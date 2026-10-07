@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -22,9 +23,9 @@ Item {
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
     // The brick this one is a quote of, which cites for it.
-    property Item host: null
+    property Markdown host: null
     // The text with the selection, when one has it.
-    property Item selection: null
+    property TextEdit selection: null
 
     signal linkActivated(string link)
     // The selection to quote in the composer: {text, start, end, prefix,
@@ -35,7 +36,7 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color selectionColor: Qt.alpha(Theme.palette.color("accent", "#346bf1"), 0.4)
-    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool light: Theme.appearance === "light"
     readonly property int codeSize: Theme.fontSizeCode
@@ -79,11 +80,16 @@ Item {
         return richHead + html + "</body></html>";
     }
 
+    // A segment's item, whose functions are the delegate's own.
+    function segmentAt(i: int): var {
+        return segments.itemAt(i);
+    }
+
     // Every text of the reply, in reading order.
     function texts() {
         let all = [];
         for (let i = 0; i < segments.count; ++i) {
-            const item = segments.itemAt(i);
+            const item = segmentAt(i);
             if (item && typeof item.texts === "function")
                 all = all.concat(item.texts());
         }
@@ -133,7 +139,7 @@ Item {
     function measure() {
         let width = 0;
         for (let i = 0; i < segments.count; ++i) {
-            const item = segments.itemAt(i);
+            const item = segmentAt(i);
             // A delegate on its way out has lost its functions.
             if (item && typeof item.naturalWidth === "function")
                 width = Math.max(width, item.naturalWidth());
@@ -169,7 +175,7 @@ Item {
         if (segmentModel.count > next.length) {
             segmentModel.remove(next.length, segmentModel.count - next.length);
             if (fitWidth)
-                Qt.callLater(measure);
+                measureLater.restart();
         }
         // New segments are laid out already: a bubble fits them before it
         // is first drawn.
@@ -200,6 +206,15 @@ Item {
         id: segmentModel
     }
 
+    // Measures on the next pass. A timer, not Qt.callLater: a quote's brick
+    // dies when the stream turns the quote into another kind, and a call
+    // queued on it would run on a destroyed context.
+    Timer {
+        id: measureLater
+        interval: 0
+        onTriggered: root.measure()
+    }
+
     TextEdit {
         id: clipboard
         visible: false
@@ -209,17 +224,18 @@ Item {
     // A 24px icon button in the web's `icon-xs` size: ghost-muted, or
     // secondary while `checked`.
     component IconButton: ShellButton {
+        id: iconButton
         property string label: ""
         subtle: true
         implicitWidth: 24
         implicitHeight: 24
         iconSize: 12
         radius: 6
-        tint: checked ? root.headingColor : root.mutedColor
+        tint: iconButton.checked ? root.headingColor : root.mutedColor
         focusPolicy: Qt.TabFocus
-        Accessible.name: label
-        ToolTip.visible: hovered && label.length > 0
-        ToolTip.text: label
+        Accessible.name: iconButton.label
+        ToolTip.visible: iconButton.hovered && iconButton.label.length > 0
+        ToolTip.text: iconButton.label
         ToolTip.delay: 400
     }
 
@@ -360,12 +376,15 @@ Item {
                 required property string alert
                 required property real gap
 
+                // The loaded block, whose functions are its component's own.
+                readonly property var block: loader.item
+
                 function naturalWidth() {
-                    return loader.item ? loader.item.implicitWidth + indent : 0;
+                    return block ? block.implicitWidth + indent : 0;
                 }
 
                 function texts() {
-                    return loader.item && typeof loader.item.texts === "function" ? loader.item.texts() : [];
+                    return block && typeof block.texts === "function" ? block.texts() : [];
                 }
 
                 objectName: "markdownSegment"
@@ -374,7 +393,7 @@ Item {
                 Connections {
                     target: root.fitWidth ? loader.item : null
                     function onImplicitWidthChanged() {
-                        Qt.callLater(root.measure);
+                        measureLater.restart();
                     }
                 }
 
@@ -383,10 +402,10 @@ Item {
                     x: seg.indent
                     y: seg.gap
                     width: seg.width - seg.indent
-                    height: item ? item.implicitHeight : 0
+                    height: (item as Item)?.implicitHeight ?? 0
                     onLoaded: {
                         if (root.fitWidth)
-                            Qt.callLater(root.measure);
+                            measureLater.restart();
                     }
                     sourceComponent: seg.kind === "code" ? codeBlock : seg.kind === "table" ? table : seg.kind === "quote" ? quote : prose
                 }
@@ -444,10 +463,10 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 name: "file"
                                 size: 14
-                                color: label.color
+                                color: codeLabel.color
                             }
                             Text {
-                                id: label
+                                id: codeLabel
                                 objectName: "codeLabel"
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - (seg.title.length > 0 ? 19.6 : 0)
@@ -543,7 +562,7 @@ Item {
                         readonly property real naturalWidth: widths.reduce((sum, w) => sum + w, 0)
                         // Width 100%, at least max-content: spare room goes to
                         // the columns in proportion, as an auto table layout does.
-                        readonly property real scale: naturalWidth > 0 && naturalWidth < width ? width / naturalWidth : 1
+                        readonly property real stretch: naturalWidth > 0 && naturalWidth < width ? width / naturalWidth : 1
 
                         function copy(format) {
                             root.copyText(format === "csv" ? spec.csv : spec.markdown);
@@ -553,10 +572,15 @@ Item {
 
                         // Each column is as wide as its widest cell, capped at
                         // 24rem (a header only while collapsed), plus padding.
+                        // A line's item, whose cell() is the delegate's own.
+                        function lineAt(r: int): var {
+                            return lines.itemAt(r);
+                        }
+
                         function measure() {
                             const next = [];
                             for (let r = 0; r < lines.count; ++r) {
-                                const line = lines.itemAt(r);
+                                const line = lineAt(r);
                                 // One that is going away answers nothing.
                                 if (!line || typeof line.cell !== "function")
                                     continue;
@@ -574,7 +598,7 @@ Item {
                         function texts() {
                             const all = [];
                             for (let r = 0; r < lines.count; ++r) {
-                                const line = lines.itemAt(r);
+                                const line = lineAt(r);
                                 for (let c = 0; line && typeof line.cell === "function" && c < line.cellCount; ++c) {
                                     if (line.cell(c))
                                         all.push(line.cell(c));
@@ -585,10 +609,20 @@ Item {
 
                         implicitWidth: naturalWidth
                         implicitHeight: footer.y + footer.height
-                        onExpandedChanged: Qt.callLater(measure)
+                        onExpandedChanged: measureCells.restart()
                         Component.onCompleted: {
                             syncLines();
-                            Qt.callLater(measure);
+                            measureCells.restart();
+                        }
+
+                        // Measures once the cells are laid out. A timer, not
+                        // Qt.callLater: it dies with a table the stream turned
+                        // into another kind, where a queued call would run on
+                        // a destroyed context.
+                        Timer {
+                            id: measureCells
+                            interval: 0
+                            onTriggered: grid.measure()
                         }
 
                         Timer {
@@ -601,7 +635,7 @@ Item {
                             id: tableScroll
                             width: grid.width
                             height: tableBody.height
-                            contentWidth: grid.naturalWidth * grid.scale
+                            contentWidth: grid.naturalWidth * grid.stretch
 
                             Column {
                                 id: tableBody
@@ -615,9 +649,13 @@ Item {
                                         required property int index
                                         readonly property bool head: index === 0
                                         readonly property int cellCount: cells.count
-                                        function cell(c) {
-                                            const item = cells.itemAt(c);
-                                            return item ? item.text : null;
+                                        function boxAt(c: int): var {
+                                            return cells.itemAt(c);
+                                        }
+                                        // A cell's text, null while it is being made.
+                                        function cell(c: int): var {
+                                            const box = boxAt(c);
+                                            return box ? box.text : null;
                                         }
                                         width: tableScroll.contentWidth
                                         height: cellRow.height + 1
@@ -629,11 +667,11 @@ Item {
                                                 // and only the one whose text changed is laid out.
                                                 model: line.modelData.length
                                                 delegate: Item {
-                                                    id: cell
+                                                    id: cellBox
                                                     required property int index
                                                     readonly property string html: line.modelData[index] ?? ""
                                                     readonly property alias text: cellText
-                                                    width: (grid.widths[index] ?? 0) * grid.scale
+                                                    width: (grid.widths[index] ?? 0) * grid.stretch
                                                     height: cellRow.rowHeight
                                                     clip: true
                                                     RichText {
@@ -645,17 +683,17 @@ Item {
                                                         wrapMode: grid.expanded && !line.head ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
                                                         font.pixelSize: Math.round(12 * Theme.fontScale)
                                                         font.weight: line.head ? Font.DemiBold : Font.Normal
-                                                        text: root.rich("<p align=\"" + (grid.spec.align[index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + cell.html + "</p>")
-                                                        onImplicitWidthChanged: Qt.callLater(grid.measure)
+                                                        text: root.rich("<p align=\"" + (grid.spec.align[cellBox.index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + cellBox.html + "</p>")
+                                                        onImplicitWidthChanged: measureCells.restart()
                                                     }
                                                 }
                                             }
                                             readonly property real rowHeight: {
                                                 let h = 0;
                                                 for (let c = 0; c < cells.count; ++c) {
-                                                    const item = cells.itemAt(c);
-                                                    if (item)
-                                                        h = Math.max(h, grid.expanded && !line.head ? item.text.height : 19.5);
+                                                    const text = line.cell(c);
+                                                    if (text)
+                                                        h = Math.max(h, grid.expanded && !line.head ? text.height : 19.5);
                                                 }
                                                 return h + (line.head ? 17.6 : 14.4);
                                             }
@@ -727,7 +765,10 @@ Item {
                         readonly property var kindOf: kinds[seg.alert] ?? null
                         readonly property color titleColor: kindOf ? (root.light ? kindOf[3] : kindOf[4]) : root.textColor
 
-                        implicitWidth: (inner.item ? inner.item.implicitWidth : 0) + inner.x
+                        // The quote's own brick, once loaded.
+                        readonly property Markdown quoted: inner.item as Markdown
+
+                        implicitWidth: (quoted?.implicitWidth ?? 0) + inner.x
                         implicitHeight: inner.y + inner.height
 
                         Rectangle {
@@ -764,22 +805,23 @@ Item {
                             x: quoteBox.kindOf ? 12 : 12.8
                             y: quoteBox.kindOf ? alertTitle.height + 10.4 : 0
                             width: parent.width - x
-                            height: item ? item.implicitHeight : 0
+                            height: quoteBox.quoted?.implicitHeight ?? 0
                             source: Qt.resolvedUrl("Markdown.qml")
                             onLoaded: {
-                                item.fitWidth = Qt.binding(() => root.fitWidth);
+                                const brick = inner.item as Markdown;
+                                brick.fitWidth = Qt.binding(() => root.fitWidth);
                                 // Before the text, which is parsed as it is set.
-                                item.lineBreaks = Qt.binding(() => root.lineBreaks);
-                                item.text = Qt.binding(() => seg.payload);
+                                brick.lineBreaks = Qt.binding(() => root.lineBreaks);
+                                brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
-                                item.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
-                                item.linkActivated.connect(root.linkActivated);
-                                item.host = root;
+                                brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
+                                brick.linkActivated.connect(root.linkActivated);
+                                brick.host = root;
                             }
                         }
 
                         function texts() {
-                            return inner.item ? inner.item.texts() : [];
+                            return quoteBox.quoted ? quoteBox.quoted.texts() : [];
                         }
                     }
                 }

@@ -1,10 +1,15 @@
 #include "ShellBridge.h"
 
+#include <algorithm>
+
+#include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
+#include <QMimeData>
 #include <QMimeDatabase>
 #include <QtLogging>
 
@@ -130,6 +135,39 @@ QStringList ShellBridge::directoryPaths(const QList<QUrl>& urls) const {
 
 QString ShellBridge::clipboardText() const {
   return QGuiApplication::clipboard()->text();
+}
+
+QVariantList ShellBridge::clipboardFiles() const {
+  constexpr qsizetype kMaxBytes = 10 * 1024 * 1024;
+  const QMimeData* data = QGuiApplication::clipboard()->mimeData();
+  if (!data) return {};
+  if (const QVariantList files = readAttachmentFiles(data->urls()); !files.isEmpty()) {
+    const bool picture = std::any_of(files.cbegin(), files.cend(), [](const QVariant& file) {
+      return file.toMap().value(QStringLiteral("mimeType")).toString().startsWith(QStringLiteral("image/"));
+    });
+    // File managers put the copied files' addresses or paths on the clipboard
+    // as text too; that is no text to paste instead.
+    QStringList names;
+    for (const QUrl& url : data->urls()) names << url.toString() << url.toString(QUrl::FullyEncoded) << url.toLocalFile();
+    const QStringList lines = data->text().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const bool onlyNames = std::all_of(lines.cbegin(), lines.cend(), [&](const QString& line) {
+      return line.trimmed().isEmpty() || names.contains(line.trimmed());
+    });
+    return picture || onlyNames ? files : QVariantList{};
+  }
+  if (!data->hasImage()) return {};
+  QByteArray png;
+  QBuffer buffer(&png);
+  buffer.open(QIODevice::WriteOnly);
+  if (!qvariant_cast<QImage>(data->imageData()).save(&buffer, "PNG") || png.size() > kMaxBytes) {
+    qInfo().noquote() << "[shell] skipping pasted image (too large or unreadable)";
+    return {};
+  }
+  return {QVariantMap{
+      {QStringLiteral("name"), QStringLiteral("image.png")},
+      {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+      {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
+  }};
 }
 
 bool ShellBridge::pasteAttaches(const QString& text, int promptLength) const {

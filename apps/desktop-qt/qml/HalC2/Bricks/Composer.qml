@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
@@ -16,7 +18,7 @@ Rectangle {
     // This machine's stashed prompts (ComposerController), newest first.
     readonly property var stashEntries: Shell.state.composerStash?.entries ?? []
     readonly property bool stashOpen: ready && Shell.state.composerStash?.open === true
-    readonly property var attachments: ready ? model.attachments : []
+    readonly property var attachments: ready ? (model.attachments ?? []) : []
     readonly property var citations: ready ? (model.citations ?? []) : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
@@ -242,10 +244,19 @@ Rectangle {
         });
     }
 
-    // A paste too large for the prompt becomes a text file; Paste as Text
-    // (mod+shift+V) keeps it in the editor.
+    // A copied picture is attached, and so are copied files when there is no
+    // text to paste instead (Shell.clipboardFiles). A paste too large for the
+    // prompt becomes a text file; Paste as Text (mod+shift+V) keeps it in the
+    // editor.
     function paste(asText) {
         const text = Shell.clipboardText();
+        const files = asText ? [] : Shell.clipboardFiles();
+        if (files.length > 0) {
+            Shell.dispatch("composer.attach", {
+                files: files
+            });
+            return true;
+        }
         if (text.length === 0) return false;
         const selected = input.selectionEnd - input.selectionStart;
         if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
@@ -435,7 +446,7 @@ Rectangle {
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                             Layout.maximumWidth: parent.width * 0.5
                         }
@@ -445,7 +456,7 @@ Rectangle {
                             text: suggestion.modelData.description
                             color: composer.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                         }
                     }
@@ -504,7 +515,7 @@ Rectangle {
                     text: qsTr("Stash")
                     color: composer.muted
                     font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 }
 
                 Text {
@@ -575,7 +586,7 @@ Rectangle {
                             text: stashRow.modelData.snippet
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
@@ -652,7 +663,7 @@ Rectangle {
                         text: qsTr("Editing a queued message")
                         color: composer.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
 
                     ShellButton {
@@ -791,7 +802,7 @@ Rectangle {
                                         elide: Text.ElideRight
                                         color: composer.muted
                                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                     }
 
                                     ShellTextField {
@@ -874,7 +885,7 @@ Rectangle {
                         background: null
                         // The prompt has its own font and size (Settings → Appearance).
                         font.pixelSize: Theme.fontSizePrompt
-                        font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Qt.application.font.family
+                        font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Application.font.family
                         Accessible.name: qsTr("Message")
                         onTextChanged: {
                             if (text !== composer.lastSentText) {
@@ -894,6 +905,10 @@ Rectangle {
                             if (event.accepted) return;
                             if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
                                 event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                if (event.accepted) return;
+                            } else if (event.matches(StandardKey.Paste)) {
+                                // Shift+Insert and the platform's other paste keys.
+                                event.accepted = composer.paste(false);
                                 if (event.accepted) return;
                             }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
@@ -1062,7 +1077,7 @@ Rectangle {
                         text: vim.modeLabel
                         color: composer.muted
                         font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         Accessible.name: qsTr("Vim mode: %1").arg(text)
                     }
 
@@ -1275,7 +1290,7 @@ Rectangle {
                         color: composer.secondary
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1310,7 +1325,7 @@ Rectangle {
                         color: parent.prColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1497,7 +1512,7 @@ Rectangle {
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
                                             font.pixelSize: Math.round(13 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                             elide: Text.ElideMiddle
                                         }
 
@@ -1506,7 +1521,7 @@ Rectangle {
                                             text: branchRow.badge
                                             color: Qt.alpha(composer.muted, 0.45)
                                             font.pixelSize: Math.round(10 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                         }
                                     }
                                 }

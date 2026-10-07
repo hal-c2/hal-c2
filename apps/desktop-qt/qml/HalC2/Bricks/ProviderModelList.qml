@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -70,7 +71,7 @@ ColumnLayout {
                 text: (row.modelData.favorite ? "★ " : "") + (row.modelData.name.length > 0 ? row.modelData.name : row.modelData.slug) + ((row.modelData.labels ?? []).length > 0 ? " · " + row.modelData.labels.join(" · ") : "")
                 color: Theme.palette.color(row.modelData.hidden ? "textMuted" : "text", row.modelData.hidden ? "#a1a1aa" : "#e4e4e7")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.strikeout: row.modelData.hidden
+                font.strikeout: row.modelData.hidden === true
                 elide: Text.ElideRight
             }
 

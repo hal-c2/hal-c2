@@ -137,6 +137,15 @@ Feature: Tool calls and file changes
     When the user opens "src/cart.ts" from the list of changed files
     Then the diff shows only "src/cart.ts"
 
+  @desktop
+  Scenario: A turn's changed files are folded under their folders
+    Given a turn changed "src/cart.ts" and "src/checkout.ts"
+    Then the reply lists the folder "src" with its files hidden
+    When the user expands all folders of the changed files
+    Then "cart.ts" and "checkout.ts" are listed under their folder
+    When the user collapses all folders of the changed files
+    Then the reply lists the folder "src" with its files hidden
+
   @mc
   Scenario: The MC serves a turn's diff and the whole thread's diff
     Given a thread with three finished turns

@@ -103,7 +103,7 @@ ShellWindow {
                     id: sidebarExtension
                     Layout.fillHeight: true
                     Layout.fillWidth: true
-                    Layout.preferredWidth: status === Loader.Ready && item ? item.implicitWidth : 0
+                    Layout.preferredWidth: status === Loader.Ready ? (item as Item)?.implicitWidth ?? 0 : 0
                     active: sourceComponent !== null
                     visible: active
                 }
@@ -152,7 +152,7 @@ ShellWindow {
                     objectName: "extensionToolbar"
 
                     Layout.fillWidth: true
-                    Layout.preferredHeight: status === Loader.Ready && item ? item.implicitHeight : 0
+                    Layout.preferredHeight: status === Loader.Ready ? (item as Item)?.implicitHeight ?? 0 : 0
                     active: sourceComponent !== null
                     visible: active
                 }

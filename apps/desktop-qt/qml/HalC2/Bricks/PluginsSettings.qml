@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -12,10 +13,10 @@ import HalC2.Shell
 SettingsPage {
     id: page
 
-    readonly property var state: Shell.state.plugins ?? null
-    readonly property var items: state?.items ?? []
-    readonly property var disabled: state?.disabled ?? []
-    readonly property var failed: state?.failed ?? []
+    readonly property var settings: Shell.state.plugins ?? null
+    readonly property var items: settings?.items ?? []
+    readonly property var disabled: settings?.disabled ?? []
+    readonly property var failed: settings?.failed ?? []
     readonly property var mcEnvironments: (Shell.state.mcPlugins?.environments ?? []).filter(environment => environment.plugins.length > 0)
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
@@ -43,7 +44,7 @@ SettingsPage {
             Label {
                 objectName: "pluginName"
                 text: row.pluginId
-                color: page.foreground
+                color: Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
@@ -52,7 +53,7 @@ SettingsPage {
                 objectName: "pluginDetail"
                 Layout.fillWidth: true
                 text: row.detail
-                color: page.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 elide: Text.ElideMiddle
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
@@ -232,7 +233,7 @@ SettingsPage {
 
     Label {
         Layout.fillWidth: true
-        text: qsTr("QML files in %1 that add to the sidebar footer, the composer's actions and the status bar.").arg(page.state?.dir ?? "")
+        text: qsTr("QML files in %1 that add to the sidebar footer, the composer's actions and the status bar.").arg(page.settings?.dir ?? "")
         color: page.muted
         wrapMode: Text.Wrap
         font.pixelSize: Math.round(12 * Theme.fontScale)

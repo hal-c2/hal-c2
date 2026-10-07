@@ -30,7 +30,7 @@ Item {
 
     readonly property color textColor: Theme.palette.color("text", "#e4e4e7")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
     // Where web addresses go: the system browser (tests keep them in).
     property var openExternally: url => Qt.openUrlExternally(url)

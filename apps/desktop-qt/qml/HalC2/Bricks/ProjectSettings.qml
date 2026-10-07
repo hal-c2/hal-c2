@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -9,12 +11,11 @@ import HalC2.Shell
 SettingsPage {
     id: page
 
-    readonly property var state: Shell.state.projectSettings ?? null
-    readonly property bool ready: state?.status === "ready"
+    readonly property var settings: Shell.state.projectSettings ?? null
+    readonly property bool ready: settings?.status === "ready"
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: (Shell.state.settingsScope?.kind ?? "all") === "project"
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color warning: Theme.palette.color("warning", "#fbbf24")
 
     function send(name, payload) {
@@ -24,15 +25,16 @@ SettingsPage {
     objectName: "projectSettings"
     title: qsTr("Project")
 
+    // Inline components cannot see `page`; the ones that need it are handed it.
     component Heading: Label {
-        color: page.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: page.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
@@ -41,6 +43,7 @@ SettingsPage {
     component Row: RowLayout {
         id: row
 
+        required property ProjectSettings project
         property string title
         property string description
         property bool mixed: false
@@ -60,17 +63,17 @@ SettingsPage {
 
                 Label {
                     text: row.title
-                    color: page.foreground
+                    color: row.project.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
                 ShellButton {
                     objectName: "reset"
-                    visible: row.resetKey.length > 0 && row.resettable && page.editable
+                    visible: row.resetKey.length > 0 && row.resettable && row.project.editable
                     subtle: true
-                    text: page.projectScope ? qsTr("Inherit") : qsTr("Reset")
-                    onClicked: page.send("reset", { key: row.resetKey })
+                    text: row.project.projectScope ? qsTr("Inherit") : qsTr("Reset")
+                    onClicked: row.project.send("reset", { key: row.resetKey })
                 }
             }
 
@@ -78,7 +81,7 @@ SettingsPage {
                 objectName: "mixed"
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
-                color: page.warning
+                color: row.project.warning
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -99,23 +102,23 @@ SettingsPage {
         id: choice
 
         property string name
-        readonly property var entry: page.state?.[name] ?? null
+        readonly property var entry: choice.project.settings?.[choice.name] ?? null
 
-        objectName: name
-        mixed: entry?.mixed ?? false
-        resetKey: name
-        resettable: entry?.resettable ?? false
+        objectName: choice.name
+        mixed: choice.entry?.mixed ?? false
+        resetKey: choice.name
+        resettable: choice.entry?.resettable ?? false
 
         ShellComboBox {
             objectName: "control"
-            enabled: page.editable
+            enabled: choice.project.editable
             outline: true
             implicitWidth: 200
             model: (choice.entry?.options ?? []).map(option => option.label)
             currentIndex: (choice.entry?.options ?? []).findIndex(option => option.value === choice.entry?.value)
             displayText: choice.entry?.label ?? ""
             Accessible.name: choice.title
-            onActivated: index => page.send(choice.name, { value: choice.entry.options[index].value })
+            onActivated: index => choice.project.send(choice.name, { value: choice.entry.options[index].value })
         }
     }
 
@@ -124,7 +127,7 @@ SettingsPage {
     Caption {
         objectName: "message"
         visible: text.length > 0
-        text: page.state?.message ?? ""
+        text: page.settings?.message ?? ""
     }
 
     ColumnLayout {
@@ -136,36 +139,38 @@ SettingsPage {
         Heading { text: qsTr("Project") }
 
         Row {
+            project: page
             objectName: "name"
             title: qsTr("Name")
             description: qsTr("How the project shows in the sidebar, on every checkout in this scope.")
 
             TextField {
-                id: name
+                id: nameField
 
                 objectName: "control"
                 implicitWidth: 240
                 enabled: page.editable
-                text: page.state?.name ?? ""
+                text: page.settings?.name ?? ""
                 selectByMouse: true
                 Accessible.name: qsTr("Project name")
                 onEditingFinished: {
-                    if (text.trim() !== (page.state?.name ?? "")) page.send("rename", { title: text });
-                    else text = Qt.binding(() => page.state?.name ?? "");
+                    if (text.trim() !== (page.settings?.name ?? "")) page.send("rename", { title: text });
+                    else text = Qt.binding(() => page.settings?.name ?? "");
                 }
             }
         }
 
         Row {
+            project: page
             objectName: "icon"
             title: qsTr("Icon")
-            description: page.state?.icon?.custom ? qsTr("Current: %1").arg(page.state.icon.label)
+            description: page.settings?.icon?.custom ? qsTr("Current: %1").arg(page.settings.icon.label)
                                                   : qsTr("Automatic, from the project's favicon when it has one.")
 
             ProjectIcon {
                 objectName: "preview"
                 size: 20
-                icon: Shell.state.projectIcons?.[page.state?.checkouts?.[0]?.key ?? ""] ?? null
+                icon: Shell.state.projectIcons?.[page.settings?.checkouts?.[0]?.key ?? ""] ?? null
             }
 
             ShellButton {
@@ -174,8 +179,8 @@ SettingsPage {
                 subtle: true
                 text: qsTr("Choose…")
                 onClicked: Shell.dispatch("projectIcon.open", {
-                    projectKey: page.state?.checkouts?.[0]?.key ?? "",
-                    name: page.state?.name ?? ""
+                    projectKey: page.settings?.checkouts?.[0]?.key ?? "",
+                    name: page.settings?.name ?? ""
                 })
             }
 
@@ -183,17 +188,17 @@ SettingsPage {
                 objectName: "emoji"
                 implicitWidth: 64
                 enabled: page.editable
-                text: page.state?.icon?.emoji ?? ""
+                text: page.settings?.icon?.emoji ?? ""
                 placeholderText: qsTr("Emoji")
                 Accessible.name: qsTr("Project icon emoji")
                 onEditingFinished: {
-                    if (text.trim().length > 0 && text.trim() !== (page.state?.icon?.emoji ?? "")) page.send("icon", { emoji: text.trim() });
+                    if (text.trim().length > 0 && text.trim() !== (page.settings?.icon?.emoji ?? "")) page.send("icon", { emoji: text.trim() });
                 }
             }
 
             ShellButton {
                 objectName: "automatic"
-                visible: page.state?.icon?.custom ?? false
+                visible: page.settings?.icon?.custom ?? false
                 enabled: page.editable
                 subtle: true
                 text: qsTr("Use automatic")
@@ -203,30 +208,32 @@ SettingsPage {
 
         ColumnLayout {
             objectName: "checkouts"
-            visible: (page.state?.checkouts ?? []).length > 1
+            visible: (page.settings?.checkouts ?? []).length > 1
             Layout.fillWidth: true
             spacing: 6
 
             Heading { text: qsTr("Checkouts") }
 
             Repeater {
-                model: page.state?.checkouts ?? []
+                model: page.settings?.checkouts ?? []
 
                 delegate: RowLayout {
+                    id: checkout
+
                     required property var modelData
                     objectName: "checkout:" + modelData.key
                     Layout.fillWidth: true
                     spacing: 8
 
                     Label {
-                        text: modelData.environment
+                        text: checkout.modelData.environment
                         color: page.foreground
                         font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
                     Caption {
-                        text: modelData.path
+                        text: checkout.modelData.path
                         font.family: "monospace"
                         elide: Text.ElideMiddle
                         wrapMode: Text.NoWrap
@@ -237,23 +244,24 @@ SettingsPage {
                         enabled: page.editable
                         subtle: true
                         text: qsTr("Remove")
-                        Accessible.name: qsTr("Remove the checkout on %1").arg(modelData.environment)
-                        onClicked: page.send("remove", { key: modelData.key })
+                        Accessible.name: qsTr("Remove the checkout on %1").arg(checkout.modelData.environment)
+                        onClicked: page.send("remove", { key: checkout.modelData.key })
                     }
                 }
             }
         }
 
         Row {
+            project: page
             objectName: "removal"
-            title: page.state?.removal?.title ?? ""
-            description: page.state?.removal?.description ?? ""
+            title: page.settings?.removal?.title ?? ""
+            description: page.settings?.removal?.description ?? ""
 
             ShellButton {
                 objectName: "control"
                 enabled: page.editable
                 tint: Theme.palette.color("error", "#ef4444")
-                text: page.state?.removal?.button ?? ""
+                text: page.settings?.removal?.button ?? ""
                 onClicked: page.send("remove")
             }
         }
@@ -262,28 +270,29 @@ SettingsPage {
     Heading { text: qsTr("New threads") }
 
     Caption {
-        visible: !(page.state?.available ?? false)
+        visible: !(page.settings?.available ?? false)
         text: qsTr("Connect an environment in this scope to change how its threads start.")
     }
 
     Row {
+        project: page
         objectName: "model"
         title: qsTr("Default model")
-        description: page.state?.model?.none ? qsTr("No provider is ready on this environment.")
+        description: page.settings?.model?.none ? qsTr("No provider is ready on this environment.")
                                              : qsTr("Automatic uses the provider's own default.")
-        mixed: page.state?.model?.mixed ?? false
+        mixed: page.settings?.model?.mixed ?? false
         resetKey: "model"
-        resettable: page.state?.model?.resettable ?? false
+        resettable: page.settings?.model?.resettable ?? false
 
         ShellComboBox {
             objectName: "control"
-            enabled: page.editable && (page.state?.available ?? false)
+            enabled: page.editable && (page.settings?.available ?? false)
             outline: true
             implicitWidth: 260
-            readonly property var models: page.state?.model?.models ?? []
+            readonly property var models: page.settings?.model?.models ?? []
             model: [qsTr("Automatic")].concat(models.map(model => model.label))
-            currentIndex: page.state?.model?.automatic ? 0 : models.findIndex(model => model.key === page.state?.model?.value) + 1
-            displayText: page.state?.model?.label ?? ""
+            currentIndex: page.settings?.model?.automatic ? 0 : models.findIndex(model => model.key === page.settings?.model?.value) + 1
+            displayText: page.settings?.model?.label ?? ""
             Accessible.name: qsTr("Default model")
             onActivated: index => page.send("model", { key: index === 0 ? "" : models[index - 1].key })
         }
@@ -294,7 +303,7 @@ SettingsPage {
     ColumnLayout {
         id: sources
 
-        readonly property var inheritance: page.state?.model?.inheritance ?? null
+        readonly property var inheritance: page.settings?.model?.inheritance ?? null
 
         objectName: "modelSources"
         Layout.fillWidth: true
@@ -348,18 +357,21 @@ SettingsPage {
     }
 
     Choice {
+        project: page
         name: "permissions"
         title: qsTr("Permissions")
         description: qsTr("What agents may do before asking.")
     }
 
     Choice {
+        project: page
         name: "workspace"
         title: qsTr("Workspace")
         description: qsTr("Where new threads work: the checkout itself or a fresh worktree.")
     }
 
     Choice {
+        project: page
         name: "submodules"
         title: qsTr("Worktree submodules")
         description: qsTr("Which submodules a new worktree checks out.")
@@ -370,6 +382,6 @@ SettingsPage {
     Caption {
         objectName: "note"
         visible: text.length > 0
-        text: page.state?.note ?? ""
+        text: page.settings?.note ?? ""
     }
 }

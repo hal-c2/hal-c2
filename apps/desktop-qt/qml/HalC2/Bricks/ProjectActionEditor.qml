@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -11,7 +12,6 @@ Dialog {
 
     readonly property var editor: Shell.state.projectActions?.editor ?? null
     readonly property bool editing: (editor?.scriptId ?? "").length > 0
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property var icons: ["play", "test", "lint", "configure", "build", "debug"]
 
@@ -35,7 +35,7 @@ Dialog {
     onRejected: Shell.dispatch("projectActions.cancel")
 
     component Caption: Label {
-        color: dialog.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }

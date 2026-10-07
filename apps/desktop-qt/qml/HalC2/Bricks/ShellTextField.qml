@@ -9,7 +9,7 @@ TextField {
     implicitHeight: 30
     leftPadding: 10
     rightPadding: 10
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(13 * Theme.fontScale)
     color: Theme.palette.color("text", "#e4e4e7")
     placeholderTextColor: Theme.palette.color("placeholder", "#71717a")

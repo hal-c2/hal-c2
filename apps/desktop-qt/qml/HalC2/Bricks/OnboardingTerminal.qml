@@ -9,7 +9,9 @@ import HalC2.Shell
 Rectangle {
     id: root
 
-    readonly property QtObject session: Onboarding.terminal
+    // A TerminalSession, which `import HalC2.Shell` does not declare to the
+    // tools: `var` so they leave its methods to the runtime.
+    readonly property var session: Onboarding.terminal
 
     objectName: "onboardingTerminal"
     implicitHeight: 256
@@ -26,12 +28,17 @@ Rectangle {
         anchors.margins: 1
         padding: 6
         focus: true
-        font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
-        font.pixelSize: Theme.fontSizeTerminal
+        // A whole font: the Terminal's default carries a point size, which a
+        // pixel size set over it warns about.
+        font: Qt.font({
+            family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace",
+            pixelSize: Theme.fontSizeTerminal
+        })
         backgroundColor: root.color
         foregroundColor: Theme.palette.color("text", "#e4e4e7")
-        cursorColor: foregroundColor
+        cursorColor: Theme.palette.color("text", "#e4e4e7")
         selectionColor: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.35)
+        Keys.onPressed: event => menu.keyPressed(event)
         onInput: data => {
             if (root.session)
                 root.session.write(data);

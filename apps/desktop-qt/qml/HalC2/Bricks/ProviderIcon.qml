@@ -93,7 +93,7 @@ Item {
         visible: icon.bitmap.length === 0 && icon.glyph === null
         text: icon.initials
         color: Theme.palette.color("text", "#e4e4e7")
-        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
         font.pixelSize: Math.max(8, Math.round(icon.size * 0.5))
         font.weight: Font.DemiBold
     }
@@ -115,7 +115,7 @@ Item {
             anchors.centerIn: parent
             text: icon.initials
             color: icon.accentColor ? "#ffffff" : Theme.palette.color("textMuted", "#8b8b93")
-            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             font.pixelSize: Math.max(6, Math.round(parent.height * 0.6))
             font.weight: Font.DemiBold
         }

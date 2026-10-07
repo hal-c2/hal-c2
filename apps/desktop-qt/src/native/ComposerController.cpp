@@ -65,7 +65,9 @@ QString approvalTitle(const QString& kind) {
 // (ComposerPendingApprovalActions.tsx), the primary one first.
 QVariantList defaultApprovalOptions() {
   const auto option = [](const QString& decision, const QString& label) {
-    return QVariantMap{{QStringLiteral("decision"), decision}, {QStringLiteral("label"), label}};
+    return QVariantMap{{QStringLiteral("decision"), decision},
+                       {QStringLiteral("label"), label},
+                       {QStringLiteral("warning"), QString()}};
   };
   return {option(QStringLiteral("accept"), QStringLiteral("Approve")),
           option(QStringLiteral("acceptForSession"), QStringLiteral("Always allow this session")),

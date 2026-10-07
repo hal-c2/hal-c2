@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -898,23 +899,25 @@ Rectangle {
                         model: credentials.fields
 
                         delegate: ColumnLayout {
+                            id: credentialField
+
                             required property var modelData
                             Layout.fillWidth: true
                             spacing: 2
 
                             Label {
-                                text: modelData.label || modelData.name
+                                text: credentialField.modelData.label || credentialField.modelData.name
                                 color: page.foreground
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
 
                             ShellTextField {
-                                objectName: "credential_" + modelData.name
+                                objectName: "credential_" + credentialField.modelData.name
                                 Layout.fillWidth: true
-                                echoMode: modelData.secret ? TextInput.Password : TextInput.Normal
+                                echoMode: credentialField.modelData.secret ? TextInput.Password : TextInput.Normal
                                 maximumLength: 16384
-                                Accessible.name: modelData.label || modelData.name
-                                onTextEdited: credentials.values[modelData.name] = text
+                                Accessible.name: credentialField.modelData.label || credentialField.modelData.name
+                                onTextEdited: credentials.values[credentialField.modelData.name] = text
                                 onAccepted: connect.clicked()
                             }
                         }
@@ -1014,13 +1017,15 @@ Rectangle {
                     model: card.provider.secrets
 
                     delegate: ColumnLayout {
+                        id: secretRow
+
                         required property var modelData
-                        objectName: "secret_" + modelData.name
+                        objectName: "secret_" + secretRow.modelData.name
                         Layout.fillWidth: true
                         spacing: 2
 
                         Label {
-                            text: modelData.label
+                            text: secretRow.modelData.label
                             color: page.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
@@ -1033,10 +1038,10 @@ Rectangle {
                             ShellTextField {
                                 Layout.fillWidth: true
                                 echoMode: TextInput.Password
-                                placeholderText: modelData.stored ? qsTr("Stored secret, enter a new value to replace") : modelData.placeholder
-                                Accessible.name: modelData.label
+                                placeholderText: secretRow.modelData.stored ? qsTr("Stored secret, enter a new value to replace") : secretRow.modelData.placeholder
+                                Accessible.name: secretRow.modelData.label
                                 onEditingFinished: if (text.length > 0) {
-                                    page.act("secret", card.provider, { name: modelData.name, value: text });
+                                    page.act("secret", card.provider, { name: secretRow.modelData.name, value: text });
                                     text = "";
                                 }
                             }
@@ -1044,16 +1049,16 @@ Rectangle {
                             // An empty value forgets the stored secret.
                             ShellButton {
                                 objectName: "clearSecret"
-                                visible: modelData.stored
+                                visible: secretRow.modelData.stored
                                 text: qsTr("Clear")
-                                Accessible.name: qsTr("Clear %1").arg(modelData.label)
-                                onClicked: page.act("secret", card.provider, { name: modelData.name, value: "" })
+                                Accessible.name: qsTr("Clear %1").arg(secretRow.modelData.label)
+                                onClicked: page.act("secret", card.provider, { name: secretRow.modelData.name, value: "" })
                             }
                         }
 
                         Note {
-                            visible: modelData.description.length > 0
-                            text: modelData.description
+                            visible: secretRow.modelData.description.length > 0
+                            text: secretRow.modelData.description
                         }
                     }
                 }
@@ -1378,8 +1383,10 @@ Rectangle {
                     model: hubsSection.hubs ?? []
 
                     delegate: RowLayout {
+                        id: hubRow
+
                         required property var modelData
-                        objectName: "hub_" + modelData.id
+                        objectName: "hub_" + hubRow.modelData.id
                         Layout.fillWidth: true
                         spacing: 12
 
@@ -1389,14 +1396,14 @@ Rectangle {
 
                             Label {
                                 objectName: "label"
-                                text: modelData.label
+                                text: hubRow.modelData.label
                                 color: page.foreground
                                 font.pixelSize: Math.round(13 * Theme.fontScale)
                                 font.weight: Font.Medium
                             }
 
                             Note {
-                                text: modelData.description
+                                text: hubRow.modelData.description
                                 wrapMode: Text.WrapAnywhere
                             }
                         }
@@ -1406,8 +1413,8 @@ Rectangle {
                             subtle: true
                             text: qsTr("Remove")
                             onClicked: {
-                                removeHubDialog.hubId = modelData.id;
-                                removeHubDialog.label = modelData.label;
+                                removeHubDialog.hubId = hubRow.modelData.id;
+                                removeHubDialog.label = hubRow.modelData.label;
                                 removeHubDialog.open();
                             }
                         }

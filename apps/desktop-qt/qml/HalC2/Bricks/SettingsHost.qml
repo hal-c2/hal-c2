@@ -1,5 +1,4 @@
 import QtQuick
-import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
 // The settings page for the section showing (js/settingsPages.js).

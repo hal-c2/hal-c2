@@ -89,6 +89,7 @@ qt_add_qml_module(hal_c2_bricks
     CentreHost.qml
     ThreadView.qml
     js/centreViews.js
+    js/changedFilesTree.js
     js/panelTabs.js
     js/terminalLinks.js
     js/scheduledTasks.js

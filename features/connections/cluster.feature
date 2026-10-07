@@ -127,6 +127,24 @@ Feature: Clustering one person's machines
     When both restart
     Then they connect again at the addresses they reported
 
+  # Two MCs on one machine (the installed one and a developer's) cannot both have the
+  # cluster port. An update restarts every member at once, so the one without it has
+  # to come back where the others last reached it.
+  @mc
+  Scenario: Members that could not have the cluster port keep the ports they took
+    Given a cluster of two members that found the cluster port taken
+    When both restart
+    Then they connect again on the ports they took
+
+  # An update can move a member onto the cluster port (a release's own one, or one that
+  # was taken before), where the others never recorded it. With no tailnet and no
+  # HAL_C2_PEERS, the hosts they recorded are all they have to look at.
+  @mc
+  Scenario: Members that move to the cluster port are found at the hosts they had
+    Given a cluster of two members that found the cluster port taken
+    When the cluster port is free again and both restart
+    Then they connect again on the cluster port
+
   @mc
   Scenario Outline: A discovery strategy finds a member the others lost track of
     Given a cluster of two members whose recorded addresses are out of date

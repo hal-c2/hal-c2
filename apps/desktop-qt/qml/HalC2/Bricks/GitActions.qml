@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -168,9 +170,12 @@ RowLayout {
         parent: Overlay.overlay
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
+        // A Popup is no Item, so the RowLayout leaves it be: a qmllint false positive.
+        // qmllint disable Quick.layout-positioning
         x: Math.round((parent.width - width * scale) / 2)
         y: Math.round((parent.height - height * scale) / 2)
         width: 520
+        // qmllint enable Quick.layout-positioning
         modal: true
         padding: 16
 
@@ -216,6 +221,8 @@ RowLayout {
                 boundsBehavior: Flickable.StopAtBounds
 
                 delegate: RowLayout {
+                    id: fileRow
+
                     required property var modelData
 
                     width: fileList.width
@@ -223,14 +230,14 @@ RowLayout {
                     spacing: 8
 
                     CheckBox {
-                        objectName: "fileCheck-" + modelData.path
-                        checked: !commitDialog.excluded[modelData.path]
+                        objectName: "fileCheck-" + fileRow.modelData.path
+                        checked: !commitDialog.excluded[fileRow.modelData.path]
                         onToggled: {
                             const next = Object.assign({}, commitDialog.excluded);
                             if (checked) {
-                                delete next[modelData.path];
+                                delete next[fileRow.modelData.path];
                             } else {
-                                next[modelData.path] = true;
+                                next[fileRow.modelData.path] = true;
                             }
                             commitDialog.excluded = next;
                         }
@@ -238,36 +245,36 @@ RowLayout {
 
                     Text {
                         Layout.fillWidth: true
-                        text: modelData.path
+                        text: fileRow.modelData.path
                         color: git.foreground
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideMiddle
                     }
 
                     ShellButton {
-                        objectName: "fileOpen-" + modelData.path
+                        objectName: "fileOpen-" + fileRow.modelData.path
                         subtle: true
                         iconName: "square-arrow-out-up-right"
                         iconSize: 12
                         iconTint: git.muted
                         implicitWidth: 22
                         implicitHeight: 22
-                        Accessible.name: qsTr("Open %1 in the editor").arg(modelData.path)
+                        Accessible.name: qsTr("Open %1 in the editor").arg(fileRow.modelData.path)
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("Open in editor")
                         onClicked: Shell.dispatch("workspace.openFile", {
-                            path: modelData.path
+                            path: fileRow.modelData.path
                         })
                     }
 
                     Text {
-                        text: "+" + modelData.insertions
+                        text: "+" + fileRow.modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
 
                     Text {
-                        text: "−" + modelData.deletions
+                        text: "−" + fileRow.modelData.deletions
                         color: Theme.palette.color("error", "#ef4444")
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
@@ -339,9 +346,12 @@ RowLayout {
         parent: Overlay.overlay
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
+        // A Popup is no Item, so the RowLayout leaves it be: a qmllint false positive.
+        // qmllint disable Quick.layout-positioning
         x: Math.round((parent.width - width * scale) / 2)
         y: Math.round((parent.height - height * scale) / 2)
         width: 460
+        // qmllint enable Quick.layout-positioning
         modal: true
         padding: 16
         visible: pending !== null
@@ -432,9 +442,12 @@ RowLayout {
         parent: Overlay.overlay
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
+        // A Popup is no Item, so the RowLayout leaves it be: a qmllint false positive.
+        // qmllint disable Quick.layout-positioning
         x: Math.round((parent.width - width * scale) / 2)
         y: Math.round((parent.height - height * scale) / 2)
         width: 460
+        // qmllint enable Quick.layout-positioning
         modal: true
         padding: 16
         closePolicy: Popup.CloseOnEscape

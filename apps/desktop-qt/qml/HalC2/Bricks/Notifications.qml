@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -111,7 +112,7 @@ Item {
                             color: Theme.palette.color("text", "#e4e4e7")
                             font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.bold: true
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             wrapMode: Text.Wrap
                         }
 
@@ -141,7 +142,7 @@ Item {
                         text: card.modelData.description ?? ""
                         color: Theme.palette.color("textMuted", "#8b8b93")
                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         lineHeight: 1.2
                         wrapMode: Text.Wrap
                     }

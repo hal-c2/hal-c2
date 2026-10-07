@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, file drop, attachment removal)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, file drop, clipboard paste, attachment removal)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
 #   apps/web/src/chatAttachment.ts (message and attachment limits)
@@ -55,7 +55,29 @@ Feature: Attaching images and files to a message
     When the user pastes an image
     Then a clipboard image is attached to the draft
 
-  @tui
+  @desktop
+  Scenario Outline: A copied picture pasted into the prompt is attached
+    When the user pastes a copied picture into the prompt with <keys>
+    Then the draft carries "image.png"
+
+    Examples:
+      | keys         |
+      | mod+v        |
+      | shift+insert |
+
+  @desktop
+  Scenario Outline: A file copied in a file manager pasted into the prompt is attached
+    When the user pastes "<file>" copied with <text> into the prompt
+    Then the draft carries "<file>"
+
+    Examples:
+      | file       | text                     |
+      | schema.sql | no text                  |
+      | schema.sql | its path as text         |
+      | schema.sql | its URL as text          |
+      | café.sql   | its encoded URL as text  |
+
+  @tui @desktop @backlog-desktop
   Scenario Outline: An image that cannot be attached is refused with a reason
     When the user tries to attach <image>
     Then nothing is attached

@@ -42,29 +42,80 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 # The app opens SQLite and no other database, but linuxdeploy's Qt plugin bundles
 # every SQL driver of the Qt it finds and stops at the first whose client library is
 # not installed. A Qt from its installer ships Mimer's, ODBC's, PostgreSQL's and
-# MySQL's. They are set aside while it runs and put back when this script ends. A Qt
-# whose drivers cannot be moved (a distribution's, which installs each on its own) is
-# left as it is.
+# MySQL's, and a distribution's may have Firebird's. So the plugin is shown the Qt
+# through a qmake that names a plugin directory with the same contents apart from
+# the SQL drivers, of which it holds SQLite's alone. The Qt itself is left as it is.
 qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
-drivers=""
-if [ -n "${qmake}" ]; then
-  drivers="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)/sqldrivers"
+if [ -z "${qmake}" ]; then
+  echo "error: no qmake6 or qmake on the PATH; set QMAKE to the Qt's" >&2
+  exit 1
 fi
-set_aside="${build_dir}/sqldrivers-set-aside"
-restore_drivers() {
-  [ -d "${set_aside}" ] || return 0
-  find "${set_aside}" -name '*.so' -exec mv {} "${drivers}/" \;
-  rmdir "${set_aside}"
-}
-trap restore_drivers EXIT
-# What a run that was cut short left behind.
-restore_drivers
-if [ -d "${drivers}" ] && [ -w "${drivers}" ]; then
-  mkdir -p "${set_aside}"
-  find "${drivers}" -maxdepth 1 -name '*.so' ! -name 'libqsqlite.so' -exec mv {} "${set_aside}/" \;
+plugins="$("${qmake}" -query QT_INSTALL_PLUGINS)"
+drivers="${plugins}/sqldrivers"
+# Loaded at run time, so nothing else notices it missing: the app would start and
+# fail to open its cache.
+if [ ! -f "${drivers}/libqsqlite.so" ]; then
+  echo "error: ${drivers} has no libqsqlite.so; install the Qt's SQLite driver" >&2
+  exit 1
 fi
+# Absolute: the plugin runs qmake from where it likes.
+wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
+view="$(cd "${build_dir}" && pwd)/qt-plugins"
+rm -rf "${view}"
+mkdir -p "${view}/sqldrivers"
+for entry in "${plugins}"/*; do
+  [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
+done
+cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
+# Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
+# A qmake that fails fails the wrapper too. The paths reach it through the
+# environment and are compared as strings, so no path character means anything.
+cat > "${wrapper}" <<'QMAKE'
+#!/bin/sh
+out="$("${HAL_C2_QMAKE}" "$@")" || exit $?
+printf '%s\n' "${out}" | while IFS= read -r line; do
+  case "${line}" in
+    QT_INSTALL_PLUGINS:*) line="QT_INSTALL_PLUGINS:${HAL_C2_QT_PLUGIN_VIEW}" ;;
+    "${HAL_C2_QT_PLUGINS}") line="${HAL_C2_QT_PLUGIN_VIEW}" ;;
+  esac
+  printf '%s\n' "${line}"
+done
+QMAKE
+chmod +x "${wrapper}"
+export HAL_C2_QMAKE="${qmake}" HAL_C2_QT_PLUGINS="${plugins}" HAL_C2_QT_PLUGIN_VIEW="${view}"
+export QMAKE="${wrapper}"
 
+# The app's own QML modules are compiled into the binary. The plugin's import scanner
+# is told where they were built so that it can follow their imports of Qt's modules,
+# and what it then copies of them (their build directories) is taken out again
+# before the image is made: a copy on disk could be loaded in place of the binary's.
+export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
-export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
-"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage
-echo "AppImage at ${OUTPUT}"
+# The plugin bundles only xcb by default, which leaves a Wayland session running
+# the app through XWayland. It takes the Wayland platform plugin when asked (one
+# libqwayland.so since Qt 6.10, an EGL and a generic one before), but not the
+# plugins that one cannot start without (it looks for the names they had before
+# Qt 6.8), so those are copied in after it: the xdg shell, EGL, and the decorations
+# drawn when the compositor draws none. A Qt without Qt Wayland packages for xcb alone.
+wayland=""
+for name in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+  [ -f "${plugins}/platforms/${name}" ] && wayland="${wayland:+${wayland};}${name}"
+done
+export EXTRA_PLATFORM_PLUGINS="${wayland}"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt
+rm -rf "${app_dir}/usr/qml/HalC2" "${app_dir}/usr/qml/Ghostty"
+if [ -n "${wayland}" ]; then
+  for plugin in wayland-shell-integration/libxdg-shell.so \
+    wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
+    wayland-decoration-client/libbradient.so; do
+    mkdir -p "${app_dir}/usr/plugins/$(dirname "${plugin}")"
+    cp "${plugins}/${plugin}" "${app_dir}/usr/plugins/${plugin}"
+  done
+  "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-shell-integration" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-graphics-integration-client" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-decoration-client"
+fi
+export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
+echo "AppImage at ${LDAI_OUTPUT}"

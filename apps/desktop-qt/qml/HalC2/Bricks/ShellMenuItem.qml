@@ -16,7 +16,7 @@ MenuItem {
     implicitHeight: 28
     leftPadding: 8
     rightPadding: 8
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
 

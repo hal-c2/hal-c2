@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -72,7 +74,7 @@ Rectangle {
     // "/" starts a search while the keyboard is not in a text field.
     Shortcut {
         sequence: "/"
-        enabled: nav.visible && !(nav.Window.activeFocusItem && nav.Window.activeFocusItem.cursorPosition !== undefined)
+        enabled: nav.visible && !(nav.Window.activeFocusItem && "cursorPosition" in nav.Window.activeFocusItem)
         onActivated: search.forceActiveFocus()
     }
 

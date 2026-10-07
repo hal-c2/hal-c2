@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Stop the desktop:cua sandbox: the app, cua-driver, the scratch MC and the headless display"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec apps/desktop-qt/scripts/cua-sandbox.sh stop

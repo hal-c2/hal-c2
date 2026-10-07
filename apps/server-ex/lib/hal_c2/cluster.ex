@@ -18,8 +18,10 @@ defmodule HalC2.Cluster do
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
   (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
   that path and starts distribution before anything reads `node()`, on the cluster
-  port (4370) or any free one when that is taken. `HalC2.Cluster.Epmd` stands in for
-  EPMD and `HalC2.Cluster.Discovery` finds where members are.
+  port (4370, or 4380 in a release so that one runs beside an MC from a checkout) or,
+  when that is taken, on the port it had last time or else any free one.
+  `HalC2.Cluster.Epmd` stands in for EPMD and `HalC2.Cluster.Discovery` finds where
+  members are.
 
   A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
   link for an `access:write` session, presents its fingerprint, and the member admits
@@ -485,6 +487,8 @@ defmodule HalC2.Cluster do
     do: {:noreply, merge_in(state, incoming)}
 
   def handle_cast(:version_changed, %{off: nil} = state) do
+    # An MC updated in place from a version that kept no port has not kept its own yet.
+    keep_port(state.dir)
     Node.set_cookie(cookie())
     state = state |> refresh_own() |> commit()
     for mc <- Node.list(), do: Node.disconnect(mc)
@@ -671,7 +675,8 @@ defmodule HalC2.Cluster do
                {:ok, ip} <- :inet.parse_address(to_charlist(ip)),
                do: Application.put_env(:kernel, :inet_dist_use_interface, ip)
 
-          if listen(name, dist_port()) or listen(name, 0) do
+          if Enum.any?(Enum.uniq([dist_port(), kept_port(dir), 0]), &listen(name, &1)) do
+            keep_port(dir)
             Node.set_cookie(cookie())
             :ok
           else
@@ -682,6 +687,22 @@ defmodule HalC2.Cluster do
         end
     end
   end
+
+  # The port this MC last listened on. Members reach it at the addresses it reported,
+  # so one that could not have the cluster port takes the same other port every time:
+  # members that all restart at once (an update) would otherwise each come back on a
+  # port no other member knows.
+  defp kept_port(dir) do
+    with {:ok, text} <- File.read(Path.join(dir, "port")),
+         {port, ""} when port in 1..65_535 <- Integer.parse(String.trim(text)) do
+      port
+    else
+      _ -> dist_port()
+    end
+  end
+
+  defp keep_port(dir),
+    do: File.write!(Path.join(dir, "port"), Integer.to_string(Epmd.listen_port()))
 
   defp cookie, do: :"hal_c2_#{HalC2.Upgrade.version()}"
 

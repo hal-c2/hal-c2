@@ -1,4 +1,5 @@
 import QtQuick
+import Ghostty
 import HalC2.Shell
 
 // A terminal's right-click menu, as the web's terminalContextMenuItems: the
@@ -7,13 +8,34 @@ import HalC2.Shell
 //
 //   TapHandler { acceptedButtons: Qt.RightButton; onTapped: point => menu.popup(point.position.x, point.position.y) }
 //   TerminalMenu { id: menu; terminal: screen }
+//
+// The same from the keyboard, as the web's terminal: Ctrl+V pastes, and Ctrl+C
+// (or Ctrl+Insert) copies a selection and stays the shell's without one.
+//
+//   Terminal { Keys.onPressed: event => menu.keyPressed(event) }
 ShellMenu {
     id: menu
 
     // The Ghostty Terminal it acts on.
-    required property Item terminal
+    required property Terminal terminal
     // Adds the selection to the draft; null where there is none.
     property var addToChat: null
+
+    function keyPressed(event) {
+        event.accepted = false;
+        if (event.modifiers !== Qt.ControlModifier)
+            return;
+        if (event.key === Qt.Key_V) {
+            menu.terminal.paste(Shell.clipboardText());
+            event.accepted = true;
+        } else if ((event.key === Qt.Key_C || event.key === Qt.Key_Insert) && menu.terminal.hasSelection) {
+            menu.terminal.copy();
+            // The next Ctrl+C is the shell's.
+            if (event.key === Qt.Key_C)
+                menu.terminal.clearSelection();
+            event.accepted = true;
+        }
+    }
 
     ShellMenuItem {
         objectName: "terminalAddToChat"

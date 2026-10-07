@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run qmllint over the desktop's QML (HalC2.Bricks) against the Debug build"
+#MISE dir="{{config_root}}/apps/desktop-qt"
+set -euo pipefail
+node scripts/dev-qt.mjs --configure-only
+exec cmake --build build/debug --target hal_c2_bricks_qmllint

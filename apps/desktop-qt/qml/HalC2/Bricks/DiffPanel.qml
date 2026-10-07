@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -45,7 +46,7 @@ Rectangle {
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color border: Theme.palette.color("border", "#27272a")
+    readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color added: Theme.palette.color("diffAdded", "#22c55e")
     readonly property color removed: Theme.palette.color("diffRemoved", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
@@ -223,7 +224,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: root.border
+            color: root.borderColor
         }
 
         RowLayout {
@@ -279,7 +280,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 visible: treeView.visible
-                color: root.border
+                color: root.borderColor
             }
 
             Item {
@@ -384,7 +385,7 @@ Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width
                     height: 1
-                    color: root.border
+                    color: root.borderColor
                 }
             }
             contentItem: RowLayout {
@@ -508,6 +509,7 @@ Rectangle {
         id: stackedLine
 
         Rectangle {
+            id: stackedRow
             readonly property var row: parent
             implicitHeight: Math.max(18, lineText.implicitHeight)
             height: implicitHeight
@@ -517,10 +519,10 @@ Rectangle {
                 id: numbers
                 spacing: 6
                 LineNumber {
-                    text: numbers.parent.row.oldLine ?? ""
+                    text: stackedRow.row.oldLine ?? ""
                 }
                 LineNumber {
-                    text: numbers.parent.row.newLine ?? ""
+                    text: stackedRow.row.newLine ?? ""
                 }
             }
             Text {
@@ -647,7 +649,7 @@ Rectangle {
         background: Rectangle {
             radius: Theme.radius
             color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: root.border
+            border.color: root.borderColor
             border.width: 1
         }
 

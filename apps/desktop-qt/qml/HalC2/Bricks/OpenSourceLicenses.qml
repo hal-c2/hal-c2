@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -11,14 +13,13 @@ import HalC2.Shell
 Rectangle {
     id: page
 
-    readonly property var state: Shell.state.licenses ?? null
-    readonly property string status: state?.status ?? "loading"
-    readonly property var entries: state?.entries ?? []
-    readonly property int total: state?.total ?? 0
+    readonly property var settings: Shell.state.licenses ?? null
+    readonly property string status: settings?.status ?? "loading"
+    readonly property var entries: settings?.entries ?? []
+    readonly property int total: settings?.total ?? 0
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color line: Theme.palette.color("border", "#27272a")
-    property real radius: 0
 
     objectName: "openSourceLicenses"
     color: Theme.palette.color("canvas", "#0b0b0d")
@@ -72,7 +73,7 @@ Rectangle {
                     visible: page.status === "ready"
                     implicitWidth: 200
                     placeholderText: qsTr("Search licenses")
-                    text: page.state?.query ?? ""
+                    text: page.settings?.query ?? ""
                     Accessible.name: qsTr("Search open-source licenses")
                     Keys.onEscapePressed: Shell.dispatch("licenses.search", { query: "" })
                     onTextEdited: Shell.dispatch("licenses.search", { query: text })
@@ -118,7 +119,7 @@ Rectangle {
 
                 Label {
                     Layout.maximumWidth: 560
-                    text: page.state?.message ?? ""
+                    text: page.settings?.message ?? ""
                     color: page.muted
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                     wrapMode: Text.Wrap
@@ -136,9 +137,9 @@ Rectangle {
             id: notice
 
             required property var modelData
-            readonly property bool open: page.state?.openKey === modelData.key
+            readonly property bool open: page.settings?.openKey === notice.modelData.key
 
-            objectName: "license:" + modelData.name
+            objectName: "license:" + notice.modelData.name
             x: 24
             width: Math.min(720, list.width - 48)
             spacing: 0
@@ -188,7 +189,7 @@ Rectangle {
                 visible: notice.open
                 readOnly: true
                 selectByMouse: true
-                text: notice.open ? page.state?.noticeText ?? "" : ""
+                text: notice.open ? page.settings?.noticeText ?? "" : ""
                 wrapMode: TextEdit.Wrap
                 color: page.foreground
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"

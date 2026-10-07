@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -318,6 +320,8 @@ Rectangle {
                                             model: card.modelData.accounts
 
                                             delegate: ColumnLayout {
+                                                id: account
+
                                                 required property var modelData
 
                                                 Layout.fillWidth: true
@@ -331,7 +335,7 @@ Rectangle {
                                                     color: Theme.palette.color("accentSurface", "#27272a")
 
                                                     Rectangle {
-                                                        width: parent.width * Math.max(0, 100 - modelData.usedPercent) / 100
+                                                        width: parent.width * Math.max(0, 100 - account.modelData.usedPercent) / 100
                                                         height: parent.height
                                                         radius: 3
                                                         color: Theme.palette.color("accent", "#3b82f6")
@@ -340,7 +344,7 @@ Rectangle {
 
                                                 Label {
                                                     Layout.fillWidth: true
-                                                    text: qsTr("%1 · %2%").arg(modelData.name).arg(Math.round(100 - modelData.usedPercent))
+                                                    text: qsTr("%1 · %2%").arg(account.modelData.name).arg(Math.round(100 - account.modelData.usedPercent))
                                                     color: page.muted
                                                     font.pixelSize: Math.round(11 * Theme.fontScale)
                                                     elide: Text.ElideRight
@@ -357,26 +361,28 @@ Rectangle {
                             model: pool.modelData.credits ?? []
 
                             delegate: RowLayout {
+                                id: credit
+
                                 required property var modelData
 
-                                objectName: "usageCredits_" + modelData.key
+                                objectName: "usageCredits_" + credit.modelData.key
                                 Layout.fillWidth: true
                                 spacing: 8
 
                                 Label {
-                                    text: pool.modelData.credits.length > 1 ? qsTr("%1: %2").arg(modelData.name).arg(page.credits(modelData)) : page.credits(modelData)
+                                    text: pool.modelData.credits.length > 1 ? qsTr("%1: %2").arg(credit.modelData.name).arg(page.credits(credit.modelData)) : page.credits(credit.modelData)
                                     color: page.muted
                                     font.pixelSize: Math.round(12 * Theme.fontScale)
                                 }
 
                                 ShellButton {
                                     objectName: "useReset"
-                                    visible: modelData.available > 0
-                                    enabled: !modelData.busy
+                                    visible: credit.modelData.available > 0
+                                    enabled: !credit.modelData.busy
                                     subtle: true
-                                    text: modelData.busy ? qsTr("Using…") : qsTr("Use reset")
+                                    text: credit.modelData.busy ? qsTr("Using…") : qsTr("Use reset")
                                     onClicked: {
-                                        resetDialog.key = modelData.key;
+                                        resetDialog.key = credit.modelData.key;
                                         resetDialog.open();
                                     }
                                 }
@@ -385,7 +391,7 @@ Rectangle {
                                     objectName: "resetStatus"
                                     Layout.fillWidth: true
                                     visible: text.length > 0
-                                    text: modelData.status
+                                    text: credit.modelData.status
                                     color: page.foreground
                                     font.pixelSize: Math.round(12 * Theme.fontScale)
                                     wrapMode: Text.Wrap
@@ -428,6 +434,8 @@ Rectangle {
                         model: page.summary ? page.summary.providers : []
 
                         delegate: RowLayout {
+                            id: providerRow
+
                             required property var modelData
 
                             Layout.fillWidth: true
@@ -438,24 +446,24 @@ Rectangle {
                                 implicitWidth: 8
                                 implicitHeight: 8
                                 radius: 4
-                                color: page.providerColor(modelData.id)
+                                color: page.providerColor(providerRow.modelData.id)
                                 Accessible.ignored: true
                             }
 
                             ProviderIcon {
-                                driverKind: page.driverKind(modelData.id)
+                                driverKind: page.driverKind(providerRow.modelData.id)
                             }
 
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("%1  %2").arg(modelData.label).arg(page.sessions(modelData.sessions))
+                                text: qsTr("%1  %2").arg(providerRow.modelData.label).arg(page.sessions(providerRow.modelData.sessions))
                                 color: page.foreground
                                 font.pixelSize: Math.round(13 * Theme.fontScale)
                                 elide: Text.ElideRight
                             }
 
                             Label {
-                                text: page.amount(modelData)
+                                text: page.amount(providerRow.modelData)
                                 color: page.foreground
                                 font.pixelSize: Math.round(13 * Theme.fontScale)
                             }
@@ -497,19 +505,21 @@ Rectangle {
                         model: page.summary ? [[qsTr("Processed tokens"), page.tokens(page.summary.totalTokens)], [qsTr("Cached input"), page.tokens(page.summary.cachedInputTokens)], [qsTr("Uncached input"), page.tokens(page.summary.uncachedInputTokens)], [qsTr("Output"), page.tokens(page.summary.outputTokens)], [qsTr("Cache savings"), page.usd(page.summary.cacheSavingsUsd)]] : []
 
                         delegate: RowLayout {
+                            id: total
+
                             required property var modelData
 
                             Layout.fillWidth: true
 
                             Label {
                                 Layout.fillWidth: true
-                                text: modelData[0]
+                                text: total.modelData[0]
                                 color: page.muted
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
 
                             Label {
-                                text: modelData[1]
+                                text: total.modelData[1]
                                 color: page.foreground
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
@@ -524,20 +534,22 @@ Rectangle {
                         model: page.summary ? page.summary.models : []
 
                         delegate: RowLayout {
+                            id: modelRow
+
                             required property var modelData
 
                             Layout.fillWidth: true
 
                             Label {
                                 Layout.fillWidth: true
-                                text: modelData.model
+                                text: modelRow.modelData.model
                                 color: page.foreground
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                 elide: Text.ElideRight
                             }
 
                             Label {
-                                text: page.metric === "cost" && modelData.unpriced ? qsTr("Unpriced") : page.amount(modelData)
+                                text: page.metric === "cost" && modelRow.modelData.unpriced ? qsTr("Unpriced") : page.amount(modelRow.modelData)
                                 color: page.foreground
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
@@ -562,6 +574,8 @@ Rectangle {
                         model: page.summary ? page.summary.periods : []
 
                         delegate: RowLayout {
+                            id: periodRow
+
                             required property var modelData
 
                             Layout.fillWidth: true
@@ -569,7 +583,7 @@ Rectangle {
 
                             Label {
                                 Layout.preferredWidth: 64
-                                text: modelData.label
+                                text: periodRow.modelData.label
                                 color: page.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
@@ -581,7 +595,7 @@ Rectangle {
                                 Rectangle {
                                     height: parent.height
                                     radius: 2
-                                    width: periods.peak > 0 ? parent.width * (page.metric === "tokens" ? modelData.totalTokens : modelData.costUsd) / periods.peak : 0
+                                    width: periods.peak > 0 ? parent.width * (page.metric === "tokens" ? periodRow.modelData.totalTokens : periodRow.modelData.costUsd) / periods.peak : 0
                                     color: Theme.palette.color("accent", "#3b82f6")
                                 }
                             }
@@ -589,7 +603,7 @@ Rectangle {
                             Label {
                                 Layout.preferredWidth: 72
                                 horizontalAlignment: Text.AlignRight
-                                text: page.amount(modelData)
+                                text: page.amount(periodRow.modelData)
                                 color: page.foreground
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
