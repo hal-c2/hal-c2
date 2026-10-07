@@ -311,15 +311,12 @@ defmodule HalC2.Settings do
   end
 
   @impl true
-  def handle_call({:put, settings, version}, _from, %{version: version} = state) do
-    state = save(state, settings, true)
-    {:reply, {:ok, state.version}, state}
-  end
+  def handle_call({:put, settings, version}, _from, %{version: version} = state),
+    do: save_reply(state, fn -> settings end)
 
-  def handle_call({:update, fun}, _from, state) do
-    state = save(state, fun.(state.settings), true)
-    {:reply, {:ok, state.version}, state}
-  end
+  # `fun` is a caller's: a crash in it must not take the table every service reads with it.
+  def handle_call({:update, fun}, _from, state),
+    do: save_reply(state, fn -> fun.(state.settings) end)
 
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
@@ -376,6 +373,15 @@ defmodule HalC2.Settings do
     else
       _ -> {:noreply, %{state | stamp: stamp}}
     end
+  end
+
+  # Saves what `settings.()` returns and replies with the new version. A document that
+  # cannot be built or written is refused with the reason and nothing changes.
+  defp save_reply(state, settings) do
+    state = save(state, settings.(), true)
+    {:reply, {:ok, state.version}, state}
+  rescue
+    exception -> {:reply, {:error, Exception.message(exception)}, state}
   end
 
   defp save(state, settings, write?) do
