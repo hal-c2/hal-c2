@@ -2,6 +2,7 @@ defmodule HalC2.ThreadMoveTest do
   # Regressions `prop/hal_c2/thread_move_prop_test.exs` found.
   use ExUnit.Case, async: false
 
+  alias HalC2.Orchestration.Entities
   alias HalC2.Test.{Machines, Mc}
   alias HalC2.Test.Mc.World
 
@@ -56,6 +57,29 @@ defmodule HalC2.ThreadMoveTest do
 
     assert World.thread(context, "Plan")["title"] == "Plan"
     Process.exit(mover, :kill)
+  end
+
+  # A rename of the record a moved thread left behind used to be taken, and lost: the
+  # thread lives on where it moved.
+  test "a thread's forwarding record refuses to be renamed, but goes with its project", %{
+    context: context
+  } do
+    root = Path.join(context.mc.home, "shop")
+    File.mkdir_p!(root)
+    context = World.create_project(context, "shop", %{"workspaceRoot" => root})
+    context = World.create_thread(context, "Plan", "shop")
+    id = World.thread_id(context, "Plan")
+    moved = %{"mc" => "desktop@127.0.0.1", "label" => "desktop", "at" => Entities.now()}
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"movedTo" => moved}}}])
+
+    rename = %{"type" => "thread.metadata.update", "threadId" => id, "title" => "Renamed"}
+    assert {:error, "Plan has moved to desktop."} = HalC2.Orchestration.dispatch(rename)
+    assert World.thread(context, "Plan")["title"] == "Plan"
+
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
   end
 
   # Settling a cut-off move waited on the destination inside ThreadMove, up to 30 seconds

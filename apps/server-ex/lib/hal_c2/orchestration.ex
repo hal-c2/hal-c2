@@ -475,6 +475,11 @@ defmodule HalC2.Orchestration do
             {[],
              {:error, "#{thread["title"]} is moving to #{to}. Try again once it has arrived."}}
 
+          # The thread lives where it moved: a change to the record left here would be lost.
+          # Deleting its project still deletes the record.
+          %{"movedTo" => %{} = moved} = thread when type not in ~w(thread.visit thread.delete) ->
+            {[], {:error, "#{thread["title"]} has moved to #{moved["label"]}."}}
+
           thread ->
             case refusal(type, command, thread, state) ||
                    with(

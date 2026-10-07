@@ -116,14 +116,9 @@ defmodule HalC2.ThreadMovePropTest do
             [
               {3, {:call, __MODULE__, :release, [state.held, :go]}},
               {2, {:call, __MODULE__, :release, [state.held, :crash]}},
+              {1, {:call, __MODULE__, :rename, [state.held.t, state.held.from, title()]}},
               {1, {:call, __MODULE__, :move, [state.held.t, state.held.from, oneof(@mcs)]}}
             ] ++
-              if(forwarded?(state.held),
-                do: [],
-                else: [
-                  {1, {:call, __MODULE__, :rename, [state.held.t, state.held.from, title()]}}
-                ]
-              ) ++
               if(state.held.stage in [:staged, :taking] and not state.held.killed,
                 do: [{4, {:call, __MODULE__, :kill_mover, [state.held]}}],
                 else: []
@@ -146,9 +141,7 @@ defmodule HalC2.ThreadMovePropTest do
     do: state.held != nil and held.t == state.held.t
 
   def precondition(state, {:call, _, :rename, [t, at, _]}),
-    do:
-      is_map_key(state.threads, t) and state.threads[t].at == at and
-        not (state.held != nil and state.held.t == t and forwarded?(state.held))
+    do: is_map_key(state.threads, t) and state.threads[t].at == at
 
   def precondition(state, {:call, _, :move, [t, _from, _to]}), do: is_map_key(state.threads, t)
   def precondition(_state, _call), do: true
@@ -208,12 +201,6 @@ defmodule HalC2.ThreadMovePropTest do
   # thread is then where it was, and free; the destination is refused when it asks.
   defp released?(held),
     do: held.stage in [:sending, :staged] and (held.killed or held.source_restarted)
-
-  # Whether a restart of the source settled a held move whose destination had the thread
-  # already: the source keeps only a forwarding record, though the model has the thread
-  # moving until the move is released. Renaming the record is taken (the thread stays
-  # as it is on the destination), which the model does not cover.
-  defp forwarded?(held), do: held.stage == :accepted and held.source_restarted
 
   # Whether a held move ends with the thread on its destination. A move ends where it
   # was until the destination asks to take it (`:taking`); from then on it completes.
