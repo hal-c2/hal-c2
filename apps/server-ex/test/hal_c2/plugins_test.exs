@@ -33,6 +33,28 @@ defmodule HalC2.PluginsTest do
     assert monitors() == 2
   end
 
+  test "followers of a topic, and what it last carried, outlive a restart of the host" do
+    other = follower()
+    assert {:ok, nil} = Plugins.subscribe_topic(self(), "alpha", "t")
+    assert {:ok, nil} = Plugins.subscribe_topic(other, "alpha", "t")
+    Plugins.publish("alpha", "t", 1)
+    assert_receive {:hal_c2_plugin_topic, _, "alpha", "t", 1}
+
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, Plugins)
+
+    Plugins.publish("alpha", "t", 2)
+    assert_receive {:hal_c2_plugin_topic, _, "alpha", "t", 2}
+    assert {:ok, 2} = Plugins.subscribe_topic(follower(), "alpha", "t")
+
+    # The new server watches them too: one that goes away is dropped.
+    assert monitors() == 3
+    ref = Process.monitor(other)
+    Process.exit(other, :kill)
+    assert_receive {:DOWN, ^ref, _, _, _}
+    assert monitors() == 2
+  end
+
   defp monitors do
     :sys.get_state(Plugins)
     {:monitors, monitors} = Process.info(Process.whereis(Plugins), :monitors)
