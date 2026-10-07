@@ -892,6 +892,32 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context
   end
 
+  step "the user moves the thread to another machine", context do
+    {reply, context} = move(context)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told the thread stays on this machine while {string} runs",
+       %{args: [id]} = context do
+    assert {:error, message, _} = context.reply
+
+    assert message ==
+             "Review #12 was started by #{id} and stays on this machine while #{id} runs."
+
+    context
+  end
+
+  step "once {string} is removed, the move is no longer refused for it",
+       %{args: [id]} = context do
+    File.rm_rf!(Packages.dir(context, id))
+    context = Fixtures.rescan(context)
+    {reply, context} = move(context)
+    # This MC is alone, so the move goes on to find no machine to go to.
+    assert {:error, message, _} = reply
+    assert message =~ "There is no machine desktop"
+    context
+  end
+
   step "the thread is marked as not listed", context do
     assert %{"plugin" => %{"listed" => false}} = thread(context.plugin_thread)
     context
@@ -927,6 +953,13 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     assert %{"status" => "running"} = Fixtures.entry(id)
     context
   end
+
+  defp move(context),
+    do:
+      World.call(context, "hal-c2.moveThread", %{
+        "threadId" => context.plugin_thread,
+        "machine" => "desktop"
+      })
 
   defp file(context, id, path) do
     {result, context} = World.call!(context, "plugins.file", %{"id" => id, "path" => path})

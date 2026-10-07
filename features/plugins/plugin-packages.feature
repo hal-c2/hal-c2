@@ -253,6 +253,13 @@ Feature: Plugin packages
       Then the thread can still be opened, read and continued
 
     @mc
+    Scenario: A plugin's thread stays on its machine while the plugin runs
+      Given "code-review" started a "review" thread
+      When the user moves the thread to another machine
+      Then the user is told the thread stays on this machine while "code-review" runs
+      And once "code-review" is removed, the move is no longer refused for it
+
+    @mc
     Scenario: A plugin can keep its threads out of the thread list
       When "code-review" starts a "review" thread that is not listed
       Then the thread is marked as not listed

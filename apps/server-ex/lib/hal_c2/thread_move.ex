@@ -62,8 +62,8 @@ defmodule HalC2.ThreadMove do
   def move(ref, to, opts \\ []) do
     with {:ok, id} <- thread_id(ref),
          thread = thread(id),
-         {:ok, dest} <- destination(to, thread),
          :ok <- movable(state(id), thread),
+         {:ok, dest} <- destination(to, thread),
          :ok <- online(dest, thread),
          :ok <- save_terminals(id),
          have = has(dest, thread, opts[:project]),
@@ -91,8 +91,8 @@ defmodule HalC2.ThreadMove do
   def after_turn(ref, to, opts \\ []) do
     with {:ok, id} <- thread_id(ref),
          thread = thread(id),
-         {:ok, dest} <- destination(to, thread),
          :ok <- movable(state(id), thread, true),
+         {:ok, dest} <- destination(to, thread),
          :ok <- online(dest, thread) do
       :ok = GenServer.call(__MODULE__, {:after_turn, id, to, opts})
 
@@ -241,6 +241,14 @@ defmodule HalC2.ThreadMove do
 
       thread["deletedAt"] ->
         error(:thread_not_movable, "#{title} was deleted.")
+
+      # What the plugin keeps of its thread (and the tools it gives the thread's agent)
+      # stays on this machine; once the plugin stops, the thread is an ordinary one.
+      (owner = thread["plugin"]["id"]) && HalC2.Plugins.running?(owner) ->
+        error(
+          :thread_not_movable,
+          "#{title} was started by #{owner} and stays on this machine while #{owner} runs."
+        )
 
       after_turn ->
         :ok

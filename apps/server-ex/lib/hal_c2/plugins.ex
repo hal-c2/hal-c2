@@ -210,6 +210,13 @@ defmodule HalC2.Plugins do
     end
   end
 
+  @doc "Whether plugin `id` is running on this MC."
+  def running?(id) do
+    GenServer.call(__MODULE__, {:running?, id})
+  catch
+    :exit, _ -> false
+  end
+
   @doc "Whether `id` is a running text-generation backend."
   def text_backend?(id), do: Enum.any?(running("textGeneration"), &(elem(&1, 0) == id))
 
@@ -532,6 +539,9 @@ defmodule HalC2.Plugins do
 
     {:reply, running, state}
   end
+
+  def handle_call({:running?, id}, _from, state),
+    do: {:reply, match?(%{sup: sup} when sup != nil, state.plugins[id]), state}
 
   def handle_call({:set_enabled, id, enabled, accepted}, _from, state) do
     case state.plugins[id] do

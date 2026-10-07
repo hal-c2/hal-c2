@@ -82,7 +82,8 @@ What a running plugin adds reaches every app connected to that machine:
   different versions, each named with its machines.
 - **Threads it starts** carry its mark in the thread list and its header above
   the conversation. A plugin can keep its threads out of the list and show them
-  on its page instead. Turn the plugin off and they are ordinary threads again.
+  on its page instead. They stay on their machine while the plugin runs there.
+  Turn the plugin off and they are ordinary threads again, free to move.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
