@@ -70,15 +70,20 @@ defmodule HalC2.Plugins do
   @doc "The plugin API version this MC offers."
   def api_version, do: @api_version
 
+  # Enabling or rescanning can compile a package, which takes longer than a call does.
+  @compiles 60_000
+
   @doc "Serves `plugins.<method>` (`HalC2.Rpc`)."
   def handle("list", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
-  def handle("rescan", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan)}}
+
+  def handle("rescan", _input),
+    do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan, @compiles)}}
 
   def handle("enable", %{"id" => id} = input) do
     case input["acceptPermissions"] || [] do
       accepted when is_list(accepted) ->
         if Enum.all?(accepted, &is_binary/1),
-          do: GenServer.call(__MODULE__, {:set_enabled, id, true, accepted}),
+          do: GenServer.call(__MODULE__, {:set_enabled, id, true, accepted}, @compiles),
           else: {:error, "acceptPermissions is a list of permission ids."}
 
       _ ->
