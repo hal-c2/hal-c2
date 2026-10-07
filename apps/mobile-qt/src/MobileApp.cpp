@@ -36,7 +36,8 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   m_bridge->setLocalFolderImportEnabled(false);
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->registerQmlSingletons();
-  m_native->setStoreDirs(m_storage.state, m_storage.data);
+  // The cache is what the phone paints from before its MC answers.
+  m_native->setStoreDirs(m_storage.state, m_storage.data, m_storage.cache);
   LayoutController::setSystemReducedMotion(systemReducedMotion());
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   m_native->controller<PluginController>()->setConfigDir(configDir);

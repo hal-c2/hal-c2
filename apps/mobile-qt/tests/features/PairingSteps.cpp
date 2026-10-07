@@ -203,7 +203,8 @@ const Steps steps([] {
     expect(world.native().client()->phase() == McClient::Phase::Blocked && world.native().client()->retryDelay() == 0,
            S("the phone will try again in %1 ms").arg(world.native().client()->retryDelay()));
     expect(world.mc.connections.size() == world.mc.part<Seen>().sockets, S("the phone opened a connection to it"));
-    expect(world.native().store()->threads().isEmpty(), S("the phone holds its threads"));
+    // What it kept from before may show; none of it passes for the MC's word.
+    expect(!world.native().store()->synchronized(), S("the phone takes what it holds for the environment's own"));
   });
 
   step(S("the user removes %1 and confirms").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
