@@ -97,7 +97,13 @@ defmodule HalC2.ScheduledTasks do
           Map.merge(task, %{
             "enabled" => enabled,
             "updatedAt" => iso(at),
-            "nextRunAt" => if(enabled, do: next_run(task["schedule"], at))
+            "nextRunAt" =>
+              cond do
+                not enabled -> nil
+                # Enabling a task that is already on keeps its pending run.
+                task["enabled"] and task["nextRunAt"] -> task["nextRunAt"]
+                true -> next_run(task["schedule"], at)
+              end
           })
 
         {:reply, {:ok, %{"task" => task}}, state |> put(task) |> changed()}
@@ -122,6 +128,7 @@ defmodule HalC2.ScheduledTasks do
   @impl true
   def handle_info(:tick, state) do
     at = now()
+    before = state.tasks
     state = %{state | timer: nil}
 
     state =
@@ -141,19 +148,20 @@ defmodule HalC2.ScheduledTasks do
         end
       end)
 
-    {:noreply, state |> changed()}
+    # A tick that starts nothing (a due task still running) only re-arms the timer.
+    {:noreply, if(state.tasks == before, do: schedule(state), else: changed(state))}
   end
 
   # A run finished: record it, and answer a waiting "run now".
-  def handle_info({ref, result}, %{runs: runs} = state) when is_map_key(runs, ref) do
-    Process.demonitor(ref, [:flush])
-    {state, _task} = complete(state, ref, result)
+  def handle_info({:run_done, pid, result}, %{runs: runs} = state) when is_map_key(runs, pid) do
+    Process.demonitor(runs[pid].ref, [:flush])
+    {state, _task} = complete(state, pid, result)
     {:noreply, changed(state)}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{runs: runs} = state)
-      when is_map_key(runs, ref) do
-    {state, _task} = complete(state, ref, {:error, "The run stopped: #{inspect(reason)}"})
+  def handle_info({:DOWN, _ref, :process, pid, reason}, %{runs: runs} = state)
+      when is_map_key(runs, pid) do
+    {state, _task} = complete(state, pid, {:error, "The run stopped: #{inspect(reason)}"})
     {:noreply, changed(state)}
   end
 
@@ -168,19 +176,23 @@ defmodule HalC2.ScheduledTasks do
     at = now()
     fire_key = "#{task["id"]}:#{DateTime.to_unix(at, :millisecond)}:#{trigger}"
     running = Map.merge(task, %{"lastRunStatus" => "running", "updatedAt" => iso(at)})
-    %Task{ref: ref} = Task.async(fn -> fire(running, fire_key) end)
+    # Not linked: a run that exits must fail its task, not take the scheduler down.
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end)
 
     state
     |> put(running)
     |> Map.update!(
       :runs,
-      &Map.put(&1, ref, %{id: task["id"], started: at, from: from, trigger: trigger})
+      &Map.put(&1, pid, %{ref: ref, id: task["id"], started: at, from: from, trigger: trigger})
     )
     |> changed()
   end
 
-  defp complete(state, ref, result) do
-    {%{id: id, started: started, from: from} = run, runs} = Map.pop(state.runs, ref)
+  defp complete(state, pid, result) do
+    {%{id: id, started: started, from: from} = run, runs} = Map.pop(state.runs, pid)
     state = %{state | runs: runs}
 
     case state.tasks[id] do
@@ -228,38 +240,44 @@ defmodule HalC2.ScheduledTasks do
     message_id = "scheduled-task-message:#{fire_key}"
 
     result =
-      if task["threadId"] do
-        Orchestration.dispatch(%{
-          "type" => "message.dispatch",
-          "commandId" => command_id,
-          "threadId" => task["threadId"],
-          "messageId" => message_id,
-          "scheduledTaskId" => task["id"],
-          "text" => task["prompt"],
-          "attachments" => [],
-          "modelSelection" => task["modelSelection"],
-          "createdBy" => task["createdBy"],
-          "creationSource" => task["creationSource"],
-          "dispatchMode" => %{"type" => "queue_after_active"}
-        })
-      else
-        Orchestration.launch_thread(%{
-          "commandId" => command_id,
-          "projectId" => task["projectId"],
-          "title" => task["title"],
-          "modelSelection" => task["modelSelection"],
-          "runtimeMode" => task["runtimeMode"],
-          "interactionMode" => task["interactionMode"],
-          "workspaceStrategy" => task["workspaceStrategy"],
-          "createdBy" => task["createdBy"],
-          "creationSource" => task["creationSource"],
-          "initialMessage" => %{
+      cond do
+        # Tests fire into a fake of their own.
+        fake = Application.get_env(:hal_c2, :scheduled_tasks_fire) ->
+          fake.(task, fire_key)
+
+        task["threadId"] ->
+          Orchestration.dispatch(%{
+            "type" => "message.dispatch",
+            "commandId" => command_id,
+            "threadId" => task["threadId"],
             "messageId" => message_id,
             "scheduledTaskId" => task["id"],
             "text" => task["prompt"],
-            "attachments" => []
-          }
-        })
+            "attachments" => [],
+            "modelSelection" => task["modelSelection"],
+            "createdBy" => task["createdBy"],
+            "creationSource" => task["creationSource"],
+            "dispatchMode" => %{"type" => "queue_after_active"}
+          })
+
+        true ->
+          Orchestration.launch_thread(%{
+            "commandId" => command_id,
+            "projectId" => task["projectId"],
+            "title" => task["title"],
+            "modelSelection" => task["modelSelection"],
+            "runtimeMode" => task["runtimeMode"],
+            "interactionMode" => task["interactionMode"],
+            "workspaceStrategy" => task["workspaceStrategy"],
+            "createdBy" => task["createdBy"],
+            "creationSource" => task["creationSource"],
+            "initialMessage" => %{
+              "messageId" => message_id,
+              "scheduledTaskId" => task["id"],
+              "text" => task["prompt"],
+              "attachments" => []
+            }
+          })
       end
 
     case result do
@@ -423,7 +441,7 @@ defmodule HalC2.ScheduledTasks do
     delay =
       state.tasks
       |> Map.values()
-      |> Enum.filter(& &1["enabled"])
+      |> Enum.filter(&(&1["enabled"] and not running?(state, &1["id"])))
       |> Enum.flat_map(fn task ->
         case task["nextRunAt"] && DateTime.from_iso8601(task["nextRunAt"]) do
           {:ok, time, _} -> [max(DateTime.diff(time, at, :millisecond), 0)]
