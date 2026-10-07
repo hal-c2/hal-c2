@@ -51,6 +51,10 @@ public:
   void setCacheDir(const QString& dir) { m_cacheDir = dir; }
   // The published pages, for the window's tabs.
   QVariantList pages() const { return m_pages; }
+  // Whether the threads plugin `id` keeps out of the sidebar stay out: while it
+  // runs on `environment`, or until that environment's plugins are known. Once
+  // the plugin stops or goes, its threads are listed like any other.
+  bool keepsUnlisted(const QString& environment, const QString& id) const;
 
   // Asks plugin `id` on `environment` (`plugins.call`); the answer comes as
   // `answered(request, result, error)`.
@@ -66,6 +70,8 @@ public:
 
 signals:
   void pagesChanged();
+  // What keepsUnlisted answers has changed.
+  void runningChanged();
   void answered(int request, const QVariant& result, const QString& error);
   void published(int watch, const QVariant& value);
 
@@ -91,6 +97,7 @@ private:
   void fetch(const QString& environment, const QJsonObject& entry);
   QString cachePath(const QString& environment, const QString& id, const QString& revision, bool runs, const QString& path) const;
   void publish();
+  void noteRunning();
   QString label(const QString& environment) const;
   void enable(const QString& environment, const QString& id);
   void request(const QString& environment, const QString& method, const QJsonObject& input, const QString& failed);
@@ -104,6 +111,7 @@ private:
   QString m_cacheDir;
   QHash<QString, int> m_subscriptions;     // environment → `plugins` shape
   QHash<QString, QJsonArray> m_plugins;    // environment → PluginEntry[]
+  QHash<QString, QSet<QString>> m_running;  // environment → ids of the plugins running on it
   QHash<QString, Files> m_files;           // "<environment>/<id>" → files
   QHash<QString, Topic> m_topics;          // "<environment>/<id>/<topic>" → its subscription
   QHash<int, QString> m_watches;           // watch → its topic

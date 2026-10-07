@@ -100,9 +100,30 @@ void McPluginController::follow() {
       m_plugins.insert(environment, plugins);
       for (const QJsonValue& entry : plugins) fetch(environment, entry.toObject());
       publish();
+      noteRunning();
     }));
   }
-  if (dropped) publish();
+  if (!dropped) return;
+  publish();
+  noteRunning();
+}
+
+bool McPluginController::keepsUnlisted(const QString& environment, const QString& id) const {
+  const auto it = m_running.constFind(environment);
+  return it == m_running.cend() || it->contains(id);
+}
+
+void McPluginController::noteRunning() {
+  QHash<QString, QSet<QString>> now;
+  for (auto it = m_plugins.cbegin(); it != m_plugins.cend(); ++it) {
+    QSet<QString>& ids = now[it.key()];
+    for (const QJsonValue& value : it.value()) {
+      if (running(value.toObject())) ids.insert(str(value[QLatin1String("id")]));
+    }
+  }
+  if (now == m_running) return;
+  m_running = now;
+  emit runningChanged();
 }
 
 // Where `path` of a plugin's files is kept. What a running plugin's clients

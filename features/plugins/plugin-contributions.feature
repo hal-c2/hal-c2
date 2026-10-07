@@ -133,6 +133,12 @@ Feature: What plugins add to the clients
       Then the thread is not in it
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A thread the plugin kept out of the list is listed once the plugin is not running
+      Given "code-review" started a "review" thread that is not listed
+      When "code-review" is disabled
+      Then the thread is listed and opens as an ordinary thread
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A plugin thread looks like any other thread when the plugin is not running
       Given "code-review" started a listed "review" thread
       When "code-review" is disabled

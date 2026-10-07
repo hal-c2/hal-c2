@@ -123,6 +123,9 @@ signals:
   void grouped();
 
 private:
+  // The store's threads, with the ones a plugin keeps unlisted listed again
+  // once it no longer runs (McPluginController::keepsUnlisted).
+  QList<sidebar::Thread> threads() const;
   void command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void openSnoozeMenu(const QString& key, double x, double y);
