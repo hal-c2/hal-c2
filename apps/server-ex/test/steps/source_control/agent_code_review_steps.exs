@@ -475,6 +475,37 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the head of \#{int} adds the file {string}", %{args: [number, file]} = context do
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits, file => "export const x = 1;\n"})
+
+    put_in(context, [:heads, number], head)
+  end
+
+  step "the agent reports a comment on line {int} of {string}", %{args: [line, file]} = context do
+    report(context, %{
+      "verdict" => "comment",
+      "summary" => "One thing.",
+      "comments" => [%{"path" => file, "line" => line, "body" => "Name it."}]
+    })
+  end
+
+  step "the comment sits on line {int} of {string}", %{args: [line, file]} = context do
+    {review, context} = await_review(context, 12, &(&1["status"] == "waiting"))
+
+    assert [
+             %{
+               "path" => ^file,
+               "line" => ^line,
+               "position" => %{"kind" => "added", "newLine" => ^line}
+             }
+           ] =
+             review["comments"]
+
+    assert review["summary"] == "One thing."
+    context
+  end
+
   step "the agent reports a comment on a line that is not in the diff of \#{int}",
        %{args: [number]} = context do
     context

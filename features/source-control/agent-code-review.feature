@@ -170,6 +170,18 @@ Feature: Agent code review
       Then a new review of #12 starts
 
     @mc
+    Scenario Outline: A comment on a file whose name git quotes stays on its line
+      Given the head of #12 adds the file "<file>"
+      And a review of #12 is running
+      When the agent reports a comment on line 1 of "<file>"
+      Then the comment sits on line 1 of "<file>"
+
+      Examples:
+        | file              |
+        | src/café.ts       |
+        | src/with space.ts |
+
+    @mc
     Scenario: A comment on a line the pull request does not change is kept as a general comment
       When the agent reports a comment on a line that is not in the diff of #12
       Then the comment is kept in the review's summary instead of on the line

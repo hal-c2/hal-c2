@@ -82,11 +82,11 @@ defmodule HalC2Plugins.CodeReview.Checkout do
         String.starts_with?(text, "diff --git ") ->
           {files, nil, 0, 0, true}
 
-        header? and String.starts_with?(text, "--- a/") ->
-          {files, String.trim_leading(text, "--- a/"), 0, 0, true}
+        header? and String.starts_with?(text, "--- ") ->
+          {files, header_path(text, "a/") || file, 0, 0, true}
 
-        header? and String.starts_with?(text, "+++ b/") ->
-          {files, String.trim_leading(text, "+++ b/"), 0, 0, true}
+        header? and String.starts_with?(text, "+++ ") ->
+          {files, header_path(text, "b/") || file, 0, 0, true}
 
         match = Regex.run(~r/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/, text) ->
           [_, old, new] = match
@@ -111,6 +111,36 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end)
     |> elem(0)
   end
+
+  # The path of a `---`/`+++` line, nil for /dev/null. Git quotes a path with
+  # unusual characters as a C string ("a/\303\251.ts") and ends one with a space
+  # in a tab.
+  defp header_path(<<_marker::binary-size(4), path::binary>>, prefix) do
+    path = String.trim_trailing(path, "\t")
+
+    path =
+      if String.starts_with?(path, "\"") and String.ends_with?(path, "\""),
+        do: path |> binary_part(1, byte_size(path) - 2) |> unquote_c(<<>>),
+        else: path
+
+    if String.starts_with?(path, prefix), do: String.replace_prefix(path, prefix, "")
+  end
+
+  defp unquote_c(<<?\\, a, b, c, rest::binary>>, acc) when a in ?0..?3 and b in ?0..?7 and c in ?0..?7,
+    do: unquote_c(rest, <<acc::binary, (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)>>)
+
+  defp unquote_c(<<?\\, char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, escaped(char)>>)
+  defp unquote_c(<<char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, char>>)
+  defp unquote_c(<<>>, acc), do: acc
+
+  defp escaped(?n), do: ?\n
+  defp escaped(?t), do: ?\t
+  defp escaped(?r), do: ?\r
+  defp escaped(?a), do: 7
+  defp escaped(?b), do: ?\b
+  defp escaped(?f), do: ?\f
+  defp escaped(?v), do: ?\v
+  defp escaped(char), do: char
 
   defp mark(files, file, key, kind),
     do: Map.update(files, file, %{key => kind}, &Map.put(&1, key, kind))
