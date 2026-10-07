@@ -26,8 +26,9 @@ no other.
 `mise run release:install` builds and installs it for your user. The MC becomes the systemd user
 unit `hal-c2.service`, or on macOS the launch agent `io.github.halc2.service`
 ([Running HAL-C2 in the background](../user/background-service.md)),
-unpacked into `~/.local/share/hal-c2/elixir/release`. It listens on 3781 and keeps its files in the
-`hal-c2` profile, so the dev MC (3780, `hal-c2-dev`) can stay up beside it. On x86_64 Linux the
+unpacked into `~/.local/share/hal-c2/elixir/release`. It listens on 3790, and for cluster
+members on 4380, and keeps its files in the `hal-c2` profile, so the dev MC (3780 and 4370,
+`hal-c2-dev`) can stay up beside it. On x86_64 Linux the
 desktop AppImage goes to `~/.local/bin/hal-c2` with a launcher entry, and on macOS the app to
 `~/Applications/HAL-C2.app`. It uses the service's MC rather than starting the one it carries,
 because that MC already runs on the same files.

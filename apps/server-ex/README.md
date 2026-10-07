@@ -22,7 +22,7 @@ During development the MC keeps its files in the XDG `hal-c2-dev` profile, in th
 `~/.local/state/hal-c2-dev/elixir/logs`), apart from the installed app's, whichever checkout
 or worktree it runs from. It ignores `HAL_C2_HOME`; set `HAL_C2_MC_HOME` to put them
 elsewhere. The MC
-listens on loopback port 3780 from a checkout and 3781 as a release; `HAL_C2_MC_PORT` and
+listens on loopback port 3780 from a checkout and 3790 as a release; `HAL_C2_MC_PORT` and
 `HAL_C2_MC_HOST` (a LAN or tailnet address, for pairing other devices; `HAL_C2_HOST` also
 works) change that.
 

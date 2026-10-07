@@ -42,10 +42,16 @@ Feature: Starting the MC
     Then it serves clients on port 3780
 
   @mc
-  Scenario: A release MC listens on port 3781, beside one run from a checkout
+  Scenario: A release MC listens on port 3790, beside one run from a checkout
     Given no port is configured for a release
     When the MC starts
-    Then it serves clients on port 3781
+    Then it serves clients on port 3790
+
+  @mc
+  Scenario: A release MC listens for cluster members on its own port
+    Given no port is configured for a release
+    When the MC starts
+    Then it listens for cluster members on port 4380, not on 4370 as one run from a checkout does
 
   @mc
   Scenario: The port comes from the environment
