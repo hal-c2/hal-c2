@@ -232,6 +232,9 @@ defmodule HalC2Plugins.CodeReview do
 
   @impl GenServer
   def init(settings) do
+    # Runs and posts are linked to the server, so stopping the plugin stops them; the
+    # server itself only hears that one ended.
+    Process.flag(:trap_exit, true)
     send(self(), :poll)
 
     {:ok,
@@ -711,7 +714,7 @@ defmodule HalC2Plugins.CodeReview do
         })
 
       settings = state.settings
-      spawn(fn -> run(review, settings) end)
+      spawn_link(fn -> run(review, settings) end)
       put(state, review)
     end)
   end
@@ -906,7 +909,7 @@ defmodule HalC2Plugins.CodeReview do
     end)
   end
 
-  defp spawn_publish(review, settings), do: spawn(fn -> publish(review, settings) end)
+  defp spawn_publish(review, settings), do: spawn_link(fn -> publish(review, settings) end)
 
   # Posts the review with the comments the user kept; the server hears how it went.
   defp publish(review, settings) do

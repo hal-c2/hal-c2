@@ -285,6 +285,15 @@ Feature: Agent code review
       And the post of the earlier run comes back
       Then the new review of #12 is not marked as published
 
+    @mc
+    Scenario: Turning code-review off calls off a post it has not finished
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And "code-review" is turned off while the review of #12 is being posted
+      Then the post to GitHub is called off
+      And once "code-review" is turned back on, the review of #12 is waiting to be published
+
   Rule: Reviews show up where the user wants them
 
     @mc

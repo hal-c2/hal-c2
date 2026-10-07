@@ -761,7 +761,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> World.cli_rules([
       %{
         "args" => ["--method POST", "pulls/12/reviews"],
-        "run" => "while [ ! -e '#{gate}' ] && [ -d '#{context.mc.home}' ]; do sleep 0.05; done",
+        "run" =>
+          "echo $PPID > '#{gate}.pid'; while [ ! -e '#{gate}' ] && [ -d '#{context.mc.home}' ]; do sleep 0.05; done",
         "stdout" => "{}"
       }
     ])
@@ -812,6 +813,40 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert review["status"] in ~w(queued running)
     assert review["threadId"] != context.earlier_run
     take_reviews(context)
+  end
+
+  step "{string} is turned off while the review of \#{int} is being posted",
+       %{args: [@id, number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+    # The post is under way once GitHub holds it.
+    pid = context.github_gate <> ".pid"
+
+    assert {_, 0} =
+             System.cmd("timeout", ["5", "sh", "-c", "until [ -s '#{pid}' ]; do sleep 0.05; done"])
+
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => @id})
+    context
+  end
+
+  step "the post to GitHub is called off", context do
+    pid = context.github_gate |> Kernel.<>(".pid") |> File.read!() |> String.trim()
+    # `tail --pid` returns once the process is gone.
+    assert {_, 0} =
+             System.cmd("timeout", ["5", "tail", "--pid=#{pid}", "-s", "0.05", "-f", "/dev/null"])
+
+    take_reviews(context)
+  end
+
+  step "once {string} is turned back on, the review of \#{int} is waiting to be published",
+       %{args: [@id, number]} = context do
+    accepted = Enum.map(Fixtures.entry(@id)["permissions"], & &1["id"])
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => @id, "acceptPermissions" => accepted})
+
+    review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
+    assert %{"status" => "waiting", "comments" => [_, _]} = review
+    context
   end
 
   # --- where reviews show up -------------------------------------------------------------------
