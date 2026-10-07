@@ -2,6 +2,8 @@
 
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QPointingDevice>
@@ -92,6 +94,14 @@ World::World() : environment(QStringLiteral("a"), QStringLiteral("My MacBook")),
 
 World::~World() {
   close();
+  // The home is deleted with the scenario, which a directory that cannot be written is not.
+  if (m_storageFull) QFile::setPermissions(QDir(m_home.path()).filePath(QStringLiteral("data")), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+}
+
+void World::fillStorage() {
+  const QString data = QDir(m_home.path()).filePath(QStringLiteral("data"));
+  expect(QDir().mkpath(data) && QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner), QStringLiteral("%1 could not be closed to writing").arg(data));
+  m_storageFull = true;
 }
 
 void World::open() {

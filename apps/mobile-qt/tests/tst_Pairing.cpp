@@ -146,6 +146,10 @@ const QVariantMap kUnpaired{{QStringLiteral("phase"), QStringLiteral("unpaired")
                             {QStringLiteral("origin"), QString()},
                             {QStringLiteral("label"), QString()}};
 
+// What the pairing screen says of a session the device could not keep.
+const QString kNotSaved = QStringLiteral("This environment could not be paired: its session could not be saved on this device. The link is used now, "
+                                         "so ask the environment for a fresh one.");
+
 }  // namespace
 
 class tst_Pairing : public QObject {
@@ -859,6 +863,181 @@ private slots:
     phone.dispatch(QStringLiteral("pairing.forget"));
     QCOMPARE(phone.pairingState(), kUnpaired);
     QVERIFY(!QFile::exists(phone.file));
+  }
+
+  // A session that cannot be saved on the device is not reported as paired:
+  // the next start would know nothing of it.
+  void aSessionThatCannotBeSavedIsNotPaired() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    const QString data = QFileInfo(phone.file).absolutePath();
+    const QString link = macbook.link();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+    const bool answered = phone.pair(link);
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(answered);
+
+    // The form says why, with the link still in it.
+    QVariantMap unsaved = kUnpaired;
+    unsaved.insert(QStringLiteral("error"), kNotSaved);
+    unsaved.insert(QStringLiteral("link"), link);
+    QCOMPARE(phone.pairingState(), unsaved);
+    QVERIFY(!QFile::exists(phone.file));
+    // Nothing was opened with the session the link bought.
+    QCOMPARE(phone.shell->client()->phase(), McClient::Phase::Closed);
+    QVERIFY(macbook.mc.connections.isEmpty());
+    QVERIFY(macbook.tickets.isEmpty());
+    QVERIFY(phone.shell->store()->environments().isEmpty());
+    // The link is spent all the same.
+    QCOMPARE(macbook.sessions.size(), 1);
+    QVERIFY(macbook.pairingTokens.isEmpty());
+
+    // Once it can be saved, a fresh link pairs and the error goes.
+    QVERIFY(phone.pair(macbook.link()));
+    QCOMPARE(phone.phase(), QStringLiteral("paired"));
+    QCOMPARE(phone.error(), QString());
+    QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), macbook.sessions.last());
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+  }
+
+  // Nor does it take the place of the environment the phone has: that one
+  // stays as it was, on the device and connected, now and at the next start.
+  void aSessionThatCannotBeSavedReplacesNothing_data() {
+    QTest::addColumn<bool>("another");
+    QTest::newRow("of another environment") << true;
+    QTest::newRow("of the same environment") << false;
+  }
+  void aSessionThatCannotBeSavedReplacesNothing() {
+    QFETCH(bool, another);
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    PairableMc office(QStringLiteral("b"), QStringLiteral("Office Mac"));
+    PairableMc& other = another ? office : macbook;
+    {
+      Phone phone(home.path());
+      QVERIFY(phone.pair(macbook.link()));
+      QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+      QVERIFY(phone.waitForThreads({macbook.threadTitle()}));
+      auto* drafts = phone.shell->controller<DraftController>();
+      drafts->setText(drafts->start(QStringLiteral("env-a"), QStringLiteral("p-a")), QStringLiteral("roll back the deploy"));
+      phone.dispatch(QStringLiteral("pairing.add"));
+      const QVariantMap adding = phone.pairingState();
+      const QJsonObject kept = phone.kept();
+      const QString session = macbook.sessions.last();
+      const qsizetype sessions = other.sessions.size();
+      const QString data = QFileInfo(phone.file).absolutePath();
+      const QString link = other.link();
+      QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+      const bool answered = phone.pair(link);
+      QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+      QVERIFY(answered);
+
+      // Still at the pairing screen, which says why, with the link in it.
+      QVariantMap unsaved = adding;
+      unsaved.insert(QStringLiteral("error"), kNotSaved);
+      unsaved.insert(QStringLiteral("link"), link);
+      QCOMPARE(phone.pairingState(), unsaved);
+      QCOMPARE(phone.kept(), kept);
+      // On the socket it had, with what it showed and what was written for it.
+      QCOMPARE(phone.state(QStringLiteral("connection")).value(QStringLiteral("phase")).toString(), QStringLiteral("connected"));
+      QCOMPARE(phone.shell->client()->origin(), macbook.mc.origin());
+      QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
+      QCOMPARE(drafts->drafts().size(), 1);
+      QCOMPARE(macbook.mc.connections.size(), 1);
+      QVERIFY(phone.roundTrip(QStringLiteral("env-a")));
+      QVERIFY(office.mc.connections.isEmpty());
+      // The link is spent all the same, on a session nothing was opened with.
+      QCOMPARE(other.sessions.size(), sessions + 1);
+      QCOMPARE(macbook.tickets.size(), 1);
+      QVERIFY(office.tickets.isEmpty());
+
+      // Back: the environment it had, and the session it had with it.
+      phone.dispatch(QStringLiteral("pairing.cancel"));
+      QVariantMap paired = adding;
+      paired.insert(QStringLiteral("adding"), false);
+      QCOMPARE(phone.pairingState(), paired);
+      QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), session);
+    }
+    Phone phone(home.path());
+    QCOMPARE(phone.pairingState().value(QStringLiteral("label")).toString(), QStringLiteral("My MacBook"));
+    QVERIFY(phone.waitForThreads({macbook.threadTitle()}));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    QVERIFY(office.mc.connections.isEmpty());
+  }
+
+  // A session bought to pair again with an MC that refused the last one is the
+  // connection's from then on, saved or not: the user is told that the device
+  // did not keep it, and it is saved when it next can be.
+  void aSessionPairedAgainThatCannotBeSavedSaysSo() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    const QString revoked = macbook.sessions.last();
+    macbook.revoke(revoked);
+    QVERIFY(phone.waitForConnection(QStringLiteral("refused")));
+    const QString data = QFileInfo(phone.file).absolutePath();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+
+    phone.dispatch(QStringLiteral("connection.pair"), {{QStringLiteral("pairingUrl"), macbook.link()}});
+    const bool connected = phone.waitForConnection(QStringLiteral("connected")) && phone.roundTrip(QStringLiteral("env-a"));
+    const QJsonObject kept = phone.kept();
+    const QVariantList toasts = phone.state(QStringLiteral("toasts")).value(QStringLiteral("items")).toList();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(connected);
+    // Connected on the new session, with the old one still the device's.
+    QVERIFY(macbook.sessions.last() != revoked);
+    QVERIFY(macbook.connectedWithTicket());
+    QCOMPARE(phone.phase(), QStringLiteral("paired"));
+    QCOMPARE(kept.value(QLatin1String("token")).toString(), revoked);
+    // Said once, though the MC's own word of itself was not saved either.
+    QCOMPARE(toasts.size(), 1);
+    QCOMPARE(toasts.first().toMap().value(QStringLiteral("type")).toString(), QStringLiteral("warning"));
+    QCOMPARE(toasts.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Session not saved"));
+    QCOMPARE(toasts.first().toMap().value(QStringLiteral("description")).toString(),
+             QStringLiteral("The new session with My MacBook could not be saved on this device. It stays connected, and may need a fresh pairing link the "
+                            "next time HAL-C2 starts."));
+
+    // The next time the MC answers, the device can keep it.
+    macbook.mc.drop();
+    QVERIFY(phone.waitForState(QStringLiteral("connection"), [](const QVariantMap& connection) { return connection.value(QStringLiteral("phase")) != QLatin1String("connected"); }));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    QVERIFY(phone.roundTrip(QStringLiteral("env-a")));
+    QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), macbook.sessions.last());
+    QCOMPARE(phone.state(QStringLiteral("toasts")).value(QStringLiteral("items")).toList().size(), 1);
+  }
+
+  // The environment's label is kept only to show before it answers: one that
+  // cannot be saved is still shown, and saved when it next can be.
+  void aLabelThatCannotBeSavedIsStillShown() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("devbox"));
+    {
+      Phone phone(home.path());
+      QVERIFY(phone.pair(macbook.link()));
+      QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    }
+    macbook.mc.label = QStringLiteral("My MacBook");
+    const QString data = QDir(home.path()).filePath(QStringLiteral("data"));
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+    Phone phone(home.path());
+    const bool told = phone.waitForState(QStringLiteral("pairing"), [](const QVariantMap& pairing) { return pairing.value(QStringLiteral("label")) == QLatin1String("My MacBook"); }) &&
+                      phone.waitForConnection(QStringLiteral("connected")) && phone.roundTrip(QStringLiteral("env-a"));
+    const QJsonObject kept = phone.kept();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(told);
+    QCOMPARE(kept.value(QLatin1String("label")).toString(), QStringLiteral("devbox"));
+    // The session is the one the device keeps: there is nothing to tell the user.
+    QCOMPARE(phone.error(), QString());
+    QVERIFY(phone.state(QStringLiteral("toasts")).value(QStringLiteral("items")).toList().isEmpty());
+
+    macbook.mc.drop();
+    QVERIFY(phone.waitForState(QStringLiteral("connection"), [](const QVariantMap& connection) { return connection.value(QStringLiteral("phase")) != QLatin1String("connected"); }));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    QVERIFY(phone.roundTrip(QStringLiteral("env-a")));
+    QCOMPARE(phone.kept().value(QLatin1String("label")).toString(), QStringLiteral("My MacBook"));
   }
 
   // Forgetting one environment and pairing with another shows the other alone.

@@ -75,6 +75,9 @@ public:
   QVariant state(const QString& key);
   // Where the phone keeps its files, across restarts.
   QString homeDir() const { return m_home.path(); }
+  // The device can write nothing more where it keeps its session, as one
+  // whose storage is full; until the scenario ends.
+  void fillStorage();
   // The window becomes `width` by `height`, now and each time the app opens:
   // a tablet's or a laptop's window, a rotation, a fold.
   void resize(int width, int height);
@@ -134,6 +137,7 @@ private:
   QPoint middleOf(QQuickItem* item);
 
   QTemporaryDir m_home;
+  bool m_storageFull = false;
   QSize m_size;
   std::unique_ptr<PairableMc> m_another;
   std::unique_ptr<MobileApp> m_app;

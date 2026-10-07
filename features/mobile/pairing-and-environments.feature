@@ -11,8 +11,11 @@
 #   apps/mobile/src/features/cloud/linkEnvironment.ts
 #   apps/mobile/app.config.ts (local network usage, camera)
 #   apps/mobile-qt/src/Pairing.cpp (one environment at a time: pairing.pair, pairing.forget; pairing with
-#     another: pairing.add, pairing.cancel; a link from outside the app is shown and never spent: openLink)
-#   apps/mobile-qt/src/Scanner.cpp (the camera while the scanner shows, camera access, a code that is not a pairing code)
+#     another: pairing.add, pairing.cancel; a link from outside the app is shown and never spent: openLink;
+#     a session is saved before it is paired with)
+#   apps/mobile-qt/src/Scanner.cpp (the camera while the scanner shows, camera access, a code that is not a pairing
+#     code, a camera that gives no picture: scanner.retry)
+#   apps/mobile-qt/src/ScanCamera.cpp (a camera that does not start or stops, a device with none)
 #   apps/mobile-qt/src/QrReader.cpp (reading a QR code off a camera frame)
 #   apps/mobile-qt/src/MobileApp.cpp (the handler of hal-c2: links)
 #   apps/mobile-qt/android/AndroidManifest.xml (hal-c2://pair, the camera permission)
@@ -141,6 +144,26 @@ Feature: Pairing a phone with environments
     When the user tries to pair with it
     Then the user is told the environment could not be reached
     And no environment is added
+
+  # New behaviour, the next two: the session a link buys is saved on the phone before the phone
+  # pairs with it. The link is spent by then, so the user is told to ask for a fresh one.
+  @mobile
+  Scenario: A session the phone cannot save is not paired with
+    Given the phone has no room to save a session
+    When the user enters a pairing link that carries a token
+    And the user adds the environment
+    Then the user is told the session could not be saved
+    And the pairing form keeps what the user entered
+    And no environment is added
+
+  @mobile
+  Scenario: A session the phone cannot save does not replace the environment it has
+    Given the phone is paired with "My MacBook"
+    And the phone has no room to save a session
+    When the user tries to pair with the environment "Office Mac" instead
+    Then the user is told the session could not be saved
+    And the pairing form keeps what the user entered
+    And the phone is still paired with "My MacBook" and connected
 
   @mobile
   Scenario: Pairing with an environment that is already paired updates it instead of duplicating it

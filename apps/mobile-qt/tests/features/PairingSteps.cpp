@@ -185,6 +185,13 @@ const Steps steps([] {
     world.link = S("http://") + deadAddress() + S("/?token=abc");
   });
 
+  step(S("the phone has no room to save a session"), [](World& world, const Captures&, const Table&) { world.fillStorage(); });
+
+  step(S("the user is told the session could not be saved"), [](World& world, const Captures&, const Table&) {
+    const QString said = shownText(world, S("pairingError"));
+    expect(said.contains(S("could not be saved on this device")) && said.contains(S("ask the environment for a fresh one")), S("the screen says: %1").arg(screenTexts(world)));
+  });
+
   step(S("the user tries to pair with it"), [](World& world, const Captures&, const Table&) {
     world.mc.part<Seen>().sockets = world.mc.connections.size();
     enterPairingLink(world, world.link);
@@ -343,6 +350,32 @@ const Steps steps([] {
     chooseToPairWithAnother(world);
     enterPairingLink(world, other.link());
     awaitConnection(world);
+  });
+
+  step(S("the user tries to pair with the environment %1 instead").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    PairableMc& other = world.another(c[0]);
+    chooseToPairWithAnother(world);
+    world.link = other.link();
+    enterPairingLink(world, world.link);
+  });
+
+  // As it was before the link was spent: the environment's name and address,
+  // the session the device keeps, and the connection that session opened.
+  step(S("the phone is still paired with %1 and connected").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap pairing = world.state(S("pairing")).toMap();
+    expect(pairing.value(S("phase")) == S("paired") && pairing.value(S("label")) == c[0] && pairing.value(S("origin")) == world.mc.origin().toString(),
+           S("the phone is %1").arg(show(pairing)));
+    expect(keptPairing(world).value(QLatin1String("token")).toString() == world.environment.sessions.first(),
+           S("the phone keeps %1").arg(show(keptPairing(world).toVariantMap())));
+    expect(world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected") && world.mc.connections.size() == 1,
+           S("the connection is %1, the MC's %2th").arg(show(world.state(S("connection")))).arg(world.mc.connections.size()));
+    world.sync();
+    expect(show(world.state(S("sidebar"))).contains(S("Tax line")), S("the thread list is %1").arg(show(world.state(S("sidebar")))));
+    if (world.hasAnother()) expect(world.another(S("Office Mac")).mc.connections.isEmpty(), S("the phone connected to the other environment"));
+    // And the way back from the pairing screen leads to it, in Settings where the user set out.
+    world.back();
+    world.waitFor([&] { return world.find(S("pairingScreen")) == nullptr; }, [&] { return S("the pairing screen to go; the screen says: %1").arg(screenTexts(world)); });
+    expect(shownText(world, S("environmentName")) == c[0], S("the settings do not name %1; the screen says: %2").arg(c[0], screenTexts(world)));
   });
 
   step(S("%1 is listed in place of %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

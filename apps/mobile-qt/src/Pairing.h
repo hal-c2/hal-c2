@@ -45,6 +45,13 @@ class ShellBridge;
 // `pairing.cancel` takes it away again, the environment it has untouched
 // (not while a link is being spent).
 //
+// A session is on the device before the phone says it is paired with it or
+// connects with it. One that cannot be saved is said in `error`, with the
+// link kept and the environment the device had left as it was, though the
+// link is spent: the MC has no way for a client to give its own session
+// back, so that one stays among the MC's clients until it is revoked there
+// or expires.
+//
 // A link from outside the app (openLink) is anybody's: a web page or a QR
 // code can hold one. It is never paired with by itself. It is put in the
 // pairing screen's field with the address it leads to (`offered`), in the
@@ -101,7 +108,9 @@ private:
   // The connected MC described itself: its label and environment may be news.
   void describe();
   void load();
-  void save();
+  // Writes `environment` as the session the device keeps, in the place of
+  // the one it kept; false, with that one still there, when it cannot.
+  bool save(const Environment& environment);
   void publish();
   QString explain(const pairing::Result& result) const;
 
@@ -111,6 +120,11 @@ private:
   pairing::Client m_device;
   QNetworkAccessManager* m_http;
   std::optional<Environment> m_paired;
+  // The device keeps `m_paired` as it is here. False while it does not:
+  // what the shell connected with by itself (remember) and what the MC says
+  // of itself (describe) are held even when they could not be saved, and
+  // saved the next time the MC answers.
+  bool m_saved = true;
   // The exchange in flight, if any; an answer to an older one is ignored.
   quint64 m_attempt = 0;
   bool m_pairing = false;

@@ -183,6 +183,16 @@ void Pairing::pair(const QString& link) {
 
 void Pairing::paired(const pairing::Result& result) {
   const QString environmentId = result.descriptor.value(QLatin1String("environmentId")).toString();
+  const Environment next{result.origin, result.token, result.descriptor.value(QLatin1String("label")).toString(), environmentId};
+  // On the device first: a session that is only in memory is gone at the
+  // next start, and the one it replaced would be opened in its place. The
+  // link is spent by now, and the session it bought is left with the MC.
+  if (!save(next)) {
+    m_error = tr("This environment could not be paired: its session could not be saved on this device. The link is used now, so ask the environment "
+                 "for a fresh one.");
+    publish();
+    return;
+  }
   if (!m_paired) {
     // Nothing to leave.
   } else if (m_paired->environmentId == environmentId) {
@@ -191,12 +201,12 @@ void Pairing::paired(const pairing::Result& result) {
   } else {
     m_shell->close();
   }
-  m_paired = Environment{result.origin, result.token, result.descriptor.value(QLatin1String("label")).toString(), environmentId};
+  m_paired = next;
+  m_saved = true;
   m_adding = false;
   m_link.clear();
   m_offered.clear();
   m_error.clear();
-  save();
   publish();
   m_shell->open(result.origin, result.token);
 }
@@ -239,8 +249,19 @@ void Pairing::remember(const QUrl& origin, const QString& token) {
     next.environmentId = m_paired->environmentId;
   }
   if (m_paired == next) return;
+  // The shell is connected with it already, so it is this device's session
+  // whether or not it can be saved: the one on the device is the one the MC
+  // refused, and is what the next start would open.
   m_paired = next;
-  save();
+  m_saved = save(next);
+  if (!m_saved) {
+    m_shell->controller<ToastController>()->show(
+        QStringLiteral("warning"), tr("Session not saved"),
+        tr("The new session with %1 could not be saved on this device. It stays connected, and may need a fresh pairing link the next time HAL-C2 "
+           "starts.")
+            .arg(next.label.isEmpty() ? tr("this environment") : next.label),
+        {}, 0);
+  }
   publish();
 }
 
@@ -253,9 +274,12 @@ void Pairing::describe() {
   if (descriptor.value(QLatin1String("environmentId")).toString() == next.environmentId) {
     next.label = descriptor.value(QLatin1String("label")).toString();
   }
-  if (m_paired == next) return;
+  if (m_paired == next && m_saved) return;
+  // What the MC says of itself is shown whether or not it can be saved: the
+  // device keeps it only to have something to show before the MC next
+  // answers, and then this runs again. So the user is not told.
   m_paired = next;
-  save();
+  m_saved = save(next);
   publish();
 }
 
@@ -268,19 +292,18 @@ void Pairing::load() {
   if (environment.origin.isValid() && !environment.origin.host().isEmpty() && !environment.token.isEmpty()) m_paired = environment;
 }
 
-void Pairing::save() {
-  if (!m_paired) return;
+bool Pairing::save(const Environment& environment) {
   QDir().mkpath(QFileInfo(m_path).absolutePath());
   QSaveFile file(m_path);
-  const QJsonObject saved{{QStringLiteral("origin"), m_paired->origin.toString()},
-                          {QStringLiteral("token"), m_paired->token},
-                          {QStringLiteral("label"), m_paired->label},
-                          {QStringLiteral("environmentId"), m_paired->environmentId}};
+  const QJsonObject saved{{QStringLiteral("origin"), environment.origin.toString()},
+                          {QStringLiteral("token"), environment.token},
+                          {QStringLiteral("label"), environment.label},
+                          {QStringLiteral("environmentId"), environment.environmentId}};
   // The token is the session: nobody else on the device reads it.
-  if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
-      file.write(QJsonDocument(saved).toJson(QJsonDocument::Compact)) < 0 || !file.commit()) {
-    qWarning("pairing not saved: %s", qPrintable(file.errorString()));
-  }
+  const bool done = file.open(QIODevice::WriteOnly) && file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) &&
+                    file.write(QJsonDocument(saved).toJson(QJsonDocument::Compact)) >= 0 && file.commit();
+  if (!done) qWarning("pairing not saved: %s", qPrintable(file.errorString()));
+  return done;
 }
 
 void Pairing::publish() {
