@@ -90,9 +90,11 @@ Item {
     }
     // Which folders of a reply's changed files are open, by row: `all`, and
     // the folders opened or closed one by one since. Closed until opened.
+    // Folders are kept without a prototype so one named "constructor" or
+    // "__proto__" is a folder like any other.
     property var changedFolders: ({})
     function foldersOf(rowId) {
-        return root.changedFolders[rowId] ?? { all: false, folders: {} };
+        return root.changedFolders[rowId] ?? { all: false, folders: Object.create(null) };
     }
     function setFolders(rowId, all, folders) {
         const next = Object.assign({}, root.changedFolders);
@@ -101,7 +103,7 @@ Item {
     }
     function toggleFolder(rowId, path) {
         const open = root.foldersOf(rowId);
-        const folders = Object.assign({}, open.folders);
+        const folders = Object.assign(Object.create(null), open.folders);
         folders[path] = !(folders[path] ?? open.all);
         root.setFolders(rowId, open.all, folders);
     }
@@ -247,6 +249,7 @@ Item {
         color: button.hovered ? root.hoverColor : "transparent"
         Accessible.role: Accessible.Button
         Accessible.name: button.tip
+        Accessible.onPressAction: button.clicked()
         ShellIcon {
             anchors.centerIn: parent
             name: button.icon
@@ -833,7 +836,7 @@ Item {
                                         anchors.verticalCenter: parent.verticalCenter
                                         icon: changedFiles.open.all ? "chevrons-down-up" : "chevrons-up-down"
                                         tip: changedFiles.open.all ? qsTr("Collapse all folders") : qsTr("Expand all folders")
-                                        onClicked: root.setFolders(row.rowId, !changedFiles.open.all, {})
+                                        onClicked: root.setFolders(row.rowId, !changedFiles.open.all, Object.create(null))
                                     }
                                     // The turn's whole diff.
                                     Rectangle {
@@ -896,6 +899,13 @@ Item {
                                             color: changedFileHover.hovered ? Qt.alpha(root.hoverColor, 0.6) : "transparent"
                                             Accessible.role: Accessible.Button
                                             Accessible.name: modelData.path
+                                            Accessible.onPressAction: changedFile.activate()
+                                            function activate() {
+                                                if (changedFile.folder)
+                                                    root.toggleFolder(row.rowId, changedFile.modelData.path);
+                                                else
+                                                    root.fileActivated(changedFile.modelData.path, "diff", row.rowId);
+                                            }
                                             ShellIcon {
                                                 id: folderChevron
                                                 visible: changedFile.folder
@@ -950,12 +960,7 @@ Item {
                                                 cursorShape: Qt.PointingHandCursor
                                             }
                                             TapHandler {
-                                                onTapped: {
-                                                    if (changedFile.folder)
-                                                        root.toggleFolder(row.rowId, changedFile.modelData.path);
-                                                    else
-                                                        root.fileActivated(changedFile.modelData.path, "diff", row.rowId);
-                                                }
+                                                onTapped: changedFile.activate()
                                             }
                                         }
                                     }

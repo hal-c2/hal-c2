@@ -340,6 +340,49 @@ Item {
             tryCompare({ get names() { return shown().join(" "); } }, "names", "docs src/cart README.md");
         }
 
+        function test_foldersNamedLikeObjectPropertiesFoldToo() {
+            rows.append(root.row({
+                rowId: "reply:1",
+                text: "Done.",
+                files: [
+                    { path: "constructor/a.ts", additions: 1, deletions: 0 },
+                    { path: "__proto__/b.ts", additions: 1, deletions: 0 }
+                ]
+            }));
+            const openedView = openThread();
+            const reply = () => list(openedView).itemAtIndex(0);
+            tryVerify(() => reply() !== null);
+            const files = () => {
+                const names = [];
+                const walk = item => {
+                    if (item.objectName === "changedFile")
+                        names.push(item.modelData.name);
+                    for (let i = 0; i < item.children.length; ++i)
+                        walk(item.children[i]);
+                };
+                walk(reply());
+                return names.join(" ");
+            };
+            const folder = name => {
+                let found = null;
+                const walk = item => {
+                    if (item.objectName === "changedFolder" && item.modelData.name === name)
+                        found = item;
+                    for (let i = 0; i < item.children.length && !found; ++i)
+                        walk(item.children[i]);
+                };
+                walk(reply());
+                return found;
+            };
+            compare(files(), "");
+            verify(!isPolishScheduled(folder("__proto__").parent) || waitForPolish(folder("__proto__").parent));
+            mouseClick(folder("__proto__"));
+            tryCompare({ get names() { return files(); } }, "names", "b.ts");
+            verify(!isPolishScheduled(folder("__proto__").parent) || waitForPolish(folder("__proto__").parent));
+            mouseClick(folder("__proto__"));
+            tryCompare({ get names() { return files(); } }, "names", "");
+        }
+
         function test_aFileATurnChangedOpensInTheRightPanel() {
             const view = answeredThread();
             const timeline = list(view);

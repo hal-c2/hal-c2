@@ -304,6 +304,17 @@ const Steps steps([] {
     expect(pressInComposer(world, QStringLiteral("mod+v")), QStringLiteral("the composer did not take the paste"));
   });
 
+  // As a file manager copies a file: its address, and maybe some form of it as text.
+  step(QStringLiteral("the user pastes %1 copied with (no text|its path as text|its URL as text) into the prompt").arg(q), [](World& world, const Captures& c, const Table&) {
+    composerBrick(world);
+    const QUrl url = plainFile(world, c[0]);
+    auto* data = new QMimeData;
+    data->setUrls({url});
+    if (c[1] != QLatin1String("no text")) data->setText(c[1] == QLatin1String("its path as text") ? url.toLocalFile() : url.toString());
+    QGuiApplication::clipboard()->setMimeData(data);
+    expect(pressInComposer(world, QStringLiteral("mod+v")), QStringLiteral("the composer did not take the paste"));
+  });
+
   // Large pastes.
   step(QStringLiteral("the user pastes 40 KiB of log output"), [](World& world, const Captures&, const Table&) { paste(world, false); });
   step(QStringLiteral("the user pastes 40 KiB of log output with Paste as Text"), [](World& world, const Captures&, const Table&) { paste(world, true); });

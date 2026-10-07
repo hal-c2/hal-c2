@@ -1,5 +1,7 @@
 #include "ShellBridge.h"
 
+#include <algorithm>
+
 #include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -139,7 +141,20 @@ QVariantList ShellBridge::clipboardFiles() const {
   constexpr qsizetype kMaxBytes = 10 * 1024 * 1024;
   const QMimeData* data = QGuiApplication::clipboard()->mimeData();
   if (!data) return {};
-  if (const QVariantList files = readAttachmentFiles(data->urls()); !files.isEmpty()) return files;
+  if (const QVariantList files = readAttachmentFiles(data->urls()); !files.isEmpty()) {
+    const bool picture = std::any_of(files.cbegin(), files.cend(), [](const QVariant& file) {
+      return file.toMap().value(QStringLiteral("mimeType")).toString().startsWith(QStringLiteral("image/"));
+    });
+    // File managers put the copied files' addresses or paths on the clipboard
+    // as text too; that is no text to paste instead.
+    QStringList names;
+    for (const QUrl& url : data->urls()) names << url.toString() << url.toLocalFile();
+    const QStringList lines = data->text().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const bool onlyNames = std::all_of(lines.cbegin(), lines.cend(), [&](const QString& line) {
+      return line.trimmed().isEmpty() || names.contains(line.trimmed());
+    });
+    return picture || onlyNames ? files : QVariantList{};
+  }
   if (!data->hasImage()) return {};
   QByteArray png;
   QBuffer buffer(&png);

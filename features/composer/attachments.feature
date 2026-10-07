@@ -60,6 +60,17 @@ Feature: Attaching images and files to a message
     When the user pastes a copied picture into the prompt
     Then the draft carries "image.png"
 
+  @desktop
+  Scenario Outline: A file copied in a file manager pasted into the prompt is attached
+    When the user pastes "schema.sql" copied with <text> into the prompt
+    Then the draft carries "schema.sql"
+
+    Examples:
+      | text             |
+      | no text          |
+      | its path as text |
+      | its URL as text  |
+
   @tui
   Scenario Outline: An image that cannot be attached is refused with a reason
     When the user tries to attach <image>

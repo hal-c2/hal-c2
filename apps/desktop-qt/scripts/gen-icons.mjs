@@ -88,6 +88,7 @@ const ICONS = [
   "play",
   "plus",
   "power",
+  "quote",
   "redo-2",
   "refresh-cw",
   "rotate-ccw",
