@@ -618,6 +618,13 @@ defmodule HalC2.Plugins do
         fields = fields(plugin)
         input = Map.take(input, Enum.map(fields, & &1["key"]))
         current = config(id)["settings"] || %{}
+
+        # The marker a secret field shows keeps what is stored for it, if anything.
+        input =
+          for %{"key" => key, "secret" => true} <- fields, input[key] == @marker, reduce: input do
+            input -> Map.put(input, key, current[key])
+          end
+
         # A value saved as null goes back to the field's default.
         next = current |> Map.merge(input) |> Map.reject(fn {_key, value} -> value == nil end)
 
@@ -1312,7 +1319,7 @@ defmodule HalC2.Plugins do
     Enum.find_value(fields, :ok, fn %{"key" => key} = field ->
       value = input[key]
 
-      if value != nil and value != @marker and not Package.typed?(field, value),
+      if value != nil and not Package.typed?(field, value),
         do: {:error, "#{field["label"]} (#{key}) must be #{expected(field)}."}
     end)
   end
@@ -1323,9 +1330,15 @@ defmodule HalC2.Plugins do
   defp expected(%{"type" => "choice"}), do: "one of the choices offered"
   defp expected(_field), do: "text"
 
+  # A marker with nothing stored behind it (the document was written by hand, or came
+  # from another machine) leaves the field at its default.
   defp reveal(id, fields, settings) do
     for %{"key" => key, "secret" => true} <- fields, settings[key] == @marker, reduce: settings do
-      settings -> Map.put(settings, key, File.read!(secret_path(id, key)))
+      settings ->
+        case File.read(secret_path(id, key)) do
+          {:ok, value} -> Map.put(settings, key, value)
+          {:error, _} -> Map.delete(settings, key)
+        end
     end
   end
 

@@ -6,6 +6,8 @@ defmodule HalC2.PluginsTest do
   @moduletag :tmp_dir
   @moduletag capture_log: true
 
+  @marker "••••••"
+
   setup %{tmp_dir: dir} do
     bundled = Application.fetch_env(:hal_c2, :bundled_plugins)
 
@@ -53,6 +55,56 @@ defmodule HalC2.PluginsTest do
     Process.exit(other, :kill)
     assert_receive {:DOWN, ^ref, _, _, _}
     assert monitors() == 2
+  end
+
+  test "the secret marker is refused for a field that is not secret" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+
+    assert {:error, %{"_tag" => "PluginSettingsInvalid", "message" => message}} =
+             save("notes", %{"count" => @marker})
+
+    assert message =~ "(count)"
+    assert stored("notes") == %{}
+  end
+
+  test "the secret marker leaves a secret that was never set unset" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, _} = save("notes", %{"token" => @marker, "count" => 2})
+    assert stored("notes") == %{"count" => 2}
+  end
+
+  defp save(id, settings),
+    do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
+
+  defp stored(id), do: get_in(HalC2.Settings.settings(), ["plugins", id, "settings"]) || %{}
+  defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
+
+  # A package of UI parts only, with a number and a secret among its settings.
+  defp package(id, version) do
+    dir = Path.join(plugins_dir(), id)
+    File.mkdir_p!(Path.join(dir, "ui"))
+    File.write!(Path.join(dir, "ui/main.qml"), "#{id} #{version}")
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{
+        "id" => id,
+        "name" => id,
+        "version" => version,
+        "description" => "A package of UI parts only.",
+        "apiVersion" => 1,
+        "settings" => [
+          %{"key" => "count", "label" => "Count", "type" => "number", "default" => 1},
+          %{"key" => "token", "label" => "Token", "type" => "secret"}
+        ],
+        "contributes" => %{
+          "pages" => [%{"id" => "main", "title" => "Main", "qml" => "ui/main.qml"}]
+        }
+      })
+    )
   end
 
   defp monitors do
