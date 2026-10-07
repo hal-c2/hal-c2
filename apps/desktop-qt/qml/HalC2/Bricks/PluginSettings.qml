@@ -119,8 +119,9 @@ SettingsPage {
         spacing: 12
 
         Label {
+            objectName: "pluginSettingsFailure"
             Layout.fillWidth: true
-            text: qsTr("Failed: %1").arg(page.entry?.lastError ?? "")
+            text: qsTr("Failed: %1").arg(page.entry?.error || page.entry?.lastError || "")
             color: page.errorColor
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)

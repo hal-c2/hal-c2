@@ -81,6 +81,8 @@ SettingsPage {
         readonly property bool running: plugin.status === "running"
         readonly property bool failed: plugin.status === "failed" || plugin.status === "error"
         readonly property bool off: plugin.status === "disabled" || plugin.status === "awaitingConsent"
+        // Why a package did not load, else why its MC part last stopped.
+        readonly property string reason: plugin.error || plugin.lastError || ""
 
         objectName: "mcPlugin:" + plugin.environment + "/" + plugin.id
         Layout.fillWidth: true
@@ -165,9 +167,9 @@ SettingsPage {
                 case "awaitingConsent":
                     return qsTr("Waiting for you to accept what it asks for");
                 case "incompatible":
-                    return qsTr("Not made for this MC: %1").arg(card.plugin.lastError ?? "");
+                    return qsTr("Not made for this MC: %1").arg(card.reason);
                 default:
-                    return qsTr("Failed: %1").arg(card.plugin.lastError ?? "");
+                    return qsTr("Failed: %1").arg(card.reason);
                 }
             }
             color: card.failed || card.plugin.status === "incompatible" ? page.errorColor : page.muted

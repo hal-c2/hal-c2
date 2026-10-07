@@ -586,6 +586,13 @@ const Steps steps([] {
     announce(world);
     world.waitFor([&] { return published(world).value(QStringLiteral("pages")).toList().size() == 1; }, [&] { return describe(world); });
   });
+  step(QStringLiteral("the second environment updates %1").arg(q), [](World& world, const Captures&, const Table&) {
+    for (QJsonObject& entry : fake(world).plugins[QStringLiteral("work")]) entry.insert(QStringLiteral("revision"), QStringLiteral("newer"));
+    announce(world);
+  });
+  step(QStringLiteral("the user is on the %1 tab of the version the second environment runs").arg(q), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return routeTab(world) == QLatin1String("code-review/reviews@newer"); }, [&] { return describe(world); });
+  });
   step(QStringLiteral("the user is still on the same page"), [](World& world, const Captures&, const Table&) {
     QQuickItem* page = fake(world).page.data();
     expect(page != nullptr && page->isVisible(), QStringLiteral("the page was replaced or hidden; tab %1; %2").arg(routeTab(world), describe(world)));
@@ -808,6 +815,26 @@ const Steps steps([] {
       entry.insert(QStringLiteral("lastError"), QStringLiteral("exited with status 1"));
     });
     waitStatus(world, c[0], QStringLiteral("failed"));
+  });
+  step(QStringLiteral("%1 is listed as (\\w+) because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    change(world, c[0], [&](QJsonObject& entry) {
+      entry.insert(QStringLiteral("status"), c[1]);
+      entry.insert(QStringLiteral("error"), c[2]);
+    });
+    waitStatus(world, c[0], c[1]);
+  });
+  step(QStringLiteral("the card of %1 says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    QString says;
+    world.waitFor([&] {
+      QQuickItem* card = findNamed(list, QStringLiteral("mcPlugin:%1/%2").arg(world.mc.environmentId, c[0]));
+      QQuickItem* status = card ? findNamed(card, QStringLiteral("mcPluginStatus")) : nullptr;
+      return (says = status ? status->property("text").toString() : QString()) == c[1];
+    }, [&] { return QStringLiteral("the card says \"%1\"").arg(says); });
+  });
+  step(QStringLiteral("the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* failure = waitNamed(world, QStringLiteral("pluginSettingsFailure"));
+    world.waitFor([&] { return failure->property("text").toString() == c[0]; }, [&] { return failure->property("text").toString(); });
   });
   step(QStringLiteral("the user restarts %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openSettings(world, c[0]);

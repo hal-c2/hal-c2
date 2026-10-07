@@ -98,6 +98,13 @@ Feature: What plugins add to the clients
       Then the user is still on the same page
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A version's tab follows its environment to the version it updates to
+      Given a second environment runs another version of "code-review"
+      And the user is on the "Reviews" tab of the second environment
+      When the second environment updates "code-review"
+      Then the user is on the "Reviews" tab of the version the second environment runs
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A page whose UI part fails to load shows the error in its tab
       Given the "Reviews" page of "code-review" fails to load
       When the user switches to the "Reviews" tab
@@ -137,6 +144,23 @@ Feature: What plugins add to the clients
     Scenario: The plugin list shows what each MC plugin is
       When the user opens the plugin list
       Then "code-review" is listed under its environment with its description, version, author and screenshots
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: A plugin that did not load says why in the plugin list
+      Given "code-review" is listed as <status> because "<reason>"
+      When the user opens the plugin list
+      Then the card of "code-review" says "<says>: <reason>"
+
+      Examples:
+        | status       | reason                         | says                 |
+        | error        | plugin.json is not valid JSON. | Failed               |
+        | incompatible | It needs a newer MC.           | Not made for this MC |
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings of a plugin that did not load say why
+      Given "code-review" is listed as error because "plugin.json is not valid JSON."
+      When the user opens the settings of "code-review"
+      Then the settings say "Failed: plugin.json is not valid JSON."
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: Enabling a plugin shows the permissions before it runs

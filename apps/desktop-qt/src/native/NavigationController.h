@@ -110,6 +110,8 @@ private:
   void leaveVanishedThread();
   // The tabs: the threads, then each plugin page.
   QStringList tabs() const;
+  // The environments the page tab `key` shows, none for the threads.
+  QStringList pageEnvironments(const QString& key) const;
   // Moves `by` tabs along, wrapping.
   void stepTab(int by);
   // Follows the pages that come and go: their palette entries, and the tab.
@@ -133,6 +135,8 @@ private:
   // rather than has not arrived yet.
   bool m_threadSeen = false;
   QString m_tab = kThreadsTab;
+  // The environments the selected page showed, to follow it to its next version.
+  QStringList m_tabEnvironments;
   // The palette entries of the pages, by page key.
   QStringList m_pageCommands;
 };

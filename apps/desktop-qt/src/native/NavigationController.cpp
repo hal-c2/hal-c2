@@ -326,11 +326,21 @@ bool NavigationController::selectTab(const QString& key) {
   if (!tabs().contains(key)) return false;
   // A tab is chosen to be seen: settings make way for it.
   if (m_route.kind == QLatin1String("settings")) back();
+  m_tabEnvironments = pageEnvironments(key);
   if (key != m_tab) {
     m_tab = key;
     publish();
   }
   return true;
+}
+
+QStringList NavigationController::pageEnvironments(const QString& key) const {
+  if (const auto* plugins = NativeShell::of(this)->controller<McPluginController>()) {
+    for (const QVariant& page : plugins->pages()) {
+      if (page.toMap().value(QStringLiteral("key")) == key) return page.toMap().value(QStringLiteral("environments")).toStringList();
+    }
+  }
+  return {};
 }
 
 void NavigationController::stepTab(int by) {
@@ -359,12 +369,22 @@ void NavigationController::followPages() {
   const bool several = listed.size() > 0;
   commands->setListed(QStringLiteral("tabs.next"), several);
   commands->setListed(QStringLiteral("tabs.previous"), several);
-  // A page's tab is keyed by its version, so an update keeps the user on the page.
+  // A page's tab is keyed by its version, so an update keeps the user on the page:
+  // on the version the environments they were looking at now run, when another
+  // version of it is open too.
   if (const QStringList keys = tabs(); !keys.contains(m_tab)) {
     const QString page = m_tab.section(QLatin1Char('@'), 0, 0) + QLatin1Char('@');
-    const auto same = std::find_if(keys.cbegin(), keys.cend(), [&](const QString& key) { return key.startsWith(page); });
-    m_tab = same != keys.cend() ? *same : kThreadsTab;
+    QString next = kThreadsTab;
+    for (const QString& key : keys) {
+      if (!key.startsWith(page)) continue;
+      const QStringList environments = pageEnvironments(key);
+      const bool shared = std::any_of(environments.cbegin(), environments.cend(), [&](const QString& each) { return m_tabEnvironments.contains(each); });
+      if (shared || next == kThreadsTab) next = key;
+      if (shared) break;
+    }
+    m_tab = next;
   }
+  m_tabEnvironments = pageEnvironments(m_tab);
   publish();
 }
 
