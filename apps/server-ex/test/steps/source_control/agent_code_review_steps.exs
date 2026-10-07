@@ -406,7 +406,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     put_in(context, [:heads, number], head)
   end
 
-  step "the head of \#{int} has a REVIEW.md that is not UTF-8 text", %{args: [number]} = context do
+  step "the head of \#{int} has a REVIEW.md that is not UTF-8 text",
+       %{args: [number]} = context do
     text = "not UTF-8 text\n" <> <<0xFF, 0xFE>>
     head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
     put_in(context, [:heads, number], head)
@@ -465,6 +466,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         %{"path" => path, "line" => 4, "body" => "This always allows."}
       ]
     })
+  end
+
+  step "the agent reports the verdict {string} with no summary and no comments",
+       %{args: [verdict]} = context do
+    result =
+      call_report(context, %{"verdict" => @verdicts[verdict], "summary" => " ", "comments" => []})
+
+    Map.put(context, :report_result, result)
+  end
+
+  step "the agent is told its report needs a summary or a comment on the change", context do
+    assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
+    assert text =~ "summary must say what the review found"
+    context
   end
 
   step "the review of \#{int} is finished with that verdict, summary and comments",
@@ -1076,6 +1091,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # The agent of the review's thread calls the report tool with `arguments`.
   defp report(context, arguments) do
+    result = call_report(context, arguments)
+    assert result["isError"] != true, inspect(result)
+    context
+  end
+
+  # The tool result the report tool gives for `arguments`.
+  defp call_report(context, arguments) do
     %{authorization: auth} = HalC2.Mcp.server(context.thread, "codex")
 
     {200, %{"result" => result}} =
@@ -1089,8 +1111,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         })
       )
 
-    assert result["isError"] != true, inspect(result)
-    context
+    result
   end
 
   defp findings(verdict, count) do

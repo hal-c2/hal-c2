@@ -892,7 +892,10 @@ defmodule HalC2Plugins.CodeReview do
               String.trim("#{summary}\n\n#{notes}")
           end
 
-        {:ok, %{verdict: verdict, summary: summary, comments: placed, general: general}}
+        # The pull request takes a review that says nothing only as an approval.
+        if verdict != "approve" and summary == "" and placed == [],
+          do: {:error, "summary must say what the review found when no comment is on a line of the change."},
+          else: {:ok, %{verdict: verdict, summary: summary, comments: placed, general: general}}
     end
   end
 

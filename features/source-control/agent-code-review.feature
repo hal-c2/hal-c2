@@ -171,6 +171,13 @@ Feature: Agent code review
       Then the review of #12 is finished with that verdict, summary and comments
 
     @mc
+    Scenario: A report with nothing to post is sent back to the agent
+      Given a review of #12 is running
+      When the agent reports the verdict "changes requested" with no summary and no comments
+      Then the agent is told its report needs a summary or a comment on the change
+      And the review of #12 is still running in the same thread
+
+    @mc
     Scenario: A review whose agent never reports is finished as failed
       Given a review of #12 is running
       When the agent's turn ends without a report
