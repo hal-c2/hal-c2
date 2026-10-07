@@ -9,6 +9,8 @@
 #     event stream owned by one MC)
 #   apps/server-ex/lib/hal_c2/thread_move.ex (the destination asks before it imports, and a move cut
 #     off after that is settled by what the destination says)
+#   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
+#     mark stays behind)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
 #     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
@@ -166,6 +168,12 @@ Feature: Moving a thread and its agent to another machine
         | its linked pull request                            |
         | its unread state                                   |
         | a pending merge-back from one of its forks         |
+
+    @mc
+    Scenario: A thread a plugin started arrives as an ordinary thread
+      Given "Alpha" was started by the plugin "code-review", which no longer runs on "laptop"
+      When "Alpha" moves to "desktop"
+      Then "Alpha" on "desktop" is an ordinary thread, in the thread list
 
     @mc
     Scenario Outline: The thread keeps what happened in it
