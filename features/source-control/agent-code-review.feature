@@ -98,6 +98,12 @@ Feature: Agent code review
   Rule: The agent and its prompt are the user's to set
 
     @mc
+    Scenario: The settings offer the MC's agents and the repositories of its projects
+      When the settings of "code-review" are opened
+      Then the MC's agents are offered with their models
+      And "acme/api" is offered as a repository to watch
+
+    @mc
     Scenario: A review runs with the provider, model and mode the user picked
       Given "code-review" reviews with Claude on "claude-sonnet-5-5" in the "auto-accept-edits" mode
       When #12 is reviewed
@@ -208,6 +214,12 @@ Feature: Agent code review
         | page    | not listed with the threads   |
         | threads | listed with the threads       |
         | both    | listed with the threads       |
+
+    @mc
+    Scenario: A review thread's clients follow the state of its review
+      Given a review of #12 is running
+      When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
+      Then the clients of its thread see a review of #12 waiting with the verdict "changes requested"
 
     @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: The reviews page lists reviews by state

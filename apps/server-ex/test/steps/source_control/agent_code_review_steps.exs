@@ -320,6 +320,23 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the settings of {string} are opened", %{args: [@id]} = context do
+    {{:ok, offered}, context} = plugin(context, "settings", %{})
+    Map.put(context, :offered, offered)
+  end
+
+  step "the MC's agents are offered with their models", context do
+    assert %{"name" => _, "models" => [%{"slug" => _} | _]} =
+             Enum.find(context.offered["providers"], &(&1["instanceId"] == "codex"))
+
+    context
+  end
+
+  step "{string} is offered as a repository to watch", %{args: [repo]} = context do
+    assert repo in context.offered["repositories"]
+    context
+  end
+
   step "the review prompt template is {string}", %{args: [template]} = context do
     save(context, %{"prompt" => template})
   end
@@ -591,6 +608,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # --- the host --------------------------------------------------------------------------------
+
+  step "the clients of its thread see a review of \#{int} waiting with the verdict {string}",
+       %{args: [number, verdict]} = context do
+    sub = System.unique_integer([:positive])
+    shape = %{"type" => "plugin", "environment" => context.mc.environment, "id" => @id, "topic" => "threads"}
+    thread = context.thread
+    wanted = @verdicts[verdict]
+
+    {_, client} =
+      context
+      |> World.client("threads")
+      |> Mc.sub(sub, shape)
+      |> Mc.await(
+        &(&1["t"] == "plugin" and &1["id"] == sub and
+            match?(
+              %{^thread => %{"number" => ^number, "status" => "waiting", "verdict" => ^wanted}},
+              &1["value"]
+            )),
+        10_000
+      )
+
+    World.put_client(context, "threads", client)
+  end
 
   step "gh is not signed in on the MC's machine", context do
     signed_out = %{

@@ -99,9 +99,24 @@ defmodule HalC2Plugins.CodeReview do
   @impl HalC2.Plugins.Extension
   def call("reviews", _input, _context), do: {:ok, server(:snapshot)}
 
+  # What the settings page offers: the agents and models, and the repositories of
+  # this MC's projects on the host.
   def call("settings", _input, context) do
     {:ok, providers} = Host.providers(@id)
-    {:ok, %{"settings" => context.settings, "providers" => providers}}
+
+    repositories =
+      case Host.projects(@id) do
+        {:ok, projects} ->
+          for %{"kind" => kind, "repository" => repository} <- projects,
+              kind == context.settings["host"] and is_binary(repository),
+              uniq: true,
+              do: repository
+
+        _ ->
+          []
+      end
+
+    {:ok, %{"settings" => context.settings, "providers" => providers, "repositories" => repositories}}
   end
 
   def call("refresh", _input, context) do
@@ -225,9 +240,13 @@ defmodule HalC2Plugins.CodeReview do
        unwatched: [],
        checked_at: nil,
        looked: nil,
-       polling: nil
-     }}
+       polling: nil,
+       threads: nil
+     }, {:continue, :announce}}
   end
+
+  @impl GenServer
+  def handle_continue(:announce, state), do: {:noreply, announce(state)}
 
   @impl GenServer
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
@@ -906,8 +925,25 @@ defmodule HalC2Plugins.CodeReview do
 
   defp changed(state) do
     save(state.reviews)
+    announce(state)
+  end
+
+  # What clients follow: `reviews` for the Reviews page, and `threads` for each
+  # review thread's mark and header, by thread id, without the findings. A row mark
+  # is drawn per row, so `threads` is sent only when it changes.
+  defp announce(state) do
     Host.publish(@id, "reviews", snapshot(state))
-    state
+    threads = threads(state)
+    if threads != state.threads, do: Host.publish(@id, "threads", threads)
+    %{state | threads: threads}
+  end
+
+  @thread_fields ~w(key repository number title url headBranch baseBranch status verdict error publishError)
+
+  defp threads(state) do
+    for {_, %{"threadId" => id} = review} <- state.reviews, is_binary(id), into: %{} do
+      {id, Map.take(review, @thread_fields)}
+    end
   end
 
   @order ~w(running queued waiting failed kept ready published)
