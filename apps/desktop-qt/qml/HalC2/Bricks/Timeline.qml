@@ -35,6 +35,12 @@ Item {
     property bool working: root.model !== null && root.model.working === true
     // Whether the view keeps the latest output in view.
     readonly property alias following: view.following
+    // Whether the user has scrolled away from the latest output, as of their
+    // last finished scroll: what a host makes room for while they read
+    // (Composer's collapse on scroll). It never changes under the user's
+    // hand, since room made mid-scroll would move the end the scroll is
+    // measured against and hand the view back to following.
+    readonly property alias scrolledAway: view.away
     // Whether the list says it is loading or its MC cannot be reached;
     // hosts that say so themselves turn it off.
     property bool showStatus: true
@@ -368,6 +374,13 @@ Item {
 
         property bool following: true
         property bool positioning: false
+        property bool away: false
+
+        function settleAway() {
+            if (!moving && !dragging && !scrollBar.pressed)
+                away = !following;
+        }
+        onFollowingChanged: settleAway()
 
         // Moves to the end without counting as the user scrolling.
         function stick() {
@@ -455,6 +468,7 @@ Item {
         model: root.model
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
+            onPressedChanged: view.settleAway()
         }
 
         // Only the user's own scrolling (wheel, drag, keys, scroll bar)
@@ -469,6 +483,7 @@ Item {
         }
         onMovementEnded: {
             following = nearEnd();
+            settleAway();
             if (atYBeginning)
                 root.loadEarlier();
         }
@@ -1625,6 +1640,17 @@ Item {
             color: root.mutedColor
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.NoWrap
+        }
+    }
+
+    // Scrolling down where the list goes no further, as when the room made
+    // for reading shows the end, returns to it. Only at the end: a wheel that
+    // reaches here mid-thread (over an overlay) is not one the list refused.
+    WheelHandler {
+        target: null
+        onWheel: event => {
+            if (!view.following && view.nearEnd() && (event.angleDelta.y < 0 || event.pixelDelta.y < 0))
+                root.scrollToEnd();
         }
     }
 
