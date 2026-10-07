@@ -159,6 +159,13 @@ Feature: Plugin packages
       And "code-review" stays disabled
 
     @mc
+    Scenario: Enabling a package with accepted permissions that are not a list is refused
+      When a client enables "code-review" sending an object as the accepted permissions
+      Then the MC refuses saying the accepted permissions are a list
+      And "code-review" stays disabled
+      And plugins can still be listed
+
+    @mc
     Scenario: A plugin cannot use an MC capability it was not granted
       Given the package "quiet" was granted only to read pull requests
       When "quiet" tries to start a thread

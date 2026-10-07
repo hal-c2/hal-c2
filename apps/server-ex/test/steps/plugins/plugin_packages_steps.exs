@@ -595,6 +595,28 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context
   end
 
+  step "a client enables {string} sending an object as the accepted permissions",
+       %{args: [id]} = context do
+    context = Packages.ensure(context, id)
+
+    {reply, context} =
+      World.call(context, "plugins.enable", %{"id" => id, "acceptPermissions" => %{}})
+
+    Map.merge(context, %{reply: reply, plugin: id})
+  end
+
+  step "the MC refuses saying the accepted permissions are a list", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "acceptPermissions is a list"
+    context
+  end
+
+  step "plugins can still be listed", context do
+    {_, context} = World.call!(context, "plugins.list", %{})
+    assert Fixtures.entry(context.plugin)
+    context
+  end
+
   step "{string} stays disabled", %{args: [id]} = context do
     assert %{"enabled" => false, "status" => "disabled"} = Fixtures.entry(id)
     context

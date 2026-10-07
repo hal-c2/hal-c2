@@ -73,8 +73,17 @@ defmodule HalC2.Plugins do
   def handle("list", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
   def handle("rescan", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan)}}
 
-  def handle("enable", %{"id" => id} = input),
-    do: GenServer.call(__MODULE__, {:set_enabled, id, true, input["acceptPermissions"] || []})
+  def handle("enable", %{"id" => id} = input) do
+    case input["acceptPermissions"] || [] do
+      accepted when is_list(accepted) ->
+        if Enum.all?(accepted, &is_binary/1),
+          do: GenServer.call(__MODULE__, {:set_enabled, id, true, accepted}),
+          else: {:error, "acceptPermissions is a list of permission ids."}
+
+      _ ->
+        {:error, "acceptPermissions is a list of permission ids."}
+    end
+  end
 
   def handle("disable", %{"id" => id}),
     do: GenServer.call(__MODULE__, {:set_enabled, id, false, []})
