@@ -68,7 +68,7 @@ void turnRow(World& world, const QString& key, bool on) {
   expect(control->isEnabled(), QStringLiteral("the %1 switch is disabled").arg(key));
   if (control->property("checked").toBool() != on) QTest::mouseClick(&page.window(), Qt::LeftButton, Qt::NoModifier, page.at(control));
   world.waitFor([&] { return settingOn(world, key) == on && control->property("checked").toBool() == on; },
-                [&] { return QStringLiteral("%1 to be %2; it is %3").arg(key, on ? u"on"_qs : u"off"_qs, show(settings(world)->setting(key))); });
+                [&] { return QStringLiteral("%1 to be %2; it is %3").arg(key, on ? QStringLiteral("on") : QStringLiteral("off"), show(settings(world)->setting(key))); });
 }
 
 void chooseRow(World& world, const QString& key, const QString& label) {

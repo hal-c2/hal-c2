@@ -12,7 +12,7 @@ class BackendProcessTest : public QObject {
 
   BackendProcess::Options host(const QByteArray& script) {
     QFile entry(directory.filePath("host.sh"));
-    entry.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) qFatal("cannot write host.sh");
     entry.write(script);
     entry.close();
     return {QStringLiteral("/bin/sh"), entry.fileName(), {}};

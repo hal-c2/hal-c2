@@ -135,7 +135,7 @@ QString describe(World& world) {
                                          model.index(row).data(CommandPaletteController::DescriptionRole).toString());
   }
   return QStringLiteral("the palette (%1, %2 \"%3\", query \"%4\") lists [%5]")
-      .arg(model.isOpen() ? u"open"_qs : u"closed"_qs, model.mode(), model.submenu(), model.query(), rows.join(u"; "));
+      .arg(model.isOpen() ? QStringLiteral("open") : QStringLiteral("closed"), model.mode(), model.submenu(), model.query(), rows.join(u"; "));
 }
 
 // The row titled `title` once the palette's searches are answered, or -1.
