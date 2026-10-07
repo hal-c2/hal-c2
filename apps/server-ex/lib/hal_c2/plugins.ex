@@ -633,10 +633,10 @@ defmodule HalC2.Plugins do
   end
 
   def handle_call({:subscribe_topic, pid, id, topic}, _from, state) do
-    watchers =
-      Map.update(state.topic_watchers, {id, topic}, %{pid => Process.monitor(pid)}, fn pids ->
-        Map.put_new_lazy(pids, pid, fn -> Process.monitor(pid) end)
-      end)
+    # One monitor per follower of a topic, however often it follows.
+    pids = state.topic_watchers[{id, topic}] || %{}
+    pids = Map.put_new_lazy(pids, pid, fn -> Process.monitor(pid) end)
+    watchers = Map.put(state.topic_watchers, {id, topic}, pids)
 
     {:reply, {:ok, state.topics[{id, topic}]}, %{state | topic_watchers: watchers}}
   end
