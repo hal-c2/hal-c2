@@ -47,6 +47,28 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
+  @doc """
+  The agents threads can run on, for a plugin that starts threads to pick from:
+  `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault"}]}`.
+  """
+  def providers(_id) do
+    {:ok,
+     for provider <- Plugins.providers() || [] do
+       %{
+         "instanceId" => provider["instanceId"],
+         "name" => provider["displayName"] || provider["instanceId"],
+         "models" =>
+           for model <- provider["models"] || [] do
+             %{
+               "slug" => model["slug"],
+               "name" => model["name"],
+               "isDefault" => model["isDefault"] == true
+             }
+           end
+       }
+     end}
+  end
+
   @doc "`pullRequests.<method>` as a client calls it (`HalC2.PullRequests.handle/2`)."
   def pull_requests(id, method, input) do
     permission = if method in @writes, do: "pullRequests:write", else: "pullRequests:read"
