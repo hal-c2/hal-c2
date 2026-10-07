@@ -89,11 +89,16 @@ fi
 export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 # The plugin bundles only xcb by default, which leaves a Wayland session running
-# the app through XWayland. It takes the Wayland platform plugin when asked, but not
-# the plugins that one cannot start without (it looks for the names they had before
+# the app through XWayland. It takes the Wayland platform plugin when asked (one
+# libqwayland.so since Qt 6.10, an EGL and a generic one before), but not the
+# plugins that one cannot start without (it looks for the names they had before
 # Qt 6.8), so those are copied in after it: the xdg shell, EGL, and the decorations
 # drawn when the compositor draws none.
-export EXTRA_PLATFORM_PLUGINS="libqwayland.so"
+wayland=""
+for name in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+  [ -f "${plugins}/platforms/${name}" ] && wayland="${wayland:+${wayland};}${name}"
+done
+export EXTRA_PLATFORM_PLUGINS="${wayland}"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt
 rm -rf "${app_dir}/usr/qml/HalC2" "${app_dir}/usr/qml/Ghostty"
 for plugin in wayland-shell-integration/libxdg-shell.so \
