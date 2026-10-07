@@ -20,6 +20,7 @@ qt_add_qml_module(hal_c2_bricks
     FolderExplorer.qml
     FolderOperationDialog.qml
     ContextMenuHost.qml
+    DefaultLayout.qml
     DefaultShell.qml
     GitActions.qml
     Notifications.qml
