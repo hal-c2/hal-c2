@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStyleHints>
 
 namespace {
@@ -227,6 +228,21 @@ QString firstFontFamily(const QString& list) {
   return candidates.value(0);
 }
 
+// A monospace family that is not installed (a phone has none of a desktop's)
+// is drawn with the system's fixed-width font: Qt's own stand-in for a family
+// it lacks is proportional, which spreads a terminal's cells and unaligns
+// code. The family keeps the name the theme gave it.
+QString fixedWidth(const QString& family) {
+  static QSet<QString> seen;
+  if (!family.isEmpty() && !seen.contains(family)) {
+    seen.insert(family);
+    if (!QFontDatabase::hasFamily(family)) {
+      QFont::insertSubstitution(family, QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+    }
+  }
+  return family;
+}
+
 }  // namespace
 
 QColor ThemeStore::link() const {
@@ -257,7 +273,7 @@ QString ThemeStore::fontUi() const {
 }
 
 QString ThemeStore::fontMono() const {
-  return m_fontMono.isEmpty() ? firstFontFamily(m_baseFontMono) : firstFontFamily(m_fontMono);
+  return fixedWidth(m_fontMono.isEmpty() ? firstFontFamily(m_baseFontMono) : firstFontFamily(m_fontMono));
 }
 
 QString ThemeStore::fontPrompt() const {
@@ -267,7 +283,7 @@ QString ThemeStore::fontPrompt() const {
 
 QString ThemeStore::fontTerminal() const {
   const QString own = m_baseTheme.value(QStringLiteral("fontTerminal")).toString();
-  return own.isEmpty() ? fontMono() : firstFontFamily(own);
+  return own.isEmpty() ? fontMono() : fixedWidth(firstFontFamily(own));
 }
 
 int ThemeStore::fontSize(const char* part, int fallback) const {
