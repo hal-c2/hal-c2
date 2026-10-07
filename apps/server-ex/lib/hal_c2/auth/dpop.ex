@@ -10,15 +10,15 @@ defmodule HalC2.Auth.Dpop do
   @max_age 300
   @proofs __MODULE__.Proofs
 
-  @doc "Creates the replay table; called by `HalC2.Auth` on start."
-  def init, do: :ets.new(@proofs, [:named_table, :public, write_concurrency: true])
+  @doc "The replay table, which `HalC2.Auth` creates and keeps across its restarts."
+  def table, do: @proofs
 
   @doc """
   Verifies `proof` for a request; returns `{:ok, thumbprint}` or `{:error, reason}`.
   Options: `thumbprint` (the key the proof must use), `access_token` (for `ath`).
   """
   def verify(proof, method, url, opts \\ []) do
-    now = System.os_time(:second)
+    now = div(HalC2.Auth.now(), 1000)
 
     with [h, p, sig] when h != "" and p != "" and sig != "" <- String.split(proof || "", "."),
          {:ok, %{"typ" => "dpop+jwt", "alg" => "ES256", "jwk" => jwk}} <- decode(h),
@@ -76,8 +76,12 @@ defmodule HalC2.Auth.Dpop do
     end
   end
 
+  @doc "Forgets proofs too old to be accepted again; returns how many."
+  def prune(now \\ div(HalC2.Auth.now(), 1000)),
+    do: :ets.select_delete(@proofs, [{{:_, :"$1"}, [{:<, :"$1", now - @max_age - 5}], [true]}])
+
   defp fresh?(thumbprint, jti, iat, now) do
-    :ets.select_delete(@proofs, [{{:_, :"$1"}, [{:<, :"$1", now - @max_age - 5}], [true]}])
+    prune(now)
     :ets.insert_new(@proofs, {{thumbprint, jti}, iat})
   end
 end
