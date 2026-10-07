@@ -861,6 +861,15 @@ const Steps steps([] {
       return (says = status ? status->property("text").toString() : QString()) == c[1];
     }, [&] { return QStringLiteral("the card says \"%1\"").arg(says); });
   });
+  step(QStringLiteral("the card of %1 offers no restart").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* card = findNamed(showPluginList(world), QStringLiteral("mcPlugin:%1/%2").arg(world.mc.environmentId, c[0]));
+    QQuickItem* restart = card ? findNamed(card, QStringLiteral("mcPluginRestart")) : nullptr;
+    expect(restart && !restart->isVisible(), QStringLiteral("the card offers a restart"));
+  });
+  step(QStringLiteral("the settings offer no restart"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* restart = findNamed(waitNamed(world, QStringLiteral("pluginSettingsFailure"))->parentItem(), QStringLiteral("pluginSettingsRestart"));
+    expect(restart && !restart->isVisible(), QStringLiteral("the settings offer a restart"));
+  });
   step(QStringLiteral("the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* failure = waitNamed(world, QStringLiteral("pluginSettingsFailure"));
     world.waitFor([&] { return failure->property("text").toString() == c[0]; }, [&] { return failure->property("text").toString(); });

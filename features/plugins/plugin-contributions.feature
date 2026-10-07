@@ -162,6 +162,7 @@ Feature: What plugins add to the clients
       Given "code-review" is listed as <status> because "<reason>"
       When the user opens the plugin list
       Then the card of "code-review" says "<says>: <reason>"
+      And the card of "code-review" offers no restart
 
       Examples:
         | status       | reason                         | says                 |
@@ -173,6 +174,7 @@ Feature: What plugins add to the clients
       Given "code-review" is listed as error because "plugin.json is not valid JSON."
       When the user opens the settings of "code-review"
       Then the settings say "Failed: plugin.json is not valid JSON."
+      And the settings offer no restart
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: Enabling a plugin shows the permissions before it runs

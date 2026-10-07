@@ -130,6 +130,8 @@ SettingsPage {
         ShellButton {
             objectName: "pluginSettingsRestart"
             text: qsTr("Restart")
+            // A package that did not load is fixed in its files, not by a restart.
+            visible: page.entry?.status === "failed"
             onClicked: Shell.dispatch("mcPlugins.restart", { environment: page.environment, id: page.pluginId })
         }
     }

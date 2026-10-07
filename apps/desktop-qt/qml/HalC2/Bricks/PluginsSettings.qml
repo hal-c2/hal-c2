@@ -126,7 +126,8 @@ SettingsPage {
             ShellButton {
                 objectName: "mcPluginRestart"
                 text: qsTr("Restart")
-                visible: card.running || card.failed
+                // A package that did not load is fixed in its files, not by a restart.
+                visible: card.running || card.plugin.status === "failed"
                 onClicked: Shell.dispatch("mcPlugins.restart", { environment: card.plugin.environment, id: card.plugin.id })
             }
 
