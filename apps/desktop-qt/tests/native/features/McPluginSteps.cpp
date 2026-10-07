@@ -944,6 +944,17 @@ const Steps steps([] {
                   [&] { return describe(world); });
     expect(page != fake(world).page && page->isVisible(), QStringLiteral("the new page is not shown"));
   });
+  step(QStringLiteral("only the new version's UI parts are kept"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return pageOn(world, world.mc.environmentId).value(QStringLiteral("url")).toString().contains(QLatin1String("/2/running/")); },
+                  [&] { return describe(world); });
+    // The plugin's directory of the cache: <plugin>/<revision>/running/<path>.
+    QString path = QUrl(pageOn(world, world.mc.environmentId).value(QStringLiteral("url")).toString()).toLocalFile();
+    path = path.left(path.indexOf(QLatin1String("/2/running/")));
+    const QStringList versions = QDir(path).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    const QStringList modes = QDir(path + QLatin1String("/2")).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    expect(versions == QStringList{QStringLiteral("2")} && modes == QStringList{QStringLiteral("running")},
+           QStringLiteral("the cache keeps %1 and %2").arg(versions.join(QLatin1String(", ")), modes.join(QLatin1String(", "))));
+  });
 });
 
 }  // namespace

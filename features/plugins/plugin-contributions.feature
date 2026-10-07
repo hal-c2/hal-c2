@@ -252,3 +252,9 @@ Feature: What plugins add to the clients
       Given the "Reviews" page is shown
       When the MC runs a new version of "code-review"
       Then the page is loaded again from the new version
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: An updated plugin's old UI parts are not kept
+      Given the "Reviews" page is shown
+      When the MC runs a new version of "code-review"
+      Then only the new version's UI parts are kept

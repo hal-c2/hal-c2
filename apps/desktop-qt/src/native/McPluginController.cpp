@@ -153,7 +153,19 @@ void McPluginController::fetch(const QString& environment, const QJsonObject& en
   Files& files = m_files[key];
   // What failed stays failed until the plugin starts, stops or changes version,
   // so the list's other news does not take a failed page back to loading.
-  if (files.revision != revision || files.runs != runs) files = Files{revision, runs, {}, {}, {}};
+  if (files.revision != revision || files.runs != runs) {
+    files = Files{revision, runs, {}, {}, {}};
+    // Only what the plugin is at now is kept, or every version it went through would
+    // stay on the device. Nothing shows the other versions' files any more.
+    const QString kept = QFileInfo(cachePath(environment, id, revision, runs, QString())).absoluteFilePath();
+    const QDir version = QFileInfo(kept).dir();
+    for (const QDir& dir : {QFileInfo(version.absolutePath()).dir(), version}) {
+      for (const QFileInfo& other : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString path = other.absoluteFilePath();
+        if (path != version.absolutePath() && path != kept) QDir(path).removeRecursively();
+      }
+    }
+  }
   for (const QString& path : filesOf(entry)) {
     if (files.urls.contains(path) || files.errors.contains(path) || files.pending.contains(path)) continue;
     const QString local = cachePath(environment, id, revision, runs, path);
