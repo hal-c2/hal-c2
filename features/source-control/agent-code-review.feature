@@ -221,32 +221,32 @@ Feature: Agent code review
       When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
       Then the clients of its thread see a review of #12 waiting with the verdict "changes requested"
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page lists reviews by state
       Given reviews of #12 running, #13 waiting to be published and #14 failed
       When the user switches to the "Reviews" tab
       Then #12, #13 and #14 are listed with their states
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a review's findings and publishes them
       Given the review of #13 is waiting with two comments
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
       And the user can publish it or dismiss comments
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread shows the pull request and the verdict above the conversation
       Given the review of #13 finished with the verdict "approved"
       When the user opens the review's thread
       Then the pull request, the verdict and the publish action are shown above the conversation
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread is marked as a review in the thread list
       Given "code-review" shows reviews as "threads"
       When #12 is reviewed
       Then its thread is listed with the review mark and the state of the review
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user starts a review from the reviews page
       Given "code-review" watches "acme/api" selectively
       When the user starts a review of #12 from the "Reviews" tab
@@ -254,7 +254,7 @@ Feature: Agent code review
 
   Rule: The host is the user's choice
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings offer each source control host
       When the user opens the settings of "code-review"
       Then GitHub, GitLab, Forgejo, Bitbucket and Azure DevOps are offered as hosts

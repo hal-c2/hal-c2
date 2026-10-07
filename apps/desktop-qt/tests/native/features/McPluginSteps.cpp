@@ -4,6 +4,8 @@
 // and the real DefaultShell window that draws them.
 
 #include <QBuffer>
+#include <QDir>
+#include <QFile>
 #include <QImage>
 #include <QJsonArray>
 #include <QPointer>
@@ -34,6 +36,8 @@ struct FakeMcPlugins {
   // What `plugins.saveSettings` refuses with, when it does.
   QString refusal;
   QJsonArray reviews;
+  // Plugins faked by other steps, by id.
+  QHash<QString, FakePluginPart> parts;
   // The page a scenario keeps an eye on, to tell a reload from an update.
   QPointer<QQuickItem> page;
 };
@@ -118,7 +122,12 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     mc.send({{QStringLiteral("t"), QStringLiteral("plugins")}, {QStringLiteral("id"), id}, {QStringLiteral("plugins"), plugins}});
   });
   mc.onShape(QStringLiteral("plugin"), [&mc](int id, const QJsonObject& shape) {
-    if (shape.value(QLatin1String("topic")).toString() != QLatin1String("reviews")) return;
+    const QString topic = shape.value(QLatin1String("topic")).toString();
+    if (const auto part = mc.part<FakeMcPlugins>().parts.find(shape.value(QLatin1String("id")).toString()); part != mc.part<FakeMcPlugins>().parts.end()) {
+      if (part->topics.contains(topic)) mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), id}, {QStringLiteral("topic"), topic}, {QStringLiteral("value"), part->topics.value(topic)}});
+      return;
+    }
+    if (topic != QLatin1String("reviews")) return;
     mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), id}, {QStringLiteral("topic"), QStringLiteral("reviews")},
              {QStringLiteral("value"), mc.part<FakeMcPlugins>().reviews}});
   });
@@ -140,9 +149,14 @@ const FakeMc::Extension extension([](FakeMc& mc) {
         mc.send({{QStringLiteral("t"), QStringLiteral("plugins")}, {QStringLiteral("id"), subscriber}, {QStringLiteral("plugins"), list}});
       }
     };
+    const auto part = fake.parts.constFind(id);
     if (rpc.method == QLatin1String("plugins.file")) {
       const QString path = rpc.payload.value(QLatin1String("path")).toString();
-      const QByteArray bytes = fake.files.value(revision + QLatin1Char('/') + path, fake.files.value(QStringLiteral("*/") + path));
+      QByteArray bytes = fake.files.value(revision + QLatin1Char('/') + path, fake.files.value(QStringLiteral("*/") + path));
+      if (part != fake.parts.constEnd()) {
+        QFile file(QDir(part->package).filePath(path));
+        bytes = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+      }
       if (bytes.isEmpty()) return mc.refuse(rpc, QStringLiteral("%1 is not in the package").arg(path));
       const bool binary = path.endsWith(QLatin1String(".png"));
       mc.reply(rpc, QJsonObject{{QStringLiteral("path"), path},
@@ -164,6 +178,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       entry->insert(QStringLiteral("saved"), settings);
       changed(entry->value(QLatin1String("status")).toString());
     } else if (rpc.method == QLatin1String("plugins.call")) {
+      if (part != fake.parts.constEnd()) return part->call ? part->call(rpc) : mc.refuse(rpc, QStringLiteral("no such call"));
       mc.reply(rpc, QJsonObject{{QStringLiteral("from"), QStringLiteral("Reviews on %1").arg(environment)}});
     } else {
       mc.refuse(rpc, QStringLiteral("no such call"));
@@ -783,6 +798,42 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void runFakePlugin(World& world, const QJsonObject& entry, const FakePluginPart& part) {
+  const QString id = entry.value(QLatin1String("id")).toString();
+  fake(world).parts.insert(id, part);
+  fake(world).plugins[world.mc.environmentId] = {entry};
+  pluginShell(world);
+  announce(world);
+  waitStatus(world, id, QStringLiteral("running"));
+}
+
+FakePluginPart& fakePluginPart(World& world, const QString& id) {
+  expect(fake(world).parts.contains(id), QStringLiteral("no plugin %1 is faked").arg(id));
+  return fake(world).parts[id];
+}
+
+void publishTopic(World& world, const QString& id, const QString& topic) {
+  const QJsonValue value = fakePluginPart(world, id).topics.value(topic);
+  for (const int subscriber : world.mc.subscribers(QStringLiteral("plugin"))) {
+    const QJsonObject shape = world.mc.shapeOf(subscriber);
+    if (shape.value(QLatin1String("id")) != id || shape.value(QLatin1String("topic")) != topic) continue;
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), subscriber}, {QStringLiteral("topic"), topic}, {QStringLiteral("value"), value}});
+  }
+}
+
+QQuickItem* waitShownNamed(World& world, const QString& objectName, const std::function<bool(QQuickItem*)>& ready) {
+  return waitNamed(world, objectName, ready);
+}
+
+void switchToTab(World& world, const QString& title) {
+  clickTab(world, title);
+  waitNamed(world, QStringLiteral("pluginPages"));
+}
+
+void addPluginThread(World& world, const QString& id, const QString& title, const QJsonObject& plugin) { addThread(world, id, title, plugin); }
+
+void openPluginThread(World& world, const QString& id) { openThread(world, id); }
 
 bool isMcPlugin(World& world, const QString& id) {
   for (const QList<QJsonObject>& plugins : std::as_const(world.mc.part<FakeMcPlugins>().plugins)) {

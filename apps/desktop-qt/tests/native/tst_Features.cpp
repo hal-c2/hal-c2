@@ -392,6 +392,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mc/platform/websocket-protocol.feature:A client skips an event type*"),
     QStringLiteral("threads/drafts.feature"),
     QStringLiteral("source-control/pull-request-list.feature"),
+    QStringLiteral("source-control/agent-code-review.feature"),
     QStringLiteral("settings/usage.feature"),
     QStringLiteral("providers/usage-limits.feature:The same account on two environments*"),
     QStringLiteral("settings/usage-limit-sources.feature:A hub's accounts are pooled*"),
