@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QUrl>
 
 #include "NativeShell.h"
@@ -41,7 +42,8 @@ QString pairingUrl(const QString& address, const QString& code) {
 
 bool loopback(const QUrl& address) {
   const QString host = address.host();
-  return host == QLatin1String("localhost") || host == QLatin1String("127.0.0.1") || host == QLatin1String("::1");
+  // All of 127.0.0.0/8 and ::1 are this machine, not only 127.0.0.1.
+  return host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0 || QHostAddress(host).isLoopback();
 }
 
 }  // namespace

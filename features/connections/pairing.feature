@@ -65,6 +65,9 @@ Feature: Pairing a client with an environment
       | its LAN address      | at the address it listens on     | the MC's LAN address                     | one another device can reach      |
       | its own machine only | at the address it listens on     | the MC's loopback address                | reachable only on its own machine |
       | its own machine only | at "https://box.tailnet.ts.net/" | the address "https://box.tailnet.ts.net" | one another device can reach      |
+      | its own machine only | at "http://127.0.0.2:4000"       | the address "http://127.0.0.2:4000"      | reachable only on its own machine |
+      | its own machine only | at "http://LocalHost:4000"       | the address "http://LocalHost:4000"      | reachable only on its own machine |
+      | its own machine only | at "http://[::1]:4000"           | the address "http://[::1]:4000"          | reachable only on its own machine |
 
   @mc
   Scenario: A pairing link over Tailscale publishes its MC on the tailnet

@@ -45,8 +45,6 @@ defmodule HalC2.Web do
     "#{scheme}://#{host}:#{port()}"
   end
 
-  @loopback ["127.0.0.1", "localhost", "::1", "[::1]"]
-
   @doc """
   Where another device reaches this MC, for a link made here (a pairing link, a cluster
   invite): `{:ok, %{"address" => url, "localOnly" => boolean}}`. The address is
@@ -83,7 +81,20 @@ defmodule HalC2.Web do
   end
 
   defp reached_at(base),
-    do: %{"address" => base, "localOnly" => URI.parse(base).host in @loopback}
+    do: %{"address" => base, "localOnly" => loopback?(URI.parse(base).host)}
+
+  # Whether only this machine reaches `host`: localhost, all of 127.0.0.0/8, or ::1.
+  defp loopback?(nil), do: false
+
+  defp loopback?(host) do
+    host = host |> String.downcase() |> String.trim_leading("[") |> String.trim_trailing("]")
+
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      _ -> host == "localhost"
+    end
+  end
 
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
