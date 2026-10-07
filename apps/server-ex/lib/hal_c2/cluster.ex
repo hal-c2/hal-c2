@@ -18,9 +18,10 @@ defmodule HalC2.Cluster do
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
   (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
   that path and starts distribution before anything reads `node()`, on the cluster
-  port (4370) or, when that is taken, on the port it had last time or else any free
-  one. `HalC2.Cluster.Epmd` stands in for EPMD and `HalC2.Cluster.Discovery` finds
-  where members are.
+  port (4370, or 4380 in a release so that one runs beside an MC from a checkout) or,
+  when that is taken, on the port it had last time or else any free one.
+  `HalC2.Cluster.Epmd` stands in for EPMD and `HalC2.Cluster.Discovery` finds where
+  members are.
 
   A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
   link for an `access:write` session, presents its fingerprint, and the member admits

@@ -88,6 +88,13 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  step "it listens for cluster members on port {int}, not on {int} as one run from a checkout does",
+       %{args: [release, checkout]} = context do
+    assert boot_config(context.boot_env)[:cluster_port] == release
+    assert Keyword.get(boot_config(:dev), :cluster_port, HalC2.Cluster.dist_port()) == checkout
+    context
+  end
+
   step "it serves clients on {string}", %{args: [host]} = context do
     {:ok, ip} = :inet.parse_address(String.to_charlist(host))
     assert {^ip, _port} = listener(boot_config(context.boot_env))
