@@ -850,6 +850,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     take_reviews(context)
   end
 
+  # The user's post waits for GitHub's answer, so it is sent from a process of its own.
+  step "the user starts publishing the review of \#{int}", %{args: [number]} = context do
+    input = %{"id" => @id, "method" => "publish", "input" => %{"key" => key(context, number)}}
+    spawn(fn -> HalC2.Plugins.handle("call", input) end)
+    context
+  end
+
   step "{string} is turned off while the review of \#{int} is being posted",
        %{args: [@id, number]} = context do
     context = await_review!(context, number, &(&1["status"] == "publishing"))

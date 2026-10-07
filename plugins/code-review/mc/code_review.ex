@@ -151,10 +151,9 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def call("publish", %{"key" => key}, context) do
-    with {:ok, review} <- server({:publishable, key}),
-         do: publish(review, context.settings)
-  end
+  # The post can take a while; the caller waits for GitHub's answer.
+  def call("publish", %{"key" => key}, _context),
+    do: GenServer.call(__MODULE__, {:publish, key}, 120_000)
 
   def call(method, _input, _context), do: {:error, "code-review has no method #{method}."}
 
@@ -306,12 +305,15 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def handle_call({:publishable, key}, _from, state) do
+  def handle_call({:publish, key}, from, state) do
     case state.reviews[key] do
-      # Reserved here, so two asks cannot both post it.
+      # Reserved here, so two asks cannot both post it, and posted from a process
+      # linked to this one, so turning the plugin off calls the post off.
       %{"status" => "waiting"} = review ->
         review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
-        {:reply, {:ok, review}, state |> put(review) |> changed()}
+        settings = state.settings
+        spawn_link(fn -> GenServer.reply(from, publish(review, settings)) end)
+        {:noreply, state |> put(review) |> changed()}
 
       %{"status" => "publishing"} ->
         {:reply, {:error, "The review of #{key} is being published."}, state}
@@ -574,7 +576,6 @@ defmodule HalC2Plugins.CodeReview do
     with {:ok, projects} <- Host.projects(@id),
          %{} = project <-
            Enum.find(projects, &(&1["kind"] == settings["host"] and same?(&1["repository"], repository))) ||
-             
              {:error, "No project on this MC has the repository #{repository}."},
          {:ok, list} <- Host.pull_requests(@id, "list", %{"projectIds" => [project["id"]], "state" => "open"}),
          %{} = entry <-

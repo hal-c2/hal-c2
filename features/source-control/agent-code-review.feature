@@ -308,6 +308,15 @@ Feature: Agent code review
       Then the post to GitHub is called off
       And once "code-review" is turned back on, the review of #12 is waiting to be published
 
+    @mc
+    Scenario: Turning code-review off calls off a post the user started
+      Given the review of #12 is waiting to be published
+      And GitHub is slow to take reviews
+      When the user starts publishing the review of #12
+      And "code-review" is turned off while the review of #12 is being posted
+      Then the post to GitHub is called off
+      And once "code-review" is turned back on, the review of #12 is waiting to be published
+
   Rule: Reviews show up where the user wants them
 
     @mc
