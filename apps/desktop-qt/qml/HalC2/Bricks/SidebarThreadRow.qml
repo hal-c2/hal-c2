@@ -21,8 +21,9 @@ Item {
     property string section: "active"
     // Keyboard cursor: draws the focus ring and shows the actions.
     property bool focused: false
-    // A row under a finger: a drag is left to the list, which scrolls, and
-    // a long press asks for the menu a right click opens.
+    // A row that may be under a finger: a finger's drag is left to the list,
+    // which scrolls, and its long press asks for the menu a right click
+    // opens. A mouse or trackpad still arranges the row by dragging it.
     property bool touch: false
     property double ageNow: Date.now()
 
@@ -296,7 +297,8 @@ Item {
         property bool cancelled: false
 
         target: null
-        enabled: !row.draft && !row.offline && !row.touch
+        enabled: !row.draft && !row.offline
+        acceptedDevices: row.touch ? PointerDevice.Mouse | PointerDevice.TouchPad : PointerDevice.AllDevices
         acceptedButtons: Qt.LeftButton
         onActiveChanged: {
             if (active) {
