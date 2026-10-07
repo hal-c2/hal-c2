@@ -14,6 +14,10 @@ Item {
 
     // The window it lays out: its route, settings section and thread list.
     required property ShellWindow window
+    // Whether the layout frames the window: its tabs, sidebar band and header
+    // are then the drag handle of a frameless window and carry its buttons. A
+    // root whose system frames the window (Android) turns it off.
+    property bool framesWindow: true
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive
@@ -37,7 +41,7 @@ Item {
             objectName: "shellTabs"
             Layout.fillWidth: true
             visible: pages.length > 0 && !layout.window.settingsActive
-            window: layout.window
+            window: layout.framesWindow ? layout.window : null
         }
 
         RowLayout {
@@ -69,7 +73,7 @@ Item {
                     Layout.preferredWidth: shownWidth
                     Layout.minimumWidth: 0
                     showBrand: true
-                    window: layout.window
+                    window: layout.framesWindow ? layout.window : null
 
                     // The right edge: drag to resize, double click for the default width.
                     MouseArea {
@@ -148,7 +152,7 @@ Item {
                     sidebarToggle: layout.window.sidebarCollapsed
                     panelToggle: panelView.available ? panelView.open : null
                     detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
-                    window: layout.window
+                    window: layout.framesWindow ? layout.window : null
                 }
 
                 Loader {

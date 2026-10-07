@@ -185,10 +185,9 @@ ShellWindow {
                     // A tablet's or a touchscreen laptop's list is under a
                     // finger as well as a pointer.
                     sidebar.touchRows: true
-                    // Android frames the window itself: the header is no drag
-                    // handle and carries no window buttons.
-                    sidebar.window: null
-                    workspace.window: null
+                    // Android frames the window itself: nothing here is its
+                    // drag handle or carries its buttons.
+                    framesWindow: false
                 }
             }
 
