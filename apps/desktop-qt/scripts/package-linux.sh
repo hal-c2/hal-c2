@@ -88,8 +88,24 @@ fi
 # before the image is made: a copy on disk could be loaded in place of the binary's.
 export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
+# The plugin bundles only xcb by default, which leaves a Wayland session running
+# the app through XWayland. It takes the Wayland platform plugin when asked, but not
+# the plugins that one cannot start without (it looks for the names they had before
+# Qt 6.8), so those are copied in after it: the xdg shell, EGL, and the decorations
+# drawn when the compositor draws none.
+export EXTRA_PLATFORM_PLUGINS="libqwayland.so"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt
 rm -rf "${app_dir}/usr/qml/HalC2" "${app_dir}/usr/qml/Ghostty"
+for plugin in wayland-shell-integration/libxdg-shell.so \
+  wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
+  wayland-decoration-client/libbradient.so; do
+  mkdir -p "${app_dir}/usr/plugins/$(dirname "${plugin}")"
+  cp "${plugins}/${plugin}" "${app_dir}/usr/plugins/${plugin}"
+done
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" \
+  --deploy-deps-only "${app_dir}/usr/plugins/wayland-shell-integration" \
+  --deploy-deps-only "${app_dir}/usr/plugins/wayland-graphics-integration-client" \
+  --deploy-deps-only "${app_dir}/usr/plugins/wayland-decoration-client"
 export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
 echo "AppImage at ${LDAI_OUTPUT}"
