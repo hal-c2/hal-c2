@@ -29,7 +29,7 @@
       ]
     },
     {
-      "bundles": ["assets", "desktop", "web"],
+      "bundles": ["assets", "desktop", "desktop-qt", "mobile-qt", "web"],
       "license": "CC0-1.0",
       "name": "Folder_Whoosh.wav by BaggoNotes",
       "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/",
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "bundles": ["assets", "desktop", "web"],
+      "bundles": ["assets", "desktop", "desktop-qt", "mobile-qt", "web"],
       "license": "CC0-1.0",
       "name": "Contarex camera shutter.wav by Tonik1105",
       "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/",
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "mobile-qt"],
       "license": "MIT",
       "name": "QR Code generator",
       "sourceUrl": "https://github.com/nayuki/QR-Code-generator",
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "bundles": ["android"],
+      "bundles": ["mobile-qt"],
       "license": "Apache-2.0 AND BSD-3-Clause AND MIT",
       "name": "zxing-cpp",
       "sourceUrl": "https://github.com/zxing-cpp/zxing-cpp",
@@ -138,7 +138,7 @@
       ]
     },
     {
-      "bundles": ["android", "assets", "desktop-qt", "mobile", "web"],
+      "bundles": ["android", "assets", "desktop-qt", "mobile", "mobile-qt", "web"],
       "license": "MIT",
       "name": "libghostty-vt",
       "noticeFile": "native/libghostty-vt/LICENSE",
@@ -154,6 +154,133 @@
           "licenseId": "LGPL-3.0-only",
           "preamble": [
             "The desktop app links dynamically against Qt 6 (Qt Core, Gui, Network, Quick, QML, WebSockets and, on Linux, D-Bus), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/ and can be replaced with a compatible build."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "LGPL-3.0-only",
+      "name": "Qt",
+      "sourceUrl": "https://www.qt.io/download-open-source",
+      "generatedNotices": [
+        {
+          "licenseId": "LGPL-3.0-only",
+          "preamble": [
+            "The Android app links dynamically against Qt 6 (Qt Core, Concurrent, Gui, Multimedia, Network, OpenGL, QML, Quick, Quick Controls, Quick Dialogs, Quick Effects, Quick Layouts, Quick Shapes, Quick Templates, SQL, SVG and WebSockets, with their plugins and Qt's Java classes), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/.",
+            "Qt's libraries are files of their own in the APK, lib/arm64-v8a/libQt6*.so with its libplugins_*.so and libqml_*.so, and can be replaced with a compatible build. To run the app with another Qt, build the app from its source (https://github.com/hal-c2/hal-c2, apps/mobile-qt) against that Qt, or replace those files in the APK and sign it again with a key of your own. Android installs an APK signed with another key only once the installed app has been removed.",
+            "Qt's libraries contain third-party code under its own licenses, which Qt lists at https://doc.qt.io/qt-6/licenses-used-in-qt.html."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "Apache-2.0",
+      "name": "OpenSSL",
+      "sourceUrl": "https://github.com/openssl/openssl",
+      "version": "3.5.9",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": [
+            "Copyright (c) 1998-2026 The OpenSSL Project Authors",
+            "Copyright (c) 1995-1998 Eric A. Young, Tim J. Hudson",
+            "All rights reserved."
+          ],
+          "preamble": [
+            "The Android app makes its HTTPS and WebSocket connections with OpenSSL, built from the release's source unchanged and shipped in the APK as libcrypto_3.so and libssl_3.so."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "Apache-2.0 WITH LLVM-exception AND (NCSA OR MIT)",
+      "name": "LLVM libc++",
+      "sourceUrl": "https://github.com/llvm/llvm-project",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "preamble": [
+            "The Android app ships the Android NDK's libc++_shared.so: libc++ and libc++abi, the C++ standard library of the LLVM Project, under the Apache License 2.0 with LLVM Exceptions.",
+            "---- LLVM Exceptions to the Apache 2.0 License ----\n\nAs an exception, if, as a result of your compiling your source code, portions of this Software are embedded into an Object form of such source code, you may redistribute such embedded portions in such Object form without complying with the conditions of Sections 4(a), 4(b) and 4(d) of the License.\n\nIn addition, if you combine or link compiled forms of this Software with software that is licensed under the GPLv2 (\"Combined Software\") and if a court of competent jurisdiction determines that the patent provision (Section 3), the indemnity provision (Section 9) or other Section of the License conflicts with the conditions of the GPLv2, you may retroactively and prospectively choose to deem waived or otherwise exclude such Section(s) of the License, but only in their entirety and only with respect to the Combined Software."
+          ]
+        },
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT"],
+          "preamble": [
+            "Code in libc++ and libc++abi from before the LLVM Project changed its license stays under the legacy one, the University of Illinois/NCSA license or, as the recipient chooses, the MIT license."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "Apache-2.0",
+      "name": "AndroidX",
+      "sourceUrl": "https://github.com/androidx/androidx",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": ["Copyright (C) The Android Open Source Project"],
+          "preamble": [
+            "Qt's Android activity is built with androidx.core, which brings other AndroidX libraries into the APK with it (annotation, collection, lifecycle, startup and tracing among them)."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "Apache-2.0",
+      "name": "Kotlin",
+      "sourceUrl": "https://github.com/JetBrains/kotlin",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": [
+            "Copyright 2000-2020 JetBrains s.r.o. and Kotlin Programming Language contributors."
+          ],
+          "preamble": [
+            "The AndroidX libraries in the APK bring the Kotlin standard library and kotlinx.coroutines with them, with kotlinx.atomicfu and JetBrains' annotations."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "ISC AND MIT",
+      "name": "Lucide",
+      "sourceUrl": "https://github.com/lucide-icons/lucide",
+      "generatedNotices": [
+        {
+          "licenseId": "ISC",
+          "copyrights": [
+            "Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026."
+          ],
+          "preamble": [
+            "The Android app draws its icons from path data taken from Lucide (apps/desktop-qt/scripts/gen-icons.mjs)."
+          ]
+        },
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2013-2026 Cole Bemis"],
+          "preamble": ["Some Lucide icons are derived from Feather."]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "MIT",
+      "name": "qt-liquid-glass",
+      "sourceUrl": "https://github.com/fsalinas26/qt-liquid-glass",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) Francisco Salinas (fsalinas26)"],
+          "preamble": [
+            "The desktop app on macOS draws its window's glass with qt-liquid-glass, compiled into it. Its README gives the license as MIT."
           ]
         }
       ]

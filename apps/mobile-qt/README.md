@@ -78,6 +78,18 @@ level>`, so only the first `build/android` on a machine builds it, in under a mi
 `cmake -DHAL_C2_TERMINAL=OFF apps/mobile-qt/build/android` (or `build/host`, `build/tests`) leaves
 the terminal out of that build directory, also after a configure that stopped for want of Zig.
 
+Two more things are made while the APK is, with what a Mac or a Linux machine set up for the
+desktop already has:
+
+- **OpenSSL**, which Qt for Android needs in the APK for `https` and `wss`, is built from its
+  release tarball with the NDK when `build/android` is first configured
+  (`cmake/AndroidOpenSsl.cmake`). That takes `perl` and `make`, a 53 MB download and about half a
+  minute, once per machine: the two libraries are kept in `~/.cache/qt-android-openssl`.
+- **The open source notices** the Settings page shows are written by Node during the build
+  (`cmake/Licenses.cmake`) and compiled into the binary. It is the desktop's Node, 24 or later,
+  and needs no `node_modules`; configuring stops with a sentence saying so when there is none. The
+  first build fetches the license texts from GitHub into the repo's gitignored `.generated/`.
+
 ## Worth knowing
 
 - The phone layout's chrome and the pairing screen (`qml/HalC2/Mobile`) import
@@ -97,9 +109,14 @@ the terminal out of that build directory, also after a configure that stopped fo
   and controllers ask before they offer or draw a terminal; a build without it offers none. Only
   the desktop's layout draws one, and opens one: the terminal wants a keyboard.
 - The first APK build downloads Gradle and the Android Gradle plugin into `~/.gradle`, about
-  600 MB. Configuring downloads the two OpenSSL libraries the APK carries (5 MB).
-- TLS on Android is that OpenSSL, pinned by hash in `cmake/AndroidPackage.cmake`. A phone reaches
-  an MC over `https` and `wss`, so a new ABI needs its own pair there.
+  600 MB.
+- TLS on Android is the OpenSSL in the APK, 6.6 MB of it, built from the release pinned by version
+  and hash in `cmake/AndroidOpenSsl.cmake`. It has to be a branch OpenSSL still supports, and Qt
+  6.11 is built against 3.5; the notice in `third-party-licenses.config.json` names the version
+  too. A phone reaches an MC over `https` and `wss`, so a new ABI needs its OpenSSL target there.
+- What the APK ships has a notice tagged `mobile-qt` in `third-party-licenses.config.json`, and
+  that is all the Settings page lists. A library, font or sound added to the package needs its
+  entry there (`docs/internals/open-source-licenses.md`).
 - `androiddeployqt` warns that three QML imports "could not be resolved": `HalC2.Shell` is
   registered from C++, and `HalC2.Bricks` and `Ghostty` (the terminal) are compiled into the
   binary.
@@ -108,7 +125,7 @@ the terminal out of that build directory, also after a configure that stopped fo
   so nothing may instantiate them there.
 - The terminal's library is cross-built per ABI by `apps/desktop-qt/cmake/QmlGhosttyAndroid.cmake`,
   which names one Zig target for each: a new ABI needs its line there, as it needs its OpenSSL
-  pair. The terminal adds about 0.6 MB to the APK.
+  target. The terminal adds about 0.6 MB to the APK.
 - A phone build has no FFmpeg, so a Device tab's screen says it is unavailable
   (`HAL_C2_HAS_FFMPEG` in `apps/desktop-qt/cmake/NativeShell.cmake`). That includes Qt
   Multimedia's FFmpeg backend: `cmake/Scanner.cmake` packages its Android backend alone, and the

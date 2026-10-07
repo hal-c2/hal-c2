@@ -9,6 +9,7 @@
 
 #include "DraftController.h"
 #include "LayoutController.h"
+#include "LicensesController.h"
 #include "LocalFolderModel.h"
 #include "NativeShell.h"
 #include "PlatformWindow.h"
@@ -34,6 +35,9 @@ void MobileApp::prepare() {
   TerminalController::setSupported(false);
 #endif
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
+  // The open source notices are compiled into a package (cmake/Licenses.cmake).
+  // A build for this machine has none, and the page says it could not load.
+  LicensesController::setManifestPath(QStringLiteral(":/hal-c2/licenses/third-party-licenses.json"));
 }
 
 MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(options.home)) {

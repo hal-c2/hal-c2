@@ -25,6 +25,7 @@ QString bundleLabel(const QString& bundle) {
       {QStringLiteral("device-tools"), QStringLiteral("Device tools")},
       {QStringLiteral("ios"), QStringLiteral("iOS")},
       {QStringLiteral("mobile"), QStringLiteral("Mobile")},
+      {QStringLiteral("mobile-qt"), QStringLiteral("Qt mobile")},
       {QStringLiteral("server"), QStringLiteral("Server")},
       {QStringLiteral("web"), QStringLiteral("Web")},
   };

@@ -80,4 +80,6 @@ target_link_libraries(hal-c2-mobile PRIVATE
 if(ANDROID)
   include(cmake/AndroidPackage.cmake)
   hal_c2_android_package(hal-c2-mobile)
+  include(cmake/Licenses.cmake)
+  hal_c2_target_licenses(hal-c2-mobile)
 endif()
