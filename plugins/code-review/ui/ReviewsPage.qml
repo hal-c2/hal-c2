@@ -24,7 +24,7 @@ Item {
         }
         return all.sort((a, b) => page.order.indexOf(a.status) - page.order.indexOf(b.status));
     }
-    readonly property var order: ["running", "queued", "waiting", "failed", "kept", "ready", "published"]
+    readonly property var order: ["running", "queued", "publishing", "waiting", "failed", "kept", "ready", "published"]
     property string selected: ""
     readonly property var review: reviews.find(review => review.id === selected) ?? null
     // Why the last action from this page failed, until the next one.
@@ -77,6 +77,8 @@ Item {
             return qsTr("Queued");
         case "waiting":
             return qsTr("Waiting to publish");
+        case "publishing":
+            return qsTr("Publishing");
         case "failed":
             return qsTr("Failed");
         case "kept":
@@ -527,7 +529,7 @@ Item {
 
                         ShellButton {
                             objectName: "codeReviewRetry"
-                            visible: findings.review !== null && findings.status !== "running" && findings.status !== "queued"
+                            visible: findings.review !== null && !["running", "queued", "publishing"].includes(findings.status)
                             primary: findings.status === "ready" || findings.status === "failed"
                             enabled: page.busy === 0
                             text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
@@ -551,7 +553,7 @@ Item {
                         ShellButton {
                             objectName: "codeReviewDiscard"
                             subtle: true
-                            visible: findings.review !== null && findings.status !== "running"
+                            visible: findings.review !== null && findings.status !== "running" && findings.status !== "publishing"
                             enabled: page.busy === 0
                             text: qsTr("Discard")
                             onClicked: page.ask("discard", { key: findings.review.key }, findings.review.environment)

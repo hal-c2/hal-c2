@@ -233,6 +233,24 @@ Feature: Agent code review
       Then the user is told GitHub's reason
       And the review of #12 is still waiting with its comments
 
+    @mc
+    Scenario: A review being posted is not posted twice
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user publishes the review of #12 while it is being posted
+      Then the user is told the review is already being posted
+      And once GitHub has it, #12 has one review and it is marked as published
+
+    @mc
+    Scenario: A post that comes back after the review ran again leaves the new run alone
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user retries the review of #12 while it is being posted
+      And the post of the earlier run comes back
+      Then the new review of #12 is not marked as published
+
   Rule: Reviews show up where the user wants them
 
     @mc

@@ -57,6 +57,8 @@ Rectangle {
             return qsTr("Failed");
         case "waiting":
             return qsTr("Not published yet");
+        case "publishing":
+            return qsTr("Publishing");
         case "kept":
             return qsTr("Kept in HAL-C2");
         case "published":
@@ -127,10 +129,10 @@ Rectangle {
 
             ShellButton {
                 objectName: "codeReviewPublish"
-                visible: header.status === "waiting"
+                visible: header.status === "waiting" || header.status === "publishing"
                 primary: true
-                enabled: !header.publishing
-                text: header.publishing ? qsTr("Publishing…") : qsTr("Publish")
+                enabled: header.status === "waiting" && !header.publishing
+                text: enabled ? qsTr("Publish") : qsTr("Publishing…")
                 onClicked: header.publish()
             }
 

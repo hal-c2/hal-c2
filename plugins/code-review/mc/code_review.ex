@@ -299,8 +299,13 @@ defmodule HalC2Plugins.CodeReview do
 
   def handle_call({:publishable, key}, _from, state) do
     case state.reviews[key] do
+      # Reserved here, so two asks cannot both post it.
       %{"status" => "waiting"} = review ->
-        {:reply, {:ok, review}, state}
+        review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
+        {:reply, {:ok, review}, state |> put(review) |> changed()}
+
+      %{"status" => "publishing"} ->
+        {:reply, {:error, "The review of #{key} is being published."}, state}
 
       %{"status" => "kept"} ->
         {:reply, {:error, "The review of #{key} is kept in HAL-C2; its repository does not publish reviews."}, state}
@@ -316,12 +321,10 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def handle_call({:published, key, error}, _from, state) do
+  # How posting the review of `thread_id` went; a review run again since is left alone.
+  def handle_call({:published, key, thread_id, error}, _from, state) do
     case state.reviews[key] do
-      nil ->
-        {:reply, :ok, state}
-
-      review ->
+      %{"status" => "publishing", "threadId" => ^thread_id} = review ->
         review =
           if error,
             do: Map.merge(review, %{"status" => "waiting", "publishError" => error}),
@@ -333,12 +336,16 @@ defmodule HalC2Plugins.CodeReview do
               })
 
         {:reply, :ok, state |> put(review) |> changed()}
+
+      _ ->
+        {:reply, :ok, state}
     end
   end
 
   def handle_call({:for_thread, thread_id}, _from, state) do
     case by_thread(state, thread_id) do
       %{"status" => "published"} -> {:reply, {:error, "This review is already published."}, state}
+      %{"status" => "publishing"} -> {:reply, {:error, "This review is being published."}, state}
       %{} = review -> {:reply, {:ok, review}, state}
       nil -> {:reply, {:error, "This thread is not a code review."}, state}
     end
@@ -346,12 +353,19 @@ defmodule HalC2Plugins.CodeReview do
 
   def handle_call({:report, thread_id, findings}, _from, state) do
     case by_thread(state, thread_id) do
-      %{"status" => status} = review when status != "published" ->
+      %{"status" => status} = review when status not in ~w(published publishing) ->
         mode = publishing(state.settings, review["repository"])
+
+        status =
+          case mode do
+            "local" -> "kept"
+            "automatic" -> "publishing"
+            _ -> "waiting"
+          end
 
         review =
           Map.merge(review, %{
-            "status" => if(mode == "local", do: "kept", else: "waiting"),
+            "status" => status,
             "verdict" => findings.verdict,
             "summary" => findings.summary,
             "comments" => findings.comments,
@@ -910,11 +924,11 @@ defmodule HalC2Plugins.CodeReview do
 
     case Host.pull_requests(@id, "submitReview", input) do
       {:ok, _} ->
-        server({:published, review["key"], nil})
+        server({:published, review["key"], review["threadId"], nil})
         {:ok, server(:snapshot)}
 
       {:error, error} ->
-        server({:published, review["key"], message(error)})
+        server({:published, review["key"], review["threadId"], message(error)})
         {:error, message(error)}
     end
   end
@@ -978,7 +992,11 @@ defmodule HalC2Plugins.CodeReview do
   defp load do
     with {:ok, text} <- File.read(file()),
          {:ok, %{"reviews" => reviews}} when is_map(reviews) <- JSON.decode(text) do
-      reviews
+      # A publish the MC stopped in the middle of is the user's to try again.
+      Map.new(reviews, fn
+        {key, %{"status" => "publishing"} = review} -> {key, %{review | "status" => "waiting"}}
+        entry -> entry
+      end)
     else
       _ -> %{}
     end

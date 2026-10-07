@@ -670,6 +670,68 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # Holds every review posted to #12 until `take_reviews/1`, or the scenario ends.
+  step "GitHub is slow to take reviews", context do
+    gate = Path.join(context.mc.home, "github-gate")
+    on_exit_gate(gate)
+
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["--method POST", "pulls/12/reviews"],
+        "run" => "while [ ! -e '#{gate}' ] && [ -d '#{context.mc.home}' ]; do sleep 0.05; done",
+        "stdout" => "{}"
+      }
+    ])
+    |> Map.put(:github_gate, gate)
+  end
+
+  step "the user publishes the review of \#{int} while it is being posted",
+       %{args: [number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+    publish(context, number)
+  end
+
+  step "the user is told the review is already being posted", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "is being published"
+    context
+  end
+
+  step "once GitHub has it, \#{int} has one review and it is marked as published",
+       %{args: [number]} = context do
+    context = context |> take_reviews() |> await_review!(number, &(&1["status"] == "published"))
+    assert [_] = World.cli_calls(context, "pulls/#{number}/reviews")
+    context
+  end
+
+  step "the user retries the review of \#{int} while it is being posted",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "publishing"))
+    {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
+    assert {:ok, _} = reply
+    Map.put(context, :earlier_run, review["threadId"])
+  end
+
+  # The post is still held, so its answer is delivered as the plugin's publisher
+  # would deliver it; when it lands is then the scenario's to say.
+  step "the post of the earlier run comes back", context do
+    :ok =
+      GenServer.call(
+        HalC2Plugins.CodeReview,
+        {:published, key(context, 12), context.earlier_run, nil}
+      )
+
+    context
+  end
+
+  step "the new review of \#{int} is not marked as published", %{args: [number]} = context do
+    review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
+    assert review["status"] in ~w(queued running)
+    assert review["threadId"] != context.earlier_run
+    take_reviews(context)
+  end
+
   # --- where reviews show up -------------------------------------------------------------------
 
   step "{string} shows reviews as {string}", %{args: [@id, display]} = context do
@@ -923,6 +985,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     {reply, context} = plugin(context, "publish", %{"key" => key(context, number)})
     Map.put(context, :reply, reply)
   end
+
+  defp take_reviews(context) do
+    File.write!(context.github_gate, "")
+    context
+  end
+
+  defp on_exit_gate(gate), do: ExUnit.Callbacks.on_exit(fn -> File.write(gate, "") end)
 
   # Lets the fake Codex finish every turn held at the gate.
   defp end_turns(context) do

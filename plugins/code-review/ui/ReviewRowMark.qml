@@ -16,7 +16,7 @@ Rectangle {
     readonly property color tone: {
         if (status === "failed")
             return Theme.palette.color("error", "#ef4444");
-        if (status === "running" || status === "queued")
+        if (status === "running" || status === "queued" || status === "publishing")
             return Theme.palette.color("info", "#3b82f6");
         if (verdict === "approve")
             return Theme.palette.color("success", "#22c55e");
@@ -33,6 +33,7 @@ Rectangle {
         case "failed":
             return qsTr("Failed");
         case "waiting":
+        case "publishing":
         case "kept":
         case "published":
             return verdict === "approve" ? qsTr("Approve") : verdict === "request-changes" ? qsTr("Changes") : qsTr("Comment");
