@@ -68,9 +68,14 @@ void removeWhere(QJsonArray& list, const QString& key, const QString& value) {
 }
 
 void answerAccess(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  const QString method = rpc.method;
+  // A link asked for while the MC holds its answers is made once it answers, late.
+  if (method == QLatin1String("hal-c2.createPairingLink") && mc.holding(QStringLiteral("answers"))) {
+    mc.defer([&mc, rpc] { answerAccess(mc, rpc); });
+    return;
+  }
   FakeAccess& access = mc.part<FakeAccess>();
   access.calls.append({rpc.method, rpc.payload});
-  const QString method = rpc.method;
   const bool reads = method == QLatin1String("hal-c2.pairingLinks") || method == QLatin1String("hal-c2.clients");
   if (!access.admin) {
     mc.refuse(rpc, reads ? QStringLiteral("access:read is required") : QStringLiteral("access:write is required"));
@@ -249,12 +254,24 @@ QStringList offeredMachines(World& world) {
   return labels.toStringList();
 }
 
-// Creates a link from the page, over Tailscale or not, and waits for the MC's answer.
-void createFromPage(World& world, bool tailscale) {
+void leaveConnections(World& world) {
+  world.bridge().dispatch(QStringLiteral("connections.close"), {});
+  world.sync();
+}
+
+// Asks for a link from the page, over Tailscale or not, and waits for the MC to hear of it.
+void askFromPage(World& world, bool tailscale) {
   Brick& brick = page(world);
   const qsizetype asked = world.mc.calls.size();
   brick.click(tailscale ? QStringLiteral("connectionsCreateLinkTailscale") : QStringLiteral("connectionsCreateLink"));
-  world.waitFor([&] { return world.mc.calls.size() > asked && !connections(world).value(QStringLiteral("busy")).toBool(); },
+  world.waitFor([&] { return world.mc.calls.size() > asked; },
+                [&] { return QStringLiteral("the MC to be asked; the Connections page is %1").arg(show(connections(world))); });
+}
+
+// Creates a link from the page, and waits for the MC's answer.
+void createFromPage(World& world, bool tailscale) {
+  askFromPage(world, tailscale);
+  world.waitFor([&] { return !connections(world).value(QStringLiteral("busy")).toBool(); },
                 [&] { return QStringLiteral("the MC to answer; the Connections page is %1").arg(show(connections(world))); });
 }
 
@@ -432,10 +449,11 @@ const Steps steps([] {
     expect(connections(world).value(QStringLiteral("created")).isNull(), QStringLiteral("the revoked link can still be copied"));
   });
   step(QStringLiteral("the user leaves the Connections page and comes back"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("connections.close"), {});
-    world.sync();
+    leaveConnections(world);
     openConnections(world);
   });
+  step(QStringLiteral("the user leaves the Connections page"), [](World& world, const Captures&, const Table&) { leaveConnections(world); });
+  step(QStringLiteral("the user comes back to the Connections page"), [](World& world, const Captures&, const Table&) { openConnections(world); });
   step(QStringLiteral("the link is listed without its secret"), [](World& world, const Captures&, const Table&) {
     const QVariantMap page = connections(world);
     const QVariantList links = listed(world, QStringLiteral("pairingLinks"));
@@ -486,6 +504,11 @@ const Steps steps([] {
          chooseMachine(world, c[0]);
          createFromPage(world, !c.value(1).isEmpty());
        });
+  // Its answer is the scenario's to wait for ("the MC holds its answers").
+  step(QStringLiteral("the user asks for a pairing link for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    chooseMachine(world, c[0]);
+    askFromPage(world, false);
+  });
   step(QStringLiteral("(this machine|%1) is asked for the pairing link over Tailscale").arg(q), [](World& world, const Captures& c, const Table&) {
     const FakeMc::Rpc asked = lastCall(world, QStringLiteral("hal-c2.createPairingLink"));
     const QString machine = c.value(1).isEmpty() ? world.mc.environmentId : c[1];

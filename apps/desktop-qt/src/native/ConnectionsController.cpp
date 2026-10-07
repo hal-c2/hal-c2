@@ -158,6 +158,8 @@ void ConnectionsController::setOpen(bool open) {
   m_state.insert(QStringLiteral("access"), null());
   m_state.insert(QStringLiteral("accessError"), null());
   m_state.insert(QStringLiteral("created"), null());
+  // And a link still on its way is not shown when it arrives.
+  ++m_linkRequest;
   publish();
 }
 
@@ -248,9 +250,17 @@ void ConnectionsController::createPairingLink(const QVariantMap& input) {
   if (environmentId == own && !payload.contains(QLatin1String("tailscale")) && !loopback(reached)) {
     payload.insert(QStringLiteral("baseUrl"), reached.toString());
   }
-  change(environmentId, QStringLiteral("hal-c2.createPairingLink"), payload, [this, environmentId, own](const QJsonObject& result) {
+  const quint64 request = ++m_linkRequest;
+  change(environmentId, QStringLiteral("hal-c2.createPairingLink"), payload, [this, environmentId, own, request](const QJsonObject& result) {
     const QString code = result.value(QLatin1String("credential")).toString();
     const QString id = result.value(QLatin1String("id")).toString();
+    // The page was left since, or asked for another link: this one would be
+    // shown to nobody, or on a visit that did not ask for it.
+    if (request != m_linkRequest) {
+      discard(environmentId, id);
+      publish();
+      return;
+    }
     // The MC says where it is reached. One from before it did is reached where
     // this shell reached it, which says nothing of another machine.
     QString address = result.value(QLatin1String("address")).toString();
@@ -262,9 +272,8 @@ void ConnectionsController::createPairingLink(const QVariantMap& input) {
     }
     const QString machine = NativeShell::of(this)->controller<SettingsScopeController>()->label(environmentId);
     if (address.isEmpty()) {
-      // No one can use a link with no address: it is not left behind.
-      m_client->call(this, environmentId, QStringLiteral("hal-c2.revokePairingLink"), QJsonObject{{QStringLiteral("id"), id}},
-                     [](const QJsonValue&, const std::optional<QString>&) {});
+      // No one can use a link with no address.
+      discard(environmentId, id);
       setNotice(QStringLiteral("error"),
                 QStringLiteral("Could not create the pairing URL: %1 did not say where it can be reached. Update HAL-C2 on it.").arg(machine));
       return;
@@ -288,6 +297,11 @@ void ConnectionsController::createPairingLink(const QVariantMap& input) {
                    });
     setNotice(QStringLiteral("success"), QStringLiteral("Pairing link created. Copy it now: it is shown only while this page is open."));
   }, QStringLiteral("Could not create the pairing URL"));
+}
+
+void ConnectionsController::discard(const QString& environmentId, const QString& id) {
+  m_client->call(this, environmentId, QStringLiteral("hal-c2.revokePairingLink"), QJsonObject{{QStringLiteral("id"), id}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
 }
 
 void ConnectionsController::change(const QString& environmentId, const QString& method, const QJsonObject& payload,

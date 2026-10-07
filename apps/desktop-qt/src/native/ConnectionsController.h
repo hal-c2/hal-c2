@@ -29,6 +29,8 @@ class ShellStore;
 // `connections.pairingLink.create {label, scopes, environmentId, tailscale}`
 // asks the machine named (the shell's own MC when none is) for the link, over
 // Tailscale Serve when asked; the MC answers with the address it is reached at.
+// A link that arrives after the page closed, or after another was asked for, is
+// revoked on its machine instead of shown.
 // The page shows while the route is the settings section
 // "/settings/connections" (NavigationController takes connections.open and
 // connections.close). Managing access needs an administrative session; the
@@ -51,6 +53,9 @@ private:
   void onAccess(const QJsonObject& frame);
   void publishAccess();
   void createPairingLink(const QVariantMap& input);
+  // Revokes a link nobody can use on the machine that made it, saying nothing:
+  // it is not left behind.
+  void discard(const QString& environmentId, const QString& id);
   // Reads the machines a pairing link can be for; true when they changed.
   bool readMachines();
   // Calls `method` on the MC of `environmentId`.
@@ -68,6 +73,9 @@ private:
   QJsonArray m_pairingLinks;
   QJsonArray m_clients;
   int m_accessSubscription = -1;
+  // The pairing link the page last asked for, counted; closing the page counts
+  // too, so the answer to any other request is discarded.
+  quint64 m_linkRequest = 0;
   bool m_active = false;
   bool m_open = false;
   std::function<bool(const QString& text)> m_copy;

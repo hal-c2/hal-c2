@@ -260,6 +260,26 @@ Feature: Connections settings
       And no pairing link is shown
       And a device can no longer pair with it
 
+    # A link's secret is shown only while the page that asked for it stays open. One that
+    # arrives after the user left can be used by nobody, on that visit or the next, and for
+    # another machine it is not in this machine's list either: its machine takes it back.
+    @desktop
+    Scenario Outline: A pairing link that arrives after the user left the page is revoked, not shown
+      Given the cluster also has the machine "Studio"
+      And the MC holds its answers
+      When the user asks for a pairing link for "Studio"
+      And the user leaves the Connections page
+      And <first>
+      And <then>
+      Then no pairing link is shown
+      And "Studio" is asked to revoke it
+      And a device can no longer pair with it
+
+      Examples:
+        | first                                       | then                                        |
+        | the MC answers                              | the user comes back to the Connections page |
+        | the user comes back to the Connections page | the MC answers                              |
+
     # A device paired with another machine of the cluster is that machine's client, and
     # the MC answers the access list and client revocation only for the machine the session
     # is on (hal-c2.clients and hal-c2.revokeClient refuse with "session_on_another_mc").
