@@ -24,6 +24,8 @@ defmodule HalC2Plugins.CodeReview do
   @tool "code_review_report"
   @modes ~w(local draft automatic)
   @verdicts ~w(approve comment request-changes)
+  # The most of a repository's REVIEW.md that goes into the prompt; a longer one is left out.
+  @review_md_limit 64 * 1024
   @choices %{
     "activation" => ~w(automatic selective),
     "display" => ~w(page threads both),
@@ -803,10 +805,8 @@ defmodule HalC2Plugins.CodeReview do
 
     review_md =
       if settings["readReviewMd"] do
-        case File.read(Path.join(checkout["path"], "REVIEW.md")) do
-          {:ok, text} -> if String.trim(text) != "", do: text
-          _ -> nil
-        end
+        text = Checkout.read(checkout["path"], checkout["headSha"], "REVIEW.md", @review_md_limit)
+        if text && String.trim(text) != "", do: text
       end
 
     [

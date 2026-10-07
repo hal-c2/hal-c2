@@ -383,6 +383,35 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     put_in(context, [:heads, number], head)
   end
 
+  step "the head of \#{int} has a REVIEW.md that links to a file outside its repository",
+       %{args: [number]} = context do
+    outside = Path.join(context.mc.home, "outside.md")
+    File.write!(outside, "outside the checkout\n")
+    source = context.source
+    World.git!(source, ~w(fetch -q origin))
+    World.git!(source, ~w(checkout -q --detach origin/main))
+    File.ln_s!(outside, Path.join(source, "REVIEW.md"))
+    File.mkdir_p!(Path.join(source, "src"))
+    File.write!(Path.join(source, "src/limits.ts"), @limits)
+    World.git!(source, ~w(add REVIEW.md src/limits.ts))
+    World.git!(source, ["commit", "-q", "-m", "Pull request #{number}"])
+    World.git!(source, ["push", "-q", "--force", "origin", "HEAD:refs/pull/#{number}/head"])
+    put_in(context, [:heads, number], World.git!(source, ~w(rev-parse HEAD)))
+  end
+
+  step "the head of \#{int} has a REVIEW.md that is longer than a prompt takes",
+       %{args: [number]} = context do
+    text = "a very long REVIEW.md\n" <> String.duplicate("Check everything.\n", 4000)
+    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
+    put_in(context, [:heads, number], head)
+  end
+
+  step "the agent's prompt does not include {string}", %{args: [text]} = context do
+    prompt = prompt(context.thread)
+    refute prompt =~ text, prompt
+    context
+  end
+
   step "the user changed the review prompt template", context do
     save(context, %{"prompt" => "Look hard at {{pr.title}}. answer from gate"})
   end

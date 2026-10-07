@@ -47,6 +47,22 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   @doc """
+  The text of `file` at commit `sha` in the checkout at `path`, or nil when the commit
+  has no such regular file or it is over `limit` bytes. It is read from git rather than
+  the worktree: the pull request decides what the worktree holds, links included.
+  """
+  def read(path, sha, file, limit) do
+    with {:ok, entry} <- git(path, ["ls-tree", "-l", sha, "--", file]),
+         [mode, "blob", object, size | _] when mode in ~w(100644 100755) <- String.split(entry),
+         true <- String.to_integer(size) <= limit,
+         {:ok, text} <- git(path, ["cat-file", "blob", object]) do
+      text
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
   The lines of the change `from`..`to` in the checkout at `path` a review comment
   can sit on, as `%{path => %{{side, line} => kind}}`: `side` is `"new"` or `"old"`
   and `kind` is `"added"`, `"deleted"` or `"context"`.

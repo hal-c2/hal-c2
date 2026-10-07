@@ -130,6 +130,18 @@ Feature: Agent code review
       Then the agent's prompt includes "Check the changelog"
 
     @mc
+    Scenario Outline: A REVIEW.md the prompt cannot take is left out of it
+      Given "code-review" reads REVIEW.md
+      And the head of #12 has a REVIEW.md that <is>
+      When #12 is reviewed
+      Then the agent's prompt does not include "<text>"
+
+      Examples:
+        | is                                          | text                  |
+        | links to a file outside its repository      | outside the checkout  |
+        | is longer than a prompt takes               | a very long REVIEW.md |
+
+    @mc
     Scenario: The prompt template can be reset to the plugin's default
       Given the user changed the review prompt template
       When the user resets the review prompt
