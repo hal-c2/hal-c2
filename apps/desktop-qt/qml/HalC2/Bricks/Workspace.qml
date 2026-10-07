@@ -141,7 +141,11 @@ Rectangle {
                 objectName: "titleSlot"
 
                 property bool editing: false
+                // The request already answered: one made before this strip
+                // was (in a layout without one) is not its to answer.
                 property int handledRenameRequest: 0
+
+                Component.onCompleted: handledRenameRequest = strip.ready ? strip.model.renameRequestId : 0
 
                 function startEditing() {
                     editing = true;
