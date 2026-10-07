@@ -66,7 +66,7 @@ Item {
 
     function ask(environment) {
         page.answer = "";
-        page.plugin.call("reviews", {}, (result, error) => page.answer = error ? "error: " + error : result.from, environment || undefined);
+        page.plugin.call("reviews", { state: "failed" }, (result, error) => page.answer = error ? "error: " + error : result.from, environment || undefined);
     }
 
     function watchAgain(topic) {
@@ -728,7 +728,8 @@ const Steps steps([] {
     world.waitFor([&] { return page->property("answer") == QStringLiteral("Reviews on %1").arg(world.mc.environmentId); },
                   [&] { return QStringLiteral("the answer; the page has %1").arg(page->property("answer").toString()); });
     const FakeMc::Rpc call = callsOf(world, QStringLiteral("plugins.call")).value(0);
-    expect(call.payload.value(QLatin1String("id")) == c[0] && call.payload.value(QLatin1String("method")) == QLatin1String("reviews"),
+    expect(call.payload.value(QLatin1String("id")) == c[0] && call.payload.value(QLatin1String("method")) == QLatin1String("reviews") &&
+               call.payload.value(QLatin1String("input")) == QJsonObject{{QStringLiteral("state"), QStringLiteral("failed")}},
            QStringLiteral("the MC was asked %1").arg(show(call.payload)));
   });
   step(QStringLiteral("the %1 page watches the %1 topic").arg(q), [](World& world, const Captures& c, const Table&) {

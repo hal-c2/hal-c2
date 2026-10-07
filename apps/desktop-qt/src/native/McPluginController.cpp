@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJSValue>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTimer>
@@ -323,8 +324,10 @@ int McPluginController::ask(const QString& environment, const QString& method, c
 }
 
 int McPluginController::call(const QString& environment, const QString& id, const QString& method, const QVariant& input) {
+  // A JS object comes as a QJSValue, which QJsonValue cannot read.
+  const QVariant plain = input.metaType() == QMetaType::fromType<QJSValue>() ? input.value<QJSValue>().toVariant() : input;
   return ask(environment, QStringLiteral("plugins.call"),
-             {{QStringLiteral("id"), id}, {QStringLiteral("method"), method}, {QStringLiteral("input"), QJsonValue::fromVariant(input)}});
+             {{QStringLiteral("id"), id}, {QStringLiteral("method"), method}, {QStringLiteral("input"), QJsonValue::fromVariant(plain)}});
 }
 
 int McPluginController::saveSettings(const QString& environment, const QString& id, const QVariantMap& settings) {
