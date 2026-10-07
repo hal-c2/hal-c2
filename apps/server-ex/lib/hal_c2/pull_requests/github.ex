@@ -359,7 +359,8 @@ defmodule HalC2.PullRequests.GitHub do
     said = String.downcase(err <> "\n" <> out)
 
     detail =
-      (first_line(err) || first_line(out) || "gh failed.") |> String.replace_prefix("gh: ", "")
+      (api_error(err) || first_line(err) || first_line(out) || "gh failed.")
+      |> String.replace_prefix("gh: ", "")
 
     cond do
       String.contains?(said, [
@@ -2268,6 +2269,17 @@ defmodule HalC2.PullRequests.GitHub do
 
   defp up(value) when is_binary(value), do: value |> String.trim() |> String.upcase()
   defp up(_), do: nil
+
+  # `gh api` puts GitHub's message and each of its `errors` on a line of their own,
+  # the last ending in `(HTTP 422)`; the reason is usually in the later lines.
+  defp api_error(err) do
+    lines = err |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    case Enum.split_while(lines, &(not (&1 =~ ~r/\(HTTP \d{3}\)$/))) do
+      {["gh: " <> _ | _] = before, [last | _]} -> Enum.join(before ++ [last], ": ")
+      _ -> nil
+    end
+  end
 
   defp first_line(text) do
     text |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.find(&(&1 != ""))
