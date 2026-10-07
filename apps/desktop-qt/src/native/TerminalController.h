@@ -180,8 +180,13 @@ private:
 // most four to a group. A group made for the right panel (addPanelGroup) is
 // shown in a `terminal:<group>` tab and never in the drawer; the drawer shows
 // every other group, one tab each. Ids are shared: at most six per thread.
+//
+// A build without the terminal's QML module (`setSupported(false)`) has no
+// terminals at all: `supported` is the one thing the bricks and the other
+// controllers ask before they offer, open or draw one.
 class TerminalController : public QObject, public NativeController {
   Q_OBJECT
+  Q_PROPERTY(bool supported READ supported CONSTANT)
   Q_PROPERTY(bool available READ available NOTIFY changed)
   Q_PROPERTY(bool open READ isOpen NOTIFY changed)
   Q_PROPERTY(int height READ height NOTIFY changed)
@@ -202,6 +207,15 @@ public:
   static constexpr int maxParkedThreads = 10;
 
   TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
+
+  // Whether this build can draw a terminal (the bricks' Ghostty module is
+  // linked in). The app says so once, before any window; the desktop always can.
+  static void setSupported(bool supported);
+  static bool supported();
+  // Whether the window's layout has anywhere to draw a terminal. A layout
+  // without a drawer or a panel (a phone's) says no, and the thread then has
+  // no place for one, so no command opens a shell nobody can see.
+  void setDrawn(bool drawn);
 
   void activate() override;
   bool isActive() const { return m_active; }
@@ -297,6 +311,7 @@ private:
   ShellBridge* m_bridge;
   McClient* m_client;
   bool m_active = false;
+  bool m_drawn = true;
   QString m_threadKey;
   std::optional<TerminalPlace> m_place;
   // Whether the thread on screen has its terminals attached.

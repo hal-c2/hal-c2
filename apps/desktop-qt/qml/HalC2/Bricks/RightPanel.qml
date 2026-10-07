@@ -243,6 +243,9 @@ Rectangle {
                     ShellMenuItem {
                         text: qsTr("Terminal")
                         iconName: "terminal"
+                        // Not offered by a build without a terminal.
+                        visible: Terminals.supported
+                        height: visible ? implicitHeight : 0
                         enabled: panel.open && panel.model.canAdd.terminal === true
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "terminal"

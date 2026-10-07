@@ -25,6 +25,8 @@ namespace {
 // The drawer reads it as the `Terminals` singleton.
 const NativeControllerRegistrar<TerminalController> registrar(QStringLiteral("terminals"), {}, "Terminals");
 
+bool g_supported = true;
+
 // TerminalWriteInput's limit.
 constexpr qsizetype kMaxWrite = 65536;
 // What the transcript keeps for a late Terminal, as the other clients cap their
@@ -457,6 +459,20 @@ QStringList TerminalController::panelGroups(const QString& threadKey) const {
   return groups;
 }
 
+void TerminalController::setSupported(bool supported) {
+  g_supported = supported;
+}
+
+bool TerminalController::supported() {
+  return g_supported;
+}
+
+void TerminalController::setDrawn(bool drawn) {
+  if (drawn == m_drawn) return;
+  m_drawn = drawn;
+  refresh();
+}
+
 bool TerminalController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap args = payload.toMap();
@@ -514,6 +530,8 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
 // Where the route's thread (a draft too) runs its terminals: its project root,
 // worktree and scripts.
 std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
+  // No terminal in this build, or nowhere in the layout to draw one: no thread has a place for it.
+  if (!supported() || !m_drawn) return std::nullopt;
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->place()) return std::nullopt;
   const WorkspaceController::Place& at = *workspace->place();
@@ -936,6 +954,10 @@ void TerminalController::followLink(const QString& kind, const QString& text, co
 }
 
 bool TerminalController::runScript(const QString& scriptId) {
+  if (!supported()) {
+    toast(QStringLiteral("This build of HAL-C2 has no terminal"), QStringLiteral("Project actions run in one. Run it from HAL-C2 on a computer."));
+    return false;
+  }
   if (!m_active || !m_place) return false;
   QJsonObject script;
   for (const QJsonValue& value : std::as_const(m_place->scripts)) {

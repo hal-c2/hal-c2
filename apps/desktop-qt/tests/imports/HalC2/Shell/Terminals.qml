@@ -8,6 +8,8 @@ import QtQuick
 QtObject {
     id: terminals
 
+    // Whether the build has a terminal at all; the desktop's always does.
+    readonly property bool supported: true
     property bool available: false
     property bool open: false
     property int height: 280

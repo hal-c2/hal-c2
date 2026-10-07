@@ -419,7 +419,7 @@ QVariantMap OnboardingController::agents() const {
           {QStringLiteral("headline"), summary.first},
           {QStringLiteral("detail"), summary.second},
           {QStringLiteral("terminalOpen"), m_setup && m_setup->environmentId == id && m_setup->driver == driver},
-          {QStringLiteral("terminalAvailable"), !config.isEmpty()},
+          {QStringLiteral("terminalAvailable"), !config.isEmpty() && TerminalController::supported()},
       });
     }
     computers.append(QVariantMap{{QStringLiteral("environmentId"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("cards"), cards}});
@@ -430,6 +430,7 @@ QVariantMap OnboardingController::agents() const {
 // Install or sign in: a terminal on the computer, run as the provider
 // instance, with the command typed but not run.
 void OnboardingController::openSetup(const QString& environmentId, const QString& driver) {
+  if (!TerminalController::supported()) return;
   if (!m_setupIds.contains(environmentId) || !kDrivers.contains(driver)) return;
   const QJsonObject config = m_configs.value(environmentId).config;
   if (config.isEmpty()) return;
