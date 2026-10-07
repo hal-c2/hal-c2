@@ -56,9 +56,14 @@ Feature: Attaching images and files to a message
     Then a clipboard image is attached to the draft
 
   @desktop
-  Scenario: A copied picture pasted into the prompt is attached
-    When the user pastes a copied picture into the prompt
+  Scenario Outline: A copied picture pasted into the prompt is attached
+    When the user pastes a copied picture into the prompt with <keys>
     Then the draft carries "image.png"
+
+    Examples:
+      | keys         |
+      | mod+v        |
+      | shift+insert |
 
   @desktop
   Scenario Outline: A file copied in a file manager pasted into the prompt is attached

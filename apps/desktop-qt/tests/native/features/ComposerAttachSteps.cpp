@@ -296,12 +296,12 @@ const Steps steps([] {
            QStringLiteral("the draft reads \"%1\" with %2").arg(draftText(world), carried(world).join(u", ")));
   });
 
-  step(QStringLiteral("the user pastes a copied picture into the prompt"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user pastes a copied picture into the prompt with (\\S+)"), [](World& world, const Captures& c, const Table&) {
     composerBrick(world);
     QImage picture(4, 4, QImage::Format_RGB32);
     picture.fill(Qt::red);
     QGuiApplication::clipboard()->setImage(picture);
-    expect(pressInComposer(world, QStringLiteral("mod+v")), QStringLiteral("the composer did not take the paste"));
+    expect(pressInComposer(world, c[0]), QStringLiteral("the composer did not take the paste"));
   });
 
   // As a file manager copies a file: its address, and maybe some form of it as text.

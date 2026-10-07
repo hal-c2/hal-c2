@@ -508,7 +508,7 @@ bool pressInComposer(World& world, const QString& key) {
       {QStringLiteral("enter"), Qt::Key_Return}, {QStringLiteral("return"), Qt::Key_Return}, {QStringLiteral("escape"), Qt::Key_Escape},
       {QStringLiteral("esc"), Qt::Key_Escape},   {QStringLiteral("up"), Qt::Key_Up},         {QStringLiteral("down"), Qt::Key_Down},
       {QStringLiteral("left"), Qt::Key_Left},    {QStringLiteral("right"), Qt::Key_Right},   {QStringLiteral("backspace"), Qt::Key_Backspace},
-      {QStringLiteral("tab"), Qt::Key_Tab}};
+      {QStringLiteral("tab"), Qt::Key_Tab},        {QStringLiteral("insert"), Qt::Key_Insert}};
   if (lower == QLatin1String("tab") && (modifiers & Qt::ShiftModifier)) {
     QTest::keyClick(&brick.window(), Qt::Key_Backtab, modifiers);
   } else if (named.contains(lower)) {
