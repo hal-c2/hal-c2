@@ -177,6 +177,26 @@ defmodule HalC2.CodeReviewTest do
     assert head == context.shas[1]
   end
 
+  test "a push while the checkout of a review is fetched leaves the review at the head it saw last",
+       context do
+    hold = Path.join(context.dir, "fetch.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    second = context.shas[2]
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    {:ok, _} = call("refresh", %{})
+    await_look()
+    assert %{"status" => "running", "headSha" => ^second} = review()
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "running", "reviewedSha" => ^second, "headSha" => ^second} = review()
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   defp start_review do
@@ -223,6 +243,19 @@ defmodule HalC2.CodeReviewTest do
         Enum.each(refs, &Process.demonitor(&1, [:flush]))
         settle()
     end
+  end
+
+  # Returns once the look for pull requests under way, if any, is applied.
+  defp await_look do
+    pid = Process.whereis(@server)
+
+    with %{polling: polling} when polling != nil <- :sys.get_state(pid),
+         {:monitors, [{:process, look} | _]} <- Process.info(pid, :monitors) do
+      ref = Process.monitor(look)
+      assert_receive {:DOWN, ^ref, :process, _, _}, 15_000
+    end
+
+    :sys.get_state(pid)
   end
 
   defp await_file(path) do
@@ -303,6 +336,11 @@ defmodule HalC2.CodeReviewTest do
 
     git!(seed, ["push", "-q", bare, "#{shas[2]}:refs/fixtures/2", "#{shas[1]}:refs/pull/1/head"])
     shas
+  end
+
+  defp push!(context, i) do
+    bare = Path.join(context.dir, "remotes/acme/api.git")
+    git!(context.dir, ["--git-dir", bare, "update-ref", "refs/pull/1/head", context.shas[i]])
   end
 
   defp git!(dir, args) do

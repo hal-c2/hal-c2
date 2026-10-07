@@ -414,7 +414,12 @@ defmodule HalC2Plugins.CodeReview do
   def handle_cast({:started, key, thread_id, checkout}, state) do
     case state.reviews[key] do
       %{"threadId" => ^thread_id} = review ->
-        review = Map.merge(review, checkout)
+        # A look while the checkout was fetched saw a newer head than the run began with.
+        review = Map.merge(review, checkout, fn
+          "headSha", seen, fetched -> seen || fetched
+          _, _, value -> value
+        end)
+
         {:noreply, state |> put(review) |> changed()}
 
       _ ->
@@ -753,7 +758,7 @@ defmodule HalC2Plugins.CodeReview do
              "root" => project["root"],
              "mergeBase" => checkout["mergeBase"],
              "reviewedSha" => checkout["headSha"],
-             "headSha" => review["headSha"] || checkout["headSha"]
+             "headSha" => checkout["headSha"]
            }}
         )
 
