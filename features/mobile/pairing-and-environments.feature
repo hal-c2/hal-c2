@@ -114,6 +114,35 @@ Feature: Pairing a phone with environments
     When the user switches to another app and back
     Then the scanner is looking again
 
+  # New behaviour, the next three: the React Native app showed an empty preview for a camera that
+  # gave no picture.
+  @mobile
+  Scenario Outline: A camera that gives no picture is explained
+    Given the user has allowed camera access
+    And <trouble>
+    When the user chooses to scan a pairing code
+    Then the user is told <explanation>
+    And the camera is off
+
+    Examples:
+      | trouble                         | explanation               |
+      | another app is using the camera | the camera cannot be used |
+      | the device has no camera        | the device has no camera  |
+
+  @mobile
+  Scenario: A camera that stops while scanning is explained
+    Given the user is scanning for a pairing code
+    When another app takes the camera
+    Then the user is told the camera cannot be used
+    And the camera is off
+
+  @mobile
+  Scenario: The user tries a camera that stopped again without leaving the scanner
+    Given the user is scanning for a pairing code
+    And another app has taken the camera
+    When the user tries the camera again
+    Then the scanner is looking again
+
   @mobile
   Scenario: Pasting a pairing link adds the environment
     When the user enters a pairing link that carries a token

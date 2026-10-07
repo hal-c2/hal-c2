@@ -159,7 +159,36 @@ const Steps steps([] {
   });
 
   step(S("the camera is off"), [](World& world, const Captures&, const Table&) {
-    expect(!world.camera->running(), S("the camera is running; the scanner is %1").arg(show(scanner(world))));
+    expect(!world.camera->inUse(), S("the app still has the camera; the scanner is %1").arg(show(scanner(world))));
+  });
+
+  step(S("the user has allowed camera access"), [](World& world, const Captures&, const Table&) { world.camera->held = ScanCamera::Access::Granted; });
+
+  step(S("another app is using the camera"), [](World& world, const Captures&, const Table&) { world.camera->fault = ScanCamera::Failure::Stopped; });
+
+  step(S("the device has no camera"), [](World& world, const Captures&, const Table&) { world.camera->fault = ScanCamera::Failure::NoCamera; });
+
+  step(S("another app (?:takes|has taken) the camera"), [](World& world, const Captures&, const Table&) {
+    world.camera->fail();
+    world.item(S("scanFailed"));
+  });
+
+  step(S("the user is told (the camera cannot be used|the device has no camera)"), [](World& world, const Captures& c, const Table&) {
+    const QString said = world.item(S("scanFailed"))->property("text").toString();
+    expect(said.startsWith(c[0] == QLatin1String("the device has no camera") ? S("This device has no camera.") : S("The camera cannot be used right now.")),
+           S("the screen says: %1").arg(screenTexts(world)));
+    expectOnScreen(world, S("scanFailed"));
+    // In the place of a preview with nothing in it, and of what to point the camera at.
+    expect(world.find(S("scanPreview")) == nullptr && world.find(S("scanMessage")) == nullptr, S("the screen says: %1").arg(screenTexts(world)));
+    // The way back to entering the link is still there.
+    expectOnScreen(world, S("back"));
+  });
+
+  // The other app has let go of it by now.
+  step(S("the user tries the camera again"), [](World& world, const Captures&, const Table&) {
+    world.camera->fault.reset();
+    expectOnScreen(world, S("scanRetry"));
+    world.tap(S("scanRetry"));
   });
 
   step(S("the scanner is looking again"), [](World& world, const Captures&, const Table&) {

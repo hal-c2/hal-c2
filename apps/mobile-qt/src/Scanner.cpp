@@ -46,6 +46,8 @@ bool Scanner::handle(const QString& action, const QVariant& payload) {
     preview(qobject_cast<QVideoSink*>(payload.toMap().value(QStringLiteral("sink")).value<QObject*>()));
   } else if (action == QLatin1String("scanner.settings")) {
     m_camera->openSettings();
+  } else if (action == QLatin1String("scanner.retry")) {
+    retry();
   } else {
     return false;
   }
@@ -55,8 +57,6 @@ bool Scanner::handle(const QString& action, const QVariant& payload) {
 void Scanner::open() {
   if (m_open) return;
   m_open = true;
-  m_failed = false;
-  m_message.clear();
   m_access = m_camera->access();
   // Asked whenever the app does not have it: only the system knows whether
   // it will still put the question, and it answers at once when it will not.
@@ -74,8 +74,28 @@ void Scanner::open() {
 void Scanner::close() {
   if (!m_open) return;
   m_open = false;
+  m_failed = false;
   m_message.clear();
   update();
+}
+
+void Scanner::retry() {
+  if (!m_open || !m_failed) return;
+  m_failed = false;
+  m_message.clear();
+  update();
+}
+
+void Scanner::failed(ScanCamera::Failure why) {
+  // The camera's to let go of, for whichever app has it now; what a frame
+  // from before held is dropped with it (found).
+  m_camera->stop();
+  m_running = false;
+  m_failed = true;
+  m_message = why == ScanCamera::Failure::NoCamera
+                  ? tr("This device has no camera. Go back and enter the pairing link instead.")
+                  : tr("The camera cannot be used right now. Another app may be using it: close that app and try again, or go back and enter the pairing link.");
+  publish();
 }
 
 void Scanner::preview(QVideoSink* sink) {
@@ -98,11 +118,8 @@ void Scanner::preview(QVideoSink* sink) {
 void Scanner::update() {
   const bool wanted = m_open && !m_failed && m_access == ScanCamera::Access::Granted && m_sink && qGuiApp->applicationState() == Qt::ApplicationActive;
   if (wanted && !m_running) {
-    m_running = m_camera->start(m_sink);
-    if (!m_running) {
-      m_failed = true;
-      m_message = tr("The camera could not be started. Enter the pairing link instead.");
-    }
+    m_running = true;
+    m_camera->start(m_sink, this, [this](ScanCamera::Failure why) { failed(why); });
   } else if (!wanted && m_running) {
     m_camera->stop();
     m_running = false;
@@ -136,7 +153,8 @@ void Scanner::publish() {
                          : m_access == ScanCamera::Access::Granted ? QStringLiteral("granted")
                          : m_access == ScanCamera::Access::Denied  ? QStringLiteral("denied")
                                                                    : QStringLiteral("unknown");
-  const QVariantMap state{{QStringLiteral("open"), m_open}, {QStringLiteral("access"), access}, {QStringLiteral("message"), m_message}};
+  const QVariantMap state{
+      {QStringLiteral("open"), m_open}, {QStringLiteral("access"), access}, {QStringLiteral("failed"), m_failed}, {QStringLiteral("message"), m_message}};
   if (state == m_published) return;
   m_published = state;
   m_bridge->publish(kKey, state);

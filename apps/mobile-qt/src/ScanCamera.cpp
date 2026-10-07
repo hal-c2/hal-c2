@@ -7,6 +7,7 @@
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
 #include <QPermissions>
+#include <QPointer>
 #include <QVideoSink>
 #include <QtLogging>
 
@@ -29,6 +30,9 @@ ScanCamera::Access accessFor(Qt::PermissionStatus status) {
   return ScanCamera::Access::Undetermined;
 }
 
+// Only for an app that may use the camera: Qt's backend over Android's
+// camera opens each one to list its formats, and keeps the list it made, so
+// one made before the user allowed the camera has no formats for good.
 QCameraDevice cameraToScanWith() {
   const QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
   for (const QCameraDevice& camera : cameras) {
@@ -61,25 +65,45 @@ public:
     });
   }
 
-  bool start(QVideoSink* sink) override {
+  void start(QVideoSink* sink, QObject* context, std::function<void(Failure)> failed) override {
     stop();
+    // Passed on through the event loop, and dropped when the camera was
+    // stopped or started again meanwhile. Qt's backend over Android's camera
+    // reports one it cannot open before QCamera::start() has returned, and
+    // whoever is told stops the camera, which is not to be done from inside
+    // its own signal.
+    const auto fail = [this, run = m_run, context = QPointer<QObject>(context), failed = std::move(failed)](Failure why) {
+      if (!context) return;
+      QMetaObject::invokeMethod(
+          context,
+          [this, run, why, failed] {
+            if (run != m_run) return;
+            ++m_run;
+            failed(why);
+          },
+          Qt::QueuedConnection);
+    };
     const QCameraDevice device = cameraToScanWith();
-    if (device.isNull()) return false;
+    if (device.isNull()) return fail(Failure::NoCamera);
     // Made when first wanted: the session loads Qt Multimedia's backend.
     m_session = std::make_unique<QMediaCaptureSession>();
     m_camera = std::make_unique<QCamera>(device);
-    QObject::connect(m_camera.get(), &QCamera::errorOccurred, m_camera.get(), [](QCamera::Error, const QString& said) {
+    // QCamera::start() returns nothing and isActive() holds for a camera
+    // that could not be opened: this signal is all that tells of one.
+    QObject::connect(m_camera.get(), &QCamera::errorOccurred, m_camera.get(), [fail](QCamera::Error error, const QString& said) {
+      if (error == QCamera::NoError) return;
       qWarning("[scanner] camera: %s", qPrintable(said));
+      fail(Failure::Stopped);
     });
     const QCameraFormat format = formatToScanWith(device);
     if (!format.isNull()) m_camera->setCameraFormat(format);
     m_session->setCamera(m_camera.get());
     m_session->setVideoSink(sink);
     m_camera->start();
-    return true;
   }
 
   void stop() override {
+    ++m_run;
     if (!m_camera) return;
     m_camera->stop();
     m_session.reset();
@@ -103,6 +127,9 @@ public:
 private:
   std::unique_ptr<QMediaCaptureSession> m_session;
   std::unique_ptr<QCamera> m_camera;
+  // Moves on with each stop and each failure told: a failure from before
+  // either is nobody's.
+  quint64 m_run = 0;
 };
 
 }  // namespace

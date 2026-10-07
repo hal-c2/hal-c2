@@ -22,6 +22,10 @@ namespace {
 
 const QString kLink = QStringLiteral("https://devbox.tailnet.ts.net/pair#token=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA");
 
+// What the scanner says of a camera that did not start, or stopped.
+const QString kCameraStopped =
+    QStringLiteral("The camera cannot be used right now. Another app may be using it: close that app and try again, or go back and enter the pairing link.");
+
 void appState(Qt::ApplicationState state) {
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(state);
 }
@@ -46,6 +50,7 @@ public:
   QString access() const { return state().value(QStringLiteral("access")).toString(); }
   QString message() const { return state().value(QStringLiteral("message")).toString(); }
   bool open() const { return state().value(QStringLiteral("open")).toBool(); }
+  bool failed() const { return state().value(QStringLiteral("failed")).toBool(); }
   void dispatch(const QString& action, const QVariantMap& payload = {}) { bridge.dispatch(action, payload); }
   // The screen comes up with its preview, as ScanScreen.qml does.
   void showPreview() { dispatch(QStringLiteral("scanner.preview"), {{QStringLiteral("sink"), QVariant::fromValue<QObject*>(sink.get())}}); }
@@ -286,25 +291,123 @@ private slots:
     QCOMPARE(device.paired, QStringList());
   }
 
+  // A camera says only later that it did not start: the scanner then lets
+  // go of it and says so, in the place of a preview with nothing in it.
   void aCameraThatDoesNotStartSaysSo() {
     Device device;
     device.camera->held = ScanCamera::Access::Granted;
-    device.camera->broken = true;
+    device.camera->fault = ScanCamera::Failure::Stopped;
     device.dispatch(QStringLiteral("scanner.open"));
     device.showPreview();
-    QVERIFY(!device.camera->running());
-    QVERIFY2(device.message().startsWith(QStringLiteral("The camera could not be started.")), qPrintable(device.message()));
+    // The camera has been started, and has yet to say how that went.
+    QVERIFY(device.camera->inUse());
+    QCOMPARE(device.failed(), false);
+    QVERIFY(device.waitUntil([&] { return device.failed(); }));
+    QCOMPARE(device.message(), kCameraStopped);
+    QCOMPARE(device.open(), true);
+    QVERIFY(!device.camera->inUse());
     QCOMPARE(device.camera->attempts, 1);
     // Not tried over and over.
     appState(Qt::ApplicationInactive);
     appState(Qt::ApplicationActive);
     QCOMPARE(device.camera->attempts, 1);
-    // The user's next try is one.
+
+    // The user's own try is one, and says the same of a camera that still does not start.
+    device.dispatch(QStringLiteral("scanner.retry"));
+    QCOMPARE(device.camera->attempts, 2);
+    QCOMPARE(device.failed(), false);
+    QCOMPARE(device.message(), QString());
+    QVERIFY(device.waitUntil([&] { return device.failed(); }));
+    QCOMPARE(device.message(), kCameraStopped);
+    QVERIFY(!device.camera->inUse());
+
+    // The other app lets go of it: the next try scans.
+    device.camera->fault.reset();
+    device.dispatch(QStringLiteral("scanner.retry"));
+    QVERIFY(device.camera->running());
+    QCOMPARE(device.failed(), false);
+    QCOMPARE(device.message(), QString());
+    device.camera->show(camera::sees(kLink));
+    QVERIFY(device.waitUntil([&] { return !device.paired.isEmpty(); }));
+    QCOMPARE(device.paired, QStringList{kLink});
+  }
+
+  // Leaving the scanner and opening it again is a try as well.
+  void reopeningTriesACameraThatFailedAgain() {
+    Device device;
+    device.camera->held = ScanCamera::Access::Granted;
+    device.camera->fault = ScanCamera::Failure::Stopped;
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    QVERIFY(device.waitUntil([&] { return device.failed(); }));
     device.dispatch(QStringLiteral("scanner.close"));
-    device.camera->broken = false;
+    QCOMPARE(device.failed(), false);
+    QCOMPARE(device.message(), QString());
+    // Nothing to try again with the scanner closed.
+    device.dispatch(QStringLiteral("scanner.retry"));
+    QCOMPARE(device.camera->attempts, 1);
+
+    device.camera->fault.reset();
     device.dispatch(QStringLiteral("scanner.open"));
     QVERIFY(device.camera->running());
+    QCOMPARE(device.failed(), false);
+  }
+
+  // A camera that stops while it scans (another app takes it, it is
+  // unplugged) is let go of and said to have stopped.
+  void aCameraThatStopsWhileScanningSaysSo() {
+    Device device;
+    device.camera->held = ScanCamera::Access::Granted;
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    QVERIFY(device.camera->running());
+    // A frame of a pairing code is being read as it stops.
+    device.camera->show(camera::sees(kLink));
+    device.camera->fail();
+    QCOMPARE(device.failed(), true);
+    QCOMPARE(device.message(), kCameraStopped);
+    QCOMPARE(device.open(), true);
+    QVERIFY(!device.camera->inUse());
+    // What that frame held pairs with nothing: the user is reading why the camera stopped.
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(10000));
+    QCoreApplication::processEvents();
+    QCOMPARE(device.paired, QStringList());
+    QCOMPARE(device.failed(), true);
+
+    device.dispatch(QStringLiteral("scanner.retry"));
+    QVERIFY(device.camera->running());
+    QCOMPARE(device.failed(), false);
     QCOMPARE(device.message(), QString());
+    QCOMPARE(device.camera->starts, 2);
+  }
+
+  // A failure on its way when the scanner closed is not said of the next camera.
+  void aFailureFromBeforeClosingIsDropped() {
+    Device device;
+    device.camera->held = ScanCamera::Access::Granted;
+    device.camera->fault = ScanCamera::Failure::Stopped;
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    device.dispatch(QStringLiteral("scanner.close"));
+    device.camera->fault.reset();
+    device.dispatch(QStringLiteral("scanner.open"));
+    QVERIFY(device.camera->running());
+    QCoreApplication::processEvents();
+    QCOMPARE(device.failed(), false);
+    QVERIFY(device.camera->running());
+  }
+
+  // A device with no camera says that, and not that one failed.
+  void aDeviceWithNoCameraSaysSo() {
+    Device device;
+    device.camera->held = ScanCamera::Access::Granted;
+    device.camera->fault = ScanCamera::Failure::NoCamera;
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    QVERIFY(device.waitUntil([&] { return device.failed(); }));
+    QCOMPARE(device.message(), QStringLiteral("This device has no camera. Go back and enter the pairing link instead."));
+    QVERIFY(!device.camera->inUse());
+    QCOMPARE(device.camera->attempts, 1);
   }
 };
 

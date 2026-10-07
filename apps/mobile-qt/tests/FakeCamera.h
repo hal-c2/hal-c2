@@ -2,8 +2,9 @@
 
 // The camera the phone's tests scan with (tst_Scanner, and the scenarios'
 // World), in the place of the device's (ScanCamera): the user's answer to
-// "may HAL-C2 use the camera" is scripted, and a picture is handed over as
-// the frame a camera would deliver, in a camera's own pixel format.
+// "may HAL-C2 use the camera" is scripted, as is a camera that does not
+// start or stops by itself, and a picture is handed over as the frame a
+// camera would deliver, in a camera's own pixel format.
 
 #include <QImage>
 #include <QMetaObject>
@@ -95,15 +96,27 @@ public:
   // What comes of asking: the user's answer, or the system's own when it no
   // longer asks. None leaves the question on screen until reply().
   std::optional<Access> answer;
-  // A device whose camera does not start.
-  bool broken = false;
+  // What comes of starting the camera, later as a camera's own word comes:
+  // a device with none, or one whose camera does not start. None starts it.
+  std::optional<Failure> fault;
   int asked = 0;
   // How often the camera was asked to start, and how often it did.
   int attempts = 0;
   int starts = 0;
   int settingsOpened = 0;
 
+  // Whether the app holds the camera: started and not stopped since, with
+  // frames or without.
+  bool inUse() const { return m_inUse; }
+  // Whether it gives frames.
   bool running() const { return m_running; }
+  // The running camera stops by itself: another app took it, or it was
+  // unplugged.
+  void fail(Failure why = Failure::Stopped) {
+    if (!m_running) qFatal("the camera is not running");
+    m_running = false;
+    if (auto failed = std::exchange(m_failed, {})) failed(why);
+  }
   // Whether the user is looking at the system's question.
   bool asking() const { return static_cast<bool>(m_answered); }
   // The user answers it.
@@ -126,22 +139,40 @@ public:
     };
     if (answer) reply(*answer);
   }
-  bool start(QVideoSink* sink) override {
+  void start(QVideoSink* sink, QObject* context, std::function<void(Failure)> failed) override {
+    stop();
     ++attempts;
-    if (broken) return false;
-    ++starts;
-    m_sink = sink;
-    m_running = true;
-    return true;
+    m_inUse = true;
+    m_failed = std::move(failed);
+    if (!fault) {
+      ++starts;
+      m_sink = sink;
+      m_running = true;
+      return;
+    }
+    QMetaObject::invokeMethod(
+        context,
+        [this, run = m_run, why = *fault] {
+          if (run != m_run) return;
+          if (auto failed = std::exchange(m_failed, {})) failed(why);
+        },
+        Qt::QueuedConnection);
   }
   void stop() override {
+    ++m_run;
+    m_inUse = false;
     m_running = false;
     m_sink = nullptr;
+    m_failed = {};
   }
   void openSettings() override { ++settingsOpened; }
 
 private:
+  bool m_inUse = false;
   bool m_running = false;
+  // Moves on with each stop: a failure on its way from before one is dropped.
+  int m_run = 0;
   QPointer<QVideoSink> m_sink;
   std::function<void(Access)> m_answered;
+  std::function<void(Failure)> m_failed;
 };
