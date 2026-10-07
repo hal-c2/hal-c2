@@ -232,8 +232,16 @@ ColumnLayout {
                 implicitHeight: 28
                 radius: Math.min(Theme.radius, 8)
                 color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen ? Theme.palette.color("focus", "#3b82f6") : settings.border
+                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
+                border.width: activeFocus ? 2 : 1
                 opacity: open ? 1 : 0.5
+                activeFocusOnTab: open
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        choice.picked(modelData.value);
+                        event.accepted = true;
+                    }
+                }
                 Accessible.role: Accessible.RadioButton
                 Accessible.name: optionText.text
                 Accessible.checkable: true
