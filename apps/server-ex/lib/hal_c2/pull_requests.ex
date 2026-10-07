@@ -309,6 +309,7 @@ defmodule HalC2.PullRequests do
       "viewerReviewRequested" =>
         author != me and Enum.any?(item["reviewRequestLogins"], &(String.downcase(&1) == me))
     })
+    |> put_present("headSha", item["headSha"])
     |> put_present("reviewDecision", item["reviewDecision"])
     |> put_present("checksState", item["checksState"])
   end

@@ -18,7 +18,7 @@ defmodule HalC2.PullRequests.GitHub do
   @files_viewed_pages 5
   @approval_limit 1_000
 
-  @list_fields "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup"
+  @list_fields "number,title,url,author,headRefName,headRefOid,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup"
   @detail_fields @list_fields <>
                    ",body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest"
 
@@ -650,6 +650,7 @@ defmodule HalC2.PullRequests.GitHub do
         "url" => url,
         "author" => actor(raw["author"]),
         "headBranch" => head,
+        "headSha" => trimmed(raw["headRefOid"]),
         "baseBranch" => base,
         "state" => state(raw),
         "isDraft" => raw["isDraft"] == true,
