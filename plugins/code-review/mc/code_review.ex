@@ -570,10 +570,11 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # The user's own ask for pull request `number`, which need not be watched.
-  defp find(_settings, repository, number) do
+  defp find(settings, repository, number) do
     with {:ok, projects} <- Host.projects(@id),
          %{} = project <-
-           Enum.find(projects, &same?(&1["repository"], repository)) ||
+           Enum.find(projects, &(&1["kind"] == settings["host"] and same?(&1["repository"], repository))) ||
+             
              {:error, "No project on this MC has the repository #{repository}."},
          {:ok, list} <- Host.pull_requests(@id, "list", %{"projectIds" => [project["id"]], "state" => "open"}),
          %{} = entry <-

@@ -45,6 +45,12 @@ Feature: Agent code review
       Then a review of #12 starts
 
     @mc
+    Scenario: The user's ask finds the repository on the plugin's host
+      Given the project "acme api" whose remote is "acme/api" on GitLab
+      When the user asks for a review of #12
+      Then a review of #12 starts
+
+    @mc
     Scenario Outline: A selective trigger starts a review
       Given "code-review" watches "acme/api" selectively with the trigger "<trigger>"
       When <event>

@@ -87,6 +87,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     })
   end
 
+  step "the project {string} whose remote is {string} on GitLab",
+       %{args: [title, repository]} = context do
+    context = World.create_project(context, title)
+
+    World.git!(World.project(context, title).root, [
+      "remote",
+      "add",
+      "origin",
+      "git@gitlab.com:#{repository}.git"
+    ])
+
+    context
+  end
+
   # --- what is watched and when -------------------------------------------------------------
 
   step "{string} watches {string} automatically", %{args: [@id, repo]} = context do
