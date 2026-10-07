@@ -279,6 +279,10 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
       "a page without a title" => %{
         "contributes" => %{"pages" => [%{"id" => "reviews", "qml" => "ui/Reviews.qml"}]}
       },
+      "a page id with an @ in it" => %{"contributes" => %{"pages" => [page("reviews@2")]}},
+      "two pages with the same id" => %{
+        "contributes" => %{"pages" => [page("reviews"), page("reviews")]}
+      },
       "an author that is only a name" => %{"author" => "HAL-C2"},
       "a setting that is not an object" => %{"settings" => ["host"]},
       "a permission without a reason" => %{"permissions" => [%{"id" => "projects:read"}]}
@@ -1085,4 +1089,6 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   defp stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
   defp thread(thread_id), do: HalC2.StreamState.get(stream(thread_id), "thread")[thread_id]
+
+  defp page(id), do: %{"id" => id, "title" => "Reviews", "qml" => "ui/Reviews.qml"}
 end

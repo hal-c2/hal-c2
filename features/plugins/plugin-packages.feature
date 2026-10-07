@@ -73,6 +73,8 @@ Feature: Plugin packages
       | an author that is only a name    | author                     |
       | a setting that is not an object  | settings[0]                |
       | a permission without a reason    | permissions[0].reason      |
+      | a page id with an @ in it        | contributes.pages[0].id    |
+      | two pages with the same id       | contributes.pages[1].id    |
 
   @mc
   Scenario: A package that needs a newer plugin API asks for an MC update

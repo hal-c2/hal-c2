@@ -19,7 +19,10 @@ export const PLUGIN_API_VERSION = 1;
 // trimming transform) and its checks survive into the JSON Schema.
 const NonEmpty = Schema.String.check(Schema.isNonEmpty());
 
-const PluginId = NonEmpty.check(Schema.isPattern(/^[a-z][a-z0-9-]*$/)).annotate({
+// Ids go into tab, topic and cache keys, so they hold no delimiter.
+const Slug = NonEmpty.check(Schema.isPattern(/^[a-z][a-z0-9-]*$/));
+
+const PluginId = Slug.annotate({
   description:
     "Lowercase letters, digits and dashes, starting with a letter. The package's directory name.",
 });
@@ -116,7 +119,10 @@ export type PluginSettingField = typeof PluginSettingField.Type;
 
 /** A page the user switches to with the shell's tabs. */
 export const PluginPage = Schema.Struct({
-  id: NonEmpty,
+  id: Slug.annotate({
+    description:
+      "Lowercase letters, digits and dashes, starting with a letter. Unique among the plugin's pages.",
+  }),
   title: NonEmpty,
   icon: Schema.optionalKey(NonEmpty),
   qml: PackagePath,
@@ -150,7 +156,16 @@ export type PluginSlotContribution = typeof PluginSlotContribution.Type;
  * cannot import the package's other files.
  */
 export const PluginContributions = Schema.Struct({
-  pages: Schema.optionalKey(Schema.Array(PluginPage)),
+  pages: Schema.optionalKey(
+    Schema.Array(PluginPage).check(
+      Schema.makeFilter((pages) => {
+        const at = pages.findIndex(
+          (page, i) => pages.findIndex((other) => other.id === page.id) < i,
+        );
+        return at < 0 || { path: [at, "id"], issue: "must differ from the other pages' ids" };
+      }),
+    ),
+  ),
   threadKinds: Schema.optionalKey(Schema.Array(PluginThreadKind)),
   slots: Schema.optionalKey(Schema.Array(PluginSlotContribution)),
   /** The plugin's own settings page; without it clients build one from `settings`. */

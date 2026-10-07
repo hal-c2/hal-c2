@@ -34,6 +34,19 @@ describe("PluginManifest", () => {
     expect(() => decodeManifest({ ...minimal, id: "Code Review" })).toThrow();
   });
 
+  it.each([
+    ["an @ in it", [{ id: "main@2", title: "Main", qml: "ui/Main.qml" }]],
+    [
+      "another page's id",
+      [
+        { id: "main", title: "Main", qml: "ui/Main.qml" },
+        { id: "main", title: "Other", qml: "ui/Other.qml" },
+      ],
+    ],
+  ])("refuses a page id with %s", (_, pages) => {
+    expect(() => decodeManifest({ ...minimal, contributes: { pages } })).toThrow();
+  });
+
   it("refuses permissions the MC does not know", () => {
     expect(() =>
       decodeManifest({ ...minimal, permissions: [{ id: "root", reason: "Because" }] }),

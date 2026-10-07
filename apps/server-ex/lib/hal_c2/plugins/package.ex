@@ -23,13 +23,14 @@ defmodule HalC2.Plugins.Package do
   @setting_types ~w(text longText secret boolean number choice list object)
 
   # The shape of what the MC and its clients read from a manifest, after
-  # `PluginManifest`: `:text` is a non-empty string, `{:map, required, optional}` an
-  # object with those keys. An optional key that is absent or null is left out.
+  # `PluginManifest`: `:text` is a non-empty string, `:slug` one that is fit for an
+  # id, `{:map, required, optional}` an object with those keys. An optional key that
+  # is absent or null is left out.
   @contributes {:map, %{},
                 %{
                   "pages" =>
                     {:list,
-                     {:map, %{"id" => :text, "title" => :text, "qml" => :text},
+                     {:map, %{"id" => :slug, "title" => :text, "qml" => :text},
                       %{"icon" => :text}}},
                   "threadKinds" =>
                     {:list,
@@ -169,7 +170,7 @@ defmodule HalC2.Plugins.Package do
          "plugin.json names the id #{inspect(json["id"])}, but its directory is #{inspect(dirname)}; they must be the same."}
 
       # The id goes into tab, topic and cache keys, so it is held to `PluginManifest`'s pattern.
-      not Regex.match?(~r/^[a-z][a-z0-9-]*$/, json["id"]) ->
+      not slug?(json["id"]) ->
         {:error,
          "plugin.json names the id #{inspect(json["id"])}; an id is lowercase letters, digits and dashes, starting with a letter."}
 
@@ -181,6 +182,11 @@ defmodule HalC2.Plugins.Package do
 
       problem = misshapen(json, @shape, nil) ->
         {:error, "plugin.json does not fit its schema: #{problem}."}
+
+      # A page's id is its tab's, so two pages cannot share one.
+      at = repeated_page(json) ->
+        {:error,
+         "plugin.json does not fit its schema: #{at} must differ from the other pages' ids."}
 
       unknown = Enum.find(list(json["permissions"]), &(not Map.has_key?(@permissions, &1["id"]))) ->
         {:error, "plugin.json asks for the unknown permission #{inspect(unknown["id"])}."}
@@ -220,6 +226,12 @@ defmodule HalC2.Plugins.Package do
   end
 
   defp misshapen(value, :text, _at) when is_binary(value) and value != "", do: nil
+
+  defp misshapen(value, :slug, at) when is_binary(value) do
+    if not slug?(value),
+      do: "#{at} must be lowercase letters, digits and dashes, starting with a letter"
+  end
+
   defp misshapen(value, :string, _at) when is_binary(value), do: nil
   defp misshapen(value, :int, _at) when is_integer(value), do: nil
   defp misshapen(_value, {:map, _, _}, at), do: "#{at} must be an object"
@@ -231,6 +243,17 @@ defmodule HalC2.Plugins.Package do
   defp under(at, key), do: "#{at}.#{key}"
 
   defp text?(value), do: is_binary(value) and value != ""
+  defp slug?(value), do: Regex.match?(~r/^[a-z][a-z0-9-]*$/, value)
+
+  # Where a page names an id an earlier page has, or nil.
+  defp repeated_page(json) do
+    ids = Enum.map(list((json["contributes"] || %{})["pages"]), & &1["id"])
+
+    Enum.find_value(Enum.with_index(ids), fn {id, i} ->
+      if id in Enum.take(ids, i), do: "contributes.pages[#{i}].id"
+    end)
+  end
+
   defp list(value) when is_list(value), do: Enum.filter(value, &is_map/1)
   defp list(_), do: []
 
