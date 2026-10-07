@@ -46,6 +46,9 @@ defmodule HalC2.Cluster.Epmd do
   @doc "Reaches the MC named after `host` at `ip` and `port` from now on."
   def put(host, ip, port), do: :ets.insert(@table, {{:address, host}, {ip, port}})
 
+  @doc "Forgets where the MC named after `host` is reached."
+  def forget(host), do: :ets.delete(@table, {:address, host})
+
   @doc "Where the MC named after `host` is reached, if known."
   def lookup(host) do
     case :ets.lookup(@table, {:address, host}) do
