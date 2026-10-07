@@ -4,9 +4,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // Renames the open thread when the thread menu's Rename asks for it: the
-// desktop's header edits its title in place on `workspace.renameRequestId`,
-// and a phone asks in a dialog.
-MobileDialog {
+// desktop layout's header edits its title in place on
+// `workspace.renameRequestId`, and the phone layout asks in a dialog.
+// Centred in its parent, so it stays clear of the keyboard when the parent does.
+Dialog {
     id: dialog
 
     readonly property var workspace: Shell.state.workspace ?? null
@@ -27,10 +28,26 @@ MobileDialog {
     }
 
     objectName: "renameThreadDialog"
+    modal: true
+    anchors.centerIn: parent
+    width: Math.min(parent.width - 32, 420)
+    padding: 20
     title: qsTr("Rename thread")
     onAccepted: {
         if (field.text.trim().length > 0)
             Shell.dispatch("workspace.rename", { title: field.text.trim() });
+    }
+
+    background: MobileSurface {}
+    Overlay.modal: Rectangle {
+        color: Qt.rgba(0, 0, 0, 0.5)
+    }
+    header: Label {
+        text: dialog.title
+        padding: 20
+        bottomPadding: 0
+        font.pixelSize: Math.round(18 * Theme.fontScale)
+        font.weight: Font.DemiBold
     }
 
     ColumnLayout {

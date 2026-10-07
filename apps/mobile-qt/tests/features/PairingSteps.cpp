@@ -1,7 +1,7 @@
 // Pairing a phone with an environment (features/mobile/
-// pairing-and-environments.feature): the pairing screen, the environment's
-// sheet and its way out, as the user taps and types them, against an MC that
-// sells sessions for pairing links (PairableMc).
+// pairing-and-environments.feature): the pairing screen, the environment in
+// Settings and its way out, as the user taps and types them, against an MC
+// that sells sessions for pairing links (PairableMc).
 
 #include <QDir>
 #include <QDirIterator>
@@ -38,7 +38,7 @@ void pairWithEnvironment(World& world) {
                 [&] { return QStringLiteral("the phone to pair; it says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
   world.waitFor([&] { return world.state(QStringLiteral("connection")).toMap().value(QStringLiteral("phase")) == QLatin1String("connected"); },
                 [&] { return QStringLiteral("the connection; it is %1").arg(show(world.state(QStringLiteral("connection")))); });
-  world.item(QStringLiteral("homeScreen"));
+  threadList(world);
 }
 
 namespace {
@@ -56,17 +56,26 @@ QString screenTexts(World& world) {
   return world.texts().join(QStringLiteral(" | "));
 }
 
-// The user opens the environment's sheet, which names it.
+// From home, the user opens the environment in Settings, which names it.
 void showEnvironment(World& world, const QString& name) {
   world.tap(QStringLiteral("environment"));
-  world.awaitPopup(QStringLiteral("environmentSheet"));
-  expect(world.shows(name), QStringLiteral("the sheet does not name %1; the screen says: %2").arg(name, screenTexts(world)));
+  world.item(QStringLiteral("pairingSettings"));
+  world.waitFor([&] { return shownText(world, QStringLiteral("environmentName")) == name; },
+                [&] { return QStringLiteral("the settings to name %1; the screen says: %2").arg(name, screenTexts(world)); });
 }
 
-// From its sheet, the user asks to forget it and is asked whether to.
+// And back out of Settings, a step at a time: its sections, then home.
+void leaveEnvironment(World& world) {
+  world.back();
+  world.item(QStringLiteral("settingsSections"));
+  world.back();
+  world.item(QStringLiteral("homeScreen"));
+}
+
+// From there, the user asks to forget it and is asked whether to.
 void askToForget(World& world, const QString& name) {
   world.tap(QStringLiteral("environmentForget"));
-  world.awaitPopup(QStringLiteral("forgetDialog"));
+  world.awaitPopup(QStringLiteral("confirmDialog"));
   expect(world.shows(QStringLiteral("Forget %1?").arg(name)), QStringLiteral("the question does not name %1; the screen says: %2").arg(name, screenTexts(world)));
 }
 
@@ -119,10 +128,8 @@ const Steps steps([] {
     expect(world.environment.sessions.size() == 1 && world.environment.pairingTokens.isEmpty(),
            S("the MC sold %1 sessions").arg(world.environment.sessions.size()));
     world.waitFor([&] { return world.environment.connectedWithTicket(); }, S("the phone to connect with its session"));
-    // And the environment is the phone's to show: its name, on its sheet.
-    world.tap(S("environment"));
-    world.awaitPopup(S("environmentSheet"));
-    expect(world.shows(world.mc.label), S("the sheet does not name the environment; the screen says: %1").arg(screenTexts(world)));
+    // And the environment is the phone's to show: its name and address, in Settings.
+    showEnvironment(world, world.mc.label);
     expect(shownText(world, S("environmentAddress")) == world.mc.origin().toString(), S("its address reads %1").arg(shownText(world, S("environmentAddress"))));
   });
 
@@ -172,8 +179,7 @@ const Steps steps([] {
     world.mc.label = c[0];
     pairWithEnvironment(world);
     showEnvironment(world, c[0]);
-    world.tap(S("environmentClose"));
-    world.awaitPopup(S("environmentSheet"), false);
+    leaveEnvironment(world);
   });
 
   // One environment at a time (src/Pairing.h): a second pairing replaces the first.
@@ -210,19 +216,28 @@ const Steps steps([] {
   step(S("the user removes %1 and confirms").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     showEnvironment(world, c[0]);
     askToForget(world, c[0]);
-    world.tap(S("forgetConfirm"));
+    world.tap(S("confirmAccept"));
+  });
+
+  // Settings need the connection; beside the notice of a lost one is the other way out.
+  step(S("the user removes it from the connection notice and confirms"), [](World& world, const Captures&, const Table&) {
+    world.item(S("connectionNoticeTitle"));
+    world.tap(S("connectionForget"));
+    world.awaitPopup(S("confirmDialog"));
+    expect(world.shows(S("Forget %1?").arg(world.mc.label)), S("the question does not name %1; the screen says: %2").arg(world.mc.label, screenTexts(world)));
+    world.tap(S("confirmAccept"));
   });
 
   step(S("the user starts to remove %1 but cancels").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     showEnvironment(world, c[0]);
     askToForget(world, c[0]);
-    world.tap(S("forgetCancel"));
+    world.tap(S("confirmCancel"));
   });
 
   step(S("%1 is no longer listed").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return pairingPhase(world) == QLatin1String("unpaired") && world.find(S("pairingScreen")) != nullptr; },
                   [&] { return S("the pairing screen; the phone is %1 and says: %2").arg(pairingPhase(world), screenTexts(world)); });
-    world.awaitPopup(S("forgetDialog"), false);
+    world.awaitPopup(S("confirmDialog"), false);
     expect(!world.shows(c[0], false) && world.find(S("homeScreen")) == nullptr, S("%1 is still on screen, which says: %2").arg(c[0], screenTexts(world)));
     expect(!QFile::exists(pairingFile(world)), S("the phone still keeps the pairing"));
   });
@@ -252,16 +267,13 @@ const Steps steps([] {
   });
 
   step(S("%1 is still listed").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    // The question is gone, and the environment's sheet still names it.
-    world.awaitPopup(S("forgetDialog"), false);
-    if (!world.popupShowing(S("environmentSheet"))) world.tap(S("environment"));
-    world.awaitPopup(S("environmentSheet"));
-    expect(world.shows(c[0]), S("the sheet does not name %1; the screen says: %2").arg(c[0], screenTexts(world)));
+    // The question is gone, and Settings still names the environment.
+    world.awaitPopup(S("confirmDialog"), false);
+    world.item(S("pairingSettings"));
+    expect(shownText(world, S("environmentName")) == c[0], S("the settings do not name %1; the screen says: %2").arg(c[0], screenTexts(world)));
     expect(pairingPhase(world) == QLatin1String("paired"), S("the phone is %1").arg(pairingPhase(world)));
     expect(QFile::exists(pairingFile(world)), S("the phone no longer keeps the pairing"));
-    world.tap(S("environmentClose"));
-    world.awaitPopup(S("environmentSheet"), false);
-    world.item(S("homeScreen"));
+    leaveEnvironment(world);
     threadRow(world, S("Tax line"));
     expect(world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"), S("the connection is %1").arg(show(world.state(S("connection")))));
   });

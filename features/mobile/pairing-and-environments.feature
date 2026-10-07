@@ -12,7 +12,8 @@
 #   apps/mobile/app.config.ts (local network usage, camera)
 #   apps/mobile-qt/src/Pairing.cpp (one environment at a time: pairing.pair, pairing.forget)
 #   apps/mobile-qt/qml/HalC2/Mobile/PairingScreen.qml
-#   apps/mobile-qt/qml/HalC2/Mobile/EnvironmentSheet.qml (forgetting an environment, asked first)
+#   apps/desktop-qt/qml/HalC2/Bricks/PairingSettings.qml (the environment in Settings, forgetting it, asked first)
+#   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (forgetting an environment that cannot be reached)
 #   apps/desktop-qt/src/native/PairingExchange.cpp (reading a link, spending its token)
 #   apps/desktop-qt/src/native/ConnectionHealthController.cpp (an MC of another protocol, trace id)
 #   apps/desktop-qt/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
@@ -117,6 +118,12 @@ Feature: Pairing a phone with environments
     Given the phone is paired with "My MacBook"
     When the user starts to remove "My MacBook" but cancels
     Then "My MacBook" is still listed
+
+  @mobile
+  Scenario: An environment the phone cannot connect to can still be removed
+    Given an environment runs a server version the app does not support
+    When the user removes it from the connection notice and confirms
+    Then "My MacBook" is no longer listed
 
   @mobile
   Scenario: The user copies a connection trace id for support

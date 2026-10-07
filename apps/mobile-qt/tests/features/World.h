@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QPoint>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -17,10 +19,11 @@ class QQuickItem;
 class QQuickWindow;
 class ShellBridge;
 
-// A phone and the environment it can pair with. The phone is the app as
+// A device and the environment it can pair with. The device is the app as
 // main.cpp builds it (MobileApp), its real root (MobileShell.qml) in a window
-// the steps tap and type into; the environment is the desktop harness's fake
-// MC with the HTTP side of pairing. One per scenario.
+// the steps tap, click and type into: a phone's until a scenario gives it
+// another size. The environment is the desktop harness's fake MC with the
+// HTTP side of pairing. One per scenario.
 class World {
 public:
   World();
@@ -57,6 +60,9 @@ public:
   QVariant state(const QString& key);
   // Where the phone keeps its files, across restarts.
   QString homeDir() const { return m_home.path(); }
+  // The window becomes `width` by `height`, now and each time the app opens:
+  // a tablet's or a laptop's window, a rotation, a fold.
+  void resize(int width, int height);
 
   // What is on screen. An item counts when it is visible, so an objectName
   // two screens share is the one of the screen showing.
@@ -71,6 +77,8 @@ public:
   // Waits for it to be up, its way in finished, or (`open` false) to be gone
   // from the screen.
   void awaitPopup(const QString& objectName, bool open = true);
+  // What the window shows, kept as a PNG; nothing while the app is closed.
+  void snapshot(const QString& path);
   // Every text a visible item shows, for a failure to quote.
   QStringList texts();
   // Whether a visible item's text is `text`, or has it in it.
@@ -83,8 +91,19 @@ public:
   // A finger held on the item's middle until `until` holds (a long press's
   // menu is up), then lifted.
   void hold(QQuickItem* item, const std::function<bool()>& until, const QString& what);
+  // A finger put on the item's middle, dragged `by` and lifted; `during` runs
+  // while it is still down at the end of the drag.
+  void swipe(QQuickItem* item, const QPoint& by, const std::function<void()>& during = {});
+  // A mouse or trackpad: its pointer on the item's middle, a click there, and
+  // the same drag with its left button held.
+  void hover(QQuickItem* item);
+  void click(QQuickItem* item, Qt::MouseButton button = Qt::LeftButton);
+  void drag(QQuickItem* item, const QPoint& by, const std::function<void()>& during = {});
   // Keys into whatever has the keyboard.
   void type(const QString& text);
+  // A key of a hardware keyboard as keybindings.json spells it ("mod+k",
+  // "Down", "Escape"), through the window's shortcuts first as a real one is.
+  void press(const QString& key);
   // Android's Back.
   void back();
 
@@ -100,5 +119,6 @@ private:
   QPoint middleOf(QQuickItem* item);
 
   QTemporaryDir m_home;
+  QSize m_size;
   std::unique_ptr<MobileApp> m_app;
 };

@@ -8,14 +8,11 @@ qt_add_qml_module(hal_c2_mobile
   NO_GENERATE_QMLDIR
   NO_PLUGIN_OPTIONAL
   QML_FILES
-    EnvironmentSheet.qml
     HomeScreen.qml
     MobileBar.qml
     MobileButton.qml
-    MobileDialog.qml
     MobileIconButton.qml
     MobileMenu.qml
-    MobileScrim.qml
     MobileShell.qml
     MobileSurface.qml
     PairingScreen.qml

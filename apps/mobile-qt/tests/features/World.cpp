@@ -18,6 +18,9 @@ namespace {
 
 const pairing::Client kTestPhone{QStringLiteral("HAL-C2 on Test Phone"), QStringLiteral("mobile"), QStringLiteral("Android")};
 
+// How many moves a drag is made of: enough for a handler to take it for one.
+constexpr int kDragSteps = 8;
+
 QPointingDevice* finger() {
   static QPointingDevice* device = QTest::createTouchDevice();
   return device;
@@ -36,9 +39,9 @@ QQuickItem* search(QQuickItem* item, const std::function<bool(QQuickItem*)>& mat
 }
 
 // The object named `objectName` among what `object` owns and, for an item,
-// draws: an item or not. A Popup is a QObject, owned by the item or by the
-// content of the popup it was declared in, and a closed popup's content is in
-// no window.
+// draws: an item or not. A Popup is a QObject, owned by the window, the item
+// or the content of the popup it was declared in, and a closed popup's
+// content is in no window.
 QObject* searchObjects(QObject* object, const QString& objectName) {
   if (object->objectName() == objectName) return object;
   const auto* item = qobject_cast<QQuickItem*>(object);
@@ -104,6 +107,7 @@ void World::open() {
   QQuickWindow* shown = m_app->runtime().window();
   expect(shown != nullptr, QStringLiteral("the phone's window did not load: %1").arg(m_app->runtime().lastError()));
   expect(m_app->runtime().lastError().isEmpty(), QStringLiteral("the phone's root did not load: %1").arg(m_app->runtime().lastError()));
+  if (m_size.isValid()) shown->resize(m_size);
   shown->requestActivate();
   expect(QTest::qWaitForWindowActive(shown), QStringLiteral("the phone's window did not take the keyboard"));
 }
@@ -114,6 +118,14 @@ void World::background() {
 
 void World::close() {
   m_app.reset();
+}
+
+void World::resize(int width, int height) {
+  m_size = QSize(width, height);
+  if (!m_app) return;
+  window().resize(m_size);
+  waitFor([&] { return window().size() == m_size; },
+          [&] { return QStringLiteral("a %1x%2 window; it is %3x%4").arg(width).arg(height).arg(window().width()).arg(window().height()); });
 }
 
 MobileApp& World::app() {
@@ -153,18 +165,22 @@ QQuickItem* World::item(const QString& objectName) {
 }
 
 bool World::popupShowing(const QString& objectName) {
-  const QObject* popup = searchObjects(window().contentItem(), objectName);
-  expect(popup != nullptr, QStringLiteral("the phone has no %1").arg(objectName));
+  const QObject* popup = searchObjects(&window(), objectName);
+  expect(popup != nullptr, QStringLiteral("the window has no %1").arg(objectName));
   return popup->property("visible").toBool();
 }
 
 void World::awaitPopup(const QString& objectName, bool open) {
   waitFor(
       [&] {
-        const QObject* popup = searchObjects(window().contentItem(), objectName);
+        const QObject* popup = searchObjects(&window(), objectName);
         return popup && (open ? popup->property("opened").toBool() : !popup->property("visible").toBool());
       },
       [&] { return QStringLiteral("%1 to %2; the screen says: %3").arg(objectName, open ? QStringLiteral("open") : QStringLiteral("close"), texts().join(QStringLiteral(" | "))); });
+}
+
+void World::snapshot(const QString& path) {
+  if (m_app) window().grabWindow().save(path);
 }
 
 QStringList World::texts() {
@@ -209,6 +225,39 @@ void World::hold(QQuickItem* target, const std::function<bool()>& until, const Q
 
 void World::tap(const QString& objectName) {
   tap(item(objectName));
+}
+
+void World::swipe(QQuickItem* target, const QPoint& by, const std::function<void()>& during) {
+  const QPoint from = middleOf(target);
+  QTest::touchEvent(&window(), finger()).press(0, from, &window());
+  for (int step = 1; step <= kDragSteps; ++step) QTest::touchEvent(&window(), finger()).move(0, from + by * step / kDragSteps, &window());
+  if (during) during();
+  QTest::touchEvent(&window(), finger()).release(0, from + by, &window());
+}
+
+void World::hover(QQuickItem* target) {
+  // Onto the item from beside its middle: a pointer that arrives, as a real one does.
+  const QPoint point = middleOf(target);
+  QTest::mouseMove(&window(), point + QPoint(0, 4));
+  QTest::mouseMove(&window(), point);
+}
+
+void World::click(QQuickItem* target, Qt::MouseButton button) {
+  QTest::mouseClick(&window(), button, Qt::NoModifier, middleOf(target));
+}
+
+void World::drag(QQuickItem* target, const QPoint& by, const std::function<void()>& during) {
+  const QPoint from = middleOf(target);
+  QTest::mousePress(&window(), Qt::LeftButton, Qt::NoModifier, from);
+  for (int step = 1; step <= kDragSteps; ++step) QTest::mouseMove(&window(), from + by * step / kDragSteps);
+  if (during) during();
+  QTest::mouseRelease(&window(), Qt::LeftButton, Qt::NoModifier, from + by);
+}
+
+void World::press(const QString& key) {
+  QString chord = key;
+  chord.replace(QLatin1String("mod"), QLatin1String("Ctrl"), Qt::CaseInsensitive);
+  expect(app().runtime().pressKey(chord), QStringLiteral("%1 is not a key the window can be sent").arg(key));
 }
 
 void World::type(const QString& text) {

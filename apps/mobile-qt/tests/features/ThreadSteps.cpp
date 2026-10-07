@@ -37,14 +37,30 @@ QQuickItem* threadRow(World& world, const QString& title) {
   return row;
 }
 
+QQuickItem* threadList(World& world) {
+  QQuickItem* list = nullptr;
+  world.waitFor([&] { return (list = world.find(QStringLiteral("homeScreen"))) != nullptr || (list = world.find(QStringLiteral("threadSidebar"))) != nullptr; },
+                [&] { return QStringLiteral("the thread list; the screen says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
+  return list;
+}
+
+QString shownThread(World& world) {
+  if (world.find(QStringLiteral("threadScreen")) != nullptr) {
+    const QQuickItem* title = world.find(QStringLiteral("title"));
+    return title ? title->property("text").toString() : QString();
+  }
+  const QQuickItem* label = world.find(QStringLiteral("threadLabel"));
+  return label && world.find(QStringLiteral("desktopLayout")) != nullptr ? label->property("text").toString() : QString();
+}
+
 void openThread(World& world, const QString& title) {
-  world.item(QStringLiteral("homeScreen"));
+  threadList(world);
   world.tap(threadRow(world, title));
-  world.waitFor([&] { return world.find(QStringLiteral("threadScreen")) != nullptr || world.popupShowing(QStringLiteral("mobileMenu")); },
-                [&] { return QStringLiteral("the thread's screen; the screen says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
-  expect(!world.popupShowing(QStringLiteral("mobileMenu")), QStringLiteral("a tap on %1 opened its menu, not the thread").arg(title));
-  world.waitFor([&] { return world.item(QStringLiteral("title"))->property("text").toString() == title; },
-                [&] { return QStringLiteral("the thread's screen; the screen says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
+  // A tap that the row took for a long press opens its menu instead.
+  const auto menuOpened = [&] { return world.find(QStringLiteral("phoneLayout")) != nullptr && world.popupShowing(QStringLiteral("mobileMenu")); };
+  world.waitFor([&] { return shownThread(world) == title || menuOpened(); },
+                [&] { return QStringLiteral("the thread %1; the screen says: %2").arg(title, world.texts().join(QStringLiteral(" | "))); });
+  expect(!menuOpened(), QStringLiteral("a tap on %1 opened its menu, not the thread").arg(title));
 }
 
 namespace {

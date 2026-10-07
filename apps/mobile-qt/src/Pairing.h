@@ -34,7 +34,9 @@ class ShellBridge;
 //
 // Actions: `pairing.pair {link}` and `pairing.forget`, the way back out: the
 // session is deleted from this device, the connection closes, and the shell
-// shows nothing of the environment.
+// shows nothing of the environment. `pairing.askToForget` is what the user's
+// own button dispatches: the shell's question first (MenuController, the
+// ConfirmDialog brick), which needs no connection, then `pairing.forget`.
 class Pairing : public QObject {
   Q_OBJECT
 
@@ -50,7 +52,8 @@ public:
   void start();
 
   // This device as an MC's client list should show it: "HAL-C2 on <model>",
-  // a phone, and its OS.
+  // what kind of device it is (a phone, a tablet, or a laptop, which the MC
+  // lists as a desktop), and its OS.
   static pairing::Client thisDevice();
 
 private:
@@ -65,6 +68,7 @@ private:
   bool handle(const QString& action, const QVariant& payload);
   void pair(const QString& link);
   void paired(const pairing::Result& result);
+  void askToForget();
   void forget();
   // The shell connected with this credential: it is the one to remember.
   void remember(const QUrl& origin, const QString& token);

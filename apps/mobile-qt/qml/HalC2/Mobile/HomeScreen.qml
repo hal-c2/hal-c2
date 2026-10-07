@@ -4,9 +4,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// Home: every thread of the environment, grouped as the desktop's sidebar
-// groups them (the Sidebar brick over `sidebar`), under a bar with the
-// environment, settings and a new thread.
+// The phone layout's home: every thread of the environment, grouped as the
+// desktop's sidebar groups them (the Sidebar brick over `sidebar`), under a
+// bar with the environment, settings and a new thread.
 ColumnLayout {
     id: screen
 
@@ -17,19 +17,6 @@ ColumnLayout {
     readonly property string scopeName: {
         const project = projects.find(candidate => candidate.key === scope);
         return project ? project.displayName : "";
-    }
-
-    signal environmentRequested
-
-    // A new thread starts in the project the list is narrowed to, in the
-    // only project, or in the one the user picks.
-    function newThread() {
-        if (scope !== null)
-            Shell.dispatch("thread.new", { projectKey: scope });
-        else if (projects.length === 1)
-            Shell.dispatch("thread.new", { projectKey: projects[0].key });
-        else if (projects.length > 1)
-            projectMenu.open();
     }
 
     objectName: "homeScreen"
@@ -43,50 +30,27 @@ ColumnLayout {
             objectName: "environment"
             iconName: "monitor"
             label: qsTr("Environment")
-            onClicked: screen.environmentRequested()
+            // The route is the MC's first snapshot away.
+            enabled: (Shell.state.route ?? null) !== null
+            onClicked: Shell.dispatch("settings.navigate", { to: "/settings/pairing" })
         }
 
         MobileIconButton {
             objectName: "settings"
             iconName: "settings"
             label: qsTr("Settings")
-            // The route is the MC's first snapshot away.
             enabled: (Shell.state.route ?? null) !== null
             onClicked: Shell.dispatch("settings.open")
         }
 
         MobileIconButton {
-            id: newThreadButton
-
             objectName: "newThread"
             iconName: "square-pen"
             label: qsTr("New thread")
             enabled: screen.projects.length > 0
-            onClicked: screen.newThread()
-
-            Menu {
-                id: projectMenu
-
-                objectName: "newThreadProjects"
-                x: parent.width - width
-                y: parent.height
-                title: qsTr("New thread in")
-                background: MobileSurface {
-                    implicitWidth: 240
-                }
-
-                Repeater {
-                    model: screen.projects
-
-                    delegate: MenuItem {
-                        required property var modelData
-
-                        objectName: "newThreadProject:" + modelData.key
-                        text: modelData.displayName
-                        onTriggered: Shell.dispatch("thread.new", { projectKey: modelData.key })
-                    }
-                }
-            }
+            // In the project the list is narrowed to or the only one; with
+            // several, the shell asks which (DraftController).
+            onClicked: Shell.dispatch("thread.new", screen.scope !== null ? { projectKey: screen.scope } : {})
         }
     }
 

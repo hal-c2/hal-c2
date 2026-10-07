@@ -5,8 +5,8 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The shell's menus (`menu`, MenuController: a thread's, a draft's, the
-// projects a draft can move to) as a sheet from the bottom edge with rows a
-// finger wide, in place of the popup the desktop opens at the pointer. One
+// projects a draft can move to) in the phone layout: a sheet from the bottom
+// edge with rows a finger wide, in place of the popup at the pointer. One
 // level of children reads as a headed group, as it does there. The choice
 // goes back as `menu.select`, and closing the sheet any other way chooses
 // nothing.
@@ -59,7 +59,9 @@ Popup {
     bottomPadding: 8
 
     background: MobileSurface {}
-    Overlay.modal: MobileScrim {}
+    Overlay.modal: Rectangle {
+        color: Qt.rgba(0, 0, 0, 0.5)
+    }
 
     contentItem: ListView {
         implicitHeight: contentHeight

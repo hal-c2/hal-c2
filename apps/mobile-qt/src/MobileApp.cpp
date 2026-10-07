@@ -1,6 +1,7 @@
 #include "MobileApp.h"
 
 #include <QDir>
+#include <QPointer>
 #include <QQmlPropertyMap>
 #include <QQuickStyle>
 #include <QtQml/qqml.h>
@@ -14,6 +15,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "TerminalController.h"
 #include "ThemeStore.h"
 
 void MobileApp::prepare() {
@@ -24,6 +26,11 @@ void MobileApp::prepare() {
   // which the two bricks that import plain QtQuick.Controls get: Basic, as on
   // the desktop, whatever the phone's root happens to import first.
   QQuickStyle::setStyle(QStringLiteral("Basic"));
+#ifndef HAL_C2_HAS_TERMINAL
+  // The terminal bricks draw with the Ghostty QML module, which this build
+  // was made without: nothing offers, opens or draws a terminal.
+  TerminalController::setSupported(false);
+#endif
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
 }
 
@@ -41,8 +48,23 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   LayoutController::setSystemReducedMotion(systemReducedMotion());
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   m_native->controller<PluginController>()->setConfigDir(configDir);
-  // The phone's home is the thread list, not a draft to land on.
+  // The root says which layout it shows (`layout.desktop {shown}`), at start
+  // and as the window changes size, for the two things about it that live
+  // here. The phone layout's home is the thread list, not a draft to land on,
+  // and the desktop layout's is one. And only the desktop layout draws a
+  // terminal, so in the phone's a thread has no place for one.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
+  m_native->controller<TerminalController>()->setDrawn(false);
+  m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
+                            terminals = QPointer<TerminalController>(m_native->controller<TerminalController>())](const QString& action, const QVariant& payload) {
+    if (action != QLatin1String("layout.desktop")) return false;
+    if (!drafts || !terminals) return true;
+    const bool desktop = payload.toMap().value(QStringLiteral("shown")).toBool();
+    drafts->setLandsOnDraft(desktop);
+    if (desktop) drafts->land();
+    terminals->setDrawn(desktop);
+    return true;
+  });
   m_theme = std::make_unique<ThemeStore>(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   m_theme->applyBaseTheme(m_bridge->state()->value(QStringLiteral("theme")));

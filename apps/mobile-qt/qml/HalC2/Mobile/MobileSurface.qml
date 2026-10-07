@@ -1,7 +1,7 @@
 import QtQuick
 import HalC2.Shell
 
-// What the phone's sheets and dialogs sit on: the surface the bricks' own
+// What the phone layout's sheet and dialog sit on: the surface the bricks' own
 // dialogs use (ConfirmDialog), over the canvas. The Theme may thin that
 // surface (Appearance's glass), and a sheet as large as the screen it covers
 // is unreadable with the conversation showing through.

@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// What a phone with no environment shows (`pairing`, apps/mobile-qt
+// What a device with no environment shows (`pairing`, apps/mobile-qt
 // Pairing): where a pairing link comes from, a field for one, and how the
 // attempt went. The field follows `pairing.link`, so a link that failed is
 // still there to correct.
@@ -56,7 +56,7 @@ Flickable {
             wrapMode: Text.Wrap
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(14 * Theme.fontScale)
-            text: qsTr("Pair this phone with a machine that runs HAL-C2. On that machine, create a pairing link in the desktop app under Settings → Connections, or run `hal-c2 pair --tailscale`, and enter the link here.")
+            text: qsTr("Pair this device with a machine that runs HAL-C2. On that machine, create a pairing link in the desktop app under Settings → Connections, or run `hal-c2 pair --tailscale`, and enter the link here.")
         }
 
         TextField {

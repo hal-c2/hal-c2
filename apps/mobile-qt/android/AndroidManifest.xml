@@ -11,11 +11,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- %%INSERT_FEATURES -->
+    <!-- Phones, tablets and laptops alike: a device with no touchscreen (a
+         mouse or trackpad is its pointer) installs the app too. Android
+         assumes a touchscreen is required unless told otherwise. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
+    <uses-feature android:name="android.hardware.type.pc" android:required="false" />
     <supports-screens
         android:anyDensity="true"
+        android:xlargeScreens="true"
         android:largeScreens="true"
         android:normalScreens="true"
-        android:smallScreens="true" />
+        android:smallScreens="true"
+        android:resizeable="true" />
     <!-- The session token lives in the app's private files: no backup, and
          no copy to a new device (allowBackup alone still allows that one
          from Android 12). -->
@@ -27,12 +35,19 @@
         android:enableOnBackInvokedCallback="false"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules">
-        <!-- adjustResize: the composer stays above the on-screen keyboard. -->
+        <!-- adjustResize: the composer stays above the on-screen keyboard.
+             resizeableActivity and no orientation or aspect limit: the window
+             is whatever a split screen, a freeform desktop or an unfolding
+             gives it, and the app's root picks its layout from that size.
+             configChanges names everything that happens to such a window
+             (a keyboard or pointer attached, another display), so none of
+             it restarts the activity, which would restart the app. -->
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
-            android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
+            android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|touchscreen|mcc|mnc|density"
             android:label="HAL-C2"
             android:launchMode="singleTop"
+            android:resizeableActivity="true"
             android:screenOrientation="unspecified"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">

@@ -14,11 +14,13 @@
 #include <QtLogging>
 
 #ifdef Q_OS_ANDROID
+#include <QCoreApplication>
 #include <QJniObject>
 #endif
 
 #include "ConnectionHealthController.h"
 #include "McClient.h"
+#include "MenuController.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 
@@ -57,9 +59,24 @@ void Pairing::start() {
 }
 
 pairing::Client Pairing::thisDevice() {
+  QString kind = QStringLiteral("mobile");
 #if defined(Q_OS_ANDROID)
   const QString model = QJniObject::getStaticObjectField("android/os/Build", "MODEL", "Ljava/lang/String;").toString();
   const QString os = QStringLiteral("Android");
+  // A laptop says it is a PC (PackageManager.FEATURE_PC), and a tablet's
+  // shorter side is 600 dp or more, as Android's own sw600dp resources have it.
+  const QJniObject context = QNativeInterface::QAndroidApplication::context();
+  if (context.isValid()) {
+    const QJniObject pc = QJniObject::fromString(QStringLiteral("android.hardware.type.pc"));
+    const QJniObject packages = context.callObjectMethod("getPackageManager", "()Landroid/content/pm/PackageManager;");
+    const QJniObject configuration = context.callObjectMethod("getResources", "()Landroid/content/res/Resources;")
+                                         .callObjectMethod("getConfiguration", "()Landroid/content/res/Configuration;");
+    if (packages.callMethod<jboolean>("hasSystemFeature", "(Ljava/lang/String;)Z", pc.object<jstring>())) {
+      kind = QStringLiteral("desktop");
+    } else if (configuration.getField<jint>("smallestScreenWidthDp") >= 600) {
+      kind = QStringLiteral("tablet");
+    }
+  }
 #else
   const QString model = QSysInfo::machineHostName();
 #if defined(Q_OS_IOS)
@@ -72,13 +89,14 @@ pairing::Client Pairing::thisDevice() {
   const QString os = QStringLiteral("Linux");
 #endif
 #endif
-  return {model.trimmed().isEmpty() ? QStringLiteral("HAL-C2 mobile") : QStringLiteral("HAL-C2 on %1").arg(model.trimmed()),
-          QStringLiteral("mobile"), os};
+  return {model.trimmed().isEmpty() ? QStringLiteral("HAL-C2 mobile") : QStringLiteral("HAL-C2 on %1").arg(model.trimmed()), kind, os};
 }
 
 bool Pairing::handle(const QString& action, const QVariant& payload) {
   if (action == QLatin1String("pairing.pair")) {
     pair(payload.toMap().value(QStringLiteral("link")).toString());
+  } else if (action == QLatin1String("pairing.askToForget")) {
+    askToForget();
   } else if (action == QLatin1String("pairing.forget")) {
     forget();
   } else {
@@ -124,6 +142,15 @@ void Pairing::paired(const pairing::Result& result) {
   save();
   publish();
   m_shell->open(result.origin, result.token);
+}
+
+void Pairing::askToForget() {
+  if (!m_paired) return;
+  m_shell->controller<MenuController>()->confirm(
+      tr("Forget %1?").arg(m_paired->label.isEmpty() ? tr("this environment") : m_paired->label),
+      tr("This device signs out of the environment and stops showing its projects and threads. Nothing on the environment is deleted. Pair again "
+         "with a fresh pairing link to come back."),
+      tr("Forget"), true, [this] { forget(); });
 }
 
 void Pairing::forget() {

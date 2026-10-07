@@ -12,6 +12,10 @@ Item {
 
     readonly property var items: Shell.state.toasts ? Shell.state.toasts.items : []
     property int cardWidth: 340
+    // Cards that lie over a screen's whole content (a phone's): the surface is
+    // laid on the canvas, so what is under a card does not show through one the
+    // Theme has thinned (Appearance's glass).
+    property bool opaque: false
 
     implicitWidth: cardWidth
     implicitHeight: column.implicitHeight
@@ -51,7 +55,7 @@ Item {
                 Layout.fillWidth: true
                 implicitHeight: body.implicitHeight + 28
                 radius: Theme.radius
-                color: Theme.palette.color("surfaceOverlay", "#18181b")
+                color: host.opaque ? Qt.tint(Theme.palette.color("canvas", "#0b0b0d"), Theme.palette.color("surfaceOverlay", "#18181b")) : Theme.palette.color("surfaceOverlay", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
                 border.width: 1
                 transform: Translate {
