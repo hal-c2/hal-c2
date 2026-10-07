@@ -18,6 +18,8 @@ Rectangle {
     default property alias content: lead.data
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color line: Theme.palette.color("border", "#27272a")
+    // How wide the page lays its content out, whatever that content asks for.
+    readonly property real contentWidth: column.width
 
     readonly property var route: Shell.state.route ?? null
     readonly property int targetSeq: route !== null && route.targetSeq !== undefined ? route.targetSeq : 0

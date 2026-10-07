@@ -61,7 +61,16 @@ hal-c2 pair
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
 in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
-such as `127.0.0.1` reaches only the device opening the link.
+such as `127.0.0.1` reaches only the device opening the link, so Settings shows
+no QR code for one.
+
+When your machines are [clustered](#cluster-your-machines), **Settings →
+Connections** asks which machine the link is for. A phone reaches the whole
+cluster through the machine it paired with, and loses it when that machine
+sleeps, so pair it with one that stays on rather than the laptop you are sitting
+at. **Create over Tailscale** publishes the chosen machine on your tailnet and
+makes the link for that address. A phone's own camera can read the code too: it
+opens a page on that machine that hands the link to the HAL-C2 app.
 
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links

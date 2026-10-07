@@ -19,6 +19,11 @@ Rectangle {
     // shows above its sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
+    // A list that may be under a finger (a phone's, a tablet's): a finger
+    // dragging a row scrolls the list instead of arranging the row, and its
+    // long press opens the row's menu, which holds every row action and Move
+    // up and Move down. A mouse or trackpad arranges rows as ever.
+    property bool touchRows: false
     // The build the MC is (StageController): {label, artwork, pill}.
     readonly property var stage: Shell.state.stage ?? null
     property Window window: null
@@ -731,6 +736,7 @@ Rectangle {
                         slim: entry.kind !== "thread"
                         section: entry.modelData.section
                         focused: entry.focused
+                        touch: sidebar.touchRows
                         item: entry.kind === "draft" ? {
                             title: entry.modelData.item.label,
                             status: "ready",

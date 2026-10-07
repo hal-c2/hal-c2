@@ -45,6 +45,57 @@ defmodule HalC2.Web do
     "#{scheme}://#{host}:#{port()}"
   end
 
+  @doc """
+  Where another device reaches this MC, for a link made here (a pairing link, a cluster
+  invite): `{:ok, %{"address" => url, "localOnly" => boolean}}`. The address is
+  `"baseUrl"` when the caller names one, else with `"tailscale" => true` this MC's
+  Tailscale Serve name (published if need be, on the MC's own port number when
+  something else holds HTTPS 443, `{:error, {:tailscale, message}}` when it cannot be),
+  else the address the MC listens on. `localOnly` says only this machine can reach it.
+  """
+  @spec address(map) :: {:ok, map} | {:error, {:tailscale, String.t()}}
+  def address(input \\ %{})
+
+  def address(%{"baseUrl" => base}) when is_binary(base) and base != "",
+    do: {:ok, reached_at(String.trim_trailing(base, "/"))}
+
+  def address(%{"tailscale" => true}) do
+    case HalC2.TailscaleServe.publish_free(port()) do
+      {:ok, base} -> {:ok, reached_at(base)}
+      {:error, message} -> {:error, {:tailscale, message}}
+    end
+  end
+
+  # An MC listening on every interface is reached at the address it reports to members.
+  def address(_input) do
+    wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
+
+    with true <- wildcard?,
+         %{"clustered" => true, "addresses" => [address | _]} <- HalC2.Cluster.status(),
+         [ip | _] <- String.split(address, ":"),
+         false <- String.starts_with?(ip, "127.") do
+      {:ok, reached_at("http://#{ip}:#{port()}")}
+    else
+      _ -> {:ok, reached_at(base_url())}
+    end
+  end
+
+  defp reached_at(base),
+    do: %{"address" => base, "localOnly" => loopback?(URI.parse(base).host)}
+
+  # Whether only this machine reaches `host`: localhost, all of 127.0.0.0/8, or ::1.
+  defp loopback?(nil), do: false
+
+  defp loopback?(host) do
+    host = host |> String.downcase() |> String.trim_leading("[") |> String.trim_trailing("]")
+
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      _ -> host == "localhost"
+    end
+  end
+
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do

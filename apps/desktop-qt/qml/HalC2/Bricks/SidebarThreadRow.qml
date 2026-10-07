@@ -21,6 +21,10 @@ Item {
     property string section: "active"
     // Keyboard cursor: draws the focus ring and shows the actions.
     property bool focused: false
+    // A row that may be under a finger: a finger's drag is left to the list,
+    // which scrolls, and its long press asks for the menu a right click
+    // opens. A mouse or trackpad still arranges the row by dragging it.
+    property bool touch: false
     property double ageNow: Date.now()
 
     signal activated
@@ -294,6 +298,7 @@ Item {
 
         target: null
         enabled: !row.draft && !row.offline
+        acceptedDevices: row.touch ? PointerDevice.Mouse | PointerDevice.TouchPad : PointerDevice.AllDevices
         acceptedButtons: Qt.LeftButton
         onActiveChanged: {
             if (active) {
@@ -310,15 +315,23 @@ Item {
         }
     }
 
-    // The menu opens on press, anywhere on the row, like the web app's.
+    // The menu opens on press, anywhere on the row, like the web app's. A
+    // finger has no buttons to tell apart, so it would open the menu too.
     TapHandler {
         acceptedButtons: Qt.RightButton
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         gesturePolicy: TapHandler.WithinBounds
         onPressedChanged: {
             if (pressed) {
                 row.menuRequested(point.scenePosition.x, point.scenePosition.y);
             }
         }
+    }
+
+    TapHandler {
+        enabled: row.touch
+        acceptedDevices: PointerDevice.TouchScreen
+        onLongPressed: row.menuRequested(point.scenePosition.x, point.scenePosition.y)
     }
 
     // Row actions never take focus: the keyboard cursor stays on the list

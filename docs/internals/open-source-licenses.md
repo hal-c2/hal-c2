@@ -14,6 +14,11 @@ License notices are generated independently for the client that ships them:
   a dev build). It holds the web app's packages, whose icons the bricks draw, plus the `desktop-qt`
   custom notices: Qt, the Erlang/OTP and Elixir runtime of the MC, and the Node.js it ships.
   `LicensesController` reads it when the Open source licenses section opens.
+- The Qt mobile client compiles its manifest into the binary when an APK is built
+  (`apps/mobile-qt/cmake/Licenses.cmake`), since an APK has no directory beside the binary. It holds
+  the `mobile-qt` custom notices and no packages: what an APK ships is native code (Qt, OpenSSL, the
+  NDK's C++ library, the libraries Qt's Android activity is built with) and the icons, which have a
+  notice of their own there because the phone's build installs no npm packages to take it from.
 
 No path depends on the connected environment or an RPC.
 
@@ -40,7 +45,8 @@ while preventing incomplete release artifacts.
 
 The repository-level `third-party-licenses.config.json` holds manually maintained exceptions for
 all clients. Add an entry to `customNotices` for adapted icons, fonts, media, native modules, or
-another asset that did not come from an npm package:
+another asset that did not come from an npm package. `android`, `ios` and `mobile` are the React
+Native app; the Qt clients are `desktop-qt` and `mobile-qt`:
 
 ```json
 {

@@ -100,15 +100,22 @@ QString ShellRuntime::appVersion() const {
   return QStringLiteral(HAL_C2_APP_VERSION);
 }
 
+QStringList ShellRuntime::sourceDirs() const {
+  QStringList dirs;
+  for (const QString& dir : {m_options.clientQmlSourceDir, m_options.qmlSourceDir}) {
+    if (!dir.isEmpty()) dirs << dir;
+  }
+  return dirs;
+}
+
 QUrl ShellRuntime::defaultShellUrl() const {
-  if (!m_options.qmlSourceDir.isEmpty()) {
-    const QString onDisk =
-        QDir(m_options.qmlSourceDir).filePath(QStringLiteral("HalC2/Bricks/DefaultShell.qml"));
+  for (const QString& dir : sourceDirs()) {
+    const QString onDisk = QDir(dir).filePath(m_options.defaultShell);
     if (QFileInfo::exists(onDisk)) {
       return QUrl::fromLocalFile(onDisk);
     }
   }
-  return QUrl(QStringLiteral("qrc:/qt/qml/HalC2/Bricks/DefaultShell.qml"));
+  return QUrl(QStringLiteral("qrc:/qt/qml/") + m_options.defaultShell);
 }
 
 void ShellRuntime::start() {
@@ -176,8 +183,8 @@ void ShellRuntime::reload() {
 bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
   auto* engine = m_engine;
   const auto previousRootCount = engine->rootObjects().size();
-  if (!m_options.qmlSourceDir.isEmpty()) {
-    engine->addImportPath(m_options.qmlSourceDir);
+  for (const QString& dir : sourceDirs()) {
+    engine->addImportPath(dir);
   }
   const QString userImports = QDir(m_options.configDir).filePath(QStringLiteral("qml"));
   if (QDir(userImports).exists()) {
@@ -244,7 +251,7 @@ void ShellRuntime::rebuildWatchList() {
     }
   };
   collect(m_options.configDir);
-  collect(m_options.qmlSourceDir);
+  for (const QString& dir : sourceDirs()) collect(dir);
 
   const QStringList watched = m_watcher.directories();
   QStringList added;
@@ -351,6 +358,11 @@ bool ShellRuntime::pressKey(const QString& chord) {
     const QChar character(key);
     text = modifiers.testFlag(Qt::ShiftModifier) ? character.toUpper() : character.toLower();
   }
+#if defined(Q_OS_MACOS)
+  // Elsewhere a key press tries the shortcuts itself. On macOS that is the
+  // Cocoa plugin's doing, which a scripted press does not pass through.
+  if (QWindowSystemInterface::handleShortcutEvent(window, 0, key, modifiers, 0, 0, 0, text)) return true;
+#endif
   using Delivery = QWindowSystemInterface::SynchronousDelivery;
   QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyPress, key, modifiers, text);
   QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyRelease, key, modifiers,

@@ -2,12 +2,16 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QUrl>
 
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "QrCode.h"
+#include "SettingsScopeController.h"
 #include "ShellBridge.h"
+#include "ShellStore.h"
 
 namespace {
 
@@ -29,22 +33,32 @@ QVariant null() {
   return QVariant::fromValue(nullptr);
 }
 
-// The link a client pairs with: this MC's origin and the code.
-QString pairingUrl(const QString& origin, const QString& code) {
-  return origin + QStringLiteral("/pair#token=") + code;
+// The link a client pairs with: the address its MC is reached at and the code.
+// A phone's camera opens it as a page of that MC (`GET /pair`), and the app
+// reads it scanned, pasted or handed over by that page.
+QString pairingUrl(const QString& address, const QString& code) {
+  return address + QStringLiteral("/pair#token=") + code;
+}
+
+bool loopback(const QUrl& address) {
+  const QString host = address.host();
+  // All of 127.0.0.0/8 and ::1 are this machine, not only 127.0.0.1.
+  return host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0 || QHostAddress(host).isLoopback();
 }
 
 }  // namespace
 
-ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, QObject* parent)
+ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),
+      m_store(store),
       m_state{
           {QStringLiteral("access"), null()},
           {QStringLiteral("accessError"), null()},
           {QStringLiteral("busy"), false},
           {QStringLiteral("notice"), null()},
+          {QStringLiteral("machines"), QVariantList()},
           {QStringLiteral("created"), null()},
       } {}
 
@@ -58,6 +72,12 @@ void ConnectionsController::activate() {
   };
   setOpen(opened());
   connect(navigation, &NavigationController::changed, this, [this, opened] { setOpen(opened()); });
+  // Machines that join, leave, sleep or wake change which ones a link can be for.
+  const auto machinesChanged = [this] {
+    if (m_open && readMachines()) publish();
+  };
+  connect(m_store, &ShellStore::changed, this, machinesChanged);
+  connect(m_client, &McClient::readyChanged, this, machinesChanged);
 }
 
 bool ConnectionsController::handle(const QString& action, const QVariant& payload) {
@@ -88,7 +108,11 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
   } else if (action == QLatin1String("connections.pairingLink.revoke")) {
     const QString id = input.value(QStringLiteral("id")).toString();
     if (id.isEmpty()) return true;
-    change(QStringLiteral("hal-c2.revokePairingLink"), {{QStringLiteral("id"), id}}, [this, id](const QJsonObject&) {
+    // A link made on another machine is that machine's to revoke.
+    const QVariantMap created = m_state.value(QStringLiteral("created")).toMap();
+    const QString environmentId =
+        created.value(QStringLiteral("id")) == id ? created.value(QStringLiteral("environmentId")).toString() : m_client->environment();
+    change(environmentId, QStringLiteral("hal-c2.revokePairingLink"), {{QStringLiteral("id"), id}}, [this, id](const QJsonObject&) {
       if (m_state.value(QStringLiteral("created")).toMap().value(QStringLiteral("id")) == id) {
         m_state.insert(QStringLiteral("created"), null());
       }
@@ -104,11 +128,11 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
       const QJsonObject about = object.value(QLatin1String("client")).toObject();
       label = about.value(QLatin1String("label")).toString(about.value(QLatin1String("deviceType")).toString(label));
     }
-    change(QStringLiteral("hal-c2.revokeClient"), {{QStringLiteral("sessionId"), id}}, [this, label](const QJsonObject&) {
+    change(m_client->environment(), QStringLiteral("hal-c2.revokeClient"), {{QStringLiteral("sessionId"), id}}, [this, label](const QJsonObject&) {
       setNotice(QStringLiteral("success"), QStringLiteral("%1 was signed out.").arg(label));
     }, QStringLiteral("Could not revoke the client"));
   } else if (action == QLatin1String("connections.clients.revokeOthers")) {
-    change(QStringLiteral("hal-c2.revokeOtherClients"), {}, [this](const QJsonObject& result) {
+    change(m_client->environment(), QStringLiteral("hal-c2.revokeOtherClients"), {}, [this](const QJsonObject& result) {
       const int count = result.value(QLatin1String("revokedCount")).toInt();
       setNotice(QStringLiteral("success"), count == 1 ? QStringLiteral("1 client was revoked.")
                                                       : QStringLiteral("%1 clients were revoked.").arg(count));
@@ -126,6 +150,7 @@ void ConnectionsController::setOpen(bool open) {
   m_open = open;
   m_state.insert(QStringLiteral("notice"), null());
   if (open) {
+    readMachines();
     watchAccess();
     return;
   }
@@ -135,7 +160,20 @@ void ConnectionsController::setOpen(bool open) {
   m_state.insert(QStringLiteral("access"), null());
   m_state.insert(QStringLiteral("accessError"), null());
   m_state.insert(QStringLiteral("created"), null());
+  // And a link still on its way is not shown when it arrives.
+  ++m_linkRequest;
   publish();
+}
+
+bool ConnectionsController::readMachines() {
+  auto* scope = NativeShell::of(this)->controller<SettingsScopeController>();
+  QVariantList machines;
+  for (const QString& id : scope->listed()) {
+    if (scope->online(id)) machines.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("label"), scope->label(id)}});
+  }
+  if (machines == m_state.value(QStringLiteral("machines")).toList()) return false;
+  m_state.insert(QStringLiteral("machines"), machines);
+  return true;
 }
 
 void ConnectionsController::watchAccess() {
@@ -203,24 +241,75 @@ void ConnectionsController::createPairingLink(const QVariantMap& input) {
   QJsonObject payload{{QStringLiteral("scopes"), QJsonArray::fromStringList(scopes)}};
   const QString label = input.value(QStringLiteral("label")).toString().trimmed();
   if (!label.isEmpty()) payload.insert(QStringLiteral("label"), label);
-  change(QStringLiteral("hal-c2.createPairingLink"), payload, [this](const QJsonObject& result) {
+  if (input.value(QStringLiteral("tailscale")).toBool()) payload.insert(QStringLiteral("tailscale"), true);
+  const QString own = m_client->environment();
+  const QString chosen = input.value(QStringLiteral("environmentId")).toString();
+  const QString environmentId = chosen.isEmpty() ? own : chosen;
+  // A machine this shell reached over the network is reached there by the
+  // next device too, and the MC may only know the loopback it listens on (it
+  // sits behind Tailscale Serve or a proxy): the shell names the address.
+  const QUrl reached = m_client->origin().adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment);
+  if (environmentId == own && !payload.contains(QLatin1String("tailscale")) && !loopback(reached)) {
+    payload.insert(QStringLiteral("baseUrl"), reached.toString());
+  }
+  const quint64 request = ++m_linkRequest;
+  change(environmentId, QStringLiteral("hal-c2.createPairingLink"), payload, [this, environmentId, own, request](const QJsonObject& result) {
     const QString code = result.value(QLatin1String("credential")).toString();
-    const QString origin = m_client->origin().adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment).toString();
-    m_state.insert(QStringLiteral("created"), QVariantMap{
-                                                   {QStringLiteral("id"), result.value(QLatin1String("id")).toString()},
-                                                   {QStringLiteral("label"), result.value(QLatin1String("label")).toString()},
-                                                   {QStringLiteral("code"), code},
-                                                   {QStringLiteral("url"), pairingUrl(origin, code)},
-                                                   {QStringLiteral("expiresAt"), result.value(QLatin1String("expiresAt")).toString()},
-                                               });
+    const QString id = result.value(QLatin1String("id")).toString();
+    // The page was left since, or asked for another link: this one would be
+    // shown to nobody, or on a visit that did not ask for it.
+    if (request != m_linkRequest) {
+      discard(environmentId, id);
+      publish();
+      return;
+    }
+    // The MC says where it is reached. One from before it did is reached where
+    // this shell reached it, which says nothing of another machine.
+    QString address = result.value(QLatin1String("address")).toString();
+    bool localOnly = result.value(QLatin1String("localOnly")).toBool();
+    if (address.isEmpty() && environmentId == own) {
+      const QUrl origin = m_client->origin().adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment);
+      address = origin.toString();
+      localOnly = loopback(origin);
+    }
+    const QString machine = NativeShell::of(this)->controller<SettingsScopeController>()->label(environmentId);
+    if (address.isEmpty()) {
+      // No one can use a link with no address.
+      discard(environmentId, id);
+      setNotice(QStringLiteral("error"),
+                QStringLiteral("Could not create the pairing URL: %1 did not say where it can be reached. Update HAL-C2 on it.").arg(machine));
+      return;
+    }
+    const QString url = pairingUrl(address, code);
+    const qr::Code code2d = localOnly ? qr::Code{} : qr::encode(url);
+    m_state.insert(QStringLiteral("created"),
+                   QVariantMap{
+                       {QStringLiteral("id"), id},
+                       {QStringLiteral("label"), result.value(QLatin1String("label")).toString()},
+                       {QStringLiteral("code"), code},
+                       {QStringLiteral("url"), url},
+                       {QStringLiteral("expiresAt"), result.value(QLatin1String("expiresAt")).toString()},
+                       {QStringLiteral("environmentId"), environmentId},
+                       {QStringLiteral("machine"), machine},
+                       {QStringLiteral("elsewhere"), environmentId != own},
+                       {QStringLiteral("localOnly"), localOnly},
+                       {QStringLiteral("qr"), code2d.isNull() ? null()
+                                                              : QVariant(QVariantMap{{QStringLiteral("modules"), code2d.size},
+                                                                                     {QStringLiteral("path"), qr::path(code2d)}})},
+                   });
     setNotice(QStringLiteral("success"), QStringLiteral("Pairing link created. Copy it now: it is shown only while this page is open."));
   }, QStringLiteral("Could not create the pairing URL"));
 }
 
-void ConnectionsController::change(const QString& method, const QJsonObject& payload,
+void ConnectionsController::discard(const QString& environmentId, const QString& id) {
+  m_client->call(this, environmentId, QStringLiteral("hal-c2.revokePairingLink"), QJsonObject{{QStringLiteral("id"), id}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
+}
+
+void ConnectionsController::change(const QString& environmentId, const QString& method, const QJsonObject& payload,
                                    std::function<void(const QJsonObject& result)> done, const QString& failure) {
   set(QStringLiteral("busy"), true);
-  m_client->call(this, m_client->environment(), method, payload,
+  m_client->call(this, environmentId, method, payload,
                  [this, done = std::move(done), failure](const QJsonValue& result, const std::optional<QString>& error) {
                    m_state.insert(QStringLiteral("busy"), false);
                    if (error) {

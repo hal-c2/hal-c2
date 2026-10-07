@@ -152,7 +152,9 @@ defmodule HalC2.AuthTest do
     input = %{"label" => "Tablet", "scopes" => ["orchestration:read", "not-a-scope"]}
     {{:ok, link}, admin} = call(admin, "hal-c2.createPairingLink", input)
     assert %{"id" => link_id, "credential" => credential, "label" => "Tablet"} = link
-    assert Enum.sort(Map.keys(link)) == ~w(credential expiresAt id label)
+    # With where this MC is reached: its loopback listener, which only this machine reaches.
+    assert Enum.sort(Map.keys(link)) == ~w(address credential expiresAt id label localOnly)
+    assert %{"address" => "http://127.0.0.1:" <> _, "localOnly" => true} = link
 
     {{:ok, [listed]}, admin} = call(admin, "hal-c2.pairingLinks", %{})
     assert %{"id" => ^link_id, "scopes" => ["orchestration:read"]} = listed

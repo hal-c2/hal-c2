@@ -13,6 +13,17 @@ Window {
 
     default property alias content: body.data
 
+    // The first-run gate and welcome wizard over the window. A client that
+    // sets no machine up (the phone, which shows its pairing screen before
+    // there is an MC to wait for) turns it off.
+    property bool firstRunGate: true
+    // The window's own ConnectionNotice at its top edge. A layout that places
+    // the notice itself (clear of a phone's status bar) turns it off.
+    property bool connectionNotice: true
+    // The shell's menus (`menu`) as a popup where they were asked for. A
+    // layout that draws them itself (the phone's sheet) turns it off.
+    property bool contextMenus: true
+
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
     // How wide the thread list is drawn (LayoutController: the width the user
@@ -76,7 +87,7 @@ Window {
 
     ContextMenuHost {
         objectName: "shellMenuHost"
-        surfaceId: "shell"
+        surfaceId: root.contextMenus ? "shell" : ""
     }
 
     ProjectRemovalDialog {}
@@ -132,14 +143,21 @@ Window {
 
     // The first-run gate: covers the window until setup is done.
     WelcomeWizard {
+        id: welcomeWizard
+
         anchors.fill: parent
+        visible: root.firstRunGate && welcomeWizard.active
     }
 
     ShellErrorOverlay {
         anchors.fill: parent
     }
 
-    ConnectionNotice {}
+    ConnectionNotice {
+        id: windowNotice
+
+        visible: root.connectionNotice && (windowNotice.troubled || windowNotice.warning !== null)
+    }
 
     // One window shortcut per sequence the keymap (Keybindings) binds. A key
     // with no command in the current focus stands down and stays with the

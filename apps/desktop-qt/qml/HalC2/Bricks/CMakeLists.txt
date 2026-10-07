@@ -20,6 +20,7 @@ qt_add_qml_module(hal_c2_bricks
     FolderExplorer.qml
     FolderOperationDialog.qml
     ContextMenuHost.qml
+    DefaultLayout.qml
     DefaultShell.qml
     GitActions.qml
     Notifications.qml
@@ -36,6 +37,7 @@ qt_add_qml_module(hal_c2_bricks
     ShellChevron.qml
     ShellComboBox.qml
     ShellIcon.qml
+    QrCode.qml
     ShellSplitButton.qml
     ShellMenu.qml
     ShellMenuItem.qml
@@ -109,6 +111,7 @@ qt_add_qml_module(hal_c2_bricks
     PluginContext.qml
     PluginThreadPart.qml
     PluginSettings.qml
+    PairingSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml

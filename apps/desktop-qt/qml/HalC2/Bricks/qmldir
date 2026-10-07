@@ -11,6 +11,7 @@ ProviderIcon 1.0 ProviderIcon.qml
 ComposerVimKeys 1.0 ComposerVimKeys.qml
 ProjectFolderDrop 1.0 ProjectFolderDrop.qml
 ContextMenuHost 1.0 ContextMenuHost.qml
+DefaultLayout 1.0 DefaultLayout.qml
 DefaultShell 1.0 DefaultShell.qml
 GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
@@ -30,6 +31,7 @@ ShellComboBox 1.0 ShellComboBox.qml
 ShellButton 1.0 ShellButton.qml
 ShellCard 1.0 ShellCard.qml
 ShellIcon 1.0 ShellIcon.qml
+QrCode 1.0 QrCode.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
 Sidebar 1.0 Sidebar.qml
@@ -118,3 +120,4 @@ PluginPart 1.0 PluginPart.qml
 PluginContext 1.0 PluginContext.qml
 PluginThreadPart 1.0 PluginThreadPart.qml
 PluginSettings 1.0 PluginSettings.qml
+PairingSettings 1.0 PairingSettings.qml

@@ -22,6 +22,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "TerminalController.h"
 #include "ToastController.h"
 
 namespace {
@@ -867,7 +868,11 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   } else if (active) {
     description = phase == QLatin1String("starting")    ? QStringLiteral("Starting sign-in…")
                   : phase == QLatin1String("verifying") ? QStringLiteral("Checking your account…")
-                  : interactionType == QLatin1String("terminal")    ? QStringLiteral("Complete sign-in in the terminal below.")
+                  : interactionType == QLatin1String("terminal")
+                      ? (TerminalController::supported()
+                             ? QStringLiteral("Complete sign-in in the terminal below.")
+                             : QStringLiteral("This sign-in continues in a terminal, which this build of HAL-C2 does not have. Cancel it and sign in "
+                                              "from HAL-C2 on a computer."))
                   : interactionType == QLatin1String("credentials") ? QStringLiteral("Enter your credentials below.")
                                                                     : QStringLiteral("Finish signing in in your browser.");
   } else if (signedIn) {
@@ -896,7 +901,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   }
   // The agent's login terminal: its latest output and how far it has come.
   QVariant terminal = null();
-  if (active && interactionType == QLatin1String("terminal")) {
+  if (active && interactionType == QLatin1String("terminal") && TerminalController::supported()) {
     terminal = QVariantMap{{QStringLiteral("key"), state.value(QLatin1String("flowId")).toString() + QLatin1Char(':') +
                                                       interaction.value(QLatin1String("id")).toString()},
                            {QStringLiteral("output"), interaction.value(QLatin1String("output")).toString()},

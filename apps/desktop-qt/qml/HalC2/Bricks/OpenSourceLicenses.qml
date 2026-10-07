@@ -22,6 +22,9 @@ Rectangle {
     readonly property color line: Theme.palette.color("border", "#27272a")
 
     objectName: "openSourceLicenses"
+    // A list too narrow for a row's name beside its licence (a phone's): the
+    // licence goes under the name, and the search under the heading.
+    readonly property bool narrow: list.width < 520
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     ListView {
@@ -46,10 +49,12 @@ Rectangle {
                 section: qsTr("Open source licenses")
             }
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 12
-                spacing: 12
+                columns: page.narrow ? 2 : 3
+                columnSpacing: 12
+                rowSpacing: 8
 
                 Label {
                     Layout.fillWidth: true
@@ -71,6 +76,8 @@ Rectangle {
                 ShellTextField {
                     objectName: "licenseSearch"
                     visible: page.status === "ready"
+                    Layout.columnSpan: page.narrow ? 2 : 1
+                    Layout.fillWidth: page.narrow
                     implicitWidth: 200
                     placeholderText: qsTr("Search licenses")
                     text: page.settings?.query ?? ""
@@ -144,12 +151,16 @@ Rectangle {
             width: Math.min(720, list.width - 48)
             spacing: 0
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                columns: page.narrow ? 2 : 3
+                columnSpacing: 8
+                rowSpacing: 0
 
                 ShellButton {
                     objectName: "toggle"
+                    Layout.row: 0
+                    Layout.column: 0
                     Layout.fillWidth: true
                     subtle: true
                     chevron: true
@@ -160,7 +171,13 @@ Rectangle {
 
                 Label {
                     objectName: "summary"
-                    Layout.maximumWidth: 300
+                    Layout.row: page.narrow ? 1 : 0
+                    Layout.column: page.narrow ? 0 : 1
+                    Layout.columnSpan: page.narrow ? 2 : 1
+                    Layout.fillWidth: page.narrow
+                    Layout.leftMargin: page.narrow ? 28 : 0
+                    Layout.bottomMargin: page.narrow ? 6 : 0
+                    Layout.maximumWidth: page.narrow ? -1 : 300
                     text: notice.modelData.license + " · " + notice.modelData.where
                     elide: Text.ElideRight
                     color: page.muted
@@ -168,6 +185,8 @@ Rectangle {
                 }
 
                 ShellButton {
+                    Layout.row: 0
+                    Layout.column: page.narrow ? 1 : 2
                     visible: !!notice.modelData.sourceUrl
                     subtle: true
                     iconName: "external-link"

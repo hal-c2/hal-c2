@@ -1,6 +1,8 @@
 # Sources:
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/QrCode.qml, apps/desktop-qt/src/native/QrCode.cpp (a pairing link as a QR code)
+#   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink: the address a link's machine is reached at)
 #   apps/web/src/components/settings/ConnectionsSettings.logic.ts
 #   apps/web/src/components/settings/pairingUrls.ts
 #   apps/web/src/components/settings/EnvironmentRow.tsx
@@ -167,13 +169,129 @@ Feature: Connections settings
       When the user copies a pairing link
       Then the link is shown so the user can copy it by hand
 
-    @backlog @desktop
+    # A link names the address its machine says it is reached at (the MC's
+    # hal-c2.createPairingLink, connections/pairing.feature), and the QR code holds exactly
+    # the link shown: the phone app scans it, and a phone's own camera opens it as a page of
+    # that machine.
+    @desktop
     Scenario: A pairing link can be shared as a QR code except on this machine's own address
-      Given a pairing link is listed
-      When the user chooses to reach this machine via its local network address
-      Then a QR code for the link is offered
-      When the user chooses this machine's loopback address
+      Given this machine is reached over Tailscale at "https://desk.tail5e3a.ts.net"
+      When the user creates a pairing link over Tailscale
+      Then the link shown starts with "https://desk.tail5e3a.ts.net/pair#token="
+      And a QR code of the link shown is offered, dark on light
+      When the user creates a pairing link at the address this machine listens on
       Then no QR code is offered
+      And the user is told to create the link over Tailscale or start the machine on a network address
+
+    @desktop
+    Scenario Outline: The QR code of a pairing link keeps a size a phone can scan
+      Given this machine is reached over Tailscale at "https://desk.tail5e3a.ts.net"
+      And the Connections settings are shown in <window>
+      When the user creates a pairing link over Tailscale
+      Then the QR code of the link shown is <drawn>
+
+      Examples:
+        | window                                    | drawn                               |
+        | a wide window                             | whole, at its full size             |
+        | a narrow window                           | whole, smaller                      |
+        | a window narrower than a code can be read | no smaller than a phone can scan    |
+
+    @desktop
+    Scenario: Tailscale that cannot publish the machine leaves no pairing link
+      Given Tailscale is not running on this machine
+      When the user creates a pairing link over Tailscale
+      Then the user is told the pairing URL could not be created
+      And no pairing link is shown
+
+    # A phone paired with the laptop its user sits at stops working when the laptop sleeps:
+    # the link can be for a machine of the cluster that stays on.
+    @desktop
+    Scenario: A pairing link can be for another machine of the cluster
+      Given the cluster also has the machine "Studio", reached over Tailscale at "https://studio.tail5e3a.ts.net"
+      When the user creates a pairing link for "Studio" over Tailscale
+      Then "Studio" is asked for the pairing link over Tailscale
+      And the link shown starts with "https://studio.tail5e3a.ts.net/pair#token="
+      And a QR code of the link shown is offered, dark on light
+
+    @desktop
+    Scenario: A pairing link is for this machine until the user chooses another
+      Given the cluster also has the machine "Studio", reached over Tailscale at "https://studio.tail5e3a.ts.net"
+      And this machine is reached over Tailscale at "https://desk.tail5e3a.ts.net"
+      When the user creates a pairing link over Tailscale
+      Then this machine is asked for the pairing link over Tailscale
+      And the link shown starts with "https://desk.tail5e3a.ts.net/pair#token="
+
+    @desktop
+    Scenario: Only machines that are online are offered for a pairing link
+      Given the cluster also has the machines "Studio" and "Laptop"
+      When "Laptop" becomes unreachable
+      Then a pairing link can be for this machine or "Studio"
+      When "Laptop" is reachable again
+      Then a pairing link can be for this machine, "Laptop" or "Studio"
+
+    @desktop
+    Scenario: A machine on its own offers no choice of machine for a pairing link
+      Then no choice of machine is offered for a pairing link
+
+    # The list is of this machine's links, so one made on another machine is revoked where
+    # it is shown.
+    @desktop
+    Scenario: A pairing link made on another machine is revoked there
+      Given the cluster also has the machine "Studio"
+      And the user created a pairing link for "Studio"
+      When the user revokes that link
+      Then "Studio" is asked to revoke it
+      And no pairing link is shown
+      And a device can no longer pair with it
+
+    # An MC from before pairing links named their address.
+    @desktop
+    Scenario: A machine that does not say where it is reached is paired at the address this desktop reached it at
+      Given this machine runs a HAL-C2 from before pairing links named their address
+      When the user creates a pairing link at the address this machine listens on
+      Then the link shown starts with the address this desktop reached the machine at
+
+    @desktop
+    Scenario: Another machine that does not say where it is reached gets no pairing link
+      Given the cluster also has the machine "Studio"
+      And "Studio" runs a HAL-C2 from before pairing links named their address
+      When the user creates a pairing link for "Studio"
+      Then the user is told the pairing URL could not be created
+      And no pairing link is shown
+      And a device can no longer pair with it
+
+    # A link's secret is shown only while the page that asked for it stays open. One that
+    # arrives after the user left can be used by nobody, on that visit or the next, and for
+    # another machine it is not in this machine's list either: its machine takes it back.
+    @desktop
+    Scenario Outline: A pairing link that arrives after the user left the page is revoked, not shown
+      Given the cluster also has the machine "Studio"
+      And the MC holds its answers
+      When the user asks for a pairing link for "Studio"
+      And the user leaves the Connections page
+      And <first>
+      And <then>
+      Then no pairing link is shown
+      And "Studio" is asked to revoke it
+      And a device can no longer pair with it
+
+      Examples:
+        | first                                       | then                                        |
+        | the MC answers                              | the user comes back to the Connections page |
+        | the user comes back to the Connections page | the MC answers                              |
+
+    # A device paired with another machine of the cluster is that machine's client, and
+    # the MC answers the access list and client revocation only for the machine the session
+    # is on (hal-c2.clients and hal-c2.revokeClient refuse with "session_on_another_mc").
+    # Waits for the maintainers: whether a session on one member may manage another's clients.
+    @backlog @blocked @desktop
+    Scenario: A device paired with another machine of the cluster is listed and revoked from here
+      Given the cluster also has the machine "Studio"
+      And the phone "Pixel" paired with "Studio" through a link created here
+      When the user looks at who may reach "Studio"
+      Then "Pixel" is listed
+      When the user revokes "Pixel"
+      Then "Pixel" can no longer reach "Studio"
 
     @desktop
     Scenario: Revoking a pairing link stops it from pairing

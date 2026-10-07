@@ -104,6 +104,7 @@ const BUNDLE_LABELS: Readonly<Record<string, string>> = {
   "device-tools": "Device tools",
   ios: "iOS",
   mobile: "Mobile",
+  "mobile-qt": "Qt mobile",
   server: "Server",
   web: "Web",
 };

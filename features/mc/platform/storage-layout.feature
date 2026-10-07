@@ -6,6 +6,7 @@
 #   apps/server/src/config.ts (deriveServerPaths: settings, database, attachments, logs, caches)
 #   apps/server/src/cli/config.ts (--base-dir, a dev URL picks the dev profile)
 #   apps/server/src/cli/pair.ts (probes both profiles)
+#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex (finds the running MC; --release names the installed one)
 #   apps/server/src/device/SshDeviceHost.ts, packages/ssh/src/tunnel.ts (ssh-launch on remote hosts)
 #   apps/server-ex/config/config.exs (the hal-c2-dev profile for a dev MC)
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME)
@@ -231,6 +232,20 @@ Feature: Where HAL-C2 keeps its files
         | which         |
         | the installed |
         | a development |
+
+    @mc
+    Scenario: A developer pairs with the installed server while a development one runs too
+      Given the installed server is running with no HAL-C2 home configured
+      And a development server is running beside it
+      When a developer asks a checkout for the installed server's pairing link
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: Asking for the installed server's pairing link when it is not running says so
+      Given a development server is running with no HAL-C2 home configured
+      When a developer asks a checkout for the installed server's pairing link
+      Then the developer is told the installed server is not running
+      And no pairing token is made
 
   Rule: The MC's files are sorted by kind
 

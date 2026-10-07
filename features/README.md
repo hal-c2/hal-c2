@@ -129,10 +129,14 @@ to fail there.
 | MC         | `mise run features:mc <globs>`, `features:mc:all`         | `mix features [--backlog] <globs>` in `apps/server-ex`                                       |
 | TUI        | `mise run features:tui <globs>`, `features:tui:all`       | `TUI_FEATURES="<globs>" [TUI_INCLUDE_BACKLOG=1] bun test ./features/runner.ts` in `apps/tui` |
 | Qt desktop | `mise run features:desktop` (`:qml` and `:native` halves) | `vp run --filter @hal-c2/desktop-qt test:qml`, ctest per `apps/desktop-qt/README.md`         |
+| QML phone  | `mise run features:mobile [--backlog] [globs]`            | `[HAL_C2_FEATURES="<globs>"] [HAL_C2_BACKLOG=1]` ctest per `apps/mobile-qt/README.md`        |
 
 MC globs are required; `features:mc:all` runs the suite one top-level directory at a time,
 because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
 `@shared` scenario. On the desktop, the native tests' `tst_Features` runs the `@desktop` scenarios
 of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake MC (`HAL_C2_FEATURES="<globs>"` picks other files);
-`apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. `mise run features` runs all three and reports
-each. Step definitions live in `apps/server-ex/test/steps/` and `apps/tui/features/`.
+`apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. On the phone, the tests' `tst_Features`
+runs the `@mobile` and `@shared` scenarios of the `mobile/` files it lists against the same fake MC, tapping and typing into the phone's real
+root; like the desktop's it leaves out `@backlog` and its own surface's `@backlog-mobile`, and `--backlog` runs only those instead.
+`mise run features` runs all four and reports each. Step definitions live in `apps/server-ex/test/steps/`, `apps/tui/features/`,
+`apps/desktop-qt/tests/native/features/` and `apps/mobile-qt/tests/features/`.

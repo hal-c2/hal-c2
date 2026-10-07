@@ -1,0 +1,13 @@
+module HalC2.Mobile
+HomeScreen 1.0 HomeScreen.qml
+MobileBar 1.0 MobileBar.qml
+MobileButton 1.0 MobileButton.qml
+MobileIconButton 1.0 MobileIconButton.qml
+MobileMenu 1.0 MobileMenu.qml
+MobileShell 1.0 MobileShell.qml
+MobileSurface 1.0 MobileSurface.qml
+PairingScreen 1.0 PairingScreen.qml
+RenameThreadDialog 1.0 RenameThreadDialog.qml
+ScanScreen 1.0 ScanScreen.qml
+SettingsScreen 1.0 SettingsScreen.qml
+ThreadScreen 1.0 ThreadScreen.qml

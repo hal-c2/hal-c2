@@ -158,6 +158,27 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
+  step ~r/^(?:a development|the installed) server is running beside it$/, context do
+    Storage.running_beside(context)
+  end
+
+  step "a developer asks a checkout for the installed server's pairing link", context do
+    Storage.pair_release(context)
+  end
+
+  step "the developer is told the installed server is not running", context do
+    assert {:error, message} = context.pair_output
+    assert message =~ "The installed MC is not running"
+    context
+  end
+
+  step "no pairing token is made", context do
+    assert HalC2.Auth.pairing_links() == []
+    installed = Paths.mc_dirs(nil, System.get_env(), Paths.user_home())
+    refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
+    context
+  end
+
   # --- where things are ----------------------------------------------------------------
 
   step ~r/^its (?<kind>config|data|state|cache|runtime) directory is (?<path>.+)$/,

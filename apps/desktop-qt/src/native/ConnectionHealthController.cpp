@@ -3,15 +3,10 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QHostAddress>
 #include <QNetworkAccessManager>
 #include <QNetworkInformation>
-#include <QNetworkReply>
-#include <QUrl>
-#include <QUrlQuery>
+#include <QNetworkInterface>
 
 #include "KeybindingController.h"
 #include "McClient.h"
@@ -28,6 +23,21 @@ const NativeControllerRegistrar<ConnectionHealthController> registrar(QStringLit
                                                                       NativeControllerScope::Shared);
 
 const QString kKey = QStringLiteral("connection");
+
+// Whether some interface besides loopback is up with an address of its own: a
+// second opinion for a backend that says the device is disconnected. Android's
+// says so when any network is lost, the one a phone just left for another
+// included, and stays there until some network next changes.
+bool hasNetwork() {
+  for (const QNetworkInterface& interface : QNetworkInterface::allInterfaces()) {
+    const QNetworkInterface::InterfaceFlags flags = interface.flags();
+    if (!flags.testFlag(QNetworkInterface::IsUp) || !flags.testFlag(QNetworkInterface::IsRunning) || flags.testFlag(QNetworkInterface::IsLoopBack)) continue;
+    for (const QNetworkAddressEntry& entry : interface.addressEntries()) {
+      if (!entry.ip().isLinkLocal() && !entry.ip().isLoopback()) return true;
+    }
+  }
+  return false;
+}
 const QString kDismissals = QStringLiteral("versionMismatchDismissals");
 
 struct Version {
@@ -97,6 +107,7 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
         QGuiApplication::clipboard()->setText(text);
         return true;
       }),
+      m_network{[] { return false; }, hasNetwork},
       m_clientVersion(QCoreApplication::applicationVersion()) {
   connect(client, &McClient::phaseChanged, this, &ConnectionHealthController::update);
   connect(client, &McClient::readyChanged, this, [this](bool ready) {
@@ -111,19 +122,27 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
       if (state == Qt::ApplicationActive) m_client->wake();
     });
   }
-  // A remote MC is not retried while this device has no network, and is
-  // tried at once when it returns. The MC on this machine needs none.
   if (QNetworkInformation::loadDefaultBackend()) {
     QNetworkInformation* network = QNetworkInformation::instance();
-    connect(network, &QNetworkInformation::reachabilityChanged, this, [this](QNetworkInformation::Reachability reachability) {
-      const QString host = m_client->origin().host();
-      const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
-      const bool online = local || reachability != QNetworkInformation::Reachability::Disconnected;
-      m_client->setOnline(online);
-      if (online) m_client->wake();
-    });
+    m_network.disconnected = [network] { return network->reachability() == QNetworkInformation::Reachability::Disconnected; };
+    connect(network, &QNetworkInformation::reachabilityChanged, this, &ConnectionHealthController::networkChanged);
+  }
+  // The MC the client is opened at may be on this machine where the last one
+  // was not, or the other way round.
+  if (auto* shell = qobject_cast<NativeShell*>(parent)) {
+    connect(shell, &NativeShell::opened, this, &ConnectionHealthController::networkChanged);
   }
   update();
+}
+
+// A remote MC is not retried while this device has no network, and is tried
+// at once when it returns. The MC on this machine needs none.
+void ConnectionHealthController::networkChanged() {
+  const QString host = m_client->origin().host();
+  const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
+  const bool online = local || !m_network.disconnected() || m_network.interfaceUp();
+  m_client->setOnline(online);
+  if (online) m_client->wake();
 }
 
 void ConnectionHealthController::activate() {
@@ -185,43 +204,24 @@ bool ConnectionHealthController::handle(const QString& action, const QVariant& p
 // and connects with it. Everything the shell holds stays as it is.
 void ConnectionHealthController::pair(const QString& pairingUrl) {
   if (m_pairing) return;
-  const QUrl link(pairingUrl);
-  const QString token = QUrlQuery(link.fragment()).queryItemValue(QStringLiteral("token"));
-  if (!link.isValid() || link.host().isEmpty() || token.isEmpty()) {
+  const auto link = pairing::readLink(pairingUrl);
+  if (!link) {
     m_pairingError = tr("Enter a pairing link from the environment.");
     update();
     return;
   }
-  QUrl origin;
-  origin.setScheme(link.scheme());
-  origin.setHost(link.host());
-  origin.setPort(link.port());
   m_pairing = true;
   m_pairingError.clear();
   update();
   if (!m_http) m_http = new QNetworkAccessManager(this);
-  QUrl exchange = origin;
-  exchange.setPath(QStringLiteral("/oauth/token"));
-  QNetworkRequest request(exchange);
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/x-www-form-urlencoded"));
-  request.setTransferTimeout(5000);
-  QUrlQuery form;
-  form.addQueryItem(QStringLiteral("grant_type"), QStringLiteral("urn:ietf:params:oauth:grant-type:token-exchange"));
-  form.addQueryItem(QStringLiteral("subject_token_type"), QStringLiteral("urn:hal-c2:params:oauth:token-type:environment-bootstrap"));
-  form.addQueryItem(QStringLiteral("subject_token"), token);
-  form.addQueryItem(QStringLiteral("client_label"), QStringLiteral("HAL-C2 desktop"));
-  form.addQueryItem(QStringLiteral("client_device_type"), QStringLiteral("desktop"));
-  QNetworkReply* answer = m_http->post(request, form.toString(QUrl::FullyEncoded).toUtf8());
-  connect(answer, &QNetworkReply::finished, this, [this, answer, origin] {
-    answer->deleteLater();
+  pairing::exchange(m_http, this, *link, m_pairingClient, [this](const pairing::Result& result) {
     m_pairing = false;
-    const QString access = QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("access_token")).toString();
-    if (answer->error() != QNetworkReply::NoError || access.isEmpty()) {
+    if (result.outcome != pairing::Outcome::Paired) {
       m_pairingError = tr("The pairing link is invalid or expired. Ask for a fresh one.");
       update();
       return;
     }
-    NativeShell::of(this)->shell()->open(origin, access);
+    NativeShell::of(this)->shell()->open(result.origin, result.token);
     update();
   });
 }

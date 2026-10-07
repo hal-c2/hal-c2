@@ -1,0 +1,100 @@
+<?xml version="1.0"?>
+<!-- Qt 6.11's template (src/android/templates/AndroidManifest.xml) with the
+     app's own name, icon and permissions. androiddeployqt fills the %% marks. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.halc2.mobile"
+    android:installLocation="auto"
+    android:versionCode="-- %%INSERT_VERSION_CODE%% --"
+    android:versionName="-- %%INSERT_VERSION_NAME%% --">
+    <!-- Written out rather than %%INSERT_PERMISSIONS, which also adds the
+         storage permission Qt Core asks for and this app never uses. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Scanning an environment's pairing code. Asked for when the user first
+         opens the scanner; Qt Multimedia's own list also has the microphone
+         and Bluetooth, which nothing here uses. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- %%INSERT_FEATURES -->
+    <!-- Phones, tablets and laptops alike: a device with no touchscreen (a
+         mouse or trackpad is its pointer) installs the app too. Android
+         assumes a touchscreen is required unless told otherwise. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
+    <uses-feature android:name="android.hardware.type.pc" android:required="false" />
+    <!-- The camera permission makes a camera required unless told otherwise;
+         a device without one pairs by a link. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <supports-screens
+        android:anyDensity="true"
+        android:xlargeScreens="true"
+        android:largeScreens="true"
+        android:normalScreens="true"
+        android:smallScreens="true"
+        android:resizeable="true" />
+    <!-- The session token lives in the app's private files: no backup, and
+         no copy to a new device (allowBackup alone still allows that one
+         from Android 12). -->
+    <application
+        android:name="org.qtproject.qt.android.bindings.QtApplication"
+        android:hardwareAccelerated="true"
+        android:label="HAL-C2"
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="false"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+        <!-- adjustResize: the composer stays above the on-screen keyboard.
+             resizeableActivity and no orientation or aspect limit: the window
+             is whatever a split screen, a freeform desktop or an unfolding
+             gives it, and the app's root picks its layout from that size.
+             configChanges names everything that happens to such a window
+             (a keyboard or pointer attached, another display), so none of
+             it restarts the activity, which would restart the app.
+             singleTask: a link that opens the app (the filter below) always
+             reaches the one activity the app has, whoever started it; with
+             singleTop an app that starts it without asking for a new task
+             gets a second one inside its own, which Qt cannot run. -->
+        <activity
+            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|touchscreen|mcc|mnc|density"
+            android:label="HAL-C2"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- hal-c2://pair?pairingUrl=<pairing link>, which an MC's /pair
+                 page offers a phone's browser. Qt hands the address to the
+                 `hal-c2` handler MobileApp sets, which only ever shows it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hal-c2" android:host="pair" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="-- %%INSERT_APP_LIB_NAME%% --" />
+
+            <meta-data
+                android:name="android.app.arguments"
+                android:value="-- %%INSERT_APP_ARGUMENTS%% --" />
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.qtprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/qtprovider_paths"/>
+        </provider>
+    </application>
+</manifest>

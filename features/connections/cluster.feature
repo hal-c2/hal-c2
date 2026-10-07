@@ -10,6 +10,8 @@
 #   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
+#   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
+#     the address an invite or a pairing link names)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/tui/src/clusterClient.ts (one list over the cluster's machines, a project keyed by its machine)
 #   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
@@ -228,6 +230,17 @@ Feature: Clustering one person's machines
     Given a client connected to the first member
     When it follows a thread that lives on the second member by that member's environment
     Then the thread streams over the client's one socket
+
+  # A phone paired with the laptop its user sits at stops working when the laptop sleeps;
+  # the laptop's client asks the server of the cluster for the link instead.
+  @mc
+  Scenario: A client connected to one member gets a pairing link for another
+    Given a client that manages access is connected to the first member
+    And Tailscale names the second member's machine "garden-box.tail5e3a.ts.net"
+    When it asks the second member for a pairing link over Tailscale
+    Then Tailscale serves the second member over HTTPS at "garden-box.tail5e3a.ts.net"
+    And the link comes with the second member's tailnet address
+    And the link pairs a device with the second member, not the first
 
   @mc
   Scenario: A request for an offline member fails without closing the socket

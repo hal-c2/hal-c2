@@ -7,6 +7,8 @@ import HalC2.Shell
 // The Connections settings page, native (ConnectionsController publishes
 // `connections`): who may reach this machine (pairing links and paired
 // clients), and which machine new threads start on (LoadBalancingGroup).
+// A pairing link is for any machine of the cluster that is online, and is
+// shown as a QR code when another device can reach its address.
 // Other machines join on the Cluster page.
 SettingsPage {
     id: page
@@ -14,6 +16,11 @@ SettingsPage {
     readonly property var model: Shell.state.connections ?? null
     readonly property var access: model ? model.access : null
     readonly property var created: model ? model.created : null
+    // The machines a pairing link can be for, the shell's own first, and the
+    // one chosen: the first until the user picks another that is still there.
+    readonly property var machines: model ? (model.machines ?? []) : []
+    property string chosenMachine: ""
+    readonly property var machine: machines.find(entry => entry.id === chosenMachine) ?? machines[0] ?? null
     readonly property var notice: model ? model.notice : null
     readonly property bool busy: model !== null && model.busy
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -36,6 +43,16 @@ SettingsPage {
 
     function scopeTitles(scopes) {
         return scopeOptions.filter(option => scopes.indexOf(option.scope) >= 0).map(option => option.title).join(", ");
+    }
+
+    function createLink(tailscale) {
+        Shell.dispatch("connections.pairingLink.create", {
+            label: linkLabel.text,
+            scopes: page.chosenScopes,
+            environmentId: page.machine ? page.machine.id : "",
+            tailscale: tailscale
+        });
+        linkLabel.clear();
     }
 
     function when(iso) {
@@ -164,7 +181,33 @@ SettingsPage {
             spacing: 8
 
             Note {
-                text: qsTr("A pairing link lets one more device reach this machine. It works once and expires after five minutes.")
+                text: page.machines.length > 1 ? qsTr("A pairing link lets one more device reach the machine you choose, and the rest of the cluster through it. It works once and expires after five minutes.") : qsTr("A pairing link lets one more device reach this machine. It works once and expires after five minutes.")
+            }
+
+            // A phone paired with a laptop stops working when the laptop sleeps:
+            // the link can be for a machine that stays on.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: page.machines.length > 1
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Pair with")
+                    color: page.foreground
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    elide: Text.ElideRight
+                }
+
+                ShellComboBox {
+                    objectName: "connectionsMachine"
+                    outline: true
+                    implicitWidth: 220
+                    model: page.machines.map(entry => entry.label)
+                    currentIndex: page.machine ? page.machines.findIndex(entry => entry.id === page.machine.id) : -1
+                    Accessible.name: qsTr("Machine the device pairs with: %1").arg(displayText)
+                    onActivated: index => page.chosenMachine = page.machines[index].id
+                }
             }
 
             ShellTextField {
@@ -194,16 +237,23 @@ SettingsPage {
                 }
             }
 
-            ShellButton {
-                primary: true
-                enabled: !page.busy
-                text: qsTr("Create pairing link")
-                onClicked: {
-                    Shell.dispatch("connections.pairingLink.create", {
-                        label: linkLabel.text,
-                        scopes: page.chosenScopes
-                    });
-                    linkLabel.clear();
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ShellButton {
+                    objectName: "connectionsCreateLink"
+                    primary: true
+                    enabled: !page.busy
+                    text: qsTr("Create pairing link")
+                    onClicked: page.createLink(false)
+                }
+
+                ShellButton {
+                    objectName: "connectionsCreateLinkTailscale"
+                    enabled: !page.busy
+                    text: qsTr("Create over Tailscale")
+                    onClicked: page.createLink(true)
                 }
             }
 
@@ -236,6 +286,59 @@ SettingsPage {
                     onClicked: Shell.dispatch("connections.pairingLink.copy", {
                         what: "code"
                     })
+                }
+            }
+
+            // The link as a QR code, beside what to do with it; under it in a
+            // window too narrow for both.
+            GridLayout {
+                Layout.fillWidth: true
+                visible: page.created !== null
+                columns: page.contentWidth < 480 ? 1 : 2
+                columnSpacing: 16
+                rowSpacing: 8
+
+                QrCode {
+                    objectName: "connectionsQr"
+                    visible: page.created !== null && !!page.created.qr
+                    modules: visible ? page.created.qr.modules : 0
+                    path: visible ? page.created.qr.path : ""
+                    Layout.alignment: Qt.AlignTop
+                    availableWidth: page.contentWidth
+                    Accessible.name: qsTr("QR code of the pairing link")
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 8
+
+                    Note {
+                        objectName: "connectionsQrHint"
+                        visible: page.created !== null && !!page.created.qr
+                        text: page.created ? qsTr("Scan this with the HAL-C2 app on a phone, or with the phone's camera. Pairs with: %1.").arg(page.created.machine) : ""
+                    }
+
+                    // No QR code for an address no other device can open.
+                    Note {
+                        objectName: "connectionsLocalOnly"
+                        visible: page.created !== null && page.created.localOnly === true
+                        text: page.created ? qsTr("No QR code: a phone cannot open this link. Pairs with: %1, whose MC listens only on its own loopback address. Create the link over Tailscale instead, or start that MC with HAL_C2_MC_HOST set to its LAN or tailnet address.").arg(page.created.machine) : ""
+                        color: page.danger
+                    }
+
+                    // A link on another machine is not in the list below.
+                    ShellButton {
+                        objectName: "connectionsRevokeCreated"
+                        visible: page.created !== null && page.created.elsewhere === true
+                        subtle: true
+                        enabled: !page.busy
+                        text: qsTr("Revoke this link")
+                        Accessible.name: page.created ? qsTr("Revoke the pairing link on %1").arg(page.created.machine) : ""
+                        onClicked: Shell.dispatch("connections.pairingLink.revoke", {
+                            id: page.created.id
+                        })
+                    }
                 }
             }
 

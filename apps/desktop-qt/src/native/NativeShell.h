@@ -93,6 +93,12 @@ public:
 
   // Connects to the MC at `origin`; every window's bridge learns where it is.
   void open(const QUrl& origin, const QString& token);
+  // Leaves the MC for good: the connection closes, and the rows of its
+  // machines, what the cache kept of them and every draft go. The controllers
+  // stay, for whichever MC open() names next. Not for reconnecting
+  // (McClient::reconnect).
+  // False when what the cache kept of it could not be deleted from disk.
+  bool close();
 
   McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
@@ -164,6 +170,9 @@ public:
   bool isActive() const { return m_active; }
 
 signals:
+  // open() was called with this credential: whoever remembers the MC between
+  // runs (the phone's Pairing) keeps the one the shell last connected with.
+  void opened(const QUrl& origin, const QString& token);
   void windowOpened(NativeWindow* window);
   // Before `window` goes (deleteLater): whatever shows it should go first.
   void windowClosing(NativeWindow* window);

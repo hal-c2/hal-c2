@@ -227,11 +227,14 @@ void KeybindingController::registerCommands() {
     });
   }
   // The native terminals', through the bridge like the drawer's buttons; split
-  // and close act on the focused terminal.
-  for (const QString& action : {QStringLiteral("terminal.toggle"), QStringLiteral("terminal.new"),
-                                QStringLiteral("terminal.close"), QStringLiteral("terminal.split"),
-                                QStringLiteral("terminal.splitVertical")}) {
-    add(action, [this, action] { m_bridge->dispatch(action); });
+  // and close act on the focused terminal. A build without a terminal has
+  // none of them, in the palette or under a key.
+  if (TerminalController::supported()) {
+    for (const QString& action : {QStringLiteral("terminal.toggle"), QStringLiteral("terminal.new"),
+                                  QStringLiteral("terminal.close"), QStringLiteral("terminal.split"),
+                                  QStringLiteral("terminal.splitVertical")}) {
+      add(action, [this, action] { m_bridge->dispatch(action); });
+    }
   }
   // The route thread's running turn stops, as the composer's stop button does.
   add(QStringLiteral("thread.stop"), [this] { m_bridge->dispatch(QStringLiteral("composer.interrupt")); });

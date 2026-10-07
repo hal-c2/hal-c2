@@ -133,7 +133,10 @@ lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
 pass an icon name (`iconName: "git-branch"`) and get the same glyph the web
 app shows, at any size or color.
 
-`DefaultShell` is laid out like the web app: the sidebar's brand band ("HAL-C2"
+`DefaultShell` is a `ShellWindow` filled with `DefaultLayout`, the layout as
+an item, so that another root can show it beside a layout of its own
+(`apps/mobile-qt`, see [mobile-qt.md](mobile-qt.md)). It is laid out like the
+web app: the sidebar's brand band ("HAL-C2"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
 run / open / git pills, the timeline, and the composer card with the checkout
 strip welded under it. Frameless windows get their drag handle and buttons
@@ -786,7 +789,15 @@ documents the shape and actions:
   `hal-c2.*` access RPCs, which need `access:read`/`access:write`, so a
   session paired with standard scopes sees one explanation in place of the
   list. A created pairing link's secret lives only in `created` until the
-  section closes. Other machines are the Cluster section's, which the page
+  section closes. The link's address is the one the MC answers with
+  (`hal-c2.createPairingLink`, `HalC2.Web.address/1`), never the origin this
+  client connected at: the call is routed to whichever online member the user
+  picks, and only that member knows where it is reached. The access list and
+  client revocation stay the connected MC's (the MC refuses them across
+  members), so a link made on another member is revoked from `created`, and a
+  device paired there is not listed here. `created.qr` is the link as a QR
+  code (`qr::path`), left out when the MC says only its own machine can open
+  the address. Other machines are the Cluster section's, which the page
   leads to. With more than one machine the page also has the load-balancing
   group (`LoadBalancingController`, `loadBalancing`): its switch and each
   machine's preference are in the connected MC's settings document, because

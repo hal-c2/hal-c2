@@ -1,5 +1,23 @@
 #include "FFmpeg.h"
 
+#ifndef HAL_C2_HAS_FFMPEG
+
+namespace ffmpeg {
+
+const Api* api() {
+  return nullptr;
+}
+
+QString missing() {
+  return QStringLiteral("Device screens are not available in this build of HAL-C2.");
+}
+
+void pretendMissing(bool) {}
+
+}  // namespace ffmpeg
+
+#else
+
 #include <QLibrary>
 #include <QMutex>
 #include <QMutexLocker>
@@ -98,3 +116,5 @@ void pretendMissing(bool missing) {
 }
 
 }  // namespace ffmpeg
+
+#endif

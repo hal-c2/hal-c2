@@ -37,20 +37,29 @@ defmodule HalC2.RuntimeRecord do
   """
   def locate(own) when own in [nil, :dev] do
     Enum.find_value([own | [nil, :dev] -- [own]], fn home ->
-      state = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).state
-
-      with {:ok, text} <- File.read(Path.join(state, "server-runtime.json")),
-           {:ok, %{"pid" => pid, "origin" => origin} = record} when is_integer(pid) <-
-             JSON.decode(text),
-           true <- is_binary(origin) and alive?(pid) do
-        {home, record}
-      else
-        _ -> nil
-      end
+      if record = running(home), do: {home, record}
     end)
   end
 
   def locate(_own), do: nil
+
+  @doc """
+  The live record of the MC of one profile (`nil` the installed one, `:dev` one run
+  from a checkout), or nil when that one is not running: for a tool that was told
+  which of the two it means, as `mix hal_c2.pair --release` is.
+  """
+  def running(home) when home in [nil, :dev] do
+    state = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).state
+
+    with {:ok, text} <- File.read(Path.join(state, "server-runtime.json")),
+         {:ok, %{"pid" => pid, "origin" => origin} = record} when is_integer(pid) <-
+           JSON.decode(text),
+         true <- is_binary(origin) and alive?(pid) do
+      record
+    else
+      _ -> nil
+    end
+  end
 
   # A record outlives an MC that was killed; its process does not.
   defp alive?(pid) do

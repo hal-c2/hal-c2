@@ -1,14 +1,12 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
-#include <QJsonDocument>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlEngine>
 #include <QStandardPaths>
-#include <QTimer>
 #include <QWindow>
 #include <QtLogging>
 
@@ -22,6 +20,7 @@
 #include "NativeNotifications.h"
 #include "NativeShell.h"
 #include "QuitController.h"
+#include "ScriptedRun.h"
 #include "PluginController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -129,23 +128,9 @@ int main(int argc, char* argv[]) {
   const QCommandLineOption nodeOption(
       QStringLiteral("node"), QStringLiteral("Node executable used to run the desktop host."),
       QStringLiteral("path"), resolveDefaultNodeExecutable());
-  const QCommandLineOption screenshotOption(
-      QStringLiteral("screenshot"),
-      QStringLiteral("Write a PNG of the window once the MC's first snapshot is in, then quit."),
-      QStringLiteral("file"));
-  const QCommandLineOption actionOption(
-      QStringLiteral("action"),
-      QStringLiteral("Dispatch a shell action once the MC's first snapshot is in, e.g. rightPanel.toggle. "
-                     "Repeatable; runs in order."),
-      QStringLiteral("name[=json]"));
-  const QCommandLineOption keyOption(
-      QStringLiteral("key"),
-      QStringLiteral("Press a key chord once the MC's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
-                     "names). Repeatable; runs in command-line order together with --action."),
-      QStringLiteral("chord"));
   parser.addOptions({urlOption, configDirOption, homeDirOption, devOption, qmlDirOption, hostEntryOption,
-                     nodeOption, screenshotOption, actionOption, keyOption, localFolderImportOption,
-                     appIdOption});
+                     nodeOption, localFolderImportOption, appIdOption});
+  ScriptedRun::addOptions(parser);
   parser.process(app);
   if (parser.isSet(appIdOption) && !parser.value(appIdOption).trimmed().isEmpty()) {
     QGuiApplication::setDesktopFileName(parser.value(appIdOption).trimmed());
@@ -283,73 +268,14 @@ int main(int argc, char* argv[]) {
 
   backend.start();
 
-  // Scripted runs: replay --action and --key steps in command-line order once
-  // the MC's first snapshot is in (NativeShell::ready), then optionally grab
-  // the window and quit.
-  struct ScriptedStep {
-    bool isKey;
-    QString spec;
-  };
-  QList<ScriptedStep> scriptedSteps;
-  {
-    QStringList actions = parser.values(actionOption);
-    QStringList keys = parser.values(keyOption);
-    for (const QString& name : parser.optionNames()) {
-      if (name == QStringLiteral("action")) {
-        scriptedSteps.append({false, actions.takeFirst()});
-      } else if (name == QStringLiteral("key")) {
-        scriptedSteps.append({true, keys.takeFirst()});
-      }
-    }
-  }
-  const bool screenshotRequested = parser.isSet(screenshotOption);
-  if (!scriptedSteps.isEmpty() || screenshotRequested) {
-    const QString target = parser.value(screenshotOption);
-    QObject::connect(&native, &NativeShell::ready, &runtime,
-                     [&runtime, &bridge, &app, target, scriptedSteps,
-                      screenshotRequested] {
-                       int delay = 1500;
-                       for (const ScriptedStep& step : scriptedSteps) {
-                         if (step.isKey) {
-                           QTimer::singleShot(delay, &runtime, [&runtime, step] {
-                             qInfo().noquote() << "[shell] scripted key" << step.spec;
-                             runtime.pressKey(step.spec);
-                           });
-                           delay += 1500;
-                           continue;
-                         }
-                         const QString spec = step.spec;
-                         QTimer::singleShot(delay, &bridge, [&bridge, spec] {
-                           const int eq = spec.indexOf(QLatin1Char('='));
-                           const QString name = eq < 0 ? spec : spec.left(eq);
-                           QVariant payload;
-                           if (eq >= 0) {
-                             payload = QJsonDocument::fromJson(spec.mid(eq + 1).toUtf8())
-                                           .toVariant();
-                           }
-                           qInfo().noquote() << "[shell] scripted action" << name;
-                           bridge.dispatch(name, payload);
-                         });
-                         delay += 1500;
-                       }
-                       if (screenshotRequested) {
-                         QTimer::singleShot(delay + 1500, &runtime, [&runtime, &app, target] {
-                           const bool ok = runtime.captureWindow(target);
-                           app.exit(ok ? 0 : 2);
-                         });
-                       }
-                     },
+  // Scripted runs start once the MC's first snapshot is in (NativeShell::ready).
+  if (ScriptedRun::requested(parser)) {
+    QObject::connect(&native, &NativeShell::ready, &runtime, [&parser, &runtime, &bridge] { ScriptedRun::play(parser, &runtime, &bridge); },
                      Qt::SingleShotConnection);
     // A start that fails never reaches the MC; grab the error the window shows
     // instead of waiting forever, and quit with a failure code.
-    if (screenshotRequested) {
-      QObject::connect(&backend, &BackendProcess::failed, &runtime,
-                       [&runtime, &app, target] {
-                         QTimer::singleShot(1500, &runtime, [&runtime, &app, target] {
-                           runtime.captureWindow(target);
-                           app.exit(2);
-                         });
-                       },
+    if (ScriptedRun::screenshotRequested(parser)) {
+      QObject::connect(&backend, &BackendProcess::failed, &runtime, [&parser, &runtime] { ScriptedRun::captureFailure(parser, &runtime); },
                        Qt::SingleShotConnection);
     }
   }

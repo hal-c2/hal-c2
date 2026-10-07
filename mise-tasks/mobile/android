@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Build the phone client's APK (arm64); with one device or emulator attached, install and start it"
+#MISE dir="{{config_root}}/apps/mobile-qt"
+set -euo pipefail
+# Where the toolchain is; apps/mobile-qt/README.md says how to install it.
+sdk=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}
+ndk=${ANDROID_NDK_ROOT:-$sdk/ndk/27.2.12479018}
+qt=${QT_ANDROID_PREFIX:-$HOME/Qt/6.11.1/android_arm64_v8a}
+host_qt=${QT_HOST_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}
+export JAVA_HOME=${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}
+
+need() { # need <what it is> <its directory> <a file it must have> <the variable that names the directory>
+  [[ -e $2/$3 ]] || { echo "mobile:android: $1 was not found at ${2:-(nowhere)}; set $4." >&2; exit 1; }
+}
+need "the Android SDK" "$sdk" platform-tools/adb ANDROID_SDK_ROOT
+need "the Android NDK" "$ndk" build/cmake/android.toolchain.cmake ANDROID_NDK_ROOT
+need "Qt for Android" "$qt" bin/qt-cmake QT_ANDROID_PREFIX
+need "this machine's Qt, the same version as the one for Android," "$host_qt" bin/androiddeployqt QT_HOST_PATH
+need "a JDK (Qt 6.11 wants 21)" "$JAVA_HOME" bin/java JAVA_HOME
+
+# Release with -g0: the NDK's toolchain adds -g to every build type, which
+# makes a 180 MB library. QT_ANDROID_DEPLOYMENT_TYPE keeps the package a debug
+# one, signed with the debug key; a Release build's is unsigned otherwise.
+[[ -f build/android/build.ninja ]] ||
+  "$qt/bin/qt-cmake" -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-g0 \
+    "-DQT_HOST_PATH=$host_qt" "-DANDROID_SDK_ROOT=$sdk" "-DANDROID_NDK_ROOT=$ndk" -DQT_ANDROID_DEPLOYMENT_TYPE=Debug
+cmake --build build/android --target apk
+apk=$PWD/build/android/android-build/hal-c2-mobile.apk
+echo "mobile:android: built $apk"
+
+adb=$sdk/platform-tools/adb
+if [[ -z ${ANDROID_SERIAL:-} && $("$adb" devices | grep -c 'device$') != 1 ]]; then
+  echo "mobile:android: not installed: attach one device or emulator, or name one in ANDROID_SERIAL." >&2
+  exit 0
+fi
+"$adb" install -r "$apk"
+"$adb" shell am start -n io.github.halc2.mobile/org.qtproject.qt.android.bindings.QtActivity

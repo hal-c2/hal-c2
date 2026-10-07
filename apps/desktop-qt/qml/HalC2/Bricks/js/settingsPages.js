@@ -57,6 +57,10 @@ var sections = [
       settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
                    keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
       keywords: "connections pairing link code clients revoke access remote" },
+    // Not the web's: only a client that paired itself (apps/mobile-qt) publishes `pairing`.
+    { to: "/settings/pairing", label: "Pairing", brick: "PairingSettings", requires: "pairing",
+      detail: "The environment this device is paired with",
+      keywords: "pairing paired environment machine address connection forget unpair sign out disconnect this device" },
     { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
       detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",

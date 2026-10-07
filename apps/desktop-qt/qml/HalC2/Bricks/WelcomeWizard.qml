@@ -417,6 +417,13 @@ Item {
                 Layout.topMargin: 10
                 text: qsTr("Agents available on your selected computers.")
             }
+            // Installing and signing in run in a terminal (Terminals.supported).
+            Detail {
+                objectName: "onboardingNoTerminal"
+                Layout.topMargin: 6
+                visible: !Terminals.supported
+                text: qsTr("This build of HAL-C2 has no terminal to install or sign in to an agent with. Do it from HAL-C2 on a computer, or in a terminal on that machine.")
+            }
 
             Repeater {
                 model: wizard.onboarding ? wizard.onboarding.agents : []

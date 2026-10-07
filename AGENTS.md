@@ -8,7 +8,7 @@ Upstream's Node server (`apps/server`), React web app (`apps/web`), Electron des
 
 - **The MC** (`hal-c2-mc`, mission control): an Elixir/OTP server in `apps/server-ex`. Each machine runs one MC; MCs cluster and share one sidebar. Clients pair with it like any other environment.
 - **Qt/QML desktop** in `apps/desktop-qt`.
-- **QML mobile**, the phone and tablet client, built from the same QML as the desktop.
+- **QML mobile** in `apps/mobile-qt`, the phone and tablet client, built from the same QML as the desktop. Android first.
 - **QML TUI** in `apps/tui`, rendered by opentui-qml.
 - **No web client.** The hosted web app and the locally served one go away with the Node server.
 - **Threads move between machines**, including the agent's own session, so work started on one MC continues on another. Specified under `features/threads/`.
@@ -70,6 +70,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `HAL_C2_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `hal-c2.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
 - The MC runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. From any checkout or worktree it keeps dev state in the `elixir` level of the XDG `hal-c2-dev` directories, which are the developer's (rule 2). To run your own MC, set `HAL_C2_MC_HOME` to a scratch directory and `HAL_C2_MC_PORT` to a free port.
+- The phone client runs on this machine with `mise run mobile` and on Android with `mise run mobile:android` (`apps/mobile-qt/README.md`). It pairs with an MC by a pairing link (`mise run mc:pair`).
 - Stop what you started, by the PID you tracked. See rule 1.
 
 ## Test data
@@ -139,7 +140,7 @@ Full glossary with file links: `docs/internals/glossary.md`
 ## Where code lives
 
 - `apps/server-ex` - the MC (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
-- `apps/desktop-qt` - the Qt/QML desktop. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
+- `apps/desktop-qt` - the Qt/QML desktop. `apps/mobile-qt` - the QML mobile client, the desktop's C++ and bricks with a phone layout; read `docs/internals/mobile-qt.md` first. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
 - `apps/server` (legacy) - the Node server: WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
 - `apps/web`, `apps/desktop`, `apps/mobile` (legacy) - React/Vite UI, the Electron wrapper, and the React Native app. `apps/marketing` is the site.
 - `features/` - the Gherkin behaviour ledger; see `features/README.md`.

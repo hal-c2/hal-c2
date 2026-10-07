@@ -102,10 +102,8 @@ Lost& lost() {
   return record;
 }
 
-// Whether the cache holds anything to read or to bring up to date: always,
-// but after a failed commit only once everything it held is dropped.
-bool usable(QSqlDatabase& db) {
-  if (!lost().everything) return true;
+// Every copy goes, cursors and versions first; whether all of them did.
+bool dropEverything(QSqlDatabase& db) {
   const bool threads = run(db, QStringLiteral("DELETE FROM threads"));
   if (threads) run(db, QStringLiteral("DELETE FROM entities"));
   const bool shells = run(db, QStringLiteral("DELETE FROM shell_mcs"));
@@ -113,6 +111,12 @@ bool usable(QSqlDatabase& db) {
   if (!threads || !shells) return false;
   lost() = {};
   return true;
+}
+
+// Whether the cache holds anything to read or to bring up to date: always,
+// but after a failed commit only once everything it held is dropped.
+bool usable(QSqlDatabase& db) {
+  return !lost().everything || dropEverything(db);
 }
 
 QVariant nextUse(QSqlDatabase& db) {
@@ -271,11 +275,34 @@ public:
 
   // A database of another schema, or one SQLite cannot read, is started over.
   bool open(const QString& path) {
-    if (ready(path)) return true;
+    m_path = path;
+    return ready(path) || startOver();
+  }
+
+  // An empty database in place of the file, and of its journal: nothing of
+  // what was kept stays on disk. A file that cannot be removed is emptied
+  // where it is, its freed pages overwritten. False when neither could be
+  // done: what it still holds is then not read, and is dropped as soon as it
+  // can be.
+  bool startOver() {
     close();
-    for (const char* suffix : {"", "-wal", "-shm"}) QFile::remove(path + QLatin1String(suffix));
-    if (ready(path)) return true;
-    close();
+    for (const char* suffix : {"", "-wal", "-shm"}) QFile::remove(m_path + QLatin1String(suffix));
+    lost() = {};
+    if (!QFile::exists(m_path)) {
+      if (ready(m_path)) return true;
+      close();
+      return false;
+    }
+    if (ready(m_path)) {
+      QSqlDatabase db = QSqlDatabase::database(m_connection, false);
+      run(db, QStringLiteral("PRAGMA secure_delete = ON"));
+      if (dropEverything(db)) {
+        run(db, QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
+        return true;
+      }
+    }
+    qWarning("[cache] %s could not be removed or emptied", qPrintable(m_path));
+    lost().everything = true;
     return false;
   }
 
@@ -334,6 +361,7 @@ private:
 
   LocalCache* m_cache;
   QString m_connection;
+  QString m_path;
 };
 
 LocalCache::LocalCache(QObject* parent) : QObject(parent) {}
@@ -456,6 +484,14 @@ void LocalCache::forgetThread(const QString& key) {
   post([key](QSqlDatabase& db) {
     if (usable(db) && !dropThread(db, key)) lost().threads.insert(key);
   });
+}
+
+bool LocalCache::clear() {
+  if (!m_worker) return true;
+  bool cleared = false;
+  // After what was asked for so far, which the worker takes first.
+  QMetaObject::invokeMethod(m_worker, [worker = m_worker, &cleared] { cleared = worker->startOver(); }, Qt::BlockingQueuedConnection);
+  return cleared;
 }
 
 void LocalCache::forgetEnvironment(const QString& environmentId) {

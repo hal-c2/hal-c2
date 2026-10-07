@@ -135,6 +135,26 @@ void waitForReconnect(World& world, qsizetype connections) {
                 [&] { return QStringLiteral("connection %1; there were %2 and it is %3").arg(connections).arg(world.mc.connections.size()).arg(show(connection(world))); });
 }
 
+// The MC as a client on another machine reaches it: at an address that is not
+// loopback's. The any-address is not, and the system routes it to this machine.
+QUrl remoteOrigin(World& world) {
+  QUrl origin = world.mc.origin();
+  origin.setHost(QStringLiteral("0.0.0.0"));
+  return origin;
+}
+
+// Pairs the client anew, with the MC at `origin`.
+void openAt(World& world, const QUrl& origin) {
+  world.native().close();
+  world.native().open(origin, QStringLiteral("mc-token"));
+}
+
+// What the system says of the device's network from here on, and that it changed.
+void setNetwork(World& world, bool disconnected, bool interfaceUp) {
+  health(world).setNetwork({[disconnected] { return disconnected; }, [interfaceUp] { return interfaceUp; }});
+  health(world).networkChanged();
+}
+
 // The notice every window shows over its layout.
 Brick& notice(World& world) {
   world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n", QSize(900, 600));
@@ -281,6 +301,57 @@ const Steps steps([] {
     waitForReconnect(world, 2);
   });
 
+  // The device's network as the system reports it, for an MC that needs one.
+  step(QStringLiteral("the environment is on another machine"), [](World& world, const Captures&, const Table&) {
+    const qsizetype connections = world.mc.connections.size();
+    openAt(world, remoteOrigin(world));
+    waitForReconnect(world, connections + 1);
+  });
+  step(QStringLiteral("the device loses one of its two networks"), [](World& world, const Captures&, const Table&) {
+    // As Android has it: disconnected, says the system, with a network still up.
+    setNetwork(world, true, true);
+  });
+  step(QStringLiteral("the device loses every network"), [](World& world, const Captures&, const Table&) { setNetwork(world, true, false); });
+  step(QStringLiteral("the client is waiting for the network"), [](World& world, const Captures&, const Table&) {
+    setNetwork(world, true, false);
+    world.mc.drop();
+    waitForPhase(world, {QStringLiteral("offline")});
+  });
+  step(QStringLiteral("a network comes back"), [](World& world, const Captures&, const Table&) {
+    fake(world).connectionsBefore = world.mc.connections.size();
+    setNetwork(world, false, true);
+  });
+  step(QStringLiteral("the user pairs the client with an environment on this machine"), [](World& world, const Captures&, const Table&) {
+    fake(world).connectionsBefore = world.mc.connections.size();
+    openAt(world, world.mc.origin());
+  });
+  step(QStringLiteral("the client is opened at an environment on another machine"), [](World& world, const Captures&, const Table&) {
+    // Which a device with no network does not reach.
+    world.mc.stopAccepting();
+    openAt(world, remoteOrigin(world));
+  });
+  step(QStringLiteral("the client keeps retrying"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).retryDelays.size() >= 3; },
+                  [&] { return QStringLiteral("three retries; there were %1 and the connection is %2").arg(fake(world).retryDelays.size()).arg(show(connection(world))); });
+  });
+  step(QStringLiteral("does not say the device is offline"), [](World& world, const Captures&, const Table&) {
+    expect(phase(world) == QLatin1String("reconnecting") && !notice(world).shows(QStringLiteral("This device is offline")),
+           QStringLiteral("the connection is %1").arg(show(connection(world))));
+  });
+  step(QStringLiteral("the client waits for the network"), [](World& world, const Captures&, const Table&) {
+    waitForPhase(world, {QStringLiteral("offline")});
+    // Nothing is asked of the environment while the device has no network.
+    const qsizetype connections = world.mc.connections.size();
+    QCoreApplication::processEvents();
+    expect(client(world).phase() == McClient::Phase::Offline && world.mc.connections.size() == connections,
+           QStringLiteral("the client tried again: %1 connections, %2").arg(world.mc.connections.size()).arg(show(connection(world))));
+  });
+  step(QStringLiteral("says the device is offline"), [](World& world, const Captures&, const Table&) {
+    expect(connection(world).value(QStringLiteral("status")) == QLatin1String("Waiting for the network") &&
+               notice(world).shows(QStringLiteral("This device is offline")),
+           QStringLiteral("the connection is %1").arg(show(connection(world))));
+  });
+
   // A refused credential.
   step(QStringLiteral("the environment refuses the client's credential"), [](World& world, const Captures&, const Table&) {
     const QString token = QStringLiteral("mc-token");
@@ -364,8 +435,8 @@ const Steps steps([] {
     fake(world).connectionsBefore = world.mc.connections.size();
     foreground(world);
   });
-  step(QStringLiteral("it tries again at once"), [](World& world, const Captures&, const Table&) {
-    // Ten minutes were left on the retry.
+  step(QStringLiteral("it (?:tries again|connects) at once"), [](World& world, const Captures&, const Table&) {
+    // Ten minutes were left on the retry, or no network to wait for.
     waitForReconnect(world, fake(world).connectionsBefore + 1);
   });
   step(QStringLiteral("the client checks the connection"), [](World& world, const Captures&, const Table&) {
