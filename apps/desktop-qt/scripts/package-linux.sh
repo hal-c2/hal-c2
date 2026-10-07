@@ -42,14 +42,16 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 # The app opens SQLite and no other database, but linuxdeploy's Qt plugin bundles
 # every SQL driver of the Qt it finds and stops at the first whose client library is
 # not installed. A Qt from its installer ships Mimer's, ODBC's, PostgreSQL's and
-# MySQL's. They are set aside while it runs and put back when this script ends. A Qt
-# whose drivers cannot be moved (a distribution's, which installs each on its own) is
-# left as it is.
+# MySQL's, and a distribution's may have Firebird's. In a Qt this user can write to
+# they are set aside while it runs and put back when this script ends. Any other Qt
+# (a distribution's) is shown to the plugin through a qmake that names a plugin
+# directory with the same contents, apart from the SQL drivers.
 qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
-drivers=""
+plugins=""
 if [ -n "${qmake}" ]; then
-  drivers="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)/sqldrivers"
+  plugins="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
 fi
+drivers="${plugins}/sqldrivers"
 set_aside="${build_dir}/sqldrivers-set-aside"
 restore_drivers() {
   [ -d "${set_aside}" ] || return 0
@@ -62,9 +64,32 @@ restore_drivers
 if [ -d "${drivers}" ] && [ -w "${drivers}" ]; then
   mkdir -p "${set_aside}"
   find "${drivers}" -maxdepth 1 -name '*.so' ! -name 'libqsqlite.so' -exec mv {} "${set_aside}/" \;
+elif [ -d "${drivers}" ]; then
+  # Absolute: the plugin runs qmake from where it likes.
+  wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
+  view="$(cd "${build_dir}" && pwd)/qt-plugins"
+  rm -rf "${view}"
+  mkdir -p "${view}/sqldrivers"
+  for entry in "${plugins}"/*; do
+    [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
+  done
+  cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
+  cat > "${wrapper}" <<QMAKE
+#!/bin/sh
+"${qmake}" "\$@" | sed "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|"
+QMAKE
+  chmod +x "${wrapper}"
+  export QMAKE="${wrapper}"
 fi
 
+# The app's own QML modules are compiled into the binary. The plugin's import scanner
+# is told where they were built so that it can follow their imports of Qt's modules,
+# and what it then copies of them (their build directories) is taken out again
+# before the image is made: a copy on disk could be loaded in place of the binary's.
+export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
-export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
-"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage
-echo "AppImage at ${OUTPUT}"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt
+rm -rf "${app_dir}/usr/qml/HalC2" "${app_dir}/usr/qml/Ghostty"
+export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
+echo "AppImage at ${LDAI_OUTPUT}"
