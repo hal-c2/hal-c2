@@ -11,6 +11,8 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   """
 
   @support Path.expand("../../test/support", __DIR__)
+  # The plugin each machine has installed, off until a case turns it on (`plugin/1`).
+  @plugin "prop-mover"
 
   @doc """
   Starts a machine for each label; returns `%{label => %{mc, peer, home}}`. A peer stops
@@ -110,6 +112,7 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
     :ok = :erpc.call(mc, __MODULE__, :start_mc, [], 60_000)
     :ok = :erpc.call(mc, __MODULE__, :create_project, ["proj-#{label}", Path.join(home, "shop")])
+    :ok = :erpc.call(mc, __MODULE__, :install_plugin, [], 60_000)
     %{mc: mc, peer: peer, home: home, label: label}
   end
 
@@ -179,6 +182,31 @@ defmodule HalC2.Prop.ThreadMoveCluster do
         "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
       })
 
+    history(id, title)
+  end
+
+  @doc """
+  A thread the plugin started (`HalC2.Plugins.Host.launch_thread/4`, unlisted, as a
+  review plugin starts its threads), with the history of `create_thread/3`.
+  """
+  def create_plugin_thread(id, project, title) do
+    {:ok, _} =
+      HalC2.Plugins.Host.launch_thread(
+        @plugin,
+        "review",
+        %{
+          "threadId" => id,
+          "projectId" => project,
+          "title" => title,
+          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
+        },
+        listed: false
+      )
+
+    history(id, title)
+  end
+
+  defp history(id, title) do
     attachment = "att-#{id}"
     path = Path.join(HalC2.Attachments.dir(), attachment <> ".bin")
     File.mkdir_p!(Path.dirname(path))
@@ -207,6 +235,46 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     :ok
   end
 
+  @doc """
+  Installs a plugin file that may start threads, as a user would, and leaves it off.
+  Whether it runs is the plugin manager's own answer (`HalC2.Plugins.running?/1`), the
+  one a move asks.
+  """
+  def install_plugin do
+    dir = Path.join(HalC2.Paths.data_dir(), "plugins")
+    File.mkdir_p!(dir)
+
+    File.write!(Path.join(dir, "prop_mover.ex"), """
+    defmodule HalC2.Prop.MoverPlugin do
+      @behaviour HalC2.Plugins.Extension
+
+      @impl true
+      def manifest,
+        do: %{
+          id: #{inspect(@plugin)},
+          name: "Mover",
+          version: "1.0.0",
+          api_version: 1,
+          permissions: [%{id: "threads:create", label: "Start threads"}]
+        }
+
+      @impl true
+      def call(_method, _input, _context), do: {:error, "nothing to call"}
+    end
+    """)
+
+    {:ok, _} = HalC2.Plugins.handle("rescan", %{})
+    :ok
+  end
+
+  @doc "Turns the plugin on or off, as a client does; returns whether it now runs."
+  def plugin(running) do
+    {:ok, _} =
+      HalC2.Plugins.handle(if(running, do: "enable", else: "disable"), %{"id" => @plugin})
+
+    HalC2.Plugins.running?(@plugin)
+  end
+
   def rename(id, title) do
     HalC2.Orchestration.dispatch(%{
       "type" => "thread.metadata.update",
@@ -217,8 +285,9 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
   @doc """
   What this machine has of the thread `id`: `:none`, `:forward` (a forwarding record),
-  `{:moving, title}` or `{:live, title, messages, attachment}`, where `attachment` is the
-  sha256 of the first message's attachment as stored here.
+  `{:moving, title}` or `{:live, title, messages, attachment, plugin}`, where
+  `attachment` is the sha256 of the first message's attachment as stored here and
+  `plugin` the mark of the plugin that started it, or nil.
   """
   def copy(id) do
     case HalC2.ThreadArchive.local_thread(id) do
@@ -241,7 +310,8 @@ defmodule HalC2.Prop.ThreadMoveCluster do
             path -> :crypto.hash(:sha256, File.read!(path))
           end
 
-        {:live, thread["title"], messages |> Enum.map(& &1["text"]) |> Enum.sort(), attachment}
+        {:live, thread["title"], messages |> Enum.map(& &1["text"]) |> Enum.sort(), attachment,
+         thread["plugin"]}
     end
   end
 

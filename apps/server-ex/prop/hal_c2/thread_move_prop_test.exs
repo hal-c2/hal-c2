@@ -10,11 +10,16 @@ defmodule HalC2.ThreadMovePropTest do
   The held move then goes on, or ends where it was held, as a lost connection or a
   crashed machine ends it.
 
+  Some threads are started by a plugin (`HalC2.Plugins.Host.launch_thread/4`), which
+  each machine has installed and a case turns on and off (or whose manager restarts).
+
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
   it left keep only a forwarding record, and no machine keeps a partial copy. A move
   refused or cut off before the destination took the thread leaves it where it was, and
-  one cut off after that completes.
+  one cut off after that completes. A plugin's thread is refused while its plugin runs
+  on the machine it lives on, and once moved it is an ordinary thread, its plugin's
+  mark left behind.
 
   The machines are peers started once for the property (`HalC2.Prop.ThreadMoveCluster`);
   each case uses threads of its own.
@@ -33,6 +38,8 @@ defmodule HalC2.ThreadMovePropTest do
   # How long a move cut off may take to settle; it settles on its own, so a case that
   # waits this long has found a move that never does.
   @settle 15_000
+  # How `HalC2.Plugins.Host` marks the threads the plugin starts.
+  @mark %{"id" => "prop-mover", "kind" => "review", "listed" => false}
 
   setup_all do
     machines = Cluster.start(Enum.map(@mcs, &Atom.to_string/1))
@@ -64,19 +71,31 @@ defmodule HalC2.ThreadMovePropTest do
 
   # --- model ------------------------------------------------------------------------
 
-  # threads: name => %{at: mc, title: title, made: title it was created with}
+  # threads: name => %{at: mc, title: title, made: title it was created with,
+  #   plugin: whether it still has the mark of the plugin that started it}
   # held: nil or %{t, from, to, stage, pid, mover, ref, killed, source_restarted}
-  def initial_state, do: %{threads: %{}, held: nil}
+  # running: the machines the plugin runs on
+  def initial_state, do: %{threads: %{}, held: nil, running: []}
 
   def command(state) do
     made = Map.keys(state.threads)
     fresh = @threads -- made
     free = Enum.reject(made, &moving?(state, &1))
+    # A move refused at once is never held: `move/3` covers it.
+    holdable = Enum.reject(free, &pinned?(state, &1, state.threads[&1].at))
 
     frequency(
-      [{1, {:call, __MODULE__, :restart, [oneof(@mcs), oneof([:thread_move, :store])]}}] ++
+      [
+        {1,
+         {:call, __MODULE__, :restart, [oneof(@mcs), oneof([:thread_move, :store, :plugins])]}},
+        {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}}
+      ] ++
         if(fresh != [],
           do: [{3, {:call, __MODULE__, :create, [oneof(fresh), oneof(@mcs)]}}],
+          else: []
+        ) ++
+        if(fresh != [] and state.running != [],
+          do: [{3, {:call, __MODULE__, :create_plugin, [oneof(fresh), oneof(state.running)]}}],
           else: []
         ) ++
         if(free != [],
@@ -96,10 +115,10 @@ defmodule HalC2.ThreadMovePropTest do
           ],
           else: []
         ) ++
-        if(free != [] and state.held == nil,
+        if(holdable != [] and state.held == nil,
           do: [
             {4,
-             let t <- oneof(free) do
+             let t <- oneof(holdable) do
                {:call, __MODULE__, :hold,
                 [
                   t,
@@ -132,13 +151,19 @@ defmodule HalC2.ThreadMovePropTest do
 
   def precondition(state, {:call, _, :create, [t, _]}), do: not is_map_key(state.threads, t)
 
+  # A plugin starts threads only where it runs.
+  def precondition(state, {:call, _, :create_plugin, [t, mc]}),
+    do: not is_map_key(state.threads, t) and mc in state.running
+
   def precondition(state, {:call, _, :hold, [t, from, to, _]}),
     do:
       state.held == nil and is_map_key(state.threads, t) and state.threads[t].at == from and
-        from != to
+        from != to and not pinned?(state, t, from)
 
+  # The held move as the model has it (but for its ids, symbolic until run), so shrinking
+  # drops a release of a hold it dropped.
   def precondition(state, {:call, _, fun, [held | _]}) when fun in [:release, :kill_mover],
-    do: state.held != nil and held.t == state.held.t
+    do: state.held != nil and Map.delete(held, :ids) == Map.delete(state.held, :ids)
 
   def precondition(state, {:call, _, :rename, [t, at, _]}),
     do: is_map_key(state.threads, t) and state.threads[t].at == at
@@ -147,10 +172,16 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :create, [t, mc]}),
-    do: put_in(state.threads[t], %{at: mc, title: t, made: t})
+    do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: false})
+
+  def next_state(state, _result, {:call, _, :create_plugin, [t, mc]}),
+    do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: true})
+
+  def next_state(state, _result, {:call, _, :plugin, [mc, running]}),
+    do: %{state | running: if(running, do: [mc], else: []) ++ (state.running -- [mc])}
 
   def next_state(state, _result, {:call, _, :move, [t, from, to]}) do
-    if moves?(state, t, from, to), do: put_in(state.threads[t].at, to), else: state
+    if moves?(state, t, from, to), do: arrive(state, t, to), else: state
   end
 
   def next_state(state, _result, {:call, _, :rename, [t, _at, title]}) do
@@ -174,7 +205,7 @@ defmodule HalC2.ThreadMovePropTest do
   def next_state(state, _result, {:call, _, :release, [held, how]}) do
     cond do
       released?(state.held) -> %{state | held: nil}
-      arrives?(state.held, how) -> %{put_in(state.threads[held.t].at, held.to) | held: nil}
+      arrives?(state.held, how) -> %{arrive(state, held.t, held.to) | held: nil}
       true -> %{state | held: nil}
     end
   end
@@ -188,9 +219,19 @@ defmodule HalC2.ThreadMovePropTest do
   def next_state(state, _result, _call), do: state
 
   # Whether a move of `t` from `from` to `to` moves it: only the machine it lives on
-  # moves it, never while it is moving, and never to where it is.
+  # moves it, never while it is moving, never while the plugin that started it runs
+  # there, and never to where it is.
   defp moves?(state, t, from, to),
-    do: not moving?(state, t) and state.threads[t].at == from and from != to
+    do:
+      not moving?(state, t) and state.threads[t].at == from and from != to and
+        not pinned?(state, t, from)
+
+  # Whether `t` is a plugin's thread whose plugin runs on `mc`.
+  defp pinned?(state, t, mc), do: state.threads[t].plugin and mc in state.running
+
+  # A thread that arrives is an ordinary one: the plugin's mark stays behind.
+  defp arrive(state, t, to),
+    do: update_in(state.threads[t], &%{&1 | at: to, plugin: false})
 
   defp moving?(state, t),
     do: state.held != nil and state.held.t == t and not released?(state.held)
@@ -207,15 +248,30 @@ defmodule HalC2.ThreadMovePropTest do
   defp arrives?(held, how),
     do: not released?(held) and (held.stage == :accepted or how == :go)
 
-  def postcondition(state, {:call, _, :create, _} = call, {result, world}),
-    do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
+  def postcondition(state, {:call, _, fun, _} = call, {result, world})
+      when fun in [:create, :create_plugin],
+      do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
+
+  def postcondition(state, {:call, _, :plugin, [_, running]} = call, {result, world}),
+    do: result == running and settled?(next_state(state, nil, call), world, held(state))
 
   def postcondition(state, {:call, _, :move, [t, from, to]} = call, {result, world}) do
+    # Refused for its plugin, unless already moving or not here, which is said first.
+    plugin? = pinned?(state, t, from) and state.threads[t].at == from and not moving?(state, t)
+
     told? =
       case result do
-        {:ok, %{"status" => "moved"}} -> moves?(state, t, from, to)
-        {:error, %{"code" => _}} -> not moves?(state, t, from, to)
-        _ -> false
+        {:ok, %{"status" => "moved"}} ->
+          moves?(state, t, from, to)
+
+        {:error, %{"code" => "thread_not_movable", "message" => message}} when plugin? ->
+          message =~ "stays on this machine while"
+
+        {:error, %{"code" => _}} ->
+          not plugin? and not moves?(state, t, from, to)
+
+        _ ->
+          false
       end
 
     told? and settled?(next_state(state, nil, call), world, held(state))
@@ -272,13 +328,25 @@ defmodule HalC2.ThreadMovePropTest do
     id = id(t)
     attachment = :crypto.hash(:sha256, :binary.copy(:crypto.hash(:sha256, id), 37_500))
     messages = for n <- 1..3, do: "message #{n} of #{thread.made}"
-    {:live, thread.title, messages, attachment}
+    {:live, thread.title, messages, attachment, if(thread.plugin, do: @mark)}
   end
 
   # --- system under test -------------------------------------------------------------
 
   def create(t, mc) do
     result = Cluster.on(mcs()[mc], :create_thread, [id(t), "proj-#{mc}", t])
+    {result, world()}
+  end
+
+  # The plugin running on `mc` starts `t` there.
+  def create_plugin(t, mc) do
+    result = Cluster.on(mcs()[mc], :create_plugin_thread, [id(t), "proj-#{mc}", t])
+    {result, world()}
+  end
+
+  # Turns the plugin on or off on `mc`; returns whether it runs there.
+  def plugin(mc, running) do
+    result = Cluster.on(mcs()[mc], :plugin, [running])
     {result, world()}
   end
 
@@ -367,7 +435,7 @@ defmodule HalC2.ThreadMovePropTest do
   end
 
   def restart(mc, service) do
-    child = %{thread_move: HalC2.ThreadMove, store: HalC2.Store}[service]
+    child = %{thread_move: HalC2.ThreadMove, store: HalC2.Store, plugins: HalC2.Plugins}[service]
     :ok = Cluster.on(mcs()[mc], :restart, [child])
     {:ok, world()}
   end
@@ -414,14 +482,17 @@ defmodule HalC2.ThreadMovePropTest do
     end
   end
 
-  # A case leaves no move held, so the next starts from settled machines.
-  defp cleanup(%{held: %{ids: {:held, ids}} = held}) do
-    send(ids.pid, :go)
-    await_settled(held.t)
+  # A case leaves no move held and the plugin off, so the next starts from settled
+  # machines.
+  defp cleanup(state) do
+    with %{held: %{ids: {:held, ids}} = held} <- state do
+      send(ids.pid, :go)
+      await_settled(held.t)
+    end
+
+    for mc <- @mcs, do: false = Cluster.on(mcs()[mc], :plugin, [false])
     :ok
   end
-
-  defp cleanup(_state), do: :ok
 
   defp id(t), do: "#{Process.get(:case)}-#{t}"
   defp label(mc), do: Atom.to_string(mc)
