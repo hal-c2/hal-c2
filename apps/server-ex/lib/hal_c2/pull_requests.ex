@@ -785,7 +785,8 @@ defmodule HalC2.PullRequests do
 
   # This MC's projects whose checkout has a remote, as
   # `%{id, title, root, host, repository, kind}`.
-  defp projects do
+  @doc "This MC's projects whose checkout has a remote, with its host and repository."
+  def projects do
     for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
         mc == node() and is_binary(root) and project["deletedAt"] == nil,
         remote = remote(root) do

@@ -5,7 +5,9 @@ defmodule HalC2.Plugins.Kind do
 
     * `manifest/0`: `%{id, name, version, api_version, settings}`, where `settings`
       lists `%{key, label}` fields and a field with `secret: true` is kept in the
-      MC's secret store rather than the settings document.
+      MC's secret store rather than the settings document. A plugin package's
+      `plugin.json` says this instead (`HalC2.Plugins.Package`), and its modules
+      leave `manifest/0` out.
     * `validate_settings/1` (optional): `:ok`, or `{:error, message}` shown to the
       user when they save settings the plugin cannot use.
     * `start_link/1` (optional): the plugin's process, started with its settings
@@ -17,7 +19,7 @@ defmodule HalC2.Plugins.Kind do
       @callback manifest() :: map
       @callback validate_settings(settings :: map) :: :ok | {:error, String.t()}
       @callback start_link(settings :: map) :: GenServer.on_start()
-      @optional_callbacks validate_settings: 1, start_link: 1
+      @optional_callbacks manifest: 0, validate_settings: 1, start_link: 1
     end
   end
 end
@@ -237,4 +239,34 @@ defmodule HalC2.Plugins.TextGeneration do
 
   @callback generate(prompt :: String.t(), schema :: map, settings :: map) ::
               {:ok, map} | {:error, String.t()}
+end
+
+defmodule HalC2.Plugins.Extension do
+  @moduledoc """
+  The MC part of a plugin package that has UI parts or does work of its own. Every
+  callback but `call/3` is optional, and each gets a context
+  `%{id, settings, thread_id}` (`thread_id` only where a thread is asking):
+
+    * `call(method, input, context)`: answers its UI parts (`plugins.call`) with
+      `{:ok, json}` or `{:error, message}`.
+    * `handle_event(event, context)`: a turn finished in a thread the plugin started,
+      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`. Runs
+      in a process of its own, so it may take its time.
+    * `agent_tools(context)` and `call_agent_tool(name, arguments, context)`: tools
+      offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
+      plugin was granted `agentTools`. The context names the thread whose agent is
+      asking, so a plugin can offer a tool to its own threads only.
+
+  What else it may do goes through `HalC2.Plugins.Host`, checked against the
+  permissions the user granted.
+  """
+  use HalC2.Plugins.Kind
+
+  @callback call(method :: String.t(), input :: term, context :: map) ::
+              {:ok, term} | {:error, String.t()}
+  @callback handle_event(event :: map, context :: map) :: any
+  @callback agent_tools(context :: map) :: [map]
+  @callback call_agent_tool(name :: String.t(), arguments :: map, context :: map) ::
+              {:ok, term} | {:error, String.t()}
+  @optional_callbacks handle_event: 2, agent_tools: 1, call_agent_tool: 3
 end

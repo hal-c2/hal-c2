@@ -6,7 +6,6 @@
 #   docs/user/plugins.md (plugin packages)
 #   plugins/code-review/plugin.json (the first package)
 
-@backlog
 Feature: Plugin packages
   A plugin package is a directory that can live anywhere: a manifest that says what the
   plugin is, what it asks for and what it adds, an optional MC part, optional UI parts,
@@ -65,7 +64,7 @@ Feature: Plugin packages
   @mc
   Scenario: Clients see the plugin list change as it happens
     Given a client watches the plugin list
-    When the user enables "code-review"
+    When the user enables "code-review" accepting its permissions
     Then the client is told that "code-review" is running
 
   @mc

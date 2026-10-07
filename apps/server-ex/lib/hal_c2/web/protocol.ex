@@ -46,6 +46,10 @@ defmodule HalC2.Web.Protocol do
       (`BackgroundPolicySnapshot`), then again whenever it changes
     * `{"type": "pullRequestRefreshes", "mc": n}`: that MC's pull request
       refresh revision, then each new one (`pullRequests.subscribeRefreshes`)
+    * `{"type": "plugins", "mc": n}`: that MC's plugin list (`PluginEntry[]`), then
+      the whole list again whenever it changes
+    * `{"type": "plugin", "mc": n, "id": id, "topic": topic}`: what plugin `id`
+      last published on `topic` (null before it has), then each new value
     * `{"type": "providerAuth", "mc": n, "instanceId": id}`: that provider
       instance's sign-in state (`ProviderAuthState`), then changes
     * `{"type": "providerInstall", "mc": n, "instanceId": id}`: that provider
@@ -123,6 +127,8 @@ defmodule HalC2.Web.Protocol do
       {"t": "localServers", "id", "list"} (DiscoveredLocalServerList)
       {"t": "devices", "id", "state"} (DeviceServiceState)
       {"t": "pullRequestRefreshes", "id", "revision"} (non-negative integer)
+      {"t": "plugins", "id", "plugins"} (PluginEntry[])
+      {"t": "plugin", "id", "topic", "value"} (what the plugin published)
       {"t": "rpc.result", "id", "result"} / {"t": "rpc.error", "id", "error", "detail"?}
         (`detail` is the contract error as `{"_tag", ...fields}` when there is one)
       {"t": "pong"}
@@ -176,9 +182,10 @@ defmodule HalC2.Web.Protocol do
   # relayClientInstall, resourceTelemetry, localServers, devices, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
   # and are asked of that MC by name. projectClones is routed because a client
-  # starts a clone on any environment with a routed rpc and follows it there.
+  # starts a clone on any environment with a routed rpc and follows it there. A
+  # plugin's UI parts follow the environment the plugin is installed on.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
-             pullRequestRefreshes projectClones)
+             pullRequestRefreshes projectClones plugins plugin)
 
   @doc "The shape types a client may name by environment rather than MC."
   def routed, do: @routed
@@ -318,6 +325,15 @@ defmodule HalC2.Web.Protocol do
 
   defp decode_shape(%{"type" => "pullRequestRefreshes", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:pull_request_refreshes, mc}}
+  end
+
+  defp decode_shape(%{"type" => "plugins", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:plugins, mc}}
+  end
+
+  defp decode_shape(%{"type" => "plugin", "mc" => mc, "id" => id, "topic" => topic}, mcs)
+       when is_binary(id) and is_binary(topic) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:plugin_topic, mc, id, topic}}
   end
 
   defp decode_shape(%{"type" => "worktreeSetup", "mc" => mc, "threadId" => id}, mcs)

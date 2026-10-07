@@ -199,6 +199,8 @@ export const PluginEntry = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: Schema.String,
   version: Schema.NullOr(Schema.String),
+  /** The first of `kinds`, null for a package of UI parts only. */
+  kind: Schema.NullOr(Schema.String),
   kinds: Schema.Array(Schema.String),
   apiVersion: Schema.NullOr(Schema.Int),
   source: Schema.Literals(["bundled", "file", "package"]),
@@ -223,7 +225,7 @@ export const PluginEntry = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       label: Schema.String,
-      reason: Schema.NullOr(Schema.String),
+      reason: Schema.optionalKey(Schema.String),
       granted: Schema.Boolean,
     }),
   ),
@@ -296,13 +298,18 @@ export const PluginError = Schema.Struct({
 });
 
 /**
- * Subscription shapes: `{type: "plugins"}` pushes `{t: "plugins", plugins}` on every
- * change; `{type: "plugin", id, topic}` pushes `{t: "plugin", topic, value}` with
- * what the plugin last published on `topic`, at once and on every publish.
+ * Subscription shapes, named by environment: `{type: "plugins"}` pushes
+ * `{t: "plugins", plugins}` at once and on every change; `{type: "plugin", id, topic}`
+ * pushes `{t: "plugin", topic, value}` with what the plugin last published on
+ * `topic` (null before it has), at once and on every publish.
  */
-export const PluginsShape = Schema.Struct({ type: Schema.Literal("plugins") });
+export const PluginsShape = Schema.Struct({
+  type: Schema.Literal("plugins"),
+  environment: TrimmedNonEmptyString,
+});
 export const PluginTopicShape = Schema.Struct({
   type: Schema.Literal("plugin"),
+  environment: TrimmedNonEmptyString,
   id: TrimmedNonEmptyString,
   topic: TrimmedNonEmptyString,
 });
