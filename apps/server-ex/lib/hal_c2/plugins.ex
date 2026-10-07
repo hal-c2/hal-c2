@@ -227,10 +227,15 @@ defmodule HalC2.Plugins do
     end
   end
 
-  @doc "Whether plugin `id` is running on this MC."
-  def running?(id) do
-    GenServer.call(__MODULE__, {:running?, id})
+  @doc """
+  Whether plugin `id` is running on this MC. A host too busy to answer in `timeout`,
+  say while it compiles a package, counts it as running, so what waits for a plugin to
+  stop keeps waiting. A host that is not there has taken its plugins down with it.
+  """
+  def running?(id, timeout \\ 5_000) do
+    GenServer.call(__MODULE__, {:running?, id}, timeout)
   catch
+    :exit, {:timeout, _} -> true
     :exit, _ -> false
   end
 

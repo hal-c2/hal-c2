@@ -57,6 +57,18 @@ defmodule HalC2.PluginsTest do
     assert monitors() == 2
   end
 
+  test "a busy plugin host counts its plugins as running, a stopped one does not" do
+    refute Plugins.running?("alpha")
+
+    :ok = :sys.suspend(Plugins)
+    assert Plugins.running?("alpha", 0)
+    :ok = :sys.resume(Plugins)
+    refute Plugins.running?("alpha")
+
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+    refute Plugins.running?("alpha")
+  end
+
   test "the secret marker is refused for a field that is not secret" do
     package("notes", "1")
     Plugins.handle("rescan", %{})
