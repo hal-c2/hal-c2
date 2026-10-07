@@ -107,6 +107,37 @@
       ]
     },
     {
+      "bundles": ["android"],
+      "license": "Apache-2.0 AND BSD-3-Clause AND MIT",
+      "name": "zxing-cpp",
+      "sourceUrl": "https://github.com/zxing-cpp/zxing-cpp",
+      "version": "3.1.1",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": [
+            "Copyright 2016 Nu-book Inc.",
+            "Copyright 2016 ZXing authors",
+            "Copyright 2016 Huy Cuong Nguyen",
+            "Copyright 2017-2026 Axel Waggershauser"
+          ],
+          "preamble": [
+            "The Qt Android client reads pairing QR codes off the camera with the QR reader of zxing-cpp, built from its core alone."
+          ]
+        },
+        {
+          "licenseId": "BSD-3-Clause",
+          "copyrights": ["Copyright (C) 2022 gitlost"],
+          "preamble": ["zxing-cpp includes libzueci."]
+        },
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>"],
+          "preamble": ["zxing-cpp includes Bjoern Hoehrmann's UTF-8 decoder."]
+        }
+      ]
+    },
+    {
       "bundles": ["android", "assets", "desktop-qt", "mobile", "web"],
       "license": "MIT",
       "name": "libghostty-vt",

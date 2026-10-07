@@ -5,9 +5,11 @@
 #include <memory>
 
 #include "Pairing.h"
+#include "ScanCamera.h"
 #include "StoragePaths.h"
 
 class NativeShell;
+class Scanner;
 class ShellBridge;
 class ShellRuntime;
 class ThemeStore;
@@ -15,7 +17,9 @@ class ThemeStore;
 // The phone's shell as the app (main.cpp) and its scenarios (tests/features)
 // both build it: the desktop's shell with what a phone turns off, the phone's
 // root (HalC2/Mobile/MobileShell.qml) in one window, and the one environment
-// it pairs with (Pairing). What differs between the two is in Options.
+// it pairs with (Pairing), by a link the user enters, a code the camera reads
+// (Scanner) or a `hal-c2://pair` link the system opens the app with. What
+// differs between the two is in Options.
 class MobileApp {
 public:
   struct Options {
@@ -27,6 +31,8 @@ public:
     QString mobileQmlDir;
     // What an MC lists this client as.
     pairing::Client device = Pairing::thisDevice();
+    // The camera pairing codes are scanned with; the device's own when null.
+    std::shared_ptr<ScanCamera> camera;
   };
 
   // What has to be chosen before any window: the software renderer when
@@ -56,4 +62,5 @@ private:
   std::unique_ptr<ThemeStore> m_theme;
   std::unique_ptr<ShellRuntime> m_runtime;
   std::unique_ptr<Pairing> m_pairing;
+  std::unique_ptr<Scanner> m_scanner;
 };

@@ -18,8 +18,9 @@ the brick gets a property that defaults to what the desktop does (`ShellWindow.f
 
 ## One root, two layouts
 
-The root, `MobileShell.qml`, shows the pairing screen until there is an environment, and then one
-of two layouts of the same bricks. Where the window has room it is the desktop's own,
+The root, `MobileShell.qml`, shows the pairing screen until there is an environment (and again
+when a paired device asks to pair with another), and otherwise one of two layouts of the same
+bricks. Where the window has room it is the desktop's own,
 [`DefaultLayout`](../../apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml), the item
 `DefaultShell` fills its window with, so a tablet or a laptop gets the desktop client and not a
 stretched phone. Below that it is the phone layout: one screen at a time, a back bar, and menus as
@@ -47,8 +48,8 @@ added and cannot set it up. Two things do not follow the layout:
 - The connection notice is the root's in both, above the layout and inside the system's insets,
   which the window's own notice knows nothing of.
 
-The environment and the way to forget it are a settings section, `PairingSettings`, listed only
-where `pairing` is published. Settings open only once the MC has answered
+The environment, the way to pair with another in its place and the way to forget it are a
+settings section, `PairingSettings`, listed only where `pairing` is published. Settings open only once the MC has answered
 (`NavigationController`), so the root offers the same way out beside the connection notice while
 the connection is down: an environment that never comes back can still be forgotten.
 
@@ -62,13 +63,71 @@ and opens the shell's connection with it. The exchange itself is shared with the
 
 It remembers one environment. MCs cluster and share one sidebar, so one pairing already
 shows every machine in the cluster, and `NativeShell`, `McClient` and `ShellStore` were written for
-one MC per process. Pairing with another MC replaces the one remembered. The scenarios in
-`features/mobile/` that speak of several paired environments stay in the backlog until that
-changes.
+one MC per process. Pairing with another MC replaces the one remembered, so the pairing screen a
+paired device opens from Settings says which environment that is before anything is spent, and
+has a way back. The scenarios in `features/mobile/` that speak of several paired environments
+stay in the backlog until that changes.
 
 The first product reaches an MC over Tailscale: `mise run mc:pair --tailscale` publishes the MC
 through Tailscale Serve and prints an `https://` link. That is why the Android package carries
-OpenSSL (Qt for Android has no TLS of its own), and why the relay and QR scanning can wait.
+OpenSSL (Qt for Android has no TLS of its own), and why the relay can wait.
+
+### Three ways to a pairing link, and who is trusted
+
+A pairing link reaches the pairing screen in three ways, and all three end in the same
+`pairing.pair`:
+
+- **Typed or pasted.** The user wrote it, so it is read leniently (`pairing::readLink`): an address
+  without a scheme is tried over HTTPS and then HTTP.
+- **Scanned in the app** ([`Scanner`](../../apps/mobile-qt/src/Scanner.h)). The user opened the
+  camera on the pairing screen and pointed it at a code, so a pairing code is paired with at once.
+- **A link that opens the app.** A phone's own camera app opens the QR code's `https` address in a
+  browser, where the MC's `/pair` page offers `hal-c2://pair?pairingUrl=<the link>`, the one address
+  the manifest answers to.
+
+The third is the one nobody vouches for. Any web page, message or printed code can hold a
+`hal-c2://pair` link, and following it takes one tap in another app. If it paired, that tap would
+sign the device out of its environment and into a stranger's, whose threads the user would then
+type into. So a link from outside is only ever shown: it fills the pairing screen's field, the
+address it leads to is said in words (`pairing.offered`), a paired device is told which
+environment it would give up, and nothing is sent anywhere until the user presses Pair. A link
+that is not a pairing link changes nothing and says so.
+
+What was scanned or handed over is read by `pairing::readInvitation`, which is stricter than
+`readLink` because nobody chose the text: the scheme must be written and be `http` or `https`, the
+address may carry no user name (`https://your-mac@elsewhere/…`), the app's own link holds exactly
+one `pairingUrl`, decoded once, that is not itself an app link, and the address shown has its host
+in ASCII. The address said is taken from the same parse the exchange then uses. Anything new that
+accepts a link from outside the user's hands goes through it.
+
+Two things about how Qt for Android delivers the link are easy to get wrong:
+
+- It hands a VIEW intent's address to `QDesktopServices::openUrl`, which calls the handler set for
+  the scheme (`MobileApp`). For a running app that call comes on Android's own thread, not Qt's;
+  for a stopped one it is queued when the platform plugin is made and runs with the event loop's
+  first turn, so a handler set after that never sees the link the app was started with. The
+  handler only passes the link to the pairing's thread.
+- The activity is `singleTask`. With the template's `singleTop`, an app that starts the link
+  without asking for a new task gets a second activity inside its own task, and Qt runs one.
+
+### The scanner's camera
+
+Frames come from Qt Multimedia and are read by zxing-cpp
+([`cmake/Scanner.cmake`](../../apps/mobile-qt/cmake/Scanner.cmake)). The scanner is this client's
+alone: the desktop has no camera, and `hal_c2_native` and the bricks link neither library.
+
+- **The backend.** Qt Multimedia for Android defaults to its FFmpeg backend, which brings 16 MB of
+  `libav*` libraries for a camera preview. The package carries the backend over Android's own
+  camera instead, which Qt marks deprecated. If a later Qt drops it, the choice is FFmpeg's weight
+  or a camera of our own behind [`ScanCamera`](../../apps/mobile-qt/src/ScanCamera.h), the one
+  place that touches Qt Multimedia's camera.
+- **Its frames are textures.** `QVideoFrame::toImage()` and `map()` read one back through a
+  graphics context made for the calling thread, which sees the texture only when every context
+  shares one: `main.cpp` sets `Qt::AA_ShareOpenGLContexts` on Android, and without it every frame
+  reads black with no error anywhere. The preview still draws, so only a scan on a device shows it.
+- **When it runs.** Only while the scanner is open, the app may use the camera, the screen has
+  handed over its preview's sink and the app is at the front; `Scanner` stops it when any of those
+  goes. The frames are read at that sink, where the tests deliver theirs.
 
 ## A development build must be told its home
 

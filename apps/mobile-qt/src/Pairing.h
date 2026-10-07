@@ -23,11 +23,15 @@ class ShellBridge;
 // replaces the one remembered.
 //
 // Publishes `pairing`:
-//   {phase:  unpaired | pairing | paired,
-//    error:  a sentence for the user, "" when none,
-//    link:   what the user last entered, kept after a failure, "" once paired,
-//    origin: the paired MC's origin, "" when unpaired,
-//    label:  the paired MC's label from its descriptor, "" when unpaired}
+//   {phase:   unpaired | pairing | paired,
+//    error:   a sentence for the user, "" when none,
+//    link:    what the user last entered or was handed, kept after a failure,
+//             "" once paired,
+//    origin:  the paired MC's origin, "" when unpaired,
+//    label:   the paired MC's label from its descriptor, "" when unpaired,
+//    adding:  a paired device shows the pairing screen, to pair with another,
+//    offered: the address `link` would pair with, while it is a link from
+//             outside the app that waits for the user; "" otherwise}
 // How the connection to a paired MC is doing is `connection`
 // (ConnectionHealthController), which also pairs again with an MC that refused
 // the session (`connection.pair`): the session that buys is remembered here too.
@@ -37,6 +41,15 @@ class ShellBridge;
 // shows nothing of the environment. `pairing.askToForget` is what the user's
 // own button dispatches: the shell's question first (MenuController, the
 // ConfirmDialog brick), which needs no connection, then `pairing.forget`.
+// `pairing.add` brings the pairing screen up on a paired device and
+// `pairing.cancel` takes it away again, the environment it has untouched
+// (not while a link is being spent).
+//
+// A link from outside the app (openLink) is anybody's: a web page or a QR
+// code can hold one. It is never paired with by itself. It is put in the
+// pairing screen's field with the address it leads to (`offered`), in the
+// place of a scanner left open (`scanner.close`), and the user's own
+// `pairing.pair` is what spends it.
 class Pairing : public QObject {
   Q_OBJECT
 
@@ -50,6 +63,15 @@ public:
   // Connects to the remembered environment, if there is one. Once, when the
   // shell is set up.
   void start();
+
+public slots:
+  // A link the system opened the app with, as QDesktopServices hands it to
+  // the handler of its scheme. Qt for Android calls that from Android's own
+  // thread when the app is already running, so this only passes the link on
+  // to the pairing's thread.
+  void openLink(const QUrl& url);
+
+public:
 
   // This device as an MC's client list should show it: "HAL-C2 on <model>",
   // what kind of device it is (a phone, a tablet, or a laptop, which the MC
@@ -67,6 +89,10 @@ private:
 
   bool handle(const QString& action, const QVariant& payload);
   void pair(const QString& link);
+  // A link from outside the app: shown, never spent.
+  void offer(const QString& received);
+  void add();
+  void cancel();
   void paired(const pairing::Result& result);
   void askToForget();
   void forget();
@@ -90,4 +116,6 @@ private:
   bool m_pairing = false;
   QString m_error;
   QString m_link;
+  bool m_adding = false;
+  QString m_offered;
 };

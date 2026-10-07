@@ -17,6 +17,7 @@ qt_add_qml_module(hal_c2_mobile
     MobileSurface.qml
     PairingScreen.qml
     RenameThreadDialog.qml
+    ScanScreen.qml
     SettingsScreen.qml
     ThreadScreen.qml
   RESOURCES

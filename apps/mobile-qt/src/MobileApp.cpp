@@ -1,5 +1,6 @@
 #include "MobileApp.h"
 
+#include <QDesktopServices>
 #include <QDir>
 #include <QPointer>
 #include <QQmlPropertyMap>
@@ -12,6 +13,7 @@
 #include "NativeShell.h"
 #include "PlatformWindow.h"
 #include "PluginController.h"
+#include "Scanner.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -78,9 +80,19 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
       m_theme.get());
   // The one environment the phone is paired with.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
+  m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());
+  // A `hal-c2:` link the system opens the app with (the manifest's
+  // `hal-c2://pair`). Qt for Android hands a running app's link, and the one
+  // a stopped app was started with, to QDesktopServices::openUrl, which
+  // calls the scheme's handler. The second comes with the event loop's first
+  // turn, so the handler has to be here before that.
+  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_pairing.get(), "openLink");
 }
 
-MobileApp::~MobileApp() = default;
+MobileApp::~MobileApp() {
+  // Before the pairing goes: a link may be on its way from another thread.
+  QDesktopServices::unsetUrlHandler(QStringLiteral("hal-c2"));
+}
 
 void MobileApp::start() {
   m_pairing->start();

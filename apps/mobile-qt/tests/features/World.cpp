@@ -1,11 +1,14 @@
 #include "World.h"
 
 #include <QCoreApplication>
+#include <QDesktopServices>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QPointingDevice>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTest>
+#include <QThread>
 #include <qpa/qwindowsysteminterface.h>
 
 #include "ConnectionHealthController.h"
@@ -94,7 +97,8 @@ World::~World() {
 void World::open() {
   if (m_app) return;
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
-  m_app = std::make_unique<MobileApp>(MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone});
+  m_app = std::make_unique<MobileApp>(
+      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
@@ -116,8 +120,35 @@ void World::background() {
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationSuspended);
 }
 
+void World::foreground() {
+  QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
+}
+
+void World::followLink(const QString& link) {
+  // With no handler for it, a real platform would hand the link to whatever
+  // app this machine opens it with.
+  expect(QGuiApplication::platformName() == QLatin1String("offscreen"), QStringLiteral("links are only followed on the offscreen platform"));
+  const QUrl url(link);
+  if (!m_app) {
+    // The link a stopped app was started with comes on the app's own thread.
+    open();
+    QDesktopServices::openUrl(url);
+    return;
+  }
+  // A running app's comes on Android's.
+  const std::unique_ptr<QThread> android(QThread::create([url] { QDesktopServices::openUrl(url); }));
+  android->start();
+  expect(android->wait(5000), QStringLiteral("the link was not handed over"));
+}
+
 void World::close() {
   m_app.reset();
+}
+
+PairableMc& World::another(const QString& label) {
+  if (!m_another) m_another = std::make_unique<PairableMc>(QStringLiteral("b"), label);
+  expect(m_another->mc.label == label, QStringLiteral("the other environment is %1").arg(m_another->mc.label));
+  return *m_another;
 }
 
 void World::resize(int width, int height) {

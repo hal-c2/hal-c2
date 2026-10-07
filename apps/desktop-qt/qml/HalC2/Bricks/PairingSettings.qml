@@ -5,8 +5,9 @@ import HalC2.Shell
 
 // Settings → Pairing, in a client that paired itself with its environment
 // (`pairing`, apps/mobile-qt's Pairing): which environment that is, how the
-// connection to it stands, and the way out, which asks first
-// (`pairing.askToForget`).
+// connection to it stands, the way to pair with another one in its place
+// (`pairing.add`, the client's own pairing screen), and the way out, which
+// asks first (`pairing.askToForget`).
 SettingsPage {
     id: page
 
@@ -56,8 +57,14 @@ SettingsPage {
         }
 
         ShellButton {
-            objectName: "environmentForget"
+            objectName: "environmentPairAnother"
             Layout.topMargin: 8
+            text: qsTr("Pair with another environment")
+            onClicked: Shell.dispatch("pairing.add")
+        }
+
+        ShellButton {
+            objectName: "environmentForget"
             tint: Theme.palette.color("error", "#ef4444")
             text: qsTr("Forget this environment")
             onClicked: Shell.dispatch("pairing.askToForget")

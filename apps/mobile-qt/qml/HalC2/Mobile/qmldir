@@ -8,5 +8,6 @@ MobileShell 1.0 MobileShell.qml
 MobileSurface 1.0 MobileSurface.qml
 PairingScreen 1.0 PairingScreen.qml
 RenameThreadDialog 1.0 RenameThreadDialog.qml
+ScanScreen 1.0 ScanScreen.qml
 SettingsScreen 1.0 SettingsScreen.qml
 ThreadScreen 1.0 ThreadScreen.qml

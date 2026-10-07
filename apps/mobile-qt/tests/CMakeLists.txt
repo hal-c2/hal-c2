@@ -17,6 +17,7 @@ include("${_desktop}/cmake/PlatformWindow.cmake")
 include("${_desktop}/cmake/NativeShell.cmake")
 hal_c2_add_native_library()
 include(../cmake/Terminal.cmake)
+include(../cmake/Scanner.cmake)
 
 # The pairing class by itself: nothing here needs the QML.
 add_executable(tst_Pairing
@@ -32,6 +33,18 @@ target_link_libraries(tst_Pairing PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME Pairing COMMAND tst_Pairing)
 set_tests_properties(Pairing PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 
+# The scanner by itself: codes read off camera frames, and its use of a camera
+# the test scripts (FakeCamera.h).
+add_executable(tst_Scanner
+  tst_Scanner.cpp
+  FakeCamera.h
+)
+target_include_directories(tst_Scanner PRIVATE ../src)
+target_link_libraries(tst_Scanner PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Test)
+hal_c2_target_scanner(tst_Scanner)
+add_test(NAME Scanner COMMAND tst_Scanner)
+set_tests_properties(Scanner PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+
 # The phone's scenarios of features/, against the same fake MC: the app as
 # main.cpp builds it (MobileApp) with its real root, the desktop runner's
 # Gherkin reader and harness, and one steps file per domain (features/*.cpp,
@@ -40,6 +53,7 @@ file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/featur
 add_executable(tst_Features
   tst_Features.cpp
   PairableMc.h
+  FakeCamera.h
   ${_feature_sources}
   ../src/MobileApp.cpp
   ../src/MobileApp.h
@@ -65,5 +79,6 @@ target_compile_definitions(tst_Features PRIVATE
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::QuickControls2 Qt6::Test)
 hal_c2_target_platform_window(tst_Features)
 hal_c2_target_terminal(tst_Features)
+hal_c2_target_scanner(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

@@ -5,7 +5,9 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The Android client's window: the pairing screen until the device has an
-// environment (`pairing`), then the layout the window has room for. That is
+// environment (`pairing`), and again when it asks to pair with another or is
+// opened with a pairing link, with the camera over it while a pairing code is
+// scanned (`scanner`). Otherwise the layout the window has room for. That is
 // the desktop's own (DefaultLayout) wherever its thread list and thread fit
 // side by side, and below that the phone layout, one screen at a time for
 // where the window is (`route`, NavigationController): the thread list at
@@ -19,6 +21,9 @@ ShellWindow {
     // `connection` still says connecting once an environment is forgotten, so
     // whether there is one is always `pairing`'s to say.
     readonly property bool paired: pairing !== null && pairing.phase === "paired"
+    // A paired device at the pairing screen, its environment still its own.
+    readonly property bool adding: pairing !== null && pairing.adding === true
+    readonly property bool scanning: (Shell.state.scanner ?? null)?.open === true
     readonly property bool connected: (Shell.state.connection ?? null)?.phase === "connected"
 
     // The on-screen keyboard. Android reports it in device pixels from the
@@ -45,7 +50,7 @@ ShellWindow {
     // platform's compact height class, a phone on its side.
     readonly property bool roomy: width / zoom >= 736 && fullHeight / zoom >= 480
     // What the window shows: `pairing`, or the layout it has room for.
-    readonly property string layout: !paired ? "pairing" : roomy ? "desktop" : "phone"
+    readonly property string layout: !paired || adding ? "pairing" : roomy ? "desktop" : "phone"
 
     readonly property string routeKind: route !== null ? route.kind : "home"
     // The phone layout's screen for the route.
@@ -58,13 +63,19 @@ ShellWindow {
     readonly property bool popupOpen: PaletteModel.open || Keybindings.modelPickerOpen
     // The phone layout's home is where its steps back end; the desktop
     // layout has no such screen, and ends where the route has nothing before it.
-    readonly property bool canStepBack: paired && (popupOpen || (roomy ? route !== null && route.canGoBack === true : routeKind !== "home"))
+    readonly property bool canStepBack: scanning || adding || (paired && (popupOpen || (roomy ? route !== null && route.canGoBack === true : routeKind !== "home")))
 
-    // One step back: out of an open popup, in the phone layout from a
-    // settings section to the sections, and from anything else to where the
-    // user was before (NavigationController's back stack, home when it is empty).
+    // One step back: out of the scanner, from pairing with another
+    // environment to the one the device has, out of an open popup, in the
+    // phone layout from a settings section to the sections, and from anything
+    // else to where the user was before (NavigationController's back stack,
+    // home when it is empty).
     function stepBack() {
-        if (PaletteModel.open)
+        if (scanning)
+            Shell.dispatch("scanner.close");
+        else if (adding)
+            Shell.dispatch("pairing.cancel");
+        else if (PaletteModel.open)
             PaletteModel.dismiss();
         else if (Keybindings.modelPickerOpen)
             Shell.dispatch("composer.modelPicker.toggle");
@@ -123,7 +134,7 @@ ShellWindow {
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: !notice.visible ? 0 : notice.height + 24 + (forget.visible ? forget.height + 4 : 0)
-            visible: root.paired
+            visible: root.layout !== "pairing"
 
             ConnectionNotice {
                 id: notice
@@ -151,7 +162,18 @@ ShellWindow {
             Loader {
                 anchors.fill: parent
                 active: root.layout === "pairing"
-                sourceComponent: PairingScreen {}
+                sourceComponent: PairingScreen {
+                    // Under the scanner, out of the keyboard's reach.
+                    enabled: !root.scanning
+                }
+            }
+
+            // The camera, only while a pairing code is being scanned.
+            Loader {
+                anchors.fill: parent
+                z: 1
+                active: root.layout === "pairing" && root.scanning
+                sourceComponent: ScanScreen {}
             }
 
             Loader {

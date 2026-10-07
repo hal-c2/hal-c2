@@ -15,6 +15,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QTimer>
 #include <QUrlQuery>
 
@@ -138,6 +139,8 @@ public:
 };
 
 const QVariantMap kUnpaired{{QStringLiteral("phase"), QStringLiteral("unpaired")},
+                            {QStringLiteral("adding"), false},
+                            {QStringLiteral("offered"), QString()},
                             {QStringLiteral("error"), QString()},
                             {QStringLiteral("link"), QString()},
                             {QStringLiteral("origin"), QString()},
@@ -171,6 +174,8 @@ private slots:
     QCOMPARE(phone.phase(), QStringLiteral("pairing"));
     QVERIFY(phone.waitForState(QStringLiteral("pairing"), [](const QVariantMap& pairing) { return pairing.value(QStringLiteral("phase")) == QLatin1String("paired"); }));
     const QVariantMap paired{{QStringLiteral("phase"), QStringLiteral("paired")},
+                             {QStringLiteral("adding"), false},
+                             {QStringLiteral("offered"), QString()},
                              {QStringLiteral("error"), QString()},
                              {QStringLiteral("link"), QString()},
                              {QStringLiteral("origin"), macbook.mc.origin().toString()},
@@ -270,6 +275,8 @@ private slots:
     Phone phone(home.path());
     QVERIFY(phone.pair(link));
     const QVariantMap refused{{QStringLiteral("phase"), QStringLiteral("unpaired")},
+                              {QStringLiteral("adding"), false},
+                              {QStringLiteral("offered"), QString()},
                               {QStringLiteral("error"), QStringLiteral("Pairing failed: the link was already used or has expired. Ask the environment for a fresh one.")},
                               {QStringLiteral("link"), link},
                               {QStringLiteral("origin"), QString()},
@@ -437,6 +444,290 @@ private slots:
     QCOMPARE(phone.kept().value(QLatin1String("environmentId")).toString(), QStringLiteral("env-b"));
   }
 
+  // A pairing link nobody typed: a scanned code's text, or the link another
+  // app opened this one with.
+  void invitationsAreRead_data() {
+    QTest::addColumn<QString>("received");
+    QTest::addColumn<QString>("link");
+    QTest::addColumn<QString>("address");
+    const QString link = QStringLiteral("https://devbox.tailnet.ts.net/pair#token=abc");
+    const QString carried = QString::fromUtf8(QUrl::toPercentEncoding(link));
+    const QString devbox = QStringLiteral("https://devbox.tailnet.ts.net");
+    QTest::newRow("a pairing link, as the QR code holds it") << link << link << devbox;
+    QTest::newRow("on the LAN") << "http://192.168.1.20:3773/pair#token=abc" << "http://192.168.1.20:3773/pair#token=abc" << "http://192.168.1.20:3773";
+    QTest::newRow("as mix hal_c2.pair prints it") << "http://127.0.0.1:3797/?token=abc" << "http://127.0.0.1:3797/?token=abc" << "http://127.0.0.1:3797";
+    QTest::newRow("an IPv6 address") << "http://[::1]:3797/pair#token=abc" << "http://[::1]:3797/pair#token=abc" << "http://[::1]:3797";
+    QTest::newRow("with space around it") << QStringLiteral("  ") + link + QStringLiteral("\n") << link << devbox;
+    QTest::newRow("the app's link to one") << QStringLiteral("hal-c2://pair?pairingUrl=") + carried << link << devbox;
+    QTest::newRow("the app's link with a slash") << QStringLiteral("hal-c2://pair/?pairingUrl=") + carried << link << devbox;
+    QTest::newRow("the app's link in capitals") << QStringLiteral("HAL-C2://PAIR?pairingUrl=") + carried << link << devbox;
+    // What else it carries is not read, whatever it says.
+    QTest::newRow("the app's link with other parameters")
+        << QStringLiteral("hal-c2://pair?confirm=no&pairingUrl=") + carried + QStringLiteral("&next=javascript%3Aalert(1)&token=other") << link << devbox;
+    // A name made to look like another is shown as what it is.
+    QTest::newRow("a look-alike host") << QStringLiteral("https://dev\u0432ox.example/pair#token=abc") << QStringLiteral("https://dev\u0432ox.example/pair#token=abc")
+                                       << QStringLiteral("https://") + QString::fromLatin1(QUrl::toAce(QStringLiteral("dev\u0432ox.example")));
+  }
+  void invitationsAreRead() {
+    QFETCH(QString, received);
+    QFETCH(QString, link);
+    QFETCH(QString, address);
+    const auto invitation = pairing::readInvitation(received);
+    QVERIFY(invitation.has_value());
+    QCOMPARE(invitation->link, link);
+    QCOMPARE(invitation->address, address);
+    QVERIFY2(!address.contains(QRegularExpression(QStringLiteral("[^\\x00-\\x7f]"))), qPrintable(address));
+    // The address said is the one pairing with the link goes to.
+    const auto read = pairing::readLink(invitation->link);
+    QVERIFY(read.has_value());
+    QCOMPARE(read->origins.size(), 1);
+    QCOMPARE(read->origins.first().toString(QUrl::FullyEncoded), address);
+  }
+
+  void hostileInvitationsAreRefused_data() {
+    QTest::addColumn<QString>("received");
+    const QString link = QStringLiteral("https://devbox.example/pair#token=abc");
+    const auto carrying = [](const QString& carried) { return QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(carried)); };
+    QTest::newRow("nothing") << QString();
+    QTest::newRow("space") << QStringLiteral("  \n ");
+    QTest::newRow("words") << QStringLiteral("hello world");
+    QTest::newRow("a web page") << QStringLiteral("https://example.com/menu");
+    QTest::newRow("a link with an empty token") << QStringLiteral("https://devbox.example/pair#token=");
+    // What the user may type is not guessed at for a text nobody chose.
+    QTest::newRow("an address with no scheme") << QStringLiteral("devbox.example/pair#token=abc");
+    QTest::newRow("an address and port with no scheme") << QStringLiteral("192.168.1.20:3773#token=abc");
+    QTest::newRow("a scheme with no slashes") << QStringLiteral("https:devbox.example/pair#token=abc");
+    QTest::newRow("no host") << QStringLiteral("https:///pair#token=abc");
+    QTest::newRow("a script") << QStringLiteral("javascript:alert(1)//#token=abc");
+    QTest::newRow("a file") << QStringLiteral("file:///sdcard/pair#token=abc");
+    QTest::newRow("a file on a host") << QStringLiteral("file://devbox.example/pair#token=abc");
+    QTest::newRow("ftp") << QStringLiteral("ftp://devbox.example/pair#token=abc");
+    QTest::newRow("a websocket") << QStringLiteral("wss://devbox.example/pair#token=abc");
+    QTest::newRow("an intent") << QStringLiteral("intent://devbox.example/pair#token=abc;scheme=https;end");
+    QTest::newRow("a content address") << QStringLiteral("content://devbox.example/pair#token=abc");
+    // The host the user reads first is not the one the link goes to.
+    QTest::newRow("a user name that reads as a host") << QStringLiteral("https://devbox.example@evil.example/pair#token=abc");
+    QTest::newRow("a user name and password") << QStringLiteral("https://devbox.example:443@evil.example/pair#token=abc");
+    QTest::newRow("a backslash before the host") << QStringLiteral("https://devbox.example\\@evil.example/pair#token=abc");
+    QTest::newRow("longer than a link is") << link + QString(4000, QLatin1Char('a'));
+
+    QTest::newRow("the app's link with nothing") << QStringLiteral("hal-c2://pair");
+    QTest::newRow("the app's link with an empty value") << QStringLiteral("hal-c2://pair?pairingUrl=");
+    QTest::newRow("the app's link with a blank value") << QStringLiteral("hal-c2://pair?pairingUrl=%20%0A");
+    QTest::newRow("the parameter spelt otherwise") << QStringLiteral("hal-c2://pair?pairingurl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("the parameter in the fragment") << QStringLiteral("hal-c2://pair#pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("two links to choose from") << carrying(link) + QStringLiteral("&pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(QStringLiteral("https://evil.example/pair#token=abc")));
+    QTest::newRow("the app's link to an app link") << carrying(carrying(link));
+    QTest::newRow("the app's link to a script") << carrying(QStringLiteral("javascript:alert(1)//#token=abc"));
+    QTest::newRow("the app's link to a file") << carrying(QStringLiteral("file:///data/data/io.github.halc2.mobile/files/pairing.json#token=abc"));
+    QTest::newRow("the app's link to an intent") << carrying(QStringLiteral("intent://devbox.example/#Intent;scheme=https;S.token=abc;end"));
+    QTest::newRow("the app's link to an address with no scheme") << carrying(QStringLiteral("devbox.example/pair#token=abc"));
+    QTest::newRow("the app's link to a user name that reads as a host") << carrying(QStringLiteral("https://devbox.example@evil.example/pair#token=abc"));
+    // Decoded once: what is still encoded after that is not a link.
+    QTest::newRow("a link encoded twice") << QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(QString::fromUtf8(QUrl::toPercentEncoding(link))));
+    // A token outside the encoded link is the outer link's own fragment.
+    QTest::newRow("the token left outside the carried link") << QStringLiteral("hal-c2://pair?pairingUrl=https%3A%2F%2Fdevbox.example%2Fpair#token=abc");
+    QTest::newRow("another host of the app's scheme") << QStringLiteral("hal-c2://thread/env-a/t-1?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("a host that starts like it") << QStringLiteral("hal-c2://pair.evil.example?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("pair as a user name") << QStringLiteral("hal-c2://pair@evil.example?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("a port") << QStringLiteral("hal-c2://pair:1?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("a path") << QStringLiteral("hal-c2://pair/now?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("the app's scheme with no slashes") << QStringLiteral("hal-c2:pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+    QTest::newRow("another scheme that carries one") << QStringLiteral("hal-c2-dev://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+  }
+  void hostileInvitationsAreRefused() {
+    QFETCH(QString, received);
+    const auto invitation = pairing::readInvitation(received);
+    QVERIFY2(!invitation.has_value(), invitation ? qPrintable(invitation->link + QStringLiteral(" at ") + invitation->address) : "");
+  }
+
+  // A pairing link opened from outside the app fills the pairing form
+  // without pairing.
+  void aLinkFromOutsideIsShownNotSpent() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    const QString link = macbook.link();
+    phone.pairing->openLink(QUrl(QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link))));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [&](const QVariantMap& pairing) { return pairing.value(QStringLiteral("link")) == link; }));
+    QVariantMap offered = kUnpaired;
+    offered.insert(QStringLiteral("link"), link);
+    offered.insert(QStringLiteral("offered"), macbook.mc.origin().toString());
+    QCOMPARE(phone.pairingState(), offered);
+    // Nothing was sent anywhere, and nothing is kept.
+    QCOMPARE(macbook.exchanges.size(), 0);
+    QCOMPARE(macbook.pairingTokens.size(), 1);
+    QCOMPARE(macbook.mc.connections.size(), 0);
+    QCOMPARE(phone.shell->client()->phase(), McClient::Phase::Closed);
+    QVERIFY(!QFile::exists(phone.file));
+
+    // The user's own Pair is what spends it.
+    QVERIFY(phone.pair(link));
+    QCOMPARE(phone.phase(), QStringLiteral("paired"));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("offered")).toString(), QString());
+    QCOMPARE(macbook.exchanges.size(), 1);
+  }
+
+  // Qt for Android hands a running app its link on Android's thread.
+  void aLinkFromOutsideArrivesFromAnotherThread() {
+    QTemporaryDir home;
+    Phone phone(home.path());
+    const QString link = QStringLiteral("https://devbox.example/pair#token=abc");
+    std::unique_ptr<QThread> android(QThread::create([&] {
+      QMetaObject::invokeMethod(phone.pairing.get(), "openLink", Qt::DirectConnection,
+                                Q_ARG(QUrl, QUrl(QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link)))));
+    }));
+    android->start();
+    QVERIFY(android->wait());
+    // Still on its way to the pairing's own thread.
+    QCOMPARE(phone.pairingState(), kUnpaired);
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [&](const QVariantMap& pairing) { return pairing.value(QStringLiteral("link")) == link; }));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("offered")).toString(), QStringLiteral("https://devbox.example"));
+  }
+
+  // The same while paired: the environment the phone has stays until the
+  // user pairs, and going back leaves it as it was.
+  void aLinkFromOutsideLeavesThePairedEnvironment() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    PairableMc office(QStringLiteral("b"), QStringLiteral("Office Mac"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    QVERIFY(phone.waitForThreads({macbook.threadTitle()}));
+    const QJsonObject kept = phone.kept();
+    const QVariantMap paired = phone.pairingState();
+
+    const QString link = office.link();
+    phone.pairing->openLink(QUrl(QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link))));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [&](const QVariantMap& pairing) { return pairing.value(QStringLiteral("adding")).toBool(); }));
+    QVariantMap offered = paired;
+    offered.insert(QStringLiteral("adding"), true);
+    offered.insert(QStringLiteral("link"), link);
+    offered.insert(QStringLiteral("offered"), office.mc.origin().toString());
+    QCOMPARE(phone.pairingState(), offered);
+    QCOMPARE(office.exchanges.size(), 0);
+    QCOMPARE(office.mc.connections.size(), 0);
+    QCOMPARE(phone.kept(), kept);
+    QCOMPARE(phone.state(QStringLiteral("connection")).value(QStringLiteral("phase")).toString(), QStringLiteral("connected"));
+    QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
+
+    // Back: as it was.
+    phone.dispatch(QStringLiteral("pairing.cancel"));
+    QCOMPARE(phone.pairingState(), paired);
+    QCOMPARE(phone.kept(), kept);
+    QCOMPARE(office.exchanges.size(), 0);
+    QCOMPARE(macbook.mc.connections.size(), 1);
+
+    // And the same link, once the user pairs with it, replaces the MacBook.
+    phone.pairing->openLink(QUrl(QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link))));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [&](const QVariantMap& pairing) { return pairing.value(QStringLiteral("adding")).toBool(); }));
+    QVERIFY(phone.pair(link));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("label")).toString(), QStringLiteral("Office Mac"));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("adding")).toBool(), false);
+    QCOMPARE(phone.pairingState().value(QStringLiteral("offered")).toString(), QString());
+    QCOMPARE(phone.kept().value(QLatin1String("environmentId")).toString(), QStringLiteral("env-b"));
+  }
+
+  // The address said belongs to the link that was handed over, not to what
+  // the user then writes over it.
+  void theOfferedAddressGoesWithItsLink() {
+    QTemporaryDir home;
+    Phone phone(home.path());
+    phone.pairing->openLink(QUrl(QStringLiteral("hal-c2://pair?pairingUrl=https%3A%2F%2Fdevbox.example%2Fpair%23token%3Dabc")));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [](const QVariantMap& pairing) { return !pairing.value(QStringLiteral("offered")).toString().isEmpty(); }));
+    QVERIFY(phone.pair(QStringLiteral("http://") + deadAddress() + QStringLiteral("/?token=abc")));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("offered")).toString(), QString());
+    QVERIFY(phone.error().contains(QStringLiteral("could not be reached")));
+  }
+
+  // A link from outside the app that is not a pairing link changes nothing.
+  void aLinkThatIsNotAPairingLinkChangesNothing_data() {
+    QTest::addColumn<QString>("link");
+    QTest::newRow("carries nothing") << QStringLiteral("hal-c2://pair");
+    QTest::newRow("carries a script") << QStringLiteral("hal-c2://pair?pairingUrl=javascript%3Aalert(1)%2F%2F%23token%3Dabc");
+    QTest::newRow("carries an app link") << QStringLiteral("hal-c2://pair?pairingUrl=hal-c2%3A%2F%2Fpair%3FpairingUrl%3Dhttps%253A%252F%252Fdevbox.example%252Fpair%2523token%253Dabc");
+    QTest::newRow("is a thread's link") << QStringLiteral("hal-c2://thread/env-a/t-1");
+  }
+  void aLinkThatIsNotAPairingLinkChangesNothing() {
+    QFETCH(QString, link);
+    const QString said = QStringLiteral("The link that opened HAL-C2 is not a pairing link. Nothing was changed.");
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    // With no environment, the pairing screen says so and keeps what was entered.
+    const QString typed = QStringLiteral("http://") + deadAddress() + QStringLiteral("/?token=abc");
+    QVERIFY(phone.pair(typed));
+    phone.pairing->openLink(QUrl(link));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [&](const QVariantMap& pairing) { return pairing.value(QStringLiteral("error")) == said; }));
+    QVariantMap refused = kUnpaired;
+    refused.insert(QStringLiteral("error"), said);
+    refused.insert(QStringLiteral("link"), typed);
+    QCOMPARE(phone.pairingState(), refused);
+    QVERIFY(!QFile::exists(phone.file));
+
+    // With one, a notice says so over whatever the user is looking at.
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    const QVariantMap paired = phone.pairingState();
+    const QJsonObject kept = phone.kept();
+    phone.pairing->openLink(QUrl(link));
+    QVERIFY(phone.waitForState(QStringLiteral("toasts"), [](const QVariantMap& toasts) { return !toasts.value(QStringLiteral("items")).toList().isEmpty(); }));
+    const QVariantMap toast = phone.state(QStringLiteral("toasts")).value(QStringLiteral("items")).toList().first().toMap();
+    QCOMPARE(toast.value(QStringLiteral("title")).toString(), QStringLiteral("Not a pairing link"));
+    QCOMPARE(toast.value(QStringLiteral("description")).toString(), said);
+    QCOMPARE(phone.pairingState(), paired);
+    QCOMPARE(phone.kept(), kept);
+    QCOMPARE(macbook.exchanges.size(), 1);
+    QCOMPARE(macbook.mc.connections.size(), 1);
+  }
+
+  // Settings' way to another environment, and the way back from it.
+  void addingShowsThePairingScreenAndCancellingLeavesIt() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    // A device with no environment is at the pairing screen already.
+    phone.dispatch(QStringLiteral("pairing.add"));
+    QCOMPARE(phone.pairingState(), kUnpaired);
+
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    const QVariantMap paired = phone.pairingState();
+    const QJsonObject kept = phone.kept();
+    phone.dispatch(QStringLiteral("pairing.add"));
+    QVariantMap adding = paired;
+    adding.insert(QStringLiteral("adding"), true);
+    QCOMPARE(phone.pairingState(), adding);
+
+    // A link that fails leaves the user there, with the environment they had.
+    const QString dead = QStringLiteral("http://") + deadAddress() + QStringLiteral("/?token=abc");
+    QVERIFY(phone.pair(dead));
+    QCOMPARE(phone.phase(), QStringLiteral("paired"));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("adding")).toBool(), true);
+    QCOMPARE(phone.pairingState().value(QStringLiteral("link")).toString(), dead);
+    QVERIFY(phone.error().contains(QStringLiteral("could not be reached")));
+    QCOMPARE(phone.kept(), kept);
+
+    phone.dispatch(QStringLiteral("pairing.cancel"));
+    QCOMPARE(phone.pairingState(), paired);
+    QCOMPARE(phone.kept(), kept);
+    QCOMPARE(phone.state(QStringLiteral("connection")).value(QStringLiteral("phase")).toString(), QStringLiteral("connected"));
+    QCOMPARE(macbook.mc.connections.size(), 1);
+
+    // There is no way back from a link that is being spent: the session it
+    // buys is not left behind on the environment.
+    PairableMc office(QStringLiteral("b"), QStringLiteral("Office Mac"));
+    phone.dispatch(QStringLiteral("pairing.add"));
+    phone.dispatch(QStringLiteral("pairing.pair"), {{QStringLiteral("link"), office.link()}});
+    QCOMPARE(phone.phase(), QStringLiteral("pairing"));
+    phone.dispatch(QStringLiteral("pairing.cancel"));
+    QCOMPARE(phone.phase(), QStringLiteral("pairing"));
+    QVERIFY(phone.waitForState(QStringLiteral("pairing"), [](const QVariantMap& pairing) { return pairing.value(QStringLiteral("phase")) == QLatin1String("paired"); }));
+    QCOMPARE(phone.pairingState().value(QStringLiteral("label")).toString(), QStringLiteral("Office Mac"));
+    QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), office.sessions.last());
+  }
+
   // Started again, the phone opens the environment it kept without asking.
   void restartOpensTheKeptEnvironment() {
     QTemporaryDir home;
@@ -450,6 +741,8 @@ private slots:
     Phone phone(home.path());
     // Before anything answers: it is paired, with what it knew of the environment.
     const QVariantMap paired{{QStringLiteral("phase"), QStringLiteral("paired")},
+                             {QStringLiteral("adding"), false},
+                             {QStringLiteral("offered"), QString()},
                              {QStringLiteral("error"), QString()},
                              {QStringLiteral("link"), QString()},
                              {QStringLiteral("origin"), macbook.mc.origin().toString()},
@@ -608,6 +901,8 @@ private slots:
     QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
 
     const QVariantMap paired{{QStringLiteral("phase"), QStringLiteral("paired")},
+                             {QStringLiteral("adding"), false},
+                             {QStringLiteral("offered"), QString()},
                              {QStringLiteral("error"), QString()},
                              {QStringLiteral("link"), QString()},
                              {QStringLiteral("origin"), office.mc.origin().toString()},

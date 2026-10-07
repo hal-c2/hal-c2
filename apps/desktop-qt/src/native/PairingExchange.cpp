@@ -121,6 +121,34 @@ std::optional<Link> readLink(const QString& entered) {
   return link;
 }
 
+std::optional<Invitation> readInvitation(const QString& received) {
+  // A QR code holds under 3000 characters, and a pairing link a fraction of that.
+  constexpr qsizetype kLongest = 2048;
+  QString text = received.trimmed();
+  if (text.isEmpty() || text.size() > kLongest) return std::nullopt;
+  QUrl url(text);
+  if (url.scheme() == QLatin1String("hal-c2")) {
+    const QString path = url.path();
+    if (url.host().compare(QLatin1String("pair"), Qt::CaseInsensitive) != 0 || !url.userInfo().isEmpty() || url.port() != -1 ||
+        (!path.isEmpty() && path != QLatin1String("/"))) {
+      return std::nullopt;
+    }
+    // Two of them is one for the user to read and one to be used.
+    const QStringList carried = QUrlQuery(url.query(QUrl::FullyEncoded)).allQueryItemValues(QStringLiteral("pairingUrl"), QUrl::FullyDecoded);
+    if (carried.size() != 1) return std::nullopt;
+    text = carried.first().trimmed();
+    url = QUrl(text);
+  }
+  const QString scheme = url.scheme();
+  if (!url.isValid() || (scheme != QLatin1String("http") && scheme != QLatin1String("https")) || url.host().isEmpty() || !url.userInfo().isEmpty()) {
+    return std::nullopt;
+  }
+  // With its scheme written, the link has the one origin readLink gives it.
+  const auto link = readLink(text);
+  if (!link) return std::nullopt;
+  return Invitation{text, link->origins.first().toString(QUrl::FullyEncoded)};
+}
+
 void exchange(QNetworkAccessManager* http, QObject* context, const Link& link, const Client& client,
               std::function<void(const Result&)> done) {
   describe(std::make_shared<Attempt>(Attempt{http, context, link, client, std::move(done)}), 0);

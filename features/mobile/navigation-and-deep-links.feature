@@ -6,7 +6,9 @@
 #   apps/mobile/plugins/withIosSceneLifecycle
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (screens follow the route; Back goes back one step)
 # Desktop navigation and the command palette are specified in features/navigation/.
-# This file covers links into the phone app and moving between phone screens.
+# This file covers links into the phone app and moving between phone screens. The one link the
+# QML client answers so far, the link that pairs (hal-c2://pair), is in
+# pairing-and-environments.feature.
 
 Feature: Navigating the phone app and opening links into it
   Every screen a user can reach has a link, so a notification, widget, shortcut or shared

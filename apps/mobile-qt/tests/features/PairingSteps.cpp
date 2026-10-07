@@ -7,7 +7,10 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QNetworkAccessManager>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickItem>
+#include <QUrl>
 
 #include "Harness.h"
 #include "McClient.h"
@@ -56,9 +59,28 @@ QString screenTexts(World& world) {
   return world.texts().join(QStringLiteral(" | "));
 }
 
+// What the device keeps of its environment.
+QJsonObject keptPairing(World& world) {
+  QFile file(pairingFile(world));
+  return file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject();
+}
+
+// The app's own link to a pairing link, as the MC's /pair page offers it.
+QString appLinkTo(const QString& link) {
+  return QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link));
+}
+
+// The system opens the app with a link to `link`, and the pairing screen comes.
+void followPairingLink(World& world, const QString& link) {
+  world.link = link;
+  world.followLink(appLinkTo(link));
+  world.waitFor([&] { return world.find(QStringLiteral("pairingOffer")) != nullptr; },
+                [&] { return QStringLiteral("the pairing screen with the link; the phone is %1 and says: %2").arg(show(world.state(QStringLiteral("pairing"))), screenTexts(world)); });
+}
+
 // From home, the user opens the environment in Settings, which names it.
 void showEnvironment(World& world, const QString& name) {
-  world.tap(QStringLiteral("environment"));
+  if (world.find(QStringLiteral("pairingSettings")) == nullptr) world.tap(QStringLiteral("environment"));
   world.item(QStringLiteral("pairingSettings"));
   world.waitFor([&] { return shownText(world, QStringLiteral("environmentName")) == name; },
                 [&] { return QStringLiteral("the settings to name %1; the screen says: %2").arg(name, screenTexts(world)); });
@@ -77,6 +99,22 @@ void askToForget(World& world, const QString& name) {
   world.tap(QStringLiteral("environmentForget"));
   world.awaitPopup(QStringLiteral("confirmDialog"));
   expect(world.shows(QStringLiteral("Forget %1?").arg(name)), QStringLiteral("the question does not name %1; the screen says: %2").arg(name, screenTexts(world)));
+}
+
+// From Settings, the user asks to pair with another environment and is at the
+// pairing screen, which says what that costs.
+void chooseToPairWithAnother(World& world) {
+  showEnvironment(world, world.mc.label);
+  world.tap(QStringLiteral("environmentPairAnother"));
+  world.item(QStringLiteral("pairingScreen"));
+  expect(shownText(world, QStringLiteral("pairingTitle")) == QStringLiteral("Pair with another environment"), QStringLiteral("the screen says: %1").arg(screenTexts(world)));
+}
+
+void awaitConnection(World& world) {
+  world.waitFor([&] { return pairingPhase(world) == QLatin1String("paired"); },
+                [&] { return QStringLiteral("the phone to pair; it says: %1").arg(screenTexts(world)); });
+  world.waitFor([&] { return world.state(QStringLiteral("connection")).toMap().value(QStringLiteral("phase")) == QLatin1String("connected"); },
+                [&] { return QStringLiteral("the connection; it is %1").arg(show(world.state(QStringLiteral("connection")))); });
 }
 
 // How many sockets the MC had when the scenario last looked.
@@ -264,6 +302,118 @@ const Steps steps([] {
     world.item(S("pairingScreen"));
     expect(!world.shows(S("Tax line"), false), S("the restarted app says: %1").arg(screenTexts(world)));
     expect(world.mc.connections.size() == sockets, S("the restarted app connected to the environment"));
+  });
+
+  step(S("the user pairs with %1 again").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.label == c[0], S("the environment is %1").arg(world.mc.label));
+    chooseToPairWithAnother(world);
+    enterPairingLink(world, world.environment.link());
+    awaitConnection(world);
+  });
+
+  step(S("%1 is listed once").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    // Back where the user started from, Settings names it, at its address.
+    showEnvironment(world, c[0]);
+    expect(shownText(world, S("environmentAddress")) == world.mc.origin().toString(), S("its address reads %1").arg(shownText(world, S("environmentAddress"))));
+    leaveEnvironment(world);
+    // One environment, with its threads once, on the session the second link bought.
+    threadRow(world, S("Tax line"));
+    expect(world.native().store()->environments() == QStringList{world.mc.environmentId}, S("the phone holds %1").arg(world.native().store()->environments().join(S(", "))));
+    expect(show(world.state(S("sidebar"))).count(S("Tax line")) == 1, S("the thread list is %1").arg(show(world.state(S("sidebar")))));
+    expect(world.environment.sessions.size() == 2 && world.environment.pairingTokens.isEmpty(), S("the MC sold %1 sessions").arg(world.environment.sessions.size()));
+    expect(keptPairing(world).value(QLatin1String("token")).toString() == world.environment.sessions.last(), S("the phone keeps %1").arg(show(keptPairing(world).toVariantMap())));
+    world.waitFor([&] { return world.environment.connectedWithTicket(); }, S("the phone to connect with its new session"));
+  });
+
+  step(S("the user chooses to pair with another environment"), [](World& world, const Captures&, const Table&) { chooseToPairWithAnother(world); });
+
+  step(S("the user is told that pairing replaces %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QString said = shownText(world, S("pairingReplaces"));
+    expect(said.contains(S("paired with %1 at %2").arg(c[0], world.mc.origin().toString())) && said.endsWith(S("replaces %1.").arg(c[0])),
+           S("the screen says: %1").arg(screenTexts(world)));
+  });
+
+  step(S("the user starts to pair with another environment but goes back"), [](World& world, const Captures&, const Table&) {
+    chooseToPairWithAnother(world);
+    world.tap(S("pairingCancel"));
+  });
+
+  step(S("the user pairs with the environment %1 instead").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    PairableMc& other = world.another(c[0]);
+    chooseToPairWithAnother(world);
+    enterPairingLink(world, other.link());
+    awaitConnection(world);
+  });
+
+  step(S("%1 is listed in place of %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    PairableMc& other = world.another(c[0]);
+    showEnvironment(world, c[0]);
+    expect(shownText(world, S("environmentAddress")) == other.mc.origin().toString(), S("its address reads %1").arg(shownText(world, S("environmentAddress"))));
+    expect(!world.shows(c[1], false), S("%1 is still on screen, which says: %2").arg(c[1], screenTexts(world)));
+    leaveEnvironment(world);
+    // The first environment's threads went with it, and the second's came.
+    threadRow(world, other.threadTitle());
+    expect(world.native().store()->environments() == QStringList{other.mc.environmentId}, S("the phone holds %1").arg(world.native().store()->environments().join(S(", "))));
+    expect(!show(world.state(S("sidebar"))).contains(S("Tax line")), S("the thread list is %1").arg(show(world.state(S("sidebar")))));
+    expect(keptPairing(world).value(QLatin1String("origin")).toString() == other.mc.origin().toString(), S("the phone keeps %1").arg(show(keptPairing(world).toVariantMap())));
+  });
+
+  // A link from outside the app: the system opens the app with it.
+  step(S("the user (?:follows|followed) a pairing link from outside the app"), [](World& world, const Captures&, const Table&) {
+    followPairingLink(world, world.environment.link());
+  });
+
+  step(S("the user (?:follows|followed) a pairing link to another environment from outside the app"), [](World& world, const Captures&, const Table&) {
+    followPairingLink(world, world.another(S("Office Mac")).link());
+  });
+
+  step(S("the pairing form holds the link"), [](World& world, const Captures&, const Table&) {
+    expect(shownText(world, S("pairingLink")) == world.link, S("the field reads %1").arg(shownText(world, S("pairingLink"))));
+    expect(world.item(S("pairingPair"))->isEnabled(), S("the link cannot be paired with"));
+  });
+
+  step(S("the user is told which address the link would pair with"), [](World& world, const Captures&, const Table&) {
+    const QString address = QUrl(world.link).adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment).toString();
+    const QString said = shownText(world, S("pairingOffer"));
+    expect(said.contains(S("from outside HAL-C2")) && said.contains(S("the environment at %1.").arg(address)), S("the screen says: %1").arg(screenTexts(world)));
+  });
+
+  step(S("the phone stays paired with %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap pairing = world.state(S("pairing")).toMap();
+    expect(pairing.value(S("phase")) == S("paired") && pairing.value(S("label")) == c[0] && pairing.value(S("origin")) == world.mc.origin().toString(),
+           S("the phone is %1").arg(show(pairing)));
+    // On the session it had: nothing was spent, here or anywhere else.
+    expect(world.environment.sessions.size() == 1 && keptPairing(world).value(QLatin1String("token")).toString() == world.environment.sessions.first(),
+           S("the phone keeps %1 and the MC sold %2 sessions").arg(show(keptPairing(world).toVariantMap())).arg(world.environment.sessions.size()));
+    expect(world.environment.exchanges.size() == 1 && world.mc.connections.size() == 1,
+           S("the MC saw %1 exchanges and %2 sockets").arg(world.environment.exchanges.size()).arg(world.mc.connections.size()));
+    if (world.hasAnother()) {
+      PairableMc& other = world.another(S("Office Mac"));
+      expect(other.exchanges.isEmpty() && other.mc.connections.isEmpty() && other.pairingTokens.size() == 1, S("the other environment heard from the phone"));
+    }
+    expect(world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"), S("the connection is %1").arg(show(world.state(S("connection")))));
+  });
+
+  step(S("the user goes back without pairing"), [](World& world, const Captures&, const Table&) {
+    world.back();
+    // Where the user was: the thread list, with the environment's threads.
+    world.waitFor([&] { return world.find(S("pairingScreen")) == nullptr; }, [&] { return S("the pairing screen to go; the screen says: %1").arg(screenTexts(world)); });
+    threadRow(world, S("Tax line"));
+  });
+
+  step(S("the user follows a link from outside the app that (carries no pairing link|carries something other than a web address|carries another link into the app|leads elsewhere in the app)"),
+       [](World& world, const Captures& c, const Table&) {
+         const QString inner = world.environment.link();
+         world.mc.part<Seen>().sockets = world.mc.connections.size();
+         world.followLink(c[0] == QLatin1String("carries no pairing link")                       ? S("hal-c2://pair")
+                          : c[0] == QLatin1String("carries something other than a web address") ? appLinkTo(S("javascript:alert(1)//#token=abc"))
+                          : c[0] == QLatin1String("carries another link into the app")          ? appLinkTo(appLinkTo(inner))
+                                                                                                : S("hal-c2://thread/env-a/tax-line?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(inner)));
+       });
+
+  step(S("the user is told the link is not a pairing link"), [](World& world, const Captures&, const Table&) {
+    const QString said = S("The link that opened HAL-C2 is not a pairing link. Nothing was changed.");
+    world.waitFor([&] { return world.shows(said); }, [&] { return S("the phone to say so; the screen says: %1").arg(screenTexts(world)); });
   });
 
   step(S("%1 is still listed").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

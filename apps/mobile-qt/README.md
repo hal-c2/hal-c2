@@ -36,7 +36,14 @@ root read from `qml/`, an empty home, and an MC that sells sessions for pairing 
 item with the `objectName`, a mouse's click or drag there, keys into what has the keyboard, a
 hardware keyboard's chord through the window's shortcuts, Android's Back. The Gherkin reader and
 the step registry are the desktop runner's (`apps/desktop-qt/tests/native/features/Runner.h`).
-`Pairing` is the pairing class by itself.
+`Pairing` is the pairing class by itself, with the links it must refuse, and `Scanner` the scanner.
+
+No test opens a camera. The device's is one object (`src/ScanCamera.h`), and the tests put
+`tests/FakeCamera.h` in its place: it scripts the user's answer to the system's question and
+delivers a picture as an NV12 frame into the preview's own sink, where the scanner reads a real
+camera's. The pictures are made with the desktop's encoder (`qr::image`), so a scenario goes from
+a link to its code to the reader to a paired environment. A link that opens the app is followed
+through `QDesktopServices`, as Qt for Android does it.
 
 ## Toolchain for Android
 
@@ -45,14 +52,16 @@ the same version as the one for Android, since its `androiddeployqt` and QML too
 package. Then:
 
 ```sh
-uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets -O ~/Qt
+uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets qtmultimedia -O ~/Qt
 sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "system-images;android-34;default;arm64-v8a"
 avdmanager create avd -n hal-c2-phone -k "system-images;android-34;default;arm64-v8a" -d pixel_7
 ```
 
 `sdkmanager` and `avdmanager` come with Android Studio's command-line tools, and its bundled JDK
 21 is the one Qt 6.11 wants. The system image and the AVD are only for the emulator
-(`emulator -avd hal-c2-phone`).
+(`emulator -avd hal-c2-phone`). Qt Multimedia is the scanner's camera, and this machine's Qt needs
+it too, for the tests and `mise run mobile` (Homebrew's `qt` has it); it adds about 106 MB to
+`~/Qt`, most of it the FFmpeg backend the package leaves out.
 
 `mise run mobile:android` finds these through `ANDROID_SDK_ROOT` (or `ANDROID_HOME`, default
 `~/Library/Android/sdk`), `ANDROID_NDK_ROOT` (that SDK's `ndk/27.2.12479018`),
@@ -101,7 +110,22 @@ the terminal out of that build directory, also after a configure that stopped fo
   which names one Zig target for each: a new ABI needs its line there, as it needs its OpenSSL
   pair. The terminal adds about 0.6 MB to the APK.
 - A phone build has no FFmpeg, so a Device tab's screen says it is unavailable
-  (`HAL_C2_HAS_FFMPEG` in `apps/desktop-qt/cmake/NativeShell.cmake`).
+  (`HAL_C2_HAS_FFMPEG` in `apps/desktop-qt/cmake/NativeShell.cmake`). That includes Qt
+  Multimedia's FFmpeg backend: `cmake/Scanner.cmake` packages its Android backend alone, and the
+  scanner adds 1.4 MB to the APK where both backends would add 10 MB.
+- The scanner's reader is zxing-cpp, fetched at a pinned commit when a build directory is first
+  configured and built with its QR reader only (`cmake/Scanner.cmake`).
+- Gradle packages incrementally and leaves the room of files that went in the APK. To compare
+  sizes, delete `build/android/android-build/build` and the APK and build again.
+- A link opens the app from a shell with
+  `adb shell am start -a android.intent.action.VIEW -d 'hal-c2://pair?pairingUrl=<the pairing
+link, percent-encoded>'`, whether it is running or not.
+- The emulator's back camera can look at a picture: start it with
+  `-camera-back virtualscene -virtualscene-poster wall=<png>`, walk the camera to that wall with
+  `adb emu automation play <sdk>/emulator/resources/macros/Walk_to_image_room`, and change the
+  picture with `adb emu virtualscene-image wall <png>`, under a new file name each time (a name
+  it has shown is not read again). From where the macro stops, the wall's left edge is out of
+  the frame and a chair covers its bottom: a code drawn in the top right of the picture reads.
 - The launcher icon is the legacy app's (`apps/mobile/assets/android-icon-*.png`, rendered by
   `scripts/export-android-icons.ts`), copied into the package when it is configured.
 - The emulator refuses to start an Android 14 image with less than about 7.4 GB of free disk,

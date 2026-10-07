@@ -10,6 +10,10 @@
          storage permission Qt Core asks for and this app never uses. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Scanning an environment's pairing code. Asked for when the user first
+         opens the scanner; Qt Multimedia's own list also has the microphone
+         and Bluetooth, which nothing here uses. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- %%INSERT_FEATURES -->
     <!-- Phones, tablets and laptops alike: a device with no touchscreen (a
          mouse or trackpad is its pointer) installs the app too. Android
@@ -17,6 +21,11 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />
     <uses-feature android:name="android.hardware.type.pc" android:required="false" />
+    <!-- The camera permission makes a camera required unless told otherwise;
+         a device without one pairs by a link. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <supports-screens
         android:anyDensity="true"
         android:xlargeScreens="true"
@@ -41,12 +50,16 @@
              gives it, and the app's root picks its layout from that size.
              configChanges names everything that happens to such a window
              (a keyboard or pointer attached, another display), so none of
-             it restarts the activity, which would restart the app. -->
+             it restarts the activity, which would restart the app.
+             singleTask: a link that opens the app (the filter below) always
+             reaches the one activity the app has, whoever started it; with
+             singleTop an app that starts it without asking for a new task
+             gets a second one inside its own, which Qt cannot run. -->
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|touchscreen|mcc|mnc|density"
             android:label="HAL-C2"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:screenOrientation="unspecified"
             android:windowSoftInputMode="adjustResize"
@@ -54,6 +67,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- hal-c2://pair?pairingUrl=<pairing link>, which an MC's /pair
+                 page offers a phone's browser. Qt hands the address to the
+                 `hal-c2` handler MobileApp sets, which only ever shows it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hal-c2" android:host="pair" />
             </intent-filter>
 
             <meta-data

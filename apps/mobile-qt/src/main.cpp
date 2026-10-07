@@ -47,6 +47,13 @@ int main(int argc, char* argv[]) {
   QCoreApplication::setApplicationName(QStringLiteral("hal-c2"));
   QCoreApplication::setApplicationVersion(QStringLiteral(HAL_C2_APP_VERSION));
 
+#ifdef Q_OS_ANDROID
+  // The camera's frames are textures here (Qt Multimedia's Android backend),
+  // and the scanner reads their pixels through a graphics context of its own
+  // thread. Without one context for all of them to share, that read comes
+  // back black.
+  QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#endif
   QGuiApplication app(argc, argv);
   MobileApp::prepare();
 

@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 
+#include "FakeCamera.h"
 #include "MobileApp.h"
 #include "PairableMc.h"
 
@@ -23,7 +24,8 @@ class ShellBridge;
 // main.cpp builds it (MobileApp), its real root (MobileShell.qml) in a window
 // the steps tap, click and type into: a phone's until a scenario gives it
 // another size. The environment is the desktop harness's fake MC with the
-// HTTP side of pairing. One per scenario.
+// HTTP side of pairing. The device's camera is the scenario's own
+// (FakeCamera), which is how a step holds a picture up to it. One per scenario.
 class World {
 public:
   World();
@@ -33,6 +35,13 @@ public:
   // the project "shop" and one thread in it.
   PairableMc environment;
   FakeMc& mc;
+  // A second environment, for a device that moves from one to another; made
+  // when a step first asks for it.
+  PairableMc& another(const QString& label);
+  bool hasAnother() const { return m_another != nullptr; }
+  // The device's camera, and what the user said when asked to let the app
+  // use it: kept across restarts, as the system keeps it.
+  std::shared_ptr<FakeCamera> camera = std::make_shared<FakeCamera>();
   bool checking = false;  // the running step is an outcome (Step::outcome)
   // The pairing link the scenario is about: what the user enters.
   QString link;
@@ -49,6 +58,12 @@ public:
   // The app leaves the front, as when the user goes home or to another app:
   // the system may stop it there and never run it again.
   void background();
+  // And comes back to it.
+  void foreground();
+  // The system opens the app with `link`, as following one in a browser
+  // does: through QDesktopServices, where Qt for Android hands a VIEW
+  // intent's address. A stopped app is started with it.
+  void followLink(const QString& link);
   // The app is closed: its process goes, its files stay.
   void close();
   bool isOpen() const { return m_app != nullptr; }
@@ -120,5 +135,6 @@ private:
 
   QTemporaryDir m_home;
   QSize m_size;
+  std::unique_ptr<PairableMc> m_another;
   std::unique_ptr<MobileApp> m_app;
 };

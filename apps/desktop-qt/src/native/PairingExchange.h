@@ -30,6 +30,27 @@ struct Link {
 // (packages/shared remote.ts). Nothing when it names no host or no token.
 std::optional<Link> readLink(const QString& entered);
 
+// A pairing link the user did not write: what a camera read off a QR code,
+// or what another app opened this one with.
+struct Invitation {
+  // The pairing link itself, as the user would have entered it.
+  QString link;
+  // The MC it would pair with, to say to the user before anything is sent
+  // there: its scheme, host and port, the host in ASCII so that a name made
+  // to look like another shows as what it is (`xn--…`).
+  QString address;
+};
+
+// Reads such a text: a pairing link written out in full
+// (`http(s)://<address>/pair#token=…`, what an MC's QR code holds), or the
+// app's own link to one, `hal-c2://pair?pairingUrl=<that link,
+// percent-encoded>`, which the MC's /pair page offers a phone's browser.
+// Stricter than readLink, since nobody chose this text: the scheme is never
+// guessed and only http and https pass, the address carries no user name, and
+// the app's link holds exactly one `pairingUrl`, decoded once, which is not
+// itself an app link. Nothing for anything else.
+std::optional<Invitation> readInvitation(const QString& received);
+
 // What the client says about itself in the exchange; the MC lists it among
 // its clients (apps/server-ex auth.ex).
 struct Client {

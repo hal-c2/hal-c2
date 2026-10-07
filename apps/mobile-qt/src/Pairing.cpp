@@ -23,6 +23,7 @@
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -92,9 +93,17 @@ pairing::Client Pairing::thisDevice() {
   return {model.trimmed().isEmpty() ? QStringLiteral("HAL-C2 mobile") : QStringLiteral("HAL-C2 on %1").arg(model.trimmed()), kind, os};
 }
 
+void Pairing::openLink(const QUrl& url) {
+  QMetaObject::invokeMethod(this, [this, url] { offer(url.toString(QUrl::FullyEncoded)); }, Qt::QueuedConnection);
+}
+
 bool Pairing::handle(const QString& action, const QVariant& payload) {
   if (action == QLatin1String("pairing.pair")) {
     pair(payload.toMap().value(QStringLiteral("link")).toString());
+  } else if (action == QLatin1String("pairing.add")) {
+    add();
+  } else if (action == QLatin1String("pairing.cancel")) {
+    cancel();
   } else if (action == QLatin1String("pairing.askToForget")) {
     askToForget();
   } else if (action == QLatin1String("pairing.forget")) {
@@ -105,8 +114,54 @@ bool Pairing::handle(const QString& action, const QVariant& payload) {
   return true;
 }
 
+void Pairing::offer(const QString& received) {
+  // The user's own attempt is waiting for its answer.
+  if (m_pairing) return;
+  const auto invitation = pairing::readInvitation(received);
+  if (!invitation) {
+    const QString said = tr("The link that opened HAL-C2 is not a pairing link. Nothing was changed.");
+    if (m_paired && !m_adding) {
+      // No pairing screen to say it on.
+      m_shell->controller<ToastController>()->show(QStringLiteral("warning"), tr("Not a pairing link"), said);
+    } else {
+      m_error = said;
+      publish();
+    }
+    return;
+  }
+  m_link = invitation->link;
+  m_offered = invitation->address;
+  m_adding = m_paired.has_value();
+  m_error.clear();
+  publish();
+  // It is the pairing screen's to show: not under a scanner left open.
+  m_bridge->dispatch(QStringLiteral("scanner.close"));
+}
+
+void Pairing::add() {
+  if (!m_paired || m_pairing || m_adding) return;
+  m_adding = true;
+  m_link.clear();
+  m_offered.clear();
+  m_error.clear();
+  publish();
+}
+
+void Pairing::cancel() {
+  // Not while a link is being spent: the session it buys is this device's,
+  // and the answer is seconds away.
+  if (!m_adding || m_pairing) return;
+  m_adding = false;
+  m_link.clear();
+  m_offered.clear();
+  m_error.clear();
+  publish();
+}
+
 void Pairing::pair(const QString& link) {
   if (m_pairing) return;
+  // The address was the offered link's, not that of what the user wrote over it.
+  if (link.trimmed() != m_link) m_offered.clear();
   m_link = link;
   const auto read = pairing::readLink(link);
   if (!read) {
@@ -137,7 +192,9 @@ void Pairing::paired(const pairing::Result& result) {
     m_shell->close();
   }
   m_paired = Environment{result.origin, result.token, result.descriptor.value(QLatin1String("label")).toString(), environmentId};
+  m_adding = false;
   m_link.clear();
+  m_offered.clear();
   m_error.clear();
   save();
   publish();
@@ -167,7 +224,9 @@ void Pairing::forget() {
   }
   if (m_paired) m_shell->close();
   m_paired.reset();
+  m_adding = false;
   m_link.clear();
+  m_offered.clear();
   m_error.clear();
   publish();
 }
@@ -233,6 +292,8 @@ void Pairing::publish() {
                               {QStringLiteral("link"), m_link},
                               {QStringLiteral("origin"), m_paired ? m_paired->origin.toString() : QString()},
                               {QStringLiteral("label"), m_paired ? m_paired->label : QString()},
+                              {QStringLiteral("adding"), m_adding},
+                              {QStringLiteral("offered"), m_offered},
                           });
 }
 
