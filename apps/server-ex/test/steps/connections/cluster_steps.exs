@@ -756,6 +756,73 @@ defmodule HalC2.Steps.Connections.Cluster do
     World.put_client(context, client)
   end
 
+  # --- a pairing link for another member -----------------------------------------------
+
+  step "a client that manages access is connected to the first member", context do
+    context = second_member(context)
+    client = Mc.connect_as(context.mc, Mc.pair(Mc.admin_scopes(), "Laptop"))
+    World.put_client(context, client)
+  end
+
+  step "Tailscale names the second member's machine {string}", %{args: [name]} = context do
+    state = Path.join(Mc.tmp_dir(context.mc, "tailscale"), "state.json")
+    File.write!(state, JSON.encode!(%{"self" => %{"DNSName" => name <> "."}}))
+
+    command = [
+      "env",
+      "FAKE_TAILSCALE_STATE=#{state}",
+      Path.expand("test/support/fake_tailscale.py")
+    ]
+
+    :ok =
+      :erpc.call(context.second.mc, Application, :put_env, [:hal_c2, :tailscale_command, command])
+
+    Map.put(context, :tailscale_state, state)
+  end
+
+  step "it asks the second member for a pairing link over Tailscale", context do
+    payload = %{"label" => "Phone", "scopes" => HalC2.Auth.standard_scopes(), "tailscale" => true}
+
+    {link, client} =
+      Mc.call!(
+        World.client(context),
+        context.second.environment,
+        "hal-c2.createPairingLink",
+        payload
+      )
+
+    context |> World.put_client(client) |> Map.put(:link, link)
+  end
+
+  step "Tailscale serves the second member over HTTPS at {string}", %{args: [name]} = context do
+    port = :erpc.call(context.second.mc, HalC2.Web, :port, [])
+    assert port != context.mc.port
+    assert served(context) == %{"#{name}:443" => "http://127.0.0.1:#{port}"}
+    context
+  end
+
+  step "the link comes with the second member's tailnet address", context do
+    assert %{"address" => "https://garden-box.tail5e3a.ts.net", "localOnly" => false} =
+             context.link
+
+    context
+  end
+
+  # The link is the second member's alone: the first, which the client asked through,
+  # holds no such token, and the device the second pairs is its client.
+  step "the link pairs a device with the second member, not the first", context do
+    credential = context.link["credential"]
+    second = "http://127.0.0.1:#{:erpc.call(context.second.mc, HalC2.Web, :port, [])}"
+
+    assert {400, %{"error" => "invalid_grant"}} = Mc.pair_http(context.mc, credential, "Phone")
+    assert {200, %{"access_token" => _}} = Mc.pair_http(second, credential, "Phone")
+
+    labels = &for(%{"client" => %{"label" => label}} <- &1, do: label)
+    assert "Phone" in labels.(:erpc.call(context.second.mc, HalC2.Auth, :clients, []))
+    refute "Phone" in labels.(HalC2.Auth.clients())
+    context
+  end
+
   step "the second member is offline", context do
     context |> second_member() |> sleep_second()
   end

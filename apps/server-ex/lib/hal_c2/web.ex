@@ -45,6 +45,46 @@ defmodule HalC2.Web do
     "#{scheme}://#{host}:#{port()}"
   end
 
+  @loopback ["127.0.0.1", "localhost", "::1", "[::1]"]
+
+  @doc """
+  Where another device reaches this MC, for a link made here (a pairing link, a cluster
+  invite): `{:ok, %{"address" => url, "localOnly" => boolean}}`. The address is
+  `"baseUrl"` when the caller names one, else with `"tailscale" => true` this MC's
+  Tailscale Serve name (published if need be, on the MC's own port number when
+  something else holds HTTPS 443, `{:error, {:tailscale, message}}` when it cannot be),
+  else the address the MC listens on. `localOnly` says only this machine can reach it.
+  """
+  @spec address(map) :: {:ok, map} | {:error, {:tailscale, String.t()}}
+  def address(input \\ %{})
+
+  def address(%{"baseUrl" => base}) when is_binary(base) and base != "",
+    do: {:ok, reached_at(String.trim_trailing(base, "/"))}
+
+  def address(%{"tailscale" => true}) do
+    case HalC2.TailscaleServe.publish_free(port()) do
+      {:ok, base} -> {:ok, reached_at(base)}
+      {:error, message} -> {:error, {:tailscale, message}}
+    end
+  end
+
+  # An MC listening on every interface is reached at the address it reports to members.
+  def address(_input) do
+    wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
+
+    with true <- wildcard?,
+         %{"clustered" => true, "addresses" => [address | _]} <- HalC2.Cluster.status(),
+         [ip | _] <- String.split(address, ":"),
+         false <- String.starts_with?(ip, "127.") do
+      {:ok, reached_at("http://#{ip}:#{port()}")}
+    else
+      _ -> {:ok, reached_at(base_url())}
+    end
+  end
+
+  defp reached_at(base),
+    do: %{"address" => base, "localOnly" => URI.parse(base).host in @loopback}
+
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do

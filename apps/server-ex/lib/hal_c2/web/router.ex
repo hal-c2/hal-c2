@@ -55,6 +55,62 @@ defmodule HalC2.Web.Router do
     """)
   end
 
+  # The pairing page's own style and script, and the policy that lets only those two
+  # run: the page holds a pairing token (in its address), so it loads nothing else.
+  @pair_style """
+  :root{color-scheme:light dark}
+  body{font:16px system-ui;max-width:34em;margin:3em auto;padding:0 1em;line-height:1.5}
+  h1{font-size:1.3em}
+  #open{display:inline-block;padding:.7em 1.2em;border-radius:.5em;background:#2563eb;color:#fff;font-weight:600;text-decoration:none}
+  [hidden]{display:none!important}
+  """
+  # The token is in the fragment, which only the browser has: the app's link is made here.
+  @pair_script """
+  var paired = /[#&]token=[^&]/.test(location.hash);
+  if (paired) document.getElementById("open").href = "hal-c2://pair?pairingUrl=" + encodeURIComponent(location.href);
+  document.getElementById(paired ? "open" : "missing").hidden = false;
+  """
+  @pair_policy [@pair_script, @pair_style]
+               |> Enum.map(&Base.encode64(:crypto.hash(:sha256, &1)))
+               |> then(fn [script, style] ->
+                 "default-src 'none'; script-src 'sha256-#{script}'; style-src 'sha256-#{style}'; " <>
+                   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+               end)
+
+  # A pairing link (`<address>/pair#token=…`) opened in a browser, as a phone's camera
+  # app does with the QR code Settings → Connections shows: the page offers to hand its
+  # own address to the HAL-C2 app, which registers `hal-c2://pair` and pairs with it.
+  get "/pair" do
+    label = Plug.HTML.html_escape(HalC2.Environment.descriptor()["label"])
+
+    conn
+    |> put_resp_content_type("text/html")
+    |> put_resp_header("content-security-policy", @pair_policy)
+    |> put_resp_header("referrer-policy", "no-referrer")
+    |> put_resp_header("cache-control", "no-store")
+    |> send_resp(200, """
+    <!doctype html><html lang="en"><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Pair with HAL-C2 MC #{label}</title>
+    <style>#{@pair_style}</style>
+    <body>
+    <h1>Pair this device with #{label}</h1>
+    <p>This is a pairing link for the HAL-C2 MC <b>#{label}</b>. It connects the HAL-C2
+    app on this device to that machine.</p>
+    <p><a id="open" hidden>Open in the HAL-C2 app</a></p>
+    <p id="missing" hidden>This address carries no pairing token. Scan the code again, or
+    make a new pairing link in <b>HAL-C2 → Settings → Connections</b>.</p>
+    <p>Nothing happens? Then the HAL-C2 app is not installed on this device. Install it,
+    then scan the code from inside the app, or copy this page's full address and paste it
+    there.</p>
+    <p>Pairing links work once and expire after 5 minutes.</p>
+    <noscript><p>This page needs JavaScript to open the app. Copy its full address and
+    paste it into the HAL-C2 app instead.</p></noscript>
+    <script>#{@pair_script}</script>
+    </body></html>
+    """)
+  end
+
   # Pairing: exchange a one-time pairing token for a bearer access token, or with a
   # `DPoP` proof for a token bound to the client's key. `scope` asks for fewer scopes.
   # A HAL-C2 Connect credential was minted for one device key and needs its proof.

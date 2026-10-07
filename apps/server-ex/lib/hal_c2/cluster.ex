@@ -120,52 +120,25 @@ defmodule HalC2.Cluster do
   @doc """
   A one-time pairing link that grants `access:write` and names this MC's fingerprint
   (in the fragment, which is never sent anywhere), for another machine to `join/1`
-  with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at
-  `"baseUrl"` when given, else with `"tailscale" => true` at this MC's Tailscale Serve
-  name (published if need be, on the MC's own port number when something else holds
-  HTTPS 443), else at the address the MC listens on. `localOnly`
-  says no other machine can reach the link.
+  with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at the
+  address `HalC2.Web.address/1` picks for `input` (`"baseUrl"`, `"tailscale"`, else
+  where the MC listens), and `localOnly` says no other machine can reach the link.
   """
   def invite(input \\ %{}) do
-    with {:ok, base} <- invite_base(input),
+    with {:ok, %{"address" => base, "localOnly" => local_only}} <- HalC2.Web.address(input),
          {:ok, %{"credential" => token, "expiresAt" => expires}} <-
            HalC2.Auth.create_pairing_link(%{
              "scopes" => ["access:write"],
              "label" => "Cluster invite"
            }) do
-      host = URI.parse(base).host
       fingerprint = GenServer.call(__MODULE__, :fingerprint)
 
       {:ok,
        %{
-         "link" =>
-           "#{String.trim_trailing(base, "/")}/?token=#{token}#fingerprint=#{fingerprint}",
+         "link" => "#{base}/?token=#{token}#fingerprint=#{fingerprint}",
          "expiresAt" => expires,
-         "localOnly" => host in ["127.0.0.1", "localhost", "::1", "[::1]"]
+         "localOnly" => local_only
        }}
-    end
-  end
-
-  defp invite_base(%{"baseUrl" => base}) when is_binary(base) and base != "", do: {:ok, base}
-
-  defp invite_base(%{"tailscale" => true}) do
-    case HalC2.TailscaleServe.publish_free(HalC2.Web.port()) do
-      {:ok, base} -> {:ok, base}
-      {:error, message} -> {:error, {:tailscale, message}}
-    end
-  end
-
-  # An MC listening on every interface is reached at the address it reports to members.
-  defp invite_base(_input) do
-    wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
-
-    with true <- wildcard?,
-         %{"clustered" => true, "addresses" => [address | _]} <- status(),
-         [ip | _] <- String.split(address, ":"),
-         false <- String.starts_with?(ip, "127.") do
-      {:ok, "http://#{ip}:#{HalC2.Web.port()}"}
-    else
-      _ -> {:ok, HalC2.Web.base_url()}
     end
   end
 

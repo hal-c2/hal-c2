@@ -3,7 +3,10 @@
 #   docs/operations/development.md (vp run dev --share pairing URL, Reusable dev credential)
 #   docs/internals/environment-auth.md (Authority survives transport changes)
 #   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
-#   apps/server-ex/lib/hal_c2/auth.ex, apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, pairing links)
+#   apps/server-ex/lib/hal_c2/auth.ex, apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, pairing links,
+#     /pair: the page a phone's camera app opens)
+#   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
+#     where a link's MC is reached), apps/server-ex/lib/hal_c2/tailscale_serve.ex
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Add environment, Create pairing link,
 #     pairing link scopes, QR code, hosted app link, pairing code)
 #   apps/web/src/components/settings/pairingUrls.ts
@@ -45,6 +48,51 @@ Feature: Pairing a client with an environment
     When it creates a pairing link labelled "Living room iPad" with standard scopes
     Then the MC returns the link's credential once
     And the link is listed under that label until it is used
+
+  # hal-c2.createPairingLink: the MC that makes a link says where another device reaches
+  # it, which a client cannot know of a machine it is not connected to. A link for another
+  # member of a cluster is in connections/cluster.feature.
+  @mc
+  Scenario Outline: A pairing link says where a device reaches its MC
+    Given the MC listens on <listening>
+    And an administrator's client
+    When it asks the MC for a pairing link <asking>
+    Then the link comes with <address>
+    And that address is <reach>
+
+    Examples:
+      | listening            | asking                           | address                                  | reach                             |
+      | its LAN address      | at the address it listens on     | the MC's LAN address                     | one another device can reach      |
+      | its own machine only | at the address it listens on     | the MC's loopback address                | reachable only on its own machine |
+      | its own machine only | at "https://box.tailnet.ts.net/" | the address "https://box.tailnet.ts.net" | one another device can reach      |
+
+  @mc
+  Scenario: A pairing link over Tailscale publishes its MC on the tailnet
+    Given Tailscale names the MC's machine "box.tail5e3a.ts.net"
+    And an administrator's client
+    When it asks the MC for a pairing link over Tailscale
+    Then Tailscale serves the MC over HTTPS at "box.tail5e3a.ts.net"
+    And the link comes with the address "https://box.tail5e3a.ts.net"
+    And that address is one another device can reach
+
+  @mc
+  Scenario: No pairing link is made when Tailscale cannot publish the MC
+    Given Tailscale is not running on the MC's machine
+    And an administrator's client
+    When it asks the MC for a pairing link over Tailscale
+    Then the client is told Tailscale could not be reached
+    And no pairing link is listed
+
+  # What a phone's own camera app opens when it reads the QR code of a pairing link
+  # (`<address>/pair#token=…`). The token is in the fragment, which a browser keeps to
+  # itself, so the page makes the app's link (`hal-c2://pair?pairingUrl=…`) in the browser.
+  @mc
+  Scenario: A pairing link opened in a phone's browser offers to open the app
+    When a phone's browser opens a pairing link
+    Then the page names the MC and offers to open the HAL-C2 app
+    And it hands the app its own address as "hal-c2://pair?pairingUrl="
+    And it says what to do when the app is not installed
+    And nothing but the page's own script and style may load
 
   @mc
   Scenario: A used pairing link leaves the list
