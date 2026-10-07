@@ -68,19 +68,33 @@ defmodule HalC2.Patch do
   processes use it to collapse a burst of streaming updates before sending.
   """
   @spec compose(t, t) :: t
+  # A void patch (`HalC2.StreamState.void?/1`) changes nothing.
+  def compose(p1, %{"s" => nil} = p2) when map_size(p2) == 1, do: p1
+  def compose(%{"s" => nil} = p1, p2) when map_size(p1) == 1, do: p2
+
   def compose(p1, p2) when is_map_key(p1, "q") or is_map_key(p2, "q") do
-    # A merged patch is quiet only if every part of it was.
-    quiet? = Map.get(p1, "q") == true and Map.get(p2, "q") == true
+    # A merged patch is quiet only if every part of it was. A part with nothing in it
+    # is quiet too, so the empty patch stays an identity.
+    quiet? = quiet?(p1) and quiet?(p2)
     merged = compose(Map.delete(p1, "q"), Map.delete(p2, "q"))
     if quiet?, do: Map.put(merged, "q", true), else: merged
   end
 
   def compose(_p1, %{"d" => true} = p2), do: p2
-  def compose(%{"d" => true}, p2), do: Map.put(p2, "d", true)
+  # A delete followed by a replacement stays a delete: p2 applies to the replacement.
+  def compose(%{"d" => true} = p1, p2), do: Map.put(compose(Map.delete(p1, "d"), p2), "d", true)
 
   def compose(p1, p2) do
     {s1, a1, u1} = parts(p1)
     {s2, a2, u2} = parts(p2)
+
+    # p1's appends to a field it sets extend that set value, as applying p1 does.
+    s1 =
+      Enum.reduce(Map.take(a1, Map.keys(s1)), s1, fn {f, suffix}, s ->
+        Map.update!(s, f, &(&1 <> suffix))
+      end)
+
+    a1 = Map.drop(a1, Map.keys(s1))
 
     # p2's unsets and sets override whatever p1 did to those fields.
     s = s1 |> Map.drop(u2) |> Map.merge(s2)
@@ -95,21 +109,32 @@ defmodule HalC2.Patch do
           else: {s, Map.update(a, field, suffix, &(&1 <> suffix))}
       end)
 
-    %{"s" => s, "a" => a, "u" => u} |> Map.reject(fn {_, v} -> v == %{} or v == [] end)
+    # A field the composed patch keeps is one that either part had. "s" can be empty
+    # and still create an entity, and an empty patch on an absent entity creates none,
+    # so emptiness has to survive composition.
+    for {field, value} <- [{"s", s}, {"a", a}, {"u", u}],
+        Map.has_key?(p1, field) or Map.has_key?(p2, field),
+        into: %{},
+        do: {field, value}
   end
 
   defp parts(patch),
     do: {Map.get(patch, "s", %{}), Map.get(patch, "a", %{}), Map.get(patch, "u", [])}
+
+  defp quiet?(patch), do: Map.get(patch, "q") == true or Map.delete(patch, "q") == %{}
 
   @doc """
   Applies a patch, returning `nil` when it deletes the entity. Appended strings are
   copied so they never pin a decoded row.
   """
   @spec apply(entity | nil, t) :: entity | nil
+  # Quiet first: a quiet delete must still answer nil, not an empty entity.
+  def apply(entity, %{"q" => true} = patch), do: __MODULE__.apply(entity, Map.delete(patch, "q"))
+
+  # An empty patch changes nothing, so it does not create an entity out of nothing.
+  def apply(nil, patch) when map_size(patch) == 0, do: nil
   def apply(_entity, %{"d" => true} = patch) when map_size(patch) == 1, do: nil
   def apply(_entity, %{"d" => true} = patch), do: __MODULE__.apply(nil, Map.delete(patch, "d"))
-
-  def apply(entity, %{"q" => true} = patch), do: __MODULE__.apply(entity, Map.delete(patch, "q"))
 
   def apply(entity, patch) do
     entity = Map.merge(entity || %{}, Map.get(patch, "s", %{}))

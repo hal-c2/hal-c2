@@ -56,6 +56,55 @@ defmodule HalC2.PatchTest do
     end)
   end
 
+  test "a delete with a replacement keeps the replacement when composed with a later patch" do
+    e = %{"a" => 1}
+    p1 = %{"d" => true, "s" => %{"x" => "keep"}}
+    p2 = %{"s" => %{"y" => "later"}}
+
+    assert Patch.apply(e, Patch.compose(p1, p2)) == %{"x" => "keep", "y" => "later"}
+    assert Patch.apply(e, Patch.compose(p1, p2)) == Patch.apply(Patch.apply(e, p1), p2)
+  end
+
+  test "an append onto a field the first patch set lands after that set's value" do
+    e = %{"t" => "a"}
+    p1 = %{"s" => %{"t" => "b"}, "a" => %{"t" => "c"}}
+    p2 = %{"a" => %{"t" => "d"}}
+
+    assert Patch.apply(e, Patch.compose(p1, p2)) == %{"t" => "bcd"}
+    assert Patch.apply(e, Patch.compose(p1, p2)) == Patch.apply(Patch.apply(e, p1), p2)
+  end
+
+  test "a quiet delete removes the entity rather than leaving an empty one" do
+    assert Patch.apply(%{"a" => 1}, %{"d" => true, "q" => true}) == nil
+  end
+
+  test "a delete followed by an empty patch is still a delete" do
+    assert Patch.apply(%{"a" => 1}, Patch.compose(Patch.delete(), %{})) == nil
+    assert Patch.apply(%{"a" => 1}, Patch.compose(%{}, Patch.delete())) == nil
+  end
+
+  test "composing with the empty patch keeps quietness" do
+    quiet = %{"s" => %{"v" => 1}, "q" => true}
+    assert Map.get(Patch.compose(%{}, quiet), "q") == true
+    assert Map.get(Patch.compose(quiet, %{}), "q") == true
+    assert Map.get(Patch.compose(%{"s" => %{"v" => 1}}, quiet), "q") == nil
+  end
+
+  test "a void patch composes as nothing on either side" do
+    void = %{"s" => nil}
+    patch = %{"s" => %{"t" => "x"}, "a" => %{"b" => "y"}}
+
+    assert Patch.compose(patch, void) == patch
+    assert Patch.compose(void, patch) == patch
+
+    events = [
+      %{seq: 1, kind: "message", entity: "m", patch: patch},
+      %{seq: 2, kind: "message", entity: "m", patch: void}
+    ]
+
+    assert [%{seq: 2, patch: ^patch}] = HalC2.Web.Protocol.coalesce(events)
+  end
+
   test "folding a sequence of patches reproduces the last version" do
     versions =
       Enum.scan(1..50, %{"id" => "i", "text" => "", "n" => 0}, fn n, acc ->
