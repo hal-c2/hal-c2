@@ -27,7 +27,83 @@ QString threadKey(const QString& environmentId, const QString& threadId) {
 }  // namespace
 
 ShellStore::ShellStore(McClient* client, QObject* parent) : QObject(parent) {
-  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this](const QJsonObject& frame) { onFrame(frame); });
+  m_flushTimer.setSingleShot(true);
+  m_flushTimer.setInterval(flushDelayMs);
+  connect(&m_flushTimer, &QTimer::timeout, this, &ShellStore::flush);
+  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this](const QJsonObject& frame) { onFrame(frame); },
+                    [this] { return QJsonObject{{QStringLiteral("have"), have()}}; });
+}
+
+ShellStore::~ShellStore() {
+  flush();
+}
+
+void ShellStore::showKept() {
+  if (!m_cache || !m_origin.isEmpty()) return;
+  const cache::Shell kept = m_cache->shell();
+  if (!kept.origin.isEmpty()) hold(kept, kept.origin);
+}
+
+void ShellStore::open(const QUrl& origin) {
+  const QString key = origin.adjusted(QUrl::RemoveUserInfo | QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment).toString();
+  // The MC whose rows are held, kept or its own, stays as it is.
+  if (key == m_origin) return;
+  flush();
+  const bool another = !m_origin.isEmpty();
+  hold(m_cache ? m_cache->shell(key) : cache::Shell(), key);
+  // What was shown of the MC it held before is not this one's.
+  if (another) emit originChanged();
+}
+
+void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
+  m_origin = origin;
+  const bool held = !m_mcs.isEmpty();
+  m_mcs.clear();
+  m_synchronized = false;
+  m_previewing = false;
+  for (const cache::ShellMc& mc : kept.mcs) {
+    setEnvironment(mc.mc, mc.environment);
+    Mc& entry = m_mcs[mc.mc];
+    entry.epoch = mc.epoch;
+    entry.rev = mc.rev;
+    for (const cache::ShellRow& row : mc.rows) {
+      if (auto* rows = rowsOf(entry, row.kind)) rows->insert(row.id, row.fields);
+    }
+    m_previewing = true;
+  }
+  // Read, not changed: nothing of it is owed to the cache.
+  m_unsaved.clear();
+  m_flushTimer.stop();
+  if (held || m_previewing) emit changed();
+}
+
+QJsonObject ShellStore::have() const {
+  QJsonObject have;
+  for (auto it = m_mcs.cbegin(); it != m_mcs.cend(); ++it) {
+    if (!it->epoch.isEmpty()) have.insert(it.key(), QJsonArray{it->epoch, it->rev});
+  }
+  return have;
+}
+
+ShellStore::Unsaved& ShellStore::unsaved(const QString& mc) {
+  if (!m_flushTimer.isActive()) m_flushTimer.start();
+  return m_unsaved[mc];
+}
+
+void ShellStore::flush() {
+  m_flushTimer.stop();
+  const QHash<QString, Unsaved> unsaved = std::exchange(m_unsaved, {});
+  if (!m_cache || m_origin.isEmpty() || unsaved.isEmpty()) return;
+  QList<cache::ShellMcUpdate> updates;
+  for (auto it = unsaved.cbegin(); it != unsaved.cend(); ++it) {
+    const auto mc = m_mcs.constFind(it.key());
+    if (mc == m_mcs.cend()) {
+      updates.append({it.key(), true, false, {}, 0, {}, {}, {}});
+    } else {
+      updates.append({it.key(), false, it->reset, mc->epoch, mc->rev, mc->environment, it->put.values(), it->gone.values()});
+    }
+  }
+  m_cache->storeShell(m_origin, updates);
 }
 
 QList<sidebar::Thread> ShellStore::threads() const {
@@ -112,12 +188,58 @@ void ShellStore::putRows(const QString& mc, const QJsonArray& rows) {
 }
 
 void ShellStore::putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields) {
-  auto* kept = rowsOf(m_mcs[mc], kind);
+  Mc& entry = m_mcs[mc];
+  auto* kept = rowsOf(entry, kind);
   if (!kept) return;
+  Unsaved& change = unsaved(mc);
   if (removed(fields)) {
     kept->remove(id);
+    change.put.remove(id);
+    if (!change.reset) change.gone.insert(id);
+    // A deleted thread is not coming back to be read.
+    if (m_cache && kind == QLatin1String("thread") && !entry.environmentId.isEmpty()) m_cache->forgetThread(threadKey(entry.environmentId, id));
   } else {
     kept->insert(id, fields);
+    change.gone.remove(id);
+    change.put.insert(id, {id, kind, fields});
+  }
+}
+
+void ShellStore::setVersion(const QString& mc, const QJsonValue& epoch, const QJsonValue& rev) {
+  Mc& entry = m_mcs[mc];
+  const bool versioned = epoch.isString() && !epoch.toString().isEmpty() && rev.isDouble();
+  entry.epoch = versioned ? epoch.toString() : QString();
+  entry.rev = versioned ? qint64(rev.toDouble()) : 0;
+  unsaved(mc);
+}
+
+void ShellStore::resetRows(const QString& mc, QSet<QString>& threads) {
+  Mc& entry = m_mcs[mc];
+  if (!entry.environmentId.isEmpty()) {
+    for (auto it = entry.threads.cbegin(); it != entry.threads.cend(); ++it) threads.insert(threadKey(entry.environmentId, it.key()));
+  }
+  entry.threads.clear();
+  entry.projects.clear();
+  Unsaved& change = unsaved(mc);
+  change.reset = true;
+  change.put.clear();
+  change.gone.clear();
+}
+
+void ShellStore::removeMc(const QString& mc) {
+  const QString environmentId = m_mcs.take(mc).environmentId;
+  Unsaved& change = unsaved(mc);
+  change = {};
+  change.reset = true;
+  // Its threads go with it, unless another MC serves the environment now
+  // (an MC's name changes when it joins a cluster).
+  if (m_cache && !environmentId.isEmpty() && !servesEnvironment(environmentId)) m_cache->forgetEnvironment(environmentId);
+}
+
+void ShellStore::forgetThreads(const QSet<QString>& threads) {
+  if (!m_cache) return;
+  for (const QString& key : threads) {
+    if (threadRow(key).isEmpty()) m_cache->forgetThread(key);
   }
 }
 
@@ -222,26 +344,39 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
   entry.environment = environment;
+  unsaved(mc);
 }
 
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
   if (type == QLatin1String("shell")) {
-    // The whole cluster, sent on every (re)subscription.
-    m_mcs.clear();
+    // The cluster's members, and the rows this client lacks of each: all of
+    // them for an MC marked `reset` (or sent by an MC that keeps no versions),
+    // else the ones changed since the `have` it was sent.
+    QSet<QString> listed;
+    QSet<QString> replaced;
     for (const QJsonValue& value : frame.value(QLatin1String("mcs")).toArray()) {
       const QJsonObject mc = value.toObject();
       const QString name = mc.value(QLatin1String("mc")).toString();
+      listed.insert(name);
+      if (mc.value(QLatin1String("reset")).toBool(true)) resetRows(name, replaced);
       setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
+      setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
+    }
+    for (const QString& name : m_mcs.keys()) {
+      if (!listed.contains(name)) removeMc(name);
     }
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
       putRow(row.at(0).toString(), row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
     }
+    forgetThreads(replaced);
     m_synchronized = true;
+    m_previewing = false;
     ++m_snapshots;
     m_problem.clear();
+    flush();
   } else if (type == QLatin1String("error")) {
     m_problem = frame.value(QLatin1String("reason")).toString(QStringLiteral("The MC did not send its projects and threads."));
   } else if (type == QLatin1String("shell.environment")) {
@@ -251,12 +386,18 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     const QString mc = frame.value(QLatin1String("mc")).toString();
     // A machine removed from the cluster takes its rows with it; an offline one keeps them.
     if (frame.value(QLatin1String("removed")).toBool()) {
-      m_mcs.remove(mc);
+      removeMc(mc);
     } else {
       m_mcs[mc].online = frame.value(QLatin1String("online")).toBool();
     }
   } else if (type == QLatin1String("shell.rows")) {
-    putRows(frame.value(QLatin1String("mc")).toString(), frame.value(QLatin1String("rows")).toArray());
+    const QString mc = frame.value(QLatin1String("mc")).toString();
+    QSet<QString> replaced;
+    if (frame.value(QLatin1String("reset")).toBool()) resetRows(mc, replaced);
+    putRows(mc, frame.value(QLatin1String("rows")).toArray());
+    // They bring the MC's rows to this version; a frame without one leaves none to resume from.
+    setVersion(mc, frame.value(QLatin1String("epoch")), frame.value(QLatin1String("rev")));
+    forgetThreads(replaced);
   } else {
     return;
   }

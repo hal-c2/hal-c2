@@ -39,6 +39,31 @@ cp "${icon_source}" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps/hal-c2.pn
 
 node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 
+# The app opens SQLite and no other database, but linuxdeploy's Qt plugin bundles
+# every SQL driver of the Qt it finds and stops at the first whose client library is
+# not installed. A Qt from its installer ships Mimer's, ODBC's, PostgreSQL's and
+# MySQL's. They are set aside while it runs and put back when this script ends. A Qt
+# whose drivers cannot be moved (a distribution's, which installs each on its own) is
+# left as it is.
+qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
+drivers=""
+if [ -n "${qmake}" ]; then
+  drivers="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)/sqldrivers"
+fi
+set_aside="${build_dir}/sqldrivers-set-aside"
+restore_drivers() {
+  [ -d "${set_aside}" ] || return 0
+  find "${set_aside}" -name '*.so' -exec mv {} "${drivers}/" \;
+  rmdir "${set_aside}"
+}
+trap restore_drivers EXIT
+# What a run that was cut short left behind.
+restore_drivers
+if [ -d "${drivers}" ] && [ -w "${drivers}" ]; then
+  mkdir -p "${set_aside}"
+  find "${drivers}" -maxdepth 1 -name '*.so' ! -name 'libqsqlite.so' -exec mv {} "${set_aside}/" \;
+fi
+
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage

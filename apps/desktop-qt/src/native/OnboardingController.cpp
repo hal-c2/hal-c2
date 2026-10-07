@@ -150,6 +150,21 @@ SettingsController* OnboardingController::settings() const {
   return window ? window->controller<SettingsController>() : nullptr;
 }
 
+void OnboardingController::preview() {
+  if (m_active || m_previewing) return;
+  m_previewing = true;
+  // The device's own record may be read after the kept rows are shown.
+  if (auto* device = settings()) {
+    connect(device, &SettingsController::deviceChanged, this, [this] {
+      if (m_active) return;
+      decide();
+      publish();
+    });
+  }
+  decide();
+  publish();
+}
+
 void OnboardingController::activate() {
   if (m_active) return;
   m_active = true;

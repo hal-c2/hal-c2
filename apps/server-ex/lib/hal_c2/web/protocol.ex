@@ -7,7 +7,9 @@ defmodule HalC2.Web.Protocol do
 
     * `{"type": "shell"}`: every MC's environment and every project and thread
       summary on it
-    * `{"type": "stream", "mc": n, "stream": id}`: one project or thread
+    * `{"type": "stream", "mc": n, "stream": id}`: one project or thread; with
+      `"kinds": {kind: {field: value}}` only its entities of those kinds whose fields
+      have those values (`HalC2.Streams.View`)
     * `{"type": "config", "mc": n}`: that MC's `ServerConfig` and name, then its settings and providers as they change;
       with `"usageLimitsCommand": true` (a client that answers `/usage-limits` itself),
       every provider with limits to show offers that command
@@ -55,6 +57,12 @@ defmodule HalC2.Web.Protocol do
   Client to server:
 
       {"t": "sub", "id": 1, "shape": {...}, "offset": 1234 | null}
+        (a stream also takes "handle": the one its offset came with, and "window":
+        {"items": n} to start with the newest runs holding n turn items or
+        {"floor": f} to keep the window it has; the shell takes "have":
+        {mc: [epoch, rev]}, each MC's rows as the client holds them)
+      {"t": "more", "id": 1, "items": n}
+        (a windowed stream: the runs before its floor holding n turn items, as a page)
       {"t": "unsub", "id": 1}
       {"t": "ping"}
       {"t": "rpc", "id": 1, "environment": id, "method": m, "payload": ...}
@@ -66,15 +74,24 @@ defmodule HalC2.Web.Protocol do
 
       {"t": "hello", "protocol": 3, "mc": n, "environment": id}
         (the environment this MC serves, for RPCs about the MC itself)
-      {"t": "shell", "id", "mcs": [{"mc", "online", "environment"}], "rows": [[mc, id, kind, row]]}
+      {"t": "shell", "id", "mcs": [{"mc", "online", "environment", "epoch", "rev", "reset"}],
+       "rows": [[mc, id, kind, row]]}
+        (the rows the client lacks: all of an MC marked "reset", whose rows the
+        client held are dropped, else those after the "have" it sent)
       {"t": "shell.environment", "id", "mc", "environment"}
-      {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]]}
+      {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]], "epoch", "rev", "reset"}
+        (they bring that MC's rows to [epoch, rev], what a client sends as "have")
       {"t": "shell.mc", "id", "mc", "online"}
         (with "removed": true once the machine was removed from the cluster: its
         environment and rows are no longer part of the shell)
-      {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done"}
+      {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done",
+       "handle", "floor"?}
+        ("floor" with a window: the ordinal of its first run, null when it reaches
+        the start of the thread)
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
-      {"t": "live", "id", "offset"}     (caught up; later events are live)
+      {"t": "live", "id", "offset", "handle"}     (caught up; later events are live)
+      {"t": "page", "id", "offset", "rows": [[kind, id, entity]], "floor", "done"}
+        (answers "more": rows to add, and the window's floor once they are)
       {"t": "resync", "id", "offset"}   (fell behind: resubscribe from offset)
       {"t": "error", "id", "reason", "detail"?}
       {"t": "config", "id", "mc", "config"}
@@ -116,6 +133,13 @@ defmodule HalC2.Web.Protocol do
   A `snapshot` with `"part": 0` replaces the client's copy of the shape; later parts
   add to it, and rows arrive in creation order. `events` carry `HalC2.Patch` values,
   already merged per entity, with `at` in unix ms.
+
+  A client that keeps a stream between connections keeps its `handle`, `offset` and
+  `floor` with it and subscribes with them. It is then sent only what it lacks, as
+  `events`: the changes since its offset, or past a point one event replacing each
+  entity changed since. A snapshot follows only when the handle no longer names
+  what the client holds (the thread moved, the wire format changed, or the client
+  asks for other kinds than its copy was made of).
   """
 
   @version 3
@@ -128,10 +152,24 @@ defmodule HalC2.Web.Protocol do
            | {:stream, node, String.t()}
            | {:config, node}
            | {:config, node, :usage_limits_command}
-           | {:environment, String.t(), map}, non_neg_integer | nil}
+           | {:environment, String.t(), map}, resume}
+          | {:more, integer, pos_integer}
           | {:unsub, integer}
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
+
+  @typedoc """
+  Where a subscription continues from: a stream's `offset`, `handle`, `window`
+  and `kinds` (`HalC2.Streams.Server.client/0`), the shell's `have`. A shape that
+  does not resume ignores it.
+  """
+  @type resume :: %{
+          offset: non_neg_integer | nil,
+          handle: String.t() | nil,
+          window: {:items, pos_integer} | {:floor, integer | nil} | nil,
+          kinds: %{String.t() => map} | nil,
+          have: %{String.t() => {String.t(), non_neg_integer}}
+        }
 
   # The shapes a client may name by environment. The rest are about the MC a client
   # talks to (shell, authAccess) or administer one MC's host (serverUpdate,
@@ -161,8 +199,12 @@ defmodule HalC2.Web.Protocol do
   def decode(frame, known_mcs) do
     case JSON.decode!(frame) do
       %{"t" => "sub", "id" => id, "shape" => shape} = msg when is_integer(id) ->
-        with {:ok, shape} <- decode_shape(shape, known_mcs),
-             do: {:ok, {:sub, id, shape, offset(msg["offset"])}}
+        with {:ok, decoded} <- decode_shape(shape, known_mcs),
+             do: {:ok, {:sub, id, decoded, resume(msg, shape)}}
+
+      %{"t" => "more", "id" => id, "items" => items}
+      when is_integer(id) and is_integer(items) and items > 0 ->
+        {:ok, {:more, id, items}}
 
       %{"t" => "unsub", "id" => id} when is_integer(id) ->
         {:ok, {:unsub, id}}
@@ -306,8 +348,33 @@ defmodule HalC2.Web.Protocol do
     end
   end
 
+  defp resume(msg, shape) do
+    %{
+      offset: offset(msg["offset"]),
+      handle: if(is_binary(msg["handle"]), do: msg["handle"]),
+      window: window(msg["window"]),
+      kinds: kinds(shape["kinds"]),
+      have: have(msg["have"])
+    }
+  end
+
   defp offset(n) when is_integer(n) and n >= 0, do: n
   defp offset(_), do: nil
+
+  defp window(%{"items" => items}) when is_integer(items) and items > 0, do: {:items, items}
+  defp window(%{"floor" => floor}) when is_integer(floor) or floor == nil, do: {:floor, floor}
+  defp window(_), do: nil
+
+  defp kinds(%{} = kinds), do: Map.filter(kinds, fn {_kind, where} -> is_map(where) end)
+  defp kinds(_), do: nil
+
+  defp have(%{} = have) do
+    for {mc, [epoch, rev]} <- have, is_binary(epoch), is_integer(rev), into: %{} do
+      {mc, {epoch, rev}}
+    end
+  end
+
+  defp have(_), do: %{}
 
   @spec encode(map) :: {:text, iodata}
   def encode(message), do: {:text, JSON.encode_to_iodata!(message)}

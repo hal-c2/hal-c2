@@ -16,6 +16,8 @@ as the installed app does.
 
 Besides Qt Quick, the shell needs the Qt WebSockets module for its own MC
 client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
+Its cache of the MC is SQLite through Qt SQL, which is part of Qt's base; Debian and Ubuntu
+package the driver apart, as `libqt6sql6-sqlite`. Without the driver the app runs and keeps nothing.
 The Device tab decodes H.264 with FFmpeg's libavcodec, libavutil and libswscale. Building needs
 only their headers, found through `pkg-config`: `ffmpeg` on Arch and Homebrew,
 `libavcodec-dev libavutil-dev libswscale-dev` on Debian and Ubuntu, `ffmpeg-free-devel` (or
@@ -50,6 +52,7 @@ Its steps live in `tests/native/features/`, one self-registering file per domain
 own part of the fake MC (`FakeMc::Extension`).
 One scenario runs the built app itself (a screenshot of a start that fails), so build it first:
 `mise run desktop:build`, or point `HAL_C2_DESKTOP_BINARY` at one.
+`LocalCache` covers the client's cache on a database of its own.
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local

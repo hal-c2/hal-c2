@@ -3,7 +3,8 @@ defmodule HalC2.Web.Socket do
   One client connection. See `HalC2.Web.Protocol` for the wire format.
 
   Stream subscriptions may live on any MC in the cluster; the owning MC's stream
-  server sends straight to this process. Incoming events are buffered and flushed
+  server sends straight to this process, already trimmed to what the client holds
+  (`HalC2.Streams.Server`). Incoming events are buffered and flushed
   once the mailbox is drained, merged per entity, so a burst of streaming tokens
   becomes one frame. A subscription whose unsent buffer passes `@max_buffered` is
   dropped with a `resync`; the client resubscribes from its offset and the stream
@@ -14,7 +15,7 @@ defmodule HalC2.Web.Socket do
 
   @behaviour WebSock
 
-  alias HalC2.Web.{Protocol, Wire}
+  alias HalC2.Web.Protocol
 
   require Logger
 
@@ -22,7 +23,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 2
+  @state_version 3
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -42,8 +43,6 @@ defmodule HalC2.Web.Socket do
       by_stream: %{},
       by_terminal: %{},
       buffers: %{},
-      # Turn item types by stream subscription, for trimming patches (`HalC2.Web.Wire`).
-      item_types: %{},
       flush_scheduled: false
     }
 
@@ -72,6 +71,12 @@ defmodule HalC2.Web.Socket do
         if allowed?(state, scope),
           do: subscribe(state, id, shape, offset),
           else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
+
+      {:ok, {:more, id, items}} ->
+        with %{^id => {:stream, mc, stream_id}} <- state.subs,
+             do: :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
+
+        {:ok, state}
 
       {:ok, {:unsub, id}} ->
         {:ok, unsubscribe(state, id)}
@@ -517,20 +522,25 @@ defmodule HalC2.Web.Socket do
 
   # --- subscriptions -------------------------------------------------------------
 
-  defp subscribe(state, id, :shell, _offset) do
-    :ok = HalC2.Shell.subscribe(self())
-    online = MapSet.new(HalC2.Shell.online_mcs())
+  defp subscribe(state, id, :shell, %{have: have}) do
+    %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
 
-    rows =
-      for {{mc, stream}, {kind, row}} <- HalC2.Shell.rows(),
-          do: [Atom.to_string(mc), stream, kind, row]
-
-    mcs =
-      for {mc, descriptor} <- HalC2.Shell.environments() do
-        %{"mc" => Atom.to_string(mc), "online" => mc in online, "environment" => descriptor}
-      end
-
-    frame = %{"t" => "shell", "id" => id, "mcs" => mcs, "rows" => rows}
+    frame = %{
+      "t" => "shell",
+      "id" => id,
+      "mcs" =>
+        for mc <- mcs do
+          %{
+            "mc" => Atom.to_string(mc.mc),
+            "online" => mc.online,
+            "environment" => mc.environment,
+            "epoch" => mc.epoch,
+            "rev" => mc.rev,
+            "reset" => mc.reset
+          }
+        end,
+      "rows" => for({mc, stream, kind, row} <- rows, do: [Atom.to_string(mc), stream, kind, row])
+    }
 
     {:push, Protocol.encode(frame), put_in(state.subs[id], :shell)}
   end
@@ -594,12 +604,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:stream, mc, stream_id} = shape, offset) do
+  defp subscribe(state, id, {:stream, mc, stream_id} = shape, resume) do
     if Map.has_key?(state.by_stream, stream_id) do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
+      client = Map.take(resume, [:handle, :window, :kinds])
+
       # The owning MC may be gone or slow; the client retries when it is back.
-      case remote(mc, HalC2.Streams, :subscribe, [stream_id, self(), offset]) do
+      case remote(mc, HalC2.Streams, :subscribe, [stream_id, self(), resume.offset, client]) do
         {:ok, :ok} ->
           # Until `live`, events are the stream's replay from `offset`: bounded by the
           # stream, and resyncing on them would only ask for the same replay again.
@@ -1009,7 +1021,19 @@ defmodule HalC2.Web.Socket do
 
   # Version 2: the session's scopes, checked on every call and subscription.
   defp migrate(%{v: 1} = state),
-    do: state |> Map.put(:scopes, session_scopes(state.session)) |> Map.put(:v, 2)
+    do: state |> Map.put(:scopes, session_scopes(state.session)) |> Map.put(:v, 2) |> migrate()
+
+  # Version 3: streams send what the client holds already trimmed, with the offset
+  # each batch of events brings it to.
+  defp migrate(%{v: 2} = state) do
+    buffers =
+      Map.new(state.buffers, fn
+        {id, %{events: [last | _]} = buffer} -> {id, Map.put(buffer, :seq, last.seq)}
+        entry -> entry
+      end)
+
+    state |> Map.delete(:item_types) |> Map.merge(%{buffers: buffers, v: 3})
+  end
 
   defp migrate(state), do: state
 
@@ -1247,8 +1271,7 @@ defmodule HalC2.Web.Socket do
           state
           | subs: subs,
             by_stream: Map.delete(state.by_stream, stream_id),
-            buffers: Map.delete(state.buffers, id),
-            item_types: Map.delete(state.item_types, id)
+            buffers: Map.delete(state.buffers, id)
         }
 
       {_, subs} ->
@@ -1256,21 +1279,21 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp stream_message(state, id, {:snapshot, seq, updated_at, rows, part_state}) do
+  defp stream_message(state, id, {:snapshot, seq, updated_at, rows, part_state, meta}) do
     part = get_in(state.buffers, [id, :snapshot_part]) || 0
 
-    frame = %{
-      "t" => "snapshot",
-      "id" => id,
-      "offset" => seq,
-      "at" => updated_at,
-      "part" => part,
-      "done" => part_state == :done,
-      "rows" => for({kind, eid, entity} <- rows, do: [kind, eid, Wire.entity(kind, entity)])
-    }
-
-    types = Wire.types(frame["rows"], if(part == 0, do: %{}, else: state.item_types[id] || %{}))
-    state = %{state | item_types: Map.put(state.item_types, id, types)}
+    frame =
+      %{
+        "t" => "snapshot",
+        "id" => id,
+        "offset" => seq,
+        "at" => updated_at,
+        "part" => part,
+        "done" => part_state == :done,
+        "handle" => meta.handle,
+        "rows" => for({kind, eid, entity} <- rows, do: [kind, eid, entity])
+      }
+      |> put_floor(meta)
 
     buffers =
       if part_state == :done,
@@ -1281,7 +1304,7 @@ defmodule HalC2.Web.Socket do
   end
 
   # Replayed events may still be buffered; they go out before the live marker.
-  defp stream_message(state, id, {:live, seq}) do
+  defp stream_message(state, id, {:live, seq, handle}) do
     {frames, state} = flush(state)
 
     state =
@@ -1293,64 +1316,72 @@ defmodule HalC2.Web.Socket do
           state
       end
 
-    {:push, frames ++ [Protocol.encode(%{"t" => "live", "id" => id, "offset" => seq})], state}
+    live = %{"t" => "live", "id" => id, "offset" => seq, "handle" => handle}
+    {:push, frames ++ [Protocol.encode(live)], state}
   end
 
-  defp stream_message(state, _id, {:events, []}), do: {:ok, state}
+  # A page is the stream as of `seq`, so the events before it go out first.
+  defp stream_message(state, id, {:page, seq, rows, floor, part_state}) do
+    {frames, state} = flush(state)
 
-  defp stream_message(state, id, {:events, events}) do
+    page = %{
+      "t" => "page",
+      "id" => id,
+      "offset" => seq,
+      "floor" => floor,
+      "done" => part_state == :done,
+      "rows" => for({kind, eid, entity} <- rows, do: [kind, eid, entity])
+    }
+
+    {:push, frames ++ [Protocol.encode(page)], state}
+  end
+
+  defp stream_message(state, id, {:events, events, seq}) do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
     bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
 
-    if bytes > @max_buffered and not Map.get(buffer, :replay, false) do
-      # The client has everything before the oldest event it has not been sent.
-      oldest = List.last(buffer.events) || hd(events)
-      state = unsubscribe(state, id)
-      {:push, Protocol.encode(%{"t" => "resync", "id" => id, "offset" => oldest.seq - 1}), state}
-    else
-      buffer = %{buffer | events: Enum.reverse(events, buffer.events), bytes: bytes}
-      state = %{state | buffers: Map.put(state.buffers, id, buffer)}
-      {:ok, schedule_flush(state)}
+    cond do
+      # A part of what the client lacks goes out as it comes, as a snapshot's parts
+      # do. Buffered, the parts of a thread on this MC would all be here before the
+      # first flush and leave as one frame of any size.
+      Map.get(buffer, :replay, false) ->
+        {:push, events_frame(id, events, seq), state}
+
+      bytes > @max_buffered ->
+        # The client has everything before the oldest event it has not been sent.
+        oldest = List.last(buffer.events) || hd(events)
+        state = unsubscribe(state, id)
+        resync = %{"t" => "resync", "id" => id, "offset" => oldest.seq - 1}
+        {:push, Protocol.encode(resync), state}
+
+      true ->
+        buffer =
+          Map.merge(buffer, %{events: Enum.reverse(events, buffer.events), bytes: bytes, seq: seq})
+
+        state = %{state | buffers: Map.put(state.buffers, id, buffer)}
+        {:ok, schedule_flush(state)}
     end
   end
 
+  # The offset is the one the stream gave with the last of the events: a replay in
+  # several parts only moves the client's offset with its last.
+  defp events_frame(id, events, seq) do
+    wire = for e <- Protocol.coalesce(events), do: [e.seq, e.kind, e.entity, e.patch, e.at]
+    Protocol.encode(%{"t" => "events", "id" => id, "offset" => seq, "events" => wire})
+  end
+
+  defp put_floor(frame, %{floor: floor}), do: Map.put(frame, "floor", floor)
+  defp put_floor(frame, _meta), do: frame
+
   defp flush(state) do
-    {frames, item_types} =
-      for {id, %{events: events}} <- state.buffers,
-          events != [],
-          reduce: {[], state.item_types} do
-        {frames, item_types} ->
-          events = events |> Enum.reverse() |> Protocol.coalesce()
-          {wire, types} = wire_events(events, item_types[id] || %{})
-
-          # The offset stays the last event's, even when trimming dropped it.
-          frame =
-            Protocol.encode(%{
-              "t" => "events",
-              "id" => id,
-              "offset" => List.last(events).seq,
-              "events" => wire
-            })
-
-          {[frame | frames], Map.put(item_types, id, types)}
-      end
+    frames =
+      for {id, %{events: [_ | _] = events, seq: seq}} <- state.buffers,
+          do: events_frame(id, Enum.reverse(events), seq)
 
     buffers =
       Map.new(state.buffers, fn {id, buffer} -> {id, %{buffer | events: [], bytes: 0}} end)
 
-    {Enum.reverse(frames), %{state | buffers: buffers, item_types: item_types}}
-  end
-
-  defp wire_events(events, types) do
-    {wire, types} =
-      Enum.reduce(events, {[], types}, fn e, {wire, types} ->
-        case Wire.patch(e.kind, e.entity, e.patch, types) do
-          {nil, types} -> {wire, types}
-          {patch, types} -> {[[e.seq, e.kind, e.entity, patch, e.at] | wire], types}
-        end
-      end)
-
-    {Enum.reverse(wire), types}
+    {frames, %{state | buffers: buffers}}
   end
 
   # The flush message lands behind everything already in the mailbox, so each
@@ -1365,11 +1396,23 @@ defmodule HalC2.Web.Socket do
   # The socket's one shell subscription, as `{id, :shell}`.
   defp shell_sub(state), do: Enum.find(state.subs, fn {_, shape} -> shape == :shell end)
 
+  # To a socket that subscribed before rows had versions.
   defp shell_message(id, {:rows, mc, rows}),
     do: %{
       "t" => "shell.rows",
       "id" => id,
       "mc" => to_string(mc),
+      "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
+    }
+
+  defp shell_message(id, {:rows, mc, rows, version}),
+    do: %{
+      "t" => "shell.rows",
+      "id" => id,
+      "mc" => to_string(mc),
+      "epoch" => version.epoch,
+      "rev" => version.rev,
+      "reset" => version.reset,
       "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
     }
 

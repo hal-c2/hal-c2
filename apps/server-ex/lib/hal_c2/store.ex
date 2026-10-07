@@ -19,7 +19,8 @@ defmodule HalC2.Store do
   connection instead, which SQLite runs alongside writes.
 
   The meta table records the schema version the file was written with. An MC
-  refuses to open a store from a newer schema rather than misread it.
+  refuses to open a store from a newer schema rather than misread it. It also holds
+  the store's `id/1`, which names this log: offsets are only comparable within it.
   """
 
   use GenServer
@@ -209,6 +210,22 @@ defmodule HalC2.Store do
     end
   end
 
+  @doc """
+  The id this store was created with. A client that kept an offset resumes from it
+  only against the store the offset came from (`HalC2.Streams.Server.handle/0`).
+  """
+  @spec id(pid | atom) :: String.t()
+  def id(store \\ __MODULE__) do
+    with pid when is_pid(pid) <- GenServer.whereis(store),
+         {_, _} = key <- path_key(pid) do
+      # A store that was running before it kept an id (the MC took this version's
+      # code in place) reads it the first time it is asked.
+      :persistent_term.get({:id, key}, nil) || GenServer.call(pid, :id, @write_timeout)
+    else
+      _ -> exit({:noproc, {__MODULE__, :id, [store]}})
+    end
+  end
+
   # A named store keeps its path under its name, so a restart replaces the entry
   # instead of leaving one behind for each process it has been.
   defp path_key(pid) do
@@ -332,6 +349,8 @@ defmodule HalC2.Store do
         "INSERT OR IGNORE INTO meta VALUES ('schema_version', '#{@schema_version}')"
       )
 
+    read_id(db)
+
     store = self()
     checkpointer = spawn_link(fn -> checkpointer(path, store) end)
 
@@ -398,6 +417,22 @@ defmodule HalC2.Store do
         Logger.warning("the store could not checkpoint its WAL: #{inspect(reason)}")
         {:error, reason}
     end
+  end
+
+  # The store's id, made the first time it is read, and kept where `id/1` finds it
+  # without a call.
+  defp read_id(db) do
+    :ok =
+      Sqlite3.execute(
+        db,
+        "INSERT OR IGNORE INTO meta VALUES ('store_id', lower(hex(randomblob(8))))"
+      )
+
+    {:ok, stmt} = Sqlite3.prepare(db, "SELECT value FROM meta WHERE key = 'store_id'")
+    {:row, [id]} = Sqlite3.step(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    :persistent_term.put({:id, path_key(self())}, id)
+    id
   end
 
   # The schema version a store was written with, or 0 for a new file.
@@ -478,6 +513,8 @@ defmodule HalC2.Store do
 
     {:reply, :ok, state}
   end
+
+  def handle_call(:id, _from, state), do: {:reply, read_id(state.db), state}
 
   def handle_call(:checkpoint, from, state) do
     send(state.checkpointer, {:checkpoint, from})

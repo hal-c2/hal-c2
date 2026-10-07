@@ -15,6 +15,9 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
+#   apps/server-ex/lib/hal_c2/streams/view.ex (a window over a thread's newest runs, `more` and `page`)
+#   apps/desktop-qt/src/native/TimelineModel.cpp (windowItems, hasEarlier, loadEarlier)
+#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top)
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -45,13 +48,26 @@ Feature: Moving through a thread and following links
     Then the latest output is shown
     And the view follows new output again
 
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A long thread opens as its newest turns
+    Given the thread has more turns than a client loads at once
+    When the user opens it again
+    Then the client asks its MC for the newest turns only
+    And only those turns are sent and shown
+
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Earlier turns load when the user reaches the top
     Given the thread has more turns than are loaded
     When the user loads earlier turns
     Then the user sees that earlier turns are loading
     And the earlier turns appear above without moving the message being read
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A thread that does not fill the view loads earlier turns by itself
+    Given the thread has more turns than are loaded
+    When what is loaded leaves room in the view
+    Then the earlier turns are loaded without the user scrolling
 
   @desktop @backlog
   Scenario: The user jumps between turns

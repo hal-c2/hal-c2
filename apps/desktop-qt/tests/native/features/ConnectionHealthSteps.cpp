@@ -483,7 +483,8 @@ const Steps steps([] {
     const QString draft = drafts->start(environment, QStringLiteral("ops"));
     drafts->setText(draft, QStringLiteral("roll back the deploy"));
     leaveThread(world);
-    expect(store(world)->timeline(fake(world).thread) && drafts->draft(draft).has_value(), QStringLiteral("nothing was kept for %1").arg(environment));
+    expect(store(world)->timeline(fake(world).thread) && drafts->draft(draft).has_value() && keptCopy(world, fake(world).thread).found(),
+           QStringLiteral("nothing was kept for %1").arg(environment));
   });
   step(QStringLiteral("its credential, cached data and drafts are cleared"), [](World& world, const Captures&, const Table&) {
     const QString environment = QStringLiteral("Build box");
@@ -503,6 +504,7 @@ const Steps steps([] {
                !store(world)->timeline(fake(world).thread) && !store(world)->openThreads().contains(fake(world).thread),
            QStringLiteral("its threads are still kept"));
     expect(drafts.isEmpty(), QStringLiteral("its drafts are still kept: %1").arg(drafts.join(QStringLiteral(", "))));
+    expect(!keptCopy(world, fake(world).thread).found(), QStringLiteral("the client still keeps a copy of %1").arg(fake(world).thread));
   });
 
   // Leaving a thread and coming back.
@@ -523,18 +525,6 @@ const Steps steps([] {
     // And it is still followed: what the agent says next arrives.
     addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Shipping is next.")}});
     expect(shows(timeline(world), QStringLiteral("Shipping is next.")), QStringLiteral("the thread shows %1").arg(describe(timeline(world))));
-  });
-  step(QStringLiteral("the client loads the thread again"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return streamSubscriptions(world, kThread) == fake(world).streamSubsBefore + 1 &&
-                               timeline(world).rowCount() == fake(world).rowsBefore; },
-                  [&] { return QStringLiteral("a fresh snapshot; the thread was asked for %1 times and shows %2")
-                            .arg(streamSubscriptions(world, kThread)).arg(describe(timeline(world))); });
-    // Whole: from no offset.
-    QJsonObject last;
-    for (const QJsonObject& sub : world.mc.subscriptions) {
-      if (sub.value(QLatin1String("shape")).toObject().value(QLatin1String("stream")) == kThread) last = sub;
-    }
-    expect(last.value(QLatin1String("offset")).isNull(), QStringLiteral("it resumed from %1").arg(show(last.toVariantMap())));
   });
 
   // A replaced connection.
@@ -730,13 +720,23 @@ const Steps steps([] {
              QStringLiteral("%1 stopped at %2 and resumed from %3").arg(it.key()).arg(it.value()).arg(show(resumed.value(it.key()).toVariant())));
     }
   });
-  step(QStringLiteral("the shell is sent again whole"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the thread list asks only for the rows changed since"), [](World& world, const Captures&, const Table&) {
     QJsonObject shell;
     for (qsizetype i = fake(world).connectionsBefore; i < world.mc.subscriptions.size(); ++i) {
       if (world.mc.subscriptions[i].value(QLatin1String("shape")).toObject().value(QLatin1String("type")) == QLatin1String("shell")) shell = world.mc.subscriptions[i];
     }
-    expect(!shell.isEmpty() && shell.value(QLatin1String("offset")).isNull() && world.native().store()->snapshots() == 2,
-           QStringLiteral("the shell was asked for with %1; %2 snapshots landed").arg(show(shell.toVariantMap())).arg(world.native().store()->snapshots()));
+    // It says what it holds of each member, and none of them sends its rows again.
+    const QJsonObject have = shell.value(QLatin1String("have")).toObject();
+    const QJsonObject answer = world.mc.shellFrames.last();
+    int resets = 0;
+    for (const QJsonValue& mc : answer.value(QLatin1String("mcs")).toArray()) resets += mc.toObject().value(QLatin1String("reset")).toBool() ? 1 : 0;
+    expect(have.contains(world.mc.name) && have.contains(QStringLiteral("mc-b")) && resets == 0 && answer.value(QLatin1String("rows")).toArray().isEmpty() &&
+               world.native().store()->snapshots() == 2,
+           QStringLiteral("the thread list was asked for with %1 and answered with %2").arg(show(shell.toVariantMap()), show(answer.toVariantMap())));
+    // What it held is still there.
+    expect(world.native().store()->thread(QStringLiteral("env-b:thread-env-b")).has_value() &&
+               world.native().store()->thread(world.mc.environmentId + QLatin1Char(':') + kThread).has_value(),
+           QStringLiteral("a thread went missing"));
   });
 });
 

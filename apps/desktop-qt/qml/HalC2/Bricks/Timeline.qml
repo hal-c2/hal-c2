@@ -21,7 +21,10 @@ import HalC2.Shell
 // changed or a tool call touched ask to be opened (fileActivated). What those
 // do is the host's (ThreadView). A settled turn's group of calls reads as its
 // summary and opens into the calls; a long message of the user's shows its
-// first lines until it is asked for in full.
+// first lines until it is asked for in full. A model that holds only a
+// thread's newest turns (hasEarlier) is asked for the ones before them
+// (loadEarlier()) when the user reaches the top, or while what is loaded does
+// not fill the view; their rows go in above without moving what is on screen.
 Item {
     id: root
 
@@ -109,6 +112,20 @@ Item {
         view.following = true;
         view.stick();
     }
+
+    // Whether the turns before the ones loaded are on their way.
+    readonly property bool loadingEarlier: root.model !== null && root.model.loadingEarlier === true
+    // Asks the model for the turns before the ones it holds, if it has any
+    // and is not already fetching them.
+    function loadEarlier() {
+        if (root.model && root.model.hasEarlier === true && !root.loadingEarlier && typeof root.model.loadEarlier === "function")
+            root.model.loadEarlier();
+    }
+    // What is loaded of a live thread leaves room in the view, so there is no
+    // top to scroll to: the turns before it are fetched until it is filled.
+    readonly property bool unfilled: root.model !== null && root.model.hasEarlier === true && !root.loadingEarlier && root.model.status === "live" && view.count > 0 && view.contentHeight + view.topMargin + view.bottomMargin < view.height
+    onUnfilledChanged: if (unfilled)
+        Qt.callLater(view.fill)
 
     // The model's list roles arrive as arrays from C++ and as ListModels from
     // a QML ListModel.
@@ -326,6 +343,7 @@ Item {
 
     ListView {
         id: view
+        objectName: "timelineRows"
 
         property bool following: true
         property bool positioning: false
@@ -341,6 +359,70 @@ Item {
         }
         function nearEnd() {
             return contentY + height >= originY + contentHeight - 4;
+        }
+        // Once the rows are laid out and still leave room.
+        function fill() {
+            forceLayout();
+            if (root.unfilled)
+                root.loadEarlier();
+        }
+
+        // Rows that go in above the first (earlier turns) leave what is on
+        // screen where it is. A ListView resting at its very top would show
+        // them instead, so the first row in view is held to its place.
+        property int heldIndex: -1
+        property real heldOffset: 0
+        function hold() {
+            heldIndex = following ? -1 : indexAt(width / 2, contentY + topMargin + 1);
+            const item = heldIndex >= 0 ? itemAtIndex(heldIndex) : null;
+            if (item)
+                heldOffset = item.y - contentY;
+            else
+                heldIndex = -1;
+        }
+        function release(added) {
+            if (heldIndex < 0)
+                return;
+            const index = heldIndex + added;
+            heldIndex = -1;
+            positioning = true;
+            forceLayout();
+            positionViewAtIndex(index, ListView.Beginning);
+            const item = itemAtIndex(index);
+            if (item)
+                contentY = item.y - heldOffset;
+            positioning = false;
+            // The rows just made above it are still finding their heights.
+            settlingIndex = index;
+            settlingOffset = heldOffset;
+        }
+        // The row that was held stays where it is while the rows above it
+        // settle, until the user moves the view or the rows change again.
+        property int settlingIndex: -1
+        property real settlingOffset: 0
+        function settle() {
+            if (settlingIndex < 0 || following || moving || dragging || scrollBar.pressed)
+                return;
+            const item = itemAtIndex(settlingIndex);
+            if (!item || Math.abs(item.y - settlingOffset - contentY) < 0.5)
+                return;
+            positioning = true;
+            contentY = item.y - settlingOffset;
+            positioning = false;
+        }
+        onMovementStarted: settlingIndex = -1
+        Connections {
+            target: root.model
+            ignoreUnknownSignals: true
+            function onRowsAboutToBeInserted(parent, first, last) {
+                if (first === 0)
+                    view.hold();
+            }
+            function onRowsInserted(parent, first, last) {
+                // Once every listener of the model has heard of them.
+                if (first === 0 && view.heldIndex >= 0)
+                    Qt.callLater(view.release, last - first + 1);
+            }
         }
 
         anchors.fill: parent
@@ -358,14 +440,29 @@ Item {
         // decides whether the view follows; the list settling its layout or
         // growing below the end does not.
         onContentYChanged: {
-            if (!positioning && (moving || dragging || scrollBar.pressed))
+            if (!positioning && (moving || dragging || scrollBar.pressed)) {
                 following = nearEnd();
+                if (atYBeginning)
+                    root.loadEarlier();
+            }
         }
-        onMovementEnded: following = nearEnd()
-        onContentHeightChanged: if (following)
-            Qt.callLater(stick)
-        onCountChanged: if (following)
-            Qt.callLater(stick)
+        onMovementEnded: {
+            following = nearEnd();
+            if (atYBeginning)
+                root.loadEarlier();
+        }
+        onContentHeightChanged: {
+            if (following)
+                Qt.callLater(stick);
+            else
+                settle();
+        }
+        onCountChanged: {
+            // Another row list: what was held is no longer at that index.
+            settlingIndex = -1;
+            if (following)
+                Qt.callLater(stick);
+        }
         onHeightChanged: if (following)
             Qt.callLater(stick)
 
@@ -878,6 +975,67 @@ Item {
                 Column {
                     id: workGroup
                     readonly property string summary: row.model.summary ?? ""
+
+                    // The calls on screen, kept in step with the row's
+                    // entries by id: a call that streams changes its own
+                    // line, and the lines beside it are left alone.
+                    function callOf(entry) {
+                        return {
+                            id: entry.id ?? "",
+                            type: entry.type ?? "",
+                            status: entry.status ?? "",
+                            statusLabel: entry.statusLabel ?? "",
+                            icon: entry.icon ?? "",
+                            time: entry.time ?? "",
+                            label: entry.label ?? "",
+                            detail: entry.detail ?? "",
+                            command: entry.command ?? "",
+                            path: entry.path ?? "",
+                            exited: entry.exitCode !== undefined && entry.exitCode !== null,
+                            exitCode: entry.exitCode ?? 0
+                        };
+                    }
+                    function syncCalls() {
+                        const next = root.list(row.entries);
+                        let at = 0;
+                        for (; at < next.length && at < calls.count; ++at) {
+                            const want = callOf(next[at]);
+                            const have = calls.get(at);
+                            if (have.id !== want.id)
+                                break;
+                            for (const key in want) {
+                                if (have[key] !== want[key])
+                                    calls.setProperty(at, key, want[key]);
+                            }
+                        }
+                        // From the first line that is another call's.
+                        if (at < calls.count)
+                            calls.remove(at, calls.count - at);
+                        for (; at < next.length; ++at)
+                            calls.append(callOf(next[at]));
+                    }
+                    ListModel {
+                        id: calls
+                    }
+                    Connections {
+                        target: row
+                        function onEntriesChanged() {
+                            workGroup.syncCalls();
+                        }
+                    }
+                    // A QML ListModel keeps its entries in a list of their
+                    // own, which changes in place.
+                    Connections {
+                        target: row.entries && typeof row.entries.get === "function" ? row.entries : null
+                        ignoreUnknownSignals: true
+                        function onDataChanged() {
+                            workGroup.syncCalls();
+                        }
+                        function onCountChanged() {
+                            workGroup.syncCalls();
+                        }
+                    }
+                    Component.onCompleted: syncCalls()
                     // What a settled group did, or "+N previous tool calls"
                     // while its turn runs (WorkGroupToggleTimelineRow).
                     WorkLine {
@@ -904,10 +1062,12 @@ Item {
                         }
                     }
                     Repeater {
-                        model: root.list(row.entries)
+                        model: calls
                         delegate: Column {
                             id: call
-                            required property var modelData
+                            // The call's fields, each of which changes on its own.
+                            required property var model
+                            readonly property var modelData: model
                             // Kept on the row, so streamed output does not close it.
                             readonly property bool open: row.openCalls[modelData.id] === true
                             readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0
@@ -999,7 +1159,9 @@ Item {
                                         RowText {
                                             visible: text.length > 0
                                             width: parent.width
-                                            text: call.modelData.detail ?? ""
+                                            // Laid out once it shows: text streamed
+                                            // into a closed call costs nothing.
+                                            text: call.open ? call.modelData.detail ?? "" : ""
                                             textFormat: Text.PlainText
                                             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                             font.family: call.panel ? root.monoFamily : root.uiFamily
@@ -1010,7 +1172,7 @@ Item {
                                             elide: Text.ElideRight
                                         }
                                         RowText {
-                                            visible: call.modelData.exitCode !== undefined
+                                            visible: call.modelData.exited
                                             text: qsTr("Exit code %1").arg(call.modelData.exitCode)
                                             font.pixelSize: Math.round(11 * Theme.fontScale)
                                             color: root.mutedColor
@@ -1386,6 +1548,29 @@ Item {
                 height: 1
                 color: Qt.alpha(root.borderColor, 0.6)
             }
+        }
+    }
+
+    // Earlier turns are on their way: a static line over the top of the
+    // rows, so nothing under it moves when it comes and goes.
+    Rectangle {
+        objectName: "loadingEarlier"
+        visible: root.loadingEarlier
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: view.top
+        anchors.topMargin: 12
+        width: earlierText.implicitWidth + 16
+        height: 24
+        radius: 12
+        color: root.canvasColor
+        border.color: Qt.alpha(root.borderColor, 0.6)
+        RowText {
+            id: earlierText
+            anchors.centerIn: parent
+            text: qsTr("Loading earlier turns…")
+            color: root.mutedColor
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.NoWrap
         }
     }
 

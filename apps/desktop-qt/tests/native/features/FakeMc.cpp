@@ -31,8 +31,9 @@ FakeMc::FakeMc() : m_server(QStringLiteral("fake-mc"), QWebSocketServer::NonSecu
   });
   QObject::connect(&m_server, &QWebSocketServer::newConnection, this, [this] { accept(); });
 
-  onShape(QStringLiteral("shell"), [this](int id, const QJsonObject& shape) {
+  onShape(QStringLiteral("shell"), [this](int id, const QJsonObject&) {
     m_shellSubscription = id;
+    m_have = subscriptions.last().value(QLatin1String("have")).toObject();
     if (!holdSnapshot) sendSnapshot();
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
@@ -83,37 +84,65 @@ void FakeMc::answerHeld() {
   for (const auto& answer : held) answer();
 }
 
+QMap<QString, QJsonArray> FakeMc::rowsOf(const QString& mc) const {
+  if (mc != name) return peerRows.value(peers.key(mc));
+  QMap<QString, QJsonArray> rows;
+  for (auto it = threads.cbegin(); it != threads.cend(); ++it) rows.insert(it.key(), QJsonArray{it.key(), QStringLiteral("thread"), *it});
+  for (auto it = projects.cbegin(); it != projects.cend(); ++it) rows.insert(it.key(), QJsonArray{it.key(), QStringLiteral("project"), *it});
+  return rows;
+}
+
+QJsonObject FakeMc::shellMc(const QString& mc, bool online, const QJsonObject& environment, QJsonArray& rows) {
+  QJsonObject member{{QStringLiteral("mc"), mc}, {QStringLiteral("online"), online}, {QStringLiteral("environment"), environment}};
+  const QMap<QString, QJsonArray> current = rowsOf(mc);
+  Told& told = m_told[mc];
+  const QJsonArray held = m_have.value(mc).toArray();
+  // Only the version the client was last told can be told apart from now.
+  const bool resumes = versioned && held.size() == 2 && held.at(0).toString() == epoch && held.at(1).toInt() == told.rev;
+  bool changed = !resumes;
+  for (auto it = current.cbegin(); it != current.cend(); ++it) {
+    if (resumes && told.rows.value(it.key()) == *it) continue;
+    changed = true;
+    rows.append(QJsonArray{mc, it->at(0), it->at(1), it->at(2)});
+  }
+  if (resumes) {
+    // A row that went leaves a deleted one behind, as a thread does.
+    for (auto it = told.rows.cbegin(); it != told.rows.cend(); ++it) {
+      if (current.contains(it.key())) continue;
+      changed = true;
+      rows.append(QJsonArray{mc, it.key(), it->at(1), QJsonObject{{QStringLiteral("id"), it.key()}, {QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
+    }
+  }
+  if (changed) ++told.rev;
+  told.rows = current;
+  if (versioned) {
+    member.insert(QStringLiteral("epoch"), epoch);
+    member.insert(QStringLiteral("rev"), told.rev);
+    member.insert(QStringLiteral("reset"), !resumes);
+  }
+  return member;
+}
+
 void FakeMc::sendSnapshot() {
   if (!m_socket || m_shellSubscription < 0) return;
   QJsonArray rows;
-  for (auto it = threads.cbegin(); it != threads.cend(); ++it) {
-    rows.append(QJsonArray{name, it.key(), QStringLiteral("thread"), *it});
-  }
-  for (auto it = projects.cbegin(); it != projects.cend(); ++it) {
-    rows.append(QJsonArray{name, it.key(), QStringLiteral("project"), *it});
-  }
-  QJsonArray mcs{QJsonObject{
-      {QStringLiteral("mc"), name},
-      {QStringLiteral("online"), true},
-      {QStringLiteral("environment"),
-       label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
-                       : QJsonObject{{QStringLiteral("environmentId"), environmentId},
-                                     {QStringLiteral("label"), label},
-                                     {QStringLiteral("capabilities"), capabilities}}},
-  }};
+  QJsonArray mcs{shellMc(name, true,
+                         label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
+                                         : QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                                       {QStringLiteral("label"), label},
+                                                       {QStringLiteral("capabilities"), capabilities}},
+                         rows)};
   for (const QString& environment : std::as_const(members)) {
-    const QString peer = peers.value(environment);
-    mcs.append(QJsonObject{{QStringLiteral("mc"), peer},
-                           {QStringLiteral("online"), !offline.contains(environment)},
-                           {QStringLiteral("environment"), peerEnvironment(environment)}});
-    for (const QJsonArray& row : peerRows.value(environment)) rows.append(QJsonArray{peer, row.at(0), row.at(1), row.at(2)});
+    mcs.append(shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows));
   }
-  send({
+  const QJsonObject frame{
       {QStringLiteral("t"), QStringLiteral("shell")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("mcs"), mcs},
       {QStringLiteral("rows"), rows},
-  });
+  };
+  shellFrames.append(frame);
+  send(frame);
 }
 
 QJsonObject FakeMc::peerEnvironment(const QString& environment) const {
@@ -159,6 +188,7 @@ void FakeMc::setOnline(const QString& environment, bool online) {
 
 void FakeMc::remove(const QString& environment) {
   const QString peer = peers.take(environment);
+  m_told.remove(peer);
   members.removeAll(environment);
   offline.remove(environment);
   peerRows.remove(environment);
@@ -183,12 +213,34 @@ void FakeMc::sendRow(const QString& id, const QJsonObject& row, const QString& k
 
 void FakeMc::sendRows(const QString& mc, const QJsonArray& rows) {
   if (!m_socket || m_shellSubscription < 0) return;
-  send({
+  QJsonObject frame{
       {QStringLiteral("t"), QStringLiteral("shell.rows")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("mc"), mc},
       {QStringLiteral("rows"), rows},
-  });
+  };
+  if (versioned) {
+    // They bring the client's copy of the MC's rows to the next version.
+    Told& told = m_told[mc];
+    for (const QJsonValue& row : rows) told.rows.insert(row.toArray().at(0).toString(), row.toArray());
+    // A member's rows are the ones it was last said to have.
+    if (const QString environment = peers.key(mc); !environment.isEmpty()) {
+      for (const QJsonValue& row : rows) peerRows[environment].insert(row.toArray().at(0).toString(), row.toArray());
+    }
+    frame.insert(QStringLiteral("epoch"), epoch);
+    frame.insert(QStringLiteral("rev"), ++told.rev);
+    frame.insert(QStringLiteral("reset"), false);
+  }
+  send(frame);
+}
+
+void FakeMc::drop() {
+  if (!m_socket) return;
+  QWebSocket* socket = m_socket;
+  m_socket = nullptr;
+  m_shellSubscription = -1;
+  m_live.clear();
+  socket->close();
 }
 
 void FakeMc::route(QTcpSocket* socket) {
@@ -288,6 +340,8 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
     (*handler)(id, shape);
   } else if (type == QLatin1String("unsub")) {
     m_live.remove(id);
+  } else if (const auto read = m_frames.constFind(type); read != m_frames.cend()) {
+    (*read)(message);
   } else if (type == QLatin1String("ping")) {
     if (answerPings) send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {

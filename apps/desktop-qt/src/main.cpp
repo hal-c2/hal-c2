@@ -181,7 +181,8 @@ int main(int argc, char* argv[]) {
   native.registerQmlSingletons();
   // Each window reopens where the user left it (its route and panels are
   // state); the drafts are every window's unsent work (data).
-  native.setStoreDirs(storage.state, storage.data);
+  // And what the client keeps of its MC so the next start paints at once (cache).
+  native.setStoreDirs(storage.state, storage.data, storage.cache);
   LayoutController::setSystemReducedMotion(systemReducedMotion());
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   native.controller<PluginController>()->setConfigDir(configDir);

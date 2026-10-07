@@ -5,6 +5,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
+  alias HalC2.Test.WsClient
 
   # --- run status ----------------------------------------------------------------------
 
@@ -613,6 +614,106 @@ defmodule HalC2.Steps.Orchestration.Projections do
     assert seqs != [] and Enum.all?(seqs, &(&1 > seq))
     context
   end
+
+  # --- windows ------------------------------------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" has a very long history$/, %{args: [thread]} = context do
+    {:ok, _} = HalC2.Streams.commit(thread, :thread, Enum.flat_map(1..6, &turn/1))
+    context
+  end
+
+  step ~r/^a client subscribes to "(?<thread>[^"]+)" with a window$/,
+       %{args: [thread]} = context do
+    client = windowed(World.client(context), thread, 4)
+    {frames, client} = until_live(client, [])
+    context |> World.put_client(client) |> Map.merge(%{frames: frames, thread: thread})
+  end
+
+  step "it receives the newest part of the history with a marker that older history exists",
+       context do
+    {live, snapshots} = List.pop_at(context.frames, -1)
+    assert live["t"] == "live"
+    assert Enum.all?(snapshots, &(&1["t"] == "snapshot"))
+    # The two newest turns hold the four items asked for; the floor says more lie before.
+    assert List.last(snapshots)["floor"] == 5
+    assert items(snapshots) == ~w(item-5-1 item-5-2 item-5-3 item-6-1 item-6-2 item-6-3)
+    Map.put(context, :offset, live["offset"])
+  end
+
+  step "it can page older history on request", context do
+    client = WsClient.send_json(World.client(context), %{"t" => "more", "id" => 41, "items" => 3})
+    {page, client} = Mc.await(client, &(&1["t"] == "page" and &1["id"] == 41))
+    assert %{"floor" => 4, "done" => true} = page
+    assert items([page]) == ~w(item-4-1 item-4-2 item-4-3)
+    World.put_client(context, client)
+  end
+
+  step "then it receives live events after the snapshot's sequence", context do
+    change = {"turn-item", "item-6-3", %{"a" => %{"text" => "more"}}}
+    {:ok, seq} = HalC2.Streams.commit(context.thread, :thread, [change])
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events" and &1["id"] == 41))
+    assert seq > context.offset
+    assert [[^seq, "turn-item", "item-6-3", _patch, _at]] = frame["events"]
+    World.put_client(context, client)
+  end
+
+  step ~r/^"(?<thread>[^"]+)" has hidden and visible earlier turns$/,
+       %{args: [thread]} = context do
+    rolled_back = {"run", "run-2", %{"s" => %{"status" => "rolled_back"}}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, Enum.flat_map(1..4, &turn/1) ++ [rolled_back])
+
+    context
+  end
+
+  step ~r/^a client asks for a bounded page of the history of "(?<thread>[^"]+)"$/,
+       %{args: [thread]} = context do
+    client = windowed(World.client(context), thread, 1)
+    {_frames, client} = until_live(client, [])
+    client = WsClient.send_json(client, %{"t" => "more", "id" => 41, "items" => 100})
+    {page, client} = Mc.await(client, &(&1["t"] == "page" and &1["id"] == 41))
+    context |> World.put_client(client) |> Map.put(:page, page)
+  end
+
+  step "the page holds only visible turns", context do
+    assert items([context.page]) ==
+             ~w(item-1-1 item-1-2 item-1-3 item-3-1 item-3-2 item-3-3)
+
+    context
+  end
+
+  step "it ends at the true start of the history", context do
+    assert %{"floor" => nil, "done" => true} = context.page
+    context
+  end
+
+  # One run and its three turn items.
+  defp turn(n) do
+    run = %{"id" => "run-#{n}", "ordinal" => n, "status" => "completed"}
+
+    [
+      {"run", run["id"], %{"s" => run}}
+      | for i <- 1..3 do
+          item = %{"id" => "item-#{n}-#{i}", "runId" => run["id"], "type" => "reasoning"}
+          {"turn-item", item["id"], %{"s" => Map.put(item, "ordinal", n * 10 + i)}}
+        end
+    ]
+  end
+
+  defp windowed(client, thread, items) do
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => thread}
+
+    WsClient.send_json(client, %{
+      "t" => "sub",
+      "id" => 41,
+      "shape" => shape,
+      "window" => %{"items" => items}
+    })
+  end
+
+  defp items(frames),
+    do: for(frame <- frames, ["turn-item", id, _] <- frame["rows"], do: id)
 
   defp until_live(client, acc) do
     {frame, client} = Mc.await(client, &(&1["id"] == 41))

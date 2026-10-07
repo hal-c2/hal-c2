@@ -863,7 +863,7 @@ defmodule HalC2.ThreadMove do
 
   @impl true
   def handle_call({:after_turn, id, to, opts}, _from, state) do
-    :ok = Streams.subscribe(id, self(), nil)
+    :ok = Streams.watch(id, self())
     send(self(), {:turn_check, id})
     {:reply, :ok, put_in(state, [:after_turn, id], {to, opts})}
   end

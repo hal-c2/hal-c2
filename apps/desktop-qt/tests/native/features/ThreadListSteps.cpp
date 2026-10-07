@@ -279,6 +279,45 @@ const Steps steps([] {
            QStringLiteral("the list holds %1 threads and held as few as %2").arg(active.size()).arg(world.mc.part<Reconnect>().fewest));
   });
 
+  step(QStringLiteral("the MC sent only the two new threads"), [](World& world, const Captures&, const Table&) {
+    // The client said what it held, so nothing it had was sent again.
+    QJsonObject have;
+    for (const QJsonObject& sub : std::as_const(world.mc.subscriptions)) {
+      if (sub.value(QLatin1String("shape")).toObject().value(QLatin1String("type")) == QLatin1String("shell")) have = sub.value(QLatin1String("have")).toObject();
+    }
+    const QJsonObject frame = world.mc.shellFrames.last();
+    const QJsonObject mc = frame.value(QLatin1String("mcs")).toArray().first().toObject();
+    expect(world.mc.shellFrames.size() == 2 && have.value(world.mc.name).toArray().first() == world.mc.epoch &&
+               mc.value(QLatin1String("reset")) == false && frame.value(QLatin1String("rows")).toArray().size() == 2,
+           QStringLiteral("the client held %1 and the MC sent %2").arg(show(have.toVariantMap()), show(frame.toVariantMap())));
+  });
+  step(QStringLiteral("the client was disconnected while its MC restarted and lost a thread"), [](World& world, const Captures&, const Table&) {
+    const QString project = world.mc.projects.firstKey();
+    putThread(world, QStringLiteral("t-earlier"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Earlier work")}});
+    putThread(world, QStringLiteral("t-lost"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Lost work")}});
+    world.sync();
+    waitForSection(world, QStringLiteral("Lost work"), QStringLiteral("active"));
+    world.mc.part<Reconnect>().subscriptions = world.shellSubscriptions();
+    world.mc.drop();
+    world.waitFor([&] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to notice the lost connection"));
+    // Another run of the MC's shell: what a client holds of its rows is of no use.
+    world.mc.epoch = QStringLiteral("epoch-2");
+    world.mc.threads.remove(QStringLiteral("t-lost"));
+  });
+  step(QStringLiteral("the MC sent its whole list"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QJsonObject frame = world.mc.shellFrames.last();
+    const QJsonObject mc = frame.value(QLatin1String("mcs")).toArray().first().toObject();
+    const qsizetype rows = world.mc.threads.size() + world.mc.projects.size();
+    expect(world.mc.shellFrames.size() == 2 && mc.value(QLatin1String("reset")) == true && frame.value(QLatin1String("rows")).toArray().size() == rows,
+           QStringLiteral("the MC holds %1 rows and sent %2").arg(rows).arg(show(frame.toVariantMap())));
+  });
+  step(QStringLiteral("the lost thread is no longer listed"), [](World& world, const Captures&, const Table&) {
+    QStringList titles;
+    for (const QVariant& row : sidebar(world).value(QStringLiteral("active")).toList()) titles.append(row.toMap().value(QStringLiteral("title")).toString());
+    expect(titles == QStringList{QStringLiteral("Earlier work")}, QStringLiteral("the list holds %1").arg(titles.join(QStringLiteral(", "))));
+  });
+
   // Snoozing.
   // A day of the week the scenarios' clock starts in (Wednesday 23 September 2026).
   step(QStringLiteral("the local time is (\\w+day) (\\d+):(\\d+)"), [](World& world, const Captures& c, const Table&) {

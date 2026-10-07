@@ -68,12 +68,17 @@ public:
   // The shell's config directory (theme.json, preferences.json), fresh per
   // scenario and kept across restarts, and the palette main.cpp builds over it.
   QString configDir() const { return m_home.filePath(QStringLiteral("config")); }
-  // Where the shell keeps its state (`state/`) and data (`data/`).
+  // Where the shell keeps its state (`state/`), data (`data/`) and its cache of the MC (`cache/`).
   QString homeDir() const { return m_home.path(); }
   ThemeStore& theme() { return *m_theme; }
   QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
   // The desktop quits and starts again: a new shell, the same files.
   void restart();
+  // The two halves, for what happens while the app is closed: no step may
+  // reach for the shell between them.
+  void quit();
+  void launch();
+  bool running() const { return m_native != nullptr; }
   // Puts every window of the shell on screen (as main.cpp does), each a
   // bare window, so the user can close them.
   ShellWindows& showWindows();
@@ -100,8 +105,9 @@ public:
   void waitFor(const std::function<bool()>& condition, const std::function<QString()>& what);
   void waitFor(const std::function<bool()>& condition, const QString& what);
 
-  // A round trip through the MC: everything the MC sent before, and every
-  // answer to a command sent before, has been handled once it returns.
+  // A round trip through the cache and then the MC: everything the MC sent
+  // before, and every answer to a command sent before, has been handled once
+  // it returns.
   void sync();
 
   QList<BrickAction> actionsOf(const QString& type) const;

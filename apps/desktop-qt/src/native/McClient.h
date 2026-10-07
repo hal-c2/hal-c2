@@ -19,8 +19,8 @@ class QWebSocket;
 // The shell's own protocol-3 connection to its MC (apps/server-ex
 // lib/hal_c2/web/protocol.ex), the C++ twin of client-runtime's ClusterSocket.
 // Subscriptions are multiplexed by id, sent once the MC says hello, and
-// sent again after every reconnect or `resync`: a thread's stream from the
-// offset it had reached, everything else whole.
+// sent again after every reconnect or `resync`: from where their owner says
+// they had got to (Resume), or whole.
 //
 // One owner of retries. Before each socket it reads the MC's descriptor
 // (`/.well-known/hal-c2/environment`) and stays blocked on a protocol it does
@@ -47,6 +47,10 @@ public:
     Blocked,     // the MC speaks another protocol (blockedProtocol): one side must update
   };
   using FrameHandler = std::function<void(const QJsonObject& frame)>;
+  // What a `sub` frame carries besides its shape: a stream's `offset`,
+  // `handle` and `window`, the shell's `have`. Asked each time the frame is
+  // sent, so whoever holds the data is the one to say where it continues.
+  using Resume = std::function<QJsonObject()>;
   // `error` is set when the call failed: the MC's message, or "not connected"
   // / "disconnected" when the socket was not there to carry it.
   using Reply = std::function<void(const QJsonValue& result, const std::optional<QString>& error)>;
@@ -95,8 +99,12 @@ public:
 
   // `context` owns the callback, as with a Qt connection: once it is destroyed
   // no reply or frame reaches it, and its subscriptions are ended.
-  int subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame);
+  // Without `resume` the shape is asked for whole each time.
+  int subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume = {});
   void unsubscribe(int id);
+  // Asks a windowed stream for the runs before its window that hold `items`
+  // turn items; a `page` frame answers.
+  void more(int id, int items);
   void call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload, Reply reply);
   // POSTs `body` to `path` of the MC's origin (its HTTP API, for answers too
   // large for the socket, as `/api/pull-requests/diff`), with the access token.
@@ -150,8 +158,7 @@ private:
     FrameHandler onFrame;
     // Ends the subscription when its context goes.
     QMetaObject::Connection contextGone;
-    // A stream's offset once its snapshot is whole: where a resubscription resumes.
-    QJsonValue offset = QJsonValue::Null;
+    Resume resume;
   };
   struct Call {
     QPointer<QObject> context;

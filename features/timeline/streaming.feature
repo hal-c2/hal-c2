@@ -14,6 +14,8 @@
 #   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown MC)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment)
 #   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its MC stopped sending)
+#   apps/desktop-qt/src/native/TimelineModel.cpp (the thread's cursor, a catch-up applied whole)
+#   apps/server-ex/lib/hal_c2/streams/server.ex (resuming from an offset, a catch-up in several parts)
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -146,6 +148,16 @@ Feature: Streaming the agent's reply
     And the shell reconnects to the MC
     Then the whole reply is shown
     And the rows shown before are kept
+    And the MC sends only what the client lacks
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A catch-up cut off part-way is not applied twice
+    Given the agent is writing a reply
+    And the agent finishes the reply while the MC cannot be reached
+    When the MC is back and the connection drops again part-way through the catch-up
+    Then the whole reply is shown
+    And the rows shown before are kept
+    And the client asked again from where it was
 
   @shared @backlog-mobile @backlog-tui
   Scenario: A thread that falls behind is caught up from the MC

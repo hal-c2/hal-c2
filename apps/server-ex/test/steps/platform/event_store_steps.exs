@@ -316,11 +316,11 @@ defmodule HalC2.Steps.Platform.EventStore do
     state = thread_state(context)
     idle_stop(id)
 
-    # v1 state had no creation order.
+    # v1 state had no creation order, nor a record of what changed when.
     old =
       state
       |> Map.from_struct()
-      |> Map.drop([:created])
+      |> Map.drop([:created, :changed, :deleted, :since])
       |> Map.merge(%{__struct__: StreamState, v: 1})
 
     :ok = Store.put_snapshot(id, state.seq, old)
@@ -333,9 +333,12 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "the snapshot is migrated to the current format", context do
     loaded = context.loaded
-    assert %StreamState{v: 2, created: created} = loaded
+    assert %StreamState{v: 3, created: created} = loaded
     # Loaded from the snapshot (a fold of the log records creation order).
     assert created == %{}
+    # Nothing is known of what changed before the snapshot: a client behind it starts over.
+    assert loaded.since == loaded.seq
+    assert StreamState.changed_since(loaded, loaded.seq - 1) == :unknown
     assert loaded.entities == context.expected.entities
     assert loaded.seq == context.expected.seq
     context

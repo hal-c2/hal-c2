@@ -298,7 +298,10 @@ function renderInline(src, ctx, inLink) {
             if (!link) {
                 var ref = /^\[([^\]]*)\]/.exec(src.slice(i + 1));
                 var key = ref && ref[1].trim().length > 0 ? ref[1] : label;
-                var def = ctx.refs[normalizeLabel(key)];
+                var name = normalizeLabel(key);
+                if (ctx.used !== null)
+                    ctx.used.add(name);
+                var def = ctx.refs.get(name);
                 if (def !== undefined) {
                     href = def;
                     end = ref ? i + 1 + ref[0].length : i + 1;
@@ -496,141 +499,148 @@ function fenceTitle(meta) {
 }
 
 // Parses lines into block nodes: heading, hr, code, quote, list, table, para.
-// Each carries `src`, its source text, for caching and stable segments.
+// Each carries `src`, its source text, which tells whether a block read again
+// is the one read before.
 function parseBlocks(lines, ctx) {
     var blocks = [];
     var i = 0;
     while (i < lines.length) {
-        var line = lines[i];
-        if (isBlank(line)) {
+        if (isBlank(lines[i])) {
             ++i;
             continue;
         }
-        var start = i;
-        var fence = FENCE.exec(line);
-        if (fence && !(fence[2][0] === "`" && fence[3].indexOf("`") >= 0)) {
-            var marker = fence[2];
-            var indent = fence[1].length;
-            var info = fence[3].trim();
-            var body = [];
-            var closed = false;
-            ++i;
-            while (i < lines.length) {
-                var close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[i]);
-                if (close && close[1][0] === marker[0] && close[1].length >= marker.length) {
-                    closed = true;
-                    ++i;
-                    break;
-                }
-                var content = lines[i];
-                var strip = 0;
-                while (strip < indent && content[strip] === " ")
-                    ++strip;
-                body.push(content.slice(strip));
-                ++i;
-            }
-            var space = info.search(/\s/);
-            var language = (space < 0 ? info : info.slice(0, space)).replace(/^\{\.?|\}$/g, "");
-            blocks.push({ type: "code", code: body.join("\n"), language: language === "gitignore" ? "ini" : language, title: fenceTitle(space < 0 ? "" : info.slice(space + 1).trim()), open: !closed, src: lines.slice(start, i).join("\n") });
-            continue;
-        }
-        var atx = ATX.exec(line);
-        if (atx) {
-            var heading = atx[2].replace(/[ \t]+#+[ \t]*$/, "").replace(/^#+[ \t]*$/, "").trim();
-            blocks.push({ type: "heading", level: atx[1].length, text: heading, src: line });
-            ++i;
-            continue;
-        }
-        if (THEMATIC.test(line)) {
-            blocks.push({ type: "hr", src: line });
-            ++i;
-            continue;
-        }
-        if (QUOTE.test(line)) {
-            var quoted = [];
-            while (i < lines.length && !isBlank(lines[i])) {
-                if (QUOTE.test(lines[i]))
-                    quoted.push(lines[i].replace(QUOTE, ""));
-                else if (quoted.length > 0 && !isBlank(quoted[quoted.length - 1]) && !interrupts(lines, i))
-                    quoted.push(lines[i]);
-                else
-                    break;
-                ++i;
-            }
-            var alert = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i.exec(quoted[0] || "");
-            if (alert)
-                quoted.shift();
-            blocks.push({ type: "quote", alert: alert ? alert[1].toLowerCase() : "", text: quoted.join("\n"), src: lines.slice(start, i).join("\n") });
-            continue;
-        }
-        var item = LIST_ITEM.exec(line);
-        if (item) {
-            var list = parseList(lines, i, ctx);
-            blocks.push(list.block);
-            i = list.end;
-            continue;
-        }
-        if (isTableStart(lines, i)) {
-            var header = splitRow(lines[i]);
-            var align = splitRow(lines[i + 1]).map(function (cell) {
-                var left = cell[0] === ":";
-                var right = cell[cell.length - 1] === ":";
-                return left && right ? "center" : right ? "right" : "left";
-            });
-            var rows = [];
-            i += 2;
-            while (i < lines.length && !isBlank(lines[i]) && !(FENCE.test(lines[i]) || ATX.test(lines[i]) || QUOTE.test(lines[i]) || THEMATIC.test(lines[i]))) {
-                var cells = splitRow(lines[i]);
-                while (cells.length < header.length)
-                    cells.push("");
-                rows.push(cells.slice(0, header.length));
-                ++i;
-            }
-            blocks.push({ type: "table", header: header, align: align, rows: rows, src: lines.slice(start, i).join("\n") });
-            continue;
-        }
-        if (/^ {4}/.test(line)) {
-            var indented = [];
-            while (i < lines.length && (/^ {4}/.test(lines[i]) || isBlank(lines[i]))) {
-                indented.push(lines[i].slice(4));
-                ++i;
-            }
-            while (indented.length > 0 && isBlank(indented[indented.length - 1]))
-                indented.pop();
-            blocks.push({ type: "code", code: indented.join("\n"), language: "", title: "", open: false, src: lines.slice(start, i).join("\n") });
-            continue;
-        }
-        // A paragraph: link definitions first, then lines until a blank line,
-        // an interrupting block, or a setext underline.
-        var para = [];
-        while (i < lines.length && !isBlank(lines[i])) {
-            if (para.length > 0) {
-                var setext = SETEXT.exec(lines[i]);
-                if (setext) {
-                    blocks.push({ type: "heading", level: setext[1][0] === "=" ? 1 : 2, text: para.join("\n").trim(), src: lines.slice(start, i + 1).join("\n") });
-                    para = null;
-                    ++i;
-                    break;
-                }
-                if (interrupts(lines, i))
-                    break;
-            } else {
-                var definition = DEFINITION.exec(lines[i]);
-                if (definition) {
-                    var label = normalizeLabel(definition[1]);
-                    if (!ctx.refs.hasOwnProperty(label))
-                        ctx.refs[label] = definition[2];
-                    ++i;
-                    continue;
-                }
-            }
-            para.push(lines[i].replace(/^[ \t]+/, ""));
-            ++i;
-        }
-        if (para !== null && para.length > 0)
-            blocks.push({ type: "para", text: para.join("\n").replace(/[ \t]+$/, ""), src: lines.slice(start, i).join("\n") });
+        var next = parseBlock(lines, i, ctx);
+        if (next.block !== null)
+            blocks.push(next.block);
+        i = next.end;
     }
     return blocks;
+}
+
+function ended(block, end, closed) {
+    return { block: block, end: end, closed: closed };
+}
+
+// Parses the block that starts at lines[i], which is not blank: `block` is its
+// node (null for link definitions alone) and `end` the first line it leaves.
+// `closed` says the block ended itself, so no line after it had a say: a fence
+// with its closing fence, a heading, a rule. Any other block ends because of
+// what lines[end] is, and of lines[end + 1] too when lines[end] has a "|" and
+// could head a table (`interrupts`); nothing reads further than that, which is
+// what `settled` relies on.
+function parseBlock(lines, i, ctx) {
+    var line = lines[i];
+    var start = i;
+    var fence = FENCE.exec(line);
+    if (fence && !(fence[2][0] === "`" && fence[3].indexOf("`") >= 0)) {
+        var marker = fence[2];
+        var indent = fence[1].length;
+        var info = fence[3].trim();
+        var body = [];
+        var closed = false;
+        ++i;
+        while (i < lines.length) {
+            var close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[i]);
+            if (close && close[1][0] === marker[0] && close[1].length >= marker.length) {
+                closed = true;
+                ++i;
+                break;
+            }
+            var content = lines[i];
+            var strip = 0;
+            while (strip < indent && content[strip] === " ")
+                ++strip;
+            body.push(content.slice(strip));
+            ++i;
+        }
+        var space = info.search(/\s/);
+        var language = (space < 0 ? info : info.slice(0, space)).replace(/^\{\.?|\}$/g, "");
+        return ended({ type: "code", code: body.join("\n"), language: language === "gitignore" ? "ini" : language, title: fenceTitle(space < 0 ? "" : info.slice(space + 1).trim()), open: !closed, src: lines.slice(start, i).join("\n") }, i, closed);
+    }
+    var atx = ATX.exec(line);
+    if (atx) {
+        var heading = atx[2].replace(/[ \t]+#+[ \t]*$/, "").replace(/^#+[ \t]*$/, "").trim();
+        return ended({ type: "heading", level: atx[1].length, text: heading, src: line }, i + 1, true);
+    }
+    if (THEMATIC.test(line))
+        return ended({ type: "hr", src: line }, i + 1, true);
+    if (QUOTE.test(line)) {
+        var quoted = [];
+        while (i < lines.length && !isBlank(lines[i])) {
+            if (QUOTE.test(lines[i]))
+                quoted.push(lines[i].replace(QUOTE, ""));
+            else if (quoted.length > 0 && !isBlank(quoted[quoted.length - 1]) && !interrupts(lines, i))
+                quoted.push(lines[i]);
+            else
+                break;
+            ++i;
+        }
+        var alert = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i.exec(quoted[0] || "");
+        if (alert)
+            quoted.shift();
+        return ended({ type: "quote", alert: alert ? alert[1].toLowerCase() : "", text: quoted.join("\n"), src: lines.slice(start, i).join("\n") }, i, false);
+    }
+    if (LIST_ITEM.test(line)) {
+        var list = parseList(lines, i, ctx);
+        return ended(list.block, list.end, false);
+    }
+    if (isTableStart(lines, i)) {
+        var header = splitRow(lines[i]);
+        var align = splitRow(lines[i + 1]).map(function (cell) {
+            var left = cell[0] === ":";
+            var right = cell[cell.length - 1] === ":";
+            return left && right ? "center" : right ? "right" : "left";
+        });
+        var rows = [];
+        i += 2;
+        while (i < lines.length && !isBlank(lines[i]) && !(FENCE.test(lines[i]) || ATX.test(lines[i]) || QUOTE.test(lines[i]) || THEMATIC.test(lines[i]))) {
+            var cells = splitRow(lines[i]);
+            while (cells.length < header.length)
+                cells.push("");
+            rows.push(cells.slice(0, header.length));
+            ++i;
+        }
+        return ended({ type: "table", header: header, align: align, rows: rows, src: lines.slice(start, i).join("\n") }, i, false);
+    }
+    if (/^ {4}/.test(line)) {
+        var indented = [];
+        while (i < lines.length && (/^ {4}/.test(lines[i]) || isBlank(lines[i]))) {
+            indented.push(lines[i].slice(4));
+            ++i;
+        }
+        while (indented.length > 0 && isBlank(indented[indented.length - 1]))
+            indented.pop();
+        return ended({ type: "code", code: indented.join("\n"), language: "", title: "", open: false, src: lines.slice(start, i).join("\n") }, i, false);
+    }
+    // A paragraph: link definitions first, then lines until a blank line,
+    // an interrupting block, or a setext underline.
+    var para = [];
+    while (i < lines.length && !isBlank(lines[i])) {
+        if (para.length > 0) {
+            var setext = SETEXT.exec(lines[i]);
+            if (setext)
+                return ended({ type: "heading", level: setext[1][0] === "=" ? 1 : 2, text: para.join("\n").trim(), src: lines.slice(start, i + 1).join("\n") }, i + 1, true);
+            if (interrupts(lines, i))
+                break;
+        } else {
+            var definition = DEFINITION.exec(lines[i]);
+            if (definition) {
+                var label = normalizeLabel(definition[1]);
+                if (!ctx.refs.has(label)) {
+                    ctx.refs.set(label, definition[2]);
+                    if (ctx.defined !== null)
+                        ctx.defined.push(label);
+                }
+                ++i;
+                continue;
+            }
+        }
+        para.push(lines[i].replace(/^[ \t]+/, ""));
+        ++i;
+    }
+    if (para.length === 0)
+        return ended(null, i, false);
+    return ended({ type: "para", text: para.join("\n").replace(/[ \t]+$/, ""), src: lines.slice(start, i).join("\n") }, i, false);
 }
 
 // Parses a list starting at lines[i]: items of the same marker kind, each
@@ -834,24 +844,62 @@ function standalone(entry, first, last) {
     return entry.indent > 0 ? "<div style=\"margin-left:" + entry.indent + "px\">" + html + "</div>" : html;
 }
 
-var cache = new Map();
-var CACHE_LIMIT = 200;
+function segment(kind, fields) {
+    return {
+        kind: kind,
+        html: fields.html || "",
+        code: fields.code || "",
+        language: fields.language || "",
+        title: fields.title || "",
+        open: !!fields.open,
+        indent: fields.indent || 0,
+        payload: fields.payload || "",
+        alert: fields.alert || "",
+        top: fields.top || 0,
+        bottom: fields.bottom || 0,
+        gap: 0,
+    };
+}
 
-// Top-level blocks render once per source: a streaming reply re-parses its
-// text on every delta but renders only the block that changed.
-var blockCache = new Map();
-var BLOCK_CACHE_LIMIT = 2000;
+// Adds a segment under the last one of `out`: its `gap` is the larger of the
+// two margins that meet, zero for the first.
+function append(out, next) {
+    next.gap = out.length === 0 ? 0 : Math.max(out[out.length - 1].bottom, next.top);
+    out.push(next);
+}
 
-function flowTop(block, ctx, flags) {
-    var key = flags + "\u0000" + block.src;
-    var hit = blockCache.get(key);
-    if (hit !== undefined)
-        return hit;
-    var entries = flowBlock(block, 0, ctx);
-    blockCache.set(key, entries);
-    if (blockCache.size > BLOCK_CACHE_LIMIT)
-        blockCache.delete(blockCache.keys().next().value);
-    return entries;
+// Ends the run of prose entries `prose` as one segment of `out`.
+function closeProse(out, prose) {
+    if (prose.length === 0)
+        return;
+    var html = "";
+    for (var p = 0; p < prose.length; ++p)
+        html += standalone(prose[p], p === 0, p === prose.length - 1);
+    append(out, segment("prose", { html: html, top: prose[0].top, bottom: prose[prose.length - 1].bottom }));
+    prose.length = 0;
+}
+
+// Adds a top-level block's entries to `out`. Prose entries wait in `prose` for
+// the prose that follows; while streaming, a block starts a segment of its own.
+function fold(out, prose, entries, streaming) {
+    if (streaming)
+        closeProse(out, prose);
+    for (var e = 0; e < entries.length; ++e) {
+        var entry = entries[e];
+        if (entry.kind === "html") {
+            prose.push(entry);
+        } else {
+            closeProse(out, prose);
+            append(out, segment(entry.kind, entry));
+        }
+    }
+}
+
+// What parsing and rendering read: `refs` maps a link definition's label to
+// its address, `used` collects the labels a render looked up and `defined` the
+// ones a parse defined, when someone asks.
+function context(lineBreaks, refs) {
+    return { refs: refs, lineBreaks: lineBreaks, olDepth: 0, ulDepth: 0, used: null, defined: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -950,74 +998,351 @@ function selector(text, rawStart, rawEnd) {
     return { text: quote, start: start, end: end, prefix: normalized.slice(prefixStart, start), suffix: normalized.slice(end, suffixEnd) };
 }
 
-// The segments of a reply, each { kind, html, code, language, title, open,
-// indent, gap, payload, alert }: `gap` is the space above it (the larger of the
-// two margins that meet, zero for the first). While streaming, every top-level
-// block is a segment of its own, so a delta re-lays out only the last block and
-// a new block never re-renders the ones before it; the finished reply merges
-// its prose so a selection can run across it.
-function segments(text, options) {
-    var opts = options || {};
-    var key = (opts.lineBreaks ? "b" : "-") + (opts.streaming ? "s" : "-") + text;
+// ---------------------------------------------------------------------------
+// Reading a text into segments
+
+// What reading has cost since `takeTally`: the characters and lines taken
+// from texts, the top-level blocks parsed and the ones rendered. Tests hold
+// the cost of a delta to the block that grows with it.
+var tally = { chars: 0, lines: 0, blocks: 0, flowed: 0 };
+
+function takeTally() {
+    var taken = tally;
+    tally = { chars: 0, lines: 0, blocks: 0, flowed: 0 };
+    return taken;
+}
+
+// The segments of a whole text, read in one go.
+function read(text, lineBreaks, streaming) {
+    var ctx = context(lineBreaks, new Map());
+    var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
+    var blocks = parseBlocks(lines, ctx);
+    tally.chars += text.length;
+    tally.lines += lines.length;
+    tally.blocks += blocks.length;
+    tally.flowed += blocks.length;
+    var out = [];
+    var prose = [];
+    for (var b = 0; b < blocks.length; ++b)
+        fold(out, prose, flowBlock(blocks[b], 0, ctx), streaming);
+    closeProse(out, prose);
+    return out;
+}
+
+// Finished texts by their flags and text, for a brick that is made again when
+// its row scrolls back into view. A text that grows is never kept here.
+var cache = new Map();
+var CACHE_LIMIT = 200;
+
+function finished(text, lineBreaks) {
+    var key = (lineBreaks ? "b" : "-") + text;
     var hit = cache.get(key);
     if (hit !== undefined) {
         cache.delete(key);
         cache.set(key, hit);
         return hit;
     }
-    var ctx = { refs: {}, lineBreaks: !!opts.lineBreaks, olDepth: 0, ulDepth: 0 };
-    var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
-    var blocks = parseBlocks(lines, ctx);
-    var result = [];
-    var prose = [];
-    var closeProse = function () {
-        if (prose.length === 0)
-            return;
-        var html = "";
-        for (var p = 0; p < prose.length; ++p)
-            html += standalone(prose[p], p === 0, p === prose.length - 1);
-        result.push(segment("prose", { html: html, top: prose[0].top, bottom: prose[prose.length - 1].bottom }));
-        prose = [];
-    };
-    var refs = JSON.stringify(ctx.refs);
-    for (var b = 0; b < blocks.length; ++b) {
-        var entries = flowTop(blocks[b], ctx, (opts.lineBreaks ? "b" : "-") + refs);
-        if (opts.streaming)
-            closeProse();
-        for (var e = 0; e < entries.length; ++e) {
-            var entry = entries[e];
-            if (entry.kind === "html") {
-                prose.push(entry);
-                continue;
-            }
-            closeProse();
-            result.push(segment(entry.kind, entry));
-        }
-    }
-    closeProse();
-    for (var s = 0; s < result.length; ++s)
-        result[s].gap = s === 0 ? 0 : Math.max(result[s - 1].bottom, result[s].top);
+    var result = read(text, lineBreaks, false);
     cache.set(key, result);
     if (cache.size > CACHE_LIMIT)
         cache.delete(cache.keys().next().value);
     return result;
 }
 
-function segment(kind, fields) {
+// A text that grows is read from its tail. Its top-level blocks settle from
+// the front: a settled block is one no later text can change, so its entries
+// are kept and the text before `cut` is never read again. Every call reads
+// the lines from `cut` on, renders the blocks among them that differ from the
+// last call, and settles those that now can. The result is what `read` makes
+// of the whole text.
+//
+// One thing reaches back over settled blocks: a link definition turns every
+// earlier `[label]` into a link. Each block remembers the labels it looked up,
+// and a definition that appears, changes or goes renders those blocks again.
+function following(lineBreaks) {
     return {
-        kind: kind,
-        html: fields.html || "",
-        code: fields.code || "",
-        language: fields.language || "",
-        title: fields.title || "",
-        open: !!fields.open,
-        indent: fields.indent || 0,
-        payload: fields.payload || "",
-        alert: fields.alert || "",
-        top: fields.top || 0,
-        bottom: fields.bottom || 0,
-        gap: 0,
+        lineBreaks: lineBreaks,
+        length: -1, // of the text as last read
+        cut: 0, // where the first unsettled block starts in the text
+        refs: new Map(), // every link definition
+        loose: new Map(), // the ones unsettled blocks made
+        blocks: [], // settled: { entries, labels, node } (the node only with labels)
+        users: new Map(), // label -> the settled blocks that looked it up, by index
+        tail: [], // unsettled, as last read: { src, entries, labels }
+        streaming: null, // how the segments are folded
+        segments: [],
+        folded: 0, // settled blocks in `segments`
+        settled: 0, // their segments
+        prose: [], // their last prose entries, which the next block may join
     };
+}
+
+// The lines of `raw`, the text from offset `base` on, as `read` splits them:
+// `starts` has each line's offset in the text, or -1 for a line a quote link
+// wrote out. Returns how many of them later text cannot change: all but the
+// last, which more text lengthens. (After a carriage return the text ends on,
+// the last line's offset may be the line feed of a CRLF; a tail read from
+// there starts with a blank line, which changes nothing.)
+function readLines(raw, base, lines, starts) {
+    var breaks = /\r\n?|\n/g;
+    var from = 0;
+    var fixed = 0;
+    var bare = false; // the line before ended on a carriage return alone
+    for (;;) {
+        var found = breaks.exec(raw);
+        var line = raw.slice(from, found === null ? raw.length : found.index);
+        var cited = withCitations(line);
+        if (cited === line) {
+            lines.push(expandTabs(line));
+            starts.push(base + from);
+        } else {
+            var written = cited.replace(/\r\n?/g, "\n").split("\n");
+            // That carriage return and the line feed a quote link starts
+            // with are one line break to `read`.
+            if (bare && cited[0] === "\n")
+                written.shift();
+            for (var w = 0; w < written.length; ++w) {
+                lines.push(expandTabs(written[w]));
+                starts.push(w === 0 ? base + from : -1);
+            }
+        }
+        if (found === null)
+            return fixed;
+        from = found.index + found[0].length;
+        fixed = lines.length;
+        bare = found[0] === "\r";
+    }
+}
+
+// Whether no later text can change a block parsed from `lines`, of which the
+// first `fixed` cannot change: every line `parseBlock` read to make it is one
+// of those.
+function settled(lines, fixed, parsed) {
+    var end = parsed.end;
+    if (parsed.closed)
+        return end <= fixed;
+    return end < fixed && (lines[end].indexOf("|") < 0 || end + 1 < fixed);
+}
+
+function uses(labels, changed) {
+    if (labels === null || changed.size === 0)
+        return false;
+    var found = false;
+    labels.forEach(function (label) {
+        found = found || changed.has(label);
+    });
+    return found;
+}
+
+// Renders a top-level block into `into`, noting the labels it looked up.
+function flow(into, block, ctx) {
+    ctx.used = new Set();
+    into.entries = flowBlock(block, 0, ctx);
+    into.labels = ctx.used.size > 0 ? ctx.used : null;
+    ctx.used = null;
+    ++tally.flowed;
+}
+
+function claim(users, labels, index) {
+    labels.forEach(function (label) {
+        if (!users.has(label))
+            users.set(label, new Set());
+        users.get(label).add(index);
+    });
+}
+
+// Reads `text` from `live.cut` on. Returns whether settled blocks were
+// rendered again.
+function readTail(live, text) {
+    var lines = [];
+    var starts = [];
+    var raw = text.slice(live.cut);
+    var fixed = readLines(raw, live.cut, lines, starts);
+    var refs = live.refs;
+    var before = live.loose;
+    before.forEach(function (url, label) {
+        refs.delete(label);
+    });
+    var ctx = context(live.lineBreaks, refs);
+    var parsed = [];
+    var i = 0;
+    while (i < lines.length) {
+        if (isBlank(lines[i])) {
+            ++i;
+            continue;
+        }
+        ctx.defined = [];
+        var next = parseBlock(lines, i, ctx);
+        next.start = i;
+        next.defined = ctx.defined;
+        parsed.push(next);
+        i = next.end;
+    }
+    ctx.defined = null;
+    tally.chars += raw.length;
+    tally.lines += lines.length;
+    tally.blocks += parsed.length;
+
+    // The labels defined otherwise than last time, and the settled blocks
+    // that looked them up.
+    var changed = new Set();
+    before.forEach(function (url, label) {
+        if (refs.get(label) !== url)
+            changed.add(label);
+    });
+    var c;
+    for (c = 0; c < parsed.length; ++c) {
+        parsed[c].defined.forEach(function (label) {
+            if (before.get(label) !== refs.get(label))
+                changed.add(label);
+        });
+    }
+    var stale = new Set();
+    changed.forEach(function (label) {
+        var users = live.users.get(label);
+        if (users !== undefined)
+            users.forEach(function (index) {
+                stale.add(index);
+            });
+    });
+    stale.forEach(function (index) {
+        var drawn = live.blocks[index];
+        flow(drawn, drawn.node, ctx);
+        if (drawn.labels !== null)
+            claim(live.users, drawn.labels, index);
+    });
+
+    // An unsettled block that reads as it did keeps its entries.
+    for (c = 0; c < parsed.length; ++c) {
+        var kept = live.tail[c];
+        next = parsed[c];
+        if (next.block === null) {
+            next.entries = [];
+            next.labels = null;
+        } else if (kept !== undefined && kept.src === next.block.src && !uses(kept.labels, changed)) {
+            next.entries = kept.entries;
+            next.labels = kept.labels;
+        } else {
+            flow(next, next.block, ctx);
+        }
+    }
+
+    // Blocks settle from the front, as far as the next one starts on a line
+    // of the text itself.
+    var count = 0;
+    while (count < parsed.length && settled(lines, fixed, parsed[count]))
+        ++count;
+    var cut = -1;
+    for (; count > 0; --count) {
+        cut = starts[count < parsed.length ? parsed[count].start : fixed];
+        if (cut >= 0)
+            break;
+    }
+    if (count > 0)
+        live.cut = cut;
+    live.tail = [];
+    live.loose = new Map();
+    for (c = 0; c < parsed.length; ++c) {
+        next = parsed[c];
+        if (c >= count) {
+            next.defined.forEach(function (label) {
+                live.loose.set(label, refs.get(label));
+            });
+            live.tail.push({ src: next.block !== null ? next.block.src : null, entries: next.entries, labels: next.labels });
+        } else if (next.block !== null) {
+            if (next.labels !== null)
+                claim(live.users, next.labels, live.blocks.length);
+            live.blocks.push({ entries: next.entries, labels: next.labels, node: next.labels !== null ? next.block : null });
+        }
+    }
+    return stale.size > 0;
+}
+
+// The segments of the text `state.live` follows, which has grown to `text` or
+// is to be folded another way. `state.stable` says how many of them, from the
+// first, are the ones the last call returned.
+function advance(state, text, streaming) {
+    var live = state.live;
+    var refold = live.streaming !== streaming;
+    var out = live.segments;
+    if (text.length !== live.length) {
+        refold = readTail(live, text) || refold;
+        live.length = text.length;
+    } else if (!refold) {
+        state.stable = out.length;
+        return out;
+    }
+    if (refold) {
+        live.streaming = streaming;
+        live.folded = 0;
+        live.settled = 0;
+        live.prose.length = 0;
+    }
+    out.length = live.settled;
+    state.stable = live.settled;
+    for (; live.folded < live.blocks.length; ++live.folded)
+        fold(out, live.prose, live.blocks[live.folded].entries, streaming);
+    // The next block starts a segment while streaming, so settled prose ends
+    // here; otherwise it stays open for the prose that follows.
+    if (streaming)
+        closeProse(out, live.prose);
+    live.settled = out.length;
+    var prose = live.prose.slice();
+    for (var t = 0; t < live.tail.length; ++t)
+        fold(out, prose, live.tail[t].entries, streaming);
+    closeProse(out, prose);
+    return out;
+}
+
+// What a brick keeps between calls of `segments`, so that a text which grows
+// is read from where it changed: the text it last gave, what `following` it
+// has made of it, and the finished segments it last got.
+function state() {
+    return { text: null, live: null, kept: null, stable: 0 };
+}
+
+// The segments of a reply, each { kind, html, code, language, title, open,
+// indent, gap, payload, alert }: `gap` is the space above it (the larger of the
+// two margins that meet, zero for the first). While streaming, every top-level
+// block is a segment of its own, so a delta re-lays out only the last block and
+// a new block never re-renders the ones before it; the finished reply merges
+// its prose so a selection can run across it.
+//
+// With a `state`, a text that streams, or that has grown since the last call,
+// costs what its unsettled tail costs and not what the text does. The array
+// returned is then the state's own and changes with the next call; its first
+// `state.stable` segments are the ones the last call returned.
+function segments(text, options, state) {
+    var opts = options || {};
+    var lineBreaks = !!opts.lineBreaks;
+    var streaming = !!opts.streaming;
+    if (!state)
+        return streaming ? read(text, lineBreaks, true) : finished(text, lineBreaks);
+    var before = state.text;
+    var grown = before !== null && text.length >= before.length && text.startsWith(before);
+    state.text = text;
+    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks))
+        state.live = null;
+    // A text is followed while it streams, and once it has grown.
+    if (state.live === null && (streaming || (grown && before.length > 0 && text.length > before.length)))
+        state.live = following(lineBreaks);
+    try {
+        if (state.live === null) {
+            var result = finished(text, lineBreaks);
+            state.stable = result === state.kept ? result.length : 0;
+            state.kept = result;
+            return result;
+        }
+        state.kept = null;
+        return advance(state, text, streaming);
+    } catch (error) {
+        // The brick shows the last segments still, and nothing here matches
+        // them any more: the next call starts over.
+        state.text = null;
+        state.live = null;
+        state.kept = null;
+        throw error;
+    }
 }
 
 // ---------------------------------------------------------------------------

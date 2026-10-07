@@ -236,6 +236,59 @@ Item {
             tryVerify(() => !visibleIn(findText(list.itemAtIndex(0), "$ bun test cart")), 2000, "the call closes");
         }
 
+        // A call that streams changes its own line; the calls beside it are
+        // not made again.
+        function test_streamedCallLeavesTheOthersAsTheyAre() {
+            const group = detail => root.row({
+                rowId: "work:2",
+                kind: "work",
+                expanded: true,
+                entries: [
+                    {
+                        id: "command:1",
+                        label: "Ran command",
+                        command: "bun test cart",
+                        detail: "12 passed",
+                        exitCode: 0
+                    },
+                    {
+                        id: "reasoning:1",
+                        type: "reasoning",
+                        label: "Thinking",
+                        detail: detail
+                    }
+                ]
+            });
+            rows.clear();
+            rows.append(group("The total"));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => allNamed(list.itemAtIndex(0), "workCall").length === 2);
+            const before = allNamed(list.itemAtIndex(0), "workCall");
+            // Laid out one under the other, so a tap lands on one of them.
+            tryVerify(() => before[1].parent.y > 0);
+            mouseClick(findText(list.itemAtIndex(0), "Thinking"));
+            tryVerify(() => visibleIn(findText(list.itemAtIndex(0), "The total")), 2000, "the thinking opens");
+
+            rows.set(0, group("The total needs a tax line"));
+            tryVerify(() => visibleIn(findText(list.itemAtIndex(0), "The total needs a tax line")), 2000, "the streamed text shows");
+            const after = allNamed(list.itemAtIndex(0), "workCall");
+            compare(after.length, 2);
+            verify(after[0] === before[0] && after[1] === before[1], "both lines are the ones that were there");
+            verify(list.itemAtIndex(0).openCalls["command:1"] !== true, "the command stays closed");
+        }
+
+        function allNamed(item, name, found) {
+            found = found ?? [];
+            if (!item)
+                return found;
+            if (item.objectName === name)
+                found.push(item);
+            for (let i = 0; i < item.children.length; ++i)
+                allNamed(item.children[i], name, found);
+            return found;
+        }
+
         function conversation() {
             actionRows.clear();
             actionRows.copiedRows = [];

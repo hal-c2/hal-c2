@@ -42,7 +42,7 @@ void World::start() {
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<ThreadStore>()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
-  m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")));
+  m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")), m_home.filePath(QStringLiteral("cache")));
   // The shell runs its own local MC, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
@@ -92,12 +92,22 @@ void World::closeWindow(NativeWindow* window) {
 }
 
 void World::restart() {
+  quit();
+  launch();
+}
+
+void World::quit() {
   brick.reset();
   m_windows.reset();
   m_theme.reset();
   m_native.reset();
   m_bridge.reset();
   brickActions.clear();
+  // The MC sees its client go.
+  waitFor([this] { return !mc.connected(); }, QStringLiteral("the MC to see the app quit"));
+}
+
+void World::launch() {
   start();
 }
 
@@ -158,6 +168,11 @@ void World::waitFor(const std::function<bool()>& condition, const QString& what)
 }
 
 void World::sync() {
+  // Nothing is on its way to an app that is closed.
+  if (!m_native) return;
+  // What the shell asked of its cache first: a thread is followed once its
+  // kept copy is read, so that subscription goes out before the barrier.
+  m_native->cache()->drain();
   bool done = false;
   m_native->client()->call(m_native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });

@@ -89,6 +89,48 @@ defmodule HalC2.ClusterTest do
     Process.exit(relay, :kill)
   end
 
+  test "a client on another MC is sent its view and its pages through its relay, in order",
+       %{b: b} do
+    alias HalC2.Streams
+
+    run = fn n -> {"run", "run-#{n}", %{"s" => %{"id" => "run-#{n}", "ordinal" => n}}} end
+
+    item = fn n ->
+      fields = %{"id" => "item-#{n}", "runId" => "run-#{n}", "ordinal" => n, "text" => ""}
+      {"turn-item", "item-#{n}", %{"s" => fields}}
+    end
+
+    changes = for n <- 1..2, change <- [run.(n), item.(n)], do: change
+    {:ok, seq} = Streams.commit("windowed-th", :thread, changes)
+
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    :ok = Streams.subscribe("windowed-th", subscriber, nil, %{window: {:items, 1}})
+
+    assert_receive {:hal_c2_stream, "windowed-th",
+                    {:snapshot, ^seq, _at, rows, :done, %{floor: 2, handle: handle}}},
+                   1_000
+
+    assert for({"turn-item", id, _} <- rows, do: id) == ["item-2"]
+    assert_receive {:hal_c2_stream, "windowed-th", {:live, ^seq, ^handle}}, 1_000
+
+    # A change and then a page, while the connection takes nothing: the page is the
+    # stream as of the change, so it must not overtake it.
+    %{relays: %{^subscriber => relay}} = :sys.get_state(Streams.ensure("windowed-th"))
+    true = :erlang.suspend_process(relay)
+    append = [{"turn-item", "item-2", %{"a" => %{"text" => "x"}}}]
+    {:ok, next} = Streams.commit("windowed-th", :thread, append)
+    :ok = Streams.more("windowed-th", subscriber, 1)
+    # The stream has taken both before the relay passes anything on.
+    %{subscribers: %{^subscriber => %{view: %{window: %{floor: nil}}}}} =
+      :sys.get_state(Streams.ensure("windowed-th"))
+
+    true = :erlang.resume_process(relay)
+    assert_receive {:hal_c2_stream, "windowed-th", first}, 1_000
+    assert {:events, [%{entity: "item-2"}], ^next} = first
+    assert_receive {:hal_c2_stream, "windowed-th", {:page, ^next, page, nil, :done}}, 1_000
+    assert for({"turn-item", id, _} <- page, do: id) == ["item-1"]
+  end
+
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
@@ -169,5 +211,77 @@ defmodule HalC2.ClusterTest do
     assert %{"mc" => ^b_name, "online" => false, "removed" => true} = removed
     refute Enum.any?(HalC2.Shell.rows(), &match?({{^b, _}, _}, &1))
     refute List.keymember?(HalC2.Shell.environments(), b, 0)
+  end
+
+  # A member this test can still reach while the two MCs are apart: its control
+  # connection is its standard io, not the cluster's.
+  defp member(dir) do
+    {:ok, peer, c} =
+      :peer.start_link(%{
+        name: :"hal_c2_peer#{System.unique_integer([:positive])}",
+        host: ~c"127.0.0.1",
+        longnames: true,
+        connection: :standard_io,
+        args: code_path_args() ++ [~c"-setcookie", ~c"#{Node.get_cookie()}"]
+      })
+
+    for {key, value} <- [start_mc: true, home: Path.join(dir, "c"), port: 0],
+        do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
+
+    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2])
+    {peer, c}
+  end
+
+  defp put_thread(peer, id, title) do
+    change = {"thread", id, %{"s" => %{"id" => id, "title" => title}}}
+    {:ok, _} = :peer.call(peer, HalC2.Streams, :commit, [id, :thread, [change]])
+    # Its row is put now, and the member's shell has taken it once it answers.
+    :ok = :peer.call(peer, HalC2.Streams, :flush_shell, [id])
+    {_epoch, _rev} = :peer.call(peer, HalC2.Shell, :version, [])
+  end
+
+  # The rows of `mc` this MC's clients are told of until `id` is among them, as
+  # `{rows, version}` per message.
+  defp rows_until(mc, id, acc \\ []) do
+    assert_receive {:hal_c2_shell, {:rows, ^mc, rows, version}}, 5_000
+    acc = [{rows, version} | acc]
+    if List.keymember?(rows, id, 0), do: Enum.reverse(acc), else: rows_until(mc, id, acc)
+  end
+
+  test "a member that comes back sends only the rows that changed while it was away",
+       %{tmp_dir: dir} do
+    {peer, c} = member(dir)
+    HalC2.Shell.subscribe(self(), %{})
+    true = Node.connect(c)
+    put_thread(peer, "th-1", "One")
+    put_thread(peer, "th-2", "Two")
+    rows_until(c, "th-2")
+
+    true = Node.disconnect(c)
+    assert_receive {:hal_c2_shell, {:mc, ^c, :down}}, 5_000
+    put_thread(peer, "th-2", "Renamed")
+    true = Node.connect(c)
+
+    sent = rows_until(c, "th-2")
+    assert Enum.all?(sent, fn {_rows, version} -> version.reset == false end)
+    assert [{"th-2", {"thread", %{"title" => "Renamed"}}}] = Enum.flat_map(sent, &elem(&1, 0))
+  end
+
+  test "a member whose shell started again sends its rows whole", %{tmp_dir: dir} do
+    {peer, c} = member(dir)
+    HalC2.Shell.subscribe(self(), %{})
+    true = Node.connect(c)
+    put_thread(peer, "th-1", "One")
+    put_thread(peer, "th-2", "Two")
+    [{_, %{epoch: epoch}} | _] = rows_until(c, "th-2")
+
+    shell = :peer.call(peer, Process, :whereis, [HalC2.Shell])
+    true = :peer.call(peer, Process, :exit, [shell, :kill])
+
+    # What this MC held of it counted another run's changes: all of it is replaced.
+    {rows, version} = List.last(rows_until(c, "th-2"))
+    assert version.reset
+    assert version.epoch != epoch
+    assert for({id, {"thread", _}} <- rows, do: id) |> Enum.sort() == ~w(th-1 th-2)
   end
 end

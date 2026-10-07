@@ -24,6 +24,11 @@
 // answers (or refuses, or holds until told to answer). Any other call is
 // answered with null unless a domain handles it.
 //
+// The shell's rows carry versions as the MC's do (lib/hal_c2/shell.ex): each
+// MC's rows are at [`epoch`, rev], and a `sub` whose `have` names the version
+// the client was last told is answered with the rows changed since, any other
+// with all of them, marked `reset`.
+//
 // A domain's fake lives with its steps: an Extension registers its RPC and
 // shape handlers on every new MC, and keeps its state in a part:
 //
@@ -51,6 +56,8 @@ public:
   // `id` is the subscription's; the shape is live until unsubscribed, forgotten
   // or the connection drops.
   using ShapeHandler = std::function<void(int id, const QJsonObject& shape)>;
+  // A client frame the MC itself does not read (`more`).
+  using FrameHandler = std::function<void(const QJsonObject& frame)>;
 
   // A `POST` to the MC's HTTP API: `respond(status, body)` answers it.
   using HttpHandler = std::function<void(const QJsonObject& body, std::function<void(int status, const QJsonObject& answer)> respond)>;
@@ -67,6 +74,7 @@ public:
   // call); an exact match wins.
   void onRpc(const QString& method, RpcHandler handler);
   void onShape(const QString& type, ShapeHandler handler);
+  void onFrame(const QString& type, FrameHandler handler) { m_frames.insert(type, std::move(handler)); }
   // Hands a call an exact handler does not take to its namespace's handler,
   // when two domains fake one method for different callers.
   void passOn(const Rpc& rpc);
@@ -80,6 +88,8 @@ public:
   void onRaw(const QString& prefix, RawHandler handler) { m_rawHandlers.insert(prefix, std::move(handler)); }
 
   void send(const QJsonObject& frame);
+  // Whether a client's socket is open: a frame sent now reaches it.
+  bool connected() const { return m_socket && m_socket->state() == QAbstractSocket::ConnectedState; }
   // Whether the call came on the connection still open.
   bool current(const Rpc& rpc) const { return rpc.socket == m_socket; }
   void reply(const Rpc& rpc, const QJsonValue& result);
@@ -116,6 +126,13 @@ public:
   QList<QUrl> connections;
   // Every `sub` frame, in order.
   QList<QJsonObject> subscriptions;
+  // Every `shell` frame it answered one with, in order.
+  QList<QJsonObject> shellFrames;
+  // Names this run of the MC's shell: after a restart (another epoch) what a
+  // client holds of its rows is of no use.
+  QString epoch = QStringLiteral("epoch-1");
+  // False for an MC from before rows had versions: its frames carry none.
+  bool versioned = true;
   QList<QJsonObject> commands;
   // The environment each of `commands` was sent to ("" for the MC's own).
   QStringList commandEnvironments;
@@ -174,9 +191,9 @@ public:
   // (`shell.mc` with `removed`).
   void remove(const QString& environment);
 
-  void drop() {
-    if (m_socket) m_socket->close();
-  }
+  // Closes the client's connection: from here on it is sent nothing and
+  // nothing it says is read, whatever the socket still does on its way out.
+  void drop();
   void stopAccepting() { m_tcp.close(); }
   void startAccepting() { m_tcp.listen(QHostAddress::LocalHost, m_port); }
 
@@ -188,6 +205,10 @@ private:
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
   QJsonObject peerEnvironment(const QString& environment) const;
+  // The MC's rows as they are now, by id: [id, kind, row].
+  QMap<QString, QJsonArray> rowsOf(const QString& mc) const;
+  // One MC of a `shell` frame, and its rows the client lacks appended to `rows`.
+  QJsonObject shellMc(const QString& mc, bool online, const QJsonObject& environment, QJsonArray& rows);
   // The member a request is for, when its MC is down.
   bool down(const QString& environment, const QString& mc) const;
 
@@ -199,6 +220,15 @@ private:
   quint16 m_port = 0;
   QPointer<QWebSocket> m_socket;
   int m_shellSubscription = -1;
+  // The `have` of the shell subscription being answered.
+  QJsonObject m_have;
+  // What the client was last told of each MC's rows, and the rev that made.
+  struct Told {
+    int rev = 0;
+    QMap<QString, QJsonArray> rows;
+  };
+  QHash<QString, Told> m_told;
+  QHash<QString, FrameHandler> m_frames;
   QMap<int, QJsonObject> m_live;
   QHash<QString, RpcHandler> m_rpc;
   QHash<QString, ShapeHandler> m_shapes;

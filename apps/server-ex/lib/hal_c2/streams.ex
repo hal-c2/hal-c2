@@ -26,11 +26,13 @@ defmodule HalC2.Streams do
   @doc "The stream's server, started if needed."
   @spec ensure(String.t()) :: pid
   def ensure(stream_id) do
-    case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{pid, _}] ->
-        pid
-
-      [] ->
+    # The registry forgets a stream a moment after it stops: one found there that
+    # has stopped is started again, as one not found is.
+    with [{pid, _}] <- Registry.lookup(HalC2.Streams.Registry, stream_id),
+         true <- Process.alive?(pid) do
+      pid
+    else
+      _ ->
         case DynamicSupervisor.start_child(HalC2.Streams.Supervisor, {Server, stream_id}) do
           {:ok, pid} -> pid
           {:error, {:already_started, pid}} -> pid
@@ -40,9 +42,18 @@ defmodule HalC2.Streams do
 
   @doc """
   Subscribes `pid` to a stream. Delivers either the full state or, when `offset` is
-  recent enough, only the events after it; see `HalC2.Streams.Server.subscribe/3`.
+  recent enough, only the events after it; see `HalC2.Streams.Server`.
   """
   defdelegate subscribe(stream_id, pid, offset), to: Server
+
+  @doc "Subscribes `pid` for a client, which is sent only what its view of the stream lacks."
+  defdelegate subscribe(stream_id, pid, offset, client), to: Server
+
+  @doc "Tells `pid` whenever the stream changes, without sending it the stream."
+  defdelegate watch(stream_id, pid), to: Server
+
+  @doc "See `HalC2.Streams.Server.more/3`."
+  defdelegate more(stream_id, pid, items), to: Server
   defdelegate unsubscribe(stream_id, pid), to: Server
 
   @doc "See `HalC2.Streams.Server.transact/3`."

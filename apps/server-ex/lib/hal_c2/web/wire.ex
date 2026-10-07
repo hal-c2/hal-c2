@@ -6,11 +6,16 @@ defmodule HalC2.Web.Wire do
   (`WireProjection.ts`). A failed command keeps the fact that it failed. Subagent
   text and dynamic tool values past their limits are cut or summarized.
 
-  Events carry patches, not entities, so a turn item's type is learned from the
-  snapshot and from the patch that creates it (`types`), and later patches are
-  trimmed by it.
+  Events carry patches, not entities, so a patch is trimmed by the type of the turn
+  item it changes, which the stream that owns the item knows.
+
+  Trimming happens on the MC that owns the thread (`HalC2.Streams.Server`), once for
+  all of a stream's clients and before anything crosses to another MC. `version/0`
+  is part of a stream's handle, so a client that kept a thread trimmed by other
+  rules starts over.
   """
 
+  @version 1
   @max_detail 32_768
   @max_dynamic 16_384
   @dropped %{
@@ -18,30 +23,25 @@ defmodule HalC2.Web.Wire do
     "file_change" => ~w(diffStr oldStr newStr)
   }
 
+  @doc "Changes whenever what `entity/2` or `patch/3` leave out does."
+  def version, do: @version
+
   @doc "A snapshot row's entity, trimmed."
   def entity("turn-item", item), do: turn_item(item)
   def entity("context-handoff", handoff), do: handoff(handoff)
   def entity(_kind, entity), do: entity
 
-  @doc "The turn item types in snapshot rows (`[kind, id, entity]`), by item id."
-  def types(rows, types \\ %{}) do
-    for [kind, id, %{"type" => type}] <- rows, kind == "turn-item", into: types, do: {id, type}
-  end
-
   @doc """
-  An event's patch, trimmed: `{patch | nil, types}`, nil when nothing the client
-  would use is left.
+  An event's patch, trimmed, or nil when nothing the client would use is left.
+  `type` is the turn item's type when the patch is to one.
   """
-  def patch("turn-item", id, patch, types) do
-    type = get_in(patch, ["s", "type"]) || types[id]
-    types = if type, do: Map.put(types, id, type), else: types
-    {turn_item_patch(type, patch) |> nonempty(), types}
-  end
+  def patch("turn-item", patch, type),
+    do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch) |> nonempty()
 
-  def patch("context-handoff", _id, patch, types),
-    do: {patch |> drop(~w(history delivery)) |> set("summaryText", "") |> nonempty(), types}
+  def patch("context-handoff", patch, _type),
+    do: patch |> drop(~w(history delivery)) |> set("summaryText", "") |> nonempty()
 
-  def patch(_kind, _id, patch, types), do: {patch, types}
+  def patch(_kind, patch, _type), do: patch
 
   # --- turn items ----------------------------------------------------------------
 

@@ -8,8 +8,8 @@
 #     updateSettings writes the whole settings document back)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 4 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
-#   environment form), 39 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
+#   Counts: 5 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
+#   environment form), 40 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   carries neither providerInstall nor relayClientInstall.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   mc/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
@@ -33,9 +33,10 @@ Feature: Protocol 3 wire parity
     When the client sends a <frame> frame with <fields>
     Then the MC answers with <answer>
 
-    Examples: 4 client frames
+    Examples: 5 client frames
       | frame | fields                                    | answer                                      |
       | sub   | id, shape, offset (a number or null)      | the shape's first frames under that id      |
+      | more  | id, items                                 | a page under that id                        |
       | unsub | id                                        | nothing further under that id               |
       | ping  | none                                      | a pong                                      |
       | rpc   | id, environment, method, optional payload | an rpc.result or an rpc.error under that id |
@@ -114,20 +115,21 @@ Feature: Protocol 3 wire parity
     When <when>
     Then the client receives a <frame> frame carrying <fields>
 
-    Examples: 31 socket, stream, config and MC frames
+    Examples: 32 socket, stream, config and MC frames
       | frame                    | when                                                   | fields                                                        |
       | hello                    | the socket opens                                       | protocol, mc, environment                                     |
       | pong                     | the client pings                                       | nothing else                                                  |
       | error                    | a frame or subscription is refused                     | reason, and the id when there is one                          |
       | rpc.result               | a method succeeds                                      | id, result                                                    |
       | rpc.error                | a method fails                                         | id, error, and the contract error as detail when there is one |
-      | shell                    | the shell subscription opens                           | id, MCs with online and environment, rows                     |
-      | shell.rows               | projects or threads on one MC change                   | id, mc, rows                                                  |
+      | shell                    | the shell subscription opens                           | id, MCs with online, environment and version, rows            |
+      | shell.rows               | projects or threads on one MC change                   | id, mc, rows, the version they bring the MC to                |
       | shell.environment        | an MC's environment descriptor changes                 | id, mc, environment                                           |
       | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, and removed once it is no longer a member     |
-      | snapshot                 | a stream subscription starts or falls too far behind   | id, offset, at, part, rows in creation order, done            |
+      | snapshot                 | a stream subscription starts without a usable offset   | id, offset, at, part, rows in creation order, done, handle    |
       | events                   | stream entities change                                 | id, offset, events as seq, kind, id, patch and unix ms at     |
-      | live                     | a stream has caught up                                 | id, offset                                                    |
+      | live                     | a stream has caught up                                 | id, offset, handle                                            |
+      | page                     | a client asks for the runs before its window           | id, offset, rows, floor, done                                 |
       | resync                   | a client falls behind                                  | id, the offset to resubscribe from                            |
       | end                      | a shape is over                                        | id                                                            |
       | config                   | a config subscription opens                            | id, mc, the MC's server config                                |

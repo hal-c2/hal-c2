@@ -142,6 +142,11 @@ bool NativeWindow::handle(const QString& action, const QVariant& payload) {
                      [&](NativeController* handler) { return handler->handle(action, payload); });
 }
 
+void NativeWindow::preview() {
+  for (const NativeControllerEntry& entry : m_controllers) entry.native->preview();
+  m_sidebar.preview();
+}
+
 void NativeWindow::activate() {
   for (const NativeControllerEntry& entry : m_controllers) entry.native->activate();
   m_sidebar.activate();
@@ -169,6 +174,7 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     m_shared.push_back({registration.name, std::move(object), native, registration.qmlName});
   }
   m_windows.push_back(std::make_unique<NativeWindow>(this, NativeWindow::kMain, bridge));
+  m_store.setCache(&m_cache);
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
 }
 
@@ -196,6 +202,8 @@ NativeWindow* NativeShell::window(const QString& id) const {
 void NativeShell::open(const QUrl& origin, const QString& token) {
   m_sharedBridge->setMcOrigin(origin);
   for (const auto& window : m_windows) window->bridge()->setMcOrigin(origin);
+  // What the cache kept of this MC shows while the socket opens.
+  m_store.open(origin);
   m_client.open(origin, token);
 }
 
@@ -212,7 +220,11 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
   m_windows.push_back(std::make_unique<NativeWindow>(this, windowId, raw, std::move(bridge)));
   NativeWindow* window = m_windows.back().get();
   if (!m_stateDir.isEmpty()) window->setStoreDirs(windowDir(windowId));
-  if (m_active) activate(window);
+  if (m_active) {
+    activate(window);
+  } else if (m_store.previewing()) {
+    window->preview();
+  }
   saveWindows();
   emit windowOpened(window);
   return window;
@@ -242,8 +254,9 @@ void NativeShell::closeWindow(const QString& id) {
   window->deleteLater();
 }
 
-void NativeShell::setStoreDirs(const QString& state, const QString& data) {
+void NativeShell::setStoreDirs(const QString& state, const QString& data, const QString& cache) {
   m_stateDir = state;
+  m_cache.open(cache);
   const QStringList saved = savedWindows();
   if (!saved.isEmpty()) main()->m_id = saved.first();
   main()->setStoreDirs(windowDir(main()->id()));
@@ -253,6 +266,9 @@ void NativeShell::setStoreDirs(const QString& state, const QString& data) {
   if (auto* composer = controller<ComposerController>()) {
     composer->setStorePath(QDir(data).filePath(QStringLiteral("shell-composer.json")));
   }
+  // With the route and drafts read: what was kept of the MC last used shows
+  // while the host is still finding or starting it.
+  m_store.showKept();
 }
 
 void NativeShell::restoreWindows() {
@@ -315,7 +331,13 @@ void NativeShell::registerQmlSingletons() {
 }
 
 void NativeShell::update() {
-  if (m_active || !m_store.synchronized()) return;
+  if (m_active) return;
+  if (!m_store.synchronized()) {
+    if (m_store.previewing()) {
+      for (const auto& window : m_windows) window->preview();
+    }
+    return;
+  }
   m_active = true;
   for (const NativeControllerEntry& entry : m_shared) entry.native->activate();
   for (const auto& window : m_windows) activate(window.get());

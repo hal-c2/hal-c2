@@ -37,6 +37,11 @@ public:
   // Once the shell has its MC's first snapshot. Called again when the
   // sidebar changes hands, so it must be idempotent.
   virtual void activate() = 0;
+  // The sidebar came from the cache and the MC has not answered yet: what a
+  // controller can show of it, it shows. Nothing is decided on cached rows
+  // and nothing is asked of the MC for them; activate() follows once the
+  // MC's own rows land. May be called more than once.
+  virtual void preview() {}
   // The ShellBridge interceptor: true when the action was handled here.
   // Controllers see actions in name order; claim disjoint ones.
   virtual bool handle(const QString& action, const QVariant& payload) = 0;

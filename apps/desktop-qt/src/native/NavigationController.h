@@ -62,6 +62,8 @@ public:
   NavigationController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
+  // Shows the thread the window was left on while the sidebar is the cache's.
+  void preview() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   const Route& route() const { return m_route; }
@@ -105,6 +107,7 @@ private:
   QList<Route> m_forwardStack;
   QString m_storePath;
   bool m_active = false;
+  bool m_previewing = false;
   // The setting the last search result opened, until the route moves on.
   QString m_target;
   int m_targetSeq = 0;

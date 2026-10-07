@@ -170,6 +170,14 @@ Feature: The thread list
     Given the client was disconnected while two threads were created
     When the client reconnects
     Then both threads are listed without reloading the whole list
+    And the MC sent only the two new threads
+
+  @desktop @mobile @backlog-mobile
+  Scenario: The list starts over when its MC restarted
+    Given the client was disconnected while its MC restarted and lost a thread
+    When the client reconnects
+    Then the MC sent its whole list
+    And the lost thread is no longer listed
 
   @desktop @mobile @backlog-mobile
   Scenario: Threads on an offline environment are still listed
