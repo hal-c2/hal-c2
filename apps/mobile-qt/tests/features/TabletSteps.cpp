@@ -14,6 +14,7 @@
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "Phone.h"
+#include "ShellBridge.h"
 #include "TerminalController.h"
 #include "World.h"
 
@@ -264,6 +265,20 @@ const Steps steps([] {
     world.item(S("workspace"));
     expect(world.find(S("terminalToggle")) == nullptr, S("the header offers a terminal"));
     expect(!world.native().controller<TerminalController>()->available(), S("the thread has a place for terminals"));
+  });
+
+  // What a project action's key and its header button both dispatch.
+  step(S("the user asks for a project action"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(S("workspace.runScript"), QVariantMap{{S("scriptId"), S("test")}});
+    world.sync();
+  });
+
+  step(S("the user is told a screen this small has no terminal for it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return show(world.state(S("toasts"))).contains(S("No terminal on a screen this small")); },
+                  [&] { return S("the notice; the toasts are %1").arg(show(world.state(S("toasts")))); });
+    for (const FakeMc::Rpc& call : std::as_const(world.mc.calls)) {
+      expect(!call.method.startsWith(QLatin1String("terminal.")), S("the environment was asked for %1").arg(call.method));
+    }
   });
 
   step(S("the terminal's key does nothing"), [](World& world, const Captures&, const Table&) {

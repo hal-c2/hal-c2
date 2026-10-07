@@ -958,6 +958,12 @@ bool TerminalController::runScript(const QString& scriptId) {
     toast(QStringLiteral("This build of HAL-C2 has no terminal"), QStringLiteral("Project actions run in one. Run it from HAL-C2 on a computer."));
     return false;
   }
+  // A layout with no place for a terminal (the phone's): the action's key is
+  // not taken without a word.
+  if (!m_drawn) {
+    toast(QStringLiteral("No terminal on a screen this small"), QStringLiteral("Project actions run in one. Run it from a wider window or another device."));
+    return false;
+  }
   if (!m_active || !m_place) return false;
   QJsonObject script;
   for (const QJsonValue& value : std::as_const(m_place->scripts)) {

@@ -141,6 +141,13 @@ Feature: Tablet layout and hardware keyboards
     And the user is in the thread "Tax line"
     Then the terminal's key does nothing
 
+  @mobile
+  Scenario: A project action on a phone says why it does not run
+    Given a hardware keyboard is attached to a phone
+    And the user is in the thread "Tax line"
+    When the user asks for a project action
+    Then the user is told a screen this small has no terminal for it
+
   # The Android package lets every device rotate, as Android asks of apps on large screens;
   # nothing holds a phone in portrait.
   @backlog @mobile
