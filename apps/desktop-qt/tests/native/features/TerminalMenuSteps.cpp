@@ -169,6 +169,18 @@ const Steps steps([] {
                   [&] { return QStringLiteral("\"%1\" to be written; the MC got %2").arg(kClipboard, describeTerminalCalls(world)); });
   });
 
+  step(QStringLiteral("the user presses %1 in the terminal").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* terminal = drawnTerminal(world);
+    terminal->forceActiveFocus();
+    world.waitFor([&] { return terminal->hasActiveFocus(); }, QStringLiteral("the terminal to take the keyboard"));
+    QTest::keyClick(&world.brick->window(), c[0] == QLatin1String("Ctrl+C") ? Qt::Key_C : Qt::Key_V, Qt::ControlModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the shell receives Ctrl-C"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return terminalWrites(world, QStringLiteral("term-1")).contains(QStringLiteral("\x03")); },
+                  [&] { return QStringLiteral("Ctrl-C to be written; the MC got %1").arg(describeTerminalCalls(world)); });
+  });
+
   step(QStringLiteral("the user clears the terminal from the keyboard"), [](World& world, const Captures&, const Table&) {
     // A shell answers Ctrl-L by clearing the screen and drawing its prompt.
     world.mc.part<FakeTerminals>().replies.insert(QStringLiteral("\x0c"), QStringLiteral("\x1b[H\x1b[2J$ "));

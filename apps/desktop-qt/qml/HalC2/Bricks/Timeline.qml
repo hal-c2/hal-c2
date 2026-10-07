@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/changedFilesTree.js" as ChangedFilesTree
 
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
@@ -86,6 +87,25 @@ Item {
         const next = Object.assign({}, root.fullMessages);
         next[rowId] = full;
         root.fullMessages = next;
+    }
+    // Which folders of a reply's changed files are open, by row: `all`, and
+    // the folders opened or closed one by one since. Closed until opened.
+    // Folders are kept without a prototype so one named "constructor" or
+    // "__proto__" is a folder like any other.
+    property var changedFolders: ({})
+    function foldersOf(rowId) {
+        return root.changedFolders[rowId] ?? { all: false, folders: Object.create(null) };
+    }
+    function setFolders(rowId, all, folders) {
+        const next = Object.assign({}, root.changedFolders);
+        next[rowId] = { all: all, folders: folders };
+        root.changedFolders = next;
+    }
+    function toggleFolder(rowId, path) {
+        const open = root.foldersOf(rowId);
+        const folders = Object.assign(Object.create(null), open.folders);
+        folders[path] = !(folders[path] ?? open.all);
+        root.setFolders(rowId, open.all, folders);
     }
     // The user cited a selection of a reply: an AssistantCitation's selector
     // {text, start, end, prefix, suffix}.
@@ -229,6 +249,7 @@ Item {
         color: button.hovered ? root.hoverColor : "transparent"
         Accessible.role: Accessible.Button
         Accessible.name: button.tip
+        Accessible.onPressAction: button.clicked()
         ShellIcon {
             anchors.centerIn: parent
             name: button.icon
@@ -762,6 +783,8 @@ Item {
                     Item {
                         id: changedFiles
                         readonly property var changed: root.list(row.files)
+                        readonly property var open: root.foldersOf(row.rowId)
+                        readonly property bool nested: ChangedFilesTree.hasFolders(changed)
                         visible: changed.length > 0
                         width: parent.width - 8
                         height: filesCard.y + filesCard.height
@@ -804,6 +827,16 @@ Item {
                                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                         }
+                                    }
+                                    IconButton {
+                                        objectName: "changedFoldersToggle"
+                                        visible: changedFiles.nested
+                                        anchors.right: openDiff.left
+                                        anchors.rightMargin: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        icon: changedFiles.open.all ? "chevrons-down-up" : "chevrons-up-down"
+                                        tip: changedFiles.open.all ? qsTr("Collapse all folders") : qsTr("Expand all folders")
+                                        onClicked: root.setFolders(row.rowId, !changedFiles.open.all, Object.create(null))
                                     }
                                     // The turn's whole diff.
                                     Rectangle {
@@ -854,20 +887,41 @@ Item {
                                     width: parent.width - 16
                                     bottomPadding: 8
                                     Repeater {
-                                        model: changedFiles.changed
+                                        model: ChangedFilesTree.rows(changedFiles.changed, changedFiles.open.all, changedFiles.open.folders)
                                         delegate: Rectangle {
                                             id: changedFile
                                             required property var modelData
-                                            objectName: "changedFile"
+                                            readonly property bool folder: modelData.kind === "directory"
+                                            objectName: folder ? "changedFolder" : "changedFile"
                                             width: parent.width
                                             height: 28
                                             radius: 6
                                             color: changedFileHover.hovered ? Qt.alpha(root.hoverColor, 0.6) : "transparent"
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: modelData.path
+                                            Accessible.onPressAction: changedFile.activate()
+                                            function activate() {
+                                                if (changedFile.folder)
+                                                    root.toggleFolder(row.rowId, changedFile.modelData.path);
+                                                else
+                                                    root.fileActivated(changedFile.modelData.path, "diff", row.rowId);
+                                            }
+                                            ShellIcon {
+                                                id: folderChevron
+                                                visible: changedFile.folder
+                                                x: 8 + changedFile.modelData.depth * 14
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                name: "chevron-right"
+                                                size: 14
+                                                rotation: changedFile.modelData.expanded ? 90 : 0
+                                                color: Qt.alpha(root.mutedColor, 0.7)
+                                            }
                                             ShellIcon {
                                                 id: fileIcon
-                                                x: 8
+                                                // A file sits under its folder's name, past the chevron.
+                                                x: folderChevron.x + (changedFiles.nested ? 22 : 0)
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                name: "file"
+                                                name: !changedFile.folder ? "file" : changedFile.modelData.expanded ? "folder" : "folder-closed"
                                                 size: 14
                                                 color: Qt.alpha(root.mutedColor, 0.7)
                                             }
@@ -875,10 +929,10 @@ Item {
                                                 x: fileIcon.x + 22
                                                 width: Math.max(0, fileStat.x - x - 8)
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                text: changedFile.modelData.path
-                                                color: changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
+                                                text: changedFile.modelData.name
+                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : Qt.alpha(root.mutedColor, 0.9)) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Math.round((changedFile.folder ? 11 : 12) * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
                                                 elide: Text.ElideMiddle
                                             }
@@ -906,7 +960,7 @@ Item {
                                                 cursorShape: Qt.PointingHandCursor
                                             }
                                             TapHandler {
-                                                onTapped: root.fileActivated(changedFile.modelData.path, "diff", row.rowId)
+                                                onTapped: changedFile.activate()
                                             }
                                         }
                                     }

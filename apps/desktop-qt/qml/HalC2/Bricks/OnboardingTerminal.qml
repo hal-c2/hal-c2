@@ -32,6 +32,7 @@ Rectangle {
         foregroundColor: Theme.palette.color("text", "#e4e4e7")
         cursorColor: foregroundColor
         selectionColor: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.35)
+        Keys.onPressed: event => menu.keyPressed(event)
         onInput: data => {
             if (root.session)
                 root.session.write(data);
