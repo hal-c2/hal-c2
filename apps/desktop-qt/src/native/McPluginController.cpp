@@ -148,9 +148,9 @@ void McPluginController::fetch(const QString& environment, const QJsonObject& en
   if (id.isEmpty() || revision.isEmpty()) return;
   const QString key = environment + QLatin1Char('/') + id;
   Files& files = m_files[key];
+  // What failed stays failed until the plugin starts, stops or changes version,
+  // so the list's other news does not take a failed page back to loading.
   if (files.revision != revision || files.runs != runs) files = Files{revision, runs, {}, {}, {}};
-  // What failed is asked again on news: the plugin may run now.
-  files.errors.clear();
   for (const QString& path : filesOf(entry)) {
     if (files.urls.contains(path) || files.errors.contains(path) || files.pending.contains(path)) continue;
     const QString local = cachePath(environment, id, revision, runs, path);
