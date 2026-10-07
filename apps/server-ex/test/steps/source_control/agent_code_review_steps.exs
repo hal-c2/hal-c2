@@ -406,6 +406,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     put_in(context, [:heads, number], head)
   end
 
+  step "the head of \#{int} has a REVIEW.md that is not UTF-8 text", %{args: [number]} = context do
+    text = "not UTF-8 text\n" <> <<0xFF, 0xFE>>
+    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
+    put_in(context, [:heads, number], head)
+  end
+
   step "the agent's prompt does not include {string}", %{args: [text]} = context do
     prompt = prompt(context.thread)
     refute prompt =~ text, prompt

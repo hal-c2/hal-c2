@@ -140,6 +140,7 @@ Feature: Agent code review
         | is                                          | text                  |
         | links to a file outside its repository      | outside the checkout  |
         | is longer than a prompt takes               | a very long REVIEW.md |
+        | is not UTF-8 text                           | not UTF-8 text        |
 
     @mc
     Scenario: The prompt template can be reset to the plugin's default
