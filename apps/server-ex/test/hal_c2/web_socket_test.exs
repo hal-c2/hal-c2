@@ -60,6 +60,113 @@ defmodule HalC2.Web.SocketTest do
              WsClient.recv(client, 1_000)
   end
 
+  # A socket following the shell, held with `:sys.suspend/1` while `messages` queue up
+  # behind each other as they do when it falls behind. Returns every frame it then
+  # sends for them.
+  defp shell_frames(port, messages) do
+    subscribers = fn -> for {pid, _} <- :ets.tab2list(HalC2.Shell.Subscribers), do: pid end
+    before = subscribers.()
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => %{"type" => "shell"}})
+
+    {%{"t" => "shell"}, client} = WsClient.recv(client, 1_000)
+    [socket] = subscribers.() -- before
+
+    :ok = :sys.suspend(socket)
+    for message <- messages, do: send(socket, {:hal_c2_shell, message})
+    :ok = :sys.resume(socket)
+
+    # The ping goes after the first frame, so it lands behind the socket's own flush.
+    {first, client} = WsClient.recv(client, 1_000)
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {%{"t" => "pong"}, frames, _client} = WsClient.recv_until(client, &(&1["t"] == "pong"))
+    [first | frames]
+  end
+
+  defp rows(rev, rows, epoch \\ "e1", reset? \\ false),
+    do: {:rows, node(), rows, %{epoch: epoch, rev: rev, reset: reset?}}
+
+  defp row(id, title), do: {id, {"thread", %{"title" => title}}}
+
+  test "a burst of row changes is one frame per MC, the latest row winning", %{port: port} do
+    frames =
+      shell_frames(port, [
+        rows(1, [row("th-2", "Second")]),
+        rows(2, [row("th-1", "First"), row("th-3", "Third")]),
+        rows(3, [row("th-2", "Renamed")])
+      ])
+
+    me = Atom.to_string(node())
+
+    assert [
+             %{
+               "t" => "shell.rows",
+               "id" => 1,
+               "mc" => ^me,
+               "epoch" => "e1",
+               "rev" => 3,
+               "reset" => false,
+               "rows" => [
+                 ["th-1", "thread", %{"title" => "First"}],
+                 ["th-2", "thread", %{"title" => "Renamed"}],
+                 ["th-3", "thread", %{"title" => "Third"}]
+               ]
+             }
+           ] = frames
+  end
+
+  test "a reset drops the rows before it, and rows after it keep the frame a reset", %{
+    port: port
+  } do
+    frames =
+      shell_frames(port, [
+        rows(4, [row("th-1", "Before")]),
+        rows(0, [row("th-2", "Whole")], "e2", true),
+        rows(1, [row("th-3", "After"), row("th-2", "Changed")], "e2")
+      ])
+
+    assert [
+             %{
+               "t" => "shell.rows",
+               "epoch" => "e2",
+               "rev" => 1,
+               "reset" => true,
+               "rows" => [
+                 ["th-2", "thread", %{"title" => "Changed"}],
+                 ["th-3", "thread", %{"title" => "After"}]
+               ]
+             }
+           ] = frames
+  end
+
+  test "a reset with no rows still goes out", %{port: port} do
+    assert [%{"t" => "shell.rows", "reset" => true, "rows" => []}] =
+             shell_frames(port, [rows(0, [], "e2", true)])
+  end
+
+  test "other shell messages do not overtake the rows sent before them", %{port: port} do
+    environment = %{"environmentId" => "env-1"}
+
+    frames =
+      shell_frames(port, [
+        rows(1, [row("th-1", "One")]),
+        {:environment, node(), environment},
+        rows(2, [row("th-1", "Two")]),
+        {:mc, node(), :down},
+        rows(3, [row("th-1", "Three")])
+      ])
+
+    assert [
+             %{"t" => "shell.rows", "rev" => 1, "rows" => [[_, _, %{"title" => "One"}]]},
+             %{"t" => "shell.environment", "environment" => ^environment},
+             %{"t" => "shell.rows", "rev" => 2, "rows" => [[_, _, %{"title" => "Two"}]]},
+             %{"t" => "shell.mc", "online" => false},
+             %{"t" => "shell.rows", "rev" => 3, "rows" => [[_, _, %{"title" => "Three"}]]}
+           ] = frames
+  end
+
   test "a stream snapshot, then live tokens, then a resume that merges what was missed", %{
     port: port
   } do
