@@ -27,6 +27,7 @@ defmodule HalC2.Terminal do
   @default_rows 30
   @output_ms 8
   @persist_ms 500
+  @stop_ms 5_000
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
@@ -90,7 +91,7 @@ defmodule HalC2.Terminal do
         terminal_id -> List.wrap(lookup(thread_id, terminal_id))
       end
 
-    Enum.each(pids, &call(&1, {:close, delete}))
+    Enum.each(pids, &close_and_wait(&1, delete))
 
     # Scrollback of terminals that are not running is on disk only.
     if delete do
@@ -99,6 +100,19 @@ defmodule HalC2.Terminal do
     end
 
     {:ok, nil}
+  end
+
+  # Returns once the terminal is gone and unregistered, so a `terminal.open` that
+  # follows starts a new one instead of finding the closing one.
+  defp close_and_wait(pid, delete) do
+    ref = Process.monitor(pid)
+    call(pid, {:close, delete})
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @stop_ms -> Process.demonitor(ref, [:flush])
+    end
   end
 
   @doc "Writes the scrollback of a thread's running terminals to disk now."
@@ -316,6 +330,9 @@ defmodule HalC2.Terminal do
   end
 
   def handle_call({:attach, input, subscriber}, _from, state) do
+    # The snapshot holds the pending batch already; sending it later would repeat it.
+    state = flush_output(state)
+
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
         (state.os_pid == nil and input["cwd"] != nil and input["restartIfNotRunning"] == true)
@@ -348,6 +365,8 @@ defmodule HalC2.Terminal do
     do: {:reply, {:ok, nil}, resize_to(state, cols, rows)}
 
   def handle_call(:clear, _from, state) do
+    # Output printed before the clear must reach the clients before "cleared".
+    state = flush_output(state)
     state = %{state | history: History.clear(state.history)} |> schedule_persist()
     {:reply, {:ok, nil}, emit(state, %{"type" => "cleared"})}
   end
@@ -446,6 +465,12 @@ defmodule HalC2.Terminal do
 
   def handle_info(:output, state), do: {:noreply, flush_output(state)}
 
+  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
+  def handle_info(:report, state) do
+    Hub.upsert(summary(state), self())
+    {:noreply, state}
+  end
+
   def handle_info(:persist, state) do
     persist(state)
     {:noreply, %{state | persist_timer: nil}}
@@ -471,6 +496,9 @@ defmodule HalC2.Terminal do
 
   @impl true
   def terminate(_reason, state) do
+    # Unregister here: the registry drops a dead process's key only afterwards, and
+    # until then a lookup finds the terminal that is already closing.
+    Registry.unregister(@registry, {state.thread_id, state.terminal_id})
     stop_shell(state)
     if state.persist_timer, do: persist(state)
     :ok
@@ -555,7 +583,11 @@ defmodule HalC2.Terminal do
 
       shell ->
         case :exec.run(shell, options) do
-          {:ok, _pid, os_pid} ->
+          {:ok, exec_pid, os_pid} ->
+            # `:exec.run_link` would drop the DOWN message. Linked, the shell is killed
+            # with the terminal even when `terminate/2` never runs (a killed terminal).
+            Process.link(exec_pid)
+
             state = %{
               state
               | status: "running",
@@ -597,8 +629,20 @@ defmodule HalC2.Terminal do
 
   defp stop_shell(%{os_pid: nil} = state), do: state
 
+  # `:exec.stop` only signals the shell; the monitor's DOWN says it is gone (SIGKILL
+  # follows the SIGTERM after `kill_timeout`), so a close or restart that returns has
+  # freed the OS process.
   defp stop_shell(state) do
-    :exec.stop(state.os_pid)
+    os_pid = state.os_pid
+
+    if :exec.stop(os_pid) == :ok do
+      receive do
+        {:DOWN, ^os_pid, :process, _pid, _reason} -> :ok
+      after
+        @stop_ms -> :ok
+      end
+    end
+
     %{flush_output(state) | os_pid: nil}
   end
 
