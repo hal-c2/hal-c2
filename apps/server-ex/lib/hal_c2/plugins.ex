@@ -14,7 +14,8 @@ defmodule HalC2.Plugins do
   The directory is compiled at boot and on `plugins.rescan`; a file or package that
   changed is compiled again, and one whose new code does not load keeps the old
   code running with the failure reported. A file with no plugin module is skipped
-  with a warning.
+  with a warning. A package's code is compiled only once the user let it run: one
+  that is off or waits for consent is compiled when it is started.
 
   A plugin is off until the user enables it. What is enabled, and each plugin's
   settings, live in the MC's settings document under `plugins.<id>`
@@ -566,7 +567,15 @@ defmodule HalC2.Plugins do
 
           plugin = %{plugin | failed: false, denied: if(enabled, do: [], else: plugin.denied)}
           state = put_in(state.plugins[id], plugin) |> reconcile() |> push()
-          {:reply, {:ok, entry(state.plugins[id])}, state}
+
+          # A package compiles when it is first enabled, and may not.
+          case state.plugins[id] do
+            %{problem: {:load, message}} when enabled ->
+              {:reply, {:error, %{"_tag" => "PluginUnavailable", "message" => message}}, state}
+
+            plugin ->
+              {:reply, {:ok, entry(plugin)}, state}
+          end
         end
     end
   end
@@ -781,13 +790,15 @@ defmodule HalC2.Plugins do
       |> Path.wildcard()
       |> Enum.flat_map(&load(&1, previous[&1] || []))
 
-    packages = Enum.flat_map(Package.dirs(state.dir), &load_package(&1, previous[&1] || []))
-    loaded = files ++ packages
-
     # A bundled plugin stands in unless a file replaces it (an update), which then
     # counts as that bundled plugin: on by default, and run as the core knows it.
     bundled = Enum.map(HalC2.Plugins.Bundled.modules(), &bundled/1)
     ids = MapSet.new(bundled, & &1.id)
+
+    packages =
+      Enum.flat_map(Package.dirs(state.dir), &load_package(&1, previous[&1] || [], ids))
+
+    loaded = files ++ packages
     loaded = Enum.map(loaded, &%{&1 | bundled: MapSet.member?(ids, &1.id)})
     loaded = loaded ++ Enum.reject(bundled, fn b -> Enum.any?(loaded, &(&1.id == b.id)) end)
 
@@ -855,8 +866,10 @@ defmodule HalC2.Plugins do
   end
 
   # A package's manifest, then its `mc/` sources, compiled in name order to at most
-  # one plugin module; a package without sources is UI parts only.
-  defp load_package(dir, previous) do
+  # one plugin module; a package without sources is UI parts only. Compiling runs
+  # the package's code, so a package compiles only once the user let it run: one
+  # that is off or waits for consent compiles when it starts (`start/2`).
+  defp load_package(dir, previous, bundled) do
     id = Path.basename(dir)
 
     case {Package.read(dir), previous} do
@@ -869,30 +882,37 @@ defmodule HalC2.Plugins do
       {{:ok, _, _, hash}, _} ->
         copy = stage(id, dir)
 
-        with {:ok, manifest, sources, hash} <- Package.read(copy),
-             {:ok, modules} <- compile_all(sources),
-             {:ok, module, kinds} <- package_module(modules) |> unload_unless_ok(modules) do
-          [
-            %{
+        case Package.read(copy) do
+          {:ok, manifest, sources, hash} ->
+            plugin = %{
               blank(id, dir, hash)
-              | module: module,
-                kinds: kinds,
-                manifest: manifest,
-                binaries: modules,
+              | manifest: manifest,
+                sources: sources,
                 package: dir,
                 files: copy,
+                bundled: MapSet.member?(bundled, id),
                 problem: api_problem(manifest.api_version)
             }
-          ]
-        else
-          error ->
+
+            if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
+
+          {:error, message, hash} ->
             File.rm_rf(Path.dirname(copy))
-            message = elem(error, 1)
             failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
         failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+    end
+  end
+
+  # The package compiled; when it does not, `failed/3` keeps the version that ran.
+  defp compile_package(plugin, previous) do
+    with {:ok, modules} <- compile_all(plugin.sources),
+         {:ok, module, kinds} <- package_module(modules) |> unload_unless_ok(modules) do
+      [%{plugin | module: module, kinds: kinds, binaries: modules, sources: []}]
+    else
+      {:error, message} -> failed(previous, message, fn -> %{plugin | sources: []} end)
     end
   end
 
@@ -1072,6 +1092,8 @@ defmodule HalC2.Plugins do
       # loaded from and serves files from.
       package: nil,
       files: nil,
+      # The package's `mc/` sources while they wait to be compiled.
+      sources: [],
       # The permissions host calls were refused for, since it was last enabled.
       denied: []
     }
@@ -1146,6 +1168,13 @@ defmodule HalC2.Plugins do
     for {key, _} <- :ets.tab2list(@providers), key not in keys, do: :ets.delete(@providers, key)
     :ets.insert(@providers, rows)
     state
+  end
+
+  defp start(state, %{sources: [_ | _]} = plugin) do
+    case compile_package(plugin, []) do
+      [%{problem: nil} = compiled] -> start(put_in(state.plugins[plugin.id], compiled), compiled)
+      [failed] -> put_in(state.plugins[plugin.id], failed)
+    end
   end
 
   defp start(state, plugin) do
@@ -1362,7 +1391,7 @@ defmodule HalC2.Plugins do
       "icon" => package["icon"],
       "screenshots" => package["screenshots"] || [],
       "contributes" => package["contributes"] || %{},
-      "runsCode" => plugin.module != nil and not plugin.bundled,
+      "runsCode" => (plugin.module != nil or plugin.sources != []) and not plugin.bundled,
       "denied" => plugin.denied,
       "revision" => revision(plugin),
       "enabled" => enabled,

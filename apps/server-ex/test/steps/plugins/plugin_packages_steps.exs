@@ -78,7 +78,8 @@ defmodule HalC2.Steps.Plugins.Packages do
   @doc """
   Writes package `id` and rescans. `opts`: `manifest` (merged over the default),
   `json` (the manifest's raw text), `mc: false` for UI parts only, `raise` (a call
-  that raises), `dir` (the directory name, default `id`).
+  that raises), `mark` (a file its code writes when it is compiled), `dir` (the
+  directory name, default `id`).
   """
   def install(context, id, opts \\ []) do
     dir = dir(context, opts[:dir] || id)
@@ -132,6 +133,7 @@ defmodule HalC2.Steps.Plugins.Packages do
       alias HalC2.Plugins.Host
 
       @id #{inspect(id)}
+      #{if mark = opts[:mark], do: "File.write!(#{inspect(mark)}, \"compiled\")"}
 
       @impl true
       def call(method, _input, _context) when method == #{inspect(raising)},
@@ -755,7 +757,26 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   end
 
   step "{string} is marked as running code with the MC's own access", %{args: [id]} = context do
-    assert %{"id" => ^id, "runsCode" => true, "kinds" => ["extension"]} = context.plugin_entry
+    assert %{"id" => ^id, "runsCode" => true} = context.plugin_entry
+    context
+  end
+
+  step "the plugins directory contains the package {string} whose MC code leaves a mark when it is compiled",
+       %{args: [id]} = context do
+    mark = Path.join(context.mc.home, "#{id}-compiled")
+    context |> Packages.install(id, mark: mark) |> Map.put(:mark, mark)
+  end
+
+  step "{string} has left no mark", %{args: [id]} = context do
+    assert %{"status" => "disabled", "runsCode" => true} = Fixtures.entry(id)
+    refute File.exists?(context.mark)
+    context
+  end
+
+  step "{string} leaves its mark once the user enables it accepting its permissions",
+       %{args: [id]} = context do
+    context = enable(context, id)
+    assert File.read!(context.mark) == "compiled"
     context
   end
 

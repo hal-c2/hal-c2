@@ -193,6 +193,13 @@ Feature: Plugin packages
       When the user lists the plugins
       Then "code-review" is marked as running code with the MC's own access
 
+    @mc
+    Scenario: A package's MC code does not run until the user enables it
+      Given the plugins directory contains the package "eager" whose MC code leaves a mark when it is compiled
+      When the MC starts
+      Then "eager" has left no mark
+      And "eager" leaves its mark once the user enables it accepting its permissions
+
   Rule: A running plugin talks to its own UI
 
     @mc
