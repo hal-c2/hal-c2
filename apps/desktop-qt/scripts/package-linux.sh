@@ -68,13 +68,21 @@ for entry in "${plugins}"/*; do
 done
 cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
 # Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
-# A qmake that fails fails the wrapper too.
-cat > "${wrapper}" <<QMAKE
+# A qmake that fails fails the wrapper too. The paths reach it through the
+# environment and are compared as strings, so no path character means anything.
+cat > "${wrapper}" <<'QMAKE'
 #!/bin/sh
-out="\$("${qmake}" "\$@")" || exit \$?
-printf '%s\n' "\$out" | sed -e "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|" -e "s|^${plugins}\\\$|${view}|"
+out="$("${HAL_C2_QMAKE}" "$@")" || exit $?
+printf '%s\n' "${out}" | while IFS= read -r line; do
+  case "${line}" in
+    QT_INSTALL_PLUGINS:*) line="QT_INSTALL_PLUGINS:${HAL_C2_QT_PLUGIN_VIEW}" ;;
+    "${HAL_C2_QT_PLUGINS}") line="${HAL_C2_QT_PLUGIN_VIEW}" ;;
+  esac
+  printf '%s\n' "${line}"
+done
 QMAKE
 chmod +x "${wrapper}"
+export HAL_C2_QMAKE="${qmake}" HAL_C2_QT_PLUGINS="${plugins}" HAL_C2_QT_PLUGIN_VIEW="${view}"
 export QMAKE="${wrapper}"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
