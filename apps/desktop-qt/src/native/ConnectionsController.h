@@ -11,6 +11,7 @@
 
 class McClient;
 class ShellBridge;
+class ShellStore;
 
 // The Connections settings page, which the shell owns: who may reach this MC
 // (`HalC2.Auth`: pairing links and paired clients, live through the
@@ -18,8 +19,16 @@ class ShellBridge;
 // Cluster page (ClusterController).
 // Publishes `connections`:
 //   {access: {pairingLinks, clients} | null, accessError, busy, notice,
-//    created: {id, label, url, code, expiresAt} | null, revealed (the clipboard
-//    refused the link, which is shown to copy by hand)}
+//    machines: [{id, label}] (the cluster's machines that are online, a pairing
+//    link can be for any of them; the shell's own MC first),
+//    created: {id, label, url, code, expiresAt, environmentId, machine (its
+//    label), elsewhere (not the shell's own MC: its link is not in `access`),
+//    localOnly (only that machine can open the link), qr: {modules, path} |
+//    null (the link as a QR code, qr::path; none for a local-only link)} | null,
+//    revealed (the clipboard refused the link, which is shown to copy by hand)}
+// `connections.pairingLink.create {label, scopes, environmentId, tailscale}`
+// asks the machine named (the shell's own MC when none is) for the link, over
+// Tailscale Serve when asked; the MC answers with the address it is reached at.
 // The page shows while the route is the settings section
 // "/settings/connections" (NavigationController takes connections.open and
 // connections.close). Managing access needs an administrative session; the
@@ -28,7 +37,7 @@ class ConnectionsController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ConnectionsController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
+  ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -42,7 +51,10 @@ private:
   void onAccess(const QJsonObject& frame);
   void publishAccess();
   void createPairingLink(const QVariantMap& input);
-  void change(const QString& method, const QJsonObject& payload,
+  // Reads the machines a pairing link can be for; true when they changed.
+  bool readMachines();
+  // Calls `method` on the MC of `environmentId`.
+  void change(const QString& environmentId, const QString& method, const QJsonObject& payload,
               std::function<void(const QJsonObject& result)> done, const QString& failure);
   void setNotice(const QString& kind, const QString& text);
   void set(const QString& field, const QVariant& value);
@@ -50,6 +62,7 @@ private:
 
   ShellBridge* m_bridge;
   McClient* m_client;
+  ShellStore* m_store;
   QVariantMap m_state;
   // The access list as the MC last described it, while the page is open.
   QJsonArray m_pairingLinks;

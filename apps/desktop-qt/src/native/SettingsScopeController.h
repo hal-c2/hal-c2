@@ -77,6 +77,9 @@ public:
   QString projectOn(const QString& environmentId) const { return m_members.value(environmentId); }
   // Whether a project of the environment is in the scope.
   bool covers(const QString& environmentId, const QString& projectId) const;
+  // Every environment of the cluster, whatever the scope: the shell's own
+  // first, the others by name.
+  QStringList listed() const;
   bool online(const QString& environmentId) const;
   std::optional<QJsonObject> settings(const QString& environmentId) const { return m_documents->settings(environmentId); }
   // A target's providers (ServerConfig providers), as its config frames last said.
@@ -101,7 +104,6 @@ private:
     QHash<QString, QString> members;
   };
   Resolved resolve() const;
-  QStringList listed() const;
   void update();
   void publish();
 

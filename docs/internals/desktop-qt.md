@@ -789,7 +789,15 @@ documents the shape and actions:
   `hal-c2.*` access RPCs, which need `access:read`/`access:write`, so a
   session paired with standard scopes sees one explanation in place of the
   list. A created pairing link's secret lives only in `created` until the
-  section closes. Other machines are the Cluster section's, which the page
+  section closes. The link's address is the one the MC answers with
+  (`hal-c2.createPairingLink`, `HalC2.Web.address/1`), never the origin this
+  client connected at: the call is routed to whichever online member the user
+  picks, and only that member knows where it is reached. The access list and
+  client revocation stay the connected MC's (the MC refuses them across
+  members), so a link made on another member is revoked from `created`, and a
+  device paired there is not listed here. `created.qr` is the link as a QR
+  code (`qr::path`), left out when the MC says only its own machine can open
+  the address. Other machines are the Cluster section's, which the page
   leads to. With more than one machine the page also has the load-balancing
   group (`LoadBalancingController`, `loadBalancing`): its switch and each
   machine's preference are in the connected MC's settings document, because
