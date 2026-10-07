@@ -21,6 +21,36 @@ defmodule HalC2.Plugins.Package do
   }
 
   @setting_types ~w(text longText secret boolean number choice list object)
+
+  # The shape of what the MC and its clients read from a manifest, after
+  # `PluginManifest`: `:text` is a non-empty string, `{:map, required, optional}` an
+  # object with those keys. An optional key that is absent or null is left out.
+  @contributes {:map, %{},
+                %{
+                  "pages" =>
+                    {:list,
+                     {:map, %{"id" => :text, "title" => :text, "qml" => :text},
+                      %{"icon" => :text}}},
+                  "threadKinds" =>
+                    {:list,
+                     {:map, %{"kind" => :text, "label" => :text},
+                      %{"rowMark" => :text, "header" => :text}}},
+                  "slots" =>
+                    {:list, {:map, %{"slot" => :text, "qml" => :text}, %{"order" => :int}}},
+                  "settingsPage" => :text
+                }}
+  @shape {:map, %{},
+          %{
+            "author" => {:map, %{"name" => :text}, %{"url" => :text}},
+            "homepage" => :text,
+            "license" => :text,
+            "icon" => :text,
+            "screenshots" => {:list, {:map, %{"path" => :text}, %{"caption" => :string}}},
+            "permissions" => {:list, {:map, %{"id" => :text, "reason" => :text}, %{}}},
+            "settings" =>
+              {:list, {:map, %{"key" => :text}, %{"label" => :text, "description" => :string}}},
+            "contributes" => @contributes
+          }}
   @text ~w(.qml .js .mjs .json .md .txt .svg .css)
 
   @doc "A permission's label as the consent shows it."
@@ -128,6 +158,9 @@ defmodule HalC2.Plugins.Package do
       not is_integer(json["apiVersion"]) ->
         {:error, "plugin.json has no apiVersion."}
 
+      problem = misshapen(json, @shape, nil) ->
+        {:error, "plugin.json does not fit its schema: #{problem}."}
+
       unknown = Enum.find(list(json["permissions"]), &(not Map.has_key?(@permissions, &1["id"]))) ->
         {:error, "plugin.json asks for the unknown permission #{inspect(unknown["id"])}."}
 
@@ -146,6 +179,35 @@ defmodule HalC2.Plugins.Package do
         :ok
     end
   end
+
+  # Where `value` does not have `shape`, as "<where> must be <what>", or nil.
+  defp misshapen(value, {:map, required, optional}, at) when is_map(value) do
+    Enum.find_value(required, fn {key, shape} ->
+      if value[key] == nil,
+        do: "#{under(at, key)} is missing",
+        else: misshapen(value[key], shape, under(at, key))
+    end) ||
+      Enum.find_value(optional, fn {key, shape} ->
+        if value[key] != nil, do: misshapen(value[key], shape, under(at, key))
+      end)
+  end
+
+  defp misshapen(value, {:list, shape}, at) when is_list(value) do
+    value
+    |> Enum.with_index()
+    |> Enum.find_value(fn {item, i} -> misshapen(item, shape, "#{at}[#{i}]") end)
+  end
+
+  defp misshapen(value, :text, _at) when is_binary(value) and value != "", do: nil
+  defp misshapen(value, :string, _at) when is_binary(value), do: nil
+  defp misshapen(value, :int, _at) when is_integer(value), do: nil
+  defp misshapen(_value, {:map, _, _}, at), do: "#{at} must be an object"
+  defp misshapen(_value, {:list, _}, at), do: "#{at} must be a list"
+  defp misshapen(_value, :int, at), do: "#{at} must be a whole number"
+  defp misshapen(_value, _text, at), do: "#{at} must be text"
+
+  defp under(nil, key), do: key
+  defp under(at, key), do: "#{at}.#{key}"
 
   defp text?(value), do: is_binary(value) and value != ""
   defp list(value) when is_list(value), do: Enum.filter(value, &is_map/1)

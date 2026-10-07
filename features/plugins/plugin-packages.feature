@@ -54,6 +54,21 @@ Feature: Plugin packages
       | a choice whose default is not one of its options |
 
   @mc
+  Scenario Outline: A package whose manifest has a part of the wrong shape is listed with the reason
+    Given the plugins directory contains the package "broken" whose manifest has "<part>"
+    When the MC starts
+    Then "broken" is listed with an error naming "<where>"
+    And the MC is ready
+
+    Examples:
+      | part                             | where                      |
+      | screenshots that are an object   | screenshots                |
+      | a page without a title           | contributes.pages[0].title |
+      | an author that is only a name    | author                     |
+      | a setting that is not an object  | settings[0]                |
+      | a permission without a reason    | permissions[0].reason      |
+
+  @mc
   Scenario: A package that needs a newer plugin API asks for an MC update
     Given the plugins directory contains the package "future" built for a newer plugin API
     When the user tries to enable "future"

@@ -264,6 +264,27 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     Packages.install(context, id, manifest: %{"settings" => [host_choice("forgejo")]})
   end
 
+  step "the plugins directory contains the package {string} whose manifest has {string}",
+       %{args: [id, part]} = context do
+    wrong = %{
+      "screenshots that are an object" => %{"screenshots" => %{"x" => 1}},
+      "a page without a title" => %{
+        "contributes" => %{"pages" => [%{"id" => "reviews", "qml" => "ui/Reviews.qml"}]}
+      },
+      "an author that is only a name" => %{"author" => "HAL-C2"},
+      "a setting that is not an object" => %{"settings" => ["host"]},
+      "a permission without a reason" => %{"permissions" => [%{"id" => "projects:read"}]}
+    }
+
+    Packages.install(context, id, manifest: Map.fetch!(wrong, part))
+  end
+
+  step "{string} is listed with an error naming {string}", %{args: [id, where]} = context do
+    assert %{"status" => "error", "error" => error} = Fixtures.entry(id)
+    assert error =~ "plugin.json does not fit its schema: #{where} "
+    context
+  end
+
   step "{string} is listed with an error naming its setting", %{args: [id]} = context do
     assert %{"status" => "error", "error" => error} = Fixtures.entry(id)
     assert error =~ "setting"
