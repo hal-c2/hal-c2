@@ -879,7 +879,7 @@ defmodule HalC2.Plugins do
       {{:error, _, hash}, [%{hash: hash} | _]} ->
         previous
 
-      {{:ok, _, _, hash}, _} ->
+      {{:ok, _, _, _}, _} ->
         copy = stage(id, dir)
 
         case Package.read(copy) do
