@@ -42,27 +42,48 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 # The app opens SQLite and no other database, but linuxdeploy's Qt plugin bundles
 # every SQL driver of the Qt it finds and stops at the first whose client library is
 # not installed. A Qt from its installer ships Mimer's, ODBC's, PostgreSQL's and
-# MySQL's. They are set aside while it runs and put back when this script ends. A Qt
-# whose drivers cannot be moved (a distribution's, which installs each on its own) is
-# left as it is.
+# MySQL's, and a distribution's may have Firebird's. So the plugin is shown the Qt
+# through a qmake that names a plugin directory with the same contents apart from
+# the SQL drivers, of which it holds SQLite's alone. The Qt itself is left as it is.
 qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
-drivers=""
-if [ -n "${qmake}" ]; then
-  drivers="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)/sqldrivers"
+if [ -z "${qmake}" ]; then
+  echo "error: no qmake6 or qmake on the PATH; set QMAKE to the Qt's" >&2
+  exit 1
 fi
-set_aside="${build_dir}/sqldrivers-set-aside"
-restore_drivers() {
-  [ -d "${set_aside}" ] || return 0
-  find "${set_aside}" -name '*.so' -exec mv {} "${drivers}/" \;
-  rmdir "${set_aside}"
-}
-trap restore_drivers EXIT
-# What a run that was cut short left behind.
-restore_drivers
-if [ -d "${drivers}" ] && [ -w "${drivers}" ]; then
-  mkdir -p "${set_aside}"
-  find "${drivers}" -maxdepth 1 -name '*.so' ! -name 'libqsqlite.so' -exec mv {} "${set_aside}/" \;
+plugins="$("${qmake}" -query QT_INSTALL_PLUGINS)"
+drivers="${plugins}/sqldrivers"
+# Loaded at run time, so nothing else notices it missing: the app would start and
+# fail to open its cache.
+if [ ! -f "${drivers}/libqsqlite.so" ]; then
+  echo "error: ${drivers} has no libqsqlite.so; install the Qt's SQLite driver" >&2
+  exit 1
 fi
+# Absolute: the plugin runs qmake from where it likes.
+wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
+view="$(cd "${build_dir}" && pwd)/qt-plugins"
+rm -rf "${view}"
+mkdir -p "${view}/sqldrivers"
+for entry in "${plugins}"/*; do
+  [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
+done
+cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
+# Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
+# A qmake that fails fails the wrapper too. The paths reach it through the
+# environment and are compared as strings, so no path character means anything.
+cat > "${wrapper}" <<'QMAKE'
+#!/bin/sh
+out="$("${HAL_C2_QMAKE}" "$@")" || exit $?
+printf '%s\n' "${out}" | while IFS= read -r line; do
+  case "${line}" in
+    QT_INSTALL_PLUGINS:*) line="QT_INSTALL_PLUGINS:${HAL_C2_QT_PLUGIN_VIEW}" ;;
+    "${HAL_C2_QT_PLUGINS}") line="${HAL_C2_QT_PLUGIN_VIEW}" ;;
+  esac
+  printf '%s\n' "${line}"
+done
+QMAKE
+chmod +x "${wrapper}"
+export HAL_C2_QMAKE="${qmake}" HAL_C2_QT_PLUGINS="${plugins}" HAL_C2_QT_PLUGIN_VIEW="${view}"
+export QMAKE="${wrapper}"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
