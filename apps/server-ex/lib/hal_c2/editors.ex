@@ -2,7 +2,8 @@ defmodule HalC2.Editors do
   @moduledoc """
   Editors this host can open a workspace in (`availableEditors`), and opening one
   (`shell.openInEditor`). The ids and launch styles mirror `EDITORS` in
-  `packages/contracts/src/editor.ts`.
+  `packages/contracts/src/editor.ts`. The list only says how each editor takes a line;
+  whatever the user set as their default text editor is offered too, as `default`.
   """
 
   # {id, commands, base args, how a `path:line:column` target is passed}
@@ -29,12 +30,13 @@ defmodule HalC2.Editors do
     {"webstorm", ["webstorm"], [], :line_column}
   ]
 
-  @doc "The ids of the editors installed here, the file manager last."
+  @doc "The ids of the editors installed here: the host's default first, the file manager last."
   def available do
     installed =
       for {id, commands, _, _} <- @editors, Enum.any?(commands, &System.find_executable/1), do: id
 
-    if file_manager(), do: installed ++ ["file-manager"], else: installed
+    if(default_editor(), do: ["default"], else: []) ++
+      installed ++ if(file_manager(), do: ["file-manager"], else: [])
   end
 
   @doc "Opens `cwd` (optionally `path:line[:column]`) in an editor, without waiting for it."
@@ -49,6 +51,17 @@ defmodule HalC2.Editors do
 
       {command, _} ->
         launch(command, [target])
+    end
+  end
+
+  # The default editor is handed a path alone: there is no common way to say a line.
+  def open(%{"cwd" => target, "editor" => "default"}) do
+    case default_editor() do
+      nil ->
+        {:error, %{"_tag" => "ExternalLauncherUnsupportedEditorError", "editor" => "default"}}
+
+      {command, args} ->
+        launch(command, args ++ [Regex.replace(~r/:\d+(?::\d+)?$/, target, "")])
     end
   end
 
@@ -82,6 +95,44 @@ defmodule HalC2.Editors do
     end
   end
 
+  # How to launch the user's default text editor, or nil without one. On Linux that is the
+  # desktop entry `xdg-mime` names for text/plain, run through `gio launch`, which also
+  # opens a terminal for terminal editors such as Neovim.
+  defp default_editor do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:unix, :darwin} ->
+        {"open", ["-t"]}
+
+      {:win32, _} ->
+        nil
+
+      _ ->
+        with true <- display?(),
+             xdg_mime when xdg_mime != nil <- System.find_executable("xdg-mime"),
+             gio when gio != nil <- System.find_executable("gio"),
+             {id, 0} <- System.cmd(xdg_mime, ["query", "default", "text/plain"]),
+             entry when entry != nil <- desktop_entry(String.trim(id)) do
+          {gio, ["launch", entry]}
+        else
+          _ -> nil
+        end
+    end
+  end
+
+  # The file of desktop entry `id`, searched for as the XDG base directory spec says.
+  defp desktop_entry(""), do: nil
+
+  defp desktop_entry(id) do
+    home = System.get_env("XDG_DATA_HOME") || Path.join(System.user_home!(), ".local/share")
+    dirs = System.get_env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share"
+
+    [home | String.split(dirs, ":", trim: true)]
+    |> Enum.map(&Path.join([&1, "applications", id]))
+    |> Enum.find(&File.regular?/1)
+  end
+
+  defp display?, do: (System.get_env("DISPLAY") || System.get_env("WAYLAND_DISPLAY")) != nil
+
   # `config :hal_c2, os_type:` stands in for `:os.type()` in tests.
   defp file_manager do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
@@ -92,9 +143,7 @@ defmodule HalC2.Editors do
         "explorer"
 
       _ ->
-        if (System.get_env("DISPLAY") || System.get_env("WAYLAND_DISPLAY")) &&
-             System.find_executable("xdg-open"),
-           do: "xdg-open"
+        if display?() && System.find_executable("xdg-open"), do: "xdg-open"
     end
   end
 
