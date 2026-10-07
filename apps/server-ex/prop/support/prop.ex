@@ -21,7 +21,13 @@ defmodule HalC2.Prop do
   Every file a service writes lands there, never in a real HAL-C2 home.
   """
   def scratch_home(name) do
-    dir = Path.expand("../../tmp/prop/#{name}-#{System.unique_integer([:positive])}", __DIR__)
+    # The OS pid keeps two runs in one checkout out of each other's homes.
+    dir =
+      Path.expand(
+        "../../tmp/prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}",
+        __DIR__
+      )
+
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     Application.put_env(:hal_c2, :home, dir)
