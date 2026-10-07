@@ -42,29 +42,16 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 # The app opens SQLite and no other database, but linuxdeploy's Qt plugin bundles
 # every SQL driver of the Qt it finds and stops at the first whose client library is
 # not installed. A Qt from its installer ships Mimer's, ODBC's, PostgreSQL's and
-# MySQL's, and a distribution's may have Firebird's. In a Qt this user can write to
-# they are set aside while it runs and put back when this script ends. Any other Qt
-# (a distribution's) is shown to the plugin through a qmake that names a plugin
-# directory with the same contents, apart from the SQL drivers.
+# MySQL's, and a distribution's may have Firebird's. So the plugin is shown the Qt
+# through a qmake that names a plugin directory with the same contents apart from
+# the SQL drivers, of which it holds SQLite's alone. The Qt itself is left as it is.
 qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
 plugins=""
 if [ -n "${qmake}" ]; then
   plugins="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
 fi
 drivers="${plugins}/sqldrivers"
-set_aside="${build_dir}/sqldrivers-set-aside"
-restore_drivers() {
-  [ -d "${set_aside}" ] || return 0
-  find "${set_aside}" -name '*.so' -exec mv {} "${drivers}/" \;
-  rmdir "${set_aside}"
-}
-trap restore_drivers EXIT
-# What a run that was cut short left behind.
-restore_drivers
-if [ -d "${drivers}" ] && [ -w "${drivers}" ]; then
-  mkdir -p "${set_aside}"
-  find "${drivers}" -maxdepth 1 -name '*.so' ! -name 'libqsqlite.so' -exec mv {} "${set_aside}/" \;
-elif [ -d "${drivers}" ]; then
+if [ -d "${drivers}" ]; then
   # Absolute: the plugin runs qmake from where it likes.
   wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
   view="$(cd "${build_dir}" && pwd)/qt-plugins"
@@ -74,9 +61,10 @@ elif [ -d "${drivers}" ]; then
     [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
   done
   cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
+  # Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
   cat > "${wrapper}" <<QMAKE
 #!/bin/sh
-"${qmake}" "\$@" | sed "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|"
+"${qmake}" "\$@" | sed -e "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|" -e "s|^${plugins}\\\$|${view}|"
 QMAKE
   chmod +x "${wrapper}"
   export QMAKE="${wrapper}"
