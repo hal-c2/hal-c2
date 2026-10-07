@@ -116,11 +116,16 @@ defmodule HalC2.ThreadMovePropTest do
             [
               {3, {:call, __MODULE__, :release, [state.held, :go]}},
               {2, {:call, __MODULE__, :release, [state.held, :crash]}},
-              {1, {:call, __MODULE__, :rename, [state.held.t, state.held.from, title()]}},
               {1, {:call, __MODULE__, :move, [state.held.t, state.held.from, oneof(@mcs)]}}
             ] ++
+              if(forwarded?(state.held),
+                do: [],
+                else: [
+                  {1, {:call, __MODULE__, :rename, [state.held.t, state.held.from, title()]}}
+                ]
+              ) ++
               if(state.held.stage in [:staged, :taking] and not state.held.killed,
-                do: [{1, {:call, __MODULE__, :kill_mover, [state.held]}}],
+                do: [{4, {:call, __MODULE__, :kill_mover, [state.held]}}],
                 else: []
               ),
           else: []
@@ -141,7 +146,9 @@ defmodule HalC2.ThreadMovePropTest do
     do: state.held != nil and held.t == state.held.t
 
   def precondition(state, {:call, _, :rename, [t, at, _]}),
-    do: is_map_key(state.threads, t) and state.threads[t].at == at
+    do:
+      is_map_key(state.threads, t) and state.threads[t].at == at and
+        not (state.held != nil and state.held.t == t and forwarded?(state.held))
 
   def precondition(state, {:call, _, :move, [t, _from, _to]}), do: is_map_key(state.threads, t)
   def precondition(_state, _call), do: true
@@ -201,6 +208,12 @@ defmodule HalC2.ThreadMovePropTest do
   # thread is then where it was, and free; the destination is refused when it asks.
   defp released?(held),
     do: held.stage in [:sending, :staged] and (held.killed or held.source_restarted)
+
+  # Whether a restart of the source settled a held move whose destination had the thread
+  # already: the source keeps only a forwarding record, though the model has the thread
+  # moving until the move is released. Renaming the record is taken (the thread stays
+  # as it is on the destination), which the model does not cover.
+  defp forwarded?(held), do: held.stage == :accepted and held.source_restarted
 
   # Whether a held move ends with the thread on its destination. A move ends where it
   # was until the destination asks to take it (`:taking`); from then on it completes.
@@ -353,14 +366,16 @@ defmodule HalC2.ThreadMovePropTest do
   end
 
   # The process that started the move dies (its client went away) while the
-  # destination works on.
-  def kill_mover(%{ids: {:held, ids}}) do
+  # destination works on. The source settles it in a task, waited for here so that the
+  # model's next step finds the thread released, or still moving, as the model says.
+  def kill_mover(%{ids: {:held, ids}} = held) do
     Process.exit(ids.mover, :kill)
 
     receive do
       {:DOWN, ref, :process, _, _} when ref == ids.monitor -> :ok
     end
 
+    :ok = Cluster.on(mcs()[held.from], :settled, [])
     {:ok, world()}
   end
 

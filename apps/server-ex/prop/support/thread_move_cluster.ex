@@ -301,8 +301,27 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     :ok = Supervisor.terminate_child(HalC2.Supervisor, child)
     {:ok, _} = Supervisor.restart_child(HalC2.Supervisor, child)
     # `HalC2.ThreadMove` settles what it finds as its first message.
-    if child == HalC2.ThreadMove, do: :sys.get_state(HalC2.ThreadMove)
+    if child == HalC2.ThreadMove, do: settled()
     :ok
+  end
+
+  @doc """
+  Returns once `HalC2.ThreadMove` is settling nothing and has nothing queued to settle:
+  what it was told before this call (a mover that died, a restart) has been settled.
+  Threads it will settle again after a pause are not waited for.
+  """
+  def settled do
+    case :sys.get_state(HalC2.ThreadMove) do
+      %{task: %Task{pid: pid}} ->
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> settled()
+        end
+
+      _idle ->
+        :ok
+    end
   end
 
   @doc "Tells `pid` whenever the thread `id` changes here."

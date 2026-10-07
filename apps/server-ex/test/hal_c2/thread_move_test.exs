@@ -58,6 +58,28 @@ defmodule HalC2.ThreadMoveTest do
     Process.exit(mover, :kill)
   end
 
+  # Settling a cut-off move waited on the destination inside ThreadMove, up to 30 seconds
+  # for each thread: its calls timed out and its watchers and movers' exits queued.
+  test "ThreadMove keeps answering while a settle waits on its destination", %{context: context} do
+    {context, id, mover} = hold_move(context)
+
+    Machines.on(context, "desktop", Application, :put_env, [
+      :hal_c2,
+      :thread_move_hook,
+      {Machines, :hold_move, [self(), :arrived]}
+    ])
+
+    Process.exit(mover, :kill)
+    assert_receive {:move_held, destination, :arrived, ^id}, 30_000
+
+    # The settle is waiting on `destination`, which has not answered.
+    assert %{} = :sys.get_state(HalC2.ThreadMove, 1_000)
+    assert World.thread(context, "Plan")["moving"]
+
+    send(destination, :release)
+    World.await_stream(id, &(HalC2.StreamState.get(&1, "thread")[id]["moving"] == nil))
+  end
+
   # Starts moving a thread "Plan" from "laptop" to "desktop" and holds it as it sends.
   defp hold_move(context) do
     context = Machines.cluster(context, "laptop", ["desktop"])
