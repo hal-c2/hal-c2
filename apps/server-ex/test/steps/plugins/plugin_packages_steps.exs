@@ -417,6 +417,30 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Fixtures.rescan() |> Map.put(:plugin, id)
   end
 
+  step "a new version of {string} whose MC files hold two plugin modules is placed in the plugins directory",
+       %{args: [id]} = context do
+    dir = Packages.dir(context, id)
+    [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
+
+    File.write!(
+      source,
+      String.replace(File.read!(source), ~s("number" => 12), ~s("number" => 13))
+    )
+
+    File.write!(Path.join(dir, "mc/zz_second.ex"), """
+    defmodule HalC2PluginFixture.Package.Second do
+      @behaviour HalC2.Plugins.Extension
+    end
+    """)
+
+    context |> Fixtures.rescan() |> Map.put(:plugin, id)
+  end
+
+  step "the reload is reported as failed because of {string}", %{args: [reason]} = context do
+    assert Fixtures.entry(context.plugin)["reloadError"] =~ reason
+    context
+  end
+
   step "{string} answers as its old version", %{args: [id]} = context do
     assert %{"status" => "running"} = Fixtures.entry(id)
     {reply, context} = call(context, id, "reviews.list", %{})

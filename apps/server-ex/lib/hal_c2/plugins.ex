@@ -848,7 +848,7 @@ defmodule HalC2.Plugins do
 
       {{:ok, manifest, sources, hash}, _} ->
         with {:ok, modules} <- compile_all(sources),
-             {:ok, module, kinds} <- package_module(modules) do
+             {:ok, module, kinds} <- package_module(modules) |> unload_unless_ok(modules) do
           [
             %{
               blank(id, dir, hash)
@@ -904,6 +904,13 @@ defmodule HalC2.Plugins do
   defp unload(modules) do
     for {module, _} <- modules, :code.soft_purge(module), do: :code.delete(module)
   end
+
+  defp unload_unless_ok({:error, _} = error, modules) do
+    unload(modules)
+    error
+  end
+
+  defp unload_unless_ok(ok, _modules), do: ok
 
   defp package_module(modules) do
     case for({module, _} <- modules, (kinds = kinds(module)) != [], do: {module, kinds}) do

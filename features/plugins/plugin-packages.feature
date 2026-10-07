@@ -95,11 +95,16 @@ Feature: Plugin packages
     Then "code-review" has a new revision
 
   @mc
-  Scenario: A new version that fails to compile part way keeps all of the old version running
+  Scenario Outline: A new version that fails to load part way keeps all of the old version running
     Given the package "code-review" is enabled
-    When a new version of "code-review" whose second MC file does not compile is placed in the plugins directory
+    When a new version of "code-review" <which> is placed in the plugins directory
     Then "code-review" answers as its old version
-    And the failed reload is reported
+    And the reload is reported as failed because of "<reason>"
+
+    Examples:
+      | which                                  | reason                       |
+      | whose second MC file does not compile  | undefined function           |
+      | whose MC files hold two plugin modules | more than one plugin module  |
 
   @mc
   Scenario: A disabled package does not serve its UI parts
