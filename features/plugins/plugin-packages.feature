@@ -36,6 +36,12 @@ Feature: Plugin packages
     Then "reviews" is listed with an error saying the directory and the id differ
 
   @mc
+  Scenario: A package whose choice setting has options HAL-C2 cannot read is listed with the reason
+    Given the plugins directory contains the package "broken" whose choice setting lists bare strings as options
+    When the MC starts
+    Then "broken" is listed with an error naming its setting
+
+  @mc
   Scenario: A package that needs a newer plugin API asks for an MC update
     Given the plugins directory contains the package "future" built for a newer plugin API
     When the user tries to enable "future"
@@ -54,6 +60,19 @@ Feature: Plugin packages
     When a client asks for the UI parts of "code-review"
     Then it gets each QML file of the package with the package's version
     And files outside the package's directory cannot be asked for
+
+  @mc
+  Scenario: Changing any file of a package, hidden ones too, gives it a new revision
+    Given the package "code-review" is enabled
+    When a hidden file of "code-review" changes and the MC rescans
+    Then "code-review" has a new revision
+
+  @mc
+  Scenario: A new version that fails to compile part way keeps all of the old version running
+    Given the package "code-review" is enabled
+    When a new version of "code-review" whose second MC file does not compile is placed in the plugins directory
+    Then "code-review" answers as its old version
+    And the failed reload is reported
 
   @mc
   Scenario: A disabled package does not serve its UI parts

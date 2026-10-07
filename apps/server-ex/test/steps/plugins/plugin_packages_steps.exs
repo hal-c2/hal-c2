@@ -242,6 +242,19 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context
   end
 
+  step "the plugins directory contains the package {string} whose choice setting lists bare strings as options",
+       %{args: [id]} = context do
+    setting = %{"key" => "host", "label" => "Host", "type" => "choice", "options" => ["github"]}
+    Packages.install(context, id, manifest: %{"settings" => [setting]})
+  end
+
+  step "{string} is listed with an error naming its setting", %{args: [id]} = context do
+    assert %{"status" => "error", "error" => error} = Fixtures.entry(id)
+    assert error =~ "setting"
+    assert error =~ ~s("host")
+    context
+  end
+
   step "the plugins directory contains the package {string} built for a newer plugin API",
        %{args: [id]} = context do
     Packages.install(context, id, manifest: %{"apiVersion" => 2})
@@ -319,6 +332,48 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
         assert {:error, _, %{"_tag" => "PluginFileNotFound"}} = reply
         context
     end
+  end
+
+  step "a hidden file of {string} changes and the MC rescans", %{args: [id]} = context do
+    path = Path.join(Packages.dir(context, id), "ui/.shared/Colors.qml")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "import QtQuick\nQtObject {}\n")
+    context = Fixtures.rescan(context)
+    before = Fixtures.entry(id)["revision"]
+    File.write!(path, "import QtQuick\nQtObject { property color accent }\n")
+    context |> Fixtures.rescan() |> Map.merge(%{plugin: id, revision_before: before})
+  end
+
+  step "{string} has a new revision", %{args: [id]} = context do
+    assert %{"status" => "running", "revision" => revision} = Fixtures.entry(id)
+    assert revision != context.revision_before
+    context
+  end
+
+  step "a new version of {string} whose second MC file does not compile is placed in the plugins directory",
+       %{args: [id]} = context do
+    dir = Packages.dir(context, id)
+    [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
+
+    File.write!(
+      source,
+      String.replace(File.read!(source), ~s("number" => 12), ~s("number" => 13))
+    )
+
+    File.write!(Path.join(dir, "mc/zz_broken.ex"), """
+    defmodule HalC2PluginFixture.Package.Broken do
+      def broken, do: undefined_call()
+    end
+    """)
+
+    context |> Fixtures.rescan() |> Map.put(:plugin, id)
+  end
+
+  step "{string} answers as its old version", %{args: [id]} = context do
+    assert %{"status" => "running"} = Fixtures.entry(id)
+    {reply, context} = call(context, id, "reviews.list", %{})
+    assert {:ok, %{"reviews" => [%{"number" => 12}]}} = reply
+    context
   end
 
   step "the request is refused because the plugin is not running", context do

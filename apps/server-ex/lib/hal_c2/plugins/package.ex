@@ -85,11 +85,14 @@ defmodule HalC2.Plugins.Package do
 
   defp safe(_dir, _path), do: nil
 
+  # Hidden files count, as the package can serve them; a `.git` checkout of the
+  # package does not.
   defp hash(dir) do
     files =
       dir
       |> Path.join("**")
-      |> Path.wildcard(match_dot: false)
+      |> Path.wildcard(match_dot: true)
+      |> Enum.reject(&(".git" in Path.split(Path.relative_to(&1, dir))))
       |> Enum.filter(&File.regular?/1)
       |> Enum.sort()
 
@@ -141,10 +144,22 @@ defmodule HalC2.Plugins.Package do
   defp list(_), do: []
 
   defp setting?(%{"key" => key, "type" => type} = field) when is_binary(key) do
-    type in @setting_types and (type != "choice" or is_list(field["options"]))
+    type in @setting_types and (type != "choice" or options?(field["options"]))
   end
 
   defp setting?(_), do: false
+
+  defp options?(options) when is_list(options),
+    do:
+      Enum.all?(
+        options,
+        &match?(
+          %{"value" => value, "label" => label} when is_binary(value) and is_binary(label),
+          &1
+        )
+      )
+
+  defp options?(_), do: false
 
   # The shape `HalC2.Plugins` reads for every plugin.
   defp manifest(json) do

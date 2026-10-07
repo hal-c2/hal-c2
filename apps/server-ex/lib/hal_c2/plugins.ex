@@ -878,10 +878,20 @@ defmodule HalC2.Plugins do
   defp compile_all(sources) do
     Enum.reduce_while(sources, {:ok, []}, fn source, {:ok, modules} ->
       case compile(source) do
-        {:ok, compiled} -> {:cont, {:ok, modules ++ compiled}}
-        {:error, message} -> {:halt, {:error, "mc/#{Path.basename(source)}: #{message}"}}
+        {:ok, compiled} ->
+          {:cont, {:ok, modules ++ compiled}}
+
+        {:error, message} ->
+          unload(modules)
+          {:halt, {:error, "mc/#{Path.basename(source)}: #{message}"}}
       end
     end)
+  end
+
+  # The modules a package compiled before one of its files failed: none of the new
+  # version may run, so they are unloaded and `restore/1` loads the old ones again.
+  defp unload(modules) do
+    for {module, _} <- modules, :code.soft_purge(module), do: :code.delete(module)
   end
 
   defp package_module(modules) do
