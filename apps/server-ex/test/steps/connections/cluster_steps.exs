@@ -451,6 +451,37 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "a cluster of two members that found the cluster port taken", context do
+    context =
+      Enum.reduce([:a, :b], context, fn name, context ->
+        context = machine(context, name)
+        hold(context.machines[name].address, context.cluster_port)
+        boot(context, name)
+      end)
+
+    %{a: a, b: b} = context.machines
+    assert {:ok, _} = command(b, ["join", invite(a)])
+
+    took =
+      Map.new(context.machines, fn {name, machine} -> {name, status(machine)["addresses"]} end)
+
+    Map.put(context, :took, took)
+  end
+
+  step "they connect again on the ports they took", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+
+    for {name, machine} <- context.machines do
+      assert [address] = status(machine)["addresses"]
+      assert [address] == context.took[name]
+      refute address == "#{machine.address}:#{context.cluster_port}"
+    end
+
+    context
+  end
+
   step "a cluster of two members whose recorded addresses are out of date", context do
     # Both come back on new addresses, so neither is where the other recorded it.
     context
@@ -838,6 +869,22 @@ defmodule HalC2.Steps.Connections.Cluster do
     {:ok, port} = :inet.port(socket)
     :gen_tcp.close(socket)
     port
+  end
+
+  # Another program listening on `address:port` until the scenario ends.
+  defp hold(address, port) do
+    {:ok, ip} = :inet.parse_address(to_charlist(address))
+    test = self()
+
+    holder =
+      spawn(fn ->
+        {:ok, _socket} = :gen_tcp.listen(port, ip: ip)
+        send(test, {:held, self()})
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive {:held, ^holder}, 5_000
+    ExUnit.Callbacks.on_exit(fn -> Process.exit(holder, :kill) end)
   end
 
   # Whether `machine` reaches `other` when told where it listens.

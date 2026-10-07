@@ -127,6 +127,15 @@ Feature: Clustering one person's machines
     When both restart
     Then they connect again at the addresses they reported
 
+  # Two MCs on one machine (the installed one and a developer's) cannot both have the
+  # cluster port. An update restarts every member at once, so the one without it has
+  # to come back where the others last reached it.
+  @mc
+  Scenario: Members that could not have the cluster port keep the ports they took
+    Given a cluster of two members that found the cluster port taken
+    When both restart
+    Then they connect again on the ports they took
+
   @mc
   Scenario Outline: A discovery strategy finds a member the others lost track of
     Given a cluster of two members whose recorded addresses are out of date
