@@ -967,11 +967,13 @@ defmodule HalC2.Plugins do
         do: File.rm_rf(copy)
   end
 
-  # A file or package that did not load: the old code keeps running, and the next
-  # scan tries again; without old code it is listed with the reason.
+  # A file or package that did not load: the version that loaded (its code, or a
+  # package of UI parts only) keeps running, and the next scan tries again; without
+  # one it is listed with the reason.
   defp failed(previous, message, blank) do
     case previous do
-      [%{module: module, file: file} | _] when module != nil ->
+      [%{file: file} = old | _]
+      when old.module != nil or (old.files != nil and old.sources == [] and old.problem == nil) ->
         Logger.warning("plugin #{Path.basename(file)} did not load: #{message}")
         restore(previous)
         Enum.map(previous, &%{&1 | reload_error: message})

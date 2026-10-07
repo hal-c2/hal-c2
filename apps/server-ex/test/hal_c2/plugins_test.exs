@@ -76,10 +76,26 @@ defmodule HalC2.PluginsTest do
     assert stored("notes") == %{"count" => 2}
   end
 
+  test "a package of UI parts only keeps serving the version that loaded when an update is refused" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    assert {:ok, %{"content" => "notes 1"}} = main_page("notes")
+
+    File.write!(Path.join(plugins_dir(), "notes/plugin.json"), "{not json")
+    Plugins.handle("rescan", %{})
+
+    assert %{"version" => "1", "enabled" => true, "reloadError" => error} = listed("notes")
+    assert error =~ "JSON"
+    assert {:ok, %{"content" => "notes 1"}} = main_page("notes")
+  end
+
   defp save(id, settings),
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 
   defp stored(id), do: get_in(HalC2.Settings.settings(), ["plugins", id, "settings"]) || %{}
+  defp main_page(id), do: Plugins.handle("file", %{"id" => id, "path" => "ui/main.qml"})
+  defp listed(id), do: Plugins |> GenServer.call(:list) |> Enum.find(&(&1["id"] == id))
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
 
   # A package of UI parts only, with a number and a secret among its settings.
