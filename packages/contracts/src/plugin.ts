@@ -91,7 +91,16 @@ export const PluginSettingField = Schema.Union([
     type: Schema.Literal("choice"),
     options: Schema.Array(PluginSettingOption),
     default: Schema.optionalKey(Schema.String),
-  }),
+  }).check(
+    Schema.makeFilter(
+      (field) =>
+        field.default === undefined ||
+        field.options.some((option) => option.value === field.default && !option.disabled) || {
+          path: ["default"],
+          issue: "must be one of the options that is not turned off",
+        },
+    ),
+  ),
   Schema.Struct({
     ...SettingBase,
     type: Schema.Literal("list"),

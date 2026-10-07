@@ -47,4 +47,23 @@ describe("PluginManifest", () => {
     ).toMatchObject({ type: "choice" });
     expect(() => decode({ key: "mode", label: "Mode", type: "choice" })).toThrow();
   });
+
+  it.each([
+    ["is not one of its options", "b"],
+    ["is turned off", "a"],
+  ])("refuses a choice whose default %s", (_, value) => {
+    const decode = Schema.decodeUnknownSync(PluginSettingField);
+    const options = [
+      { value: "a", label: "A", disabled: true },
+      { value: "c", label: "C" },
+    ];
+    expect(() =>
+      decode({ key: "mode", label: "Mode", type: "choice", options, default: value }),
+    ).toThrow();
+    expect(
+      decode({ key: "mode", label: "Mode", type: "choice", options, default: "c" }),
+    ).toMatchObject({
+      default: "c",
+    });
+  });
 });
