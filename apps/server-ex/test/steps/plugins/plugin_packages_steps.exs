@@ -242,6 +242,12 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context
   end
 
+  step "{string} is listed with an error saying what an id may hold", %{args: [dir]} = context do
+    assert %{"status" => "error", "error" => error} = Fixtures.entry(dir)
+    assert error =~ "an id is lowercase letters, digits and dashes"
+    context
+  end
+
   step "the plugins directory contains the package {string} whose choice setting lists bare strings as options",
        %{args: [id]} = context do
     setting = %{"key" => "host", "label" => "Host", "type" => "choice", "options" => ["github"]}

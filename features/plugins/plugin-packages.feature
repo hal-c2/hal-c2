@@ -36,6 +36,12 @@ Feature: Plugin packages
     Then "reviews" is listed with an error saying the directory and the id differ
 
   @mc
+  Scenario: A package whose id is not lowercase letters, digits and dashes is refused
+    Given the plugins directory contains the directory "Code Review" whose manifest says its id is "Code Review"
+    When the MC starts
+    Then "Code Review" is listed with an error saying what an id may hold
+
+  @mc
   Scenario: A package whose choice setting has options HAL-C2 cannot read is listed with the reason
     Given the plugins directory contains the package "broken" whose choice setting lists bare strings as options
     When the MC starts

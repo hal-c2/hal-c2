@@ -152,6 +152,11 @@ defmodule HalC2.Plugins.Package do
         {:error,
          "plugin.json names the id #{inspect(json["id"])}, but its directory is #{inspect(dirname)}; they must be the same."}
 
+      # The id goes into tab, topic and cache keys, so it is held to `PluginManifest`'s pattern.
+      not Regex.match?(~r/^[a-z][a-z0-9-]*$/, json["id"]) ->
+        {:error,
+         "plugin.json names the id #{inspect(json["id"])}; an id is lowercase letters, digits and dashes, starting with a letter."}
+
       missing = Enum.find(~w(name version description), &(not text?(json[&1]))) ->
         {:error, "plugin.json has no #{missing}."}
 
