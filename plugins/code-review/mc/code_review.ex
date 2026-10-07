@@ -633,8 +633,9 @@ defmodule HalC2Plugins.CodeReview do
         reviewed == nil ->
           if trigger, do: queue(state, review, trigger), else: put(state, review)
 
+        # A head pushed back to the reviewed commit is no change since the review.
         reviewed == pr["headSha"] ->
-          put(state, review)
+          put(state, Map.put(review, "changed", false))
 
         trigger && settings["reviewNewPushes"] ->
           queue(state, review, trigger)

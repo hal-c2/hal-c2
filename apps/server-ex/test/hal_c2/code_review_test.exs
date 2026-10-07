@@ -156,7 +156,48 @@ defmodule HalC2.CodeReviewTest do
     assert_receive {:DOWN, ^ref, :process, _, _}, 1_000
   end
 
+  test "a head pushed back to the commit reviewed is no longer changed since the review",
+       context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    rules!(context, head: 2)
+    refresh()
+    assert %{"changed" => true} = review()
+
+    rules!(context, head: 1)
+    refresh()
+    assert %{"changed" => false, "headSha" => head} = review()
+    assert head == context.shas[1]
+  end
+
   # --- helpers ----------------------------------------------------------------------------
+
+  defp start_review do
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    settle()
+    assert %{"status" => "running", "checkout" => checkout} = review = review()
+    assert File.dir?(checkout)
+    review
+  end
+
+  defp call(method, input),
+    do: HalC2.Plugins.handle("call", %{"id" => @id, "method" => method, "input" => input})
+
+  defp refresh do
+    {:ok, _} = call("refresh", %{})
+    settle()
+  end
+
+  defp review do
+    GenServer.call(@server, :snapshot)["reviews"] |> Enum.find(&(&1["key"] == @key))
+  end
 
   # Returns once the plugin has nothing in flight and has heard from what ended.
   defp settle do
