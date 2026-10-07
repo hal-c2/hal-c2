@@ -8,8 +8,8 @@ defmodule HalC2Plugins.CodeReview do
 
   A review is `ready` (not started), `queued`, `running`, `failed`, `waiting` (to be
   published), `kept` (in HAL-C2 only) or `published`. Reviews are kept in
-  `reviews.json` in the plugin's data directory and published on the `reviews`
-  topic for the UI parts.
+  `reviews.json` in the plugin's data directory and published for the UI parts: all
+  of them on the `reviews` topic, and each review thread's review on `threads`.
 
   Reads from the host (gh) run outside the server process: in the RPC caller for a
   call, in a process of their own for the timer, so the server only decides.
