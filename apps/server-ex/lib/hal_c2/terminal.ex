@@ -372,8 +372,10 @@ defmodule HalC2.Terminal do
   end
 
   def handle_call({:restart, input}, _from, state) do
+    # Stopped before the clear, so the old shell's last output is not in the new scrollback.
     state =
       state
+      |> stop_shell()
       |> launch_context(input)
       |> Map.update!(:history, &History.clear/1)
       |> start_shell("restarted")
@@ -407,23 +409,8 @@ defmodule HalC2.Terminal do
   end
 
   @impl true
-  def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = state) do
-    {text, carry} = History.utf8(state.carry, data)
-
-    state = %{
-      state
-      | carry: carry,
-        history: History.append(state.history, text),
-        output: [state.output, text]
-    }
-
-    state =
-      if state.output_timer,
-        do: state,
-        else: %{state | output_timer: Process.send_after(self(), :output, @output_ms)}
-
-    {:noreply, schedule_persist(state)}
-  end
+  def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = state),
+    do: {:noreply, take_output(state, data)}
 
   def handle_info({:DOWN, os_pid, :process, _pid, reason}, %{os_pid: os_pid} = state) do
     {code, signal} =
@@ -499,7 +486,7 @@ defmodule HalC2.Terminal do
     # Unregister here: the registry drops a dead process's key only afterwards, and
     # until then a lookup finds the terminal that is already closing.
     Registry.unregister(@registry, {state.thread_id, state.terminal_id})
-    stop_shell(state)
+    state = stop_shell(state)
     if state.persist_timer, do: persist(state)
     :ok
   end
@@ -633,17 +620,38 @@ defmodule HalC2.Terminal do
   # follows the SIGTERM after `kill_timeout`), so a close or restart that returns has
   # freed the OS process.
   defp stop_shell(state) do
-    os_pid = state.os_pid
-
-    if :exec.stop(os_pid) == :ok do
-      receive do
-        {:DOWN, ^os_pid, :process, _pid, _reason} -> :ok
-      after
-        @stop_ms -> :ok
-      end
-    end
-
+    state = if :exec.stop(state.os_pid) == :ok, do: await_down(state), else: state
     %{flush_output(state) | os_pid: nil}
+  end
+
+  # erlexec sends all of a shell's output before its DOWN; what arrives in between is
+  # still the shell's and belongs in the scrollback a close saves.
+  defp await_down(%{os_pid: os_pid} = state) do
+    receive do
+      {:stdout, ^os_pid, data} -> await_down(take_output(state, data))
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> state
+    after
+      @stop_ms -> state
+    end
+  end
+
+  # Output of the shell: into the scrollback and the batch sent after `@output_ms`.
+  defp take_output(state, data) do
+    {text, carry} = History.utf8(state.carry, data)
+
+    state = %{
+      state
+      | carry: carry,
+        history: History.append(state.history, text),
+        output: [state.output, text]
+    }
+
+    state =
+      if state.output_timer,
+        do: state,
+        else: %{state | output_timer: Process.send_after(self(), :output, @output_ms)}
+
+    schedule_persist(state)
   end
 
   defp resize_to(state, cols, rows) do

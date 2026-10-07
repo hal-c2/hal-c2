@@ -127,6 +127,32 @@ defmodule HalC2.TerminalRaceTest do
     end
   end
 
+  test "a closed terminal saves what its shell printed while stopping", %{
+    input: input,
+    tmp_dir: dir
+  } do
+    # Prints only once the SIGTERM of the close has arrived, so its output reaches the
+    # terminal while the close waits for the shell to go.
+    shell = Path.join(dir, "shell")
+
+    File.write!(shell, """
+    #!/bin/sh
+    trap 'kill $p; echo bye; exit 0' TERM
+    sleep 1000 & p=$!
+    echo ready
+    wait $p
+    """)
+
+    File.chmod!(shell, 0o755)
+    System.put_env("SHELL", shell)
+
+    {:ok, _} = Terminal.attach(input, self())
+    receive_until("ready\r\n")
+    {:ok, nil} = Terminal.close(input)
+
+    assert [{"term-1", "ready\r\nbye\r\n"}] = Terminal.saved_scrollback(input["threadId"])
+  end
+
   test "a killed terminal takes its shell with it", %{input: input} do
     {:ok, %{"pid" => os_pid}} = Terminal.open(input)
     pid = session(input)

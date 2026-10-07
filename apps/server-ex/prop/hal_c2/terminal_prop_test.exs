@@ -290,7 +290,11 @@ defmodule HalC2.TerminalPropTest do
         {2, {:call, __MODULE__, :restart_hub, []}},
         {2, {:call, __MODULE__, :resize, [elements(keys), integer(10, 200), integer(5, 60)]}},
         {2, {:call, __MODULE__, :restart, [elements(keys)]}},
-        {2, {:call, __MODULE__, :close, [elements(keys), boolean()]}},
+        {2,
+         let(
+           key <- elements(keys),
+           do: {:call, __MODULE__, :close, [key, boolean(), tokens_of(s, key)]}
+         )},
         {4, {:call, __MODULE__, :write, [elements(keys), token]}},
         {3,
          let(key <- elements(keys), do: {:call, __MODULE__, :clear, [key, tokens_of(s, key)]})},
@@ -300,7 +304,11 @@ defmodule HalC2.TerminalPropTest do
         if(running != [],
           do: [
             {4, {:call, __MODULE__, :inject, [elements(running), "i#{s.n}"]}},
-            {2, {:call, __MODULE__, :die, [elements(running), elements([:eof, :kill])]}}
+            {2,
+             let(
+               key <- elements(running),
+               do: {:call, __MODULE__, :die, [key, elements([:eof, :kill]), tokens_of(s, key)]}
+             )}
           ],
           else: []
         ) ++
@@ -352,8 +360,11 @@ defmodule HalC2.TerminalPropTest do
   def precondition(s, {:call, _, :inject, [key, token]}),
     do: running?(s, key) and token == "i#{s.n}"
 
-  def precondition(s, {:call, _, :die, [key, _]}), do: running?(s, key)
+  def precondition(s, {:call, _, :die, [key, _, tokens]}),
+    do: running?(s, key) and tokens == tokens_of(s, key)
+
   def precondition(s, {:call, _, :clear, [key, tokens]}), do: tokens == tokens_of(s, key)
+  def precondition(s, {:call, _, :close, [key, _, tokens]}), do: tokens == tokens_of(s, key)
   def precondition(s, {:call, _, :crash, [key]}), do: Map.has_key?(s.terms, key)
 
   def precondition(s, {:call, _, :attach, [pid, key, cwd?, _]}) do
@@ -447,7 +458,7 @@ defmodule HalC2.TerminalPropTest do
     end
   end
 
-  def next_state(s, _, {:call, _, :close, [key, delete?]}) do
+  def next_state(s, _, {:call, _, :close, [key, delete?, _]}) do
     disk =
       case {s.terms[key], delete?} do
         {_, true} -> Map.delete(s.disk, key)
@@ -458,7 +469,7 @@ defmodule HalC2.TerminalPropTest do
     %{s | terms: Map.delete(s.terms, key), disk: disk}
   end
 
-  def next_state(s, _, {:call, _, :die, [key, _]}), do: put_in(s.terms[key].status, :exited)
+  def next_state(s, _, {:call, _, :die, [key, _, _]}), do: put_in(s.terms[key].status, :exited)
 
   # A killed terminal never saved, so what the disk holds is unknown: expect nothing.
   def next_state(s, _, {:call, _, :crash, [key]}),
@@ -621,8 +632,11 @@ defmodule HalC2.TerminalPropTest do
     end
   end
 
-  def close(key, delete?) do
+  # The scrollback a close saves holds what the shell printed before it; a line the
+  # shell had not printed yet when it was stopped is not lost output.
+  def close(key, delete?, tokens) do
     note_pids()
+    settle(key, tokens)
     Terminal.close(input(key, %{"deleteHistory" => delete?}))
   end
 
@@ -633,10 +647,11 @@ defmodule HalC2.TerminalPropTest do
     :ok
   end
 
-  # The shell ends on its own (^D) or is killed from outside; returns once the terminal
-  # has told a subscriber so.
-  def die(key, how) do
+  # The shell ends on its own (^D) or is killed from outside, once it printed what
+  # earlier writes asked for; returns once the terminal has told a subscriber so.
+  def die(key, how, tokens) do
     note_pids()
+    settle(key, tokens)
     pid = pid_of(key)
     os_pid = :sys.get_state(pid).os_pid
     {thread_id, terminal_id} = key
