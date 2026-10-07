@@ -348,8 +348,18 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
 }
 
 void ShellStore::clear() {
+  // Nothing of it is owed to the cache any more, and nothing is kept there.
+  m_flushTimer.stop();
+  m_unsaved.clear();
+  m_origin.clear();
   m_mcs.clear();
   m_problem.clear();
+  m_previewing = false;
+  m_synchronized = true;
+  // The threads shown go first (ThreadStore), so nothing of theirs is written
+  // after the cache is emptied.
+  emit originChanged();
+  if (m_cache) m_cache->clear();
   emit changed();
 }
 

@@ -33,6 +33,17 @@ MobileDialog {
             Layout.fillWidth: true
         }
 
+        // Why the environment is still here after the user asked to forget it.
+        Label {
+            objectName: "environmentError"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: sheet.pairing !== null ? (sheet.pairing.error ?? "") : ""
+            color: Theme.palette.color("error", "#ef4444")
+            font.pixelSize: Math.round(14 * Theme.fontScale)
+            wrapMode: Text.Wrap
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.topMargin: 8
@@ -69,7 +80,12 @@ MobileDialog {
         objectName: "forgetDialog"
         parent: sheet.parent
         title: qsTr("Forget %1?").arg(sheet.label)
-        onAccepted: Shell.dispatch("pairing.forget")
+        onAccepted: {
+            Shell.dispatch("pairing.forget");
+            // Still paired: it could not be forgotten, and the sheet says why.
+            if (Shell.state.pairing?.phase === "paired")
+                sheet.open();
+        }
         onRejected: sheet.open()
 
         ColumnLayout {

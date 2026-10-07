@@ -130,9 +130,16 @@ void Pairing::forget() {
   // An exchange in flight has nobody to answer.
   ++m_attempt;
   m_pairing = false;
+  // The session goes from the device first: one that stays would be opened
+  // again at the next start, whatever the app says now.
+  if (QFile::exists(m_path) && !QFile::remove(m_path)) {
+    qWarning("pairing not forgotten: %s", qPrintable(m_path));
+    m_error = tr("This environment could not be forgotten: its session could not be deleted from this device.");
+    publish();
+    return;
+  }
   if (m_paired) m_shell->close();
   m_paired.reset();
-  if (QFile::exists(m_path) && !QFile::remove(m_path)) qWarning("pairing not forgotten: %s", qPrintable(m_path));
   m_link.clear();
   m_error.clear();
   publish();

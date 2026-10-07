@@ -94,9 +94,9 @@ public:
   // Connects to the MC at `origin`; every window's bridge learns where it is.
   void open(const QUrl& origin, const QString& token);
   // Leaves the MC for good: the connection closes, and the rows of its
-  // machines and the drafts written for them go, as when a machine is removed
-  // from the cluster. The controllers stay, for whichever MC open() names
-  // next. Not for reconnecting (McClient::reconnect).
+  // machines, what the cache kept of them and every draft go. The controllers
+  // stay, for whichever MC open() names next. Not for reconnecting
+  // (McClient::reconnect).
   void close();
 
   McClient* client() { return &m_client; }

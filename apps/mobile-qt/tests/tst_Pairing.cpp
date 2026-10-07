@@ -393,8 +393,9 @@ private slots:
     QVERIFY(phone.pair(origin + QStringLiteral("/?") + QUrl(again).query()));
     QCOMPARE(phone.phase(), QStringLiteral("paired"));
     QCOMPARE(phone.error(), QString());
-    // What it showed stays while the new session connects.
-    QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
+    // What it showed stays while the new session connects. At another address
+    // the rows held are another origin's (ShellStore::open) until its MC answers.
+    if (!elsewhere) QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
     QVERIFY(waitUntil(phone.shell->store(), &ShellStore::changed, [&] { return phone.shell->store()->snapshots() > snapshots; }));
     QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
 
@@ -514,6 +515,57 @@ private slots:
     QCOMPARE(phone.pairingState(), kUnpaired);
     QCOMPARE(phone.shell->client()->phase(), McClient::Phase::Closed);
     QCOMPARE(macbook.mc.connections.size(), sockets);
+  }
+
+  // Forgetting before the environment has answered (it is offline, or the app
+  // just started) leaves none of the drafts written for it either.
+  void forgettingBeforeItAnswersDropsItsDrafts() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    {
+      Phone phone(home.path());
+      QVERIFY(phone.pair(macbook.link()));
+      QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+      auto* drafts = phone.shell->controller<DraftController>();
+      drafts->setText(drafts->start(QStringLiteral("env-a"), QStringLiteral("p-a")), QStringLiteral("roll back the deploy"));
+    }
+    {
+      // Started again: the draft is read, and no row of the environment is in yet.
+      Phone phone(home.path());
+      QCOMPARE(phone.phase(), QStringLiteral("paired"));
+      QCOMPARE(phone.shell->controller<DraftController>()->drafts().size(), 1);
+      QVERIFY(phone.shell->store()->environments().isEmpty());
+      phone.dispatch(QStringLiteral("pairing.forget"));
+      QCOMPARE(phone.pairingState(), kUnpaired);
+      QVERIFY(phone.shell->controller<DraftController>()->drafts().isEmpty());
+    }
+    Phone phone(home.path());
+    QVERIFY(phone.shell->controller<DraftController>()->drafts().isEmpty());
+  }
+
+  // A session that cannot be deleted from the device is not reported as
+  // forgotten: it would be opened again at the next start.
+  void aSessionThatCannotBeDeletedStaysPaired() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    const QString data = QFileInfo(phone.file).absolutePath();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+
+    phone.dispatch(QStringLiteral("pairing.forget"));
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QCOMPARE(phone.phase(), QStringLiteral("paired"));
+    QVERIFY(phone.error().contains(QStringLiteral("could not be forgotten")));
+    QVERIFY(QFile::exists(phone.file));
+    QVERIFY(phone.sidebar().contains(macbook.threadTitle()));
+    QVERIFY(phone.shell->client()->phase() != McClient::Phase::Closed);
+
+    // Once it can be deleted, forgetting works and the error goes.
+    phone.dispatch(QStringLiteral("pairing.forget"));
+    QCOMPARE(phone.pairingState(), kUnpaired);
+    QVERIFY(!QFile::exists(phone.file));
   }
 
   // Forgetting one environment and pairing with another shows the other alone.

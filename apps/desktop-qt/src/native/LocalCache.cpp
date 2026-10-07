@@ -271,10 +271,17 @@ public:
 
   // A database of another schema, or one SQLite cannot read, is started over.
   bool open(const QString& path) {
-    if (ready(path)) return true;
+    m_path = path;
+    return ready(path) || startOver();
+  }
+
+  // An empty database in place of the file, and of its journal: nothing of
+  // what was kept stays on disk.
+  bool startOver() {
     close();
-    for (const char* suffix : {"", "-wal", "-shm"}) QFile::remove(path + QLatin1String(suffix));
-    if (ready(path)) return true;
+    for (const char* suffix : {"", "-wal", "-shm"}) QFile::remove(m_path + QLatin1String(suffix));
+    lost() = {};
+    if (ready(m_path)) return true;
     close();
     return false;
   }
@@ -334,6 +341,7 @@ private:
 
   LocalCache* m_cache;
   QString m_connection;
+  QString m_path;
 };
 
 LocalCache::LocalCache(QObject* parent) : QObject(parent) {}
@@ -456,6 +464,12 @@ void LocalCache::forgetThread(const QString& key) {
   post([key](QSqlDatabase& db) {
     if (usable(db) && !dropThread(db, key)) lost().threads.insert(key);
   });
+}
+
+void LocalCache::clear() {
+  if (!m_worker) return;
+  // After what was asked for so far, which the worker takes first.
+  QMetaObject::invokeMethod(m_worker, [worker = m_worker] { worker->startOver(); }, Qt::BlockingQueuedConnection);
 }
 
 void LocalCache::forgetEnvironment(const QString& environmentId) {

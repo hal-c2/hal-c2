@@ -211,13 +211,12 @@ void NativeShell::open(const QUrl& origin, const QString& token) {
 
 void NativeShell::close() {
   m_client.close();
-  // Nothing written for a machine it leaves is kept: its drafts go with its
-  // rows, and after them, so a window that showed either lands on neither.
+  // Nothing written for the MC it leaves is kept: the drafts go with its rows,
+  // and after them, so a window that showed either lands on neither. Every
+  // draft is one of its machines', listed or not: the rows may not be in yet.
   auto* drafts = controller<DraftController>();
   QStringList left;
-  for (const DraftController::Draft& draft : drafts ? drafts->drafts() : QList<DraftController::Draft>()) {
-    if (m_store.servesEnvironment(draft.environmentId)) left.append(draft.id);
-  }
+  for (const DraftController::Draft& draft : drafts ? drafts->drafts() : QList<DraftController::Draft>()) left.append(draft.id);
   m_store.clear();
   for (const QString& id : std::as_const(left)) drafts->remove(id);
   m_sharedBridge->setMcOrigin({});

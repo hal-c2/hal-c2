@@ -94,9 +94,10 @@ public:
   // Why the MC turned the shell subscription down (its `error` frame); empty
   // once a snapshot lands. The rows it had stay as they were.
   QString problem() const { return m_problem; }
-  // The shell left its MC (NativeShell::close): every machine and row goes.
-  // It stays synchronized, an empty cluster, so what was kept for a machine
-  // that is no longer listed is let go as when one is removed.
+  // The shell left its MC (NativeShell::close): every machine and row goes,
+  // here and in the cache. It reads as synchronized, an empty cluster, so what
+  // was kept for a machine that is no longer listed is let go as when one is
+  // removed.
   void clear();
 
 signals:
