@@ -137,8 +137,10 @@ public:
   void forgetThread(const QString& key);
   void forgetEnvironment(const QString& environmentId);
   // Starts the database over, so nothing kept stays on disk: the client left
-  // its MC for good (NativeShell::close). Blocks until it is done.
-  void clear();
+  // its MC for good (NativeShell::close). Blocks until it is done. False when
+  // the file could be neither removed nor emptied: what it holds is not read,
+  // but is still on disk.
+  bool clear();
 
   // Returns once everything asked for so far is done and every loadThread
   // reply has run. Tests and shutdown wait on this.

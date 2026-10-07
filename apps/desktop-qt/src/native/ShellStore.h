@@ -98,7 +98,8 @@ public:
   // here and in the cache. It reads as synchronized, an empty cluster, so what
   // was kept for a machine that is no longer listed is let go as when one is
   // removed.
-  void clear();
+  // False when what the cache kept could not be deleted (LocalCache::clear).
+  bool clear();
 
 signals:
   void changed();

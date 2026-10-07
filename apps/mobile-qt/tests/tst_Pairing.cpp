@@ -1040,6 +1040,34 @@ private slots:
     QCOMPARE(phone.kept().value(QLatin1String("label")).toString(), QStringLiteral("My MacBook"));
   }
 
+  // What the device kept of the environment's threads is deleted with it; when
+  // that cannot be, the environment is still forgotten and the user is told.
+  void forgettingSaysSoWhenWhatWasKeptCannotBeDeleted() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    const QString kept = QDir(home.path()).filePath(QStringLiteral("cache"));
+    phone.shell->cache()->open(kept);
+    QVERIFY(phone.shell->cache()->isOpen());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    phone.shell->store()->flush();
+    phone.shell->cache()->drain();
+    const QFileInfoList files = QDir(kept).entryInfoList(QDir::Files);
+    QVERIFY(!files.isEmpty());
+    for (const QFileInfo& info : files) QVERIFY(QFile::setPermissions(info.absoluteFilePath(), QFile::ReadOwner));
+    QVERIFY(QFile::setPermissions(kept, QFile::ReadOwner | QFile::ExeOwner));
+
+    phone.dispatch(QStringLiteral("pairing.forget"));
+    QVERIFY(QFile::setPermissions(kept, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    for (const QFileInfo& info : files) QFile::setPermissions(info.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);
+    // Forgotten all the same: no session, no rows shown.
+    QCOMPARE(phone.phase(), QStringLiteral("unpaired"));
+    QVERIFY(!QFile::exists(phone.file));
+    QVERIFY(phone.threads().isEmpty());
+    QVERIFY(phone.error().contains(QStringLiteral("could not be deleted")));
+  }
+
   // Forgetting one environment and pairing with another shows the other alone.
   void forgetThenPairAnother() {
     QTemporaryDir home;

@@ -347,7 +347,7 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   unsaved(mc);
 }
 
-void ShellStore::clear() {
+bool ShellStore::clear() {
   // Nothing of it is owed to the cache any more, and nothing is kept there.
   m_flushTimer.stop();
   m_unsaved.clear();
@@ -359,8 +359,9 @@ void ShellStore::clear() {
   // The threads shown go first (ThreadStore), so nothing of theirs is written
   // after the cache is emptied.
   emit originChanged();
-  if (m_cache) m_cache->clear();
+  const bool emptied = !m_cache || m_cache->clear();
   emit changed();
+  return emptied;
 }
 
 void ShellStore::onFrame(const QJsonObject& frame) {

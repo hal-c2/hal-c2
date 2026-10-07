@@ -232,12 +232,14 @@ void Pairing::forget() {
     publish();
     return;
   }
-  if (m_paired) m_shell->close();
+  // The session is gone, so the environment is forgotten whatever follows;
+  // what the device had kept of its threads may still be on disk.
+  const bool emptied = !m_paired || m_shell->close();
   m_paired.reset();
   m_adding = false;
   m_link.clear();
   m_offered.clear();
-  m_error.clear();
+  m_error = emptied ? QString() : tr("The environment is forgotten, but what this device kept of its threads could not be deleted.");
   publish();
 }
 

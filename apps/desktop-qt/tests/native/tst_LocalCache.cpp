@@ -6,6 +6,8 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QFileInfo>
+#include <QFile>
 #include <QTest>
 
 #include <memory>
@@ -169,6 +171,60 @@ private slots:
     QVERIFY(!load(*cache, QStringLiteral("env-a:thread-1")).found());
     QVERIFY(!load(*cache, QStringLiteral("env-a:thread-2")).found());
     QVERIFY(load(*cache, QStringLiteral("env-ab:thread-1")).found());
+  }
+
+  // Whether any file of the cache still holds `text`.
+  bool onDisk(const QByteArray& text) const {
+    for (const QFileInfo& info : QDir(m_dir->path()).entryInfoList(QDir::Files)) {
+      QFile file(info.absoluteFilePath());
+      if (file.open(QIODevice::ReadOnly) && file.readAll().contains(text)) return true;
+    }
+    return false;
+  }
+
+private slots:
+  // Leaving the MC for good: nothing kept stays, in the file or its journal.
+  void clearingLeavesNothingOnDisk() {
+    auto cache = open();
+    cache->storeThread(copy(QStringLiteral("env-a:thread-kept")));
+    cache->drain();
+    QVERIFY(onDisk("thread-kept"));
+    QVERIFY(cache->clear());
+    QVERIFY(!load(*cache, QStringLiteral("env-a:thread-kept")).found());
+    QVERIFY(!onDisk("thread-kept"));
+  }
+
+  // A file that cannot be removed is emptied where it is, not opened again as it was.
+  void aCacheThatCannotBeRemovedIsEmptied() {
+    auto cache = open();
+    cache->storeThread(copy(QStringLiteral("env-a:thread-kept")));
+    cache->drain();
+    QVERIFY(QFile::setPermissions(m_dir->path(), QFile::ReadOwner | QFile::ExeOwner));
+    const bool cleared = cache->clear();
+    const bool found = load(*cache, QStringLiteral("env-a:thread-kept")).found();
+    QVERIFY(QFile::setPermissions(m_dir->path(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(cleared);
+    QVERIFY(!found);
+    QVERIFY(!onDisk("thread-kept"));
+    // Nor is it there for the next run.
+    cache.reset();
+    QVERIFY(!load(*open(), QStringLiteral("env-a:thread-kept")).found());
+  }
+
+  // One that can be neither removed nor written says so, and is not read.
+  void aCacheThatCannotBeEmptiedIsNotRead() {
+    auto cache = open();
+    cache->storeThread(copy(QStringLiteral("env-a:thread-kept")));
+    cache->drain();
+    const QDir dir(m_dir->path());
+    for (const QFileInfo& info : dir.entryInfoList(QDir::Files)) QVERIFY(QFile::setPermissions(info.absoluteFilePath(), QFile::ReadOwner));
+    QVERIFY(QFile::setPermissions(m_dir->path(), QFile::ReadOwner | QFile::ExeOwner));
+    const bool cleared = cache->clear();
+    const bool found = load(*cache, QStringLiteral("env-a:thread-kept")).found();
+    QVERIFY(QFile::setPermissions(m_dir->path(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    for (const QFileInfo& info : dir.entryInfoList(QDir::Files)) QFile::setPermissions(info.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);
+    QVERIFY(!cleared);
+    QVERIFY(!found);
   }
 
   void theThreadListIsKeptByOriginWithItsVersions() {

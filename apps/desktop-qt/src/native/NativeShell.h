@@ -97,7 +97,8 @@ public:
   // machines, what the cache kept of them and every draft go. The controllers
   // stay, for whichever MC open() names next. Not for reconnecting
   // (McClient::reconnect).
-  void close();
+  // False when what the cache kept of it could not be deleted from disk.
+  bool close();
 
   McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
