@@ -62,10 +62,15 @@ Item {
     property string filter: "all"
     property var reviews: []
     property string answer: ""
+    property int seen: -1
 
     function ask(environment) {
         page.answer = "";
         page.plugin.call("reviews", {}, (result, error) => page.answer = error ? "error: " + error : result.from, environment || undefined);
+    }
+
+    function watchAgain(topic) {
+        page.plugin.watch(topic, value => page.seen = value.length);
     }
 
     function open(threadId) {
@@ -735,6 +740,21 @@ const Steps steps([] {
       return false;
     }, QStringLiteral("the page to watch the topic"));
     world.waitFor([&] { return reviewsShown(world) == QLatin1String("Add cache, Fix login"); }, [&] { return reviewsShown(world); });
+  });
+  step(QStringLiteral("another part of %1 watches the %1 topic").arg(q), [](World& world, const Captures& c, const Table&) {
+    QMetaObject::invokeMethod(fake(world).page.data(), "watchAgain", Q_ARG(QVariant, c[1]));
+  });
+  step(QStringLiteral("the other part is given the last list at once"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* page = fake(world).page.data();
+    world.waitFor([&] { return page->property("seen").toInt() == fake(world).reviews.size(); },
+                  [&] { return QStringLiteral("the other part has %1 reviews").arg(page->property("seen").toInt()); });
+  });
+  step(QStringLiteral("the MC sends the %1 topic to the client once").arg(q), [](World& world, const Captures& c, const Table&) {
+    int following = 0;
+    for (const int subscriber : world.mc.subscribers(QStringLiteral("plugin"))) {
+      if (world.mc.shapeOf(subscriber).value(QLatin1String("topic")) == c[0]) ++following;
+    }
+    expect(following == 1, QStringLiteral("the client follows the topic %1 times").arg(following));
   });
   step(QStringLiteral("%1 publishes a new list of reviews").arg(q), [](World& world, const Captures&, const Table&) {
     fake(world).reviews.append(QJsonObject{{QStringLiteral("title"), QStringLiteral("Bump deps")}, {QStringLiteral("state"), QStringLiteral("running")}});

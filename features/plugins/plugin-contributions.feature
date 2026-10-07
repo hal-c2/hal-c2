@@ -183,6 +183,13 @@ Feature: What plugins add to the clients
       Then the page shows the new list without reloading
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: UI parts that watch the same topic share it
+      Given the "Reviews" page watches the "reviews" topic
+      When another part of "code-review" watches the "reviews" topic
+      Then the other part is given the last list at once
+      And the MC sends the "reviews" topic to the client once
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: An updated plugin's UI parts replace the old ones
       Given the "Reviews" page is shown
       When the MC runs a new version of "code-review"

@@ -55,10 +55,12 @@ public:
   // Asks plugin `id` on `environment` (`plugins.call`); the answer comes as
   // `answered(request, result, error)`.
   Q_INVOKABLE int call(const QString& environment, const QString& id, const QString& method, const QVariant& input);
-  // Follows what plugin `id` publishes on `topic`, as `published(watch, value)`.
   // Saves plugin `id`'s settings on `environment` (`plugins.saveSettings`); the
   // answer comes as `answered`.
   Q_INVOKABLE int saveSettings(const QString& environment, const QString& id, const QVariantMap& settings);
+  // Follows what plugin `id` publishes on `topic`, as `published(watch, value)`.
+  // Watches of one topic share one subscription, and a later one is given the
+  // last value at once, so a part repeated per row costs one topic's traffic.
   Q_INVOKABLE int watch(const QString& environment, const QString& id, const QString& topic);
   Q_INVOKABLE void unwatch(int watch);
 
@@ -68,6 +70,14 @@ signals:
   void published(int watch, const QVariant& value);
 
 private:
+  // One `plugin` shape the UI parts follow, and the watches that share it.
+  struct Topic {
+    int subscription = -1;
+    QSet<int> watches;
+    QVariant last;
+    bool known = false;
+  };
+
   // One plugin's files at one revision.
   struct Files {
     QString revision;
@@ -95,7 +105,9 @@ private:
   QHash<QString, int> m_subscriptions;     // environment → `plugins` shape
   QHash<QString, QJsonArray> m_plugins;    // environment → PluginEntry[]
   QHash<QString, Files> m_files;           // "<environment>/<id>" → files
-  QSet<int> m_watches;                     // `plugin` shapes the UI parts follow
+  QHash<QString, Topic> m_topics;          // "<environment>/<id>/<topic>" → its subscription
+  QHash<int, QString> m_watches;           // watch → its topic
+  int m_nextWatch = 1;
   int m_nextRequest = 1;
   QVariantList m_pages;
 };

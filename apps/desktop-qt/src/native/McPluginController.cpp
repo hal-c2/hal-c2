@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QTimer>
 #include <QUrl>
 
 #include "McClient.h"
@@ -332,18 +333,38 @@ int McPluginController::saveSettings(const QString& environment, const QString& 
 }
 
 int McPluginController::watch(const QString& environment, const QString& id, const QString& topic) {
-  const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("plugin")}, {QStringLiteral("environment"), environment},
-                          {QStringLiteral("id"), id}, {QStringLiteral("topic"), topic}};
-  auto watch = std::make_shared<int>(0);
-  *watch = m_client->subscribe(this, shape, [this, watch](const QJsonObject& frame) {
-    if (frame.value(QLatin1String("t")).toString() == QLatin1String("plugin")) {
-      emit published(*watch, frame.value(QLatin1String("value")).toVariant());
-    }
-  });
-  m_watches.insert(*watch);
-  return *watch;
+  const QString key = environment + QLatin1Char('/') + id + QLatin1Char('/') + topic;
+  if (!m_topics.contains(key)) {
+    const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("plugin")}, {QStringLiteral("environment"), environment},
+                            {QStringLiteral("id"), id}, {QStringLiteral("topic"), topic}};
+    m_topics[key].subscription = m_client->subscribe(this, shape, [this, key](const QJsonObject& frame) {
+      if (frame.value(QLatin1String("t")).toString() != QLatin1String("plugin") || !m_topics.contains(key)) return;
+      Topic& followed = m_topics[key];
+      followed.last = frame.value(QLatin1String("value")).toVariant();
+      followed.known = true;
+      const QVariant value = followed.last;
+      for (const int watch : QSet<int>(followed.watches)) emit published(watch, value);
+    });
+  }
+  const int watch = m_nextWatch++;
+  m_topics[key].watches.insert(watch);
+  m_watches.insert(watch, key);
+  if (m_topics[key].known) {
+    // After the caller has kept the watch, as when the MC answers.
+    QTimer::singleShot(0, this, [this, watch] {
+      const auto it = m_topics.constFind(m_watches.value(watch));
+      if (it != m_topics.constEnd() && it->known) emit published(watch, it->last);
+    });
+  }
+  return watch;
 }
 
 void McPluginController::unwatch(int watch) {
-  if (m_watches.remove(watch)) m_client->unsubscribe(watch);
+  const QString key = m_watches.take(watch);
+  const auto it = m_topics.find(key);
+  if (it == m_topics.end()) return;
+  it->watches.remove(watch);
+  if (!it->watches.isEmpty()) return;
+  m_client->unsubscribe(it->subscription);
+  m_topics.erase(it);
 }
