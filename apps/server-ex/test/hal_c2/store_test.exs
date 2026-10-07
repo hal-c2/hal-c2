@@ -21,6 +21,14 @@ defmodule HalC2.StoreTest do
     assert {:ok, ^last} = Store.append([{:thread, "t2", []}])
   end
 
+  test "a write waits for a store that is restarting", %{path: path} do
+    :ok = stop_supervised(Store)
+    write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+    start_supervised!({Store, path: path})
+
+    assert {:ok, 1} = Task.await(write)
+  end
+
   test "the time of an append is only given with its store" do
     assert {:ok, 1} = Store.append(Store, [{:thread, "t1", [change("t1")]}], 1_700_000_000_000)
 
@@ -61,6 +69,7 @@ defmodule HalC2.StoreTest do
     messages = [{"m1", "user", "one", "a"}, {"m2", "user", "two", "b"}]
 
     Store.index_messages("t1", messages)
+    _ = :sys.get_state(Store)
     assert [{"t1", "user", "one", "a"}] = Store.search_messages(path, "%one%", 10)
 
     # The second row cannot be stored, so the first must not stay either.

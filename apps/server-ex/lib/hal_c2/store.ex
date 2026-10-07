@@ -32,6 +32,9 @@ defmodule HalC2.Store do
   @schema_version 1
   @compress_over 1024
   @write_timeout 60_000
+  # How long a write waits for the store to restart, and how often it looks.
+  @restart_wait 5_000
+  @restart_poll 5
   @checkpoint_every :timer.seconds(10)
 
   @schema [
@@ -124,7 +127,7 @@ defmodule HalC2.Store do
     do: append(store, batches, System.os_time(:millisecond))
 
   def append(store, batches, at) when is_list(batches) and is_integer(at),
-    do: GenServer.call(store, {:append, batches, at}, @write_timeout)
+    do: write(store, {:append, batches, at})
 
   @doc """
   Caches a stream's folded state as of `seq`. The stream must already have events:
@@ -133,7 +136,7 @@ defmodule HalC2.Store do
   @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term) ::
           :ok | {:error, :unknown_stream}
   def put_snapshot(store \\ __MODULE__, stream_id, seq, state),
-    do: GenServer.call(store, {:put_snapshot, stream_id, seq, state}, @write_timeout)
+    do: write(store, {:put_snapshot, stream_id, seq, state})
 
   @doc """
   Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`. The stream
@@ -142,7 +145,25 @@ defmodule HalC2.Store do
   @spec put_shell(GenServer.server(), String.t(), non_neg_integer, {String.t(), map}) ::
           :ok | {:error, :unknown_stream}
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
-    do: GenServer.call(store, {:put_shell, stream_id, seq, kind, row}, @write_timeout)
+    do: write(store, {:put_shell, stream_id, seq, kind, row})
+
+  # A write waits out a restart of a named store: a call that found no store wrote
+  # nothing, so it is made again once the store is back. Nothing says when that is, so
+  # it looks every few milliseconds. A call the store took and then crashed on may
+  # have landed, and fails as it did.
+  defp write(store, request, deadline \\ nil) do
+    GenServer.call(store, request, @write_timeout)
+  catch
+    :exit, {:noproc, _} = reason when is_atom(store) ->
+      deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
+
+      if System.monotonic_time(:millisecond) < deadline do
+        Process.sleep(@restart_poll)
+        write(store, request, deadline)
+      else
+        exit(reason)
+      end
+  end
 
   @doc "Every stored sidebar row as `{stream_id, kind, row}`."
   @spec list_shell(String.t()) :: [{String.t(), String.t(), map}]
@@ -203,7 +224,7 @@ defmodule HalC2.Store do
   end
 
   def put_meta(store \\ __MODULE__, key, value),
-    do: GenServer.call(store, {:put_meta, key, value}, @write_timeout)
+    do: write(store, {:put_meta, key, value})
 
   @doc """
   Copies the WAL back into the database now rather than at the next periodic
@@ -212,7 +233,7 @@ defmodule HalC2.Store do
   """
   @spec checkpoint(GenServer.server()) ::
           {:ok, %{log: integer, checkpointed: integer}} | {:error, term}
-  def checkpoint(store \\ __MODULE__), do: GenServer.call(store, :checkpoint, @write_timeout)
+  def checkpoint(store \\ __MODULE__), do: write(store, :checkpoint)
 
   @doc "The MC's database in its data directory, which the application and mix tasks open."
   def home_path, do: Path.join(HalC2.Paths.data_dir(), "hal-c2.sqlite")
