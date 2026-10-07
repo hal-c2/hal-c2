@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run the Qt desktop in a headless sandbox cua-driver can drive, on a scratch MC (--seed <hal-c2.sqlite> copies a database in, --url attaches to another MC); run it again to relaunch the app"
+#MISE dir="{{config_root}}"
+#MISE depends=["desktop:build"]
+set -euo pipefail
+exec apps/desktop-qt/scripts/cua-sandbox.sh start "$@"
