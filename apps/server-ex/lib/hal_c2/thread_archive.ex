@@ -564,7 +564,8 @@ defmodule HalC2.ThreadArchive do
 
   # The thread's entity knows where it came from, so the agent can be told the project
   # moved; it works in its new worktree here, if it got one (the old one stays behind
-  # on the machine it left).
+  # on the machine it left). A plugin's mark stays behind too: a thread only moves once
+  # its plugin stopped running, and the same plugin here holds nothing of it.
   defp carried({"thread", eid, entity}, id, worktree, meta, dest_root) when eid == id do
     arrived =
       if meta["projectRoot"] && meta["projectRoot"] != dest_root,
@@ -572,7 +573,7 @@ defmodule HalC2.ThreadArchive do
 
     entity =
       entity
-      |> Map.drop(["movedTo", "moving"])
+      |> Map.drop(["movedTo", "moving", "plugin"])
       |> Map.put("worktreePath", worktree)
       |> then(&if(arrived, do: Map.put(&1, "arrived", arrived), else: &1))
 

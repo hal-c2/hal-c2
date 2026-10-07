@@ -20,8 +20,8 @@ defmodule HalC2.Projection.Shell do
 
   # Absent from older payloads; the Node schema omits them rather than sending null.
   # `moving` and `movedTo` mark a thread leaving for, or gone to, another machine
-  # (`HalC2.ThreadMove`).
-  @optional_fields ~w(linkedPullRequest branchPullRequest activeOrderKey historyOrigin moving movedTo)
+  # (`HalC2.ThreadMove`). `plugin` marks a thread a plugin started (`HalC2.Plugins.Host`).
+  @optional_fields ~w(linkedPullRequest branchPullRequest activeOrderKey historyOrigin moving movedTo plugin)
 
   @spec thread_shell(StreamState.t(), StreamState.t() | Timeline.resolve() | nil) :: map
   def thread_shell(%StreamState{} = state, source \\ nil) do

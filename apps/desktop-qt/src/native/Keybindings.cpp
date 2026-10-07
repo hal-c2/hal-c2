@@ -24,6 +24,8 @@ QList<Rule> buildDefaults() {
       rule(QStringLiteral("mod+b"), QStringLiteral("sidebar.toggle")),
       rule(QStringLiteral("mod+["), QStringLiteral("navigation.back"), notTerminal),
       rule(QStringLiteral("mod+]"), QStringLiteral("navigation.forward"), notTerminal),
+      rule(QStringLiteral("mod+alt+]"), QStringLiteral("tabs.next"), notTerminal),
+      rule(QStringLiteral("mod+alt+["), QStringLiteral("tabs.previous"), notTerminal),
       rule(QStringLiteral("mod+j"), QStringLiteral("terminal.toggle")),
       rule(QStringLiteral("mod+alt+b"), QStringLiteral("rightPanel.toggle")),
       rule(QStringLiteral("mod+d"), QStringLiteral("terminal.split"), terminal),
@@ -312,6 +314,7 @@ const QStringList& commands() {
   static const QStringList list = [] {
     QStringList list{
         QStringLiteral("sidebar.toggle"), QStringLiteral("navigation.back"), QStringLiteral("navigation.forward"),
+        QStringLiteral("tabs.next"), QStringLiteral("tabs.previous"),
         QStringLiteral("terminal.toggle"), QStringLiteral("terminal.split"), QStringLiteral("terminal.splitVertical"),
         QStringLiteral("terminal.new"), QStringLiteral("terminal.close"), QStringLiteral("rightPanel.toggle"),
         QStringLiteral("threadPanel.toggle"), QStringLiteral("rightPanel.toggleMaximized"),

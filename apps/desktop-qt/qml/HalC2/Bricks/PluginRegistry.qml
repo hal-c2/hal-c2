@@ -8,11 +8,14 @@ import HalC2.Shell
 // replaces its plugin in place, and one that no longer loads leaves the
 // version already running. What loaded and what did not goes back as
 // `plugins.report`. PluginSlots read `contributionsFor(name)` and follow
-// `revision`.
+// `revision`, which also counts the slot parts MC plugins add
+// (`Shell.state.mcPlugins.slots`), each made as a PluginPart.
 QtObject {
     id: registry
 
     readonly property var wanted: Shell.state.plugins?.files ?? []
+    readonly property var mcSlots: Shell.state.mcPlugins?.slots ?? []
+    property string mcSlotsSeen: "[]"
     // By file: {object, revision, id}.
     property var loaded: ({})
     // What a slot could not draw: {id, file, message}, by "id\nslot".
@@ -49,8 +52,13 @@ QtObject {
         return first !== null ? qsTr("line %1: %2").arg(first.lineNumber).arg(first.message) : String(error.message ?? error);
     }
 
+    readonly property Component mcPart: Component {
+        PluginPart {}
+    }
+
     // The contributions to a slot, by plugin order and then load order, one
-    // per plugin: [{pluginId, file, delegate}].
+    // per plugin, MC plugins' after this device's: [{pluginId, file,
+    // delegate, given (its initial properties), mc}].
     function contributionsFor(name) {
         const found = [];
         registry.wanted.forEach((entry, index) => {
@@ -64,7 +72,12 @@ QtObject {
                 }
             }
         });
-        return found.sort((a, b) => (a.order - b.order) || (a.index - b.index));
+        found.sort((a, b) => (a.order - b.order) || (a.index - b.index));
+        const mc = registry.mcSlots.filter(part => part.slot === name).sort((a, b) => a.order - b.order);
+        for (const part of mc)
+            found.push({ pluginId: part.pluginId, file: part.url, delegate: registry.mcPart, mc: true,
+                         given: { url: part.url, pluginId: part.pluginId, environments: [part.environment] } });
+        return found;
     }
 
     // A slot says what it could not draw (message "" once it can).
@@ -190,5 +203,12 @@ QtObject {
     }
 
     onWantedChanged: sync()
+    onMcSlotsChanged: {
+        const seen = JSON.stringify(registry.mcSlots);
+        if (seen === registry.mcSlotsSeen)
+            return;
+        registry.mcSlotsSeen = seen;
+        registry.revision += 1;
+    }
     Component.onCompleted: sync()
 }

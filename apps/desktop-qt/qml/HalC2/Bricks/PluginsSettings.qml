@@ -4,8 +4,10 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Plugins: the UI plugins this device has (`Shell.state.plugins`,
-// the plugin controller's), each turned off and on or removed, the ones that
+// Settings → Plugins: the plugins each MC runs (`Shell.state.mcPlugins`), by
+// environment, with what they are, enabled once the user accepts what they
+// ask for; then the UI plugins this device has (`Shell.state.plugins`, the
+// plugin controller's), each turned off and on or removed, the ones that
 // failed with what went wrong, and a plugin file loaded from a URL once the
 // user has been told nothing vouches for it.
 SettingsPage {
@@ -15,6 +17,7 @@ SettingsPage {
     readonly property var items: settings?.items ?? []
     readonly property var disabled: settings?.disabled ?? []
     readonly property var failed: settings?.failed ?? []
+    readonly property var mcEnvironments: (Shell.state.mcPlugins?.environments ?? []).filter(environment => environment.plugins.length > 0)
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
     // Keeps the plugins loaded while only this page shows.
@@ -68,6 +71,166 @@ SettingsPage {
             iconName: "trash"
             Accessible.name: qsTr("Remove %1").arg(row.pluginId)
             onClicked: Shell.dispatch("plugins.remove", { id: row.pluginId })
+        }
+    }
+
+    component McPluginCard: ColumnLayout {
+        id: card
+
+        required property var plugin
+        readonly property bool running: plugin.status === "running"
+        readonly property bool failed: plugin.status === "failed" || plugin.status === "error"
+        readonly property bool off: plugin.status === "disabled" || plugin.status === "awaitingConsent"
+        // Why a package did not load, else why its MC part last stopped.
+        readonly property string reason: plugin.error || plugin.lastError || ""
+
+        objectName: "mcPlugin:" + plugin.environment + "/" + plugin.id
+        Layout.fillWidth: true
+        spacing: 6
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+
+            Image {
+                Layout.preferredWidth: 32
+                Layout.preferredHeight: 32
+                visible: card.plugin.iconUrl.length > 0
+                source: card.plugin.iconUrl
+                sourceSize: Qt.size(64, 64)
+                fillMode: Image.PreserveAspectFit
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+
+                Label {
+                    objectName: "mcPluginName"
+                    text: card.plugin.name || card.plugin.id
+                    color: page.foreground
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.weight: Font.Medium
+                }
+
+                Label {
+                    objectName: "mcPluginByline"
+                    Layout.fillWidth: true
+                    text: [card.plugin.version, card.plugin.author?.name ?? ""].filter(part => part.length > 0).join(" · ")
+                    color: page.muted
+                    elide: Text.ElideRight
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
+            }
+
+            ShellButton {
+                objectName: "mcPluginRestart"
+                text: qsTr("Restart")
+                // A package that did not load is fixed in its files, not by a restart.
+                visible: card.running || card.plugin.status === "failed"
+                onClicked: Shell.dispatch("mcPlugins.restart", { environment: card.plugin.environment, id: card.plugin.id })
+            }
+
+            ShellButton {
+                objectName: "mcPluginSettings"
+                text: qsTr("Settings")
+                visible: card.plugin.settingsSchema.length > 0 || card.plugin.settingsPageUrl.length > 0
+                onClicked: Shell.dispatch("settings.navigate", { to: "/settings/plugin/" + card.plugin.environment + "/" + card.plugin.id })
+            }
+
+            ShellButton {
+                objectName: "mcPluginToggle"
+                text: card.off ? qsTr("Enable") : qsTr("Disable")
+                enabled: card.plugin.status !== "incompatible"
+                onClicked: Shell.dispatch(card.off ? "mcPlugins.enable" : "mcPlugins.disable", { environment: card.plugin.environment, id: card.plugin.id })
+            }
+        }
+
+        Label {
+            objectName: "mcPluginDescription"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: card.plugin.description
+            color: page.foreground
+            wrapMode: Text.Wrap
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        Label {
+            objectName: "mcPluginStatus"
+            Layout.fillWidth: true
+            text: {
+                switch (card.plugin.status) {
+                case "running":
+                    return qsTr("Running");
+                case "disabled":
+                    return qsTr("Disabled");
+                case "awaitingConsent":
+                    return qsTr("Waiting for you to accept what it asks for");
+                case "incompatible":
+                    return qsTr("Not made for this MC: %1").arg(card.reason);
+                default:
+                    return qsTr("Failed: %1").arg(card.reason);
+                }
+            }
+            color: card.failed || card.plugin.status === "incompatible" ? page.errorColor : page.muted
+            wrapMode: Text.Wrap
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        Flow {
+            Layout.fillWidth: true
+            visible: card.plugin.screenshotUrls.length > 0
+            spacing: 8
+
+            Repeater {
+                model: card.plugin.screenshotUrls
+
+                delegate: Image {
+                    required property var modelData
+
+                    objectName: "mcPluginScreenshot"
+                    width: 200
+                    height: 125
+                    source: modelData.url
+                    sourceSize: Qt.size(400, 250)
+                    fillMode: Image.PreserveAspectFit
+                    Accessible.role: Accessible.Graphic
+                    Accessible.name: modelData.caption ?? ""
+                }
+            }
+        }
+    }
+
+    Repeater {
+        model: page.mcEnvironments
+
+        delegate: ColumnLayout {
+            id: environment
+
+            required property var modelData
+
+            objectName: "mcPlugins:" + modelData.id
+            Layout.fillWidth: true
+            Layout.bottomMargin: 8
+            spacing: 12
+
+            Label {
+                text: qsTr("On %1").arg(environment.modelData.label)
+                color: page.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.DemiBold
+            }
+
+            Repeater {
+                model: environment.modelData.plugins
+
+                delegate: McPluginCard {
+                    required property var modelData
+
+                    plugin: modelData
+                }
+            }
         }
     }
 

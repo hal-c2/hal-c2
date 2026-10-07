@@ -934,9 +934,12 @@ defmodule HalC2.Orchestration do
   and sends its first message when there is one (`orchestration.launchThread`). A
   new worktree is prepared first (`HalC2.WorktreeSetup`), with the message's run
   waiting as `preparing` until it is ready.
+
+  `plugin:` marks the thread as one a plugin started (`HalC2.Plugins.Host`); clients
+  cannot set it.
   """
-  @spec launch_thread(map) :: {:ok, map} | {:error, String.t()}
-  def launch_thread(input) do
+  @spec launch_thread(map, keyword) :: {:ok, map} | {:error, String.t()}
+  def launch_thread(input, opts \\ []) do
     thread_id = input["threadId"] || HalC2.Environment.uuid4()
     strategy = input["workspaceStrategy"] || %{"type" => "root"}
     at = Entities.now()
@@ -954,6 +957,7 @@ defmodule HalC2.Orchestration do
       |> Map.merge(workspace_fields(strategy))
       # A delegated task's thread is a subagent of the thread that asked for it.
       |> Map.merge(Map.take(input, ["lineage"]))
+      |> then(&if(mark = opts[:plugin], do: Map.put(&1, "plugin", mark), else: &1))
       |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
     reuse? = input["reuseExistingThread"] == true

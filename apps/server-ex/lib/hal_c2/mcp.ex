@@ -142,7 +142,7 @@ defmodule HalC2.Mcp do
         {200, result(id, %{})}
 
       "tools/list" ->
-        {200, result(id, %{"tools" => HalC2.Mcp.Tools.list() ++ plugin_tools()})}
+        {200, result(id, %{"tools" => HalC2.Mcp.Tools.list() ++ plugin_tools(caller)})}
 
       "tools/call" ->
         %{"name" => name} = params = request["params"] || %{}
@@ -153,10 +153,11 @@ defmodule HalC2.Mcp do
     end
   end
 
-  # Tools of the enabled tool packs (`HalC2.Plugins`); HAL-C2's own keep their names.
-  defp plugin_tools do
+  # Tools of the enabled tool packs and extensions (`HalC2.Plugins`) for the caller's
+  # thread; HAL-C2's own keep their names.
+  defp plugin_tools(caller) do
     own = MapSet.new(HalC2.Mcp.Tools.list(), & &1["name"])
-    Enum.reject(HalC2.Plugins.tools(), &MapSet.member?(own, &1["name"]))
+    Enum.reject(HalC2.Plugins.tools(caller.thread_id), &MapSet.member?(own, &1["name"]))
   end
 
   # A tool's answer as MCP content; a failure is an error result the agent can read.
@@ -165,7 +166,7 @@ defmodule HalC2.Mcp do
       if Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)),
         do: HalC2.Mcp.Tools.call(name, arguments, caller),
         else:
-          HalC2.Plugins.call_tool(name, arguments) ||
+          HalC2.Plugins.call_tool(name, arguments, caller.thread_id) ||
             HalC2.Mcp.Tools.call(name, arguments, caller)
 
     case answer do

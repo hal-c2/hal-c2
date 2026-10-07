@@ -746,6 +746,19 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     |> Map.put(:kept_kinds, ["context-transfer"])
   end
 
+  step "{string} was started by the plugin {string}, which no longer runs on {string}",
+       %{args: [title, plugin, _machine]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  step "{string} on {string} is an ordinary thread, in the thread list",
+       %{args: [title, machine]} = context do
+    moved!(context)
+    refute Map.has_key?(remote_thread(context, machine, title), "plugin")
+    context
+  end
+
   step("{string} on {string} still has its id and title", %{args: [title, machine]} = context,
     do: still_has(context, title, machine)
   )

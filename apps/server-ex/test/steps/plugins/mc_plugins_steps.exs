@@ -522,7 +522,8 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   end
 
   step "the previous settings are kept", context do
-    assert Fixtures.entry(context.plugin)["settings"] == %{"baseUrl" => "https://git.example.com"}
+    before = context[:settings_before] || %{"baseUrl" => "https://git.example.com"}
+    assert Fixtures.entry(context.plugin)["settings"] == before
     context
   end
 

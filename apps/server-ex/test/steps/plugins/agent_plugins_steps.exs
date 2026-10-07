@@ -291,6 +291,9 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   def ensure(context) do
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Plugins)
+    # The first scan runs after Plugins starts; reads like `provider/1` skip the
+    # server, so wait for it to finish.
+    :sys.get_state(HalC2.Plugins)
     Mc.ensure(HalC2.Orchestration.TurnWatch)
     context
   end

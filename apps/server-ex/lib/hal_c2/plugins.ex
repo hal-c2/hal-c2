@@ -1,13 +1,21 @@
 defmodule HalC2.Plugins do
   @moduledoc """
   MC plugins: Elixir source files in `<home>/plugins/*.ex` whose modules implement
-  one of the plugin behaviours (`HalC2.Plugins.Kind`): provider adapters, MCP tool
-  packs, git hosts, notification channels and text-generation backends.
+  plugin behaviours (`HalC2.Plugins.Kind`): provider adapters, MCP tool packs, git
+  hosts, notification channels, text-generation backends and extensions. A module
+  may implement several.
 
-  The directory is compiled at boot and on `plugins.rescan`; a file that changed is
-  compiled again, and a file whose new code does not load keeps the old code
-  running with the failure reported. A file with no plugin module is skipped with a
-  warning.
+  Plugin packages (`HalC2.Plugins.Package`) are directories `<home>/plugins/<id>/`
+  with a `plugin.json`: their `mc/` sources compile to at most one plugin module, a
+  package without them is UI parts only, and the MC serves the package's files to
+  clients (`plugins.file`). A running extension answers its UI parts
+  (`plugins.call`) and pushes state to them by topic (`publish/3`).
+
+  The directory is compiled at boot and on `plugins.rescan`; a file or package that
+  changed is compiled again, and one whose new code does not load keeps the old
+  code running with the failure reported. A file with no plugin module is skipped
+  with a warning. A package's code is compiled only once the user let it run: one
+  that is off or waits for consent is compiled when it is started.
 
   A plugin is off until the user enables it. What is enabled, and each plugin's
   settings, live in the MC's settings document under `plugins.<id>`
@@ -25,13 +33,20 @@ defmodule HalC2.Plugins do
   the user turns them off, and replaced by a plugin file with the same id.
 
   A plugin's manifest may ask for `permissions` (`[%{id, label}]`); enabling it
-  grants them, recorded under `plugins.<id>.granted` and shown in the listing.
+  grants them, recorded under `plugins.<id>.granted` and shown in the listing. A
+  package is enabled only with every permission it asks for accepted
+  (`acceptPermissions`), and waits as `awaitingConsent` when an update asks for
+  more; `HalC2.Plugins.Host` refuses what was not granted.
 
-  Watchers (`subscribe/1`) get `{:hal_c2_plugins, mc, list}` whenever the list changes.
+  Watchers (`subscribe/1`) get `{:hal_c2_plugins, mc, list}` whenever the list
+  changes, and topic watchers (`subscribe_topic/3`)
+  `{:hal_c2_plugin_topic, mc, id, topic, value}` whenever a plugin publishes.
   """
 
   use GenServer
   require Logger
+
+  alias HalC2.Plugins.Package
 
   # The plugin API this MC offers; a plugin's manifest names the one it was built for.
   @api_version 1
@@ -46,7 +61,8 @@ defmodule HalC2.Plugins do
     HalC2.Plugins.McpToolPack => "mcpToolPack",
     HalC2.Plugins.GitHost => "gitHost",
     HalC2.Plugins.NotificationChannel => "notificationChannel",
-    HalC2.Plugins.TextGeneration => "textGeneration"
+    HalC2.Plugins.TextGeneration => "textGeneration",
+    HalC2.Plugins.Extension => "extension"
   }
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -54,43 +70,157 @@ defmodule HalC2.Plugins do
   @doc "The plugin API version this MC offers."
   def api_version, do: @api_version
 
+  # Enabling or rescanning can compile a package, which takes longer than a call does.
+  @compiles 60_000
+
   @doc "Serves `plugins.<method>` (`HalC2.Rpc`)."
   def handle("list", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
-  def handle("rescan", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan)}}
-  def handle("enable", %{"id" => id}), do: GenServer.call(__MODULE__, {:set_enabled, id, true})
-  def handle("disable", %{"id" => id}), do: GenServer.call(__MODULE__, {:set_enabled, id, false})
+
+  def handle("rescan", _input),
+    do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan, @compiles)}}
+
+  def handle("enable", %{"id" => id} = input) do
+    case input["acceptPermissions"] || [] do
+      accepted when is_list(accepted) ->
+        if Enum.all?(accepted, &is_binary/1),
+          do: GenServer.call(__MODULE__, {:set_enabled, id, true, accepted}, @compiles),
+          else: {:error, "acceptPermissions is a list of permission ids."}
+
+      _ ->
+        {:error, "acceptPermissions is a list of permission ids."}
+    end
+  end
+
+  def handle("disable", %{"id" => id}),
+    do: GenServer.call(__MODULE__, {:set_enabled, id, false, []})
+
   def handle("restart", %{"id" => id}), do: GenServer.call(__MODULE__, {:restart, id})
 
   def handle("saveSettings", %{"id" => id, "settings" => %{} = settings}),
     do: GenServer.call(__MODULE__, {:save_settings, id, settings})
+
+  # Plugin code runs in the caller, so a slow plugin holds up only its own request.
+  def handle("call", %{"id" => id, "method" => method} = input) do
+    with {:ok, module, context} <- GenServer.call(__MODULE__, {:context, id}) do
+      case safely(fn ->
+             with(
+               {:ok, value} <- module.call(method, input["input"], context),
+               do: {:ok, json(value)}
+             )
+           end) do
+        {:ok, value} ->
+          {:ok, value}
+
+        {:error, message} ->
+          {:error, %{"_tag" => "PluginCallFailed", "message" => "#{id}: #{text(message)}"}}
+
+        other ->
+          {:error,
+           %{"_tag" => "PluginCallFailed", "message" => "#{id}: answered #{inspect(other)}"}}
+      end
+    end
+  end
+
+  def handle("file", %{"id" => id, "path" => path}) do
+    with {:ok, dir, revision} <- GenServer.call(__MODULE__, {:file, id, path}) do
+      case Package.file(dir, path, revision) do
+        {:ok, file} -> {:ok, file}
+        {:error, message} -> {:error, %{"_tag" => "PluginFileNotFound", "message" => message}}
+      end
+    end
+  end
 
   def handle(method, _input), do: {:error, "plugins.#{method} is not served by this MC yet"}
 
   @doc "Sends `{:hal_c2_plugins, mc, list}` to `pid` on every change; returns the list."
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
+  @doc "Stops what `subscribe/1` started."
+  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+
+  @doc """
+  Sends `{:hal_c2_plugin_topic, mc, id, topic, value}` to `pid` whenever plugin `id`
+  publishes on `topic`; answers `{:ok, value}` with what it last published, or nil.
+  """
+  def subscribe_topic(pid, id, topic),
+    do: GenServer.call(__MODULE__, {:subscribe_topic, pid, id, topic})
+
+  @doc "Stops what `subscribe_topic/3` started."
+  def unsubscribe_topic(pid, id, topic),
+    do: GenServer.cast(__MODULE__, {:unsubscribe_topic, pid, id, topic})
+
+  @doc "Plugin `id` publishes `value` on `topic` (`HalC2.Plugins.Host.publish/3`)."
+  def publish(id, topic, value),
+    do: GenServer.cast(__MODULE__, {:publish, id, to_string(topic), json(value)})
+
+  @doc "The permissions plugin `id` was granted."
+  def granted(id), do: config(id)["granted"] || []
+
+  @doc "Records that plugin `id` was refused a call needing `permission`."
+  def denied(id, permission), do: GenServer.cast(__MODULE__, {:denied, id, permission})
+
   # --- contributions ------------------------------------------------------------------
 
-  @doc "The tools of the running MCP tool packs, as MCP tool definitions."
-  def tools do
-    for {_id, module, settings} <- running("mcpToolPack"),
-        tool <- pack_tools(module, settings),
-        do: tool
+  @doc """
+  The tools of the running MCP tool packs, and of the running extensions granted
+  `agentTools`, for an agent in `thread_id`, as MCP tool definitions.
+  """
+  def tools(thread_id \\ nil) do
+    packs =
+      for {_id, module, settings} <- running("mcpToolPack"), do: pack_tools(module, settings)
+
+    extensions =
+      for {_id, module, context} <- tool_extensions(thread_id),
+          do: extension_tools(module, context)
+
+    List.flatten(packs ++ extensions)
   end
 
   @doc """
-  Calls a running tool pack's tool: `{:ok, value}`, `{:error, code, message}`, or
-  nil when no running pack has it.
+  Calls a running tool pack's or extension's tool for an agent in `thread_id`:
+  `{:ok, value}`, `{:error, code, message}`, or nil when no running plugin has it.
   """
-  def call_tool(name, arguments) do
-    Enum.find_value(running("mcpToolPack"), fn {id, module, settings} ->
-      if Enum.any?(pack_tools(module, settings), &(&1["name"] == name)) do
-        case safely(fn -> module.call_tool(name, arguments, settings) end) do
-          {:ok, value} -> {:ok, value}
-          {:error, message} -> {:error, "plugin_failed", "#{id}: #{message}"}
-        end
-      end
-    end)
+  def call_tool(name, arguments, thread_id \\ nil) do
+    pack =
+      Enum.find_value(running("mcpToolPack"), fn {id, module, settings} ->
+        if Enum.any?(pack_tools(module, settings), &(&1["name"] == name)),
+          do: tool_answer(id, fn -> module.call_tool(name, arguments, settings) end)
+      end)
+
+    pack ||
+      Enum.find_value(tool_extensions(thread_id), fn {id, module, context} ->
+        if Enum.any?(extension_tools(module, context), &(&1["name"] == name)),
+          do: tool_answer(id, fn -> module.call_agent_tool(name, arguments, context) end)
+      end)
+  end
+
+  defp tool_answer(id, fun) do
+    case safely(fun) do
+      {:ok, value} -> {:ok, value}
+      {:error, message} -> {:error, "plugin_failed", "#{id}: #{text(message)}"}
+    end
+  end
+
+  # `{id, module, context}` of the running extensions that may offer agents tools.
+  defp tool_extensions(thread_id) do
+    for {id, module, settings} <- running("extension"),
+        function_exported?(module, :agent_tools, 1),
+        "agentTools" in granted(id),
+        do: {id, module, %{id: id, settings: settings, thread_id: thread_id}}
+  end
+
+  defp extension_tools(module, context) do
+    case safely(fn -> module.agent_tools(context) end) do
+      tools when is_list(tools) -> Enum.map(tools, &json/1)
+      _ -> []
+    end
+  end
+
+  @doc "Whether plugin `id` is running on this MC."
+  def running?(id) do
+    GenServer.call(__MODULE__, {:running?, id})
+  catch
+    :exit, _ -> false
   end
 
   @doc "Whether `id` is a running text-generation backend."
@@ -285,20 +415,43 @@ defmodule HalC2.Plugins do
   """
   def turn_finished(thread_id, status) do
     channels = running("notificationChannel")
+    thread = fn -> thread(thread_id) end
 
     if channels != [] and not HalC2.BackgroundPolicy.watched?(thread_id) do
-      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
-      title = get_in(HalC2.StreamState.get(state, "thread"), [thread_id, "title"])
-
       notify(channels, %{
         "type" => "turn.finished",
         "threadId" => thread_id,
-        "title" => title,
+        "title" => thread.()["title"],
         "status" => status
       })
     end
 
+    # The extension that started the thread hears of it too.
+    with %{"plugin" => %{"id" => owner} = mark} <- thread.(),
+         {^owner, module, settings} <- List.keyfind(running("extension"), owner, 0),
+         true <- function_exported?(module, :handle_event, 2) do
+      event = %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "status" => status,
+        "plugin" => mark
+      }
+
+      context = %{id: owner, settings: settings, thread_id: thread_id}
+
+      Task.start(fn ->
+        with {:error, message} <- safely(fn -> module.handle_event(event, context) end),
+             do:
+               Logger.warning("plugin #{owner} failed handling a finished turn: #{text(message)}")
+      end)
+    end
+
     :ok
+  end
+
+  defp thread(thread_id) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    HalC2.StreamState.get(state, "thread")[thread_id] || %{}
   end
 
   defp notify(channels, notification) do
@@ -338,6 +491,9 @@ defmodule HalC2.Plugins do
 
   defp json(value), do: value |> JSON.encode!() |> JSON.decode!()
 
+  defp text(message) when is_binary(message), do: message
+  defp text(message), do: inspect(message)
+
   @doc false
   # The plugin's process, started by its supervisor; the MC watches it for crashes.
   def start_worker(id, module, settings) do
@@ -356,7 +512,17 @@ defmodule HalC2.Plugins do
     :ok = HalC2.Settings.watch(self())
     dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
-    state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}, watchers: %{}}
+    state = %{
+      dir: dir,
+      supervisor: supervisor,
+      plugins: %{},
+      refs: %{},
+      watchers: %{},
+      # What each plugin last published, by `{id, topic}`, and who watches it.
+      topics: %{},
+      topic_watchers: %{}
+    }
+
     {:ok, state, {:continue, :scan}}
   end
 
@@ -373,14 +539,17 @@ defmodule HalC2.Plugins do
 
   def handle_call({:running, kind}, _from, state) do
     running =
-      for {id, %{kind: ^kind, sup: sup} = plugin} <- state.plugins,
-          sup != nil,
+      for {id, %{sup: sup} = plugin} <- state.plugins,
+          sup != nil and kind in plugin.kinds,
           do: {id, plugin.module, settings(plugin)}
 
     {:reply, running, state}
   end
 
-  def handle_call({:set_enabled, id, enabled}, _from, state) do
+  def handle_call({:running?, id}, _from, state),
+    do: {:reply, match?(%{sup: sup} when sup != nil, state.plugins[id]), state}
+
+  def handle_call({:set_enabled, id, enabled, accepted}, _from, state) do
     case state.plugins[id] do
       nil ->
         {:reply, not_found(id), state}
@@ -389,17 +558,30 @@ defmodule HalC2.Plugins do
         {:reply, {:error, %{"_tag" => "PluginUnavailable", "message" => message}}, state}
 
       plugin ->
-        update_config(id, fn config ->
-          config = Map.put(config, "enabled", enabled)
+        requested = Enum.map(permissions(plugin), & &1["id"])
+        # A package gets only what the user accepted; a plugin file what it asks for.
+        missing = if plugin.package, do: requested -- (granted(id) ++ accepted), else: []
 
-          # Enabling a plugin grants what it asks for.
-          if enabled,
-            do: Map.put(config, "granted", Enum.map(permissions(plugin), & &1["id"])),
-            else: config
-        end)
+        if enabled and missing != [] do
+          {:reply, {:error, consent_required(plugin, missing)}, state}
+        else
+          update_config(id, fn config ->
+            config = Map.put(config, "enabled", enabled)
+            if enabled, do: Map.put(config, "granted", requested), else: config
+          end)
 
-        state = put_in(state.plugins[id], %{plugin | failed: false}) |> reconcile() |> push()
-        {:reply, {:ok, entry(state.plugins[id])}, state}
+          plugin = %{plugin | failed: false, denied: if(enabled, do: [], else: plugin.denied)}
+          state = put_in(state.plugins[id], plugin) |> reconcile() |> push()
+
+          # A package compiles when it is first enabled, and may not.
+          case state.plugins[id] do
+            %{problem: {:load, message}} when enabled ->
+              {:reply, {:error, %{"_tag" => "PluginUnavailable", "message" => message}}, state}
+
+            plugin ->
+              {:reply, {:ok, entry(plugin)}, state}
+          end
+        end
     end
   end
 
@@ -421,19 +603,21 @@ defmodule HalC2.Plugins do
 
   def handle_call({:save_settings, id, input}, _from, state) do
     case state.plugins[id] do
-      %{module: module} = plugin when module != nil ->
+      %{module: module, package: package} = plugin when module != nil or package != nil ->
         fields = fields(plugin)
+        input = Map.take(input, Enum.map(fields, & &1["key"]))
         current = config(id)["settings"] || %{}
-        next = Map.merge(current, Map.take(input, Enum.map(fields, & &1["key"])))
+        # A value saved as null goes back to the field's default.
+        next = current |> Map.merge(input) |> Map.reject(fn {_key, value} -> value == nil end)
 
-        case validate(module, reveal(id, fields, next)) do
-          :ok ->
-            update_config(id, &Map.put(&1, "settings", seal(id, fields, next)))
-            # A running plugin starts again with what the user saved.
-            state = if plugin.sup, do: state |> stop(id) |> reconcile(), else: state
-            state = push(state)
-            {:reply, {:ok, entry(state.plugins[id])}, state}
-
+        with :ok <- check_types(fields, input),
+             :ok <- validate(module, Map.merge(defaults(fields), reveal(id, fields, next))) do
+          update_config(id, &Map.put(&1, "settings", seal(id, fields, next)))
+          # A running plugin starts again with what the user saved.
+          state = if plugin.sup, do: state |> stop(id) |> reconcile(), else: state
+          state = push(state)
+          {:reply, {:ok, entry(state.plugins[id])}, state}
+        else
           {:error, message} ->
             {:reply, {:error, %{"_tag" => "PluginSettingsInvalid", "message" => message}}, state}
         end
@@ -448,9 +632,95 @@ defmodule HalC2.Plugins do
     {:reply, list(state), %{state | watchers: watchers}}
   end
 
+  def handle_call({:subscribe_topic, pid, id, topic}, _from, state) do
+    watchers =
+      Map.update(state.topic_watchers, {id, topic}, %{pid => Process.monitor(pid)}, fn pids ->
+        Map.put_new_lazy(pids, pid, fn -> Process.monitor(pid) end)
+      end)
+
+    {:reply, {:ok, state.topics[{id, topic}]}, %{state | topic_watchers: watchers}}
+  end
+
+  # What a plugin's MC part is called with, while it runs.
+  def handle_call({:context, id}, _from, state) do
+    reply =
+      case state.plugins[id] do
+        nil ->
+          not_found(id)
+
+        %{sup: nil} = plugin ->
+          not_running(plugin)
+
+        plugin ->
+          if "extension" in plugin.kinds,
+            do: {:ok, plugin.module, %{id: id, settings: settings(plugin), thread_id: nil}},
+            else:
+              {:error,
+               %{"_tag" => "PluginCallFailed", "message" => "#{name(plugin)} answers no calls."}}
+      end
+
+    {:reply, reply, state}
+  end
+
+  # A package serves its files while it runs, and what the plugin list shows of it
+  # (icon, screenshots, settings page) always.
+  def handle_call({:file, id, path}, _from, state) do
+    reply =
+      case state.plugins[id] do
+        nil ->
+          not_found(id)
+
+        %{package: nil} = plugin ->
+          {:error,
+           %{"_tag" => "PluginFileNotFound", "message" => "#{name(plugin)} has no files."}}
+
+        plugin ->
+          if plugin.sup != nil or path in shown_files(plugin),
+            do: {:ok, plugin.files || plugin.package, revision(plugin)},
+            else: not_running(plugin)
+      end
+
+    {:reply, reply, state}
+  end
+
   @impl true
   def handle_cast({:worker, id, pid}, state) do
     {:noreply, put_in(state.refs[Process.monitor(pid)], {:worker, id})}
+  end
+
+  def handle_cast({:unsubscribe, pid}, state) do
+    {ref, watchers} = Map.pop(state.watchers, pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    {:noreply, %{state | watchers: watchers}}
+  end
+
+  def handle_cast({:unsubscribe_topic, pid, id, topic}, state) do
+    pids = state.topic_watchers[{id, topic}] || %{}
+    {ref, pids} = Map.pop(pids, pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    {:noreply, %{state | topic_watchers: put_watchers(state.topic_watchers, {id, topic}, pids)}}
+  end
+
+  def handle_cast({:publish, id, topic, value}, state) do
+    for {pid, _} <- state.topic_watchers[{id, topic}] || %{},
+        do: send(pid, {:hal_c2_plugin_topic, node(), id, topic, value})
+
+    {:noreply, put_in(state.topics[{id, topic}], value)}
+  end
+
+  def handle_cast({:denied, id, permission}, state) do
+    case state.plugins[id] do
+      %{denied: denied} = plugin ->
+        if permission in denied do
+          {:noreply, state}
+        else
+          {:noreply,
+           put_in(state.plugins[id], %{plugin | denied: denied ++ [permission]}) |> push()}
+        end
+
+      nil ->
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -494,7 +764,13 @@ defmodule HalC2.Plugins do
         {:noreply, state |> sync() |> push()}
 
       nil ->
-        {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+        topic_watchers =
+          Enum.reduce(state.topic_watchers, state.topic_watchers, fn {key, pids}, acc ->
+            put_watchers(acc, key, Map.delete(pids, pid))
+          end)
+
+        {:noreply,
+         %{state | watchers: Map.delete(state.watchers, pid), topic_watchers: topic_watchers}}
 
       _gone ->
         {:noreply, state}
@@ -503,14 +779,17 @@ defmodule HalC2.Plugins do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  defp put_watchers(watchers, key, pids) when map_size(pids) == 0, do: Map.delete(watchers, key)
+  defp put_watchers(watchers, key, pids), do: Map.put(watchers, key, pids)
+
   # --- discovery ----------------------------------------------------------------------
 
-  # Compiles new and changed files, keeps unchanged ones, and stops plugins whose
-  # file is gone or whose code was replaced.
+  # Compiles new and changed files and packages, keeps unchanged ones, and stops
+  # plugins whose file is gone or whose code was replaced.
   defp scan(state) do
     previous = Enum.group_by(Map.values(state.plugins), & &1.file)
 
-    loaded =
+    files =
       state.dir
       |> Path.join("*.ex")
       |> Path.wildcard()
@@ -520,6 +799,11 @@ defmodule HalC2.Plugins do
     # counts as that bundled plugin: on by default, and run as the core knows it.
     bundled = Enum.map(HalC2.Plugins.Bundled.modules(), &bundled/1)
     ids = MapSet.new(bundled, & &1.id)
+
+    packages =
+      Enum.flat_map(Package.dirs(state.dir), &load_package(&1, previous[&1] || [], ids))
+
+    loaded = files ++ packages
     loaded = Enum.map(loaded, &%{&1 | bundled: MapSet.member?(ids, &1.id)})
     loaded = loaded ++ Enum.reject(bundled, fn b -> Enum.any?(loaded, &(&1.id == b.id)) end)
 
@@ -541,7 +825,19 @@ defmodule HalC2.Plugins do
         end
       end)
 
+    Enum.each(plugins, fn {id, plugin} -> revoke_dropped(id, plugin) end)
+    drop_copies(plugins)
     %{state | plugins: plugins}
+  end
+
+  # A version that stops asking for a permission gives it up, so a later one that
+  # asks again waits for the user like any new permission.
+  defp revoke_dropped(_id, %{problem: {_, _}}), do: :ok
+
+  defp revoke_dropped(id, plugin) do
+    granted = granted(id)
+    kept = Enum.filter(granted, &(&1 in Enum.map(permissions(plugin), fn p -> p["id"] end)))
+    if kept != granted, do: update_config(id, &Map.put(&1, "granted", kept)), else: :ok
   end
 
   defp load(file, previous) do
@@ -557,8 +853,8 @@ defmodule HalC2.Plugins do
           {:ok, modules} ->
             plugins =
               for {module, _} <- modules,
-                  kind = kind(module),
-                  do: %{plugin(module, kind, file, hash) | binaries: modules}
+                  (kinds = kinds(module)) != [],
+                  do: %{plugin(module, kinds, file, hash) | binaries: modules}
 
             if plugins == [],
               do:
@@ -569,19 +865,139 @@ defmodule HalC2.Plugins do
             plugins
 
           {:error, message} ->
-            Logger.warning("plugin #{Path.basename(file)} did not load: #{message}")
-
-            case previous do
-              # The old code keeps running; the next scan tries the file again.
-              [%{module: module} | _] when module != nil ->
-                restore(previous)
-                Enum.map(previous, &%{&1 | reload_error: message})
-
-              _ ->
-                id = Path.basename(file, ".ex")
-                [%{blank(id, file, hash) | problem: {:load, message}}]
-            end
+            failed(previous, message, fn -> blank(Path.basename(file, ".ex"), file, hash) end)
         end
+    end
+  end
+
+  # A package's manifest, then its `mc/` sources, compiled in name order to at most
+  # one plugin module; a package without sources is UI parts only. Compiling runs
+  # the package's code, so a package compiles only once the user let it run: one
+  # that is off or waits for consent compiles when it starts (`start/2`).
+  defp load_package(dir, previous, bundled) do
+    id = Path.basename(dir)
+
+    case {Package.read(dir), previous} do
+      {{:ok, _, _, hash}, [%{hash: hash} | _]} ->
+        Enum.map(previous, &%{&1 | reload_error: nil})
+
+      {{:error, _, hash}, [%{hash: hash} | _]} ->
+        previous
+
+      {{:ok, _, _, _}, _} ->
+        copy = stage(id, dir)
+
+        case Package.read(copy) do
+          {:ok, manifest, sources, hash} ->
+            plugin = %{
+              blank(id, dir, hash)
+              | manifest: manifest,
+                sources: sources,
+                package: dir,
+                files: copy,
+                bundled: MapSet.member?(bundled, id),
+                problem: api_problem(manifest.api_version)
+            }
+
+            if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
+
+          {:error, message, hash} ->
+            File.rm_rf(Path.dirname(copy))
+            failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+        end
+
+      {{:error, message, hash}, _} ->
+        failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+    end
+  end
+
+  # The package compiled; when it does not, `failed/3` keeps the version that ran.
+  defp compile_package(plugin, previous) do
+    with {:ok, modules} <- compile_all(plugin.sources),
+         {:ok, module, kinds} <- package_module(modules) |> unload_unless_ok(modules) do
+      [%{plugin | module: module, kinds: kinds, binaries: modules, sources: []}]
+    else
+      {:error, message} -> failed(previous, message, fn -> %{plugin | sources: []} end)
+    end
+  end
+
+  # A version of a package loads from a copy of its directory, which then serves its
+  # files: clients get the version that runs, whatever the directory holds since.
+  # Each copy sits in a directory named for the package, as the manifest's id must be.
+  defp stage(id, dir) do
+    copy = Path.join([copies_dir(), id, "#{System.unique_integer([:positive])}", id])
+    :ok = Package.copy(dir, copy)
+    copy
+  end
+
+  defp copies_dir, do: Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+
+  # Removes the copies no loaded version serves.
+  defp drop_copies(plugins) do
+    kept = MapSet.new(for {_, %{files: files}} <- plugins, files != nil, do: Path.dirname(files))
+
+    for copy <- Path.wildcard(Path.join(copies_dir(), "*/*")),
+        not MapSet.member?(kept, copy),
+        do: File.rm_rf(copy)
+  end
+
+  # A file or package that did not load: the old code keeps running, and the next
+  # scan tries again; without old code it is listed with the reason.
+  defp failed(previous, message, blank) do
+    case previous do
+      [%{module: module, file: file} | _] when module != nil ->
+        Logger.warning("plugin #{Path.basename(file)} did not load: #{message}")
+        restore(previous)
+        Enum.map(previous, &%{&1 | reload_error: message})
+
+      _ ->
+        %{file: file} = plugin = blank.()
+        Logger.warning("plugin #{Path.basename(file)} did not load: #{message}")
+        [%{plugin | problem: {:load, message}}]
+    end
+  end
+
+  defp compile_all(sources) do
+    Enum.reduce_while(sources, {:ok, []}, fn source, {:ok, modules} ->
+      case compile(source) do
+        {:ok, compiled} ->
+          {:cont, {:ok, modules ++ compiled}}
+
+        {:error, message} ->
+          unload(modules)
+          {:halt, {:error, "mc/#{Path.basename(source)}: #{message}"}}
+      end
+    end)
+  end
+
+  # The modules a package compiled before one of its files failed: none of the new
+  # version may run, so they are unloaded and `restore/1` loads the old ones again.
+  defp unload(modules) do
+    for {module, _} <- modules, :code.soft_purge(module), do: :code.delete(module)
+  end
+
+  defp unload_unless_ok({:error, _} = error, modules) do
+    unload(modules)
+    error
+  end
+
+  defp unload_unless_ok(ok, _modules), do: ok
+
+  defp package_module(modules) do
+    case for({module, _} <- modules, (kinds = kinds(module)) != [], do: {module, kinds}) do
+      [] when modules == [] ->
+        {:ok, nil, []}
+
+      [] ->
+        {:error,
+         "mc/ has no module that implements a plugin behaviour, such as HalC2.Plugins.Extension."}
+
+      [{module, kinds}] ->
+        {:ok, module, kinds}
+
+      many ->
+        {:error,
+         "mc/ has more than one plugin module (#{Enum.map_join(many, ", ", &inspect(elem(&1, 0)))}); a package has one."}
     end
   end
 
@@ -610,36 +1026,20 @@ defmodule HalC2.Plugins do
     end
   end
 
-  defp kind(module) do
+  defp kinds(module) do
     behaviours = Keyword.get_values(module.module_info(:attributes), :behaviour) |> List.flatten()
-    Enum.find_value(behaviours, &@kinds[&1])
+    for behaviour <- behaviours, kind = @kinds[behaviour], do: kind
   end
 
-  defp plugin(module, kind, file, hash) do
+  defp plugin(module, kinds, file, hash) do
     case safely(fn -> module.manifest() end) do
       %{id: id} = manifest ->
-        api = manifest[:api_version]
-
-        problem =
-          cond do
-            api == @api_version ->
-              nil
-
-            is_integer(api) and api < @api_version ->
-              {:incompatible,
-               "Built for plugin API #{api}, which this MC no longer offers (it offers #{@api_version})."}
-
-            true ->
-              {:incompatible,
-               "Needs plugin API #{inspect(api)}. Update the MC first (it offers #{@api_version})."}
-          end
-
         %{
           blank(to_string(id), file, hash)
           | module: module,
-            kind: kind,
+            kinds: kinds,
             manifest: manifest,
-            problem: problem
+            problem: api_problem(manifest[:api_version])
         }
 
       other ->
@@ -648,9 +1048,21 @@ defmodule HalC2.Plugins do
         message =
           "#{inspect(module)}.manifest/0 must return a map with an id, got #{inspect(other)}"
 
-        %{blank(id, file, hash) | kind: kind, problem: {:load, message}}
+        %{blank(id, file, hash) | kinds: kinds, problem: {:load, message}}
     end
   end
+
+  defp api_problem(@api_version), do: nil
+
+  defp api_problem(api) when is_integer(api) and api < @api_version,
+    do:
+      {:incompatible,
+       "Built for plugin API #{api}, which this MC no longer offers (it offers #{@api_version})."}
+
+  defp api_problem(api),
+    do:
+      {:incompatible,
+       "Needs plugin API #{inspect(api)}. Update the MC first (it offers #{@api_version})."}
 
   defp bundled(module) do
     %{id: id} = manifest = module.manifest()
@@ -658,7 +1070,7 @@ defmodule HalC2.Plugins do
     %{
       blank(id, nil, :bundled)
       | module: module,
-        kind: "providerAdapter",
+        kinds: ["providerAdapter"],
         manifest: manifest,
         bundled: true
     }
@@ -672,7 +1084,7 @@ defmodule HalC2.Plugins do
       module: nil,
       # The file's compiled modules, `{module, binary}`, to restore after a failed reload.
       binaries: [],
-      kind: nil,
+      kinds: [],
       manifest: %{},
       problem: nil,
       reload_error: nil,
@@ -680,14 +1092,44 @@ defmodule HalC2.Plugins do
       failed: false,
       restarts: 0,
       last_error: nil,
-      bundled: false
+      bundled: false,
+      # The package's directory, for a plugin package, and the copy of it this version
+      # loaded from and serves files from.
+      package: nil,
+      files: nil,
+      # The package's `mc/` sources while they wait to be compiled.
+      sources: [],
+      # The permissions host calls were refused for, since it was last enabled.
+      denied: []
     }
   end
 
   # --- running ------------------------------------------------------------------------
 
-  defp runnable?(plugin),
-    do: plugin.module != nil and plugin.problem == nil and enabled?(plugin)
+  defp runnable?(plugin) do
+    (plugin.module != nil or plugin.package != nil) and plugin.problem == nil and
+      enabled?(plugin) and consented?(plugin)
+  end
+
+  # A package runs only with every permission it asks for granted, so an update
+  # that asks for more waits for the user.
+  defp consented?(%{package: nil}), do: true
+
+  defp consented?(plugin),
+    do: Enum.all?(permissions(plugin), &(&1["id"] in granted(plugin.id)))
+
+  defp consent_required(plugin, missing) do
+    labels = Enum.map_join(missing, "; ", &String.downcase(Package.permission_label(&1)))
+
+    %{
+      "_tag" => "PluginConsentRequired",
+      "message" => "#{name(plugin)} needs your approval to: #{labels}.",
+      "permissions" => missing
+    }
+  end
+
+  defp not_running(plugin),
+    do: {:error, %{"_tag" => "PluginNotRunning", "message" => "#{name(plugin)} is not running."}}
 
   # Bundled plugins are on until the user turns them off; others the other way round.
   defp enabled?(%{bundled: true, id: id}), do: config(id)["enabled"] != false
@@ -711,7 +1153,8 @@ defmodule HalC2.Plugins do
     bundled = HalC2.Plugins.Bundled.modules()
 
     rows =
-      for {id, %{kind: "providerAdapter", sup: sup} = plugin} <- state.plugins, sup != nil do
+      for {id, %{sup: sup} = plugin} <- state.plugins,
+          sup != nil and "providerAdapter" in plugin.kinds do
         provider = plugin.manifest[:provider] || %{}
 
         {to_string(provider[:driver] || id),
@@ -732,17 +1175,24 @@ defmodule HalC2.Plugins do
     state
   end
 
+  defp start(state, %{sources: [_ | _]} = plugin) do
+    case compile_package(plugin, []) do
+      [%{problem: nil} = compiled] -> start(put_in(state.plugins[plugin.id], compiled), compiled)
+      [failed] -> put_in(state.plugins[plugin.id], failed)
+    end
+  end
+
   defp start(state, plugin) do
     %{id: id, module: module} = plugin
 
     children =
-      if function_exported?(module, :start_link, 1),
+      if module != nil and function_exported?(module, :start_link, 1),
         do: [%{id: module, start: {__MODULE__, :start_worker, [id, module, settings(plugin)]}}],
         else: []
 
     # A provider's thread processes (`sessions/1`).
     children =
-      if plugin.kind == "providerAdapter",
+      if "providerAdapter" in plugin.kinds,
         do: [
           %{
             id: :sessions,
@@ -818,14 +1268,41 @@ defmodule HalC2.Plugins do
       %{
         "key" => to_string(field[:key]),
         "label" => field[:label] || to_string(field[:key]),
-        "secret" => field[:secret] == true
+        "secret" => field[:secret] == true,
+        "type" => field[:type] && to_string(field[:type]),
+        "description" => field[:description],
+        "default" => field[:default],
+        "options" => field[:options] && json(field[:options])
       }
+      |> Map.reject(fn {_key, value} -> value == nil end)
     end
   end
 
-  # A plugin's settings as it uses them: secrets read back from the secret store.
-  defp settings(plugin),
-    do: reveal(plugin.id, fields(plugin), config(plugin.id)["settings"] || %{})
+  defp defaults(fields),
+    do: for(%{"key" => key, "default" => value} <- fields, into: %{}, do: {key, value})
+
+  # A plugin's settings as it uses them: defaults, then what the user saved, with
+  # secrets read back from the secret store.
+  defp settings(plugin) do
+    fields = fields(plugin)
+    Map.merge(defaults(fields), reveal(plugin.id, fields, config(plugin.id)["settings"] || %{}))
+  end
+
+  # Values of the declared type; a field without one takes anything.
+  defp check_types(fields, input) do
+    Enum.find_value(fields, :ok, fn %{"key" => key} = field ->
+      value = input[key]
+
+      if value != nil and value != @marker and not Package.typed?(field, value),
+        do: {:error, "#{field["label"]} (#{key}) must be #{expected(field)}."}
+    end)
+  end
+
+  defp expected(%{"type" => "boolean"}), do: "on or off"
+  defp expected(%{"type" => "number"}), do: "a number"
+  defp expected(%{"type" => "list"}), do: "a list of text"
+  defp expected(%{"type" => "choice"}), do: "one of the choices offered"
+  defp expected(_field), do: "text"
 
   defp reveal(id, fields, settings) do
     for %{"key" => key, "secret" => true} <- fields, settings[key] == @marker, reduce: settings do
@@ -853,7 +1330,7 @@ defmodule HalC2.Plugins do
   end
 
   defp validate(module, settings) do
-    if function_exported?(module, :validate_settings, 1) do
+    if module != nil and function_exported?(module, :validate_settings, 1) do
       case safely(fn -> module.validate_settings(settings) end) do
         :ok -> :ok
         {:error, message} -> {:error, to_string(message)}
@@ -885,12 +1362,16 @@ defmodule HalC2.Plugins do
   defp entry(plugin) do
     config = config(plugin.id)
 
+    enabled = enabled?(plugin)
+    package = plugin.manifest[:package] || %{}
+
     status =
       case plugin.problem do
         {:load, _} -> "error"
         {:incompatible, _} -> "incompatible"
         nil when plugin.sup != nil -> "running"
         nil when plugin.failed -> "failed"
+        nil when enabled -> if consented?(plugin), do: "disabled", else: "awaitingConsent"
         nil -> "disabled"
       end
 
@@ -898,18 +1379,34 @@ defmodule HalC2.Plugins do
       "id" => plugin.id,
       "name" => name(plugin),
       "version" => plugin.manifest[:version],
-      "kind" => plugin.kind,
+      "kind" => List.first(plugin.kinds),
+      "kinds" => plugin.kinds,
       "apiVersion" => plugin.manifest[:api_version],
       "file" => plugin.file && Path.basename(plugin.file),
-      "source" => if(plugin.file, do: "file", else: "bundled"),
-      "enabled" => enabled?(plugin),
+      "source" =>
+        cond do
+          plugin.package -> "package"
+          plugin.file -> "file"
+          true -> "bundled"
+        end,
+      "description" => plugin.manifest[:description],
+      "author" => package["author"],
+      "homepage" => package["homepage"],
+      "license" => package["license"],
+      "icon" => package["icon"],
+      "screenshots" => package["screenshots"] || [],
+      "contributes" => package["contributes"] || %{},
+      "runsCode" => (plugin.module != nil or plugin.sources != []) and not plugin.bundled,
+      "denied" => plugin.denied,
+      "revision" => revision(plugin),
+      "enabled" => enabled,
       "status" => status,
       "error" => with({_, message} <- plugin.problem, do: message),
       "reloadError" => plugin.reload_error,
       "lastError" => plugin.last_error,
       "restarts" => plugin.restarts,
       "settingsSchema" => fields(plugin),
-      "settings" => config["settings"] || %{},
+      "settings" => Map.merge(defaults(fields(plugin)), config["settings"] || %{}),
       "permissions" =>
         for(
           permission <- permissions(plugin),
@@ -923,32 +1420,54 @@ defmodule HalC2.Plugins do
     for permission <- plugin.manifest[:permissions] || [] do
       %{
         "id" => to_string(permission[:id]),
-        "label" => permission[:label] || to_string(permission[:id])
+        "label" => permission[:label] || to_string(permission[:id]),
+        "reason" => permission[:reason]
       }
+      |> Map.reject(fn {_key, value} -> value == nil end)
     end
   end
 
-  # What a provider plugin declares for clients that have never heard of it.
-  defp provider_entry(%{kind: "providerAdapter", manifest: manifest} = plugin) do
-    provider = manifest[:provider] || %{}
+  # What the plugin list shows of a package, served even while it is off.
+  defp shown_files(plugin) do
+    package = plugin.manifest[:package] || %{}
 
-    %{
-      "provider" => %{
-        "driver" => to_string(provider[:driver] || plugin.id),
-        "capabilities" => Enum.map(provider[:capabilities] || [], &to_string/1),
-        "instanceSettings" =>
-          for field <- provider[:instance_settings] || [] do
-            %{
-              "key" => to_string(field[:key]),
-              "label" => field[:label] || to_string(field[:key]),
-              "secret" => field[:secret] == true
-            }
-          end
-      }
-    }
+    [
+      package["icon"],
+      get_in(package, ["contributes", "settingsPage"])
+      | Enum.map(package["screenshots"] || [], & &1["path"])
+    ]
+    |> Enum.filter(&is_binary/1)
   end
 
-  defp provider_entry(_plugin), do: %{}
+  # Changes whenever the plugin's files change.
+  defp revision(%{hash: hash}) when is_binary(hash),
+    do: hash |> Base.encode16(case: :lower) |> binary_part(0, 16)
+
+  defp revision(_plugin), do: nil
+
+  # What a provider plugin declares for clients that have never heard of it.
+  defp provider_entry(%{manifest: manifest} = plugin) do
+    if "providerAdapter" in plugin.kinds do
+      provider = manifest[:provider] || %{}
+
+      %{
+        "provider" => %{
+          "driver" => to_string(provider[:driver] || plugin.id),
+          "capabilities" => Enum.map(provider[:capabilities] || [], &to_string/1),
+          "instanceSettings" =>
+            for field <- provider[:instance_settings] || [] do
+              %{
+                "key" => to_string(field[:key]),
+                "label" => field[:label] || to_string(field[:key]),
+                "secret" => field[:secret] == true
+              }
+            end
+        }
+      }
+    else
+      %{}
+    end
+  end
 
   defp name(plugin), do: plugin.manifest[:name] || plugin.id
 

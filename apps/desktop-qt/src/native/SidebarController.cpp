@@ -8,6 +8,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "McPluginController.h"
 #include "ShellBridge.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
@@ -34,7 +35,20 @@ SidebarController::SidebarController(ShellBridge* bridge, McClient* client, Shel
 
 void SidebarController::activate() {
   m_active = true;
+  if (auto* plugins = NativeShell::of(this)->controller<McPluginController>()) {
+    connect(plugins, &McPluginController::runningChanged, this, &SidebarController::refresh, Qt::UniqueConnection);
+  }
   refresh();
+}
+
+QList<sidebar::Thread> SidebarController::threads() const {
+  QList<sidebar::Thread> threads = m_store->threads();
+  const NativeWindow* window = NativeShell::of(this);
+  const auto* plugins = window ? window->controller<McPluginController>() : nullptr;
+  for (sidebar::Thread& thread : threads) {
+    if (!thread.listed && (!plugins || !plugins->keepsUnlisted(thread.environmentId, thread.pluginId))) thread.listed = true;
+  }
+  return threads;
 }
 
 void SidebarController::preview() {
@@ -61,7 +75,7 @@ std::optional<QString> SidebarController::logicalProjectKey(const QString& envir
 void SidebarController::refresh() {
   if (!m_active && !m_previewing) return;
   readSettings();
-  const QList<sidebar::Thread> threads = m_store->threads();
+  const QList<sidebar::Thread> threads = this->threads();
   const QString ownEnvironment = m_store->environmentOf(m_client->mc());
   const auto shape = [this] {
     QStringList keys;
@@ -411,7 +425,7 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
   // Planned now, before the command reshuffles the list.
   std::function<void()> navigate;
   if (activeThreadKey() == key && leave == Leave::ProjectFallback) {
-    navigate = [this, fallback = sidebar::fallbackAfterDelete(m_store->threads(), key, m_threadSortOrder)] {
+    navigate = [this, fallback = sidebar::fallbackAfterDelete(threads(), key, m_threadSortOrder)] {
       auto* navigation = NativeShell::of(this)->controller<NavigationController>();
       navigation->replace(fallback ? NavigationController::Route::thread(*fallback) : NavigationController::Route());
     };
@@ -553,7 +567,7 @@ void SidebarController::arrange(const QString& section, const QStringList& order
   QHash<QString, sidebar::Nullable> orderKeys;
   const qint64 nowMs = m_now().toMSecsSinceEpoch();
   const sidebar::Partition all = sidebar::partition(
-      m_store->threads(), std::nullopt, [this](const QString& environmentId) { return m_store->capabilities(environmentId); }, nowMs);
+      threads(), std::nullopt, [this](const QString& environmentId) { return m_store->capabilities(environmentId); }, nowMs);
   for (const sidebar::Thread& thread : pinned ? all.pinned : all.active) {
     orderKeys.insert(thread.key(), pinned ? thread.pinOrderKey : thread.activeOrderKey);
   }

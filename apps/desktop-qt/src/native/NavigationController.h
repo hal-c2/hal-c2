@@ -25,6 +25,11 @@ class ShellStore;
 // settings navigation's search field (`searchSeq` counts the askings); it
 // opens settings when the window is elsewhere.
 //
+// `tab` is the top-level tab the window shows: "threads", or a plugin page's
+// key (McPluginController's pages). Opening anything but settings returns to
+// the threads; a page that goes away does too. While a page shows, `title` is
+// the page's. `plugin` is the open thread's plugin mark {id, kind}, or null.
+//
 // Home is where the window has no thread; DraftController lands it on a
 // draft from there. The open thread going away (deleted here or elsewhere)
 // sends the window home too.
@@ -58,6 +63,7 @@ public:
   static inline const QString kOpenSettings = QStringLiteral("settings.open");
   static inline const QString kOpenUsage = QStringLiteral("usage.open");
   static inline const QString kOpenPullRequests = QStringLiteral("pullRequests.open");
+  static inline const QString kThreadsTab = QStringLiteral("threads");
 
   NavigationController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -67,6 +73,9 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   const Route& route() const { return m_route; }
+  QString tab() const { return m_tab; }
+  // Shows tab `key` ("threads" or a page's key); false for no such tab.
+  bool selectTab(const QString& key);
   // The open thread's key, or empty.
   QString threadKey() const { return m_route.kind == QLatin1String("thread") ? m_route.threadKey : QString(); }
   // Moves to `route`, keeping where the user was on the back stack.
@@ -99,6 +108,14 @@ private:
   // The open thread's row went away: home, unless the sidebar is already
   // moving the window on (park()).
   void leaveVanishedThread();
+  // The tabs: the threads, then each plugin page.
+  QStringList tabs() const;
+  // The environments the page tab `key` shows, none for the threads.
+  QStringList pageEnvironments(const QString& key) const;
+  // Moves `by` tabs along, wrapping.
+  void stepTab(int by);
+  // Follows the pages that come and go: their palette entries, and the tab.
+  void followPages();
 
   ShellBridge* m_bridge;
   ShellStore* m_store;
@@ -117,4 +134,9 @@ private:
   // The open thread's row has been seen, so its absence means it went away
   // rather than has not arrived yet.
   bool m_threadSeen = false;
+  QString m_tab = kThreadsTab;
+  // The environments the selected page showed, to follow it to its next version.
+  QStringList m_tabEnvironments;
+  // The palette entries of the pages, by page key.
+  QStringList m_pageCommands;
 };

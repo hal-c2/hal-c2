@@ -18,7 +18,7 @@ defmodule HalC2.PullRequests.GitHub do
   @files_viewed_pages 5
   @approval_limit 1_000
 
-  @list_fields "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup"
+  @list_fields "number,title,url,author,headRefName,headRefOid,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup"
   @detail_fields @list_fields <>
                    ",body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest"
 
@@ -359,7 +359,8 @@ defmodule HalC2.PullRequests.GitHub do
     said = String.downcase(err <> "\n" <> out)
 
     detail =
-      (first_line(err) || first_line(out) || "gh failed.") |> String.replace_prefix("gh: ", "")
+      (api_error(err) || first_line(err) || first_line(out) || "gh failed.")
+      |> String.replace_prefix("gh: ", "")
 
     cond do
       String.contains?(said, [
@@ -650,6 +651,7 @@ defmodule HalC2.PullRequests.GitHub do
         "url" => url,
         "author" => actor(raw["author"]),
         "headBranch" => head,
+        "headSha" => trimmed(raw["headRefOid"]),
         "baseBranch" => base,
         "state" => state(raw),
         "isDraft" => raw["isDraft"] == true,
@@ -1858,8 +1860,11 @@ defmodule HalC2.PullRequests.GitHub do
          do: done(graphql(ctx, @comment_mutations[kind], %{"commentId" => id, "body" => body}))
   end
 
-  @doc "Submits a whole review, its line comments with it."
-  def submit_review(ctx, verdict, body, comments) do
+  @doc """
+  Submits a whole review, its line comments with it, of `commit_id` when given (else
+  of the head GitHub has then).
+  """
+  def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review = %{
       "event" =>
         %{"comment" => "COMMENT", "approve" => "APPROVE", "request-changes" => "REQUEST_CHANGES"}[
@@ -1880,6 +1885,7 @@ defmodule HalC2.PullRequests.GitHub do
         end
     }
 
+    review = if is_binary(commit_id), do: Map.put(review, "commit_id", commit_id), else: review
     done(rest(ctx, "pulls/#{ctx.number}/reviews", method: "POST", input: JSON.encode!(review)))
   end
 
@@ -2267,6 +2273,17 @@ defmodule HalC2.PullRequests.GitHub do
 
   defp up(value) when is_binary(value), do: value |> String.trim() |> String.upcase()
   defp up(_), do: nil
+
+  # `gh api` puts GitHub's message and each of its `errors` on a line of their own,
+  # the last ending in `(HTTP 422)`; the reason is usually in the later lines.
+  defp api_error(err) do
+    lines = err |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    case Enum.split_while(lines, &(not (&1 =~ ~r/\(HTTP \d{3}\)$/))) do
+      {["gh: " <> _ | _] = before, [last | _]} -> Enum.join(before ++ [last], ": ")
+      _ -> nil
+    end
+  end
 
   defp first_line(text) do
     text |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.find(&(&1 != ""))

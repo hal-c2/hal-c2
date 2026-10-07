@@ -346,6 +346,27 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  def handle_info({:hal_c2_plugins, mc, plugins}, state) do
+    case state.by_terminal do
+      %{{:plugins, ^mc} => id} ->
+        {:push, Protocol.encode(%{"t" => "plugins", "id" => id, "plugins" => plugins}), state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
+  def handle_info({:hal_c2_plugin_topic, mc, plugin, topic, value}, state) do
+    case state.by_terminal do
+      %{{:plugin_topic, ^mc, ^plugin, ^topic} => id} ->
+        frame = %{"t" => "plugin", "id" => id, "topic" => topic, "value" => value}
+        {:push, Protocol.encode(frame), state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:hal_c2_worktree_setup, thread_id, snapshot}, state) do
     case state.by_terminal do
       %{{:worktree_setup, ^thread_id} => id} ->
@@ -859,6 +880,38 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  defp subscribe(state, id, {:plugins, mc} = shape, _offset) do
+    case remote(mc, HalC2.Plugins, :subscribe, [self()]) do
+      {:ok, plugins} ->
+        {:push, Protocol.encode(%{"t" => "plugins", "id" => id, "plugins" => plugins}),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, shape, id)
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  defp subscribe(state, id, {:plugin_topic, mc, plugin, topic} = shape, _offset) do
+    case remote(mc, HalC2.Plugins, :subscribe_topic, [self(), plugin, topic]) do
+      {:ok, {:ok, value}} ->
+        frame = %{"t" => "plugin", "id" => id, "topic" => topic, "value" => value}
+
+        {:push, Protocol.encode(frame),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, shape, id)
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
   defp subscribe(state, id, {:worktree_setup, mc, thread_id} = shape, _offset) do
     case remote(mc, HalC2.WorktreeSetup, :subscribe, [thread_id, self()]) do
       {:ok, snapshot} ->
@@ -1231,6 +1284,14 @@ defmodule HalC2.Web.Socket do
 
       {{:pull_request_refreshes, mc} = shape, subs} ->
         :erpc.cast(mc, HalC2.PullRequests.Refreshes, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+      {{:plugins, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.Plugins, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+      {{:plugin_topic, mc, plugin, topic} = shape, subs} ->
+        :erpc.cast(mc, HalC2.Plugins, :unsubscribe_topic, [self(), plugin, topic])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:worktree_setup, mc, thread_id}, subs} ->

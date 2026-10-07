@@ -332,6 +332,22 @@ Item {
         iconTint: row.secondaryColor
     }
 
+    // The mark of a thread an MC plugin started, while the plugin runs; made
+    // only for such threads.
+    component PluginMark: Loader {
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: visible ? item.implicitWidth : 0
+        Layout.preferredHeight: visible ? item.implicitHeight : 0
+        active: !!row.item.plugin
+        // Whether the plugin drew a mark; not item.visible, which is false
+        // while this Loader is hidden.
+        visible: item !== null && item.item !== null
+        sourceComponent: PluginThreadPart {
+            objectName: "pluginRowMark"
+            thread: row.item.plugin ? { id: row.item.threadId, title: row.item.title, environmentId: row.item.environmentId, plugin: row.item.plugin } : null
+        }
+    }
+
     // The right-hand slot: the section's actions while hovered or focused,
     // the woke pill (click acknowledges the wake), else the status or age.
     component StatusSlot: RowLayout {
@@ -440,6 +456,8 @@ Item {
             elide: Text.ElideRight
         }
 
+        PluginMark {}
+
         StatusSlot {
             Layout.alignment: Qt.AlignVCenter
         }
@@ -476,6 +494,8 @@ Item {
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 elide: Text.ElideRight
             }
+
+            PluginMark {}
 
             StatusSlot {
                 Layout.alignment: Qt.AlignVCenter

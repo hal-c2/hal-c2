@@ -309,6 +309,7 @@ defmodule HalC2.PullRequests do
       "viewerReviewRequested" =>
         author != me and Enum.any?(item["reviewRequestLogins"], &(String.downcase(&1) == me))
     })
+    |> put_present("headSha", item["headSha"])
     |> put_present("reviewDecision", item["reviewDecision"])
     |> put_present("checksState", item["checksState"])
   end
@@ -617,7 +618,8 @@ defmodule HalC2.PullRequests do
       else
         with {:ok, viewer} <- GitHub.viewer_permissions(ctx) do
           if verdict in viewer["verdicts"],
-            do: GitHub.submit_review(ctx, verdict, input["body"] || "", comments),
+            do:
+              GitHub.submit_review(ctx, verdict, input["body"] || "", comments, input["commitId"]),
             else:
               refuse(
                 "submitReview",
@@ -785,7 +787,8 @@ defmodule HalC2.PullRequests do
 
   # This MC's projects whose checkout has a remote, as
   # `%{id, title, root, host, repository, kind}`.
-  defp projects do
+  @doc "This MC's projects whose checkout has a remote, with its host and repository."
+  def projects do
     for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
         mc == node() and is_binary(root) and project["deletedAt"] == nil,
         remote = remote(root) do

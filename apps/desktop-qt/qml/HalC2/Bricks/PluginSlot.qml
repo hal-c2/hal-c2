@@ -28,7 +28,15 @@ Item {
         const shown = [];
         const offered = slot.name.length > 0 ? PluginRegistry.contributionsFor(slot.name) : [];
         for (const contribution of slot.mode === "single_winner" ? offered.slice(0, 1) : offered) {
-            const item = contribution.delegate.createObject(content);
+            const item = contribution.delegate.createObject(content, contribution.given ?? {});
+            if (contribution.mc === true && item !== null) {
+                // An MC plugin's part is a PluginPart, which loads its file itself.
+                if (item.slotData !== undefined)
+                    item.slotData = Qt.binding(() => slot.slotData);
+                items.push(item);
+                shown.push(contribution.pluginId);
+                continue;
+            }
             let problem = "";
             if (item === null)
                 problem = contribution.delegate.errorString();
