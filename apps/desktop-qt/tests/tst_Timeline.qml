@@ -68,6 +68,17 @@ Item {
         }
     }
 
+    // A host that gives the timeline more room while the user reads, as the
+    // composer resting on one line does (Composer.conversationScrolled).
+    Component {
+        id: roomyTimelineComponent
+        Timeline {
+            width: 600
+            height: scrolledAway ? 700 : 400
+            model: rows
+        }
+    }
+
     TestCase {
         name: "Timeline"
         when: windowShown
@@ -85,7 +96,7 @@ Item {
         }
 
         // A long thread whose last row is the reply being written.
-        function longThread() {
+        function longThread(component) {
             rows.clear();
             for (let i = 0; i < 30; ++i) {
                 rows.append(root.row({
@@ -99,7 +110,7 @@ Item {
                 text: "The cart",
                 streaming: true
             }));
-            const timeline = createTemporaryObject(timelineComponent, root);
+            const timeline = createTemporaryObject(component ?? timelineComponent, root);
             const list = view(timeline);
             tryVerify(() => atEnd(list) && list.contentHeight > list.height, 5000, "the thread opens at its end");
             return timeline;
@@ -157,6 +168,49 @@ Item {
             const before = list.contentHeight;
             grow();
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
+        }
+
+        // Scenario: Scrolling away stops the view from following
+        function test_roomMadeForReadingKeepsTheUserAway() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            // One notch: less than the room the host makes.
+            mouseWheel(list, list.width / 2, list.height / 2, 0, 120);
+            tryVerify(() => timeline.scrolledAway && !list.moving, 5000, "the host makes room once the scroll ends");
+            wait(0);
+            verify(!timeline.following, "the room made does not count as the user returning");
+            verify(timeline.scrolledAway, "the room stays made");
+            compare(timeline.height, 700);
+            verify(findChild(timeline, "jumpToLatest").visible);
+        }
+
+        // Scenario: The user returns to the end of the thread
+        function test_scrollingDownAtTheEndReturnsToIt() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            mouseWheel(list, list.width / 2, 100, 0, 120);
+            tryVerify(() => timeline.scrolledAway && !list.moving, 5000, "the host makes room once the scroll ends");
+            // The room made shows the end, without the user scrolling there.
+            list.positionViewAtEnd();
+            verify(!timeline.following);
+            // Down where the list goes no further.
+            mouseWheel(list, list.width / 2, 100, 0, -120);
+            tryVerify(() => timeline.following && !timeline.scrolledAway && atEnd(list), 5000, "the view follows the end again");
+            const before = list.contentHeight;
+            grow();
+            tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
+        }
+
+        // Scenario: Scrolling away stops the view from following
+        function test_scrollingDownMidThreadOnlyScrolls() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            scrollUp(timeline);
+            const away = list.contentY;
+            mouseWheel(list, list.width / 2, 100, 0, -120);
+            tryVerify(() => !list.moving && list.contentY > away, 5000, "the view scrolls down");
+            verify(!timeline.following, "a scroll the list takes does not jump to the end");
+            verify(!atEnd(list));
         }
 
         // Scenario: The previous tool calls can be shown and hidden again
