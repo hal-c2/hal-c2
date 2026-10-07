@@ -1860,8 +1860,11 @@ defmodule HalC2.PullRequests.GitHub do
          do: done(graphql(ctx, @comment_mutations[kind], %{"commentId" => id, "body" => body}))
   end
 
-  @doc "Submits a whole review, its line comments with it."
-  def submit_review(ctx, verdict, body, comments) do
+  @doc """
+  Submits a whole review, its line comments with it, of `commit_id` when given (else
+  of the head GitHub has then).
+  """
+  def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review = %{
       "event" =>
         %{"comment" => "COMMENT", "approve" => "APPROVE", "request-changes" => "REQUEST_CHANGES"}[
@@ -1882,6 +1885,7 @@ defmodule HalC2.PullRequests.GitHub do
         end
     }
 
+    review = if is_binary(commit_id), do: Map.put(review, "commit_id", commit_id), else: review
     done(rest(ctx, "pulls/#{ctx.number}/reviews", method: "POST", input: JSON.encode!(review)))
   end
 

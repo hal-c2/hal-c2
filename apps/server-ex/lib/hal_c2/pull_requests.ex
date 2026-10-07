@@ -618,7 +618,8 @@ defmodule HalC2.PullRequests do
       else
         with {:ok, viewer} <- GitHub.viewer_permissions(ctx) do
           if verdict in viewer["verdicts"],
-            do: GitHub.submit_review(ctx, verdict, input["body"] || "", comments),
+            do:
+              GitHub.submit_review(ctx, verdict, input["body"] || "", comments, input["commitId"]),
             else:
               refuse(
                 "submitReview",

@@ -916,6 +916,8 @@ defmodule HalC2Plugins.CodeReview do
       "number" => review["number"],
       "verdict" => if(as_comment, do: "comment", else: review["verdict"]),
       "body" => body,
+      # The comments' lines are the reviewed commit's, whatever has been pushed since.
+      "commitId" => review["reviewedSha"],
       "comments" =>
         for c <- review["comments"] || [], not c["dismissed"] do
           %{"path" => c["path"], "body" => c["body"], "position" => c["position"]}
@@ -967,7 +969,7 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  @order ~w(running queued waiting failed kept ready published)
+  @order ~w(running queued publishing waiting failed kept ready published)
 
   defp snapshot(state) do
     %{

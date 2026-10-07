@@ -220,6 +220,13 @@ Feature: Agent code review
       And the review of #12 is marked as published
 
     @mc
+    Scenario: A review is posted on the commit it reviewed, not one pushed since
+      Given the review of #12 is waiting to be published
+      And #12 gets a new push
+      When the user publishes the review of #12
+      Then #12 gets a review of the commit that was reviewed
+
+    @mc
     Scenario: A verdict can be posted as a plain comment instead of a decision
       Given the user posts verdicts as comments
       When the user publishes the review of #12 with the verdict "changes requested"

@@ -1170,6 +1170,8 @@ export const PullRequestSubmitReviewInput = Schema.Struct({
   /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),
+  /** The commit the review is of; the host's head when absent. */
+  commitId: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestSubmitReviewInput = typeof PullRequestSubmitReviewInput.Type;
 

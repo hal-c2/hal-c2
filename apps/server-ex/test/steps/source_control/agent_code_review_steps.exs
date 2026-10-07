@@ -615,6 +615,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "\#{int} gets a new push", %{args: [number]} = context do
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    Map.put(context, :pushed, head)
+  end
+
+  step "\#{int} gets a review of the commit that was reviewed", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "published"))
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    assert %{"commit_id" => sha} = JSON.decode!(call["stdin"])
+    assert sha == review["reviewedSha"]
+    refute sha == context.pushed
+    context
+  end
+
   step "the user posts verdicts as comments", context do
     save(context, %{"verdictAsComment" => true})
   end
