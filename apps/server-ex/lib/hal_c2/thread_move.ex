@@ -74,7 +74,11 @@ defmodule HalC2.ThreadMove do
              notes = fit["notes"] ++ source_notes(id, thread, archive, dest),
              :ok <- confirmed(notes, opts[:confirmed] == true),
              {:ok, archive, moving} <- begin(id, dest, archive, have) do
-          transfer(id, dest, archive, moving, fit, notes)
+          try do
+            transfer(id, dest, archive, moving, fit, notes)
+          after
+            GenServer.cast(__MODULE__, {:done, id, moving["id"]})
+          end
         end
       after
         ThreadArchive.discard(archive)
@@ -390,11 +394,15 @@ defmodule HalC2.ThreadMove do
 
     with {:ok, unchanged?, moving} <- marked do
       Streams.flush_shell(id)
+      # The process moving the thread may die anywhere from here (its client went
+      # away); this process then settles the move at once rather than leave the thread
+      # read-only until the destination comes back.
+      GenServer.cast(__MODULE__, {:watch, self(), id, move})
 
       with {:ok, archive} <-
              if(unchanged?,
                do: {:ok, archive},
-               else: with_release(id, fn -> build(id, have: have) end)
+               else: with_release(id, move, fn -> build(id, have: have) end)
              ),
            do: {:ok, archive, moving}
     end
@@ -448,7 +456,7 @@ defmodule HalC2.ThreadMove do
          }}
 
       {:error, message} ->
-        release(id)
+        release_own(id, moving["id"])
         error(:thread_not_movable, message)
 
       {:broken, reason} ->
@@ -459,9 +467,6 @@ defmodule HalC2.ThreadMove do
         release(id, moving)
 
         if thread(id)["moving"] do
-          with pid when is_pid(pid) <- Process.whereis(__MODULE__),
-               do: send(pid, {:settle, id})
-
           error(
             :mc_unavailable,
             "The move of #{title} to #{dest.label} was cut off while #{dest.label} was taking it. #{title} stays read-only until #{dest.label} says whether it has it."
@@ -531,19 +536,25 @@ defmodule HalC2.ThreadMove do
     Streams.flush_shell(id)
   end
 
-  defp release(id) do
-    release(id, nil)
+  # Clears `moving` if it is still the move `move`: a mover that comes back after a
+  # later move began must not call that one off.
+  defp release_own(id, move) do
+    release(id, &match?(%{"id" => ^move}, &1))
     :ok
   end
 
   # Clears `moving`, and says whether it did. Given the move as it was last seen
   # (`moving`), only if it still is that: not once the destination was told to take it.
-  defp release(id, seen) do
+  defp release(id, seen) when is_map(seen), do: release(id, &(&1 == seen))
+
+  defp release(id, seen?) do
     released =
       Streams.transact(id, :thread, fn state ->
         case StreamState.get(state, "thread")[id] do
-          %{"moving" => moving} when seen in [nil, moving] ->
-            {[Orchestration.upsert(state, "thread", id, &Map.delete(&1, "moving"))], true}
+          %{"moving" => moving} ->
+            if seen?.(moving),
+              do: {[Orchestration.upsert(state, "thread", id, &Map.delete(&1, "moving"))], true},
+              else: {[], false}
 
           _ ->
             {[], false}
@@ -572,13 +583,13 @@ defmodule HalC2.ThreadMove do
     end)
   end
 
-  defp with_release(id, fun) do
+  defp with_release(id, move, fun) do
     case fun.() do
       {:ok, _} = ok ->
         ok
 
       error ->
-        release(id)
+        release_own(id, move)
         error
     end
   end
@@ -863,10 +874,17 @@ defmodule HalC2.ThreadMove do
   @impl true
   def init(_opts) do
     :ok = :net_kernel.monitor_nodes(true)
-    File.rm_rf(incoming())
-    ThreadArchive.clear_scratch()
+
+    # Once an MC: a restart of this process alone must not take the files from under
+    # the moves still staging or sending.
+    unless :persistent_term.get({__MODULE__, :booted, incoming()}, false) do
+      File.rm_rf(incoming())
+      ThreadArchive.clear_scratch()
+      :persistent_term.put({__MODULE__, :booted, incoming()}, true)
+    end
+
     send(self(), {:settle, :all})
-    {:ok, %{after_turn: %{}, again: MapSet.new()}}
+    {:ok, %{after_turn: %{}, again: MapSet.new(), movers: %{}}}
   end
 
   @impl true
@@ -874,6 +892,20 @@ defmodule HalC2.ThreadMove do
     :ok = Streams.watch(id, self())
     send(self(), {:turn_check, id})
     {:reply, :ok, put_in(state, [:after_turn, id], {to, opts})}
+  end
+
+  @impl true
+  def handle_cast({:watch, pid, id, move}, state),
+    do: {:noreply, put_in(state, [:movers, Process.monitor(pid)], {id, move})}
+
+  # The transfer of the move ended, however it did: it settles if it was cut off.
+  def handle_cast({:done, id, move}, state) do
+    movers =
+      Map.reject(state.movers, fn {ref, {_id, watched}} ->
+        watched == move and Process.demonitor(ref, [:flush])
+      end)
+
+    settle_cut_off(id, move, %{state | movers: movers})
   end
 
   @impl true
@@ -889,6 +921,13 @@ defmodule HalC2.ThreadMove do
   end
 
   def handle_info({:nodeup, mc}, state), do: handle_info({:settle, mc}, state)
+
+  # The process moving a thread died.
+  def handle_info({:DOWN, ref, :process, _, _}, %{movers: movers} = state)
+      when is_map_key(movers, ref) do
+    {{id, move}, movers} = Map.pop(movers, ref)
+    settle_cut_off(id, move, %{state | movers: movers})
+  end
 
   # A thread waiting for its turn to end: every commit may be the one that ends it.
   def handle_info({:hal_c2_stream, id, _}, state), do: handle_info({:turn_check, id}, state)
@@ -912,6 +951,14 @@ defmodule HalC2.ThreadMove do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A move whose transfer ended or whose mover died settles, unless it was over.
+  defp settle_cut_off(id, move, state) do
+    case thread(id) do
+      %{"moving" => %{"id" => ^move}} -> handle_info({:settle, id}, state)
+      _ -> {:noreply, state}
+    end
+  end
 
   @doc """
   Settles moves that were cut off: to `mc`, of the thread `id`, or all (`:all`). A
