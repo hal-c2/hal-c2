@@ -1178,10 +1178,11 @@ defmodule HalC2.Steps.Parity.Shapes do
   subscriber when it subscribes to the shell. Returns `{pid, context}`.
   """
   def socket_pid(context) do
-    before = Map.keys(:sys.get_state(HalC2.Shell).subscribers)
+    subscribers = fn -> for {pid, _} <- :ets.tab2list(HalC2.Shell.Subscribers), do: pid end
+    before = subscribers.()
     client = Mc.sub(World.client(context), 99, %{"type" => "shell"})
     {_, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 99))
-    [pid] = Map.keys(:sys.get_state(HalC2.Shell).subscribers) -- before
+    [pid] = subscribers.() -- before
     {pid, World.put_client(context, client)}
   end
 
