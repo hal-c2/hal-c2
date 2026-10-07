@@ -135,6 +135,14 @@ Feature: Agent code review
       When the user resets the review prompt
       Then the next review uses the plugin's default prompt
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: Resetting the prompt leaves the user's other changes unsaved
+      Given the user opens the settings of "code-review"
+      And the user changed the review prompt and turned off REVIEW.md
+      When the user resets the review prompt
+      Then only the prompt is saved
+      And REVIEW.md is still turned off, waiting to be saved
+
     @mc
     Scenario: The agent reviews the pull request's own code
       When #12 is reviewed
@@ -176,7 +184,7 @@ Feature: Agent code review
 
       Examples:
         | mode      | outcome                                                                     |
-        | local     | nothing is posted to "acme/api" and the review stays in HAL-C2              |
+        | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2          |
         | draft     | the review waits for the user to publish it                                 |
         | automatic | the review is posted to #12 as a review with both line comments             |
 

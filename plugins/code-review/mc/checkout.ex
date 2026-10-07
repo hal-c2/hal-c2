@@ -72,36 +72,41 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
+  # File names are read from each file's header only, as a changed line can look
+  # like one. A deleted file is named by its old path alone.
   defp parse(diff) do
     diff
     |> String.split("\n")
-    |> Enum.reduce({%{}, nil, 0, 0}, fn text, {files, file, old, new} ->
+    |> Enum.reduce({%{}, nil, 0, 0, false}, fn text, {files, file, old, new, header?} = acc ->
       cond do
-        String.starts_with?(text, "+++ b/") ->
-          {files, String.trim_leading(text, "+++ b/"), 0, 0}
+        String.starts_with?(text, "diff --git ") ->
+          {files, nil, 0, 0, true}
 
-        String.starts_with?(text, "+++ ") or String.starts_with?(text, "--- ") ->
-          {files, file, old, new}
+        header? and String.starts_with?(text, "--- a/") ->
+          {files, String.trim_leading(text, "--- a/"), 0, 0, true}
+
+        header? and String.starts_with?(text, "+++ b/") ->
+          {files, String.trim_leading(text, "+++ b/"), 0, 0, true}
 
         match = Regex.run(~r/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/, text) ->
           [_, old, new] = match
-          {files, file, String.to_integer(old), String.to_integer(new)}
+          {files, file, String.to_integer(old), String.to_integer(new), false}
 
-        file == nil ->
-          {files, file, old, new}
+        header? or file == nil ->
+          acc
 
         String.starts_with?(text, "+") ->
-          {mark(files, file, {"new", new}, "added"), file, old, new + 1}
+          {mark(files, file, {"new", new}, "added"), file, old, new + 1, false}
 
         String.starts_with?(text, "-") ->
-          {mark(files, file, {"old", old}, "deleted"), file, old + 1, new}
+          {mark(files, file, {"old", old}, "deleted"), file, old + 1, new, false}
 
         String.starts_with?(text, " ") ->
           files = files |> mark(file, {"new", new}, "context") |> mark(file, {"old", old}, "context")
-          {files, file, old + 1, new + 1}
+          {files, file, old + 1, new + 1, false}
 
         true ->
-          {files, file, old, new}
+          acc
       end
     end)
     |> elem(0)
@@ -110,24 +115,14 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   defp mark(files, file, key, kind),
     do: Map.update(files, file, %{key => kind}, &Map.put(&1, key, kind))
 
-  # A worktree that is already there is moved to `sha`, dropping what an earlier
-  # review left in it; one that is broken is made again.
+  # Each review gets a worktree of its own, so whatever is left at `path` goes.
   defp place(root, path, sha) do
-    reused =
-      File.exists?(Path.join(path, ".git")) and
-        match?({:ok, _}, git(path, ["checkout", "-q", "--force", "--detach", sha])) and
-        match?({:ok, _}, git(path, ["clean", "-fdq"]))
+    File.rm_rf(path)
+    git(root, ["worktree", "prune"])
+    File.mkdir_p!(Path.dirname(path))
 
-    if reused do
-      :ok
-    else
-      File.rm_rf(path)
-      git(root, ["worktree", "prune"])
-      File.mkdir_p!(Path.dirname(path))
-
-      with {:ok, _} <- git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha]),
-           do: :ok
-    end
+    with {:ok, _} <- git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha]),
+         do: :ok
   end
 
   # The remote whose address names `repository`, else origin.

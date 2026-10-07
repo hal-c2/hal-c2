@@ -124,7 +124,7 @@ QJsonObject entry(const QJsonObject& manifest, const QJsonObject& settings) {
           {QStringLiteral("name"), manifest.value(QLatin1String("name"))},
           {QStringLiteral("version"), manifest.value(QLatin1String("version"))},
           {QStringLiteral("description"), manifest.value(QLatin1String("description"))},
-          {QStringLiteral("author"), manifest.value(QLatin1String("author")).toObject().value(QLatin1String("name"))},
+          {QStringLiteral("author"), manifest.value(QLatin1String("author"))},
           {QStringLiteral("status"), QStringLiteral("running")},
           {QStringLiteral("error"), QJsonValue::Null},
           {QStringLiteral("lastError"), QJsonValue::Null},
@@ -331,6 +331,40 @@ const Steps steps([] {
                   [&] { return QStringLiteral("a review of #%1 to be started, not %2").arg(c[0], show(QJsonArray{asked(world, QStringLiteral("start")).value(0)})); });
     expect(drawsText(row(world, c[0].toInt())->parentItem(), QStringLiteral("Reviewing")), QStringLiteral("#%1 is not listed as running").arg(c[0]));
     waitText(world, QStringLiteral("codeReviewTitle"), QStringLiteral("#%1  Add rate limits").arg(c[0]));
+  });
+
+  step(QStringLiteral("the user changed the review prompt and turned off REVIEW.md"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("codeReviewSettings"));
+    world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
+    for (const auto& [key, value] : {std::pair{QStringLiteral("prompt"), QVariant(QStringLiteral("Review it my way."))}, std::pair{QStringLiteral("readReviewMd"), QVariant(false)}}) {
+      expect(QMetaObject::invokeMethod(settings, "set", Q_ARG(QVariant, key), Q_ARG(QVariant, value)), QStringLiteral("the settings cannot be changed"));
+    }
+  });
+  step(QStringLiteral("the user resets the review prompt"), [](World& world, const Captures&, const Table&) {
+    // The button sits below the fold of the settings page, out of the mouse's reach.
+    QQuickItem* reset = waitShownNamed(world, QStringLiteral("codeReviewResetPrompt"));
+    world.waitFor([&] { return reset->isEnabled(); }, QStringLiteral("the reset to be enabled"));
+    expect(QMetaObject::invokeMethod(reset, "clicked"), QStringLiteral("the reset cannot be pressed"));
+  });
+  step(QStringLiteral("only the prompt is saved"), [](World& world, const Captures&, const Table&) {
+    const auto saved = [&] {
+      QJsonArray found;
+      for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+        if (rpc.method == QLatin1String("plugins.saveSettings")) found.append(rpc.payload.value(QLatin1String("settings")));
+      }
+      return found;
+    };
+    world.waitFor([&] { return !saved().isEmpty(); }, QStringLiteral("the settings to be saved"));
+    expect(saved() == QJsonArray{QJsonObject{{QStringLiteral("prompt"), QJsonValue::Null}}}, QStringLiteral("the MC was sent %1").arg(show(saved())));
+  });
+  step(QStringLiteral("REVIEW.md is still turned off, waiting to be saved"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("codeReviewSettings"));
+    const QString plugins = state(world).settings.value(QLatin1String("prompt")).toString();
+    // Read again after the save, the prompt is the plugin's and the other change is made again.
+    world.waitFor([&] {
+      const QVariantMap values = settings->property("values").toMap();
+      return values.value(QStringLiteral("prompt")).toString() == plugins && values.value(QStringLiteral("readReviewMd")) == QVariant(false) && settings->property("dirty").toBool();
+    }, [&] { return QStringLiteral("the settings to be read again with REVIEW.md off, not %1").arg(QString::fromUtf8(QJsonDocument::fromVariant(settings->property("values")).toJson(QJsonDocument::Compact))); });
   });
 
   step(QStringLiteral("GitHub, GitLab, Forgejo, Bitbucket and Azure DevOps are offered as hosts"), [](World& world, const Captures&, const Table&) {

@@ -444,7 +444,8 @@ Item {
 
                     readonly property var review: page.review
                     readonly property string status: review?.status ?? ""
-                    readonly property bool open: status === "waiting" || status === "kept"
+                    // Only a waiting review can still be published; a kept one never is.
+                    readonly property bool open: status === "waiting"
 
                     x: 20
                     y: 16
@@ -518,7 +519,7 @@ Item {
                         ShellButton {
                             objectName: "codeReviewPublish"
                             visible: findings.open
-                            primary: findings.status === "waiting"
+                            primary: true
                             enabled: page.busy === 0
                             text: qsTr("Publish to GitHub")
                             onClicked: page.ask("publish", { key: findings.review.key }, findings.review.environment)

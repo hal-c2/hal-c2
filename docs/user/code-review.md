@@ -38,10 +38,11 @@ changed since its review.
 
 ## The agent and its prompt
 
-Pick the agent, its model and its access in the settings. The agent works in a
-checkout of the pull request's head of its own, so your checkout is not touched,
-but if it runs commands it runs the pull request's code. Choose its access with
-that in mind.
+Pick the agent, its model and its access in the settings. Each review's agent
+works in a checkout of the pull request's head of its own, so your checkout is
+not touched, but if it runs commands it runs the pull request's code. Choose its
+access with that in mind. Reviewing a pull request again removes the last
+review's checkout.
 
 The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and the
 others listed under it are filled in for each pull request. How the agent
@@ -57,7 +58,7 @@ line the pull request does not change goes into the summary instead.
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
 
-- **Keep in HAL-C2** never posts.
+- **Keep in HAL-C2** never posts, and its reviews cannot be published.
 - **Wait for me to publish** keeps the review until you publish it. Dismiss the
   comments you do not want first.
 - **Post automatically** posts it as soon as the agent is done.

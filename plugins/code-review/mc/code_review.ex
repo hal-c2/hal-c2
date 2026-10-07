@@ -297,8 +297,11 @@ defmodule HalC2Plugins.CodeReview do
 
   def handle_call({:publishable, key}, _from, state) do
     case state.reviews[key] do
-      %{"status" => status} = review when status in ~w(waiting kept) ->
+      %{"status" => "waiting"} = review ->
         {:reply, {:ok, review}, state}
+
+      %{"status" => "kept"} ->
+        {:reply, {:error, "The review of #{key} is kept in HAL-C2; its repository does not publish reviews."}, state}
 
       %{"status" => "published"} ->
         {:reply, {:error, "The review of #{key} is already published."}, state}
@@ -696,13 +699,17 @@ defmodule HalC2Plugins.CodeReview do
   defp run(review, settings) do
     %{"key" => key, "threadId" => thread_id} = review
 
+    # The run before this one is over: its checkout goes, and this run gets one of
+    # its own, so no two threads share a checkout.
+    if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
+
     result =
       with {:ok, projects} <- Host.projects(@id),
            %{} = project <-
              Enum.find(projects, &(&1["id"] == review["projectId"])) ||
                {:error, "The project of #{review["repository"]} is no longer on this MC."},
            path =
-             Path.join([Host.data_dir(@id), "checkouts", review["projectId"], "pr-#{review["number"]}"]),
+             Path.join([Host.data_dir(@id), "checkouts", review["projectId"], "pr-#{review["number"]}", thread_id]),
            {:ok, checkout} <-
              Checkout.prepare(project["root"], path, review["repository"], review["number"], review["baseBranch"]),
            {:ok, model} <- model(settings) do

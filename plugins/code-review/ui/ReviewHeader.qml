@@ -127,8 +127,8 @@ Rectangle {
 
             ShellButton {
                 objectName: "codeReviewPublish"
-                visible: header.status === "waiting" || header.status === "kept"
-                primary: header.status === "waiting"
+                visible: header.status === "waiting"
+                primary: true
                 enabled: !header.publishing
                 text: header.publishing ? qsTr("Publishing…") : qsTr("Publish")
                 onClicked: header.publish()

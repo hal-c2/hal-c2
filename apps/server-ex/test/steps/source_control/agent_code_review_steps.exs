@@ -112,7 +112,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     )
   end
 
-  step "{string} watches {string} automatically and skips drafts", %{args: [@id, repo]} = context do
+  step "{string} watches {string} automatically and skips drafts",
+       %{args: [@id, repo]} = context do
     save(context, %{
       "repositories" => [repo],
       "activation" => "automatic",
@@ -186,7 +187,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     }
 
     context
-    |> World.cli_rules([%{"args" => ["pr view #{number}", "author,comments"], "stdout" => activity}])
+    |> World.cli_rules([
+      %{"args" => ["pr view #{number}", "author,comments"], "stdout" => activity}
+    ])
     |> open(number, %{"updatedAt" => "2026-09-03T00:00:00Z"})
     |> refresh()
   end
@@ -205,7 +208,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "a review of \#{int} starts with the configured agent", %{args: [number]} = context do
     context = started(context, number)
-    assert %{"instanceId" => "codex", "model" => "fake/one"} = thread(context.thread)["modelSelection"]
+
+    assert %{"instanceId" => "codex", "model" => "fake/one"} =
+             thread(context.thread)["modelSelection"]
+
     context
   end
 
@@ -215,7 +221,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "no review starts", context do
     snapshot = context.snapshot
-    refute Enum.any?(snapshot["reviews"], &(&1["status"] in ~w(queued running) or &1["threadId"])),
+
+    refute Enum.any?(
+             snapshot["reviews"],
+             &(&1["status"] in ~w(queued running) or &1["threadId"])
+           ),
            inspect(snapshot["reviews"])
 
     context
@@ -232,7 +242,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "\#{int} was reviewed at an older head commit", %{args: [number]} = context do
     context = reviewed(context, number)
-    head = push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
 
     context
     |> put_in([:heads, number], head)
@@ -382,7 +394,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the next review uses the plugin's default prompt", context do
     context = context |> open(12) |> start(12) |> started(12)
     prompt = prompt(context.thread)
-    assert String.starts_with?(prompt, ~s(Review pull request #12 "Pull request 12" in acme/api)), prompt
+
+    assert String.starts_with?(prompt, ~s(Review pull request #12 "Pull request 12" in acme/api)),
+           prompt
+
     assert prompt =~ "git diff #{context.review["mergeBase"]} HEAD"
     context
   end
@@ -488,9 +503,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context |> running(number) |> report(findings("comment", 2))
   end
 
-  step "nothing is posted to {string} and the review stays in HAL-C2", context do
+  step "nothing can be posted to {string} and the review stays in HAL-C2", context do
     {review, context} = await_review(context, 12, &(&1["status"] == "kept"))
     assert %{"status" => "kept"} = review
+    context = publish(context, 12)
+    assert inspect(context.reply) =~ "kept in HAL-C2"
     assert World.cli_calls(context, "pulls/12/reviews") == []
     context
   end
@@ -510,7 +527,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "the review of \#{int} is waiting with {word} comments", %{args: [number, count]} = context do
+  step "the review of \#{int} is waiting with {word} comments",
+       %{args: [number, count]} = context do
     context = context |> running(number) |> report(findings("request-changes", @counts[count]))
     await_review!(context, number, &(&1["status"] == "waiting"))
   end
@@ -566,7 +584,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     World.cli_rules(context, [
       %{
         "args" => ["--method POST", "pulls/12/reviews"],
-        "stderr" => "gh: Unprocessable Entity\nCan not approve your own pull request (HTTP 422)\n",
+        "stderr" =>
+          "gh: Unprocessable Entity\nCan not approve your own pull request (HTTP 422)\n",
         "stdout" =>
           ~s({"message":"Unprocessable Entity","errors":["Can not approve your own pull request"]}),
         "exit" => 1
@@ -598,7 +617,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "its thread is not listed with the threads", context do
-    assert %{"id" => @id, "kind" => "review", "listed" => false} = thread(context.thread)["plugin"]
+    assert %{"id" => @id, "kind" => "review", "listed" => false} =
+             thread(context.thread)["plugin"]
+
     context
   end
 
@@ -612,7 +633,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the clients of its thread see a review of \#{int} waiting with the verdict {string}",
        %{args: [number, verdict]} = context do
     sub = System.unique_integer([:positive])
-    shape = %{"type" => "plugin", "environment" => context.mc.environment, "id" => @id, "topic" => "threads"}
+
+    shape = %{
+      "type" => "plugin",
+      "environment" => context.mc.environment,
+      "id" => @id,
+      "topic" => "threads"
+    }
+
     thread = context.thread
     wanted = @verdicts[verdict]
 
@@ -653,7 +681,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # Saves `patch` over the plugin's settings, which restarts it.
   defp save(context, patch) do
-    {_, context} = World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
+    {_, context} =
+      World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
+
     context
   end
 
@@ -673,14 +703,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     }
 
     client = context |> World.client("reviews") |> Mc.sub(sub, shape)
-    context |> World.put_client("reviews", client) |> Map.merge(%{reviews_sub: sub, reviews_last: nil})
+
+    context
+    |> World.put_client("reviews", client)
+    |> Map.merge(%{reviews_sub: sub, reviews_last: nil})
   end
 
   # `{review, context}` once `fun` holds for the review of `number` on the `reviews`
   # topic; the last value seen is kept, as the topic only moves forward.
   defp await_review(context, number, fun) do
     found = fn value ->
-      with %{} <- value, %{} = review <- review(value, number), true <- !!fun.(review),
+      with %{} <- value,
+           %{} = review <- review(value, number),
+           true <- !!fun.(review),
            do: review,
            else: (_ -> nil)
     end
@@ -697,7 +732,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           10_000
         )
 
-      context = context |> World.put_client("reviews", client) |> Map.put(:reviews_last, frame["value"])
+      context =
+        context |> World.put_client("reviews", client) |> Map.put(:reviews_last, frame["value"])
+
       {found.(frame["value"]), context}
     end
   end
@@ -715,7 +752,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context =
       if context.heads[number],
         do: context,
-        else: put_in(context, [:heads, number], push_head(context, number, %{"src/limits.ts" => @limits}))
+        else:
+          put_in(
+            context,
+            [:heads, number],
+            push_head(context, number, %{"src/limits.ts" => @limits})
+          )
 
     pr =
       Shared.gh_pr(context.repository, number, %{
@@ -730,7 +772,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     prs = Map.put(context.prs, number, pr)
 
     context
-    |> World.cli_rules([%{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])}])
+    |> World.cli_rules([
+      %{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])}
+    ])
     |> Map.put(:prs, prs)
   end
 

@@ -43,7 +43,8 @@ ColumnLayout {
         { value: "automatic", label: qsTr("Post automatically") }
     ]
 
-    function load() {
+    // Reads the saved settings; `edits`, unsaved changes to keep, are made again on top.
+    function load(edits) {
         settings.plugin.call("settings", {}, (result, error) => {
             if (error) {
                 settings.problem = error;
@@ -55,6 +56,8 @@ ColumnLayout {
             settings.offered = result.repositories ?? [];
             settings.loaded = true;
             settings.reset();
+            for (const key in edits ?? {})
+                settings.set(key, edits[key]);
         });
     }
 
@@ -93,7 +96,8 @@ ColumnLayout {
     }
 
     // Saves `values`; a null value returns that setting to the plugin's default.
-    function save(values) {
+    // `edits` stay unsaved changes once it is saved.
+    function save(values, edits) {
         settings.saving = true;
         settings.refusal = "";
         settings.plugin.saveSettings(values, (result, error) => {
@@ -101,8 +105,19 @@ ColumnLayout {
             if (error)
                 settings.refusal = error;
             else
-                settings.load();
+                settings.load(edits);
         });
+    }
+
+    // Returns the prompt to the plugin's own and saves only that; the user's other
+    // changes stay unsaved.
+    function resetPrompt() {
+        const edits = {};
+        for (const key in settings.values) {
+            if (key !== "prompt" && JSON.stringify(settings.values[key]) !== JSON.stringify(settings.saved[key]))
+                edits[key] = settings.values[key];
+        }
+        settings.save({ prompt: null }, edits);
     }
 
     objectName: "codeReviewSettings"
@@ -275,7 +290,7 @@ ColumnLayout {
 
     Label {
         Layout.fillWidth: true
-        visible: !settings.loaded
+        visible: !settings.loaded || settings.problem.length > 0
         text: settings.problem.length > 0 ? qsTr("The settings could not be read: %1").arg(settings.problem) : qsTr("Loading…")
         color: settings.problem.length > 0 ? settings.errorColor : settings.muted
         wrapMode: Text.Wrap
@@ -567,7 +582,7 @@ ColumnLayout {
                 subtle: true
                 enabled: !settings.saving
                 text: qsTr("Reset to the plugin's prompt")
-                onClicked: settings.save(Object.assign({}, settings.values, { prompt: null }))
+                onClicked: settings.resetPrompt()
             }
         }
 
