@@ -133,7 +133,10 @@ lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
 pass an icon name (`iconName: "git-branch"`) and get the same glyph the web
 app shows, at any size or color.
 
-`DefaultShell` is laid out like the web app: the sidebar's brand band ("HAL-C2"
+`DefaultShell` is a `ShellWindow` filled with `DefaultLayout`, the layout as
+an item, so that another root can show it beside a layout of its own
+(`apps/mobile-qt`, see [mobile-qt.md](mobile-qt.md)). It is laid out like the
+web app: the sidebar's brand band ("HAL-C2"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
 run / open / git pills, the timeline, and the composer card with the checkout
 strip welded under it. Frameless windows get their drag handle and buttons
