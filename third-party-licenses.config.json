@@ -95,6 +95,18 @@
       ]
     },
     {
+      "bundles": ["desktop-qt"],
+      "license": "MIT",
+      "name": "QR Code generator",
+      "sourceUrl": "https://github.com/nayuki/QR-Code-generator",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) Project Nayuki."]
+        }
+      ]
+    },
+    {
       "bundles": ["android", "assets", "desktop-qt", "mobile", "web"],
       "license": "MIT",
       "name": "libghostty-vt",

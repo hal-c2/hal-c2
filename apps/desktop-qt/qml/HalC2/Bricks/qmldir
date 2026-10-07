@@ -31,6 +31,7 @@ ShellComboBox 1.0 ShellComboBox.qml
 ShellButton 1.0 ShellButton.qml
 ShellCard 1.0 ShellCard.qml
 ShellIcon 1.0 ShellIcon.qml
+QrCode 1.0 QrCode.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
 Sidebar 1.0 Sidebar.qml

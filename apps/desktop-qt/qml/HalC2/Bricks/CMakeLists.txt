@@ -37,6 +37,7 @@ qt_add_qml_module(hal_c2_bricks
     ShellChevron.qml
     ShellComboBox.qml
     ShellIcon.qml
+    QrCode.qml
     ShellSplitButton.qml
     ShellMenu.qml
     ShellMenuItem.qml
