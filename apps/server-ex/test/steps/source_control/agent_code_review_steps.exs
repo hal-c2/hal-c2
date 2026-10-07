@@ -504,6 +504,72 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the review of \#{int} is still running in the same thread", %{args: [number]} = context do
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, snapshot} = reply
+    assert %{"status" => "running", "threadId" => thread} = review(snapshot, number)
+    assert thread == context.thread
+    context
+  end
+
+  step "the user discards the review of \#{int}", %{args: [number]} = context do
+    {reply, context} = plugin(context, "discard", %{"key" => key(context, number)})
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told the review of \#{int} is running", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "is running"
+    context
+  end
+
+  step "{string} is restarted", %{args: [@id]} = context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => @id})
+    context
+  end
+
+  step "the review of \#{int} is failed saying the plugin stopped while it ran",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["error"] =~ "code-review restarted"
+    assert review["threadId"] == context.thread
+    context
+  end
+
+  step "its agent can still report what it found", context do
+    context
+    |> report(findings("approve", 1))
+    |> await_review!(
+      context.review["number"],
+      &(&1["status"] == "waiting" and &1["verdict"] == "approve")
+    )
+  end
+
+  step "{string} reviews with an agent the MC does not have", %{args: [@id]} = context do
+    save(context, %{"provider" => "nobody", "model" => ""})
+  end
+
+  step "the review of \#{int} is failed saying there is no such agent",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["error"] =~ "There is no agent nobody"
+    Map.put(context, :review, review)
+  end
+
+  step "no checkout of \#{int} is left", %{args: [number]} = context do
+    checkouts =
+      Path.join([
+        HalC2.Plugins.Host.data_dir(@id),
+        "checkouts",
+        context.review["projectId"],
+        "pr-#{number}"
+      ])
+
+    assert Path.wildcard(Path.join(checkouts, "*")) == []
+    refute World.git!(context.root, ~w(worktree list)) =~ "pr-#{number}"
+    context
+  end
+
   step "the head of \#{int} adds the file {string}", %{args: [number, file]} = context do
     head =
       push_head(context, number, %{"src/limits.ts" => @limits, file => "export const x = 1;\n"})

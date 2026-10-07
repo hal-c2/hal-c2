@@ -261,6 +261,8 @@ defmodule HalC2Plugins.CodeReview do
   def handle_call({:start, key, trigger}, _from, state) when is_binary(key) do
     case state.reviews[key] do
       nil -> {:reply, {:error, "There is no review #{key}."}, state}
+      # Two asks before either sees the other's leave one run.
+      %{"status" => status} when status in ~w(queued running) -> {:reply, {:ok, nil}, state}
       review -> {:reply, {:ok, nil}, state |> queue(review, trigger) |> pump() |> changed()}
     end
     |> reply_snapshot()
@@ -290,9 +292,13 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # A running review has a thread and a checkout on the way, and one being
+  # published a post in flight; it is discarded once that is over.
   def handle_call({:discard, key}, _from, state) do
     case Map.pop(state.reviews, key) do
       {nil, _} -> {:reply, {:error, "There is no review #{key}."}, state}
+      {%{"status" => "running"}, _} -> {:reply, {:error, "The review of #{key} is running."}, state}
+      {%{"status" => "publishing"}, _} -> {:reply, {:error, "The review of #{key} is being published."}, state}
       {review, reviews} -> {:reply, {:ok, review}, %{state | reviews: reviews} |> pump() |> changed()}
     end
   end
@@ -724,11 +730,12 @@ defmodule HalC2Plugins.CodeReview do
            %{} = project <-
              Enum.find(projects, &(&1["id"] == review["projectId"])) ||
                {:error, "The project of #{review["repository"]} is no longer on this MC."},
+           # Before the checkout, which nothing would remove if this failed after it.
+           {:ok, model} <- model(settings),
            path =
              Path.join([Host.data_dir(@id), "checkouts", review["projectId"], "pr-#{review["number"]}", thread_id]),
            {:ok, checkout} <-
-             Checkout.prepare(project["root"], path, review["repository"], review["number"], review["baseBranch"]),
-           {:ok, model} <- model(settings) do
+             Checkout.prepare(project["root"], path, review["repository"], review["number"], review["baseBranch"]) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
 
         GenServer.cast(
@@ -994,10 +1001,23 @@ defmodule HalC2Plugins.CodeReview do
   defp load do
     with {:ok, text} <- File.read(file()),
          {:ok, %{"reviews" => reviews}} when is_map(reviews) <- JSON.decode(text) do
-      # A publish the MC stopped in the middle of is the user's to try again.
+      # A publish the MC stopped in the middle of is the user's to try again. So is a
+      # run: the end of its turn may have come while the plugin was not there to hear
+      # it. Its agent can still report, as to any failed review.
       Map.new(reviews, fn
-        {key, %{"status" => "publishing"} = review} -> {key, %{review | "status" => "waiting"}}
-        entry -> entry
+        {key, %{"status" => "publishing"} = review} ->
+          {key, %{review | "status" => "waiting"}}
+
+        {key, %{"status" => "running"} = review} ->
+          {key,
+           Map.merge(review, %{
+             "status" => "failed",
+             "error" => "code-review restarted while this review ran; its agent can still report, or retry it.",
+             "finishedAt" => now()
+           })}
+
+        entry ->
+          entry
       end)
     else
       _ -> %{}

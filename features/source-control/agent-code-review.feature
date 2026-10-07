@@ -182,6 +182,33 @@ Feature: Agent code review
       Then a new review of #12 starts
 
     @mc
+    Scenario: Retrying a review that is running leaves the run it has
+      Given a review of #12 is running
+      When the user retries the review of #12
+      Then the review of #12 is still running in the same thread
+
+    @mc
+    Scenario: A running review cannot be discarded
+      Given a review of #12 is running
+      When the user discards the review of #12
+      Then the user is told the review of #12 is running
+      And the review of #12 is still running in the same thread
+
+    @mc
+    Scenario: A review the plugin stopped during can be tried again, and still takes its findings
+      Given a review of #12 is running
+      When "code-review" is restarted
+      Then the review of #12 is failed saying the plugin stopped while it ran
+      And its agent can still report what it found
+
+    @mc
+    Scenario: A review whose agent is not on the MC leaves no checkout behind
+      Given "code-review" reviews with an agent the MC does not have
+      When the user asks for a review of #12
+      Then the review of #12 is failed saying there is no such agent
+      And no checkout of #12 is left
+
+    @mc
     Scenario Outline: A comment on a file whose name git quotes stays on its line
       Given the head of #12 adds the file "<file>"
       And a review of #12 is running
