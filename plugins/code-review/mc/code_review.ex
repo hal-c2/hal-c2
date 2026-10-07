@@ -438,7 +438,8 @@ defmodule HalC2Plugins.CodeReview do
     server = self()
     settings = state.settings
     known = state.reviews
-    {_pid, ref} = spawn_monitor(fn -> send(server, {:polled, look(settings, known)}) end)
+    # Linked, so turning code-review off calls off a look still waiting on GitHub.
+    {_pid, ref} = Process.spawn(fn -> send(server, {:polled, look(settings, known)}) end, [:link, :monitor])
     {:noreply, %{state | polling: ref}}
   end
 
