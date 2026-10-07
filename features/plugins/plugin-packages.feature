@@ -42,6 +42,18 @@ Feature: Plugin packages
     Then "broken" is listed with an error naming its setting
 
   @mc
+  Scenario Outline: A package whose setting has a default it cannot take is listed with the reason
+    Given the plugins directory contains the package "broken" whose setting is <setting>
+    When the MC starts
+    Then "broken" is listed with an error naming its setting
+
+    Examples:
+      | setting                                        |
+      | on or off, with the default "yes"              |
+      | a choice whose default is turned off           |
+      | a choice whose default is not one of its options |
+
+  @mc
   Scenario: A package that needs a newer plugin API asks for an MC update
     Given the plugins directory contains the package "future" built for a newer plugin API
     When the user tries to enable "future"
@@ -133,6 +145,13 @@ Feature: Plugin packages
       When a version that also asks to write pull request reviews replaces it
       Then "code-review" is stopped and listed as waiting for approval of the new permission
       And it runs again once the user accepts it
+
+    @mc
+    Scenario: An update that drops a permission gives it up
+      Given "code-review" is running with read and write access to pull requests
+      When a version that only asks to read pull requests replaces it
+      Then "code-review" can no longer write pull request reviews
+      And a later version that asks to write them again waits for the user
 
     @mc
     Scenario: The consent says that an MC part is trusted code

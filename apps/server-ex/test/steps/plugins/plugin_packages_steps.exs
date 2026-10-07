@@ -248,6 +248,22 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     Packages.install(context, id, manifest: %{"settings" => [setting]})
   end
 
+  step "the plugins directory contains the package {string} whose setting is on or off, with the default {string}",
+       %{args: [id, default]} = context do
+    setting = %{"key" => "host", "label" => "Host", "type" => "boolean", "default" => default}
+    Packages.install(context, id, manifest: %{"settings" => [setting]})
+  end
+
+  step "the plugins directory contains the package {string} whose setting is a choice whose default is turned off",
+       %{args: [id]} = context do
+    Packages.install(context, id, manifest: %{"settings" => [host_choice("gitlab")]})
+  end
+
+  step "the plugins directory contains the package {string} whose setting is a choice whose default is not one of its options",
+       %{args: [id]} = context do
+    Packages.install(context, id, manifest: %{"settings" => [host_choice("forgejo")]})
+  end
+
   step "{string} is listed with an error naming its setting", %{args: [id]} = context do
     assert %{"status" => "error", "error" => error} = Fixtures.entry(id)
     assert error =~ "setting"
@@ -587,6 +603,53 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context
   end
 
+  step "{string} is running with read and write access to pull requests",
+       %{args: [id]} = context do
+    context
+    |> Packages.install(id,
+      manifest: %{
+        "permissions" => [
+          Packages.permission("pullRequests:read"),
+          Packages.permission("pullRequests:write")
+        ]
+      }
+    )
+    |> enable(id)
+    |> Map.put(:plugin, id)
+  end
+
+  step "a version that only asks to read pull requests replaces it", context do
+    Packages.install(context, context.plugin,
+      manifest: %{
+        "version" => "1.1.0",
+        "permissions" => [Packages.permission("pullRequests:read")]
+      }
+    )
+  end
+
+  step "{string} can no longer write pull request reviews", %{args: [id]} = context do
+    assert %{"status" => "running", "version" => "1.1.0"} = Fixtures.entry(id)
+    assert HalC2.Plugins.granted(id) == ["pullRequests:read"]
+    refute HalC2.Plugins.Host.granted?(id, "pullRequests:write")
+    context
+  end
+
+  step "a later version that asks to write them again waits for the user", context do
+    context =
+      Packages.install(context, context.plugin,
+        manifest: %{
+          "version" => "1.2.0",
+          "permissions" => [
+            Packages.permission("pullRequests:read"),
+            Packages.permission("pullRequests:write")
+          ]
+        }
+      )
+
+    assert %{"status" => "awaitingConsent"} = Fixtures.entry(context.plugin)
+    context
+  end
+
   step "the package {string} has an MC part", %{args: [id]} = context do
     context |> Packages.install(id) |> Map.put(:plugin, id)
   end
@@ -757,6 +820,19 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  defp host_choice(default) do
+    %{
+      "key" => "host",
+      "label" => "Host",
+      "type" => "choice",
+      "default" => default,
+      "options" => [
+        %{"value" => "github", "label" => "GitHub"},
+        %{"value" => "gitlab", "label" => "GitLab", "disabled" => true}
+      ]
+    }
+  end
 
   defp enable(context, id) do
     accepted = Enum.map(Fixtures.entry(id)["permissions"], & &1["id"])

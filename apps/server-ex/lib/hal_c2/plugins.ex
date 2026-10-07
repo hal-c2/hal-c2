@@ -790,7 +790,18 @@ defmodule HalC2.Plugins do
         end
       end)
 
+    Enum.each(plugins, fn {id, plugin} -> revoke_dropped(id, plugin) end)
     %{state | plugins: plugins}
+  end
+
+  # A version that stops asking for a permission gives it up, so a later one that
+  # asks again waits for the user like any new permission.
+  defp revoke_dropped(_id, %{problem: {_, _}}), do: :ok
+
+  defp revoke_dropped(id, plugin) do
+    granted = granted(id)
+    kept = Enum.filter(granted, &(&1 in Enum.map(permissions(plugin), fn p -> p["id"] end)))
+    if kept != granted, do: update_config(id, &Map.put(&1, "granted", kept)), else: :ok
   end
 
   defp load(file, previous) do
@@ -1193,22 +1204,10 @@ defmodule HalC2.Plugins do
     Enum.find_value(fields, :ok, fn %{"key" => key} = field ->
       value = input[key]
 
-      if value != nil and value != @marker and not typed?(field, value),
+      if value != nil and value != @marker and not Package.typed?(field, value),
         do: {:error, "#{field["label"]} (#{key}) must be #{expected(field)}."}
     end)
   end
-
-  defp typed?(%{"type" => type}, value) when type in ~w(text longText secret),
-    do: is_binary(value)
-
-  defp typed?(%{"type" => "boolean"}, value), do: is_boolean(value)
-  defp typed?(%{"type" => "number"}, value), do: is_number(value)
-  defp typed?(%{"type" => "list"}, value), do: is_list(value) and Enum.all?(value, &is_binary/1)
-
-  defp typed?(%{"type" => "choice"} = field, value),
-    do: Enum.any?(field["options"] || [], &(&1["value"] == value and &1["disabled"] != true))
-
-  defp typed?(_field, _value), do: true
 
   defp expected(%{"type" => "boolean"}), do: "on or off"
   defp expected(%{"type" => "number"}), do: "a number"

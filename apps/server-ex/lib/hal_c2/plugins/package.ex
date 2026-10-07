@@ -134,6 +134,14 @@ defmodule HalC2.Plugins.Package do
       field = Enum.find(list(json["settings"]), &(not setting?(&1))) ->
         {:error, "plugin.json has a setting HAL-C2 cannot show: #{inspect(field)}."}
 
+      field =
+          Enum.find(
+            list(json["settings"]),
+            &(&1["default"] != nil and not typed?(&1, &1["default"]))
+          ) ->
+        {:error,
+         "plugin.json gives the setting #{inspect(field["key"])} a default it cannot take: #{inspect(field["default"])}."}
+
       true ->
         :ok
     end
@@ -160,6 +168,22 @@ defmodule HalC2.Plugins.Package do
       )
 
   defp options?(_), do: false
+
+  @doc """
+  Whether `value` fits the setting `field` (string keys) declares: its type, and for a
+  choice one of its options that is not turned off. A field without a type takes anything.
+  """
+  def typed?(%{"type" => type}, value) when type in ~w(text longText secret),
+    do: is_binary(value)
+
+  def typed?(%{"type" => "boolean"}, value), do: is_boolean(value)
+  def typed?(%{"type" => "number"}, value), do: is_number(value)
+  def typed?(%{"type" => "list"}, value), do: is_list(value) and Enum.all?(value, &is_binary/1)
+
+  def typed?(%{"type" => "choice"} = field, value),
+    do: Enum.any?(field["options"] || [], &(&1["value"] == value and &1["disabled"] != true))
+
+  def typed?(_field, _value), do: true
 
   # The shape `HalC2.Plugins` reads for every plugin.
   defp manifest(json) do
