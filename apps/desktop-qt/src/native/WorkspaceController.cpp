@@ -27,6 +27,7 @@ const NativeControllerRegistrar<WorkspaceController> registrar(QStringLiteral("w
 // packages/contracts EDITORS, in the order the picker offers them.
 const QList<std::pair<QString, QString>>& editorLabels() {
   static const QList<std::pair<QString, QString>> labels{
+      {QStringLiteral("default"), QStringLiteral("Default Editor")},
       {QStringLiteral("cursor"), QStringLiteral("Cursor")},
       {QStringLiteral("trae"), QStringLiteral("Trae")},
       {QStringLiteral("kiro"), QStringLiteral("Kiro")},
