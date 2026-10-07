@@ -51,6 +51,8 @@ include("${HAL_C2_DESKTOP_DIR}/cmake/NativeShell.cmake")
 hal_c2_add_native_library()
 include("${HAL_C2_DESKTOP_DIR}/cmake/PlatformWindow.cmake")
 hal_c2_target_platform_window(hal-c2-mobile)
+include(cmake/Terminal.cmake)
+hal_c2_target_terminal(hal-c2-mobile)
 
 target_compile_definitions(hal-c2-mobile PRIVATE
   HAL_C2_QML_SOURCE_DIR="${_hal_c2_bricks_dir}"

@@ -9,6 +9,9 @@
 # libghostty-vt.a instead, and FETCHCONTENT_SOURCE_DIR_QML_GHOSTTY to build
 # from a local qml-ghostty checkout.
 #
+# A build for Android (the phone, apps/mobile-qt) gets the library from
+# QmlGhosttyAndroid.cmake instead: the script only builds for this machine.
+#
 # Include once per project, then link `qmlghosttyplugin`.
 
 include(FetchContent)
@@ -38,6 +41,8 @@ endif()
 
 if(HAL_C2_GHOSTTY_VT_LIBRARY)
   set(GHOSTTY_VT_LIBRARY "${HAL_C2_GHOSTTY_VT_LIBRARY}")
+elseif(ANDROID)
+  include("${CMAKE_CURRENT_LIST_DIR}/QmlGhosttyAndroid.cmake")
 else()
   set(_qml_ghostty_vt_prefix "${qml_ghostty_SOURCE_DIR}/third_party/libghostty-vt")
   set(GHOSTTY_VT_LIBRARY
@@ -73,3 +78,13 @@ endif()
 set(QML_GHOSTTY_BUILD_EXAMPLES OFF)
 set(QML_GHOSTTY_BUILD_TESTS OFF)
 add_subdirectory("${qml_ghostty_SOURCE_DIR}" "${qml_ghostty_BINARY_DIR}")
+
+# qml-ghostty links libutil, where forkpty lives on Linux, on every Unix that
+# is not Apple's. Android has no libutil: its forkpty is in libc.
+if(ANDROID)
+  foreach(_qml_ghostty_property IN ITEMS LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+    get_target_property(_qml_ghostty_libraries qmlghostty ${_qml_ghostty_property})
+    list(REMOVE_ITEM _qml_ghostty_libraries util "$<LINK_ONLY:util>")
+    set_property(TARGET qmlghostty PROPERTY ${_qml_ghostty_property} "${_qml_ghostty_libraries}")
+  endforeach()
+endif()
