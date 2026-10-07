@@ -113,7 +113,7 @@ SettingsPage {
                 Label {
                     objectName: "mcPluginByline"
                     Layout.fillWidth: true
-                    text: [card.plugin.version, card.plugin.author ?? ""].filter(part => part.length > 0).join(" · ")
+                    text: [card.plugin.version, card.plugin.author?.name ?? ""].filter(part => part.length > 0).join(" · ")
                     color: page.muted
                     elide: Text.ElideRight
                     font.pixelSize: Math.round(12 * Theme.fontScale)

@@ -174,6 +174,7 @@ void McPluginController::publish() {
   QVariantList environments;
   QVariantList pages;
   QHash<QString, int> pageAt;
+  QHash<QString, int> tabs;
   QVariantMap threadKinds;
   QVariantList slotParts;
   for (const QString& environment : m_store->environments()) {
@@ -205,10 +206,13 @@ void McPluginController::publish() {
         const QString pageId = str(page[QLatin1String("id")]);
         const QString path = str(page[QLatin1String("qml")]);
         const QString pageKey = id + QLatin1Char('/') + pageId;
-        // One tab per page, whichever environments run the plugin.
-        if (!pageAt.contains(pageKey)) {
-          pageAt.insert(pageKey, pages.size());
-          pages.append(QVariantMap{{QStringLiteral("key"), pageKey},
+        // One tab per page, whichever environments run the plugin, as long as they run
+        // the same version of it: one page's code cannot be given another version's MC
+        // part to talk to, so an environment on another revision gets a tab of its own.
+        const QString group = pageKey + QLatin1Char('\n') + str(entry.value(QLatin1String("revision")));
+        if (!pageAt.contains(group)) {
+          pageAt.insert(group, pages.size());
+          pages.append(QVariantMap{{QStringLiteral("key"), tabs.contains(pageKey) ? pageKey + QLatin1Char('/') + environment : pageKey},
                                    {QStringLiteral("pluginId"), id},
                                    {QStringLiteral("pageId"), pageId},
                                    {QStringLiteral("pluginName"), str(entry.value(QLatin1String("name")))},
@@ -217,15 +221,16 @@ void McPluginController::publish() {
                                    {QStringLiteral("url"), url(path)},
                                    {QStringLiteral("error"), failed(path)},
                                    {QStringLiteral("environments"), QStringList{environment}}});
+          tabs[pageKey] += 1;
           continue;
         }
-        QVariantMap merged = pages.at(pageAt.value(pageKey)).toMap();
+        QVariantMap merged = pages.at(pageAt.value(group)).toMap();
         merged.insert(QStringLiteral("environments"), merged.value(QStringLiteral("environments")).toStringList() << environment);
         if (merged.value(QStringLiteral("url")).toString().isEmpty() && !url(path).isEmpty()) {
           merged.insert(QStringLiteral("url"), url(path));
           merged.insert(QStringLiteral("error"), QString());
         }
-        pages[pageAt.value(pageKey)] = merged;
+        pages[pageAt.value(group)] = merged;
       }
       for (const QJsonValue& kind : parts.value(QLatin1String("threadKinds")).toArray()) {
         threadKinds.insert(environment + QLatin1Char('/') + id + QLatin1Char('/') + str(kind[QLatin1String("kind")]),
@@ -246,6 +251,16 @@ void McPluginController::publish() {
     environments.append(QVariantMap{{QStringLiteral("id"), environment},
                                     {QStringLiteral("label"), label(environment)},
                                     {QStringLiteral("plugins"), plugins}});
+  }
+  // A page split by version says which environments each of its tabs is for.
+  for (QVariant& value : pages) {
+    QVariantMap page = value.toMap();
+    const QString pageKey = page.value(QStringLiteral("pluginId")).toString() + QLatin1Char('/') + page.value(QStringLiteral("pageId")).toString();
+    if (tabs.value(pageKey) < 2) continue;
+    QStringList labels;
+    for (const QString& environment : page.value(QStringLiteral("environments")).toStringList()) labels.append(label(environment));
+    page.insert(QStringLiteral("title"), page.value(QStringLiteral("title")).toString() + QStringLiteral(" · ") + labels.join(QStringLiteral(", ")));
+    value = page;
   }
   m_bridge->publish(kKey, QVariantMap{{QStringLiteral("environments"), environments},
                                       {QStringLiteral("pages"), pages},

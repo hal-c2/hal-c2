@@ -84,6 +84,13 @@ Feature: What plugins add to the clients
       And the page can tell each environment's data apart
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The same plugin in two versions is a tab for each version
+      Given a second environment runs another version of "code-review"
+      When the shell is shown
+      Then there is a "Reviews" tab for each environment, named after it
+      And each tab's page runs on its own environment only
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A page whose UI part fails to load shows the error in its tab
       Given the "Reviews" page of "code-review" fails to load
       When the user switches to the "Reviews" tab

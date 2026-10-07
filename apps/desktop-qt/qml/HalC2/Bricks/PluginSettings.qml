@@ -220,9 +220,15 @@ SettingsPage {
                 outline: true
                 implicitWidth: 220
                 model: options.map(option => option.label)
+                disabledRows: options.map((option, index) => option.disabled === true ? index : -1).filter(index => index >= 0)
                 currentIndex: options.findIndex(option => option.value === field.value)
                 Accessible.name: field.modelData.label
-                onActivated: index => page.set(field.modelData.key, options[index].value)
+                onActivated: index => {
+                    if (options[index].disabled === true)
+                        currentIndex = Qt.binding(() => options.findIndex(option => option.value === field.value));
+                    else
+                        page.set(field.modelData.key, options[index].value);
+                }
             }
         }
     }

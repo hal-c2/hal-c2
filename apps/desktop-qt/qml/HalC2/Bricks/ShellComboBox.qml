@@ -4,10 +4,13 @@ import HalC2.Shell
 
 // A select in the web app's clothes: the composer's ghost pickers by default
 // (icon, muted label, chevron), `outline: true` for a bordered field.
+// `disabledRows` greys out the rows at those indexes in the popup; keys can still
+// reach them, so `onActivated` should refuse them too.
 ComboBox {
     id: control
 
     property bool outline: false
+    property var disabledRows: []
     property string iconName: ""
     property real iconSize: 16
     property real chevronSize: 14
@@ -71,6 +74,8 @@ ComboBox {
 
         width: ListView.view.width
         height: 28
+        enabled: !control.disabledRows.includes(item.index)
+        opacity: enabled ? 1 : 0.5
         leftPadding: 8
         rightPadding: 8
         hoverEnabled: true

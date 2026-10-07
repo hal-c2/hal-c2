@@ -193,7 +193,7 @@ QJsonObject codeReview() {
       {QStringLiteral("name"), QStringLiteral("Code review")},
       {QStringLiteral("version"), QStringLiteral("1.0.0")},
       {QStringLiteral("description"), QStringLiteral("Agents review the pull requests of the repositories you choose.")},
-      {QStringLiteral("author"), QStringLiteral("HAL-C2")},
+      {QStringLiteral("author"), object({{QStringLiteral("name"), QStringLiteral("HAL-C2")}})},
       {QStringLiteral("icon"), QStringLiteral("icon.png")},
       {QStringLiteral("screenshots"), QJsonArray{object({{QStringLiteral("path"), QStringLiteral("screenshots/queue.png")},
                                                          {QStringLiteral("caption"), QStringLiteral("The review queue")}})}},
@@ -531,6 +531,37 @@ const Steps steps([] {
     world.mc.join(QStringLiteral("work"));
     world.waitFor([&] { return listed(world, c[0], QStringLiteral("work")).value(QStringLiteral("status")) == QLatin1String("running"); },
                   [&] { return describe(world); });
+  });
+  step(QStringLiteral("a second environment runs another version of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    pluginShell(world);
+    QJsonObject other = codeReview();
+    other.insert(QStringLiteral("revision"), QStringLiteral("other"));
+    fake(world).plugins[QStringLiteral("work")] = {other};
+    world.mc.join(QStringLiteral("work"));
+    world.waitFor([&] { return listed(world, c[0], QStringLiteral("work")).value(QStringLiteral("status")) == QLatin1String("running"); },
+                  [&] { return describe(world); });
+  });
+  step(QStringLiteral("there is a %1 tab for each environment, named after it").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList pages;
+    world.waitFor([&] { return (pages = published(world).value(QStringLiteral("pages")).toList()).size() == 2; }, [&] { return describe(world); });
+    QStringList titles;
+    for (const QVariant& page : std::as_const(pages)) {
+      const QString title = page.toMap().value(QStringLiteral("title")).toString();
+      expect(title.startsWith(c[0] + QStringLiteral(" · ")), QStringLiteral("a tab is named %1").arg(title));
+      titles.append(title);
+      waitNamed(world, QStringLiteral("tab:") + page.toMap().value(QStringLiteral("key")).toString());
+    }
+    expect(titles.first() != titles.last(), QStringLiteral("both tabs are named %1").arg(titles.first()));
+  });
+  step(QStringLiteral("each tab's page runs on its own environment only"), [](World& world, const Captures&, const Table&) {
+    QStringList runsOn;
+    for (const QVariant& page : published(world).value(QStringLiteral("pages")).toList()) {
+      runsOn.append(page.toMap().value(QStringLiteral("environments")).toStringList().join(QLatin1Char(',')));
+    }
+    runsOn.sort();
+    QStringList wanted{world.mc.environmentId, QStringLiteral("work")};
+    wanted.sort();
+    expect(runsOn == wanted, QStringLiteral("the pages run on %1").arg(runsOn.join(QLatin1Char(' '))));
   });
   step(QStringLiteral("there is one %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = tabKey(world, c[0]);
