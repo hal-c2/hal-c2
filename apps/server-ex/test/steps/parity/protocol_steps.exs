@@ -855,8 +855,11 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id)
 
       "shell.environment" ->
+        # The shell takes a descriptor only from a machine that is up.
+        send(HalC2.Shell, {:nodeup, @gone})
         descriptor = %{"environmentId" => "env-gone"}
         GenServer.cast(HalC2.Shell, {:peer_environment, @gone, descriptor})
+        send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["mc"] == to_string(@gone)))
 
       "shell.mc" ->
