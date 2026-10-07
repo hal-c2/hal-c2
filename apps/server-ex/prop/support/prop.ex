@@ -60,9 +60,28 @@ defmodule HalC2.Prop do
   end
 
   @doc """
-  The message a failed `run_commands/2` prints: the commands, the model and the result
-  of each step, and why it failed.
+  The message a failed run prints: the commands, the model and the result of each step,
+  and why it failed. For `run_parallel_commands/2`, pass the commands, the sequential
+  history and the parallel histories it returned in place of the history and state.
   """
+  def report({prefix, branches}, sequential, parallel, result) do
+    """
+    Sequential prefix:
+    #{inspect(prefix, pretty: true, limit: :infinity)}
+
+    Parallel branches:
+    #{inspect(branches, pretty: true, limit: :infinity)}
+
+    Prefix history (model state and result after each step):
+    #{inspect(sequential, pretty: true, limit: :infinity)}
+
+    Branch histories (each step and its result):
+    #{inspect(parallel, pretty: true, limit: :infinity)}
+
+    Result: #{inspect(result, pretty: true)}
+    """
+  end
+
   def report(cmds, history, state, result) do
     """
     Commands:

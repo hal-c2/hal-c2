@@ -347,13 +347,7 @@ defmodule HalC2.StoreParallelPropTest do
         HalC2.Prop.stop_services()
 
         (result == :ok)
-        |> when_fail(
-          IO.puts("""
-          Sequential: #{inspect(sequential, pretty: true, limit: :infinity)}
-          Parallel: #{inspect(parallel, pretty: true, limit: :infinity)}
-          Result: #{inspect(result, pretty: true)}
-          """)
-        )
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, sequential, parallel, result)))
         |> aggregate(command_names(cmds))
       end
     end

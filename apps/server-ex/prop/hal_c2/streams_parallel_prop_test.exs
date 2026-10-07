@@ -37,15 +37,10 @@ defmodule HalC2.StreamsParallelPropTest do
           {sequential, branches, result} = run_parallel_commands(__MODULE__, cmds)
           settled = settled()
 
-          # `HalC2.Prop.report/4` reads a sequential history only.
           (result == :ok and settled == :ok)
           |> when_fail(
             IO.puts(
-              inspect(
-                %{sequential: sequential, branches: branches, result: result, settled: settled},
-                pretty: true,
-                limit: :infinity
-              )
+              HalC2.Prop.report(cmds, sequential, branches, %{result: result, settled: settled})
             )
           )
           |> aggregate(command_names(cmds))
