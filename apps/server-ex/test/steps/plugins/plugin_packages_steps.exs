@@ -338,9 +338,20 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   end
 
   step "files outside the package's directory cannot be asked for", context do
-    File.write!(Path.join([context.mc.home, "plugins", "outside.txt"]), "not the plugin's")
+    outside = Path.join([context.mc.home, "plugins", "outside.txt"])
+    File.write!(outside, "not the plugin's")
+    # A link in the package does not lead out of it either.
+    File.ln_s!(outside, Path.join(Packages.dir(context, context.plugin), "ui/Outside.qml"))
+    File.ln_s!(Path.dirname(outside), Path.join(Packages.dir(context, context.plugin), "up"))
 
-    for path <- ["../outside.txt", "ui/../../outside.txt", "/etc/hostname"], reduce: context do
+    for path <- [
+          "../outside.txt",
+          "ui/../../outside.txt",
+          "/etc/hostname",
+          "ui/Outside.qml",
+          "up/outside.txt"
+        ],
+        reduce: context do
       context ->
         {reply, context} =
           World.call(context, "plugins.file", %{"id" => context.plugin, "path" => path})
