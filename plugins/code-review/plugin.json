@@ -1,0 +1,230 @@
+{
+  "id": "code-review",
+  "name": "Code Review",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "An agent of your choice reviews pull requests on the repositories you pick, and you decide what of it reaches the pull request.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/code-review",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "screenshots": [
+    {
+      "path": "assets/reviews.png",
+      "caption": "The Reviews page with a review waiting to be published"
+    },
+    { "path": "assets/thread.png", "caption": "A review thread with its pull request and verdict" }
+  ],
+  "permissions": [
+    {
+      "id": "projects:read",
+      "reason": "To find the project whose repository a pull request is in."
+    },
+    {
+      "id": "pullRequests:read",
+      "reason": "To watch your repositories for pull requests and read what they change."
+    },
+    {
+      "id": "pullRequests:write",
+      "reason": "To post a review when you publish one, or automatically if you choose that."
+    },
+    {
+      "id": "threads:create",
+      "reason": "Each review is a thread in which your chosen agent reviews the pull request."
+    },
+    {
+      "id": "agentTools",
+      "reason": "The reviewing agent reports its verdict and comments through a tool of this plugin."
+    }
+  ],
+  "settings": [
+    {
+      "key": "host",
+      "label": "Source control host",
+      "type": "choice",
+      "options": [
+        { "value": "github", "label": "GitHub" },
+        { "value": "gitlab", "label": "GitLab (coming later)", "disabled": true },
+        { "value": "forgejo", "label": "Forgejo (coming later)", "disabled": true },
+        { "value": "bitbucket", "label": "Bitbucket (coming later)", "disabled": true },
+        { "value": "azure-devops", "label": "Azure DevOps (coming later)", "disabled": true }
+      ],
+      "default": "github",
+      "description": "GitHub uses the gh login of this MC's machine."
+    },
+    {
+      "key": "repositories",
+      "label": "Repositories",
+      "type": "list",
+      "default": [],
+      "description": "owner/name of each repository to watch. Each needs a project on this MC."
+    },
+    {
+      "key": "activation",
+      "label": "When a review starts",
+      "type": "choice",
+      "options": [
+        { "value": "automatic", "label": "Every new pull request" },
+        { "value": "selective", "label": "Only when asked" }
+      ],
+      "default": "selective"
+    },
+    {
+      "key": "reviewRequested",
+      "label": "Review when you are asked to review",
+      "type": "boolean",
+      "default": true,
+      "description": "Only when asked: a review request to the gh user starts a review."
+    },
+    {
+      "key": "label",
+      "label": "Label that asks for a review",
+      "type": "text",
+      "default": "agent-review",
+      "description": "Only when asked. Leave empty to turn off."
+    },
+    {
+      "key": "command",
+      "label": "Comment that asks for a review",
+      "type": "text",
+      "default": "/review",
+      "description": "Only when asked: a comment starting with this starts a review. Leave empty to turn off."
+    },
+    {
+      "key": "skipDrafts",
+      "label": "Skip draft pull requests",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "ignoredAuthors",
+      "label": "Ignored authors",
+      "type": "list",
+      "default": ["dependabot[bot]", "renovate[bot]"],
+      "description": "Pull requests by these logins are never reviewed automatically."
+    },
+    {
+      "key": "maxChangedLines",
+      "label": "Largest change reviewed automatically",
+      "type": "number",
+      "default": 2000,
+      "description": "Lines added and removed. 0 for no limit."
+    },
+    {
+      "key": "reviewNewPushes",
+      "label": "Review new pushes",
+      "type": "boolean",
+      "default": false,
+      "description": "Review a pull request again when its head changes after a review."
+    },
+    {
+      "key": "concurrency",
+      "label": "Reviews at once",
+      "type": "number",
+      "default": 2
+    },
+    {
+      "key": "pollMinutes",
+      "label": "Look for pull requests every (minutes)",
+      "type": "number",
+      "default": 5
+    },
+    {
+      "key": "provider",
+      "label": "Agent",
+      "type": "text",
+      "default": "claudeAgent",
+      "description": "The provider instance that reviews, such as claudeAgent or codex."
+    },
+    {
+      "key": "model",
+      "label": "Model",
+      "type": "text",
+      "default": "",
+      "description": "Empty for the agent's default model."
+    },
+    {
+      "key": "runtimeMode",
+      "label": "Access",
+      "type": "choice",
+      "options": [
+        { "value": "approval-required", "label": "Ask before acting" },
+        { "value": "auto-accept-edits", "label": "Accept edits" },
+        { "value": "auto", "label": "Auto" },
+        { "value": "full-access", "label": "Full access" }
+      ],
+      "default": "auto-accept-edits",
+      "description": "The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands."
+    },
+    {
+      "key": "prompt",
+      "label": "Review prompt",
+      "type": "longText",
+      "default": "Review pull request #{{pr.number}} \"{{pr.title}}\" in {{repository}} by {{pr.author}}, which merges {{pr.head}} into {{pr.base}}.\n\nYour working directory is a checkout of the pull request's head. The change is `git diff {{pr.mergeBase}} HEAD`; read the code around it where that helps.\n\nLook for bugs, security problems, missing tests and changes that break callers. Leave out style a formatter or linter would catch. Comment only where you are confident, and say what to do about it.",
+      "description": "{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}} and {{repository}} are filled in. How to report the findings is added after it."
+    },
+    {
+      "key": "instructions",
+      "label": "Instructions per repository",
+      "type": "object",
+      "default": {},
+      "description": "Added to the prompt for that repository, as {\"owner/name\": \"text\"}."
+    },
+    {
+      "key": "readReviewMd",
+      "label": "Follow REVIEW.md",
+      "type": "boolean",
+      "default": true,
+      "description": "Add the REVIEW.md at the pull request's head to the prompt."
+    },
+    {
+      "key": "display",
+      "label": "Show reviews",
+      "type": "choice",
+      "options": [
+        { "value": "page", "label": "On the Reviews page" },
+        { "value": "threads", "label": "As threads" },
+        { "value": "both", "label": "Both" }
+      ],
+      "default": "both",
+      "description": "On the Reviews page only, review threads stay out of the thread list."
+    },
+    {
+      "key": "publishing",
+      "label": "Publishing",
+      "type": "choice",
+      "options": [
+        { "value": "local", "label": "Keep in HAL-C2" },
+        { "value": "draft", "label": "Wait for me to publish" },
+        { "value": "automatic", "label": "Post automatically" }
+      ],
+      "default": "draft"
+    },
+    {
+      "key": "publishingByRepository",
+      "label": "Publishing per repository",
+      "type": "object",
+      "default": {},
+      "description": "Overrides Publishing, as {\"owner/name\": \"local\" | \"draft\" | \"automatic\"}."
+    },
+    {
+      "key": "verdictAsComment",
+      "label": "Post verdicts as comments",
+      "type": "boolean",
+      "default": false,
+      "description": "Post reviews as comments rather than approvals or change requests."
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "reviews", "title": "Reviews", "qml": "ui/ReviewsPage.qml" }],
+    "threadKinds": [
+      {
+        "kind": "review",
+        "label": "Review",
+        "rowMark": "ui/ReviewRowMark.qml",
+        "header": "ui/ReviewHeader.qml"
+      }
+    ],
+    "settingsPage": "ui/ReviewSettings.qml"
+  }
+}

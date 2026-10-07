@@ -3,10 +3,10 @@
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   apps/server-ex/lib/hal_c2/pull_requests/checkout.ex (a pull request's worktree)
+#   plugins/code-review/mc/checkout.ex (a pull request's worktree)
 #   docs/user/code-review.md
 
-@plugin-code-review @backlog
+@plugin-code-review
 Feature: Agent code review
   The code-review plugin has an agent review pull requests on the user's source control
   host. The user picks the host, which repositories it watches and when it starts, the
@@ -100,27 +100,27 @@ Feature: Agent code review
     @mc
     Scenario: A review runs with the provider, model and mode the user picked
       Given "code-review" reviews with Claude on "claude-sonnet-5-5" in the "auto-accept-edits" mode
-      When a review of #12 starts
+      When #12 is reviewed
       Then its thread runs Claude with that model and mode
 
     @mc
     Scenario: The review prompt is the user's template filled in for the pull request
       Given the review prompt template is "Review {{pr.title}} against {{pr.base}}. Focus on security."
-      When a review of #12 "Add rate limits" into "main" starts
+      When #12 "Add rate limits" into "main" is reviewed
       Then the agent is asked "Review Add rate limits against main. Focus on security."
       And it is told how to report what it finds
 
     @mc
     Scenario: A repository's own review instructions are added to the prompt
       Given "acme/api" has extra review instructions "Never approve schema changes"
-      When a review of #12 starts
+      When #12 is reviewed
       Then the agent's prompt includes "Never approve schema changes"
 
     @mc
     Scenario: The repository's REVIEW.md is followed when the user wants that
       Given "code-review" reads REVIEW.md
       And the head of #12 has a REVIEW.md saying "Check the changelog"
-      When a review of #12 starts
+      When #12 is reviewed
       Then the agent's prompt includes "Check the changelog"
 
     @mc
@@ -131,7 +131,7 @@ Feature: Agent code review
 
     @mc
     Scenario: The agent reviews the pull request's own code
-      When a review of #12 starts
+      When #12 is reviewed
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
 
@@ -152,7 +152,7 @@ Feature: Agent code review
     @mc
     Scenario: A review whose agent fails can be tried again
       Given the review of #12 failed
-      When the user retries it
+      When the user retries the review of #12
       Then a new review of #12 starts
 
     @mc
@@ -200,7 +200,7 @@ Feature: Agent code review
     @mc
     Scenario Outline: The display setting decides whether review threads are listed
       Given "code-review" shows reviews as "<display>"
-      When a review of #12 starts
+      When #12 is reviewed
       Then its thread is <listed>
 
       Examples:
@@ -209,32 +209,32 @@ Feature: Agent code review
         | threads | listed with the threads       |
         | both    | listed with the threads       |
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: The reviews page lists reviews by state
       Given reviews of #12 running, #13 waiting to be published and #14 failed
       When the user switches to the "Reviews" tab
       Then #12, #13 and #14 are listed with their states
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a review's findings and publishes them
       Given the review of #13 is waiting with two comments
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
       And the user can publish it or dismiss comments
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: A review thread shows the pull request and the verdict above the conversation
       Given the review of #13 finished with the verdict "approved"
       When the user opens the review's thread
       Then the pull request, the verdict and the publish action are shown above the conversation
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: A review thread is marked as a review in the thread list
       Given "code-review" shows reviews as "threads"
-      When a review of #12 starts
+      When #12 is reviewed
       Then its thread is listed with the review mark and the state of the review
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: The user starts a review from the reviews page
       Given "code-review" watches "acme/api" selectively
       When the user starts a review of #12 from the "Reviews" tab
@@ -242,7 +242,7 @@ Feature: Agent code review
 
   Rule: The host is the user's choice
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: The settings offer each source control host
       When the user opens the settings of "code-review"
       Then GitHub, GitLab, Forgejo, Bitbucket and Azure DevOps are offered as hosts
