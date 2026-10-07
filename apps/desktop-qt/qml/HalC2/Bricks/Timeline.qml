@@ -1644,11 +1644,12 @@ Item {
     }
 
     // Scrolling down where the list goes no further, as when the room made
-    // for reading shows the end, returns to it.
+    // for reading shows the end, returns to it. Only at the end: a wheel that
+    // reaches here mid-thread (over an overlay) is not one the list refused.
     WheelHandler {
         target: null
         onWheel: event => {
-            if (!view.following && (event.angleDelta.y < 0 || event.pixelDelta.y < 0))
+            if (!view.following && view.nearEnd() && (event.angleDelta.y < 0 || event.pixelDelta.y < 0))
                 root.scrollToEnd();
         }
     }

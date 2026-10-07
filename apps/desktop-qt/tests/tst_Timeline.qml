@@ -213,6 +213,20 @@ Item {
             verify(!atEnd(list));
         }
 
+        // Scenario: Scrolling away stops the view from following
+        function test_scrollingDownOverTheJumpButtonMidThreadOnlyScrolls() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            scrollUp(timeline);
+            const jump = findChild(timeline, "jumpToLatest");
+            verify(jump.visible);
+            mouseWheel(jump, jump.width / 2, jump.height / 2, 0, -120);
+            tryVerify(() => !list.moving, 5000);
+            wait(0);
+            verify(!timeline.following, "only the button returns to the end from mid-thread");
+            verify(!atEnd(list));
+        }
+
         // Scenario: The previous tool calls can be shown and hidden again
         // (the brick asks its model; the model re-emits the row).
         function test_previousToolCallsToggleThroughTheModel() {
