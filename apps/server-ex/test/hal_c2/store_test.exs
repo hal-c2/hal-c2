@@ -41,8 +41,14 @@ defmodule HalC2.StoreTest do
   test "derived rows do not create a stream, whose kind only an append knows", %{path: path} do
     assert {:error, :unknown_stream} = Store.put_snapshot("p1", 0, %{})
     assert {:error, :unknown_stream} = Store.put_shell("p1", 0, {"project", %{}})
-    Store.index_messages("p1", [{"m1", "user", "hello", "2026-01-01T00:00:00Z"}])
-    _ = :sys.get_state(Store)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Store.index_messages("p1", [{"m1", "user", "hello", "2026-01-01T00:00:00Z"}])
+        _ = :sys.get_state(Store)
+      end)
+
+    assert log =~ "the store ignored messages of p1"
 
     assert Store.list_streams(path) == []
     assert Store.search_messages(path, "%hello%", 10) == []
@@ -73,8 +79,13 @@ defmodule HalC2.StoreTest do
     assert [{"t1", "user", "one", "a"}] = Store.search_messages(path, "%one%", 10)
 
     # The second row cannot be stored, so the first must not stay either.
-    Store.index_messages("t1", [{"m3", "user", "three", "c"}, {"m4", "user", nil, "d"}])
-    _ = :sys.get_state(Store)
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Store.index_messages("t1", [{"m3", "user", "three", "c"}, {"m4", "user", nil, "d"}])
+        _ = :sys.get_state(Store)
+      end)
+
+    assert log =~ "the store ignored messages of t1"
 
     assert Store.search_messages(path, "%three%", 10) == []
     assert Store.search_messages(path, "%two%", 10) == [{"t1", "user", "two", "b"}]
