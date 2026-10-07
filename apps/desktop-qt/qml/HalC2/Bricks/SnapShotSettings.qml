@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -10,9 +11,9 @@ import HalC2.Shell
 SettingsPage {
     id: snap
 
-    readonly property var state: Shell.state.snapShot ?? null
-    readonly property var shortcut: state?.shortcut ?? null
-    readonly property var wizard: state?.wizard ?? null
+    readonly property var settings: Shell.state.snapShot ?? null
+    readonly property var shortcut: settings?.shortcut ?? null
+    readonly property var wizard: settings?.wizard ?? null
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property bool mac: Qt.platform.os === "osx"
 
@@ -46,7 +47,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: row.description
-                color: snap.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -56,7 +57,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: row.status
-                color: snap.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -91,29 +92,33 @@ SettingsPage {
     component Recorder: ShellButton {
         id: recorder
 
+        // Inline components cannot reach the page's id, so the recorder reads the state itself.
+        readonly property var shortcut: Shell.state.snapShot?.shortcut ?? null
+        readonly property bool mac: Qt.platform.os === "osx"
+
         objectName: "recorder"
-        text: snap.shortcut?.keys ?? ""
+        text: recorder.shortcut?.keys ?? ""
         focusPolicy: Qt.StrongFocus
         onClicked: {
             forceActiveFocus();
             Shell.dispatch("snapShot.record.start");
         }
-        onActiveFocusChanged: if (!activeFocus && (snap.shortcut?.recording ?? false)) Shell.dispatch("snapShot.record.cancel")
+        onActiveFocusChanged: if (!activeFocus && (recorder.shortcut?.recording ?? false)) Shell.dispatch("snapShot.record.cancel")
 
         function modifier(key) {
             switch (key) {
             case Qt.Key_Shift: return "shift";
-            case Qt.Key_Control: return snap.mac ? "meta" : "control";
-            case Qt.Key_Meta: return snap.mac ? "control" : "meta";
+            case Qt.Key_Control: return recorder.mac ? "meta" : "control";
+            case Qt.Key_Meta: return recorder.mac ? "control" : "meta";
             case Qt.Key_Alt: return "alt";
             }
             return "";
         }
 
-        Keys.onShortcutOverride: event => event.accepted = (snap.shortcut?.recording ?? false) && event.key !== Qt.Key_Tab
+        Keys.onShortcutOverride: event => event.accepted = (recorder.shortcut?.recording ?? false) && event.key !== Qt.Key_Tab
                                                           && event.key !== Qt.Key_Backtab
         Keys.onPressed: event => {
-            if (!(snap.shortcut?.recording ?? false) || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+            if (!(recorder.shortcut?.recording ?? false) || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
                 return;
             event.accepted = true;
             if (event.isAutoRepeat)
@@ -126,7 +131,7 @@ SettingsPage {
         }
         Keys.onReleased: event => {
             const held = modifier(event.key);
-            if (held.length > 0 && (snap.shortcut?.recording ?? false))
+            if (held.length > 0 && (recorder.shortcut?.recording ?? false))
                 Shell.dispatch("snapShot.record.modifier", { modifier: held, code: event.nativeScanCode, down: false });
         }
     }
@@ -134,21 +139,21 @@ SettingsPage {
     Row {
         objectName: "snapShot:enabled"
         heading: qsTr("SnapShots")
-        description: snap.state?.description ?? ""
-        status: snap.state?.status ?? ""
+        description: snap.settings?.description ?? ""
+        status: snap.settings?.status ?? ""
 
         ShellButton {
             objectName: "setup"
-            visible: (snap.state?.setupLabel ?? "").length > 0 && snap.wizard === null
+            visible: (snap.settings?.setupLabel ?? "").length > 0 && snap.wizard === null
             subtle: true
-            text: snap.state?.setupLabel ?? ""
+            text: snap.settings?.setupLabel ?? ""
             onClicked: Shell.dispatch("snapShot.setup.open", { step: "resume" })
         }
 
         Switch {
             objectName: "control"
-            enabled: (snap.state?.ready ?? false) && (snap.state?.available ?? false)
-            checked: snap.state?.switchOn ?? false
+            enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false)
+            checked: snap.settings?.switchOn ?? false
             Accessible.name: qsTr("SnapShots")
             onToggled: Shell.dispatch("snapShot.enable", { on: checked })
         }
@@ -287,7 +292,7 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        visible: (snap.state?.rows ?? false) && snap.wizard === null
+        visible: (snap.settings?.rows ?? false) && snap.wizard === null
         spacing: 14
 
         Row {
@@ -327,7 +332,7 @@ SettingsPage {
 
         Toggle {
             key: "accessibility"
-            model: snap.state?.accessibility ?? null
+            model: snap.settings?.accessibility ?? null
             heading: qsTr("Include app text")
             description: qsTr("Include text and controls when the app makes them available.")
         }
@@ -339,11 +344,11 @@ SettingsPage {
 
             ShellButton {
                 objectName: "play"
-                visible: (snap.state?.sound?.value ?? "off") !== "off"
+                visible: (snap.settings?.sound?.value ?? "off") !== "off"
                 subtle: true
                 iconName: "play"
-                Accessible.name: qsTr("Play %1").arg(snap.state?.sound?.label ?? "")
-                onClicked: Shell.dispatch("snapShot.sound.play", { sound: snap.state?.sound?.value })
+                Accessible.name: qsTr("Play %1").arg(snap.settings?.sound?.label ?? "")
+                onClicked: Shell.dispatch("snapShot.sound.play", { sound: snap.settings?.sound?.value })
             }
 
             ShellComboBox {
@@ -352,7 +357,7 @@ SettingsPage {
                 implicitWidth: 170
                 readonly property var sounds: ["off", "soft-pop", "camera-shutter"]
                 model: [qsTr("Off"), qsTr("Whoosh (Default)"), qsTr("Click")]
-                currentIndex: sounds.indexOf(snap.state?.sound?.value ?? "soft-pop")
+                currentIndex: sounds.indexOf(snap.settings?.sound?.value ?? "soft-pop")
                 Accessible.name: qsTr("Sound")
                 onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index] })
             }
@@ -360,14 +365,14 @@ SettingsPage {
 
         Toggle {
             key: "flash"
-            model: snap.state?.flash ?? null
+            model: snap.settings?.flash ?? null
             heading: qsTr("Flash")
             description: qsTr("Show a gentle cue on the captured window.")
         }
 
         Toggle {
             key: "animations"
-            model: snap.state?.animations ?? null
+            model: snap.settings?.animations ?? null
             heading: qsTr("Animations")
             description: qsTr("Animate captured windows into your draft.")
         }

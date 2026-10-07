@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls.Basic
-import QtQuick.Layouts
 import HalC2.Shell
 
 // The open thread's relatives (Shell.state.lineage, ThreadLineageController),

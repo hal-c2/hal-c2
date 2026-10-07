@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -88,6 +89,9 @@ Popup {
 
         required property string role
         property string label: role
+        // The editor's colours by role; edited carries the colour typed for this role.
+        property var colors: ({})
+        signal edited(string value)
 
         spacing: 8
 
@@ -95,14 +99,14 @@ Popup {
             implicitWidth: 18
             implicitHeight: 18
             radius: 4
-            color: editor.colors[colorField.role] ?? "transparent"
+            color: colorField.colors[colorField.role] ?? "transparent"
             border.color: Theme.palette.color("border", "#27272a")
         }
 
         Label {
             Layout.fillWidth: true
             text: colorField.label
-            color: editor.foreground
+            color: Theme.palette.color("text", "#e4e4e7")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             elide: Text.ElideRight
         }
@@ -110,9 +114,9 @@ Popup {
         ShellTextField {
             objectName: "color:" + colorField.role
             implicitWidth: 140
-            text: editor.colors[colorField.role] ?? ""
+            text: colorField.colors[colorField.role] ?? ""
             Accessible.name: colorField.label
-            onEditingFinished: editor.setColor(colorField.role, text)
+            onEditingFinished: colorField.edited(text)
         }
     }
 
@@ -151,6 +155,8 @@ Popup {
         ColorField {
             Layout.fillWidth: true
             role: "canvas"
+            colors: editor.colors
+            onEdited: value => editor.setColor(role, value)
             label: qsTr("Background")
             visible: !editor.advanced
         }
@@ -158,6 +164,8 @@ Popup {
         ColorField {
             Layout.fillWidth: true
             role: "accent"
+            colors: editor.colors
+            onEdited: value => editor.setColor(role, value)
             label: qsTr("Accent")
             visible: !editor.advanced
         }
@@ -236,6 +244,8 @@ Popup {
                     active: roleRow.modelData.role !== ""
                     sourceComponent: ColorField {
                         role: roleRow.modelData.role
+                        colors: editor.colors
+                        onEdited: value => editor.setColor(role, value)
                     }
                 }
             }

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -20,7 +21,7 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
-    readonly property color border: Theme.palette.color("border", "#27272a")
+    readonly property color borderColor: Theme.palette.color("border", "#27272a")
 
     objectName: "devicePanel"
     color: Theme.palette.color("surface", "#0f0f11")
@@ -152,7 +153,7 @@ Rectangle {
                 anchors.bottom: parent.bottom
                 width: parent.width
                 height: 1
-                color: root.border
+                color: root.borderColor
             }
         }
 
@@ -410,7 +411,7 @@ Rectangle {
                                 onClicked: root.source.open(modelData.hostId, modelData.id)
                                 background: Rectangle {
                                     radius: 6
-                                    border.color: root.border
+                                    border.color: root.borderColor
                                     color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                                 }
 

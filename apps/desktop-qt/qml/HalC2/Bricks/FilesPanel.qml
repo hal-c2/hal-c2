@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -20,7 +21,7 @@ Rectangle {
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color border: Theme.palette.color("border", "#27272a")
+    readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
@@ -211,7 +212,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             visible: root.fileOpen
-            color: root.border
+            color: root.borderColor
         }
 
         ColumnLayout {
@@ -324,7 +325,7 @@ Rectangle {
                     anchors.margins: 10
                     visible: (root.source?.rendered ?? false) && !root.source.fileEmpty
                     clip: true
-                    contentHeight: renderedBody.item?.implicitHeight ?? 0
+                    contentHeight: (renderedBody.item as Item)?.implicitHeight ?? 0
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar {}
 

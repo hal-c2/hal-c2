@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
@@ -660,7 +659,7 @@ Rectangle {
                             color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         }
 
                         Rectangle {
@@ -681,7 +680,7 @@ Rectangle {
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         }
 
                         ShellIcon {
@@ -718,7 +717,7 @@ Rectangle {
                     text: entry.kind === "note" ? entry.modelData.label : ""
                     color: Qt.alpha(sidebar.muted, 0.6)
                     font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 }
 
                 Loader {
@@ -815,7 +814,7 @@ Rectangle {
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: Qt.alpha(sidebar.muted, 0.6)
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             }
         }
 

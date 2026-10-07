@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -11,12 +13,11 @@ import HalC2.Shell
 SettingsPage {
     id: page
 
-    readonly property var state: Shell.state.sourceControlSettings ?? null
-    readonly property var discovery: state?.discovery ?? null
+    readonly property var settings: Shell.state.sourceControlSettings ?? null
+    readonly property var discovery: settings?.discovery ?? null
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
-    readonly property bool projectScope: state?.projectScope ?? false
+    readonly property bool projectScope: settings?.projectScope ?? false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color warning: Theme.palette.color("warning", "#fbbf24")
     readonly property var mergeMethods: ["last", "merge", "squash", "rebase"]
     readonly property var writingModes: ["repo_conventions", "conventional_commits", "custom"]
@@ -29,15 +30,16 @@ SettingsPage {
     objectName: "sourceControlSettings"
     title: qsTr("Source Control")
 
+    // Inline components cannot see `page`; the ones that need it are handed it.
     component Heading: Label {
-        color: page.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: page.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
@@ -47,6 +49,7 @@ SettingsPage {
     component ScopedRow: RowLayout {
         id: row
 
+        required property SourceControlSettings sourceControl
         property string title
         property string description
         property bool mixed: false
@@ -67,17 +70,17 @@ SettingsPage {
 
                 Label {
                     text: row.title
-                    color: page.foreground
+                    color: row.sourceControl.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
                 ShellButton {
                     objectName: "reset"
-                    visible: row.resetKey.length > 0 && (page.projectScope ? row.overridden : row.resettable) && page.editable
+                    visible: row.resetKey.length > 0 && (row.sourceControl.projectScope ? row.overridden : row.resettable) && row.sourceControl.editable
                     subtle: true
-                    text: page.projectScope ? qsTr("Inherit") : qsTr("Reset")
-                    onClicked: page.send("reset", { key: row.resetKey })
+                    text: row.sourceControl.projectScope ? qsTr("Inherit") : qsTr("Reset")
+                    onClicked: row.sourceControl.send("reset", { key: row.resetKey })
                 }
             }
 
@@ -85,7 +88,7 @@ SettingsPage {
                 objectName: "mixed"
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
-                color: page.warning
+                color: row.sourceControl.warning
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -103,6 +106,7 @@ SettingsPage {
     component Tool: ColumnLayout {
         id: tool
 
+        required property SourceControlSettings sourceControl
         required property var modelData
         objectName: "sourceControlTool:" + modelData.kind
         Layout.fillWidth: true
@@ -116,13 +120,13 @@ SettingsPage {
                 implicitWidth: 8
                 implicitHeight: 8
                 radius: 4
-                color: tool.modelData.comingSoon ? page.muted
-                     : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : page.warning
+                color: tool.modelData.comingSoon ? tool.sourceControl.muted
+                     : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : tool.sourceControl.warning
             }
 
             Label {
                 text: tool.modelData.label
-                color: page.foreground
+                color: tool.sourceControl.foreground
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
@@ -131,7 +135,7 @@ SettingsPage {
                 objectName: "version"
                 visible: text.length > 0
                 text: tool.modelData.version
-                color: page.muted
+                color: tool.sourceControl.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: "monospace"
             }
@@ -140,7 +144,7 @@ SettingsPage {
                 objectName: "badge"
                 visible: tool.modelData.comingSoon || tool.modelData.authWarning
                 text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
-                color: page.warning
+                color: tool.sourceControl.warning
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
@@ -181,7 +185,7 @@ SettingsPage {
                 Accessible.name: qsTr("Toggle source control account visibility")
                 ToolTip.visible: hovered
                 ToolTip.text: tool.modelData.revealed ? qsTr("Click to hide account") : qsTr("Click to reveal account")
-                onClicked: page.send("reveal", { kind: tool.modelData.kind, revealed: !tool.modelData.revealed })
+                onClicked: tool.sourceControl.send("reveal", { kind: tool.modelData.kind, revealed: !tool.modelData.revealed })
             }
 
             Item {
@@ -192,34 +196,35 @@ SettingsPage {
 
         // Git's background fetch, an environment-wide timer.
         ScopedRow {
+            sourceControl: tool.sourceControl
             objectName: "fetchInterval"
             visible: tool.modelData.git
             title: qsTr("Automatic Git fetch interval")
-            description: page.projectScope
+            description: tool.sourceControl.projectScope
                 ? qsTr("Applies to the whole environment. Choose all projects to change it.")
                 : qsTr("Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.")
-            mixed: page.state?.fetchInterval?.mixed ?? false
+            mixed: tool.sourceControl.settings?.fetchInterval?.mixed ?? false
 
             ShellButton {
                 objectName: "resetFetch"
-                visible: (page.state?.fetchInterval?.custom ?? false) && !page.projectScope && page.editable
+                visible: (tool.sourceControl.settings?.fetchInterval?.custom ?? false) && !tool.sourceControl.projectScope && tool.sourceControl.editable
                 subtle: true
                 text: qsTr("Reset")
-                onClicked: page.send("resetFetchInterval")
+                onClicked: tool.sourceControl.send("resetFetchInterval")
             }
 
             SpinBox {
                 objectName: "seconds"
-                enabled: page.editable && !page.projectScope
+                enabled: tool.sourceControl.editable && !tool.sourceControl.projectScope
                 from: 0
                 to: 86400
                 stepSize: 5
                 editable: true
-                value: page.state?.fetchInterval?.seconds ?? 30
+                value: tool.sourceControl.settings?.fetchInterval?.seconds ?? 30
                 textFromValue: (number, locale) => number === 0 ? qsTr("Off") : qsTr("%1 s").arg(number)
                 valueFromText: (text, locale) => parseInt(text) || 0
                 Accessible.name: qsTr("Automatic Git fetch interval in seconds")
-                onValueModified: page.send("fetchInterval", { seconds: value })
+                onValueModified: tool.sourceControl.send("fetchInterval", { seconds: value })
             }
         }
     }
@@ -229,35 +234,37 @@ SettingsPage {
     Heading { text: qsTr("Repositories") }
 
     ScopedRow {
+        sourceControl: page
         objectName: "autoPull"
         title: qsTr("Automatically pull")
         description: page.projectScope
             ? qsTr("Keeps this project's default branch current when the checkout has no local changes or commits.")
             : qsTr("Keeps the default branch current when the checkout has no local changes or commits. Projects can override it.")
-        mixed: page.state?.autoPull?.mixed ?? false
-        overridden: page.state?.autoPull?.overridden ?? false
+        mixed: page.settings?.autoPull?.mixed ?? false
+        overridden: page.settings?.autoPull?.overridden ?? false
         resetKey: "defaultAutoPull"
-        resettable: page.state?.autoPull?.value === true
+        resettable: page.settings?.autoPull?.value === true
 
         Switch {
             objectName: "control"
             enabled: page.editable
-            checked: !(page.state?.autoPull?.mixed ?? false) && page.state?.autoPull?.value === true
+            checked: !(page.settings?.autoPull?.mixed ?? false) && page.settings?.autoPull?.value === true
             Accessible.name: qsTr("Default automatic pull")
             onToggled: page.send("autoPull", { enabled: checked })
         }
     }
 
     ScopedRow {
+        sourceControl: page
         objectName: "mergeMethod"
         title: qsTr("Pull request merge method")
         description: page.projectScope
             ? qsTr("Pull requests in this project start with this method.")
             : qsTr("Pull requests start with this method. Last selected reuses whatever you chose most recently on this device.")
-        mixed: page.state?.mergeMethod?.mixed ?? false
-        overridden: page.state?.mergeMethod?.overridden ?? false
+        mixed: page.settings?.mergeMethod?.mixed ?? false
+        overridden: page.settings?.mergeMethod?.overridden ?? false
         resetKey: "pullRequestMergeMethod"
-        resettable: (page.state?.mergeMethod?.value ?? "last") !== "last"
+        resettable: (page.settings?.mergeMethod?.value ?? "last") !== "last"
 
         ShellComboBox {
             objectName: "control"
@@ -265,8 +272,8 @@ SettingsPage {
             outline: true
             implicitWidth: 180
             model: [qsTr("Last selected"), qsTr("Merge"), qsTr("Squash and merge"), qsTr("Rebase and merge")]
-            currentIndex: page.state?.mergeMethod?.mixed ? -1 : page.mergeMethods.indexOf(page.state?.mergeMethod?.value ?? "last")
-            displayText: page.state?.mergeMethod?.mixed ? qsTr("Mixed") : currentText
+            currentIndex: page.settings?.mergeMethod?.mixed ? -1 : page.mergeMethods.indexOf(page.settings?.mergeMethod?.value ?? "last")
+            displayText: page.settings?.mergeMethod?.mixed ? qsTr("Mixed") : currentText
             Accessible.name: qsTr("Default pull request merge method")
             onActivated: index => page.send("mergeMethod", { method: page.mergeMethods[index] })
         }
@@ -329,7 +336,9 @@ SettingsPage {
 
         Repeater {
             model: page.discovery?.status === "ready" ? page.discovery.versionControl : []
-            delegate: Tool {}
+            delegate: Tool {
+                sourceControl: page
+            }
         }
 
         Heading {
@@ -339,20 +348,23 @@ SettingsPage {
 
         Repeater {
             model: page.discovery?.status === "ready" ? page.discovery.providers : []
-            delegate: Tool {}
+            delegate: Tool {
+                sourceControl: page
+            }
         }
     }
 
     Heading { text: qsTr("Text generation") }
 
     ScopedRow {
+        sourceControl: page
         objectName: "writingStyle"
         title: qsTr("Writing style")
-        description: page.state?.writingStyle?.description ?? ""
-        mixed: page.state?.writingStyle?.mixed ?? false
-        overridden: page.state?.writingStyle?.overridden ?? false
+        description: page.settings?.writingStyle?.description ?? ""
+        mixed: page.settings?.writingStyle?.mixed ?? false
+        overridden: page.settings?.writingStyle?.overridden ?? false
         resetKey: "sourceControlWritingStyle"
-        resettable: page.state?.writingStyle?.dirty ?? false
+        resettable: page.settings?.writingStyle?.dirty ?? false
 
         ShellComboBox {
             objectName: "control"
@@ -360,7 +372,7 @@ SettingsPage {
             outline: true
             implicitWidth: 220
             model: [qsTr("Repository conventions"), qsTr("Conventional Commits"), qsTr("Custom instructions")]
-            currentIndex: page.writingModes.indexOf(page.state?.writingStyle?.mode ?? "")
+            currentIndex: page.writingModes.indexOf(page.settings?.writingStyle?.mode ?? "")
             displayText: currentIndex < 0 ? qsTr("Mixed") : currentText
             Accessible.name: qsTr("Source control writing style")
             onActivated: index => page.send("writingMode", { mode: page.writingModes[index] })
@@ -369,7 +381,7 @@ SettingsPage {
 
     ShellButton {
         objectName: "writeForAll"
-        visible: (page.state?.writingStyle?.mixed ?? false) && !page.writingForAll
+        visible: (page.settings?.writingStyle?.mixed ?? false) && !page.writingForAll
         enabled: page.editable
         text: qsTr("Write custom instructions for all")
         onClicked: page.writingForAll = true
@@ -381,10 +393,10 @@ SettingsPage {
         objectName: "instructions"
         Layout.fillWidth: true
         Layout.preferredHeight: 96
-        readonly property bool forAll: page.state?.writingStyle?.mixed ?? false
-        visible: forAll ? page.writingForAll : page.state?.writingStyle?.mode === "custom"
+        readonly property bool forAll: page.settings?.writingStyle?.mixed ?? false
+        visible: forAll ? page.writingForAll : page.settings?.writingStyle?.mode === "custom"
         enabled: page.editable
-        text: forAll ? "" : (page.state?.writingStyle?.instructions ?? "")
+        text: forAll ? "" : (page.settings?.writingStyle?.instructions ?? "")
         wrapMode: TextEdit.Wrap
         color: page.foreground
         font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -400,7 +412,7 @@ SettingsPage {
         // Instructions save when the field is left, as the web's do.
         onActiveFocusChanged: {
             if (activeFocus || forAll) return;
-            if (text.trim() !== (page.state?.writingStyle?.instructions ?? "")) page.send("instructions", { text: text });
+            if (text.trim() !== (page.settings?.writingStyle?.instructions ?? "")) page.send("instructions", { text: text });
         }
     }
 
@@ -416,18 +428,19 @@ SettingsPage {
     }
 
     ScopedRow {
+        sourceControl: page
         objectName: "templates"
         title: qsTr("Follow change request templates")
         description: qsTr("Use the repository's template for change request descriptions when available.")
-        mixed: page.state?.templates?.mixed ?? false
-        overridden: page.state?.templates?.overridden ?? false
+        mixed: page.settings?.templates?.mixed ?? false
+        overridden: page.settings?.templates?.overridden ?? false
         resetKey: "followChangeRequestTemplates"
-        resettable: (page.state?.templates?.mixed ?? false) || page.state?.templates?.value === false
+        resettable: (page.settings?.templates?.mixed ?? false) || page.settings?.templates?.value === false
 
         Switch {
             objectName: "control"
             enabled: page.editable
-            checked: !(page.state?.templates?.mixed ?? false) && (page.state?.templates?.value ?? true)
+            checked: !(page.settings?.templates?.mixed ?? false) && (page.settings?.templates?.value ?? true)
             Accessible.name: qsTr("Follow change request templates")
             onToggled: page.send("templates", { enabled: checked })
         }
@@ -436,7 +449,9 @@ SettingsPage {
     ScopedRow {
         id: writer
 
-        readonly property var model: page.state?.writerModel ?? null
+        sourceControl: page
+
+        readonly property var model: page.settings?.writerModel ?? null
 
         objectName: "writerModel"
         title: qsTr("Source control writer model")

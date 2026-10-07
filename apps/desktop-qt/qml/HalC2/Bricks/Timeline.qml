@@ -1,6 +1,6 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
-import QtQuick.Layouts
 import HalC2.Shell
 
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
@@ -154,7 +154,7 @@ Item {
     readonly property color errorColor: Theme.palette.color("error", "#fb414a")
     readonly property color warningColor: Theme.palette.color("warning", "#fe9a00")
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     // The web's tokens: bg-message, text-message-foreground, bg-accent (the
     // hover wash), bg-muted, bg-secondary, text-secondary-label,
     // text-icon-muted, text-tool-error-icon, success, info and the page.
@@ -519,7 +519,7 @@ Item {
             }
 
             width: ListView.view.width
-            height: body.item ? body.item.implicitHeight + row.gap : 0
+            height: body.item ? (body.item as Item).implicitHeight + row.gap : 0
 
             Loader {
                 id: body

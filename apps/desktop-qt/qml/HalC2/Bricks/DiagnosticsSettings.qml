@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -10,12 +11,11 @@ import HalC2.Shell
 SettingsPage {
     id: diagnostics
 
-    readonly property var state: Shell.state.diagnostics ?? null
-    readonly property var processes: state?.processes ?? ({})
-    readonly property var history: state?.history ?? ({})
-    readonly property var traces: state?.traces ?? ({})
+    readonly property var settings: Shell.state.diagnostics ?? null
+    readonly property var processes: settings?.processes ?? ({})
+    readonly property var history: settings?.history ?? ({})
+    readonly property var traces: settings?.traces ?? ({})
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color danger: Theme.palette.color("error", "#ef4444")
 
     objectName: "diagnosticsSettings"
@@ -35,7 +35,7 @@ SettingsPage {
             Label {
                 id: label
                 Layout.fillWidth: true
-                color: diagnostics.foreground
+                color: Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
@@ -66,19 +66,21 @@ SettingsPage {
             model: stats.figures
 
             ColumnLayout {
+                id: figure
+
                 required property var modelData
                 spacing: 2
 
                 Label {
-                    text: modelData[0]
-                    color: diagnostics.muted
+                    text: figure.modelData[0]
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
 
                 Label {
-                    objectName: "stat:" + modelData[0]
-                    text: modelData[1]
-                    color: diagnostics.foreground
+                    objectName: "stat:" + figure.modelData[0]
+                    text: figure.modelData[1]
+                    color: Theme.palette.color("text", "#e4e4e7")
                     font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
@@ -92,7 +94,7 @@ SettingsPage {
         Layout.fillWidth: true
         visible: message.length > 0
         text: message
-        color: diagnostics.danger
+        color: Theme.palette.color("error", "#ef4444")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
@@ -118,7 +120,7 @@ SettingsPage {
                 Layout.preferredWidth: index === 0 ? -1 : 80
                 text: modelData
                 elide: Text.ElideRight
-                color: row.header ? diagnostics.muted : diagnostics.foreground
+                color: row.header ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
@@ -296,7 +298,7 @@ SettingsPage {
 
         ShellButton {
             objectName: "openLogs"
-            visible: diagnostics.state?.logs?.available ?? false
+            visible: diagnostics.settings?.logs?.available ?? false
             text: qsTr("Open logs folder")
             iconName: "folder-open"
             onClicked: Shell.dispatch("diagnostics.openLogs")
@@ -305,7 +307,7 @@ SettingsPage {
 
     Failure {
         objectName: "logsError"
-        message: diagnostics.state?.logs?.error ?? ""
+        message: diagnostics.settings?.logs?.error ?? ""
     }
 
     Stats {

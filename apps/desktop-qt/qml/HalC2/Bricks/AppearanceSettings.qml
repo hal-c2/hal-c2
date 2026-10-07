@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
@@ -49,7 +50,7 @@ SettingsPage {
             id: label
 
             Layout.topMargin: 12
-            color: page.foreground
+            color: Theme.palette.color("text", "#e4e4e7")
             font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
@@ -57,7 +58,7 @@ SettingsPage {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: 1
-            color: page.line
+            color: Theme.palette.color("border", "#27272a")
         }
     }
 

@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import Ghostty
 import HalC2.Shell
@@ -21,10 +23,26 @@ FocusScope {
     property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color border: Theme.palette.color("border", "#27272a")
 
+    // A terminal's cell: a row of Terminals.tabs, loaded when it is this place's.
+    component TerminalCell: Loader {
+        required property string terminalId
+        required property string label
+        required property QtObject session
+        required property string group
+        required property bool panel
+        required property int slot
+        required property int span
+        required property bool vertical
+        required property bool current
+
+        // Its split group is the one shown.
+        property bool shown: false
+    }
+
     // The Terminal item of a terminal of this place, or null.
     function terminalOf(terminalId) {
         for (let i = 0; i < cells.count; ++i) {
-            const cell = cells.itemAt(i);
+            const cell = cells.itemAt(i) as TerminalCell;
             if (cell !== null && cell.item !== null && cell.terminalId === terminalId)
                 return cell.item;
         }
@@ -34,7 +52,7 @@ FocusScope {
     // The shown group's active terminal, or "".
     function currentTerminal() {
         for (let i = 0; i < cells.count; ++i) {
-            const cell = cells.itemAt(i);
+            const cell = cells.itemAt(i) as TerminalCell;
             if (cell !== null && cell.active && cell.shown && cell.current)
                 return cell.terminalId;
         }
@@ -46,21 +64,10 @@ FocusScope {
 
         model: Terminals.tabs
 
-        delegate: Loader {
+        delegate: TerminalCell {
             id: cell
 
-            required property string terminalId
-            required property string label
-            required property QtObject session
-            required property string group
-            required property bool panel
-            required property int slot
-            required property int span
-            required property bool vertical
-            required property bool current
-
-            readonly property bool shown: cell.group === splits.group
-
+            shown: cell.group === splits.group
             objectName: "terminalCell-" + terminalId
             active: cell.panel === splits.panel
             visible: active && shown
@@ -74,13 +81,18 @@ FocusScope {
                 id: terminal
 
                 readonly property string terminalId: cell.terminalId
-                readonly property QtObject session: cell.session
+                // A TerminalSession, which QML knows no type for.
+                readonly property var session: cell.session
 
                 objectName: "HalC2Terminal"
                 focus: true
                 padding: 6
-                font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
-                font.pixelSize: Theme.fontSizeTerminal
+                // A whole font: the Terminal's default carries a point size,
+                // which a pixel size set over it warns about.
+                font: Qt.font({
+                    family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace",
+                    pixelSize: Theme.fontSizeTerminal
+                })
                 backgroundColor: splits.background
                 foregroundColor: splits.foreground
                 cursorColor: splits.foreground

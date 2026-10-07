@@ -1,5 +1,4 @@
 import QtQuick
-import HalC2.Shell
 import "js/centreViews.js" as Views
 
 // The centre for the route (js/centreViews.js): its thread or draft, home,
@@ -13,7 +12,7 @@ Loader {
     // The loaded view's corner radius, for layouts that round the centre.
     property real radius: 0
     // Whether the loaded view is a conversation scrolled away from its latest output.
-    readonly property bool conversationScrolled: status === Loader.Ready && item.scrolledAway === true
+    readonly property bool conversationScrolled: status === Loader.Ready && (item as ThreadView)?.scrolledAway === true
 
     active: brick.length > 0
     source: active ? Qt.resolvedUrl(brick + ".qml") : ""

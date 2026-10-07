@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -10,7 +11,6 @@ Dialog {
 
     readonly property var picker: Shell.state.projectIconPicker ?? null
     readonly property string mode: picker?.mode ?? "lucide"
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property var modes: [
         {mode: "lucide", label: qsTr("Icons")},
@@ -39,7 +39,7 @@ Dialog {
     onRejected: Shell.dispatch("projectIcon.cancel")
 
     component Caption: Label {
-        color: dialog.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }

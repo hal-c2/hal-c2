@@ -6,6 +6,6 @@ import HalC2.Shell
 // on any theme.
 Q.Text {
     color: Theme.palette.color("text", "#e4e4e7")
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(12 * Theme.fontScale)
 }

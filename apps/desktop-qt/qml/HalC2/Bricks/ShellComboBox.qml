@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -18,7 +20,7 @@ ComboBox {
     implicitHeight: 28
     leftPadding: iconName.length > 0 ? 10 + iconSize + 6 : 10
     rightPadding: 10 + chevronSize + 4
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(14 * Theme.fontScale)
     font.weight: Font.Medium
     hoverEnabled: true

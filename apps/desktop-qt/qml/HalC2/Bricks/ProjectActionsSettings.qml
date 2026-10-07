@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -24,13 +25,13 @@ ColumnLayout {
 
     component Note: Label {
         Layout.fillWidth: true
-        color: section.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
     component Tag: Label {
-        color: section.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(11 * Theme.fontScale)
     }
 

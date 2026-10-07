@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -11,7 +12,6 @@ Dialog {
     id: dialog
 
     readonly property var editor: Shell.state.scheduledTasks?.editor ?? null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property var weekdayNames: [qsTr("Sun"), qsTr("Mon"), qsTr("Tue"), qsTr("Wed"), qsTr("Thu"), qsTr("Fri"), qsTr("Sat")]
     readonly property var workspaceModes: ["worktree", "root", "existing_worktree"]
@@ -73,7 +73,7 @@ Dialog {
     }
 
     component Caption: Label {
-        color: dialog.muted
+        color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
