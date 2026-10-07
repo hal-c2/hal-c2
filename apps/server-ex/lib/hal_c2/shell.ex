@@ -30,6 +30,12 @@ defmodule HalC2.Shell do
   it in the store would need a schema older MCs cannot open, to save a resend that
   only follows a restart.
 
+  When this server alone restarts, its tables, its subscribers and the versions it
+  holds of its peers outlive it with its `HalC2.Heir`: readers never find the
+  sidebar missing, subscribers stay subscribed, and peers are asked only for what
+  changed. Its own rows start a new epoch from the store, and clients are sent them
+  whole.
+
   A client subscribes with `subscribe/2` and what it holds, and receives rows as
   `{:hal_c2_shell, {:rows, mc, rows, %{epoch: e, rev: r, reset: boolean}}}`.
 
@@ -46,9 +52,21 @@ defmodule HalC2.Shell do
   @mcs HalC2.Shell.Mcs
   # `{{mc, stream_id}, rev}`: the owning MC's count at each row's latest change.
   @revs HalC2.Shell.Revs
+  # `{peer, version}`: what this MC holds of each peer's rows.
+  @versions HalC2.Shell.Versions
+  # `{pid, :plain | :client}`
+  @subscribers HalC2.Shell.Subscribers
+  @tables [@table, @mcs, @revs, @versions, @subscribers]
+  @heir HalC2.Shell.Heir
 
   @typedoc "An MC's rows as of `rev` changes in the run of its shell named `epoch`."
   @type version :: {epoch :: String.t() | nil, rev :: non_neg_integer}
+
+  # The heir starts first, and a restart of it takes the shell with it.
+  def child_spec(opts) do
+    server = %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
+    HalC2.Heir.supervise(@heir, server, HalC2.Shell.Supervisor)
+  end
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -121,29 +139,52 @@ defmodule HalC2.Shell do
 
   @impl true
   def init(_opts) do
-    :ets.new(@table, [:named_table, :protected, read_concurrency: true])
-    :ets.new(@mcs, [:named_table, :protected, read_concurrency: true])
-    :ets.new(@revs, [:named_table, :protected])
+    held = HalC2.Heir.claim(@heir, @tables)
+    for name <- @tables, name not in held, do: :ets.new(name, table_options(name))
     :ok = :net_kernel.monitor_nodes(true)
     path = HalC2.Store.path()
     stored = HalC2.Store.list_shell(path)
-    :ets.insert(@table, for({id, kind, row} <- stored, do: {{node(), id}, {kind, row}}))
+    forget_former_names()
+
+    # This run's version 0 is the rows in the store; rows kept from the last run that
+    # differ from them were changes it lost on the way down.
+    changed = replace_rows(node(), Map.new(stored, fn {id, kind, row} -> {id, {kind, row}} end))
+    :ets.match_delete(@revs, {{node(), :_}, :_})
     :ets.insert(@mcs, {node(), HalC2.Environment.descriptor()})
+    connected = transport().connected()
+    state = %{online: MapSet.new([node() | connected]), own: new_version()}
 
-    state = %{
-      subscribers: %{},
-      online: MapSet.new([node() | Node.list()]),
-      own: new_version(),
-      # What this MC holds of each peer's rows.
-      versions: %{}
-    }
+    # Subscribers of the last run stay subscribed: clients are sent this MC's rows
+    # whole in the new epoch, the rest what changed.
+    for {pid, _kind} <- :ets.tab2list(@subscribers), do: Process.monitor(pid)
+    {epoch, rev} = state.own
+    all = for [id, kind_row] <- :ets.match(@table, {{node(), :"$1"}, :"$2"}), do: {id, kind_row}
+    notify(node(), changed, all, %{epoch: epoch, rev: rev, reset: true})
 
-    # Peers already connected (this shell restarted) hold rows of its last run and
-    # it holds none of theirs: each sends the other what it lacks.
-    for peer <- Node.list(), do: hello(peer, state, true)
+    # Peers already connected (this shell restarted) hold rows of its last run, and
+    # it may have missed changes of theirs: each sends the other what it lacks.
+    for peer <- connected, do: hello(peer, true)
     backfill(path, MapSet.new(stored, &elem(&1, 0)))
     identify_repositories()
     {:ok, state}
+  end
+
+  # The tables belong to the heir while this server is down, so readers never find
+  # them gone. Without it (a tree started before it existed) they go with this server.
+  defp table_options(name) do
+    base = [:named_table, :protected] ++ HalC2.Heir.option(@heir)
+    if name in [@table, @mcs], do: [{:read_concurrency, true} | base], else: base
+  end
+
+  # This MC's rows kept under the name it had before it became distributed.
+  defp forget_former_names do
+    id = HalC2.Environment.id()
+
+    for {mc, %{"environmentId" => ^id}} <- :ets.tab2list(@mcs), mc != node() do
+      :ets.match_delete(@table, {{mc, :_}, :_})
+      :ets.match_delete(@revs, {{mc, :_}, :_})
+      :ets.delete(@mcs, mc)
+    end
   end
 
   # The rows read from the store are this run's version 0.
@@ -152,7 +193,31 @@ defmodule HalC2.Shell do
   # The MC's own version is kept apart from its peers': its node name changes when
   # it becomes distributed.
   defp version_of(state, mc) do
-    if mc == node(), do: state.own, else: Map.get(state.versions, mc, {nil, 0})
+    if mc == node(), do: state.own, else: held_version(mc)
+  end
+
+  defp held_version(peer) do
+    case :ets.lookup(@versions, peer) do
+      [{_, version}] -> version
+      [] -> {nil, 0}
+    end
+  end
+
+  # Makes `rows` (`id => {kind, row}`) the rows of `mc` and returns those that
+  # changed. New rows go in before stale ones go out, so a reader sees each row as it
+  # was or as it is, never missing.
+  defp replace_rows(mc, rows) do
+    old =
+      Map.new(:ets.match(@table, {{mc, :"$1"}, :"$2"}), fn [id, kind_row] -> {id, kind_row} end)
+
+    :ets.insert(@table, for({id, kind_row} <- rows, do: {{mc, id}, kind_row}))
+
+    for {id, _} <- old, not Map.has_key?(rows, id) do
+      :ets.delete(@table, {mc, id})
+      :ets.delete(@revs, {mc, id})
+    end
+
+    for {id, kind_row} <- rows, Map.get(old, id) != kind_row, do: {id, kind_row}
   end
 
   # A hot upgrade runs this with the new code, so projects learn what it knows about
@@ -160,22 +225,28 @@ defmodule HalC2.Shell do
   @impl true
   def code_change(_old_vsn, state, _extra) do
     identify_repositories()
-
-    # Before rows had versions. Peers upgrade too and say hello when they are back.
-    state =
-      if Map.has_key?(state, :versions) do
-        state
-      else
-        if :ets.whereis(@revs) == :undefined, do: :ets.new(@revs, [:named_table, :protected])
-
-        subscribers =
-          Map.new(state.subscribers, fn {pid, ref} -> {pid, {ref, :plain}} end)
-
-        Map.merge(state, %{own: new_version(), versions: %{}, subscribers: subscribers})
-      end
-
-    {:ok, state}
+    {:ok, migrate(state)}
   end
+
+  # Before subscribers and the versions held of peers were kept in tables, and
+  # before rows had versions. Peers upgrade too and say hello when they are back.
+  defp migrate(%{subscribers: subscribers} = state) do
+    for name <- @tables do
+      if :ets.whereis(name) == :undefined,
+        do: :ets.new(name, table_options(name)),
+        else: :ets.setopts(name, HalC2.Heir.option(@heir))
+    end
+
+    :ets.insert(
+      @subscribers,
+      for({pid, sub} <- subscribers, do: {pid, if(is_tuple(sub), do: elem(sub, 1), else: :plain)})
+    )
+
+    :ets.insert(@versions, Map.to_list(Map.get(state, :versions, %{})))
+    %{online: state.online, own: Map.get_lazy(state, :own, &new_version/0)}
+  end
+
+  defp migrate(state), do: state
 
   # Outside this server: it runs git per project and commits through the streams.
   defp identify_repositories, do: Task.start(&HalC2.Projects.identify_repositories/0)
@@ -184,8 +255,10 @@ defmodule HalC2.Shell do
   def handle_call(:online_mcs, _from, state), do: {:reply, MapSet.to_list(state.online), state}
   def handle_call(:version, _from, state), do: {:reply, state.own, state}
 
-  def handle_call({:subscribe, pid}, _from, state),
-    do: {:reply, :ok, put_subscriber(state, pid, :plain)}
+  def handle_call({:subscribe, pid}, _from, state) do
+    put_subscriber(pid, :plain)
+    {:reply, :ok, state}
+  end
 
   def handle_call({:subscribe, pid, have}, _from, state) do
     {mcs, rows} =
@@ -205,12 +278,13 @@ defmodule HalC2.Shell do
          }, mc_rows ++ rows}
       end)
 
-    {:reply, %{mcs: mcs, rows: rows}, put_subscriber(state, pid, :client)}
+    put_subscriber(pid, :client)
+    {:reply, %{mcs: mcs, rows: rows}, state}
   end
 
-  defp put_subscriber(state, pid, kind) do
-    ref = Process.monitor(pid)
-    %{state | subscribers: Map.put(state.subscribers, pid, {ref, kind})}
+  defp put_subscriber(pid, kind) do
+    Process.monitor(pid)
+    :ets.insert(@subscribers, {pid, kind})
   end
 
   # Where someone holding `have` of an MC at `version` continues from: `{rev, false}`
@@ -241,17 +315,22 @@ defmodule HalC2.Shell do
         :ets.insert(@revs, {{node(), stream_id}, rev})
         rows = [{stream_id, kind_row}]
 
-        for peer <- Node.list(),
+        for peer <- transport().connected(),
             do: push_rows(peer, {epoch, rev}, held, [{stream_id, kind_row, rev}], false)
 
-        notify(state, node(), rows, %{epoch: epoch, rev: rev, reset: false})
+        notify(node(), rows, %{epoch: epoch, rev: rev, reset: false})
         {:noreply, %{state | own: {epoch, rev}}}
     end
   end
 
+  # Like rows, a descriptor from a peer that is not online was sent before it was
+  # forgotten.
   def handle_cast({:peer_environment, peer, descriptor}, state) do
-    :ets.insert(@mcs, {peer, descriptor})
-    notify(state, {:environment, peer, descriptor})
+    if MapSet.member?(state.online, peer) do
+      :ets.insert(@mcs, {peer, descriptor})
+      notify({:environment, peer, descriptor})
+    end
+
     {:noreply, state}
   end
 
@@ -264,25 +343,18 @@ defmodule HalC2.Shell do
     for peer <- peers do
       :ets.match_delete(@table, {{peer, :_}, :_})
       :ets.match_delete(@revs, {{peer, :_}, :_})
+      :ets.delete(@versions, peer)
       :ets.delete(@mcs, peer)
-      notify(state, {:mc, peer, :removed})
+      notify({:mc, peer, :removed})
     end
 
-    {:noreply,
-     %{
-       state
-       | online: MapSet.difference(state.online, MapSet.new(peers)),
-         versions: Map.drop(state.versions, peers)
-     }}
+    {:noreply, %{state | online: MapSet.difference(state.online, MapSet.new(peers))}}
   end
 
   # A peer says what it holds of this MC and is sent the rest; `ask_back?` when it
   # wants to be told what this MC holds of it in return.
   def handle_cast({:peer_hello, peer, have, ask_back?}, state) do
-    GenServer.cast(
-      {__MODULE__, peer},
-      {:peer_environment, node(), HalC2.Environment.descriptor()}
-    )
+    cast(peer, {:peer_environment, node(), HalC2.Environment.descriptor()})
 
     version = state.own
     {from, reset?} = lacking(version, have)
@@ -294,19 +366,22 @@ defmodule HalC2.Shell do
       end
 
     push_rows(peer, version, if(reset?, do: 0, else: from), rows, reset?)
-    if ask_back?, do: hello(peer, state, false)
+    if ask_back?, do: hello(peer, false)
     {:noreply, state}
   end
 
   # Rows pushed by a peer: what this MC lacked when it said hello, single rows
-  # afterwards. `from` is the version they follow.
+  # afterwards. `from` is the version they follow. A peer is online before anything
+  # it sends arrives (`:net_kernel.monitor_nodes/1`), so rows from one that is not
+  # were sent before it was forgotten, and are dropped with it.
   def handle_cast({:peer_rows, peer, {epoch, rev}, from, rows, reset?}, state) do
-    {held_epoch, held_rev} = version_of(state, peer)
+    {held_epoch, held_rev} = held_version(peer)
 
     cond do
+      not MapSet.member?(state.online, peer) ->
+        {:noreply, state}
+
       reset? ->
-        :ets.match_delete(@table, {{peer, :_}, :_})
-        :ets.match_delete(@revs, {{peer, :_}, :_})
         {:noreply, put_peer_rows(state, peer, {epoch, rev}, rows, true)}
 
       epoch == held_epoch and from <= held_rev ->
@@ -314,7 +389,7 @@ defmodule HalC2.Shell do
 
       true ->
         # Rows between what is held and these never arrived: ask for all of them.
-        hello(peer, state, false)
+        hello(peer, false)
         {:noreply, state}
     end
   end
@@ -327,19 +402,21 @@ defmodule HalC2.Shell do
 
   @impl true
   def handle_info({:nodeup, peer}, state) do
-    hello(peer, state, false)
-    notify(state, {:mc, peer, :up})
+    hello(peer, false)
+    notify({:mc, peer, :up})
     {:noreply, %{state | online: MapSet.put(state.online, peer)}}
   end
 
   def handle_info({:nodedown, peer}, state) do
     # A machine already forgotten has nothing left to mark offline.
-    if MapSet.member?(state.online, peer), do: notify(state, {:mc, peer, :down})
+    if MapSet.member?(state.online, peer), do: notify({:mc, peer, :down})
     {:noreply, %{state | online: MapSet.delete(state.online, peer)}}
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _}, state),
-    do: {:noreply, %{state | subscribers: Map.delete(state.subscribers, pid)}}
+  def handle_info({:DOWN, _ref, :process, pid, _}, state) do
+    :ets.delete(@subscribers, pid)
+    {:noreply, state}
+  end
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -348,35 +425,50 @@ defmodule HalC2.Shell do
   defp default_rev(found, _id), do: found
 
   defp put_peer_rows(state, peer, {epoch, rev} = version, rows, reset?) do
-    :ets.insert(@table, for({id, kind_row, _rev} <- rows, do: {{peer, id}, kind_row}))
-    :ets.insert(@revs, for({id, _kind_row, rev} <- rows, do: {{peer, id}, rev}))
     plain = for {id, kind_row, _rev} <- rows, do: {id, kind_row}
-    notify(state, peer, plain, %{epoch: epoch, rev: rev, reset: reset?})
-    put_in(state.versions[peer], version)
+
+    if reset?,
+      do: replace_rows(peer, Map.new(plain)),
+      else: :ets.insert(@table, for({id, kind_row} <- plain, do: {{peer, id}, kind_row}))
+
+    :ets.insert(@revs, for({id, _kind_row, rev} <- rows, do: {{peer, id}, rev}))
+    :ets.insert(@versions, {peer, version})
+    notify(peer, plain, %{epoch: epoch, rev: rev, reset: reset?})
+    state
   end
 
-  defp hello(peer, state, ask_back?) do
-    have = Map.get(state.versions, peer)
-    GenServer.cast({__MODULE__, peer}, {:peer_hello, node(), have, ask_back?})
+  defp hello(peer, ask_back?) do
+    cast(peer, {:peer_hello, node(), held_version(peer), ask_back?})
   end
 
   defp push_rows(peer, version, from, rows, reset?),
-    do: GenServer.cast({__MODULE__, peer}, {:peer_rows, node(), version, from, rows, reset?})
+    do: cast(peer, {:peer_rows, node(), version, from, rows, reset?})
 
-  # Changed rows of `mc`: clients are told the version they bring it to.
-  defp notify(_state, _mc, [], %{reset: false}), do: :ok
+  defp cast(peer, message), do: transport().cast(peer, message)
 
-  defp notify(state, mc, rows, version) do
-    for {pid, {_ref, kind}} <- state.subscribers do
+  # Peers' shells are reached over Erlang distribution (`HalC2.Shell.Distribution`);
+  # the property tests stand in for them.
+  defp transport, do: Application.get_env(:hal_c2, :shell_transport, HalC2.Shell.Distribution)
+
+  # Changed rows of `mc`: clients are told the version they bring it to. Plain
+  # subscribers get `plain`, clients `rows`.
+  defp notify(mc, plain \\ nil, rows, version)
+
+  defp notify(_mc, _plain, [], %{reset: false}), do: :ok
+
+  defp notify(mc, plain, rows, version) do
+    plain = plain || rows
+
+    for {pid, kind} <- :ets.tab2list(@subscribers) do
       case kind do
-        :plain -> if rows != [], do: send(pid, {:hal_c2_shell, {:rows, mc, rows}})
+        :plain -> if plain != [], do: send(pid, {:hal_c2_shell, {:rows, mc, plain}})
         :client -> send(pid, {:hal_c2_shell, {:rows, mc, rows, version}})
       end
     end
   end
 
-  defp notify(state, message),
-    do: for({pid, _} <- state.subscribers, do: send(pid, {:hal_c2_shell, message}))
+  defp notify(message),
+    do: for({pid, _} <- :ets.tab2list(@subscribers), do: send(pid, {:hal_c2_shell, message}))
 
   @doc false
   # The version this MC's rows are at, for tests.
@@ -398,4 +490,12 @@ defmodule HalC2.Shell do
       end)
     end
   end
+end
+
+defmodule HalC2.Shell.Distribution do
+  @moduledoc false
+  # How `HalC2.Shell` reaches the shells of the MCs it is connected to.
+
+  def connected, do: Node.list()
+  def cast(peer, message), do: GenServer.cast({HalC2.Shell, peer}, message)
 end
