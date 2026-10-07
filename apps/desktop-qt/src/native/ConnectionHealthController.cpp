@@ -6,6 +6,7 @@
 #include <QHostAddress>
 #include <QNetworkAccessManager>
 #include <QNetworkInformation>
+#include <QNetworkInterface>
 
 #include "KeybindingController.h"
 #include "McClient.h"
@@ -22,6 +23,21 @@ const NativeControllerRegistrar<ConnectionHealthController> registrar(QStringLit
                                                                       NativeControllerScope::Shared);
 
 const QString kKey = QStringLiteral("connection");
+
+// Whether some interface besides loopback is up with an address of its own: a
+// second opinion for a backend that says the device is disconnected. Android's
+// says so when any network is lost, the one a phone just left for another
+// included, and stays there until some network next changes.
+bool hasNetwork() {
+  for (const QNetworkInterface& interface : QNetworkInterface::allInterfaces()) {
+    const QNetworkInterface::InterfaceFlags flags = interface.flags();
+    if (!flags.testFlag(QNetworkInterface::IsUp) || !flags.testFlag(QNetworkInterface::IsRunning) || flags.testFlag(QNetworkInterface::IsLoopBack)) continue;
+    for (const QNetworkAddressEntry& entry : interface.addressEntries()) {
+      if (!entry.ip().isLinkLocal() && !entry.ip().isLoopback()) return true;
+    }
+  }
+  return false;
+}
 const QString kDismissals = QStringLiteral("versionMismatchDismissals");
 
 struct Version {
@@ -112,7 +128,7 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
     connect(network, &QNetworkInformation::reachabilityChanged, this, [this](QNetworkInformation::Reachability reachability) {
       const QString host = m_client->origin().host();
       const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
-      const bool online = local || reachability != QNetworkInformation::Reachability::Disconnected;
+      const bool online = local || reachability != QNetworkInformation::Reachability::Disconnected || hasNetwork();
       m_client->setOnline(online);
       if (online) m_client->wake();
     });
