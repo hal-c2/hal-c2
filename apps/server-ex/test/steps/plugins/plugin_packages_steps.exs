@@ -280,6 +280,12 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
         "contributes" => %{"pages" => [%{"id" => "reviews", "qml" => "ui/Reviews.qml"}]}
       },
       "a page id with an @ in it" => %{"contributes" => %{"pages" => [page("reviews@2")]}},
+      "a page whose QML is outside the package" => %{
+        "contributes" => %{
+          "pages" => [%{"id" => "reviews", "title" => "Reviews", "qml" => "../Reviews.qml"}]
+        }
+      },
+      "a screenshot at an absolute path" => %{"screenshots" => [%{"path" => "/etc/shot.png"}]},
       "two pages with the same id" => %{
         "contributes" => %{"pages" => [page("reviews"), page("reviews")]}
       },

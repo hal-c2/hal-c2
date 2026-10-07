@@ -24,34 +24,36 @@ defmodule HalC2.Plugins.Package do
 
   # The shape of what the MC and its clients read from a manifest, after
   # `PluginManifest`: `:text` is a non-empty string, `:slug` one that is fit for an
-  # id, `{:map, required, optional}` an object with those keys. An optional key that
-  # is absent or null is left out.
+  # id, `:path` a relative path inside the package, `{:map, required, optional}` an
+  # object with those keys. An optional key that is absent or null is left out.
   @contributes {:map, %{},
                 %{
                   "pages" =>
                     {:list,
-                     {:map, %{"id" => :slug, "title" => :text, "qml" => :text},
+                     {:map, %{"id" => :slug, "title" => :text, "qml" => :path},
                       %{"icon" => :text}}},
                   "threadKinds" =>
                     {:list,
                      {:map, %{"kind" => :text, "label" => :text},
-                      %{"rowMark" => :text, "header" => :text}}},
+                      %{"rowMark" => :path, "header" => :path}}},
                   "slots" =>
-                    {:list, {:map, %{"slot" => :text, "qml" => :text}, %{"order" => :int}}},
-                  "settingsPage" => :text
+                    {:list, {:map, %{"slot" => :text, "qml" => :path}, %{"order" => :int}}},
+                  "settingsPage" => :path
                 }}
   @shape {:map, %{},
           %{
             "author" => {:map, %{"name" => :text}, %{"url" => :text}},
             "homepage" => :text,
             "license" => :text,
-            "icon" => :text,
-            "screenshots" => {:list, {:map, %{"path" => :text}, %{"caption" => :string}}},
+            "icon" => :path,
+            "screenshots" => {:list, {:map, %{"path" => :path}, %{"caption" => :string}}},
             "permissions" => {:list, {:map, %{"id" => :text, "reason" => :text}, %{}}},
             "settings" =>
               {:list, {:map, %{"key" => :text}, %{"label" => :text, "description" => :string}}},
             "contributes" => @contributes
           }}
+  # `PackagePath`'s pattern: never absolute, never `..`.
+  @path ~r/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w.\/-]+$/
   @text ~w(.qml .js .mjs .json .md .txt .svg .css)
 
   @doc "A permission's label as the consent shows it."
@@ -230,6 +232,10 @@ defmodule HalC2.Plugins.Package do
   defp misshapen(value, :slug, at) when is_binary(value) do
     if not slug?(value),
       do: "#{at} must be lowercase letters, digits and dashes, starting with a letter"
+  end
+
+  defp misshapen(value, :path, at) when is_binary(value) do
+    if not Regex.match?(@path, value), do: "#{at} must be a relative path inside the package"
   end
 
   defp misshapen(value, :string, _at) when is_binary(value), do: nil

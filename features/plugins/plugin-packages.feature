@@ -75,6 +75,8 @@ Feature: Plugin packages
       | a permission without a reason    | permissions[0].reason      |
       | a page id with an @ in it        | contributes.pages[0].id    |
       | two pages with the same id       | contributes.pages[1].id    |
+      | a page whose QML is outside the package | contributes.pages[0].qml |
+      | a screenshot at an absolute path | screenshots[0].path        |
 
   @mc
   Scenario: A package that needs a newer plugin API asks for an MC update
