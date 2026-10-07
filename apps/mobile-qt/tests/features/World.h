@@ -43,6 +43,9 @@ public:
 
   // The user opens the app; nothing when it is open.
   void open();
+  // The app leaves the front, as when the user goes home or to another app:
+  // the system may stop it there and never run it again.
+  void background();
   // The app is closed: its process goes, its files stay.
   void close();
   bool isOpen() const { return m_app != nullptr; }

@@ -220,11 +220,12 @@ const Steps steps([] {
   step(S("the user has typed %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) { typeMessage(world, c[0]); });
 
   step(S("the app is closed and reopened"), [](World& world, const Captures&, const Table&) {
-    // The app keeps what is typed a moment after the last key (Composer.qml's
-    // debounce); the user closes it after that.
+    // Right after the last key, inside Composer.qml's debounce: a phone stops
+    // the app as it leaves the front, and what is typed has to be kept by then.
     const QString typed = world.item(S("input"))->property("text").toString();
-    world.waitFor([&] { return composer(world).value(S("text")).toString() == typed; },
-                  [&] { return S("the app to keep the draft; the composer is %1").arg(show(composer(world))); });
+    world.background();
+    expect(composer(world).value(S("text")).toString() == typed,
+           S("the app left the front without keeping the draft; the composer is %1").arg(show(composer(world))));
     world.close();
     world.open();
   });

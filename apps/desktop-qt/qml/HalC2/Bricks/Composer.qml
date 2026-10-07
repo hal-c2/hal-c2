@@ -368,6 +368,17 @@ Rectangle {
         onTriggered: composer.flushText()
     }
 
+    // The last keystrokes do not wait for the debounce when the app stops being
+    // in front (a phone may never run it again) or the composer goes.
+    Connections {
+        target: Qt.application
+        function onStateChanged() {
+            if (Qt.application.state !== Qt.ApplicationActive)
+                composer.flushText();
+        }
+    }
+    Component.onDestruction: composer.flushText()
+
     // What the turn waits on from the user sits on the prompt, so every shell
     // that hosts the composer can answer it.
     TurnRequests {

@@ -6,6 +6,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTest>
+#include <qpa/qwindowsysteminterface.h>
 
 #include "ConnectionHealthController.h"
 #include "Harness.h"
@@ -89,6 +90,7 @@ World::~World() {
 
 void World::open() {
   if (m_app) return;
+  QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
   m_app = std::make_unique<MobileApp>(MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
@@ -104,6 +106,10 @@ void World::open() {
   expect(m_app->runtime().lastError().isEmpty(), QStringLiteral("the phone's root did not load: %1").arg(m_app->runtime().lastError()));
   shown->requestActivate();
   expect(QTest::qWaitForWindowActive(shown), QStringLiteral("the phone's window did not take the keyboard"));
+}
+
+void World::background() {
+  QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationSuspended);
 }
 
 void World::close() {
