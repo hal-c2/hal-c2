@@ -662,7 +662,7 @@ defmodule HalC2.Plugins do
 
         plugin ->
           if plugin.sup != nil or path in shown_files(plugin),
-            do: {:ok, plugin.package, revision(plugin)},
+            do: {:ok, plugin.files || plugin.package, revision(plugin)},
             else: not_running(plugin)
       end
 
@@ -810,6 +810,7 @@ defmodule HalC2.Plugins do
       end)
 
     Enum.each(plugins, fn {id, plugin} -> revoke_dropped(id, plugin) end)
+    drop_copies(plugins)
     %{state | plugins: plugins}
   end
 
@@ -865,8 +866,11 @@ defmodule HalC2.Plugins do
       {{:error, _, hash}, [%{hash: hash} | _]} ->
         previous
 
-      {{:ok, manifest, sources, hash}, _} ->
-        with {:ok, modules} <- compile_all(sources),
+      {{:ok, _, _, hash}, _} ->
+        copy = stage(id, dir)
+
+        with {:ok, manifest, sources, hash} <- Package.read(copy),
+             {:ok, modules} <- compile_all(sources),
              {:ok, module, kinds} <- package_module(modules) |> unload_unless_ok(modules) do
           [
             %{
@@ -876,17 +880,40 @@ defmodule HalC2.Plugins do
                 manifest: manifest,
                 binaries: modules,
                 package: dir,
+                files: copy,
                 problem: api_problem(manifest.api_version)
             }
           ]
         else
-          {:error, message} ->
+          error ->
+            File.rm_rf(Path.dirname(copy))
+            message = elem(error, 1)
             failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
         failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
     end
+  end
+
+  # A version of a package loads from a copy of its directory, which then serves its
+  # files: clients get the version that runs, whatever the directory holds since.
+  # Each copy sits in a directory named for the package, as the manifest's id must be.
+  defp stage(id, dir) do
+    copy = Path.join([copies_dir(), id, "#{System.unique_integer([:positive])}", id])
+    :ok = Package.copy(dir, copy)
+    copy
+  end
+
+  defp copies_dir, do: Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+
+  # Removes the copies no loaded version serves.
+  defp drop_copies(plugins) do
+    kept = MapSet.new(for {_, %{files: files}} <- plugins, files != nil, do: Path.dirname(files))
+
+    for copy <- Path.wildcard(Path.join(copies_dir(), "*/*")),
+        not MapSet.member?(kept, copy),
+        do: File.rm_rf(copy)
   end
 
   # A file or package that did not load: the old code keeps running, and the next
@@ -1041,8 +1068,10 @@ defmodule HalC2.Plugins do
       restarts: 0,
       last_error: nil,
       bundled: false,
-      # The package's directory, for a plugin package.
+      # The package's directory, for a plugin package, and the copy of it this version
+      # loaded from and serves files from.
       package: nil,
+      files: nil,
       # The permissions host calls were refused for, since it was last enabled.
       denied: []
     }

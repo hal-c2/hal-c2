@@ -105,6 +105,7 @@ Feature: Plugin packages
     Given the package "code-review" is enabled
     When a new version of "code-review" <which> is placed in the plugins directory
     Then "code-review" answers as its old version
+    And clients still get the UI parts of its old version
     And the reload is reported as failed because of "<reason>"
 
     Examples:

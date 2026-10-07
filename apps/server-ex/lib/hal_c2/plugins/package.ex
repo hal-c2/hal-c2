@@ -115,18 +115,34 @@ defmodule HalC2.Plugins.Package do
 
   defp safe(_dir, _path), do: nil
 
-  # Hidden files count, as the package can serve them; a `.git` checkout of the
-  # package does not.
-  defp hash(dir) do
-    files =
-      dir
-      |> Path.join("**")
-      |> Path.wildcard(match_dot: true)
-      |> Enum.reject(&(".git" in Path.split(Path.relative_to(&1, dir))))
-      |> Enum.filter(&File.regular?/1)
-      |> Enum.sort()
+  @doc """
+  Copies the package at `dir` to `to`: the files it can serve, without its `.git`
+  checkout or what a link in it leads to outside it.
+  """
+  def copy(dir, to) do
+    for file <- files(dir) do
+      target = Path.join(to, Path.relative_to(file, dir))
+      File.mkdir_p!(Path.dirname(target))
+      File.cp!(file, target)
+    end
 
-    files
+    :ok
+  end
+
+  # The files the package can serve. Hidden files count; a `.git` checkout of the
+  # package does not, nor does a link that leads out of it.
+  defp files(dir) do
+    dir
+    |> Path.join("**")
+    |> Path.wildcard(match_dot: true)
+    |> Enum.reject(&(".git" in Path.split(Path.relative_to(&1, dir))))
+    |> Enum.filter(&(File.regular?(&1) and safe(dir, Path.relative_to(&1, dir)) != nil))
+    |> Enum.sort()
+  end
+
+  defp hash(dir) do
+    dir
+    |> files()
     |> Enum.reduce(:crypto.hash_init(:sha256), fn file, acc ->
       acc
       |> :crypto.hash_update(Path.relative_to(file, dir))

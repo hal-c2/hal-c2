@@ -407,6 +407,7 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   step "a new version of {string} whose second MC file does not compile is placed in the plugins directory",
        %{args: [id]} = context do
     dir = Packages.dir(context, id)
+    context = new_page(context, dir)
     [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
 
     File.write!(
@@ -426,6 +427,7 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   step "a new version of {string} whose MC files hold two plugin modules is placed in the plugins directory",
        %{args: [id]} = context do
     dir = Packages.dir(context, id)
+    context = new_page(context, dir)
     [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
 
     File.write!(
@@ -440,6 +442,20 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     """)
 
     context |> Fixtures.rescan() |> Map.put(:plugin, id)
+  end
+
+  step "clients still get the UI parts of its old version", context do
+    revision = Fixtures.entry(context.plugin)["revision"]
+
+    {page, context} =
+      World.call!(context, "plugins.file", %{
+        "id" => context.plugin,
+        "path" => "ui/ReviewsPage.qml"
+      })
+
+    assert %{"content" => content, "revision" => ^revision} = page
+    assert content == context.old_page
+    context
   end
 
   step "the reload is reported as failed because of {string}", %{args: [reason]} = context do
@@ -960,6 +976,14 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
         "threadId" => context.plugin_thread,
         "machine" => "desktop"
       })
+
+  # The new version's page, keeping the old one's to compare.
+  defp new_page(context, dir) do
+    path = Path.join(dir, "ui/ReviewsPage.qml")
+    old = File.read!(path)
+    File.write!(path, old <> "// the new version\n")
+    Map.put(context, :old_page, old)
+  end
 
   defp file(context, id, path) do
     {result, context} = World.call!(context, "plugins.file", %{"id" => id, "path" => path})
