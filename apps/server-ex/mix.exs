@@ -8,10 +8,13 @@ defmodule HalC2.MixProject do
       version: hal_c2_version(),
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
-      elixirc_paths: if(Mix.env() == :test, do: ["lib", "test/support"], else: ["lib"]),
+      elixirc_paths: elixirc_paths(Mix.env()),
+      # The property tests are GPL-3.0 (prop/LICENSE), so they live apart from the MIT
+      # suite and run in their own environment: `mix prop`.
+      test_paths: if(Mix.env() == :prop, do: ["prop"], else: ["test"]),
       # Step definitions are Cucumber glue, loaded by test_helper.exs, not test files.
       test_ignore_filters: [~r{^test/steps/}],
-      aliases: [features: &features/1],
+      aliases: [features: &features/1, prop: &prop/1],
       deps: deps(),
       releases: [
         hal_c2: [
@@ -23,7 +26,11 @@ defmodule HalC2.MixProject do
     ]
   end
 
-  def cli, do: [preferred_envs: [features: :test]]
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(:prop), do: ["lib", "test/support", "prop/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  def cli, do: [preferred_envs: [features: :test, prop: :prop]]
 
   def application do
     [
@@ -35,11 +42,13 @@ defmodule HalC2.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.12"},
-      {:cucumber, "~> 1.0", only: :test},
+      {:cucumber, "~> 1.0", only: [:test, :prop]},
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
       {:mint_web_socket, "~> 1.0"},
+      # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
+      {:propcheck, "~> 1.5", only: :prop},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
       {:x509, "~> 0.9"}
@@ -89,6 +98,15 @@ defmodule HalC2.MixProject do
 
     Mix.env(:test)
     Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
+  end
+
+  # `mix prop [mix test args]` runs the stateful property tests in prop/. They are
+  # GPL-3.0 because PropCheck is, so they stay out of `mix test` and every release.
+  defp prop(args) do
+    Mix.env(:prop)
+    # `mix test` refuses an environment other than :test unless MIX_ENV names it.
+    System.put_env("MIX_ENV", "prop")
+    Mix.Task.run("test", args)
   end
 
   # `HAL_C2_MC_VERSION` names a build apart from the package's release (nightlies, local builds).
