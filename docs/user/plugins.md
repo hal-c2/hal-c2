@@ -70,6 +70,9 @@ Such a plugin is off until you turn it on. Turning it on shows what it asks to
 do, such as commenting on pull requests or starting threads, and why. It runs
 only if you accept, and an update that asks for more waits until you accept
 again. Plugins that run code on the MC say so: they can do anything the MC can.
+What a plugin asks for limits what it may do on the MC, not in the app: its
+pages and other parts run in the app with the app's access, like any UI plugin,
+so install only plugins you trust.
 
 What a running plugin adds reaches every app connected to that machine:
 
