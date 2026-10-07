@@ -148,7 +148,7 @@ QVariantList ShellBridge::clipboardFiles() const {
     // File managers put the copied files' addresses or paths on the clipboard
     // as text too; that is no text to paste instead.
     QStringList names;
-    for (const QUrl& url : data->urls()) names << url.toString() << url.toLocalFile();
+    for (const QUrl& url : data->urls()) names << url.toString() << url.toString(QUrl::FullyEncoded) << url.toLocalFile();
     const QStringList lines = data->text().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     const bool onlyNames = std::all_of(lines.cbegin(), lines.cend(), [&](const QString& line) {
       return line.trimmed().isEmpty() || names.contains(line.trimmed());

@@ -62,16 +62,17 @@ Feature: Attaching images and files to a message
 
   @desktop
   Scenario Outline: A file copied in a file manager pasted into the prompt is attached
-    When the user pastes "schema.sql" copied with <text> into the prompt
-    Then the draft carries "schema.sql"
+    When the user pastes "<file>" copied with <text> into the prompt
+    Then the draft carries "<file>"
 
     Examples:
-      | text             |
-      | no text          |
-      | its path as text |
-      | its URL as text  |
+      | file       | text                     |
+      | schema.sql | no text                  |
+      | schema.sql | its path as text         |
+      | schema.sql | its URL as text          |
+      | café.sql   | its encoded URL as text  |
 
-  @tui
+  @tui @desktop @backlog-desktop
   Scenario Outline: An image that cannot be attached is refused with a reason
     When the user tries to attach <image>
     Then nothing is attached

@@ -305,12 +305,14 @@ const Steps steps([] {
   });
 
   // As a file manager copies a file: its address, and maybe some form of it as text.
-  step(QStringLiteral("the user pastes %1 copied with (no text|its path as text|its URL as text) into the prompt").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user pastes %1 copied with (no text|its path as text|its URL as text|its encoded URL as text) into the prompt").arg(q), [](World& world, const Captures& c, const Table&) {
     composerBrick(world);
     const QUrl url = plainFile(world, c[0]);
     auto* data = new QMimeData;
     data->setUrls({url});
-    if (c[1] != QLatin1String("no text")) data->setText(c[1] == QLatin1String("its path as text") ? url.toLocalFile() : url.toString());
+    if (c[1] == QLatin1String("its path as text")) data->setText(url.toLocalFile());
+    else if (c[1] == QLatin1String("its URL as text")) data->setText(url.toString());
+    else if (c[1] == QLatin1String("its encoded URL as text")) data->setText(url.toString(QUrl::FullyEncoded));
     QGuiApplication::clipboard()->setMimeData(data);
     expect(pressInComposer(world, QStringLiteral("mod+v")), QStringLiteral("the composer did not take the paste"));
   });
