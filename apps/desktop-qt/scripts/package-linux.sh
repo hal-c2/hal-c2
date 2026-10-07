@@ -46,29 +46,36 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 # through a qmake that names a plugin directory with the same contents apart from
 # the SQL drivers, of which it holds SQLite's alone. The Qt itself is left as it is.
 qmake="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
-plugins=""
-if [ -n "${qmake}" ]; then
-  plugins="$("${qmake}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
+if [ -z "${qmake}" ]; then
+  echo "error: no qmake6 or qmake on the PATH; set QMAKE to the Qt's" >&2
+  exit 1
 fi
+plugins="$("${qmake}" -query QT_INSTALL_PLUGINS)"
 drivers="${plugins}/sqldrivers"
-if [ -d "${drivers}" ]; then
-  # Absolute: the plugin runs qmake from where it likes.
-  wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
-  view="$(cd "${build_dir}" && pwd)/qt-plugins"
-  rm -rf "${view}"
-  mkdir -p "${view}/sqldrivers"
-  for entry in "${plugins}"/*; do
-    [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
-  done
-  cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
-  # Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
-  cat > "${wrapper}" <<QMAKE
-#!/bin/sh
-"${qmake}" "\$@" | sed -e "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|" -e "s|^${plugins}\\\$|${view}|"
-QMAKE
-  chmod +x "${wrapper}"
-  export QMAKE="${wrapper}"
+# Loaded at run time, so nothing else notices it missing: the app would start and
+# fail to open its cache.
+if [ ! -f "${drivers}/libqsqlite.so" ]; then
+  echo "error: ${drivers} has no libqsqlite.so; install the Qt's SQLite driver" >&2
+  exit 1
 fi
+# Absolute: the plugin runs qmake from where it likes.
+wrapper="$(cd "${build_dir}" && pwd)/qmake-sqlite-only"
+view="$(cd "${build_dir}" && pwd)/qt-plugins"
+rm -rf "${view}"
+mkdir -p "${view}/sqldrivers"
+for entry in "${plugins}"/*; do
+  [ "${entry}" = "${drivers}" ] || ln -s "${entry}" "${view}/"
+done
+cp "${drivers}/libqsqlite.so" "${view}/sqldrivers/"
+# Both forms: every property (QT_INSTALL_PLUGINS:<path>), and one asked for by name.
+# A qmake that fails fails the wrapper too.
+cat > "${wrapper}" <<QMAKE
+#!/bin/sh
+out="\$("${qmake}" "\$@")" || exit \$?
+printf '%s\n' "\$out" | sed -e "s|^QT_INSTALL_PLUGINS:.*|QT_INSTALL_PLUGINS:${view}|" -e "s|^${plugins}\\\$|${view}|"
+QMAKE
+chmod +x "${wrapper}"
+export QMAKE="${wrapper}"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
