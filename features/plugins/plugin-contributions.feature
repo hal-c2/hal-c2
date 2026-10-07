@@ -91,6 +91,13 @@ Feature: What plugins add to the clients
       And each tab's page runs on its own environment only
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A version's tab stays put when the other version goes away
+      Given a second environment runs another version of "code-review"
+      And the user is on the "Reviews" tab of the second environment
+      When "code-review" stops on the first environment
+      Then the user is still on the same page
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A page whose UI part fails to load shows the error in its tab
       Given the "Reviews" page of "code-review" fails to load
       When the user switches to the "Reviews" tab
@@ -150,6 +157,14 @@ Feature: What plugins add to the clients
       When the user opens the settings of "ntfy"
       Then the page shows a field for each declared setting
       And saving it stores the settings on the MC
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A setting whose JSON does not parse cannot be saved
+      Given the plugin "ntfy" declares a setting that takes JSON
+      When the user opens the settings of "ntfy"
+      And the user changes that setting to JSON that does not parse
+      Then the page says the setting is not valid JSON
+      And it can be saved again once the JSON parses
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A plugin's own settings page replaces the generated one

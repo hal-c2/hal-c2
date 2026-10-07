@@ -28,6 +28,9 @@ SettingsPage {
     // The save on its way (-1 for none), and why the last one was refused.
     property int saving: -1
     property string refusal: ""
+    // The keys of the JSON fields whose text does not parse: the page is not saved
+    // until it does, so what is shown is what is saved.
+    property var unparsed: []
 
     function reset() {
         const values = {};
@@ -38,6 +41,7 @@ SettingsPage {
         page.values = Object.assign(values, page.entry?.settings ?? {});
         page.dirty = false;
         page.refusal = "";
+        page.unparsed = [];
     }
 
     function set(key, value) {
@@ -45,6 +49,20 @@ SettingsPage {
         next[key] = value;
         page.values = next;
         page.dirty = true;
+    }
+
+    function setJson(key, text) {
+        let value;
+        try {
+            value = JSON.parse(text);
+        } catch (error) {
+            if (!page.unparsed.includes(key))
+                page.unparsed = page.unparsed.concat([key]);
+            page.dirty = true;
+            return;
+        }
+        page.unparsed = page.unparsed.filter(each => each !== key);
+        page.set(key, value);
     }
 
     objectName: "pluginSettings"
@@ -193,11 +211,7 @@ SettingsPage {
                     if (field.modelData.type === "list") {
                         page.set(field.modelData.key, text.split("\n").map(line => line.trim()).filter(line => line.length > 0));
                     } else if (field.modelData.type === "object") {
-                        try {
-                            page.set(field.modelData.key, JSON.parse(text));
-                        } catch (error) {
-                            // Kept as typed until it parses.
-                        }
+                        page.setJson(field.modelData.key, text);
                     } else {
                         page.set(field.modelData.key, text);
                     }
@@ -243,6 +257,16 @@ SettingsPage {
         font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
+    Label {
+        objectName: "pluginSettingsUnparsed"
+        Layout.fillWidth: true
+        visible: page.unparsed.length > 0
+        text: qsTr("Not valid JSON: %1").arg(page.fields.filter(field => page.unparsed.includes(field.key)).map(field => field.label || field.key).join(", "))
+        color: page.errorColor
+        wrapMode: Text.Wrap
+        font.pixelSize: Math.round(12 * Theme.fontScale)
+    }
+
     RowLayout {
         Layout.fillWidth: true
         visible: page.ownPage.length === 0 && page.fields.length > 0
@@ -264,7 +288,7 @@ SettingsPage {
             objectName: "pluginSettingsSave"
             primary: true
             text: qsTr("Save")
-            enabled: page.dirty && page.saving < 0
+            enabled: page.dirty && page.saving < 0 && page.unparsed.length === 0
             onClicked: {
                 page.refusal = "";
                 page.saving = McPlugins.saveSettings(page.environment, page.pluginId, page.values);

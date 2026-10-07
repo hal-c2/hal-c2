@@ -209,10 +209,11 @@ void McPluginController::publish() {
         // One tab per page, whichever environments run the plugin, as long as they run
         // the same version of it: one page's code cannot be given another version's MC
         // part to talk to, so an environment on another revision gets a tab of its own.
-        const QString group = pageKey + QLatin1Char('\n') + str(entry.value(QLatin1String("revision")));
+        // The key names the version, so environments coming and going leave it alone.
+        const QString group = pageKey + QLatin1Char('@') + str(entry.value(QLatin1String("revision")));
         if (!pageAt.contains(group)) {
           pageAt.insert(group, pages.size());
-          pages.append(QVariantMap{{QStringLiteral("key"), tabs.contains(pageKey) ? pageKey + QLatin1Char('/') + environment : pageKey},
+          pages.append(QVariantMap{{QStringLiteral("key"), group},
                                    {QStringLiteral("pluginId"), id},
                                    {QStringLiteral("pageId"), pageId},
                                    {QStringLiteral("pluginName"), str(entry.value(QLatin1String("name")))},

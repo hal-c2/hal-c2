@@ -307,6 +307,12 @@ int countNamed(const QQuickItem* item, const QString& objectName) {
   return count;
 }
 
+int countPrefixed(const QQuickItem* item, const QString& prefix) {
+  int count = item->objectName().startsWith(prefix) ? 1 : 0;
+  for (const QQuickItem* child : item->childItems()) count += countPrefixed(child, prefix);
+  return count;
+}
+
 QQuickItem* waitNamed(World& world, const QString& objectName, const std::function<bool(QQuickItem*)>& ready = {}) {
   QQuickItem* found = nullptr;
   world.waitFor([&] { return (found = named(world, objectName)) != nullptr && found->isVisible() && (!ready || ready(found)); },
@@ -518,7 +524,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the %1 tab is gone").arg(q), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return published(world).value(QStringLiteral("pages")).toList().isEmpty() &&
-                               named(world, QStringLiteral("tab:code-review/reviews")) == nullptr; },
+                               countPrefixed(pluginShell(world)->contentItem(), QStringLiteral("tab:code-review/reviews@")) == 0; },
                   [&] { return describe(world); });
   });
   step(QStringLiteral("the threads are shown"), [](World& world, const Captures&, const Table&) {
@@ -562,6 +568,27 @@ const Steps steps([] {
     QStringList wanted{world.mc.environmentId, QStringLiteral("work")};
     wanted.sort();
     expect(runsOn == wanted, QStringLiteral("the pages run on %1").arg(runsOn.join(QLatin1Char(' '))));
+  });
+  step(QStringLiteral("the user is on the %1 tab of the second environment").arg(q), [](World& world, const Captures&, const Table&) {
+    QString key;
+    world.waitFor([&] {
+      for (const QVariant& page : published(world).value(QStringLiteral("pages")).toList()) {
+        if (page.toMap().value(QStringLiteral("environments")).toStringList() == QStringList{QStringLiteral("work")}) key = page.toMap().value(QStringLiteral("key")).toString();
+      }
+      return !key.isEmpty();
+    }, [&] { return describe(world); });
+    clickItem(world, waitNamed(world, QStringLiteral("tab:") + key));
+    world.waitFor([&] { return routeTab(world) == key; }, [&] { return describe(world); });
+    fake(world).page = waitNamed(world, QStringLiteral("reviewsPage"));
+  });
+  step(QStringLiteral("%1 stops on the first environment").arg(q), [](World& world, const Captures&, const Table&) {
+    for (QJsonObject& entry : fake(world).plugins[world.mc.environmentId]) entry.insert(QStringLiteral("status"), QStringLiteral("stopped"));
+    announce(world);
+    world.waitFor([&] { return published(world).value(QStringLiteral("pages")).toList().size() == 1; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user is still on the same page"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* page = fake(world).page.data();
+    expect(page != nullptr && page->isVisible(), QStringLiteral("the page was replaced or hidden; tab %1; %2").arg(routeTab(world), describe(world)));
   });
   step(QStringLiteral("there is one %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = tabKey(world, c[0]);
@@ -700,6 +727,41 @@ const Steps steps([] {
     fake(world).plugins[world.mc.environmentId].append(entry);
     announce(world);
     waitStatus(world, c[0], QStringLiteral("running"));
+  });
+  step(QStringLiteral("the plugin %1 declares a setting that takes JSON").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject entry = codeReview();
+    entry.insert(QStringLiteral("id"), c[0]);
+    entry.insert(QStringLiteral("name"), QStringLiteral("ntfy"));
+    entry.insert(QStringLiteral("runsCode"), false);
+    entry.insert(QStringLiteral("contributes"), QJsonObject());
+    entry.insert(QStringLiteral("settingsSchema"), QJsonArray{QJsonObject{{QStringLiteral("key"), QStringLiteral("topics")},
+                                                                          {QStringLiteral("type"), QStringLiteral("object")},
+                                                                          {QStringLiteral("label"), QStringLiteral("Topics")}}});
+    entry.insert(QStringLiteral("settings"), QJsonObject{{QStringLiteral("topics"), QJsonObject{{QStringLiteral("alerts"), true}}}});
+    fake(world).plugins[world.mc.environmentId].append(entry);
+    announce(world);
+    waitStatus(world, c[0], QStringLiteral("running"));
+  });
+  step(QStringLiteral("the user changes that setting to JSON that does not parse"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* page = waitNamed(world, QStringLiteral("pluginSettings"));
+    expect(QMetaObject::invokeMethod(page, "setJson", Q_ARG(QVariant, QStringLiteral("topics")), Q_ARG(QVariant, QStringLiteral("{\"alerts\": false}"))),
+           QStringLiteral("the settings page cannot be changed"));
+    expect(waitNamed(world, QStringLiteral("pluginSettingsSave"))->isEnabled(), QStringLiteral("a change that parses cannot be saved"));
+    QMetaObject::invokeMethod(page, "setJson", Q_ARG(QVariant, QStringLiteral("topics")), Q_ARG(QVariant, QStringLiteral("{\"alerts\": fa")));
+  });
+  step(QStringLiteral("the page says the setting is not valid JSON"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* unparsed = waitNamed(world, QStringLiteral("pluginSettingsUnparsed"));
+    expect(unparsed->property("text").toString().contains(QStringLiteral("Topics")), unparsed->property("text").toString());
+    expect(!named(world, QStringLiteral("pluginSettingsSave"))->isEnabled(), QStringLiteral("the stale value can be saved"));
+  });
+  step(QStringLiteral("it can be saved again once the JSON parses"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* page = waitNamed(world, QStringLiteral("pluginSettings"));
+    QMetaObject::invokeMethod(page, "setJson", Q_ARG(QVariant, QStringLiteral("topics")), Q_ARG(QVariant, QStringLiteral("{\"alerts\": false, \"news\": true}")));
+    clickItem(world, waitNamed(world, QStringLiteral("pluginSettingsSave")));
+    world.waitFor([&] { return !callsOf(world, QStringLiteral("plugins.saveSettings")).isEmpty(); }, QStringLiteral("the settings to be saved"));
+    const QJsonObject settings = callsOf(world, QStringLiteral("plugins.saveSettings")).first().payload.value(QLatin1String("settings")).toObject();
+    const QJsonObject wanted{{QStringLiteral("topics"), QJsonObject{{QStringLiteral("alerts"), false}, {QStringLiteral("news"), true}}}};
+    expect(settings == wanted, QStringLiteral("the MC was sent %1").arg(show(settings)));
   });
   step(QStringLiteral("the user opens the settings of %1").arg(q), [](World& world, const Captures& c, const Table&) { openSettings(world, c[0]); });
   step(QStringLiteral("the page shows a field for each declared setting"), [](World& world, const Captures&, const Table&) {

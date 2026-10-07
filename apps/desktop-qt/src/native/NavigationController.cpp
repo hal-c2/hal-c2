@@ -359,7 +359,12 @@ void NavigationController::followPages() {
   const bool several = listed.size() > 0;
   commands->setListed(QStringLiteral("tabs.next"), several);
   commands->setListed(QStringLiteral("tabs.previous"), several);
-  if (!tabs().contains(m_tab)) m_tab = kThreadsTab;
+  // A page's tab is keyed by its version, so an update keeps the user on the page.
+  if (const QStringList keys = tabs(); !keys.contains(m_tab)) {
+    const QString page = m_tab.section(QLatin1Char('@'), 0, 0) + QLatin1Char('@');
+    const auto same = std::find_if(keys.cbegin(), keys.cend(), [&](const QString& key) { return key.startsWith(page); });
+    m_tab = same != keys.cend() ? *same : kThreadsTab;
+  }
   publish();
 }
 

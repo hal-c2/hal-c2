@@ -2,35 +2,51 @@ import QtQuick
 import HalC2.Shell
 
 // The pages MC plugins add, one PluginPage per tab, the selected one shown.
-// The pages are made from their keys, so a republished list that keeps a
-// page keeps its PluginPage and the state in it.
+// The pages are made from their keys, and the list of keys is changed in place,
+// so a republished list that keeps a page keeps its PluginPage and the state in
+// it, whichever other tabs come or go.
 Item {
     id: pages
 
     readonly property var entries: Shell.state.mcPlugins?.pages ?? []
     readonly property string selected: Shell.state.route?.tab ?? "threads"
-    property var keys: []
 
     function entry(key) {
         return pages.entries.find(page => page.key === key) ?? ({ key: key });
     }
 
-    onEntriesChanged: {
+    function sync() {
         const next = pages.entries.map(page => page.key);
-        if (JSON.stringify(next) !== JSON.stringify(pages.keys))
-            pages.keys = next;
+        const kept = [];
+        for (let i = keys.count - 1; i >= 0; --i) {
+            const key = keys.get(i).key;
+            if (next.includes(key))
+                kept.push(key);
+            else
+                keys.remove(i);
+        }
+        for (const key of next) {
+            if (!kept.includes(key))
+                keys.append({ key: key });
+        }
     }
-    Component.onCompleted: keys = entries.map(page => page.key)
+
+    onEntriesChanged: sync()
+    Component.onCompleted: sync()
+
+    ListModel {
+        id: keys
+    }
 
     Repeater {
-        model: pages.keys
+        model: keys
 
         delegate: PluginPage {
-            required property string modelData
+            required property string key
 
             anchors.fill: parent
-            page: pages.entry(modelData)
-            selected: pages.selected === modelData
+            page: pages.entry(key)
+            selected: pages.selected === key
         }
     }
 }
