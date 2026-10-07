@@ -84,7 +84,7 @@ export const PluginSettingField = Schema.Union([
   Schema.Struct({
     ...SettingBase,
     type: Schema.Literal("number"),
-    default: Schema.optionalKey(Schema.Number),
+    default: Schema.optionalKey(Schema.Finite),
   }),
   Schema.Struct({
     ...SettingBase,
