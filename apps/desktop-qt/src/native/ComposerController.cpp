@@ -739,18 +739,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   // left of the thread's sends.
   m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.kept && unsent.target == target; });
   if (fromDraft && (!text.isEmpty() || !attachments.isEmpty() || !contexts.isEmpty())) {
-    std::optional<QString> after;
-    if (m_timeline && m_timeline->threadKey() == target && m_timeline->status() == QLatin1String("live")) {
-      QSet<QString> pending;
-      for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
-        if (unsent.target == target) pending.insert(unsent.messageId);
-      }
-      const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
-      after = newestUserMessage(messages, pending);
-      const QString delivered = m_kept.delivered.value(target);
-      if (!delivered.isEmpty() && !messages.contains(delivered)) after = delivered;
-    }
-    m_kept.unsent.append({target, target, messageId, after, text, attachments, contexts});
+    m_kept.unsent.append({target, target, messageId, newestBefore(target), text, attachments, contexts});
   }
   if (fromDraft) setText(target, QString(), 0);
   save();
@@ -1297,6 +1286,20 @@ void ComposerController::forgetUnsent(const QString& messageId) {
   if (m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.messageId == messageId; }) > 0) save();
 }
 
+// The thread's newest user message ahead of the sends still on their way to
+// it, once its messages are known.
+std::optional<QString> ComposerController::newestBefore(const QString& thread) const {
+  if (!m_timeline || m_timeline->threadKey() != thread || m_timeline->status() != QLatin1String("live")) return std::nullopt;
+  QSet<QString> pending;
+  for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
+    if (unsent.target == thread) pending.insert(unsent.messageId);
+  }
+  const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
+  const QString delivered = m_kept.delivered.value(thread);
+  if (!delivered.isEmpty() && !messages.contains(delivered)) return delivered;
+  return newestUserMessage(messages, pending);
+}
+
 // A kept send's fate shows once the thread's messages do: one the MC got is
 // there and is dropped; one behind a newer user message (another device's, or
 // this one's after the restart) is dropped too, as the user moved on. The
@@ -1304,6 +1307,19 @@ void ComposerController::forgetUnsent(const QString& messageId) {
 // that restores them once it is. A new thread's first send waits for the
 // shell to know whether the thread exists.
 void ComposerController::reconcileUnsent() {
+  // A send made before its thread's messages were known measures from when
+  // they are, so a newer message from elsewhere still drops it.
+  const auto unmeasured = [this](const Unsent& unsent) {
+    return !unsent.kept && !unsent.after && unsent.target == m_timeline->threadKey();
+  };
+  if (m_timeline && std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), unmeasured)) {
+    if (const std::optional<QString> newest = newestBefore(m_timeline->threadKey())) {
+      for (Unsent& unsent : m_kept.unsent) {
+        if (unmeasured(unsent)) unsent.after = newest;
+      }
+      save();
+    }
+  }
   if (!m_active || std::none_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [](const Unsent& u) { return u.kept; })) return;
   auto* drafts = NativeShell::of(this)->controller<DraftController>();
   const auto online = [this](const QString& key) {

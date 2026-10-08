@@ -274,8 +274,8 @@ private:
     // The thread it goes to, or a draft's launch makes.
     QString thread;
     QString messageId;
-    // The thread's newest user message when it was sent (empty for none);
-    // nothing when its messages were not known.
+    // The thread's newest user message when it was sent, or when its
+    // messages came in after (empty for none); nothing until they are known.
     std::optional<QString> after;
     QString prompt;
     QList<Attachment> attachments;
@@ -320,8 +320,10 @@ private:
   void forgetUnsent(const QString& messageId);
   // The kept sends from before a restart whose fate can now be told: a
   // thread's once its stream is live, a launch's once the shell knows
-  // whether its thread exists.
+  // whether its thread exists. Sends still on their way take the open
+  // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  std::optional<QString> newestBefore(const QString& thread) const;
   static QJsonObject excerptJson(const Excerpt& excerpt);
   static Excerpt excerptOf(const QJsonObject& kept);
   void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);

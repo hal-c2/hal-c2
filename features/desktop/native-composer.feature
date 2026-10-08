@@ -146,6 +146,22 @@ Feature: The desktop shell sends a thread's turns to its MC
       And the user sees no toast
 
     @desktop
+    Scenario: A prompt sent while its thread loads is dropped when the thread has a newer message
+      Given the MC holds its answers
+      And the MC is slow to send threads
+      And the composer shows "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC sends the thread
+      And the thread "t1" gets the user message "Done it another way" from another device
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the user sees no toast
+
+    @desktop
     Scenario: A new thread's first prompt cut off by a quit comes back to its draft
       Given the MC holds its answers
       And the user starts a new thread in "proj-1"

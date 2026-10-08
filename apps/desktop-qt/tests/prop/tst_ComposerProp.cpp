@@ -55,6 +55,7 @@ struct Send {
   QString delivery;  // auto, steer or queue
   bool refusedAtMc = false;  // what the MC holding it will answer
   bool superseded = false;   // a newer user message reached the thread since
+  bool measured = false;     // the thread's messages were known while it was on its way
 };
 
 // A "Failed to send message" or "A prompt was not sent" toast; what its
@@ -84,6 +85,10 @@ struct Model {
   // The sends a restart cut off that the MC never got, by thread, until the
   // thread is open again.
   QMap<QString, QList<Send>> limbo;
+  // The MC is slow to send threads: one opened now waits, unknown, until it does.
+  bool slow = false;
+  QSet<QString> loaded{QStringLiteral("t1")};
+  QSet<QString> waiting;
 
   int total() const {
     int count = 0;
@@ -138,6 +143,13 @@ void fail(Model& m, const QString& thread) {
     m.toasts.prepend({thread, restored, 0, true});
   }
   target.images += images;
+}
+
+// The open thread's messages are known: the sends on their way to it measure
+// newer messages from there.
+void measure(Model& m, const QString& thread) {
+  for (Send& send : m.queues[thread]) send.measured = true;
+  if (m.queues.value(thread).isEmpty()) m.queues.remove(thread);
 }
 
 // The thread is open after a restart: what the MC never got comes back,
@@ -232,6 +244,9 @@ struct Sut {
   // Each thread's user messages, as its stream sends them, and the stream's offset.
   QMap<QString, QList<QJsonObject>> messages;
   int seq = 0;
+  // While set, the MC is slow to send threads: each `sub` to one waits here.
+  bool slow = false;
+  QList<std::pair<int, QJsonObject>> waiting;
   // While set, what the MC answers never reached it: a restart cut it off.
   bool losing = false;
   // Those commands, by their place in mc.commands.
@@ -276,15 +291,11 @@ struct Sut {
     });
     // Each thread's messages, whole on every subscription, then as they come.
     mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) {
-      QJsonArray rows;
-      for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
-        rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
+      if (slow) {
+        waiting.append({id, shape});
+        return;
       }
-      mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
-               {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), seq},
-               {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
-      mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), seq},
-               {QStringLiteral("handle"), QStringLiteral("log-1")}});
+      sendThread(id, shape);
     });
     mc.effects.append([this](const QJsonObject& command) {
       if (losing || command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
@@ -294,6 +305,28 @@ struct Sut {
     draftId = native->controller<DraftController>()->start(mc.environmentId, QStringLiteral("p1"));
     open(QStringLiteral("t1"));
     settle(0);
+  }
+
+  // A thread's messages, whole, then as they come.
+  void sendThread(int id, const QJsonObject& shape) {
+    QJsonArray rows;
+    for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
+      rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
+    }
+    mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
+             {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), seq},
+             {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), seq},
+             {QStringLiteral("handle"), QStringLiteral("log-1")}});
+  }
+
+  // The MC sends the threads it was slow to.
+  void load() {
+    slow = false;
+    const QList<int> following = mc.subscribers(QStringLiteral("stream"));
+    for (const auto& [id, shape] : std::exchange(waiting, {})) {
+      if (following.contains(id)) sendThread(id, shape);
+    }
   }
 
   ~Sut() {
@@ -341,6 +374,8 @@ struct Sut {
     if (!mc.connected()) return;
     for (const int sub : mc.subscribers(QStringLiteral("stream"))) {
       if (mc.shapeOf(sub).value(QLatin1String("stream")).toString() != thread) continue;
+      // One the MC has not sent the thread yet gets it whole when it does.
+      if (std::any_of(waiting.cbegin(), waiting.cend(), [sub](const auto& wait) { return wait.first == sub; })) continue;
       mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), sub}, {QStringLiteral("offset"), seq},
                {QStringLiteral("events"), QJsonArray{QJsonArray{seq, QStringLiteral("message"), id,
                                                                 QJsonObject{{QStringLiteral("s"), message}}, at}}}});
@@ -354,6 +389,8 @@ struct Sut {
     native.reset();
     bridge.reset();
     RC_ASSERT(prop::until([this] { return !mc.connected(); }));
+    slow = false;
+    waiting.clear();
     if (!held.isEmpty()) {
       for (const QString& thread : held) {
         for (qsizetype i = mc.commands.size() - 1; i >= 0; --i) {
@@ -448,7 +485,7 @@ struct Sut {
 // What the app shows agrees with the model.
 void verify(const Model& m, Sut& sut) {
   // An open thread's messages are known: what a restart cut off is settled.
-  if (m.isThread(m.open)) {
+  if (m.loaded.contains(m.open)) {
     RC_ASSERT(prop::until([&] {
       const auto* timeline = sut.native->controller<ThreadStore>()->timeline(keyOf(m.open));
       return timeline && timeline->status() == QLatin1String("live");
@@ -479,7 +516,15 @@ struct Open : Command {
   QString target = pick(kThreads + QStringList{kDraft});
   void apply(Model& m) const override {
     m.open = target;
-    if (m.isThread(target)) settleLimbo(m, target);
+    if (!m.isThread(target)) return;
+    if (!m.slow) {
+      m.loaded.insert(target);
+    } else if (!m.loaded.contains(target)) {
+      m.waiting.insert(target);
+      return;
+    }
+    measure(m, target);
+    settleLimbo(m, target);
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.open(target);
@@ -566,6 +611,7 @@ struct Submit : Command {
                                                           : QStringLiteral("steer");
     QList<Send>& queue = m.queues[m.open];
     queue.append({target.text, target.images, target.model, target.runtime, delivery});
+    if (m.loaded.contains(m.open)) measure(m, m.open);
     m.lastModel = target.model.isEmpty() ? kModels.first() : target.model;
     // Newer than what a restart cut off.
     m.limbo.remove(m.open);
@@ -716,6 +762,8 @@ struct Drop : Command {
   void apply(Model& m) const override {
     m.holding = false;
     for (const QString& thread : std::exchange(m.held, {})) fail(m, thread);
+    // The threads followed are asked for again, and a slow MC keeps them waiting.
+    if (m.slow) m.waiting.unite(std::exchange(m.loaded, {}));
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.mc.drop();
@@ -738,9 +786,10 @@ struct Elsewhere : Command {
     thread = pending.isEmpty() || *rc::gen::arbitrary<bool>() ? pick(kThreads) : pick(pending);
   }
   void apply(Model& m) const override {
-    for (Send& send : m.queues[thread]) send.superseded = true;
+    // Only a send that knows the thread's messages from before can tell.
+    for (Send& send : m.queues[thread]) send.superseded = send.superseded || send.measured;
     if (m.queues.value(thread).isEmpty()) m.queues.remove(thread);
-    for (Send& send : m.limbo[thread]) send.superseded = true;
+    for (Send& send : m.limbo[thread]) send.superseded = send.superseded || send.measured;
     if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -772,7 +821,13 @@ struct Restart : Command {
       if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
       m.holding = false;
     }
-    if (m.isThread(m.open)) settleLimbo(m, m.open);
+    m.slow = false;
+    m.waiting.clear();
+    m.loaded.clear();
+    if (m.isThread(m.open)) {
+      m.loaded.insert(m.open);
+      settleLimbo(m, m.open);
+    }
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.restart(m0.held, received);
@@ -782,6 +837,34 @@ struct Restart : Command {
   void show(std::ostream& os) const override {
     os << "Restart(" << (received ? "the MC got what it held" : "the MC never got what it held") << ")";
   }
+};
+
+// The MC is slow to send threads: one opened now is not known until Load.
+struct Slow : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.slow); }
+  void apply(Model& m) const override { m.slow = true; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.slow = true;
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Slow"; }
+};
+
+// The MC sends the threads it was slow to.
+struct Load : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.slow); }
+  void apply(Model& m) const override {
+    m.slow = false;
+    m.loaded.unite(std::exchange(m.waiting, {}));
+    if (!m.loaded.contains(m.open)) return;
+    measure(m, m.open);
+    settleLimbo(m, m.open);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.load();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Load"; }
 };
 
 }  // namespace
@@ -801,7 +884,7 @@ private slots:
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime, Submit,
                                                    Submit, Submit, Stash, RestorePrompt, SetRunning, SetRunning, Hold, Refuse,
-                                                   AnswerHeld, Drop, Hold, Elsewhere, Restart>()));
+                                                   AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow, Load>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
@@ -824,7 +907,35 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Type, Attach, PickRuntime, Prompt, Prompt, Prompt, Submit, Hold, Hold, Refuse,
-                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart>()));
+                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart, Slow, Load>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // The same, with sends made before their thread's messages are known: a
+  // newer message from elsewhere once they are still drops them.
+  void sendsWhileTheThreadLoads() {
+    QVERIFY(rc::check("a send made while its thread loads is dropped by a newer message from elsewhere, else comes back", [] {
+      Sut sut;
+      Model model;
+      verify(model, sut);
+      // The MC holds its answers and is slow to send the thread opened, and
+      // a prompt goes to it.
+      Hold().run(model, sut);
+      Hold().apply(model);
+      Slow().run(model, sut);
+      Slow().apply(model);
+      Open open;
+      open.target = kThreads.at(1);
+      open.run(model, sut);
+      open.apply(model);
+      Prompt prompt;
+      prompt.run(model, sut);
+      prompt.apply(model);
+      const auto commands = *rc::gen::scale(
+          0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, Prompt, Prompt, Hold, AnswerHeld, Elsewhere, Elsewhere, Restart,
+                                                   Restart, Slow, Load, Load>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

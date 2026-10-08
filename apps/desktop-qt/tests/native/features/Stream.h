@@ -13,6 +13,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 #include "Harness.h"
@@ -68,6 +69,10 @@ struct FakeStreams {
   // A catch-up is sent in two parts, and the connection drops after the
   // first, once.
   bool cutCatchUp = false;
+  // While set, a `sub` to a stream waits for its answer in `waiting`: the
+  // thread loads slowly.
+  bool slow = false;
+  QList<std::function<void()>> waiting;
   // Environments that are down (a cluster member that left): a stream on one
   // is refused.
   QSet<QString> offline;
