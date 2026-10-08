@@ -154,12 +154,39 @@ signals:
   void revealRow(int row);
 
 private:
+  // What the properties' signals cover: each public change and each answer
+  // compares them before and after, so a signal fires once when its property
+  // changed and never otherwise.
+  struct Facts {
+    QVariantList choices;
+    int latestTurn = 0;
+    int selection = -1;
+    int shownTurn = 0;
+    bool reviewing = false;
+    QString status;
+    QString message;
+    QString focus;
+    int fileTotal = 0;
+    QString baseRef;
+    QString comparedBase;
+    QString comparedHead;
+    bool truncated = false;
+    bool canRevert = false;
+    int revertTurn = 0;
+    bool reverting = false;
+  };
+  Facts facts() const;
+  void tell(const Facts& before);
+
+  // The timeline's checkpoints changed.
   void readCheckpoints();
+  void takeCheckpoints();
   // The selection shown: the working tree stands in for the latest turn of a
   // thread that has none.
   int effectiveSelection() const;
   void loadReview(int selection);
   void load();
+  // Sets the status; the caller tells (statusChanged) once it is done.
   void setStatus(const QString& status, const QString& message = {});
   // Puts the loaded patch, or its focused file, in the model.
   void present();

@@ -9,9 +9,28 @@
 ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
     : QObject(parent), m_client(client), m_notify(std::move(notify)) {}
 
+ThreadDiff::Facts ThreadDiff::facts() const {
+  return {choices(), latestTurn(), m_selection, shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
+          m_comparedHead, m_truncated, canRevert(), m_revertTurn, m_reverting};
+}
+
+void ThreadDiff::tell(const Facts& before) {
+  const Facts now = facts();
+  if (now.choices != before.choices || now.latestTurn != before.latestTurn) emit turnsChanged();
+  if (now.selection != before.selection || now.shownTurn != before.shownTurn || now.reviewing != before.reviewing) emit selectionChanged();
+  if (now.status != before.status || now.message != before.message) emit statusChanged();
+  if (now.focus != before.focus || now.fileTotal != before.fileTotal) emit focusChanged();
+  if (now.baseRef != before.baseRef || now.comparedBase != before.comparedBase || now.comparedHead != before.comparedHead ||
+      now.truncated != before.truncated) {
+    emit reviewChanged();
+  }
+  if (now.canRevert != before.canRevert || now.revertTurn != before.revertTurn || now.reverting != before.reverting) emit revertChanged();
+}
+
 void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline) {
   const bool sameThread = environmentId == m_environment && threadId == m_threadId;
   if (sameThread && timeline == m_timeline) return;
+  const Facts before = facts();
   if (!sameThread) {
     m_environment = environmentId;
     m_threadId = threadId;
@@ -21,15 +40,13 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     m_patch.clear();
     m_focus.clear();
     m_fileTotal = 0;
-    emit focusChanged();
     m_model.clear();
+    m_comparedBase.clear();
+    m_comparedHead.clear();
+    m_truncated = false;
     m_revertTurn = 0;
     m_reverting = false;
-    emit revertChanged();
-    if (m_selection != -1) {
-      m_selection = -1;
-      emit selectionChanged();
-    }
+    m_selection = -1;
     setStatus(QStringLiteral("idle"));
   }
   disconnect(m_checkpointsConnection);
@@ -39,15 +56,18 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     m_checkpointsConnection = connect(timeline, &TimelineModel::checkpointsChanged, this, &ThreadDiff::readCheckpoints);
     m_workingConnection = connect(timeline, &TimelineModel::workingChanged, this, &ThreadDiff::revertChanged);
   }
-  readCheckpoints();
+  takeCheckpoints();
+  tell(before);
 }
 
 void ThreadDiff::setCheckout(const QString& cwd) {
   if (cwd == m_cwd) return;
+  const Facts before = facts();
   m_cwd = cwd;
-  emit turnsChanged();
-  emit selectionChanged();
+  // Without a checkout there is nothing to review.
+  if (m_cwd.isEmpty() && m_selection <= WorkingTree) m_selection = -1;
   load();
+  tell(before);
 }
 
 int ThreadDiff::effectiveSelection() const {
@@ -58,17 +78,26 @@ int ThreadDiff::effectiveSelection() const {
 void ThreadDiff::setBaseRef(const QString& ref) {
   const QString next = ref.trimmed();
   if (next == m_baseRef) return;
+  const Facts before = facts();
   m_baseRef = next;
-  emit reviewChanged();
   load();
+  tell(before);
 }
 
 void ThreadDiff::setActive(bool active) {
+  const Facts before = facts();
   m_active = active;
   load();
+  tell(before);
 }
 
 void ThreadDiff::readCheckpoints() {
+  const Facts before = facts();
+  takeCheckpoints();
+  tell(before);
+}
+
+void ThreadDiff::takeCheckpoints() {
   QMap<int, QJsonObject> turns;
   if (m_timeline) {
     const QHash<QString, QJsonObject> checkpoints = m_timeline->entities(QStringLiteral("checkpoint"));
@@ -79,18 +108,10 @@ void ThreadDiff::readCheckpoints() {
       turns.insert(ordinal.toInt(), checkpoint);
     }
   }
-  if (turns != m_turns) {
-    m_turns = turns;
-    emit turnsChanged();
-    // A first turn takes the working tree's place as what opens.
-    emit selectionChanged();
-    emit revertChanged();
-    // A turn that went away (rewound) leaves the picker on the latest one.
-    if (m_selection > 0 && !m_turns.contains(m_selection)) {
-      m_selection = -1;
-      emit selectionChanged();
-    }
-  }
+  m_turns = turns;
+  // A turn that went away (rewound) leaves the picker on the latest one, as
+  // does all changes once no turn is left.
+  if ((m_selection > 0 && !m_turns.contains(m_selection)) || (m_selection == 0 && m_turns.isEmpty())) m_selection = -1;
   load();
 }
 
@@ -113,14 +134,17 @@ QVariantList ThreadDiff::choices() const {
 
 void ThreadDiff::select(int selection) {
   if (selection > 0 && !m_turns.contains(selection)) return;
-  if (selection < Branch || (selection <= WorkingTree && m_cwd.isEmpty())) selection = -1;
+  if (selection < Branch || (selection <= WorkingTree && m_cwd.isEmpty()) || (selection == 0 && m_turns.isEmpty())) selection = -1;
   if (selection == m_selection) return;
+  const Facts before = facts();
   m_selection = selection;
-  // Another selection is shown whole.
-  m_focus.clear();
-  emit selectionChanged();
-  emit focusChanged();
+  // Another selection is shown whole, even when it is the same diff.
+  if (!m_focus.isEmpty()) {
+    m_focus.clear();
+    if (m_status == QLatin1String("ready")) present();
+  }
   load();
+  tell(before);
 }
 
 void ThreadDiff::selectRun(const QString& runId) {
@@ -139,18 +163,22 @@ int ThreadDiff::shownTurn() const {
 
 void ThreadDiff::setIgnoreWhitespace(bool ignore) {
   if (ignore == ignoreWhitespace()) return;
+  const Facts before = facts();
   m_ignoreWhitespace = ignore;
   emit optionsChanged();
   load();
+  tell(before);
 }
 
 void ThreadDiff::setDefaultIgnoreWhitespace(bool ignore) {
   if (ignore == m_defaultIgnoreWhitespace) return;
-  const bool before = ignoreWhitespace();
+  const bool was = ignoreWhitespace();
   m_defaultIgnoreWhitespace = ignore;
-  if (ignoreWhitespace() == before) return;
+  if (ignoreWhitespace() == was) return;
+  const Facts before = facts();
   emit optionsChanged();
   load();
+  tell(before);
 }
 
 void ThreadDiff::setDefaultWrap(bool wrap) {
@@ -167,31 +195,44 @@ void ThreadDiff::setWrap(bool wrap) {
 }
 
 void ThreadDiff::setStatus(const QString& status, const QString& message) {
-  if (status == m_status && message == m_message) return;
   m_status = status;
   m_message = message;
-  emit statusChanged();
 }
 
 QString ThreadDiff::loadKey() const {
   if (reviewing()) {
-    return QStringLiteral("%1:%2 review %3 %4 %5 %6").arg(m_environment, m_threadId).arg(effectiveSelection()).arg(m_cwd, m_baseRef).arg(ignoreWhitespace());
+    const int selection = effectiveSelection();
+    return QStringLiteral("%1:%2 review %3 %4 %5 %6")
+        .arg(m_environment, m_threadId)
+        .arg(selection)
+        .arg(m_cwd, selection == Branch ? m_baseRef : QString())
+        .arg(ignoreWhitespace());
   }
-  return QStringLiteral("%1:%2 %3 %4 %5")
+  // The checkpoints the diff is between: a rewound turn's number comes back
+  // with another checkpoint, and one being written becomes ready later.
+  const int to = m_selection == 0 ? latestTurn() : shownTurn();
+  const QString from = m_selection == 0 ? QString() : m_turns.value(to - 1).value(QLatin1String("id")).toString();
+  return QStringLiteral("%1:%2 %3 %4 %5 %6 %7")
       .arg(m_environment, m_threadId)
       .arg(m_selection == 0 ? QStringLiteral("all") : QStringLiteral("turn"))
-      .arg(m_selection == 0 ? latestTurn() : shownTurn())
+      .arg(to)
+      .arg(from, m_turns.value(to).value(QLatin1String("id")).toString())
       .arg(ignoreWhitespace());
 }
 
 void ThreadDiff::reload() {
+  const Facts before = facts();
   m_loaded.clear();
   load();
+  tell(before);
 }
 
 void ThreadDiff::load() {
   if (!m_active || m_threadId.isEmpty()) return;
   if (!m_timeline) {
+    // What is shown is asked for again once the timeline comes.
+    ++m_request;
+    m_loaded.clear();
     setStatus(QStringLiteral("loading"), QStringLiteral("Loading checkpoint diff..."));
     return;
   }
@@ -203,6 +244,7 @@ void ThreadDiff::load() {
     ++m_request;
     m_loaded.clear();
     m_patch.clear();
+    m_fileTotal = 0;
     m_model.clear();
     setStatus(QStringLiteral("empty"), QStringLiteral("No completed turns yet."));
     return;
@@ -225,12 +267,15 @@ void ThreadDiff::load() {
   setStatus(QStringLiteral("loading"), QStringLiteral("Loading checkpoint diff..."));
   m_client->call(this, m_environment, method, payload, [this, request](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
+    const Facts before = facts();
     if (error) {
       // Asking again (reload, another turn) tries once more.
       m_loaded.clear();
       m_patch.clear();
+      m_fileTotal = 0;
       m_model.clear();
       setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      tell(before);
       return;
     }
     m_patch = result.toObject().value(QLatin1String("diff")).toString();
@@ -240,6 +285,7 @@ void ThreadDiff::load() {
     } else {
       setStatus(QStringLiteral("ready"));
     }
+    tell(before);
     if (!m_pendingReveal.isEmpty()) revealFile(std::exchange(m_pendingReveal, QString()));
   });
 }
@@ -256,11 +302,14 @@ void ThreadDiff::loadReview(int selection) {
   m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
                  [this, request, selection](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
+    const Facts before = facts();
     if (error) {
       m_loaded.clear();
       m_patch.clear();
+      m_fileTotal = 0;
       m_model.clear();
       setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      tell(before);
       return;
     }
     const QString kind = selection == Branch ? QStringLiteral("branch-range") : QStringLiteral("working-tree");
@@ -271,7 +320,6 @@ void ThreadDiff::loadReview(int selection) {
     m_comparedBase = source.value(QLatin1String("baseRef")).toString();
     m_comparedHead = source.value(QLatin1String("headRef")).toString();
     m_truncated = source.value(QLatin1String("truncated")).toBool();
-    emit reviewChanged();
     m_patch = source.value(QLatin1String("diff")).toString();
     present();
     if (m_model.fileCount() > 0) {
@@ -282,6 +330,7 @@ void ThreadDiff::loadReview(int selection) {
     } else {
       setStatus(QStringLiteral("empty"), QStringLiteral("No uncommitted changes."));
     }
+    tell(before);
     if (!m_pendingReveal.isEmpty()) revealFile(std::exchange(m_pendingReveal, QString()));
   });
 }
@@ -303,14 +352,14 @@ void ThreadDiff::present() {
       m_focus.clear();
     }
   }
-  emit focusChanged();
 }
 
 void ThreadDiff::focusFile(const QString& path) {
   if (path == m_focus) return;
+  const Facts before = facts();
   m_focus = path;
   if (m_status == QLatin1String("ready")) present();
-  emit focusChanged();
+  tell(before);
 }
 
 bool ThreadDiff::comment(const QString& path, const QString& side, int first, int last, const QString& note) {
@@ -357,25 +406,28 @@ bool ThreadDiff::canRevert() const {
 void ThreadDiff::requestRevert(int turn) {
   if (turn <= 0) turn = shownTurn() > 0 ? shownTurn() : latestTurn();
   if (!canRevert() || !m_turns.contains(turn)) return;
+  const Facts before = facts();
   m_revertTurn = turn;
-  emit revertChanged();
+  tell(before);
 }
 
 void ThreadDiff::cancelRevert() {
   if (m_revertTurn == 0) return;
+  const Facts before = facts();
   m_revertTurn = 0;
-  emit revertChanged();
+  tell(before);
 }
 
 void ThreadDiff::confirmRevert(bool restoreFiles) {
+  const Facts before = facts();
   const int turn = std::exchange(m_revertTurn, 0);
   if (turn == 0 || !m_turns.contains(turn) || !canRevert()) {
-    emit revertChanged();
+    tell(before);
     return;
   }
   const QJsonObject checkpoint = m_turns.value(turn);
   m_reverting = true;
-  emit revertChanged();
+  tell(before);
   const QString threadId = m_threadId;
   m_client->dispatchCommand(this, m_environment,
                             {{QStringLiteral("type"), QStringLiteral("checkpoint.rollback")},
@@ -385,8 +437,9 @@ void ThreadDiff::confirmRevert(bool restoreFiles) {
                              {QStringLiteral("restoreFiles"), restoreFiles}},
                             [this, turn, threadId](const QJsonValue&, const std::optional<QString>& error) {
                               if (threadId == m_threadId) {
+                                const Facts before = facts();
                                 m_reverting = false;
-                                emit revertChanged();
+                                tell(before);
                               }
                               if (error) {
                                 m_notify(QStringLiteral("error"), QStringLiteral("Could not revert to turn %1").arg(turn),

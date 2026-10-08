@@ -106,6 +106,7 @@ public:
 signals:
   void patchChanged();
   void splitChanged();
+  // allExpanded changed.
   void expansionChanged();
 
 private:
@@ -143,6 +144,8 @@ private:
   };
 
   void parse();
+  // Inserts or removes the file's rows; the callers say when allExpanded changes.
+  void expandOne(int file, bool expand);
   void ensureLines(File& file);
   void pairLines(File& file) const;
   int linesShown(const File& file) const;

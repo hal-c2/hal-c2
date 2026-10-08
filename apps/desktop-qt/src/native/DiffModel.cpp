@@ -41,6 +41,7 @@ void DiffModel::setPatch(const QString& patch) {
   if (patch == m_patch) {
     return;
   }
+  const bool allBefore = allExpanded();
   beginResetModel();
   m_patch = patch;
   parse();
@@ -57,7 +58,9 @@ void DiffModel::setPatch(const QString& patch) {
   rebuildRows();
   endResetModel();
   emit patchChanged();
-  emit expansionChanged();
+  if (allExpanded() != allBefore) {
+    emit expansionChanged();
+  }
 }
 
 void DiffModel::parse() {
@@ -339,6 +342,14 @@ void DiffModel::toggle(int file) {
 }
 
 void DiffModel::setExpanded(int file, bool expand) {
+  const bool allBefore = allExpanded();
+  expandOne(file, expand);
+  if (allExpanded() != allBefore) {
+    emit expansionChanged();
+  }
+}
+
+void DiffModel::expandOne(int file, bool expand) {
   if (file < 0 || file >= fileCount() || m_files[size_t(file)].expanded == expand) {
     return;
   }
@@ -369,18 +380,25 @@ void DiffModel::setExpanded(int file, bool expand) {
   }
   const QModelIndex at = index(header);
   emit dataChanged(at, at, {ExpandedRole});
-  emit expansionChanged();
 }
 
 void DiffModel::expandAll() {
+  const bool allBefore = allExpanded();
   for (int f = 0; f < fileCount(); ++f) {
-    setExpanded(f, true);
+    expandOne(f, true);
+  }
+  if (!allBefore) {
+    emit expansionChanged();
   }
 }
 
 void DiffModel::collapseAll() {
+  const bool allBefore = allExpanded();
   for (int f = 0; f < fileCount(); ++f) {
-    setExpanded(f, false);
+    expandOne(f, false);
+  }
+  if (allExpanded() != allBefore) {
+    emit expansionChanged();
   }
 }
 
