@@ -60,6 +60,8 @@ holding it and its fakes), and one `rc::state::Command<Model, Sut>` per call:
 - `RC_ASSERT` and `RC_PRE` take their expression apart to print it, overloading
   `&&` and `||`, so neither short-circuits: `RC_ASSERT(found && found->ok)`
   dereferences an empty `found`. Assert the guard first, then what it guards.
+  For the same reason `RC_PRE(ptr != nullptr)` prints `*ptr`, and crashes on the
+  null it was guarding against: write `RC_PRE(bool(ptr))`.
 - Draw ids from small pools (`rc::gen::elementOf`) so commands collide, and bound
   nested generators (`rc::gen::resize`, `rc::gen::container(n, ...)`).
 - Include the events that break things in production: the MC dropping and
