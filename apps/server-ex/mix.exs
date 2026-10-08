@@ -103,6 +103,11 @@ defmodule HalC2.MixProject do
   # `mix prop [mix test args]` runs the stateful property tests in prop/. They are
   # GPL-3.0 because PropCheck is, so they stay out of `mix test` and every release.
   defp prop(args) do
+    # A MIX_ENV naming another environment loaded the project there, so `test/`
+    # would run with PropCheck's environment instead of `prop/`.
+    if System.get_env("MIX_ENV") not in [nil, "prop"],
+      do: Mix.raise("mix prop runs in the prop environment; unset MIX_ENV or set it to prop")
+
     Mix.env(:prop)
     # `mix test` refuses an environment other than :test unless MIX_ENV names it.
     System.put_env("MIX_ENV", "prop")
