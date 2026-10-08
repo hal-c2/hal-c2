@@ -150,6 +150,8 @@ private:
   void setPhase(Phase phase);
   void onMessage(const QString& text);
   void onClosed(QWebSocket* socket);
+  // Answers every call in flight with "disconnected".
+  void failCalls();
   void sendSub(int id);
   void send(const QJsonObject& message);
 
