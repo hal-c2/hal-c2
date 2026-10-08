@@ -187,8 +187,13 @@ void AgentsModel::updateTimer() {
   } else {
     m_timer.stop();
   }
+  const QDateTime now = m_now().toLocalTime();
+  // Past midnight before the timer fired (the desktop slept): yesterday's end times
+  // are redrawn before it waits for the next.
+  if (m_dayTimer.isActive() && m_nextDay <= now && !m_rows.isEmpty()) {
+    emit dataChanged(index(0), index(int(m_rows.size()) - 1), {EndedRole});
+  }
   if (m_active && !m_rows.isEmpty()) {
-    const QDateTime now = m_now().toLocalTime();
     m_nextDay = QDateTime(now.date().addDays(1), QTime(0, 0));
     m_dayTimer.start(std::max<qint64>(now.msecsTo(m_nextDay), 1000));
   } else {

@@ -222,6 +222,18 @@ Feature: Plans and subagents
     Then the Agents tab redraws when each subagent ended
     And "Tax tests" is shown to have ended "Completed yesterday at 9:59 AM"
 
+  # A laptop asleep over midnight wakes to a stream update before its timer fires.
+  @desktop
+  Scenario: The Agents tab's end times follow the day when the desktop wakes after midnight
+    Given the agent started the subagent "Tax tests" 120 seconds ago
+    And "Tax tests" finished 85 seconds after it started
+    And the agent started the subagent "Lint" 5 seconds ago
+    When the user opens the Agents tab
+    And the day turns over while the desktop sleeps
+    And the subagent finishes with "lint clean"
+    Then the Agents tab redraws when each subagent ended
+    And "Tax tests" is shown to have ended "Completed yesterday at 9:59 AM"
+
   @desktop
   Scenario: The Agents tab tells the time as the user set it
     Given the agent started the subagent "Docs" 90 seconds ago

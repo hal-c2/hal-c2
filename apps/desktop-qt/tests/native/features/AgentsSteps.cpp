@@ -47,6 +47,20 @@ QString describeAgents(World& world) {
            agents(world).ticking() ? QStringLiteral(", ticking") : QString());
 }
 
+// The next local midnight the Agents tab waits for, a second past it; counts the end
+// times it redraws from then on.
+QDateTime pastMidnight(World& world) {
+  const QDateTime midnight(world.now().toLocalTime().date().addDays(1), QTime(0, 0));
+  expect(agents(world).nextDay() == midnight,
+         QStringLiteral("the end times are next redrawn at %1, not midnight; %2").arg(agents(world).nextDay().toString(Qt::ISODate), describeAgents(world)));
+  std::shared_ptr<int> redraws = world.mc.part<FakeAgents>().endedRedraws;
+  QObject::connect(&agents(world), &QAbstractItemModel::dataChanged, &agents(world),
+                   [redraws](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                     if (roles.contains(AgentsModel::EndedRole)) ++*redraws;
+                   });
+  return midnight.addSecs(1);
+}
+
 int rowTitled(World& world, const QString& title) {
   AgentsModel& model = agents(world);
   for (int row = 0; row < model.rowCount(); ++row) {
@@ -164,16 +178,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the day turns over"), [](World& world, const Captures&, const Table&) {
     // The model's own midnight timer, without waiting for midnight.
-    const QDateTime midnight(world.now().toLocalTime().date().addDays(1), QTime(0, 0));
-    expect(agents(world).nextDay() == midnight,
-           QStringLiteral("the end times are next redrawn at %1, not midnight; %2").arg(agents(world).nextDay().toString(Qt::ISODate), describeAgents(world)));
-    std::shared_ptr<int> redraws = world.mc.part<FakeAgents>().endedRedraws;
-    QObject::connect(&agents(world), &QAbstractItemModel::dataChanged, &agents(world),
-                     [redraws](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
-                       if (roles.contains(AgentsModel::EndedRole)) ++*redraws;
-                     });
-    world.setTime(midnight.addSecs(1));
+    world.setTime(pastMidnight(world));
     agents(world).redrawEnded();
+  });
+  step(QStringLiteral("the day turns over while the desktop sleeps"), [](World& world, const Captures&, const Table&) {
+    // Midnight passed, and the midnight timer has yet to fire.
+    world.setTime(pastMidnight(world));
   });
   step(QStringLiteral("the Agents tab redraws when each subagent ended"), [](World& world, const Captures&, const Table&) {
     expect(*world.mc.part<FakeAgents>().endedRedraws > 0, describeAgents(world));
