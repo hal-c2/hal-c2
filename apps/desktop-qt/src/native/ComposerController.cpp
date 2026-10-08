@@ -1,6 +1,7 @@
 #include "ComposerController.h"
 
 #include <QBuffer>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
@@ -9,6 +10,7 @@
 #include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -2767,8 +2769,10 @@ void ComposerController::save() const {
                              {QStringLiteral("attachments"), images},
                              {QStringLiteral("terminalContexts"), contexts}});
   }
-  QFile file(m_kept.path);
-  if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+  // Whole or not at all: a write cut short would lose every thread's draft.
+  QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
+  QSaveFile file(m_kept.path);
+  if (file.open(QIODevice::WriteOnly)) {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
     if (!m_kept.lastInstance.isEmpty()) {
@@ -2778,6 +2782,7 @@ void ComposerController::save() const {
       stored.insert(QStringLiteral("lastModels"), lastModels);
     }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
+    file.commit();
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;
@@ -2788,12 +2793,13 @@ void ComposerController::save() const {
   }
   const QString joined = imagesSignature(images);
   if (joined == m_kept.images) return;
-  m_kept.images = joined;
-  QFile imagesFile(imagesPath());
   if (images.isEmpty()) {
-    imagesFile.remove();
+    if (QFile::remove(imagesPath()) || !QFile::exists(imagesPath())) m_kept.images = joined;
     return;
   }
-  if (!imagesFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+  QSaveFile imagesFile(imagesPath());
+  if (!imagesFile.open(QIODevice::WriteOnly)) return;
   imagesFile.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), images}}).toJson(QJsonDocument::Compact));
+  // Remembered once written, so a failed write is tried again on the next save.
+  if (imagesFile.commit()) m_kept.images = joined;
 }
