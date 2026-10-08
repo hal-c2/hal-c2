@@ -543,6 +543,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "failed"))
   end
 
+  step "the plugin looks at the pull requests again", context do
+    refresh(context)
+  end
+
+  step "the review of \#{int} is still the failed one", %{args: [number]} = context do
+    review = Enum.find(context.snapshot["reviews"], &(&1["number"] == number))
+    assert %{"status" => "failed"} = review
+    assert review["threadId"] == context.review["threadId"]
+    context
+  end
+
   step "the user retries the review of \#{int}", %{args: [number]} = context do
     {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
     assert {:ok, snapshot} = reply
@@ -584,7 +595,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert review["error"] =~ "code-review restarted"
-    assert review["threadId"] == context.thread
+    assert review["threadId"] == context.review["threadId"]
     context
   end
 

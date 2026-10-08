@@ -208,6 +208,15 @@ Feature: Agent code review
       Then a new review of #12 starts
 
     @mc
+    Scenario: A review that could not start is not tried again on its own
+      Given "code-review" watches "acme/api" automatically
+      And "code-review" reviews with an agent the MC does not have
+      When the pull request #12 is opened on "acme/api"
+      Then the review of #12 is failed saying there is no such agent
+      When the plugin looks at the pull requests again
+      Then the review of #12 is still the failed one
+
+    @mc
     Scenario: Retrying a review that is running leaves the run it has
       Given a review of #12 is running
       When the user retries the review of #12

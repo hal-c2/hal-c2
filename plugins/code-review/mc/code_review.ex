@@ -662,6 +662,11 @@ defmodule HalC2Plugins.CodeReview do
         asked? ->
           queue(state, review, "command")
 
+        # A run that could not start waits for the user's retry or a new push, rather
+        # than starting again at every look.
+        known && known["status"] == "failed" && known["headSha"] == pr["headSha"] ->
+          put(state, review)
+
         reviewed == nil ->
           if trigger, do: queue(state, review, trigger), else: put(state, review)
 
