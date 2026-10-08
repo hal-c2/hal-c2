@@ -234,18 +234,34 @@ bool NavigationController::openLink(const QUrl& url) {
 
 void NavigationController::back() {
   const Route from = m_route;
-  go(m_backStack.isEmpty() ? Route() : m_backStack.takeLast(), true);
+  go(takeReachable(m_backStack).value_or(Route()), true);
   if (m_route != from) m_forwardStack.append(from);
 }
 
 // Where back left, as the browser's forward: gone once the user goes
 // somewhere new.
 void NavigationController::forward() {
-  if (m_forwardStack.isEmpty()) return;
-  const Route to = m_forwardStack.takeLast();
   QList<Route> rest = m_forwardStack;
-  go(to, false);
+  const auto to = takeReachable(rest);
+  if (!to) {
+    m_forwardStack.clear();
+    return;
+  }
+  go(*to, false);
   m_forwardStack = rest;
+}
+
+std::optional<NavigationController::Route> NavigationController::takeReachable(QList<Route>& stack) const {
+  while (!stack.isEmpty()) {
+    Route route = stack.takeLast();
+    if (!route.threadKey.isEmpty()) route.threadKey = m_store->located(route.threadKey);
+    // A thread deleted since; one on an environment the MC does not serve may come back.
+    const bool gone = route.kind == QLatin1String("thread") &&
+                      m_store->servesEnvironment(route.threadKey.section(QLatin1Char(':'), 0, 0)) &&
+                      !m_store->thread(route.threadKey);
+    if (!gone && route != m_route) return route;
+  }
+  return std::nullopt;
 }
 
 void NavigationController::go(const Route& to, bool replace) {
@@ -263,7 +279,8 @@ void NavigationController::go(const Route& to, bool replace) {
     if (route.kind != QLatin1String("settings")) m_search.clear();
     const bool settingsToSettings =
         route.kind == QLatin1String("settings") && m_route.kind == QLatin1String("settings");
-    if (!replace) m_forwardStack.clear();
+    // Landing from home (back past the oldest place) keeps where back left.
+    if (!replace && !passesThrough(m_route)) m_forwardStack.clear();
     if (!replace && !settingsToSettings && !passesThrough(m_route)) {
       m_backStack.removeAll(m_route);
       m_backStack.append(m_route);
