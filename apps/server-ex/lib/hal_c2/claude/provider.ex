@@ -5,9 +5,10 @@ defmodule HalC2.Claude.Provider do
 
   Its models are the ones the installed Claude Code lists in its `initialize` reply,
   read in the background at boot and on a model refresh (`load/1`). Until that answers,
-  or when the CLI cannot say (one too old to list them, a crash, a timeout), they are
-  the Claude catalog of the model manifest in use (`HalC2.ModelManifest`), less those
-  the installed CLI is too old to run.
+  or when the CLI answers without them (one too old to list them), they are the Claude
+  catalog of the model manifest in use (`HalC2.ModelManifest`), less those the
+  installed CLI is too old to run. A read that fails (a crash, a timeout) changes
+  nothing: the list read before stands, or the manifest when there was none.
   """
 
   alias HalC2.Claude.Session
@@ -102,19 +103,27 @@ defmodule HalC2.Claude.Provider do
       )
       |> Enum.map(fn {:ok, result} -> result end)
 
-    cached = :persistent_term.get(@models, %{})
+    # Loads run at once (boot, and refreshes from several clients), so each merges what
+    # it read into the latest map rather than into the one it started from.
+    :global.trans(
+      {@models, self()},
+      fn ->
+        cached = :persistent_term.get(@models, %{})
 
-    updated =
-      Enum.reduce(results, cached, fn
-        {key, {:ok, models}}, acc -> Map.put(acc, key, models)
-        {key, :none}, acc -> Map.delete(acc, key)
-        {_key, :error}, acc -> acc
-      end)
+        updated =
+          Enum.reduce(results, cached, fn
+            {key, {:ok, models}}, acc -> Map.put(acc, key, models)
+            {key, :none}, acc -> Map.delete(acc, key)
+            {_key, :error}, acc -> acc
+          end)
 
-    if updated != cached do
-      :persistent_term.put(@models, updated)
-      HalC2.Settings.notify_providers()
-    end
+        if updated != cached do
+          :persistent_term.put(@models, updated)
+          HalC2.Settings.notify_providers()
+        end
+      end,
+      [node()]
+    )
 
     :ok
   end

@@ -189,6 +189,17 @@ defmodule HalC2.ClaudeProviderTest do
     assert Enum.map(models(), & &1["slug"]) == manifest
   end
 
+  test "a read that fails keeps the list read before", %{tmp_dir: dir} do
+    reports(@reported)
+    :ok = Provider.load()
+    assert model("opus")
+
+    # The same `claude`, now crashing at start.
+    File.write!(Path.join(dir, "claude"), "#!/bin/sh\nexit 1\n")
+    :ok = Provider.load()
+    assert model("opus")
+  end
+
   test "a CLI that does not start keeps the manifest" do
     Application.put_env(:hal_c2, :claude_command, ["false"])
     reports(@reported)
