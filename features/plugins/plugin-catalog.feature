@@ -5,6 +5,8 @@
 #   apps/server-ex/lib/hal_c2/plugins.ex (plugins.list per environment, permissions with their grant)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx (search, Add, Added)
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary)
+#   apps/server-ex/lib/hal_c2/plugins/package.ex (the package an install unpacks: one folder, its plugin.json, relative paths)
+#   Roadmap (maintainer, 2026-10-08): MC plugins install from a zip, and from a HAL-C2 plugin registry.
 
 Feature: Plugin catalog
   The user can see every plugin installed on each surface and on each environment,
@@ -171,3 +173,80 @@ Feature: Plugin catalog
     When the user removes "quota" and confirms
     Then "quota" is no longer listed
     And its settings are deleted
+
+  Rule: A plugin is installed on an MC from a zip of its package
+
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A plugin is installed from a zip file
+      Given a zip file of the package "gitea"
+      When the user installs it on an environment
+      Then "gitea" is listed on that environment as disabled
+      And turning it on asks for its permissions like any plugin
+
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A plugin is installed from the address of its zip
+      Given the package "gitea" is served as a zip at an address
+      When the user installs that address on an environment
+      Then the user is warned that the plugin is not signed
+      And "gitea" is listed on that environment as disabled only after the user confirms
+
+    @backlog @mc
+    Scenario Outline: A zip that is not one package is refused
+      Given a zip file <problem>
+      When the user installs it on an environment
+      Then the install is refused with the reason
+      And nothing is added to the MC's plugins folder
+
+      Examples:
+        | problem                                  |
+        | without a plugin.json                    |
+        | holding two packages                     |
+        | with a file outside its package folder   |
+        | whose plugin.json does not parse         |
+
+    @backlog @mc
+    Scenario: Installing a zip of a plugin the MC has updates it and keeps its settings
+      Given "gitea" version 1.0 is installed with custom settings
+      When the user installs a zip of "gitea" version 1.1 on that environment
+      Then "gitea" runs version 1.1 with the same settings
+
+  Rule: The plugin registry lists the plugins anyone can install
+
+    @backlog @mc @desktop @mobile @tui
+    Scenario: The plugin registry can be searched
+      When the user searches the plugin registry for "review"
+      Then "code-review" is listed with its description, version, author and screenshots
+      And the environments that already have it are marked
+
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A plugin from the registry is installed on the environment the user picks
+      When the user installs "code-review" from the registry on an environment
+      Then that MC downloads it
+      And "code-review" is listed on that environment as disabled
+
+    @backlog @mc
+    Scenario: A package that does not match the registry's checksum is refused
+      Given the registry lists a checksum for "code-review" that its download does not match
+      When the user installs "code-review" from the registry on an environment
+      Then the install is refused as tampered
+      And nothing is added to the MC's plugins folder
+
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A newer version in the registry is shown next to the installed one
+      Given "code-review" 1.0 is installed on an environment
+      And the registry lists "code-review" 1.1
+      When the user opens the plugin list
+      Then "code-review" shows that version 1.1 is available
+
+    @backlog @mc
+    Scenario: The registry can be searched offline from the MC's last copy
+      Given the MC fetched the plugin registry earlier
+      And the registry cannot be reached now
+      When the user searches the plugin registry
+      Then the results come from the last copy and say how old it is
+
+    @backlog @mc
+    Scenario: An MC can use a plugin registry other than HAL-C2's
+      Given the MC is set to use a self-hosted plugin registry
+      When the user searches the plugin registry
+      Then the results come from that registry
