@@ -307,6 +307,19 @@ private:
   void toast(const QString& title, const QString& description);
   void followLink(const QString& kind, const QString& text, const QString& reportedCwd);
   void save();
+  // What `changed` notifies.
+  struct Facts {
+    bool available = false;
+    bool open = false;
+    int height = 0;
+    QString active;
+    QString activeGroup;
+    QVariantMap groupSizes;
+    bool operator==(const Facts&) const = default;
+  };
+  Facts facts() const;
+  // Saves, and emits `changed` when what it notifies differs from what it last did.
+  void notify();
 
   ShellBridge* m_bridge;
   McClient* m_client;
@@ -342,4 +355,5 @@ private:
   QByteArray m_saved;
   // Threads in the order their drawers were last used, oldest first.
   QStringList m_recent;
+  Facts m_told;
 };

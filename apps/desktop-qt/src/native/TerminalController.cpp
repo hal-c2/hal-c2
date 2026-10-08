@@ -142,6 +142,9 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
   } else if (kind == QLatin1String("error")) {
     note(event.value(QLatin1String("message")).toString());
   } else if (kind == QLatin1String("closed")) {
+    // Attaching again (on a reconnect) would open the terminal anew.
+    m_client->unsubscribe(m_subscription);
+    m_subscription = 0;
     emit closed();
   }
 }
@@ -345,7 +348,7 @@ TerminalController::TerminalController(ShellBridge* bridge, McClient* client, Sh
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
-  connect(this, &TerminalController::changed, this, &TerminalController::save);
+  m_told = facts();
 }
 
 void TerminalController::activate() {
@@ -382,7 +385,7 @@ void TerminalController::setStorePath(const QString& path) {
     m_recent.removeOne(threadKey);
     m_recent.append(threadKey);
   }
-  emit changed();
+  notify();
 }
 
 void TerminalController::save() {
@@ -407,6 +410,18 @@ void TerminalController::save() {
   if (!file.open(QIODevice::WriteOnly)) return;
   file.write(json);
   if (file.commit()) m_saved = json;
+}
+
+TerminalController::Facts TerminalController::facts() const {
+  return {available(), isOpen(), m_height, activeTerminalId(), activeGroup(), groupSizes()};
+}
+
+void TerminalController::notify() {
+  save();
+  Facts now = facts();
+  if (now == m_told) return;
+  m_told = std::move(now);
+  emit changed();
 }
 
 QString TerminalController::activeTerminalId() const {
@@ -484,7 +499,7 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     const int height = std::max(minimumHeight, args.value(QStringLiteral("height")).toInt());
     if (height != m_height) {
       m_height = height;
-      emit changed();
+      notify();
     }
     return true;
   }
@@ -582,7 +597,7 @@ void TerminalController::refresh() {
   m_threadKey = threadKey;
   m_place = std::move(place);
   syncTabs();
-  emit changed();
+  notify();
 }
 
 QStringList TerminalController::terminalIds() const {
@@ -609,8 +624,9 @@ void TerminalController::syncTabs() {
     it = it->terminals.isEmpty() ? ui.groups.erase(it) : std::next(it);
   }
   const QStringList drawer = drawerIds(ui, ids);
-  // The MC closed the last one (here or elsewhere): the drawer hides.
-  if (ui.open && m_attached && drawer.isEmpty()) ui.open = false;
+  // The MC closed the last one (here or elsewhere, while the user was away
+  // too): the drawer hides.
+  if (ui.open && drawer.isEmpty()) ui.open = false;
   if (!drawer.contains(ui.active)) ui.active = drawer.isEmpty() ? QString() : drawer.constLast();
   const bool panel = drawer.size() < ids.size();
   if (!ui.open && !m_attached && !panel) return;
@@ -651,9 +667,13 @@ void TerminalController::syncTabs() {
     connect(session, &TerminalSession::closed, this, [this, threadKey, id] {
       m_ui[threadKey].local.remove(id);
       m_known[threadKey].remove(id);
+      if (auto parked = m_parked.find(threadKey); parked != m_parked.end()) {
+        if (TerminalSession* gone = parked->sessions.take(id)) gone->deleteLater();
+        if (parked->sessions.isEmpty()) dropParked(threadKey);
+      }
       if (threadKey == m_threadKey) {
         syncTabs();
-        emit changed();
+        notify();
       }
     });
     // A shell that ended on its own takes its terminal with it, unasked
@@ -726,7 +746,7 @@ void TerminalController::onTerminals(const QString& environmentId, const QJsonOb
     return;
   }
   syncTabs();
-  emit changed();
+  notify();
 }
 
 // Returns whether the drawer's open state changed.
@@ -738,7 +758,7 @@ bool TerminalController::setOpen(bool open) {
   // A drawer with no terminal yet gets its first one.
   if (open && drawerIds(ui, terminalIds()).isEmpty()) ui.local.insert(nextTerminalId());
   syncTabs();
-  emit changed();
+  notify();
   return true;
 }
 
@@ -755,7 +775,7 @@ void TerminalController::openTerminal(const QString& terminalId) {
     ui.open = true;
   }
   syncTabs();
-  emit changed();
+  notify();
   emit focusRequested(terminalId);
 }
 
@@ -768,7 +788,7 @@ void TerminalController::focusTerminal(const QString& terminalId) {
   if (active == terminalId) return;
   active = terminalId;
   syncTabs();
-  emit changed();
+  notify();
 }
 
 // A terminal beside (or under) `terminalId` in its group, as the web's
@@ -809,7 +829,7 @@ void TerminalController::split(const QString& terminalId, bool vertical) {
     ui.open = true;
   }
   syncTabs();
-  emit changed();
+  notify();
   emit focusRequested(id);
 }
 
@@ -826,7 +846,7 @@ QString TerminalController::addPanelGroup() {
   ui.local.insert(id);
   ui.groups.append({group, {id}, false, true, id});
   syncTabs();
-  emit changed();
+  notify();
   emit focusRequested(id);
   return group;
 }
@@ -911,11 +931,11 @@ void TerminalController::closeTerminal(const QString& terminalId) {
                    }
                    if (threadKey == m_threadKey) {
                      syncTabs();
-                     emit changed();
+                     notify();
                    }
                  });
   syncTabs();
-  emit changed();
+  notify();
   if (panel && !next.isEmpty()) {
     emit focusRequested(next);
   } else if (!panel && m_ui[threadKey].open) {
