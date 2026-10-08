@@ -698,11 +698,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "the review is posted to \#{int} as a review with both line comments",
+  step "the review is posted to \#{int} as a review with both line comments and the agent is told so",
        %{args: [number]} = context do
     context = await_review!(context, number, &(&1["status"] == "published"))
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     assert %{"event" => "COMMENT", "comments" => [_, _]} = JSON.decode!(call["stdin"])
+    assert inspect(context.told) =~ "The review is posted to the pull request."
     context
   end
 

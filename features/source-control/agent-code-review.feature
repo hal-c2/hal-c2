@@ -248,10 +248,10 @@ Feature: Agent code review
       Then <outcome>
 
       Examples:
-        | mode      | outcome                                                                     |
-        | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2          |
-        | draft     | the review waits for the user to publish it                                 |
-        | automatic | the review is posted to #12 as a review with both line comments             |
+        | mode      | outcome                                                                                  |
+        | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2                       |
+        | draft     | the review waits for the user to publish it                                              |
+        | automatic | the review is posted to #12 as a review with both line comments and the agent is told so |
 
     @mc
     Scenario: The user publishes a draft review with the comments they kept
