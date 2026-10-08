@@ -12,10 +12,12 @@
 
 class TimelineModel;
 
-// The Agents tab: a thread's subagents, running and finished, in the order
-// they started, then the commands still running. Read from the thread's
-// timeline (its `subagent` entities and `command_execution` turn items) and
-// updated as they change.
+// The Agents tab: a thread's work in two sections, as the sidebar keeps its
+// threads. Active on top: the subagents working, in the order they started,
+// then the commands still running. Finished below: the settled subagents, the
+// latest to end first. Read from the thread's timeline (its `subagent`
+// entities and `command_execution` turn items) and updated in place as they
+// change, rows moving between sections, so the list keeps its scroll.
 //
 // A running row's elapsed time moves once a second, and only while the tab
 // shows (setActive) and something is running; a settled one stays at the
@@ -45,6 +47,11 @@ public:
     ModelRole,
     // The thread the subagent's work is in ("<environment>:<thread id>"), or empty.
     ChildThreadKeyRole,
+    // active or finished
+    SectionRole,
+    // When a settled subagent ended, with its status: "Completed at 9:41 AM",
+    // "Failed yesterday at 9:41 AM"; empty while it works.
+    EndedRole,
   };
 
   explicit AgentsModel(QObject* parent = nullptr);
@@ -78,11 +85,13 @@ private:
   };
 
   void read();
+  void apply(const QList<Row>& rows);
   void updateTimer();
 
   QString m_environment;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_connection;
+  QMetaObject::Connection m_timesConnection;
   QList<Row> m_rows;
   bool m_active = false;
   QTimer m_timer;

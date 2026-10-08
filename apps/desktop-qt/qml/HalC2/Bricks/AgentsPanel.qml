@@ -3,10 +3,12 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// The right panel's Agents tab: the thread's subagents, running and finished,
-// then its running commands, from an AgentsModel (Panel.agents). A subagent
-// opens its own thread. Status dots are static; the elapsed times move once a
-// second, and only while the tab shows (the model's timer).
+// The right panel's Agents tab, from an AgentsModel (Panel.agents): what is
+// active (working subagents, running commands) on top, finished subagents
+// below with when they ended. Rows update and move in place, so the list
+// keeps its scroll. A subagent opens its own thread. Status dots are static;
+// the elapsed times move once a second, and only while the tab shows (the
+// model's timer).
 //
 //   AgentsPanel { anchors.fill: parent; source: Panel.agents }
 Rectangle {
@@ -52,8 +54,9 @@ Rectangle {
         anchors.margins: 6
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        reuseItems: true
         model: root.source
-        section.property: "kind"
+        section.property: "section"
         section.delegate: Text {
             required property string section
 
@@ -61,7 +64,7 @@ Rectangle {
             topPadding: 8
             bottomPadding: 4
             leftPadding: 6
-            text: section === "command" ? qsTr("Running commands") : qsTr("Agents")
+            text: section === "active" ? qsTr("Active") : qsTr("Finished")
             color: root.muted
             font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium
@@ -79,6 +82,7 @@ Rectangle {
             required property string detail
             required property string modelName
             required property string childThreadKey
+            required property string ended
 
             readonly property bool opens: childThreadKey.length > 0
 
@@ -88,7 +92,7 @@ Rectangle {
             enabled: opens
             hoverEnabled: opens
             Accessible.role: opens ? Accessible.Button : Accessible.StaticText
-            Accessible.name: row.title + ", " + row.statusLabel
+            Accessible.name: row.title + ", " + (row.ended.length > 0 ? row.ended : row.statusLabel)
             onClicked: Shell.dispatch("rightPanel.openThread", {
                 threadKey: row.childThreadKey
             })
@@ -156,7 +160,7 @@ Rectangle {
                 anchors.rightMargin: 8
                 y: 42
                 visible: row.kind === "subagent"
-                text: [row.statusLabel, row.modelName].filter(part => part.length > 0).join(" · ")
+                text: [row.ended.length > 0 ? row.ended : row.statusLabel, row.modelName].filter(part => part.length > 0).join(" · ")
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted

@@ -290,6 +290,7 @@ void TimelineModel::setLocale(const QLocale& locale) {
 }
 
 void TimelineModel::redrawTimes() {
+  emit timesChanged();
   if (m_rows.isEmpty()) return;
   emit dataChanged(index(0), index(int(m_rows.size()) - 1), {TimeRole, EntriesRole});
 }

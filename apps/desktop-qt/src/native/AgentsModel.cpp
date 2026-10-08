@@ -18,6 +18,12 @@ QDateTime timeOf(const QJsonObject& object, QLatin1StringView field) {
   return QDateTime::fromString(text(object, field), Qt::ISODateWithMs);
 }
 
+// When a settled subagent ended: its completedAt, else its last update.
+QDateTime endOf(const QJsonObject& entity) {
+  const QDateTime completed = timeOf(entity, QLatin1String("completedAt"));
+  return completed.isValid() ? completed : timeOf(entity, QLatin1String("updatedAt"));
+}
+
 // apps/web/src/components/chat/V2LifecycleRow.tsx STATUS_VISUALS.
 QString statusLabel(const QString& status) {
   if (kLive.contains(status)) return QStringLiteral("Working");
@@ -49,8 +55,15 @@ void AgentsModel::setThread(const QString& environmentId, TimelineModel* timelin
   if (environmentId == m_environment && timeline == m_timeline) return;
   m_environment = environmentId;
   disconnect(m_connection);
+  disconnect(m_timesConnection);
   m_timeline = timeline;
-  if (timeline) m_connection = connect(timeline, &TimelineModel::agentsChanged, this, &AgentsModel::read);
+  if (timeline) {
+    m_connection = connect(timeline, &TimelineModel::agentsChanged, this, &AgentsModel::read);
+    // The Settings time format or the locale changed: the end times read anew.
+    m_timesConnection = connect(timeline, &TimelineModel::timesChanged, this, [this] {
+      if (!m_rows.isEmpty()) emit dataChanged(index(0), index(int(m_rows.size()) - 1), {EndedRole});
+    });
+  }
   read();
 }
 
@@ -63,22 +76,31 @@ void AgentsModel::setActive(bool active) {
 }
 
 void AgentsModel::read() {
-  QList<Row> rows;
+  QList<Row> working;
+  QList<Row> commands;
+  QList<Row> settled;
   if (m_timeline) {
     const QHash<QString, QJsonObject> agents = m_timeline->entities(QStringLiteral("subagent"));
-    for (auto it = agents.cbegin(); it != agents.cend(); ++it) rows.append({it.key(), QStringLiteral("subagent"), it.value()});
-    // Spawn order, which settling does not change.
-    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+    for (auto it = agents.cbegin(); it != agents.cend(); ++it) {
+      (kLive.contains(text(it.value(), QLatin1String("status"))) ? working : settled).append({it.key(), QStringLiteral("subagent"), it.value()});
+    }
+    // Spawn order, which a sibling settling does not change.
+    std::sort(working.begin(), working.end(), [](const Row& a, const Row& b) {
       const QString left = text(a.entity, QLatin1String("startedAt"));
       const QString right = text(b.entity, QLatin1String("startedAt"));
       return left != right ? left < right : a.id < b.id;
+    });
+    // The latest to end first.
+    std::sort(settled.begin(), settled.end(), [](const Row& a, const Row& b) {
+      const QDateTime left = endOf(a.entity);
+      const QDateTime right = endOf(b.entity);
+      return left != right ? left > right : a.id < b.id;
     });
     QSet<QString> rolledBack;
     const QHash<QString, QJsonObject> runs = m_timeline->entities(QStringLiteral("run"));
     for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
       if (text(it.value(), QLatin1String("status")) == QLatin1String("rolled_back")) rolledBack.insert(it.key());
     }
-    QList<Row> commands;
     const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
     for (auto it = items.cbegin(); it != items.cend(); ++it) {
       const QJsonObject& item = it.value();
@@ -92,32 +114,48 @@ void AgentsModel::read() {
       const double right = b.entity.value(QLatin1String("ordinal")).toDouble();
       return left != right ? left < right : a.id < b.id;
     });
-    rows.append(commands);
   }
-
-  // Rows that stay in place are redrawn; new ones at the end are inserted;
-  // anything else (a row gone, one in between) starts the list over.
-  const qsizetype before = m_rows.size();
-  bool prefix = rows.size() >= before;
-  for (qsizetype i = 0; prefix && i < before; ++i) prefix = rows.at(i).id == m_rows.at(i).id;
-  if (!prefix) {
-    beginResetModel();
-    m_rows = rows;
-    endResetModel();
-  } else {
-    for (qsizetype i = 0; i < before; ++i) {
-      if (rows.at(i).entity == m_rows.at(i).entity) continue;
-      m_rows[i] = rows.at(i);
-      emit dataChanged(index(int(i)), index(int(i)));
-    }
-    if (rows.size() > before) {
-      beginInsertRows({}, int(before), int(rows.size() - 1));
-      m_rows = rows;
-      endInsertRows();
-    }
-  }
-  if (m_rows.size() != before || !prefix) emit countChanged();
+  apply(working + commands + settled);
   updateTimer();
+}
+
+// Takes `rows` row by row: gone ones removed, new ones inserted, the rest
+// moved to their place and redrawn when they changed. Never a reset, which
+// would throw the list back to the top.
+void AgentsModel::apply(const QList<Row>& rows) {
+  QSet<QString> wanted;
+  for (const Row& row : rows) wanted.insert(row.id);
+  bool counted = false;
+  for (qsizetype i = m_rows.size() - 1; i >= 0; --i) {
+    if (wanted.contains(m_rows.at(i).id)) continue;
+    beginRemoveRows({}, int(i), int(i));
+    m_rows.removeAt(i);
+    endRemoveRows();
+    counted = true;
+  }
+  for (qsizetype i = 0; i < rows.size(); ++i) {
+    const Row& row = rows.at(i);
+    qsizetype at = -1;
+    for (qsizetype j = i; j < m_rows.size() && at < 0; ++j) {
+      if (m_rows.at(j).id == row.id) at = j;
+    }
+    if (at < 0) {
+      beginInsertRows({}, int(i), int(i));
+      m_rows.insert(i, row);
+      endInsertRows();
+      counted = true;
+      continue;
+    }
+    if (at != i) {
+      beginMoveRows({}, int(at), int(at), {}, int(i));
+      m_rows.move(at, i);
+      endMoveRows();
+    }
+    if (m_rows.at(i).entity == row.entity) continue;
+    m_rows[i] = row;
+    emit dataChanged(index(int(i)), index(int(i)));
+  }
+  if (counted) emit countChanged();
 }
 
 void AgentsModel::tick() {
@@ -199,6 +237,19 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
       const QString child = text(entity, QLatin1String("childThreadId"));
       return agent && !child.isEmpty() ? QStringLiteral("%1:%2").arg(m_environment, child) : QString();
     }
+    case SectionRole:
+      return live ? QStringLiteral("active") : QStringLiteral("finished");
+    case EndedRole: {
+      if (live || !agent || !m_timeline) return QString();
+      const QDateTime ended = endOf(entity);
+      const QString at = m_timeline->stamp(ended);
+      if (at.isEmpty()) return QString();
+      // "9:41 AM" today reads "at 9:41 AM"; "yesterday at ..." and "9/20 ..." read as they are.
+      const bool today = ended.toLocalTime().date() == m_now().toLocalTime().date();
+      const QString when = today ? QStringLiteral("at ") + at : at;
+      if (status == QLatin1String("idle")) return QStringLiteral("Idle since %1 · resumable").arg(at);
+      return QStringLiteral("%1 %2").arg(statusLabel(status), when);
+    }
     default:
       return {};
   }
@@ -216,5 +267,7 @@ QHash<int, QByteArray> AgentsModel::roleNames() const {
       {DetailRole, "detail"},
       {ModelRole, "modelName"},
       {ChildThreadKeyRole, "childThreadKey"},
+      {SectionRole, "section"},
+      {EndedRole, "ended"},
   };
 }
