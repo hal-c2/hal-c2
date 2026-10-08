@@ -1063,11 +1063,11 @@ void ComposerController::launched(const QString& draftId, const QString& text, c
     publish();
     return;
   }
-  m_drafts.remove(draftId);
-  save();
   auto* shell = NativeShell::of(this);
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
+  m_drafts.remove(draftId);
+  save();
   publish();
 }
 
@@ -2061,6 +2061,20 @@ QString ComposerController::target() const {
     return NativeShell::of(this)->controller<DraftController>()->draft(m_draftId) ? m_draftId : QString();
   }
   return m_store->thread(m_thread) ? m_thread : QString();
+}
+
+// A draft that became a thread: what the user typed after sending its first
+// message goes on in the thread's composer.
+void ComposerController::adopt(const QString& draftId, const QString& threadKey, const QString& text) {
+  Draft carried = m_drafts.take(draftId);
+  if (text.isEmpty() && carried.attachments.isEmpty() && carried.excerpts.isEmpty()) return;
+  const Draft there = m_drafts.value(threadKey);
+  if (!there.text.isEmpty() || !there.attachments.isEmpty() || !there.excerpts.isEmpty()) return;
+  carried.edit = QVariant();
+  carried.text = text;
+  carried.cursor = std::clamp(carried.cursor, 0, int(text.size()));
+  m_drafts.insert(threadKey, carried);
+  save();
 }
 
 // A thread that moved to another machine has a new key: what was written for

@@ -132,6 +132,7 @@ public:
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
   bool handle(const QString& action, const QVariant& payload) override;
+  void adopt(const QString& draftId, const QString& threadKey, const QString& text);
 
   // Where the threads' drafts are kept; loads them from there.
   void setStorePath(const QString& path);

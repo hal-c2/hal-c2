@@ -634,6 +634,12 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
     world.sync();
   });
+  step(QStringLiteral("the user types %1 while it is sending").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
+  step(QStringLiteral("the new thread's composer reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto opened = [&world] { return world.state(QStringLiteral("route")).toMap().value(QStringLiteral("kind")) == QLatin1String("thread"); };
+    world.waitFor([&] { return opened() && openDraft(world) == c[0]; },
+                  [&] { return QStringLiteral("the %1 composer reads \"%2\"").arg(opened() ? QStringLiteral("thread's") : QStringLiteral("draft's"), openDraft(world)); });
+  });
   step(QStringLiteral("the MC takes the message"), [](World& world, const Captures&, const Table&) {
     world.mc.answerHeld();
     world.sync();

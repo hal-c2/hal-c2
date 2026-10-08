@@ -10,6 +10,7 @@
 #include <QSaveFile>
 #include <QUuid>
 
+#include "ComposerController.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "MenuController.h"
@@ -300,8 +301,10 @@ void DraftController::promote(const QString& threadKey) {
 void DraftController::promote(QString id, const QString& threadKey) {
   const auto found = std::find_if(m_drafts.cbegin(), m_drafts.cend(), [&id](const Draft& draft) { return draft.id == id; });
   if (found == m_drafts.cend()) return;
+  const QString text = found->text;
   m_drafts.erase(found);
   save();
+  NativeShell::of(this)->controller<ComposerController>()->adopt(id, threadKey, text);
   changedEverywhere();
   for (DraftController* drafts : everyWindow()) {
     auto* navigation = NativeShell::of(drafts)->controller<NavigationController>();

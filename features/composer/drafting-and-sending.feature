@@ -64,7 +64,9 @@ Feature: Drafting and sending a message
     Then a new thread starts with that message in the background
     And no window shortcut takes the key instead
 
-  @desktop @backlog-desktop
+  # As the web, a sent message leaves the composer at once and comes back if the
+  # send fails (A send the MC rejects restores the draft).
+  @desktop @dropped
   Scenario: The draft stays until the send is confirmed
     Given the user has typed "keep me"
     When the user sends the message
@@ -101,6 +103,15 @@ Feature: Drafting and sending a message
     And the thread says the message is sending
     When the MC takes the message
     Then the thread no longer says the message is sending
+
+  @desktop
+  Scenario: Text typed while a new thread starts carries over to the thread
+    Given the user starts a new thread in the project
+    And the user has typed "Fix the failing test"
+    When the user sends it before the MC answers
+    And the user types "and the lint" while it is sending
+    And the MC takes the message
+    Then the new thread's composer reads "and the lint"
 
   @tui
   Scenario: Text typed while a message is sending is kept
