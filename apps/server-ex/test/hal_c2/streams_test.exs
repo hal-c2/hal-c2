@@ -375,6 +375,21 @@ defmodule HalC2.StreamsTest do
     assert_receive {:hal_c2_stream, "th-12", {:page, ^next, [], nil, :done}}
   end
 
+  test "a page is sent before more returns, so it never follows a client into its next subscription" do
+    seq = long_thread("th-21")
+    :ok = Streams.subscribe("th-21", self(), nil, %{window: {:items, 2}})
+    {^seq, _meta, _rows} = client_snapshot("th-21")
+    assert_receive {:hal_c2_stream, "th-21", {:live, ^seq, _}}
+
+    :ok = Streams.more("th-21", self(), 3)
+    # A client moving to another window leaves with what the old one was sent.
+    assert_received {:hal_c2_stream, "th-21", {:page, ^seq, _rows, nil, :done}}
+
+    :ok = Streams.subscribe("th-21", self(), nil, %{window: {:items, 1}})
+    assert_received {:hal_c2_stream, "th-21", first}
+    assert {:snapshot, ^seq, _at, _rows, :done, %{floor: _}} = first
+  end
+
   test "a window never holds a rolled-back run" do
     _ = long_thread("th-13")
 

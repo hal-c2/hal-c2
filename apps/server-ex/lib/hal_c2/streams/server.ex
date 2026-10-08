@@ -123,13 +123,20 @@ defmodule HalC2.Streams.Server do
   @doc """
   Sends a client the runs before its window's floor that together hold at least
   `items` turn items, and moves the floor down to hold them.
+
+  Returns once the page is sent, as `subscribe/4` does with what a client starts
+  from: a subscriber on this MC has it by then, so one that subscribes again next
+  takes it as the old subscription's, never as the start of the new one.
   """
   @spec more(String.t(), pid, pos_integer) :: :ok
   def more(stream_id, pid, items) do
     case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{server, _}] -> GenServer.cast(server, {:more, pid, items})
+      [{server, _}] -> GenServer.call(server, {:more, pid, items}, :infinity)
       [] -> :ok
     end
+  catch
+    # A stream that stopped took the subscription with it: there is nothing to page.
+    :exit, _ -> :ok
   end
 
   @spec unsubscribe(String.t(), pid) :: :ok
@@ -259,6 +266,11 @@ defmodule HalC2.Streams.Server do
     end
   end
 
+  def handle_call({:more, pid, items}, _from, state) do
+    {:noreply, state, _} = handle_cast({:more, pid, items}, state)
+    {:reply, :ok, state, timeout(state)}
+  end
+
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
 
   def handle_call(:flush_shell, _from, %{shell_scheduled: true} = state) do
@@ -274,6 +286,7 @@ defmodule HalC2.Streams.Server do
     {:noreply, state, timeout(state)}
   end
 
+  # `more/3` calls; a cast is what one queued before an upgrade in place still is.
   def handle_cast({:more, pid, items}, state) do
     state =
       case state.subscribers do
