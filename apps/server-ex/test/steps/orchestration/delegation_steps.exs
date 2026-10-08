@@ -457,6 +457,43 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  step "the task ended when its child's turn did", context do
+    task = task(context)
+    child = World.await_stream(task["childThreadId"], & &1)
+    run = child |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"])
+    assert task["completedAt"] == run["completedAt"]
+    context
+  end
+
+  step "the task summary is {string}", %{args: [summary]} = context do
+    assert task(context)["result"] == summary
+    context
+  end
+
+  # The task as its caller had it before the child's end reached it.
+  # Ends the caller's turns first, including the one the result woke.
+  step "the caller was never told the task ended", context do
+    open = %{"status" => "running", "completedAt" => nil}
+    parent = World.thread_id(context, context.task_parent)
+    quiet(parent, 10)
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", context.task_id,
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "result" => nil,
+               "completionDelivery" => %{"state" => "pending", "observedByRunId" => nil}
+             })
+         }},
+        {"node", context.task_id, %{"s" => open}},
+        {"turn-item", "turn-item:subagent:#{context.task_id}", %{"s" => open}}
+      ])
+
+    context
+  end
+
   step "the delivered result says there was no answer", context do
     message = await_result_message(context, "parent")
     assert message["text"] =~ ~s(status="failed")
@@ -790,4 +827,20 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
+
+  defp quiet(thread_id, attempts) do
+    HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    World.await_stream(
+      thread_id,
+      fn state ->
+        runs = HalC2.StreamState.list(state, "run")
+        if Enum.all?(runs, &(&1["status"] not in ~w(running queued))), do: state
+      end,
+      500
+    )
+  rescue
+    error ->
+      if attempts > 1, do: quiet(thread_id, attempts - 1), else: reraise(error, __STACKTRACE__)
+  end
 end

@@ -12,6 +12,8 @@ defmodule HalC2.Orchestration.Delegation do
   one (`settled_only`) only when the caller's own run is already over.
   """
 
+  require Logger
+
   alias HalC2.{Orchestration, StreamState}
   alias HalC2.Orchestration.Entities
 
@@ -227,6 +229,43 @@ defmodule HalC2.Orchestration.Delegation do
     :ok
   end
 
+  @doc """
+  `finished/3` from the end of a child's run, tried again while a thread it reads is
+  too busy to answer: a report given up on leaves the task running in its caller for
+  good. Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  """
+  def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
+    finished(thread_id, run_id, status)
+  catch
+    :exit, reason when attempts > 0 ->
+      Logger.warning("delegated task report for #{thread_id} retried: #{inspect(reason)}")
+      Process.sleep(backoff)
+      report(thread_id, run_id, status, attempts - 1, backoff * 2)
+  end
+
+  @doc """
+  Settles the tasks `parent_id` delegated whose child stopped working without its end
+  reaching the caller (a report lost to a crash or a restart): how the child's latest
+  run ended is how the task ended. The caller is not woken; its turn is long over.
+  Returns how many it settled.
+  """
+  def reconcile(parent_id) do
+    for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
+          StreamState.list(stream(parent_id), "subagent"),
+        status not in @terminal and is_binary(child_id),
+        child = stream(child_id),
+        runs = StreamState.list(child, "run"),
+        not Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
+        %{"status" => ended} = run when ended in @terminal <-
+          [Enum.max_by(runs, & &1["ordinal"], fn -> nil end)],
+        ended_at = run["completedAt"] || run["updatedAt"],
+        settle(parent_id, task, ended, answer(child, run["id"]), "disposed", :once, ended_at) ==
+          :ok,
+        reduce: 0 do
+      count -> count + 1
+    end
+  end
+
   # --- tasks -------------------------------------------------------------------------
 
   # Records the task in the parent, then launches the child thread; returns its id.
@@ -390,10 +429,11 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # Ends the task in its parent. With `:once`, a task that already ended is left as
-  # it is and `:already` is returned, decided inside the parent's transaction.
-  defp settle(parent_id, task, status, result, delivery, how \\ :always) do
-    at = Entities.now()
+  # Ends the task in its parent, at `at` or now. With `:once`, a task that already
+  # ended is left as it is and `:already` is returned, decided inside the parent's
+  # transaction.
+  defp settle(parent_id, task, status, result, delivery, how \\ :always, at \\ nil) do
+    at = at || Entities.now()
     status = if status in @terminal, do: status, else: "completed"
     item_id = "turn-item:subagent:#{task["id"]}"
 

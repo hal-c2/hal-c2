@@ -14,7 +14,8 @@ defmodule HalC2.Orchestration.Recovery do
   that had finished its turn is then told which background commands the restart
   ended (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
-  that ends (`Delegation.finished/3`).
+  that ends (`Delegation.finished/3`); one whose child had already stopped without
+  telling it settles now (`Delegation.reconcile/1`).
 
   Only threads whose sidebar row shows an active run or background work are opened.
   """
@@ -47,6 +48,7 @@ defmodule HalC2.Orchestration.Recovery do
           row["status"] in @active_runs or row["activityRunStatus"] != nil or
             (row["pendingBackgroundTasks"] || []) != [],
           {count, continuable} = settle(thread_id),
+          count = count + HalC2.Orchestration.Delegation.reconcile(thread_id),
           count > 0,
           do: {thread_id, continuable}
 

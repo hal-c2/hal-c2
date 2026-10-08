@@ -7,6 +7,7 @@
 #   packages/contracts/src/orchestratorMcp.ts (delegate_task, task_status, task_cancel, error codes)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (abandon: a crashed caller's run)
+#   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (a lost completion settles at boot)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (delegate_task, task_status, task_cancel)
 #   apps/server/src/orchestration-v2/ (delegated task reactor and completion delivery)
 #   apps/server/src/mcp/ (orchestrator toolkit)
@@ -136,6 +137,18 @@ Feature: Delegating tasks to subagents
     And the task, its node and its turn item are "running"
     When the subagent completes
     Then the task, its node and its turn item are "completed"
+
+  # The report of a child's end can be lost: the caller's thread too busy to take it,
+  # or the MC stopping first. The child's own runs still say how the task ended.
+  @mc
+  Scenario: A task whose end never reached its caller settles when the MC starts
+    Given the agent in "parent" delegated a task that completed
+    And the caller was never told the task ended
+    When the MC restarts
+    Then the task, its node and its turn item are "completed"
+    And the task summary is "Done"
+    And the task ended when its child's turn did
+    And the task delivery is "disposed"
 
   @mc
   Scenario: The task result is the subagent's last answer

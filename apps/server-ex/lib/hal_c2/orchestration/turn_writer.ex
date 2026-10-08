@@ -626,11 +626,13 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     Task.start(fn ->
       Orchestration.start_next(thread_id)
-      # A delegated task reports back to the thread that asked for it.
-      HalC2.Orchestration.Delegation.finished(thread_id, ids.run, status)
       # Notification channels hear about turns nobody was watching end.
       HalC2.Plugins.turn_finished(thread_id, status)
     end)
+
+    # A delegated task reports back to the thread that asked for it, apart from the
+    # rest so their failures cannot lose the report.
+    Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, ids.run, status) end)
 
     :ok
   end
