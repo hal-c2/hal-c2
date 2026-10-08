@@ -618,6 +618,21 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
     world.sync();
   });
+  step(QStringLiteral("the user sends it before the MC answers"), [](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  step(QStringLiteral("the MC takes the message"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the thread (no longer )?says the message is sending"), [](World& world, const Captures& c, const Table&) {
+    // An optional group that did not match is left out of the captures.
+    const bool sending = c.value(0).isEmpty();
+    const auto busy = [&world] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("isSendBusy")).toBool(); };
+    world.waitFor([&] { return busy() == sending; }, [&] { return QStringLiteral("the composer's send is %1busy").arg(busy() ? QString() : QStringLiteral("not ")); });
+  });
   step(QStringLiteral("the user sees why the send failed"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return toasts(world).size() > 0; }, QStringLiteral("a toast"));
     const QVariantMap toast = toasts(world).last().toMap();

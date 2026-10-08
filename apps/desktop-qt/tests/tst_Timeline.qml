@@ -251,6 +251,22 @@ Item {
             verify(!findChild(timeline, "jumpToLatest").visible);
         }
 
+        // Scenario: The thread says a message is sending until its MC takes it
+        function test_sendingShowsUntilTheAgentWorks() {
+            rows.clear();
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const label = findChild(timeline, "workingLabel");
+            verify(!label.visible);
+            timeline.sending = true;
+            tryVerify(() => label.visible);
+            compare(label.text, "Sending…");
+            timeline.working = true;
+            compare(label.text, "Working");
+            timeline.sending = false;
+            timeline.working = false;
+            verify(!label.visible);
+        }
+
         // Scenario: The previous tool calls can be shown and hidden again
         // (the brick asks its model; the model re-emits the row).
         function test_previousToolCallsToggleThroughTheModel() {

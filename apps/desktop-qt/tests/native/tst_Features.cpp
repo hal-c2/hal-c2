@@ -132,6 +132,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the MC rejects*"),
+    QStringLiteral("composer/drafting-and-sending.feature:The thread says a message is sending*"),
     QStringLiteral("composer/sending-turns.feature"),
     QStringLiteral("composer/editors-and-keys.feature"),
     QStringLiteral("composer/drafting-and-sending.feature:A background prompt*"),

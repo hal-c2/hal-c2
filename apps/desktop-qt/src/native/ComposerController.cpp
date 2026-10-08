@@ -707,13 +707,13 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   withExcerpts(message, contexts);
   commands.append(message);
   if (fromDraft) setText(target, QString(), 0);
-  save();
-  publish();
-
   // A send made while an earlier one is still in flight waits its turn.
   QList<Send>& queue = m_queues[target];
   queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString()});
-  if (queue.size() == 1) sendNext(target);
+  const bool first = queue.size() == 1;
+  save();
+  publish();
+  if (first) sendNext(target);
   return true;
 }
 
@@ -1145,6 +1145,7 @@ void ComposerController::sendNext(const QString& target) {
     queue.removeFirst();
     if (queue.isEmpty()) {
       m_queues.remove(target);
+      publish();
     } else {
       sendNext(target);
     }
@@ -2523,7 +2524,8 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), isDraft,
                                                               isRunning)},
-      {QStringLiteral("isSendBusy"), busy},
+      // A first message launching, or a message on its way to the MC.
+      {QStringLiteral("isSendBusy"), busy || m_queues.contains(target)},
       {QStringLiteral("isConnecting"), false},
       {QStringLiteral("pendingApprovalCount"), approvals.size()},
       {QStringLiteral("pendingUserInputCount"), questions.size()},

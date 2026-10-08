@@ -341,6 +341,7 @@ export const ShellComposerState = Schema.Struct({
     singleLine: Schema.Record(Schema.String, ShellComposerSubmitIntent),
     multiline: Schema.Record(Schema.String, ShellComposerSubmitIntent),
   }),
+  // A new thread's first message launching, or a message on its way to the MC.
   isSendBusy: Schema.Boolean,
   isConnecting: Schema.Boolean,
   pendingApprovalCount: Schema.Number,
