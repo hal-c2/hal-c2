@@ -132,6 +132,7 @@ public:
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
   bool handle(const QString& action, const QVariant& payload) override;
+  void adopt(const QString& draftId, const QString& threadKey, const QString& text);
 
   // Where the threads' drafts are kept; loads them from there.
   void setStorePath(const QString& path);
@@ -265,7 +266,10 @@ private:
   // or the checkout the MC chooses in its place. `then` is called once.
   void place(const QString& environmentId, const QString& projectId, bool tied, const QString& instanceId,
              std::function<void(const QString& environmentId, const QString& projectId)> then);
-  void launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error);
+  void launched(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                const QList<Excerpt>& contexts, const QString& threadKey, const std::optional<QString>& error);
+  bool restoreLaunch(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                     const QList<Excerpt>& contexts);
   // The prompt to every chosen model: `input` is the launch for one, less
   // its thread, model and checkout.
   bool submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,

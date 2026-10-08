@@ -27,6 +27,8 @@ Item {
     readonly property bool unreachable: !draft && status === "unreachable"
     readonly property bool loading: !draft && (model === null || (status === "loading" && model.count === 0))
     readonly property bool empty: !draft && status === "live" && model !== null && model.count === 0
+    // The composer's message is on its way to the MC.
+    readonly property bool sending: Shell.state.composer?.isSendBusy === true
 
     readonly property color textColor: Theme.palette.color("text", "#e4e4e7")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
@@ -99,6 +101,7 @@ Item {
         anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
+        sending: view.sending
         showStatus: false
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
@@ -281,6 +284,16 @@ Item {
                     parts.push(view.workspace.branch);
                 return parts.join(" · ");
             }
+        }
+        Label {
+            objectName: "draftSending"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            visible: view.draft && view.sending
+            color: view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: Math.round(13 * Theme.fontScale)
+            text: qsTr("Sending…")
         }
     }
 

@@ -200,9 +200,16 @@ QVariantList toasts(World& world) {
   return world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
 }
 
+// The composer the window shows: the open thread's, or a new thread's draft.
+QString composerTarget(World& world) {
+  const QVariantMap route = world.state(QStringLiteral("route")).toMap();
+  if (route.value(QStringLiteral("kind")) == QLatin1String("draft")) return route.value(QStringLiteral("draftId")).toString();
+  return world.native().controller<NavigationController>()->threadKey();
+}
+
 void typeInto(World& world, const QString& text) {
   world.bridge().dispatch(QStringLiteral("composer.text.set"),
-                          QVariantMap{{QStringLiteral("target"), world.native().controller<NavigationController>()->threadKey()},
+                          QVariantMap{{QStringLiteral("target"), composerTarget(world)},
                                       {QStringLiteral("text"), text},
                                       {QStringLiteral("cursor"), text.size()}});
 }
@@ -212,7 +219,7 @@ QString draftOf(World& world, const QString& key) {
 }
 
 QString openDraft(World& world) {
-  return draftOf(world, world.native().controller<NavigationController>()->threadKey());
+  return draftOf(world, composerTarget(world));
 }
 
 const Steps steps([] {
@@ -617,6 +624,31 @@ const Steps steps([] {
     world.mc.refusals.insert(QStringLiteral("message.dispatch"), QStringLiteral("Provider unavailable"));
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
     world.sync();
+  });
+  step(QStringLiteral("the user starts a new thread in the project"), [](World& world, const Captures&, const Table&) {
+    world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(kProject)}});
+    expect(!world.draftId.isEmpty(), show(world.state(QStringLiteral("route"))));
+  });
+  step(QStringLiteral("the user sends it before the MC answers"), [](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user types %1 while it is sending").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
+  step(QStringLiteral("the new thread's composer reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto opened = [&world] { return world.state(QStringLiteral("route")).toMap().value(QStringLiteral("kind")) == QLatin1String("thread"); };
+    world.waitFor([&] { return opened() && openDraft(world) == c[0]; },
+                  [&] { return QStringLiteral("the %1 composer reads \"%2\"").arg(opened() ? QStringLiteral("thread's") : QStringLiteral("draft's"), openDraft(world)); });
+  });
+  step(QStringLiteral("the MC takes the message"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the thread (no longer )?says the message is sending"), [](World& world, const Captures& c, const Table&) {
+    // An optional group that did not match is left out of the captures.
+    const bool sending = c.value(0).isEmpty();
+    const auto busy = [&world] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("isSendBusy")).toBool(); };
+    world.waitFor([&] { return busy() == sending; }, [&] { return QStringLiteral("the composer's send is %1busy").arg(busy() ? QString() : QStringLiteral("not ")); });
   });
   step(QStringLiteral("the user sees why the send failed"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return toasts(world).size() > 0; }, QStringLiteral("a toast"));

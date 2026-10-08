@@ -33,6 +33,9 @@ Item {
     // Whether the agent is working and what the indicator says; the model's
     // own when it has them.
     property bool working: root.model !== null && root.model.working === true
+    // Whether the user's message is on its way to the MC: the indicator says
+    // so until the agent starts working.
+    property bool sending: false
     // Whether the view keeps the latest output in view.
     readonly property alias following: view.following
     // Whether the user has scrolled away from the latest output, as of their
@@ -382,6 +385,16 @@ Item {
         }
         onFollowingChanged: settleAway()
 
+        // Another thread's rows open at their latest output, however far
+        // the last thread was scrolled.
+        function restart() {
+            heldIndex = -1;
+            settlingIndex = -1;
+            following = true;
+            away = false;
+            Qt.callLater(stick);
+        }
+
         // Moves to the end without counting as the user scrolling.
         function stick() {
             // Never pull the view from under the user's hand.
@@ -466,6 +479,7 @@ Item {
         bottomMargin: 12
         boundsBehavior: Flickable.StopAtBounds
         model: root.model
+        onModelChanged: restart()
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
             onPressedChanged: view.settleAway()
@@ -1575,19 +1589,20 @@ Item {
     }
 
     // "Working for 12s" under the rows (the web's working row), a static
-    // line redrawn once a second while the agent works.
+    // line redrawn once a second while the agent works; "Sending…" while the
+    // user's message is on its way.
     Item {
         id: indicator
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 42
-        visible: root.working
+        visible: root.working || root.sending
         property int tick: 0
         Timer {
             interval: 1000
             repeat: true
-            running: indicator.visible && root.visible
+            running: root.working && root.visible
             onTriggered: indicator.tick++
         }
         Item {
@@ -1608,6 +1623,8 @@ Item {
                 wrapMode: Text.NoWrap
                 text: {
                     indicator.tick;
+                    if (!root.working)
+                        return qsTr("Sending…");
                     return root.model && typeof root.model.workingLabel === "function" ? root.model.workingLabel() : qsTr("Working");
                 }
             }

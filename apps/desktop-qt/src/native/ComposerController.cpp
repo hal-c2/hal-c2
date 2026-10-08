@@ -707,13 +707,13 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   withExcerpts(message, contexts);
   commands.append(message);
   if (fromDraft) setText(target, QString(), 0);
-  save();
-  publish();
-
   // A send made while an earlier one is still in flight waits its turn.
   QList<Send>& queue = m_queues[target];
   queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString()});
-  if (queue.size() == 1) sendNext(target);
+  const bool first = queue.size() == 1;
+  save();
+  publish();
+  if (first) sendNext(target);
   return true;
 }
 
@@ -817,16 +817,18 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (const auto models = m_drafts.value(draftId).multipleModels) {
     return submitToModels(draftId, *models, input, where.strategy, where.environmentId, text, attachments, contexts);
   }
+  // The prompt leaves the composer as a follow-up's does, and comes back if
+  // the launch fails.
+  m_drafts[draftId].attachments.clear();
+  m_drafts[draftId].excerpts.clear();
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
-    m_drafts[draftId].attachments.clear();
-    m_drafts[draftId].excerpts.clear();
     drafts->renew(draftId);
-    setText(draftId, QString(), 0);
   } else {
     m_launching.insert(draftId);
   }
+  setText(draftId, QString(), 0);
   publish();
   const QString threadId = kept->threadId;
   // The images go to the machine the thread starts on, then the thread does.
@@ -842,7 +844,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                        if (background) {
                          launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
                        } else {
-                         launched(draftId, threadKey, error);
+                         launched(draftId, text, attachments, contexts, threadKey, error);
                        }
                      });
     };
@@ -878,7 +880,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                        if (background) {
                          launchedInBackground(draftId, text, attachments, contexts, QString(), error);
                        } else {
-                         launched(draftId, QString(), error);
+                         launched(draftId, text, attachments, contexts, QString(), error);
                        }
                        return;
                      }
@@ -1049,20 +1051,38 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
   return true;
 }
 
-// The launch's answer: the draft becomes the thread, or stays with a toast.
-void ComposerController::launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error) {
+// The launch's answer: the draft becomes the thread, or gets its prompt back
+// with a toast.
+void ComposerController::launched(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                                  const QList<Excerpt>& contexts, const QString& threadKey,
+                                  const std::optional<QString>& error) {
   m_launching.remove(draftId);
   if (error) {
+    restoreLaunch(draftId, text, attachments, contexts);
     toast(QStringLiteral("Could not create thread"), *error);
     publish();
     return;
   }
-  m_drafts.remove(draftId);
-  save();
   auto* shell = NativeShell::of(this);
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
+  m_drafts.remove(draftId);
+  save();
   publish();
+}
+
+// A failed launch's prompt back in its draft. Only into an empty one: newer
+// typing is the user's.
+bool ComposerController::restoreLaunch(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                                       const QList<Excerpt>& contexts) {
+  if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
+      !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).excerpts.isEmpty()) {
+    return false;
+  }
+  m_drafts[draftId].attachments = attachments;
+  m_drafts[draftId].excerpts = contexts;
+  setText(draftId, text, int(text.size()));
+  return true;
 }
 
 // A background launch's answer, as the web's: a toast that opens the new
@@ -1082,16 +1102,8 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                                          }});
     return;
   }
-  // Only into an empty draft: newer typing is the user's.
   const auto restore = [this, draftId, text, attachments, contexts] {
-    if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
-        !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).excerpts.isEmpty()) {
-      return false;
-    }
-    m_drafts[draftId].attachments = attachments;
-    m_drafts[draftId].excerpts = contexts;
-    setText(draftId, text, int(text.size()));
-    return true;
+    return restoreLaunch(draftId, text, attachments, contexts);
   };
   if (restore()) {
     toast(QStringLiteral("A background prompt could not be sent"), *error);
@@ -1145,6 +1157,7 @@ void ComposerController::sendNext(const QString& target) {
     queue.removeFirst();
     if (queue.isEmpty()) {
       m_queues.remove(target);
+      publish();
     } else {
       sendNext(target);
     }
@@ -2050,6 +2063,20 @@ QString ComposerController::target() const {
   return m_store->thread(m_thread) ? m_thread : QString();
 }
 
+// A draft that became a thread: what the user typed after sending its first
+// message goes on in the thread's composer.
+void ComposerController::adopt(const QString& draftId, const QString& threadKey, const QString& text) {
+  Draft carried = m_drafts.take(draftId);
+  if (text.isEmpty() && carried.attachments.isEmpty() && carried.excerpts.isEmpty()) return;
+  const Draft there = m_drafts.value(threadKey);
+  if (!there.text.isEmpty() || !there.attachments.isEmpty() || !there.excerpts.isEmpty()) return;
+  carried.edit = QVariant();
+  carried.text = text;
+  carried.cursor = std::clamp(carried.cursor, 0, int(text.size()));
+  m_drafts.insert(threadKey, carried);
+  save();
+}
+
 // A thread that moved to another machine has a new key: what was written for
 // it, and the model and modes chosen, follow it there.
 void ComposerController::carryDrafts() {
@@ -2523,7 +2550,8 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), isDraft,
                                                               isRunning)},
-      {QStringLiteral("isSendBusy"), busy},
+      // A first message launching, or a message on its way to the MC.
+      {QStringLiteral("isSendBusy"), busy || m_queues.contains(target)},
       {QStringLiteral("isConnecting"), false},
       {QStringLiteral("pendingApprovalCount"), approvals.size()},
       {QStringLiteral("pendingUserInputCount"), questions.size()},

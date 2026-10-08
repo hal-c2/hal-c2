@@ -2,6 +2,8 @@
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target)
 #   apps/desktop-qt/tests/tst_Composer.qml
+#   apps/desktop-qt/src/native/ComposerController.cpp (isSendBusy while a message is on its way)
+#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Sending…)
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml
 #   apps/tui/src/components/ChatView.tsx (reply draft, send status, new thread composer)
 #   apps/web/src/composer-logic.ts (submission intents, send shortcut)
@@ -62,7 +64,9 @@ Feature: Drafting and sending a message
     Then a new thread starts with that message in the background
     And no window shortcut takes the key instead
 
-  @desktop @backlog-desktop
+  # As the web, a sent message leaves the composer at once and comes back if the
+  # send fails (A send the MC rejects restores the draft).
+  @desktop @dropped
   Scenario: The draft stays until the send is confirmed
     Given the user has typed "keep me"
     When the user sends the message
@@ -81,6 +85,33 @@ Feature: Drafting and sending a message
     When the user switches to thread B and back to thread A
     Then thread A's draft reads "draft for A"
     And thread B's draft is empty
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: The thread says a message is sending until its MC takes it
+    Given the user has typed "Fix the failing test"
+    When the user sends it before the MC answers
+    Then the thread says the message is sending
+    When the MC takes the message
+    Then the thread no longer says the message is sending
+
+  @desktop
+  Scenario: A new thread's first message leaves the composer as it is sent
+    Given the user starts a new thread in the project
+    And the user has typed "Fix the failing test"
+    When the user sends it before the MC answers
+    Then the composer is empty
+    And the thread says the message is sending
+    When the MC takes the message
+    Then the thread no longer says the message is sending
+
+  @desktop
+  Scenario: Text typed while a new thread starts carries over to the thread
+    Given the user starts a new thread in the project
+    And the user has typed "Fix the failing test"
+    When the user sends it before the MC answers
+    And the user types "and the lint" while it is sending
+    And the MC takes the message
+    Then the new thread's composer reads "and the lint"
 
   @tui
   Scenario: Text typed while a message is sending is kept
