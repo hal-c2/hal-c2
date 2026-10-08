@@ -151,6 +151,21 @@ Feature: Delegating tasks to subagents
     And the task delivery is "disposed"
 
   @mc
+  Scenario: A task whose answer was rolled back settles as cancelled when the MC starts
+    Given the agent in "parent" delegated a task that completed
+    And the caller was never told the task ended
+    And the user rolled back the task's turn in its thread
+    When the MC restarts
+    Then the task, its node and its turn item are "cancelled"
+
+  # Its turn is interrupted at boot, and may be continued; it reports when it ends.
+  @mc
+  Scenario: A task still working when the MC stopped is not settled when it starts
+    Given the agent in "parent" delegates a task
+    When the MC restarts
+    Then the task, its node and its turn item are "running"
+
+  @mc
   Scenario: The task result is the subagent's last answer
     When the subagent's turn ends with two assistant messages
     Then the task summary is the last one

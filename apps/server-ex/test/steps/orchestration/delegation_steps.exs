@@ -457,6 +457,20 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  step "the user rolled back the task's turn in its thread", context do
+    child = task(context)["childThreadId"]
+    runs = child |> World.await_stream(& &1) |> HalC2.StreamState.list("run")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        child,
+        :thread,
+        for(run <- runs, do: {"run", run["id"], %{"s" => %{"status" => "rolled_back"}}})
+      )
+
+    context
+  end
+
   step "the task ended when its child's turn did", context do
     task = task(context)
     child = World.await_stream(task["childThreadId"], & &1)

@@ -221,7 +221,10 @@ defmodule HalC2.Orchestration.Delegation do
       # A completion reported twice (a provider replaying its turn's end after a
       # reconnect, or two reports racing) settles and wakes once: only the report
       # that finds the task unsettled delivers it.
-      with :ok <- settle(parent_id, task, status, result, delivery, :once),
+      # When the run ended, not when its report got through.
+      ended_at = StreamState.get(child, "run")[run_id]["completedAt"]
+
+      with :ok <- settle(parent_id, task, status, result, delivery, :once, ended_at),
            true <- delivery == "delivered",
            do: wake(parent_id, task, status, result)
     end
@@ -246,7 +249,9 @@ defmodule HalC2.Orchestration.Delegation do
   @doc """
   Settles the tasks `parent_id` delegated whose child stopped working without its end
   reaching the caller (a report lost to a crash or a restart): how the child's latest
-  run ended is how the task ended. The caller is not woken; its turn is long over.
+  run ended (`last_end/1`) is how the task ended, and when. The caller is not woken;
+  its turn is long over. Recovery calls it before interrupting any run, so a child
+  still working when the MC stopped is not taken for one that ended.
   Returns how many it settled.
   """
   def reconcile(parent_id) do
@@ -255,16 +260,37 @@ defmodule HalC2.Orchestration.Delegation do
         status not in @terminal and is_binary(child_id),
         child = stream(child_id),
         runs = StreamState.list(child, "run"),
+        runs != [],
         not Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
-        %{"status" => ended} = run when ended in @terminal <-
-          [Enum.max_by(runs, & &1["ordinal"], fn -> nil end)],
-        ended_at = run["completedAt"] || run["updatedAt"],
-        settle(parent_id, task, ended, answer(child, run["id"]), "disposed", :once, ended_at) ==
+        {ended, run, ended_at} <- [last_end(runs)],
+        settle(
+          parent_id,
+          task,
+          ended,
+          run && answer(child, run["id"]),
+          "disposed",
+          :once,
+          ended_at
+        ) ==
           :ok,
         reduce: 0 do
       count -> count + 1
     end
   end
+
+  # How a child's work ended: its latest run that was not rolled back, or, when the
+  # user rolled back every one, cancelled when the last was. Nil for a status no
+  # task takes.
+  defp last_end(runs) do
+    case runs |> Enum.reject(&(&1["status"] == "rolled_back")) |> latest() do
+      %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
+      nil -> {"cancelled", nil, end_of(latest(runs))}
+      _ -> nil
+    end
+  end
+
+  defp latest(runs), do: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+  defp end_of(run), do: run["completedAt"] || run["updatedAt"]
 
   # --- tasks -------------------------------------------------------------------------
 

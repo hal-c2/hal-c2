@@ -40,15 +40,23 @@ defmodule HalC2.Orchestration.Recovery do
   that could go on are kept for `continue/0`.
   """
   def run do
-    settled =
+    threads =
       for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
           mc == node(),
           # `status` is the latest run's, so a cancelled queued run can hide a running
           # one behind it; `activityRunStatus` is the latest active run's.
           row["status"] in @active_runs or row["activityRunStatus"] != nil or
             (row["pendingBackgroundTasks"] || []) != [],
+          do: thread_id
+
+    # Before any run is interrupted: a child still running when the MC stopped is not
+    # one that ended, and `continue/0` may resume it to report as it should.
+    reconciled = Map.new(threads, &{&1, HalC2.Orchestration.Delegation.reconcile(&1)})
+
+    settled =
+      for thread_id <- threads,
           {count, continuable} = settle(thread_id),
-          count = count + HalC2.Orchestration.Delegation.reconcile(thread_id),
+          count = count + reconciled[thread_id],
           count > 0,
           do: {thread_id, continuable}
 
