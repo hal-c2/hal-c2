@@ -64,9 +64,9 @@ repository:
 - **Post automatically** posts it as soon as the agent is done.
 
 With **Post verdicts as comments**, a review is posted as a comment rather than
-an approval or a request for changes. If GitHub refuses a review, you are told
-why and the review keeps waiting with its comments. GitHub does not let you
-approve your own pull request.
+an approval or a request for changes. On your own pull requests, which GitHub
+does not let you approve or request changes on, it always is. If GitHub refuses
+a review, you are told why and the review keeps waiting with its comments.
 
 ## Where reviews show up
 

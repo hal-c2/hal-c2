@@ -274,6 +274,20 @@ Feature: Agent code review
       Then #12 gets a commented review rather than a request for changes
 
     @mc
+    Scenario: A verdict GitHub does not let the user give is posted as a comment
+      Given #12 is the user's own pull request
+      When the user publishes the review of #12 with the verdict "changes requested"
+      Then #12 gets a commented review rather than a request for changes
+
+    @mc
+    Scenario: The agent hears how posting its review went
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub refuses the review
+      When the review of #12 finishes with two comments
+      Then the agent is told GitHub's reason and not to post the review itself
+      And the review of #12 is still waiting with its comments
+
+    @mc
     Scenario: A failed publish keeps the review
       Given the review of #12 is waiting to be published
       And GitHub refuses the review
