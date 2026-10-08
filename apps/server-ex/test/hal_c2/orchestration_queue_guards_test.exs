@@ -4,6 +4,7 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
   use ExUnit.Case, async: false
 
   alias HalC2.{Orchestration, StreamState}
+  alias HalC2.Orchestration.TurnWriter
 
   @moduletag :tmp_dir
   @fake_codex Path.expand("../support/fake_codex.py", __DIR__)
@@ -119,6 +120,49 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["interrupted", "running"])
   end
 
+  # The next queued message starts off the runtime's process once a run has ended: an
+  # unarchive landing in between must not start what the archived thread left queued.
+  test "a turn that ends on an archived thread leaves its queue to the user",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => thread_id})
+    {:ok, _} = send_message(thread_id, "m2")
+    await_statuses(thread_id, ["running", "queued"])
+
+    # Its runtime dies, so the run is ended from what the thread recorded.
+    for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+        do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+    # Held, the stream takes the run's end, then the unarchive, then what the end
+    # starts once it has returned.
+    stream = HalC2.Streams.ensure(thread_id)
+    :ok = :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+
+    ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
+    :erlang.trace(ender, true, [:procs])
+    await_call(stream, ender)
+
+    test = self()
+    unarchive = %{"type" => "thread.unarchive", "threadId" => thread_id}
+    unarchiver = spawn(fn -> send(test, {:unarchived, Orchestration.dispatch(unarchive)}) end)
+    await_call(stream, unarchiver)
+
+    :erlang.trace(stream, false, [:receive])
+    :ok = :sys.resume(stream)
+    assert_receive {:unarchived, {:ok, _}}
+
+    # What follows the end runs in a task of its own; once it is over, the queue waits.
+    assert_receive {:trace, ^ender, :spawn, task, _}
+    ref = Process.monitor(task)
+    assert_receive {:DOWN, ^ref, :process, ^task, _}
+    assert ["interrupted", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+    await_statuses(thread_id, ["interrupted", "running"])
+  end
+
   test "a deleted thread refuses messages, updates and queue commands", %{thread_id: thread_id} do
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
     deleted = "Thread #{thread_id} is deleted."
@@ -178,6 +222,9 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
       "dispatchMode" => %{"type" => "queue_after_active"}
     })
   end
+
+  defp await_call(stream, from),
+    do: assert_receive({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}})
 
   defp current(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 

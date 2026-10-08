@@ -537,7 +537,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   `failure` is the provider's message, or a structured failure map that also becomes
   the run's error item. A completed run also captures its workspace checkpoint
   (`HalC2.Checkpoint`). The thread's next queued message then starts
-  (`HalC2.Orchestration.start_next/1`).
+  (`HalC2.Orchestration.start_next/1`), unless the thread was archived.
   """
   def finish(state, status, failure) do
     at = Entities.now()
@@ -551,14 +551,24 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
-    commit(state, fn stream ->
-      baseline_changes(stream, baselines) ++
-        checkpoint_changes(stream, state.turn, checkpoint, at) ++
-        ended(stream, state.turn.ids, status, failure, checkpoint, at)
-    end)
+    queue? =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        changes =
+          baseline_changes(stream, baselines) ++
+            checkpoint_changes(stream, state.turn, checkpoint, at) ++
+            ended(stream, state.turn.ids, status, failure, checkpoint, at)
 
-    finished(state, status, failure)
+        {Enum.filter(changes, &is_tuple/1), queue_starts?(stream, state.thread_id)}
+      end)
+
+    finished(state, status, failure, queue?)
   end
+
+  # Whether the thread's queue starts once the run has ended, decided with the end: a
+  # turn that ends while its thread is archived leaves the queue to the user, so an
+  # unarchive that lands before the start does not start it either.
+  defp queue_starts?(stream, thread_id),
+    do: (StreamState.get(stream, "thread")[thread_id] || %{})["archivedAt"] == nil
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
@@ -600,7 +610,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp held_queue(_stream, _status, _failure), do: []
 
   # What follows a run ending, once it has.
-  defp finished(state, status, failure) do
+  defp finished(state, status, failure, queue?) do
     ids = state.turn.ids
     TurnWatch.release(ids.run)
 
@@ -625,7 +635,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     )
 
     Task.start(fn ->
-      Orchestration.start_next(thread_id)
+      if queue?, do: Orchestration.start_next(thread_id)
       # Notification channels hear about turns nobody was watching end.
       HalC2.Plugins.turn_finished(thread_id, status)
     end)
@@ -656,14 +666,17 @@ defmodule HalC2.Orchestration.TurnWriter do
               left_open(stream, run, status, at) ++
                 ended(stream, state.turn.ids, status, failure, nil, at)
 
-            {Enum.filter(changes, &is_tuple/1), state}
+            {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
 
           _ ->
             {[], nil}
         end
       end)
 
-    if abandoned, do: finished(abandoned, status, failure), else: :ok
+    case abandoned do
+      {state, queue?} -> finished(state, status, failure, queue?)
+      nil -> :ok
+    end
   end
 
   # The runtime state `finish/3` needs, rebuilt from the run.

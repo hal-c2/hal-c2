@@ -210,7 +210,11 @@ defmodule HalC2.OrchestrationPropTest do
   def next_state(state, _result, {:call, _, :restart, []}) do
     threads =
       Map.new(state.threads, fn {tid, thread} ->
-        held = MapSet.new(thread.queue)
+        # Boot recovery opens the threads whose sidebar row shows a run in flight: one
+        # running, or a latest run still queued. Their queues wait for the user to
+        # resume them; an idle queue elsewhere starts nothing at boot anyway.
+        opened? = running(thread) != nil or match?(%{status: :queued}, List.last(thread.runs))
+        held = if opened?, do: MapSet.new(thread.queue), else: MapSet.new()
 
         thread =
           set_runs(thread, fn run ->
@@ -644,20 +648,22 @@ defmodule HalC2.OrchestrationPropTest do
     {reply, Map.new(@threads, &{&1, settled(&1, ending, deadline)})}
   end
 
-  # Waits on the thread's stream until no run is starting, a thread with nothing
-  # running has no queued run that could start (an archived one starts none), and the
-  # runs in `ending` have ended.
+  # Waits on the thread's stream until no run is starting and the runs in `ending` have
+  # ended. A run's end starts the next queued one off the runtime's process, so when
+  # one of this thread's runs ended, it also waits until a thread with nothing running
+  # has no queued run that could start (an archived one starts none).
   defp settled(tid, ending, deadline) do
     flush(tid)
     state = current(tid)
     runs = runs(state)
     by_id = Map.new(runs, &{&1["id"], &1})
+    ending = Enum.filter(ending, &Map.has_key?(by_id, &1))
     archived? = (StreamState.get(state, "thread")[tid] || %{})["archivedAt"] != nil
 
     quiet? =
       not Enum.any?(runs, &(&1["status"] in ~w(preparing starting))) and
         Enum.all?(ending, &(by_id[&1]["status"] not in @active)) and
-        (archived? or Enum.any?(runs, &(&1["status"] in ~w(running waiting))) or
+        (ending == [] or archived? or Enum.any?(runs, &(&1["status"] in ~w(running waiting))) or
            not Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] != true)))
 
     if quiet? do
