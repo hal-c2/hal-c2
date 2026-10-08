@@ -121,6 +121,9 @@ CLIs; `--include parity` compares sidebar rows with the Node server's
 `mix prop` runs the stateful property tests in `prop/`, kept apart because PropCheck is
 GPL-3.0 ([prop/README.md](prop/README.md)).
 
+`mix proof` model checks the Maude models in `proof/` of the protocols between MCs,
+such as thread moves ([proof/README.md](proof/README.md)).
+
 What this MC serves, what it still lacks, and why anything was dropped is written as
 Gherkin under the repository's `features/` tree: `features/parity/rpc.feature` and
 `features/parity/commands.feature` hold a row per RPC method and orchestration command,

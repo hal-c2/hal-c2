@@ -91,6 +91,18 @@ jobs:
         env:
           MIX_ENV: prop
 
+      # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
+      - name: Cache Maude
+        uses: actions/cache@v6
+        with:
+          path: apps/server-ex/_build/maude
+          key: maude-${{ runner.os }}-${{ hashFiles('apps/server-ex/mix.lock') }}
+
+      - name: Proofs
+        run: mix proof
+        env:
+          MIX_ENV: proof
+
   # The @mc scenarios of features/, one directory per job so a slow or hung
   # directory stays visible; mc/ is split in two to fit the time limit.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);

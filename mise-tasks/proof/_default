@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Model check the MC's Maude proofs (mix proof), installing Maude if needed"
+#MISE dir="{{config_root}}/apps/server-ex"
+#USAGE arg "[file]" var=#true help="Proof files relative to apps/server-ex, e.g. proof/hal_c2/thread_move_proof_test.exs"
+set -euo pipefail
+
+exec mix proof "$@"
