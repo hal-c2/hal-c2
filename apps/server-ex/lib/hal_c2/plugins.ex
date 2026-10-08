@@ -532,6 +532,7 @@ defmodule HalC2.Plugins do
     if HalC2.Heir.claim(@heir, [@watchers]) == [],
       do: :ets.new(@watchers, [:named_table, :protected, :set] ++ HalC2.Heir.option(@heir))
 
+    # A topic's last value has no watcher (`nil` filters it out) and stays as it was.
     for {key, _ref} <- :ets.tab2list(@watchers),
         pid = watcher(key),
         do: :ets.insert(@watchers, {key, Process.monitor(pid)})
