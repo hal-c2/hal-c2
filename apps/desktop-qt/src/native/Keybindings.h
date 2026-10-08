@@ -56,6 +56,7 @@ struct Binding {
   QString command;
   Shortcut shortcut;
   WhenPtr when;  // null: always
+  Rule rule;     // as written, which the MC matches a remove or replace by
 };
 
 // The identifiers a condition is evaluated against; unknown ones are false.

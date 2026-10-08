@@ -141,7 +141,7 @@ private:
   QTimer m_jumpHintDelay;
   void setRules(const QJsonArray& rules);
   void refreshShortcuts();
-  void refreshRows();
+  bool refreshRows();
   keybindings::Context context(const QVariantMap& focus) const;
   bool isNative(const QString& command) const { return m_commands.contains(command); }
   void registerCommands();

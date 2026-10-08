@@ -307,7 +307,7 @@ std::optional<Binding> compile(const Rule& rule) {
     when = parseWhen(*rule.when);
     if (!when) return std::nullopt;
   }
-  return Binding{rule.command, *shortcut, when};
+  return Binding{rule.command, *shortcut, when, rule};
 }
 
 const QStringList& commands() {
