@@ -155,7 +155,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        requests: %{},
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
-       # How the session's CLI was started (`Provider.launch/2`); a turn on another model
+       # How the session's CLI was started (`Provider.launch/3`); a turn on another model
        # or other model options restarts it.
        launch: nil,
        # A steer ends the turn's current part with an "aborted" result; that one
@@ -181,7 +181,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   @impl true
   def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
-    launch = state.launch || Provider.launch(turn.model, Map.get(turn, :options, %{}))
+
+    launch =
+      state.launch ||
+        Provider.launch(turn.model, Map.get(turn, :options, %{}), Entities.instance(ids))
+
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     wake = state.wake || %{open: false, buffer: nil}
     buffer = Enum.reverse(wake.buffer || [])
@@ -225,7 +229,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     # one lapsed, or the project's agent access changed) needs a new process to reach it.
     launch =
       turn.model
-      |> Provider.launch(Map.get(turn, :options, %{}))
+      |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
 
@@ -235,7 +239,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     # A model the installed CLI is too old for is refused here, naming the version.
     opened =
-      case Provider.too_old(turn.model) do
+      case Provider.too_old(turn.model, Entities.instance(ids)) do
         nil -> open_session(state, turn)
         message -> {:error, {:too_old, message}}
       end

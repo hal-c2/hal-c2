@@ -7,6 +7,7 @@
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (get_usage)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (claude -p)
 #   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts, apps/server-ex/priv/model-manifest.json
+#   @anthropic-ai/claude-agent-sdk sdk.d.ts (ModelInfo, SDKControlInitializeResponse.models: the models Claude Code lists at initialize)
 #   apps/server/src/provider/Drivers/ClaudeDriver.ts, apps/server/src/provider/Drivers/ClaudeHome.ts
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts
@@ -44,8 +45,26 @@ Feature: Claude
     When the user opens the update details for Claude
     Then the user is told to update Claude by hand
 
-  Scenario: Claude offers the models of the bundled model manifest
-    When the user opens the model picker for Claude
+  Scenario: Claude's models come from the installed Claude Code
+    Given the installed Claude lists its models
+    When the MC has read the Claude model list
+    Then Claude Code's models are offered in its order with its default marked
+    And a thread saved on a model's full id shows the model that covers it
+
+  Scenario: A model Claude Code lists keeps the options the manifest adds to it
+    Given the installed Claude lists its models
+    When the MC has read the Claude model list
+    Then a listed model the manifest knows offers Claude Code's reasoning levels and ultrathink
+    And a listed model the manifest does not know offers only Claude Code's reasoning levels
+
+  Scenario: A model Claude Code lists runs even when the manifest asks for a newer Claude
+    Given the installed Claude lists a model the manifest gates on a newer version
+    When the user sends a message to Claude on that model
+    Then Claude answers it on that model
+
+  Scenario: Claude offers the models of the bundled model manifest until Claude Code lists its own
+    Given the installed Claude does not list its models
+    When the MC has read the Claude model list
     Then the manifest's Claude models are offered in its order
     And models the manifest marks as legacy are labelled legacy
 
