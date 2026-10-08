@@ -160,6 +160,7 @@ private:
   struct Facts {
     QVariantList choices;
     int latestTurn = 0;
+    QJsonObject latestCheckpoint;
     int selection = -1;
     int shownTurn = 0;
     bool reviewing = false;

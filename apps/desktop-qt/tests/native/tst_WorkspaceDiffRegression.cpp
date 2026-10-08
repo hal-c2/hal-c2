@@ -101,6 +101,31 @@ private slots:
     QCOMPARE(expansion.count(), 1);
   }
 
+  // The latest turn's file summary came after its checkpoint was ready, and
+  // turnsChanged stayed quiet: the right panel never opened the diff of a
+  // turn that changed many files.
+  void aLateFileSummarySaysTurnsChanged() {
+    Held held;
+    QVERIFY(held.ready());
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("ready")}});
+    QCOMPARE(held.diff.latestTurn(), 1);
+    QSignalSpy turns(&held.diff, &ThreadDiff::turnsChanged);
+    const QJsonArray files{QJsonObject{{QStringLiteral("path"), QStringLiteral("a.txt")}, {QStringLiteral("additions"), 1}, {QStringLiteral("deletions"), 1}}};
+    held.timeline.receive({{QStringLiteral("t"), QStringLiteral("snapshot")},
+                           {QStringLiteral("part"), 0},
+                           {QStringLiteral("done"), true},
+                           {QStringLiteral("rows"), QJsonArray{QJsonArray{QStringLiteral("checkpoint"), QStringLiteral("cp-1"),
+                                                                          QJsonObject{{QStringLiteral("id"), QStringLiteral("cp-1")},
+                                                                                      {QStringLiteral("appRunOrdinal"), 1},
+                                                                                      {QStringLiteral("status"), QStringLiteral("ready")},
+                                                                                      {QStringLiteral("files"), files}}}}},
+                           {QStringLiteral("offset"), 1},
+                           {QStringLiteral("handle"), QStringLiteral("log")}});
+    QCOMPARE(held.diff.latestCheckpoint().value(QLatin1String("files")).toArray(), files);
+    QCOMPARE(turns.count(), 1);
+  }
+
   // A turn's diff was asked once the turn was ready, and not again when the
   // turn before it became ready: it stayed a diff against no checkpoint.
   void aTurnIsDiffedAgainWhenTheTurnBeforeItIsReady() {

@@ -10,13 +10,14 @@ ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
     : QObject(parent), m_client(client), m_notify(std::move(notify)) {}
 
 ThreadDiff::Facts ThreadDiff::facts() const {
-  return {choices(), latestTurn(), m_selection, shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
+  return {choices(), latestTurn(), latestCheckpoint(), m_selection, shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
           m_comparedHead, m_truncated, canRevert(), m_revertTurn, m_reverting};
 }
 
 void ThreadDiff::tell(const Facts& before) {
   const Facts now = facts();
-  if (now.choices != before.choices || now.latestTurn != before.latestTurn) emit turnsChanged();
+  // The latest checkpoint's files can come after it is ready.
+  if (now.choices != before.choices || now.latestTurn != before.latestTurn || now.latestCheckpoint != before.latestCheckpoint) emit turnsChanged();
   if (now.selection != before.selection || now.shownTurn != before.shownTurn || now.reviewing != before.reviewing) emit selectionChanged();
   if (now.status != before.status || now.message != before.message) emit statusChanged();
   if (now.focus != before.focus || now.fileTotal != before.fileTotal) emit focusChanged();

@@ -1,8 +1,9 @@
 // ThreadDiff: the Diff tab of two threads against a fake MC that holds every
 // diff it is asked for and answers them in any order. Meanwhile each
-// thread's turns finish and leave checkpoints that become ready in any order,
-// the thread is rewound and new turns take the rewound turns' numbers, and
-// all of it streams into each thread's timeline. The user switches thread
+// thread's turns finish and leave checkpoints that become ready in any order
+// (their file summaries sometimes later still), the thread is rewound and new
+// turns take the rewound turns' numbers, and all of it streams into each
+// thread's timeline. The user switches thread
 // (its timeline sometimes not there yet), shows and hides the tab, picks a
 // turn, all changes, the working tree or the branch, changes the base and
 // whitespace options, focuses one file and reloads.
@@ -20,6 +21,7 @@
 #include <QSignalSpy>
 
 #include <memory>
+#include <optional>
 
 #include "FakeMc.h"
 #include "McClient.h"
@@ -43,11 +45,13 @@ struct Checkpoint {
   int ordinal = 0;
   // ready, pending (not written yet) or stale (rewound).
   QString status;
+  // How many files its summary lists; it can come after the checkpoint is ready.
+  int files = 0;
   bool operator==(const Checkpoint&) const = default;
 };
 
 void showValue(const Checkpoint& checkpoint, std::ostream& os) {
-  os << checkpoint.id.toStdString() << " turn " << checkpoint.ordinal << " " << checkpoint.status.toStdString();
+  os << checkpoint.id.toStdString() << " turn " << checkpoint.ordinal << " " << checkpoint.status.toStdString() << " " << checkpoint.files << " files";
 }
 
 using Checkpoints = QList<Checkpoint>;
@@ -59,6 +63,15 @@ QMap<int, QString> readyTurns(const Checkpoints& checkpoints) {
     if (checkpoint.status == QLatin1String("ready")) turns.insert(checkpoint.ordinal, checkpoint.id);
   }
   return turns;
+}
+
+// The checkpoint's file summary as the MC streams it.
+QJsonArray filesOf(const Checkpoint& checkpoint) {
+  QJsonArray files;
+  for (int i = 0; i < checkpoint.files; ++i) {
+    files.append(QJsonObject{{QStringLiteral("path"), QStringLiteral("f%1.txt").arg(i)}, {QStringLiteral("additions"), 1}, {QStringLiteral("deletions"), 1}});
+  }
+  return files;
 }
 
 QString patchOf(const QStringList& files) {
@@ -170,6 +183,14 @@ struct Model {
 
   QMap<int, QString> turns() const { return timeline ? readyTurns(mc.value(thread)) : QMap<int, QString>(); }
   int latestTurn() const { return turns().isEmpty() ? 0 : turns().lastKey(); }
+  // What the panel opens proactively on (latestCheckpoint).
+  std::optional<Checkpoint> latestCheckpoint() const {
+    const QString id = turns().value(latestTurn());
+    for (const Checkpoint& checkpoint : mc.value(thread)) {
+      if (!id.isEmpty() && checkpoint.id == id) return checkpoint;
+    }
+    return std::nullopt;
+  }
   int effective() const { return selection == -1 && turns().isEmpty() && !cwd.isEmpty() ? int(ThreadDiff::WorkingTree) : selection; }
   bool reviewing() const { return effective() <= ThreadDiff::WorkingTree; }
   int shownTurn() const {
@@ -290,6 +311,7 @@ struct Model {
 struct Facts {
   QList<int> choices;
   int latestTurn;
+  std::optional<Checkpoint> latestCheckpoint;
   int selection;
   int shownTurn;
   bool reviewing;
@@ -304,7 +326,7 @@ struct Facts {
 };
 
 Facts factsOf(const Model& model) {
-  return {model.choices(), model.latestTurn(), model.selection, model.shownTurn(), model.reviewing(), model.status, model.message,
+  return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.selection, model.shownTurn(), model.reviewing(), model.status, model.message,
           model.focus,     model.fileTotal,    model.base,      model.comparedBase, model.comparedHead, model.truncated};
 }
 
@@ -384,7 +406,7 @@ struct Sut {
                              QJsonObject{{QStringLiteral("id"), checkpoint.id},
                                          {QStringLiteral("appRunOrdinal"), checkpoint.ordinal},
                                          {QStringLiteral("status"), checkpoint.status},
-                                         {QStringLiteral("files"), QJsonArray()}}});
+                                         {QStringLiteral("files"), filesOf(checkpoint)}}});
     }
     timelines.at(thread)->receive({{QStringLiteral("t"), QStringLiteral("snapshot")},
                                    {QStringLiteral("part"), 0},
@@ -476,7 +498,12 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
   }
 
   const Facts after = factsOf(expected);
-  RC_ASSERT(sut.turnsChanged->count() == (before.choices != after.choices || before.latestTurn != after.latestTurn ? 1 : 0));
+  RC_ASSERT(sut.turnsChanged->count() ==
+            (before.choices != after.choices || before.latestTurn != after.latestTurn || before.latestCheckpoint != after.latestCheckpoint ? 1 : 0));
+  // The latest checkpoint as the timeline has it.
+  const QJsonObject latest = diff.latestCheckpoint();
+  RC_ASSERT(latest.value(QLatin1String("id")).toString() == (after.latestCheckpoint ? after.latestCheckpoint->id : QString()));
+  RC_ASSERT(int(latest.value(QLatin1String("files")).toArray().size()) == (after.latestCheckpoint ? after.latestCheckpoint->files : 0));
   RC_ASSERT(sut.selectionChanged->count() ==
             (before.selection != after.selection || before.shownTurn != after.shownTurn || before.reviewing != after.reviewing ? 1 : 0));
   RC_ASSERT(sut.statusChanged->count() == (before.status != after.status || before.message != after.message ? 1 : 0));
@@ -560,6 +587,39 @@ struct Ready : Step<Ready> {
   }
   void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
   void show(std::ostream& os) const override { os << id.toStdString() << " of " << thread.toStdString() << " is ready"; }
+};
+
+// A checkpoint's summary lists the files its turn changed.
+struct Summarize : Step<Summarize> {
+  QString thread = *oneOf(kThreads);
+  QString id;
+  int files = *rc::gen::inRange(1, 4);
+  explicit Summarize(const Model& model) {
+    QStringList ids;
+    for (const Checkpoint& checkpoint : model.mc.value(thread)) {
+      if (checkpoint.files != files) ids.append(checkpoint.id);
+    }
+    RC_PRE(!ids.isEmpty());
+    id = *oneOf(ids);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const Checkpoints checkpoints = model.mc.value(thread);
+    RC_PRE(std::any_of(checkpoints.begin(), checkpoints.end(), [&](const Checkpoint& checkpoint) { return checkpoint.id == id; }));
+  }
+  Checkpoints next(const Model& model) const {
+    Checkpoints checkpoints = model.mc.value(thread);
+    for (Checkpoint& checkpoint : checkpoints) {
+      if (checkpoint.id == id) checkpoint.files = files;
+    }
+    return checkpoints;
+  }
+  // As any change to the checkpoints, it asks again for a diff that failed.
+  void apply(Model& model) const override {
+    model.mc[thread] = next(model);
+    if (thread == model.thread) model.readCheckpoints();
+  }
+  void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
+  void show(std::ostream& os) const override { os << id.toStdString() << " of " << thread.toStdString() << " lists " << files << " files"; }
 };
 
 // The thread is rewound to after `turn`: later checkpoints go stale, and the
@@ -753,7 +813,7 @@ private slots:
     QVERIFY(rc::check("the Diff tab shows what the MC says of the selection, which is always one of the choices", [] {
       Sut sut;
       rc::state::check(Model(), sut,
-                       rc::state::gen::execOneOfWithArgs<NewTurn, NewTurn, Ready, Rewind, SetThread, SetActive, SetActive, SetCheckout,
+                       rc::state::gen::execOneOfWithArgs<NewTurn, NewTurn, Ready, Summarize, Rewind, SetThread, SetActive, SetActive, SetCheckout,
                                                          Select, Select, SetBase, SetWhitespace, Focus, Reload, AnswerOne, AnswerOne,
                                                          AnswerOne, AnswerOne>());
     }));
