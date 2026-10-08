@@ -10,11 +10,12 @@ defmodule HalC2.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       # The property tests are GPL-3.0 (prop/LICENSE), so they live apart from the MIT
-      # suite and run in their own environment: `mix prop`.
-      test_paths: if(Mix.env() == :prop, do: ["prop"], else: ["test"]),
+      # suite and run in their own environment: `mix prop`. The Maude proofs run in
+      # theirs too, so neither Maude nor ex_maude reaches the MC: `mix proof`.
+      test_paths: test_paths(Mix.env()),
       # Step definitions are Cucumber glue, loaded by test_helper.exs, not test files.
       test_ignore_filters: [~r{^test/steps/}],
-      aliases: [features: &features/1, prop: &prop/1],
+      aliases: [features: &features/1, prop: &prop/1, proof: &proof/1],
       deps: deps(),
       releases: [
         hal_c2: [
@@ -28,9 +29,14 @@ defmodule HalC2.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(:prop), do: ["lib", "test/support", "prop/support"]
+  defp elixirc_paths(:proof), do: ["lib", "test/support", "proof/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  def cli, do: [preferred_envs: [features: :test, prop: :prop]]
+  defp test_paths(:prop), do: ["prop"]
+  defp test_paths(:proof), do: ["proof"]
+  defp test_paths(_), do: ["test"]
+
+  def cli, do: [preferred_envs: [features: :test, prop: :prop, proof: :proof]]
 
   def application do
     [
@@ -42,7 +48,10 @@ defmodule HalC2.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.12"},
-      {:cucumber, "~> 1.0", only: [:test, :prop]},
+      {:cucumber, "~> 1.0", only: [:test, :prop, :proof]},
+      # Drives the Maude model checker for the proofs in proof/ only: never compiled into
+      # the MC. Maude itself is a separate GPL program it runs (proof/README.md).
+      {:ex_maude, "~> 0.4.3", only: :proof},
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
@@ -111,6 +120,24 @@ defmodule HalC2.MixProject do
     Mix.env(:prop)
     # `mix test` refuses an environment other than :test unless MIX_ENV names it.
     System.put_env("MIX_ENV", "prop")
+    Mix.Task.run("test", args)
+  end
+
+  # `mix proof [mix test args]` model checks the Maude models in proof/ against the
+  # MC's code: every interleaving up to a bound, where a property only samples some.
+  defp proof(args) do
+    if System.get_env("MIX_ENV") not in [nil, "proof"],
+      do: Mix.raise("mix proof runs in the proof environment; unset MIX_ENV or set it to proof")
+
+    Mix.env(:proof)
+    System.put_env("MIX_ENV", "proof")
+
+    # Maude itself, unless MAUDE_PATH names one: where config/proof.exs looks for it.
+    unless System.get_env("MAUDE_PATH") || File.exists?("_build/maude/maude") do
+      Mix.Task.run("deps.loadpaths")
+      Mix.Task.run("maude.install", ["--path", "_build/maude"])
+    end
+
     Mix.Task.run("test", args)
   end
 

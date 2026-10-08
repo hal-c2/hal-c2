@@ -1,7 +1,7 @@
 # Used by "mix format"
 [
   import_deps: [:plug],
-  inputs: ["{mix,.formatter}.exs", "{config,lib,test,prop}/**/*.{ex,exs}"],
+  inputs: ["{mix,.formatter}.exs", "{config,lib,test,prop,proof}/**/*.{ex,exs}"],
   # PropCheck's macros (prop/ only, so not an `import_deps`: it is absent outside MIX_ENV=prop).
   locals_without_parens: [
     property: 1,
