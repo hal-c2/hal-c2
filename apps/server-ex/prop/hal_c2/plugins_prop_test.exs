@@ -32,12 +32,16 @@ defmodule HalC2.PluginsPropTest do
   @valid [:ok, :ui, :compile_error, :two_modules, :second_broken]
 
   setup do
-    bundled = Application.fetch_env(:hal_c2, :bundled_plugins)
+    saved =
+      for key <- [:bundled_plugins, :settings_check_ms],
+          do: {key, Application.fetch_env(:hal_c2, key)}
 
     on_exit(fn ->
-      case bundled do
-        {:ok, value} -> Application.put_env(:hal_c2, :bundled_plugins, value)
-        :error -> Application.delete_env(:hal_c2, :bundled_plugins)
+      for {key, value} <- saved do
+        case value do
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
+        end
       end
     end)
   end
