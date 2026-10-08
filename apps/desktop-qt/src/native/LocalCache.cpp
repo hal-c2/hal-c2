@@ -104,10 +104,9 @@ Lost& lost() {
 
 // Every copy goes, cursors and versions first; whether all of them did.
 bool dropEverything(QSqlDatabase& db) {
-  const bool threads = run(db, QStringLiteral("DELETE FROM threads"));
-  if (threads) run(db, QStringLiteral("DELETE FROM entities"));
-  const bool shells = run(db, QStringLiteral("DELETE FROM shell_mcs"));
-  if (shells) run(db, QStringLiteral("DELETE FROM shell_rows"));
+  // The copies only once what vouches for them is gone; every table counts.
+  const bool threads = run(db, QStringLiteral("DELETE FROM threads")) && run(db, QStringLiteral("DELETE FROM entities"));
+  const bool shells = run(db, QStringLiteral("DELETE FROM shell_mcs")) && run(db, QStringLiteral("DELETE FROM shell_rows"));
   if (!threads || !shells) return false;
   lost() = {};
   return true;
