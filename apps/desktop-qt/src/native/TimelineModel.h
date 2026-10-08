@@ -280,20 +280,28 @@ private:
   // One `events` frame's events, applied.
   void events(const QJsonArray& events);
   void eventsFrame(const QJsonObject& frame);
+  // The catch-up parts held so far, as one list of events.
+  QJsonArray caughtUp();
   void live(const QJsonObject& frame);
   void page(const QJsonObject& frame);
   // Whether the model folds this row of a snapshot or page.
   static bool folds(const QString& kind, const QJsonObject& entity);
   cache::Entity cached(const QString& kind, const QString& id, const QJsonObject& fields) const;
-  void everythingChanged();
+  // The turn items whose rows read differently than they did with `before`:
+  // the item itself, or the request or subagent it shows.
+  QSet<QString> changedSince(const Entities& before) const;
+  // Derives the rows again from every entity, redrawing the ones `changed` shows.
+  void everythingChanged(const QSet<QString>& changed);
   // Applies one event; true when the row list has to be derived again.
   bool apply(const QString& kind, const QString& id, const QJsonObject& patch, QSet<QString>& changed);
   void place(const QString& itemId);
   void unplace(const QString& itemId);
   void sortItems();
-  void restructure(const QSet<QString>& changed, bool all);
+  // Whether `row` draws anything of turn item `item`.
+  bool shows(const Row& row, const QString& item) const;
+  void restructure(const QSet<QString>& changed);
   QList<Row> project() const;
-  void applyRows(const QList<Row>& rows, const QSet<QString>& changed, bool all);
+  void applyRows(const QList<Row>& rows, const QSet<QString>& changed);
   void updateWorking();
   QVariantMap entry(const QJsonObject& item) const;
   // When a row or turn item happened, or invalid.
@@ -323,6 +331,8 @@ private:
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
+  // The subagents the events being applied touch, and the model each had before them.
+  QHash<QString, QString> m_agentModels;
   bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   std::function<QString(const QString&)> m_threadTitle;
