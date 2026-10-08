@@ -89,6 +89,8 @@ private:
   // The store's snapshot count when the socket last became ready: the
   // connection is described once it grows.
   quint64 m_snapshotsAtReady = 0;
+  // Whether the client's phase was Ready when last seen.
+  bool m_ready = false;
   bool m_pairing = false;
   QString m_pairingError;
 };
