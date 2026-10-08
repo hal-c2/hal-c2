@@ -143,8 +143,14 @@ Feature: Committing with written or generated messages
     Then the action reports the hook starting, its output "inside: true" and the hook finishing
 
   @mc
+  Scenario: A commit hook that prints what looks like git's trace has it reported as output
+    Given the repository has a pre-commit hook that prints a line shaped like a git trace record
+    When the user commits
+    Then the action reports the hook starting, that line as its output and the hook finishing
+
+  @mc
   Scenario: A failing commit hook's output and exit code are reported before the commit fails
-    Given the repository has a pre-commit hook that prints "lint failed" and exits with 3
+    Given the repository has a pre-commit hook that prints "lint failed" without a newline and exits with 3
     When the user commits
     Then the hook's output "lint failed" is reported before it finishes with exit code 3
     And the action fails with "lint failed"

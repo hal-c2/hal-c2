@@ -237,13 +237,28 @@ defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
     context
   end
 
+  # A git's trace record, from a session that is not the commit's.
+  @trace_shaped ~s({"event":"child_exit","sid":"hook-printed","child_id":0,"code":9})
+
   step "the repository has a pre-commit hook that prints {string}", %{args: [text]} = context do
     hook(context, "echo '#{text}'")
   end
 
-  step "the repository has a pre-commit hook that prints {string} and exits with {int}",
+  step "the repository has a pre-commit hook that prints {string} without a newline and exits with {int}",
        %{args: [text, code]} = context do
-    hook(context, "echo '#{text}' >&2\nexit #{code}")
+    hook(context, "printf '%s' '#{text}' >&2\nexit #{code}")
+  end
+
+  step "the repository has a pre-commit hook that prints a line shaped like a git trace record",
+       context do
+    hook(context, "echo '#{@trace_shaped}'")
+  end
+
+  step "the action reports the hook starting, that line as its output and the hook finishing",
+       context do
+    result(context)
+    hook_events(context, @trace_shaped, 0)
+    context
   end
 
   step "the repository has a pre-commit hook that prints {string} and what {string} prints",

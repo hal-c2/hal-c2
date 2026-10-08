@@ -235,7 +235,7 @@ defmodule HalC2.GitActions do
         stderr: :consume,
         ignore_epipe: true
       )
-      |> Enum.reduce({nil, %{hook: nil, children: %{}, err: [], pending: %{}}}, fn
+      |> Enum.reduce({nil, %{sid: nil, hook: nil, children: %{}, err: [], pending: %{}}}, fn
         {:exit, {:status, status}}, {_, trace} -> {status, trace}
         {:exit, _}, {_, trace} -> {1, trace}
         {stream, data}, {status, trace} -> {status, trace_chunk(emit, trace, stream, data)}
@@ -260,41 +260,57 @@ defmodule HalC2.GitActions do
   end
 
   # A line of this git's trace, of the trace of a git a hook runs (skipped), or one
-  # printed by git or a hook.
-  defp trace_line(emit, trace, stream, line) do
-    case stream == :stderr and trace_record(line) do
-      %{} = record ->
-        trace_event(emit, trace, record)
+  # printed by git or a hook. A hook's output without a final newline runs into the
+  # record after it, so a record is looked for where it starts, not only at the start.
+  defp trace_line(emit, trace, :stderr, line) do
+    {output, record} =
+      line
+      |> :binary.matches(~s({"event":"))
+      |> Enum.find_value({line, nil}, fn {at, _} -> split_record(trace, line, at) end)
 
+    trace =
+      if output != "" or record == nil, do: output_line(emit, trace, :stderr, output), else: trace
+
+    case record do
       # A git a hook runs traces there too.
-      :nested ->
-        trace
-
-      _ ->
-        if (text = String.trim(line)) != "" do
-          emit.(%{
-            "kind" => "hook_output",
-            "hookName" => trace.hook && trace.hook.name,
-            "stream" => Atom.to_string(stream),
-            "text" => text
-          })
-        end
-
-        if stream == :stderr, do: %{trace | err: [line | trace.err]}, else: trace
+      {:nested, _} -> trace
+      {:ok, record} -> trace_event(emit, %{trace | sid: trace.sid || record["sid"]}, record)
+      nil -> trace
     end
   end
 
-  defp trace_record("{" <> _ = line) do
-    case JSON.decode(line) do
-      {:ok, %{"event" => _, "sid" => sid} = record} ->
-        if String.contains?(sid, "/"), do: :nested, else: record
+  defp trace_line(emit, trace, stream, line), do: output_line(emit, trace, stream, line)
 
-      _ ->
-        nil
+  # The output before a record starting at `at`, and the record: this git's (its first
+  # record names the session) or a nested git's, whose session is under it. Nil when
+  # no record starts there.
+  defp split_record(trace, line, at) do
+    {output, json} = :erlang.split_binary(line, at)
+
+    with {:ok, %{"event" => _, "sid" => sid} = record} when is_binary(sid) <- JSON.decode(json) do
+      cond do
+        trace.sid == nil and not String.contains?(sid, "/") -> {output, {:ok, record}}
+        sid == trace.sid -> {output, {:ok, record}}
+        trace.sid && String.starts_with?(sid, trace.sid <> "/") -> {output, {:nested, record}}
+        true -> nil
+      end
+    else
+      _ -> nil
     end
   end
 
-  defp trace_record(_line), do: nil
+  defp output_line(emit, trace, stream, line) do
+    if (text = String.trim(line)) != "" do
+      emit.(%{
+        "kind" => "hook_output",
+        "hookName" => trace.hook && trace.hook.name,
+        "stream" => Atom.to_string(stream),
+        "text" => text
+      })
+    end
+
+    if stream == :stderr, do: %{trace | err: [line | trace.err]}, else: trace
+  end
 
   defp trace_event(emit, trace, %{"event" => "child_start", "child_class" => "hook"} = record) do
     hook = %{name: record["hook_name"], started: System.monotonic_time(:millisecond)}
