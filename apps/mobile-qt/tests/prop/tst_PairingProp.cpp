@@ -548,13 +548,14 @@ struct Cancel : Command {
 struct Forget : Command {
   explicit Forget(const Model&) {}
   void apply(Model& m) const override {
-    ++m.attempt;
-    m.pairing = false;
-    // The session stays on the device, and so the device stays paired.
+    // The session stays on the device, and so the device stays paired, and
+    // a pairing in flight goes on.
     if (m.paired && !m.writable) {
       m.said = Said::NotForgotten;
       return;
     }
+    ++m.attempt;
+    m.pairing = false;
     m.paired.reset();
     m.session.clear();
     m.adding = false;
