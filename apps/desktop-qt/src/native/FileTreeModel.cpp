@@ -35,11 +35,11 @@ void FileTreeModel::clear() {
   m_search.clear();
   m_searching = false;
   m_rows.clear();
-  m_selected.clear();
+  const bool selected = !std::exchange(m_selected, QString()).isEmpty();
   endResetModel();
   if (std::exchange(m_expandAll, false)) emit allExpandedChanged();
   emit rootChanged();
-  emit selectedChanged();
+  if (selected) emit selectedChanged();
 }
 
 void FileTreeModel::expandUnder(const QString& folder) {
@@ -91,18 +91,39 @@ void FileTreeModel::refresh() {
 }
 
 void FileTreeModel::reload() {
-  clear();
+  if (m_searching) {
+    // Only the user's tree, behind the search's rows.
+    m_folders.clear();
+    if (std::exchange(m_expandAll, false)) emit allExpandedChanged();
+  } else {
+    clear();
+  }
   Folder& root = m_folders[QString()];
   root.expanded = true;
   load(QString());
+  if (!m_searching) refill(QString());
 }
 
 void FileTreeModel::load(const QString& folder) {
-  Folder& entry = folders()[folder];
+  // Always the user's tree: a search's folders show what it lists.
+  Folder& entry = m_folders[folder];
   entry.state = State::Loading;
   entry.problem.clear();
   if (folder.isEmpty()) emit rootChanged();
   if (m_fetch) m_fetch(folder);
+}
+
+void FileTreeModel::settle(const QString& folder) {
+  if (m_searching) {
+    // A folder the search opened is waiting on the user's tree's listing.
+    const auto shown = m_search.find(folder);
+    if (shown == m_search.end() || shown->state != State::Loading) return;
+    const Folder& listed = m_folders.value(folder);
+    shown->state = listed.state;
+    shown->problem = listed.problem;
+    shown->children = listed.children;
+  }
+  refill(folder);
 }
 
 void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entries) {
@@ -111,7 +132,7 @@ void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entrie
   entry.problem.clear();
   entry.children = entries;
   sortEntries(entry.children);
-  if (!m_searching) refill(folder);
+  settle(folder);
   if (m_expandAll) expandUnder(folder);
   if (folder.isEmpty()) emit rootChanged();
   emit folderSettled(folder);
@@ -122,7 +143,7 @@ void FileTreeModel::setFailed(const QString& folder, const QString& problem) {
   entry.state = State::Failed;
   entry.problem = problem;
   entry.children.clear();
-  if (!m_searching) refill(folder);
+  settle(folder);
   if (folder.isEmpty()) emit rootChanged();
   emit folderSettled(folder);
 }
@@ -180,6 +201,10 @@ QString FileTreeModel::rootProblem() const {
 
 bool FileTreeModel::loaded(const QString& folder) const {
   return m_folders.value(folder).state == State::Loaded;
+}
+
+bool FileTreeModel::requested(const QString& folder) const {
+  return m_folders.value(folder).state != State::Unloaded;
 }
 
 bool FileTreeModel::isExpanded(const QString& folder) const {
@@ -250,8 +275,15 @@ void FileTreeModel::expand(const QString& path) {
   if (entry.expanded) return;
   entry.expanded = true;
   if (entry.state == State::Unloaded) {
-    entry.state = State::Loading;
-    if (m_fetch) m_fetch(path);
+    // A folder the search did not list shows the user's tree's listing of it,
+    // and shares its load.
+    const Folder& listed = m_folders[path];
+    if (listed.state == State::Unloaded) load(path);
+    if (m_searching) {
+      entry.state = listed.state;
+      entry.problem = listed.problem;
+      entry.children = listed.children;
+    }
   }
   refill(path);
   const int row = rowOf(path);
@@ -276,7 +308,12 @@ void FileTreeModel::collapse(const QString& path) {
 void FileTreeModel::retry(const QString& folder) {
   if (m_folders.value(folder).state != State::Failed) return;
   load(folder);
-  if (!m_searching) refill(folder);
+  const auto shown = m_search.find(folder);
+  if (m_searching && shown != m_search.end() && shown->state == State::Failed) {
+    shown->state = State::Loading;
+    shown->problem.clear();
+  }
+  refill(folder);
 }
 
 void FileTreeModel::select(const QString& path) {

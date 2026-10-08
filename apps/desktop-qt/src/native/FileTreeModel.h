@@ -54,7 +54,7 @@ public:
   // or setFailed.
   void setFetch(std::function<void(const QString& folder)> fetch) { m_fetch = std::move(fetch); }
 
-  // Forgets every folder and loads the top one again.
+  // Forgets every folder and loads the top one again; a search on screen stays.
   void reload();
   // Forgets every folder without loading anything.
   void clear();
@@ -68,6 +68,8 @@ public:
   QString selectedPath() const { return m_selected; }
   bool filtered() const { return m_searching; }
   bool loaded(const QString& folder) const;
+  // Whether the folder was asked for since the tree was last cleared.
+  bool requested(const QString& folder) const;
   bool isExpanded(const QString& folder) const;
 
   Q_INVOKABLE void toggle(const QString& path);
@@ -122,7 +124,10 @@ private:
 
   Folders& folders() { return m_searching ? m_search : m_folders; }
   const Folders& folders() const { return m_searching ? m_search : m_folders; }
+  // Asks for a folder of the user's tree.
   void load(const QString& folder);
+  // Shows a folder's listing (or failure) that just landed in the user's tree.
+  void settle(const QString& folder);
   QList<Row> rowsUnder(const QString& folder, int depth) const;
   // Redraws a visible folder's children after its state changed.
   void refill(const QString& folder);
