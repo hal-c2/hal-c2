@@ -1083,6 +1083,8 @@ bool ComposerController::restoreLaunch(const QString& draftId, const QString& te
   }
   m_drafts[draftId].attachments = attachments;
   m_drafts[draftId].excerpts = contexts;
+  // The draft keeps its text; the images and excerpts are the composer's.
+  save();
   setText(draftId, text, int(text.size()));
   return true;
 }

@@ -625,6 +625,23 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
     world.sync();
   });
+  step(QStringLiteral("the user sends it and the MC cannot start the thread"), [](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("orchestration.launchThread"), QStringLiteral("Provider unavailable"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    world.waitFor([&] { return draftOf(world, world.draftId) == QLatin1String("Fix the failing test"); },
+                  [&] { return QStringLiteral("the draft reads \"%1\"").arg(draftOf(world, world.draftId)); });
+  });
+  step(QStringLiteral("the new thread's draft reads %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    auto* composer = world.native().controller<ComposerController>();
+    const auto names = [&] {
+      QStringList all;
+      for (const QVariant& attachment : composer->attachments(world.draftId)) all.append(attachment.toMap().value(QStringLiteral("name")).toString());
+      return all;
+    };
+    world.waitFor([&] { return composer->draft(world.draftId) == c[0] && names() == QStringList{c[1]}; },
+                  [&] { return QStringLiteral("the draft reads \"%1\" with [%2]").arg(composer->draft(world.draftId), names().join(u", ")); });
+  });
   step(QStringLiteral("the user starts a new thread in the project"), [](World& world, const Captures&, const Table&) {
     world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(kProject)}});
     expect(!world.draftId.isEmpty(), show(world.state(QStringLiteral("route"))));

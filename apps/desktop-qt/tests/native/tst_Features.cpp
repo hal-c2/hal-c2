@@ -135,6 +135,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:The thread says a message is sending*"),
     QStringLiteral("composer/drafting-and-sending.feature:A new thread's first message leaves*"),
     QStringLiteral("composer/drafting-and-sending.feature:Text typed while a new thread starts*"),
+    QStringLiteral("composer/drafting-and-sending.feature:A new thread's prompt that failed*"),
     QStringLiteral("composer/sending-turns.feature"),
     QStringLiteral("composer/editors-and-keys.feature"),
     QStringLiteral("composer/drafting-and-sending.feature:A background prompt*"),

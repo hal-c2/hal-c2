@@ -113,6 +113,15 @@ Feature: Drafting and sending a message
     And the MC takes the message
     Then the new thread's composer reads "and the lint"
 
+  @desktop
+  Scenario: A new thread's prompt that failed to start survives a restart
+    Given the user starts a new thread in the project
+    And the user has typed "Fix the failing test"
+    And the user attaches the image "screen.png"
+    When the user sends it and the MC cannot start the thread
+    And the user restarts the app
+    Then the new thread's draft reads "Fix the failing test" with "screen.png"
+
   @tui
   Scenario: Text typed while a message is sending is kept
     Given the user has sent "first"
