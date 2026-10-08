@@ -383,6 +383,8 @@ defmodule HalC2.Settings do
     {:reply, {:ok, state.version}, state}
   rescue
     exception -> {:reply, {:error, Exception.message(exception)}, state}
+  catch
+    kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
   end
 
   defp save(state, settings, write?) do

@@ -16,6 +16,8 @@ defmodule HalC2.SettingsUpdateTest do
     {:ok, 1} = HalC2.Settings.update(&Map.put(&1, "a", 1))
 
     assert {:error, "boom"} = HalC2.Settings.update(fn _ -> raise "boom" end)
+    assert {:error, "** (throw) :boom"} = HalC2.Settings.update(fn _ -> throw(:boom) end)
+    assert {:error, "** (exit) :boom"} = HalC2.Settings.update(fn _ -> exit(:boom) end)
 
     assert Process.whereis(HalC2.Settings) == server
     assert HalC2.Settings.get() == {%{"a" => 1}, 1}
