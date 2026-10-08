@@ -158,6 +158,9 @@ void ThreadStore::open(const QString& threadKey) {
     m_recent.prepend(threadKey);
     if (!m_threads.contains(threadKey)) {
       Followed& followed = m_threads[threadKey];
+      // Listed now, not once its copy is in: one the MC deletes while the copy
+      // loads is closed when the reconnect says so (forgetRemoved).
+      followed.listed = m_store->thread(threadKey).has_value();
       followed.model = new TimelineModel(threadKey, this);
       if (m_now) followed.model->setClock(m_now);
       configure(followed.model);
