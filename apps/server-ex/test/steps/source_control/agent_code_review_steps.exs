@@ -212,6 +212,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context |> open(number) |> start(number)
   end
 
+  step "the open pull requests of {string} cannot be listed", context do
+    Map.put(context, :unlisted, true)
+  end
+
+  step "the user asks for a review of \#{int}, which is merged", %{args: [number]} = context do
+    context = open(context, number, %{"state" => "MERGED", "mergedAt" => "2026-09-02T00:00:00Z"})
+
+    {reply, context} =
+      plugin(context, "start", %{"repository" => context.repository, "number" => number})
+
+    context |> Map.put(:reply, reply) |> refresh()
+  end
+
   step "{string} looks at {string} again", %{args: [@id, _repo]} = context do
     refresh(context)
   end
@@ -1075,11 +1088,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     prs = Map.put(context.prs, number, pr)
 
+    listed =
+      if context[:unlisted],
+        do: %{"args" => ["pr list"], "stderr" => "HTTP 502: Bad Gateway\n", "exit" => 1},
+        else: %{
+          "args" => ["pr list"],
+          "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
+        }
+
     context
-    |> World.cli_rules([
-      %{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])},
-      detail_rule(pr)
-    ])
+    |> World.cli_rules([listed, detail_rule(pr)])
     |> Map.put(:prs, prs)
   end
 

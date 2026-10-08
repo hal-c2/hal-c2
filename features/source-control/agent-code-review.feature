@@ -51,6 +51,18 @@ Feature: Agent code review
       Then a review of #12 starts
 
     @mc
+    Scenario: The user's ask reads that pull request as the app does, not the open list
+      Given the open pull requests of "acme/api" cannot be listed
+      When the user asks for a review of #12
+      Then a review of #12 starts
+
+    @mc
+    Scenario: An ask for a pull request that is not open says so
+      When the user asks for a review of #12, which is merged
+      Then the user is told "acme/api #12 is merged, not open."
+      And no review starts
+
+    @mc
     Scenario Outline: A selective trigger starts a review
       Given "code-review" watches "acme/api" selectively with the trigger "<trigger>"
       When <event>

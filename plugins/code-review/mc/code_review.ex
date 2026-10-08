@@ -598,17 +598,23 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # The user's own ask for pull request `number`, which need not be watched.
+  # The user's own ask for pull request `number`, which need not be watched. It is read
+  # on its own, as the app's pull request card reads it, not looked for in a listing.
   defp find(settings, repository, number) do
     with {:ok, projects} <- Host.projects(@id),
          %{} = project <-
            Enum.find(projects, &(&1["kind"] == settings["host"] and same?(&1["repository"], repository))) ||
              {:error, "No project on this MC has the repository #{repository}."},
-         {:ok, list} <- Host.pull_requests(@id, "list", %{"projectIds" => [project["id"]], "state" => "open"}),
-         %{} = entry <-
-           Enum.find(list["entries"] || [], &(&1["number"] == number)) ||
-             {:error, "#{repository} has no open pull request ##{number}."} do
-      {:ok, pr(entry)}
+         {:ok, detail} <-
+           Host.pull_requests(@id, "detail", %{
+             "projectId" => project["id"],
+             "host" => project["host"],
+             "repository" => project["repository"],
+             "number" => number
+           }),
+         true <- detail["state"] == "open" || {:error, "#{repository} ##{number} is #{detail["state"]}, not open."} do
+      reviewers = Enum.map(detail["reviewers"] || [], & &1["login"])
+      {:ok, pr(Map.put(detail, "viewerReviewRequested", Enum.any?(reviewers, &same?(&1, detail["viewer"]))))}
     else
       {:error, error} -> {:error, message(error)}
     end
