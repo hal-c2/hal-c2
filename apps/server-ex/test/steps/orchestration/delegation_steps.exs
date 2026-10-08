@@ -458,15 +458,24 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   step "the user rolled back the task's turn in its thread", context do
-    child = task(context)["childThreadId"]
-    runs = child |> World.await_stream(& &1) |> HalC2.StreamState.list("run")
+    roll_back(context)
+    context
+  end
 
-    {:ok, _} =
-      HalC2.Streams.commit(
-        child,
-        :thread,
-        for(run <- runs, do: {"run", run["id"], %{"s" => %{"status" => "rolled_back"}}})
-      )
+  step "the task's end is reported while its caller is too busy to answer", context do
+    retried_report(context, fn -> :ok end)
+  end
+
+  step "the user rolls back the task's turn in its thread before the report is retried",
+       context do
+    retried_report(context, fn ->
+      roll_back(context)
+    end)
+  end
+
+  step "{string} is given the task's result once", %{args: [parent]} = context do
+    assert [_one] =
+             Enum.filter(messages(context, parent), &(&1["text"] =~ "<delegated_task_result"))
 
     context
   end
@@ -842,6 +851,44 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
 
+  # Reports the child's run end as its turn's end does, with the caller's stream held
+  # so the first try times out; `meanwhile` runs before the one retry.
+  defp retried_report(context, meanwhile) do
+    parent = HalC2.Streams.ensure(World.thread_id(context, context.task_parent))
+    child = task(context)["childThreadId"]
+
+    run =
+      child |> World.await_stream(& &1) |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"])
+
+    :ok = :logger.add_handler(:delegation_retry_gate, __MODULE__.RetryGate, %{config: self()})
+    :sys.suspend(parent)
+
+    report =
+      Task.async(fn ->
+        HalC2.Orchestration.Delegation.report(child, run["id"], "completed", 1, 0)
+      end)
+
+    assert_receive {:retrying, reporter}, 10_000
+    :sys.resume(parent)
+    :logger.remove_handler(:delegation_retry_gate)
+    meanwhile.()
+    send(reporter, :retry)
+    assert Task.await(report, 10_000) == :ok
+    context
+  end
+
+  defp roll_back(context) do
+    child = task(context)["childThreadId"]
+    runs = child |> World.await_stream(& &1) |> StreamState.list("run")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        child,
+        :thread,
+        for(run <- runs, do: {"run", run["id"], %{"s" => %{"status" => "rolled_back"}}})
+      )
+  end
+
   defp quiet(thread_id, attempts) do
     HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
 
@@ -856,5 +903,19 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   rescue
     error ->
       if attempts > 1, do: quiet(thread_id, attempts - 1), else: reraise(error, __STACKTRACE__)
+  end
+end
+
+defmodule HalC2.Steps.Orchestration.Delegation.RetryGate do
+  @moduledoc "A logger handler that holds a delegated task report at its retry."
+  def log(%{msg: msg}, %{config: test}) do
+    text = msg |> elem(1) |> IO.chardata_to_string()
+
+    if text =~ "delegated task report" do
+      send(test, {:retrying, self()})
+      receive do: (:retry -> :ok)
+    end
+  rescue
+    _ -> :ok
   end
 end

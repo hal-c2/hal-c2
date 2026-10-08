@@ -208,8 +208,11 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal do
-      result = answer(child, run_id)
+         true <- task["status"] not in @terminal,
+         # A report that comes late (retried) finds the run as it is now: one the
+         # user rolled back meanwhile ends the task as its other runs say.
+         {status, run, ended_at} <- reported(child, run_id, status) do
+      result = run && answer(child, run["id"])
 
       delivery =
         cond do
@@ -221,9 +224,6 @@ defmodule HalC2.Orchestration.Delegation do
       # A completion reported twice (a provider replaying its turn's end after a
       # reconnect, or two reports racing) settles and wakes once: only the report
       # that finds the task unsettled delivers it.
-      # When the run ended, not when its report got through.
-      ended_at = StreamState.get(child, "run")[run_id]["completedAt"]
-
       with :ok <- settle(parent_id, task, status, result, delivery, :once, ended_at),
            true <- delivery == "delivered",
            do: wake(parent_id, task, status, result)
@@ -286,6 +286,15 @@ defmodule HalC2.Orchestration.Delegation do
       %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
       nil -> {"cancelled", nil, end_of(latest(runs))}
       _ -> nil
+    end
+  end
+
+  # How the reported run ended and when, not when its report got through; nil when
+  # it was rolled back and the child is working again, whose next run reports.
+  defp reported(child, run_id, status) do
+    case StreamState.get(child, "run")[run_id] do
+      %{"status" => "rolled_back"} -> last_end(StreamState.list(child, "run"))
+      run -> {status, run || %{"id" => run_id}, run && run["completedAt"]}
     end
   end
 
