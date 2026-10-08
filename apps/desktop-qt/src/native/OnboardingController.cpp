@@ -201,10 +201,11 @@ void OnboardingController::decide() {
   }
   if (!m_active) return;
   if (!m_store->projects().isEmpty() || !m_store->threads().isEmpty()) {
+    // Settled first: a save that fails says deviceChanged, which decides again.
+    settle(QStringLiteral("app"));
     QJsonObject saved = device->deviceSettings();
     saved.insert(kCompletedAt, m_now().toUTC().toString(Qt::ISODateWithMs));
     device->setDeviceSettings(saved);
-    settle(QStringLiteral("app"));
     return;
   }
   settle(QStringLiteral("wizard"));
