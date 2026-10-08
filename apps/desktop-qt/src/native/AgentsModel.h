@@ -21,7 +21,7 @@ class TimelineModel;
 //
 // A running row's elapsed time moves once a second, and only while the tab
 // shows (setActive) and something is running; a settled one stays at the
-// time it took.
+// time it took. When each ended is redrawn at midnight, when it shows.
 class AgentsModel : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -65,6 +65,11 @@ public:
   bool ticking() const { return m_timer.isActive(); }
   // One second passing: running rows show their new elapsed time.
   void tick();
+  // When the tab next redraws its end times by itself: at local midnight, while
+  // it shows, as "Completed at" becomes "yesterday"; invalid when it will not.
+  QDateTime nextDay() const;
+  // The end times read anew: the day, the time format or the locale changed.
+  void redrawEnded();
 
   int agentCount() const;
   Q_INVOKABLE int indexOf(const QString& id) const;
@@ -95,5 +100,7 @@ private:
   QList<Row> m_rows;
   bool m_active = false;
   QTimer m_timer;
+  QTimer m_dayTimer;
+  QDateTime m_nextDay;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
 };

@@ -49,6 +49,8 @@ QString formatElapsed(qint64 total) {
 AgentsModel::AgentsModel(QObject* parent) : QAbstractListModel(parent) {
   m_timer.setInterval(1000);
   connect(&m_timer, &QTimer::timeout, this, &AgentsModel::tick);
+  m_dayTimer.setSingleShot(true);
+  connect(&m_dayTimer, &QTimer::timeout, this, &AgentsModel::redrawEnded);
 }
 
 void AgentsModel::setThread(const QString& environmentId, TimelineModel* timeline) {
@@ -60,9 +62,7 @@ void AgentsModel::setThread(const QString& environmentId, TimelineModel* timelin
   if (timeline) {
     m_connection = connect(timeline, &TimelineModel::agentsChanged, this, &AgentsModel::read);
     // The Settings time format or the locale changed: the end times read anew.
-    m_timesConnection = connect(timeline, &TimelineModel::timesChanged, this, [this] {
-      if (!m_rows.isEmpty()) emit dataChanged(index(0), index(int(m_rows.size()) - 1), {EndedRole});
-    });
+    m_timesConnection = connect(timeline, &TimelineModel::timesChanged, this, &AgentsModel::redrawEnded);
   }
   read();
 }
@@ -71,7 +71,10 @@ void AgentsModel::setActive(bool active) {
   if (active == m_active) return;
   m_active = active;
   // Hidden, the times stood still; shown, they catch up at once.
-  if (active) tick();
+  if (active) {
+    tick();
+    redrawEnded();
+  }
   updateTimer();
 }
 
@@ -166,6 +169,15 @@ void AgentsModel::tick() {
   }
 }
 
+void AgentsModel::redrawEnded() {
+  if (!m_rows.isEmpty()) emit dataChanged(index(0), index(int(m_rows.size()) - 1), {EndedRole});
+  updateTimer();
+}
+
+QDateTime AgentsModel::nextDay() const {
+  return m_dayTimer.isActive() ? m_nextDay : QDateTime();
+}
+
 void AgentsModel::updateTimer() {
   const bool running = std::any_of(m_rows.cbegin(), m_rows.cend(), [](const Row& row) {
     return kLive.contains(text(row.entity, QLatin1String("status")));
@@ -174,6 +186,13 @@ void AgentsModel::updateTimer() {
     if (!m_timer.isActive()) m_timer.start();
   } else {
     m_timer.stop();
+  }
+  if (m_active && !m_rows.isEmpty()) {
+    const QDateTime now = m_now().toLocalTime();
+    m_nextDay = QDateTime(now.date().addDays(1), QTime(0, 0));
+    m_dayTimer.start(std::max<qint64>(now.msecsTo(m_nextDay), 1000));
+  } else {
+    m_dayTimer.stop();
   }
 }
 

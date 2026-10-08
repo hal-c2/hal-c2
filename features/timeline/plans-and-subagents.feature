@@ -212,6 +212,16 @@ Feature: Plans and subagents
     And "Tax tests" is shown to have ended "Completed at 9:59 AM"
     And "Lint" is shown to have ended "Completed yesterday at 9:01 AM"
 
+  # A tab left open overnight: "Completed at" is yesterday's by morning.
+  @desktop
+  Scenario: The Agents tab's end times follow the day over midnight
+    Given the agent started the subagent "Tax tests" 120 seconds ago
+    And "Tax tests" finished 85 seconds after it started
+    When the user opens the Agents tab
+    And the day turns over
+    Then the Agents tab redraws when each subagent ended
+    And "Tax tests" is shown to have ended "Completed yesterday at 9:59 AM"
+
   @desktop
   Scenario: The Agents tab tells the time as the user set it
     Given the agent started the subagent "Docs" 90 seconds ago

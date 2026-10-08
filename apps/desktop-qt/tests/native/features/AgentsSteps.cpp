@@ -24,6 +24,8 @@ struct FakeAgents {
   QString command;
   // Resets of the list since the tab opened, which would lose the user's scroll.
   std::shared_ptr<int> resets = std::make_shared<int>(0);
+  // Redraws of the end times since the day turned over.
+  std::shared_ptr<int> endedRedraws = std::make_shared<int>(0);
 };
 
 AgentsModel& agents(World& world) {
@@ -159,6 +161,22 @@ const Steps steps([] {
     expect(agents(world).ticking(), describeAgents(world));
     world.setTime(world.now().addSecs(1));
     agents(world).tick();
+  });
+  step(QStringLiteral("the day turns over"), [](World& world, const Captures&, const Table&) {
+    // The model's own midnight timer, without waiting for midnight.
+    const QDateTime midnight(world.now().toLocalTime().date().addDays(1), QTime(0, 0));
+    expect(agents(world).nextDay() == midnight,
+           QStringLiteral("the end times are next redrawn at %1, not midnight; %2").arg(agents(world).nextDay().toString(Qt::ISODate), describeAgents(world)));
+    std::shared_ptr<int> redraws = world.mc.part<FakeAgents>().endedRedraws;
+    QObject::connect(&agents(world), &QAbstractItemModel::dataChanged, &agents(world),
+                     [redraws](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                       if (roles.contains(AgentsModel::EndedRole)) ++*redraws;
+                     });
+    world.setTime(midnight.addSecs(1));
+    agents(world).redrawEnded();
+  });
+  step(QStringLiteral("the Agents tab redraws when each subagent ended"), [](World& world, const Captures&, const Table&) {
+    expect(*world.mc.part<FakeAgents>().endedRedraws > 0, describeAgents(world));
   });
   step(QStringLiteral("the Agents tab's times stand still"), [](World& world, const Captures&, const Table&) {
     expect(!agents(world).ticking(), describeAgents(world));
