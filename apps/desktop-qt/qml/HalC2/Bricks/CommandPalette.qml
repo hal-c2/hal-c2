@@ -159,11 +159,15 @@ Popup {
         ListView {
             id: list
 
+            objectName: "commandPaletteList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             model: PaletteModel
             currentIndex: PaletteModel.highlighted
+            // Where the pointer last hovered a row, in screen coordinates.
+            property var pointer: null
+
             boundsBehavior: Flickable.StopAtBounds
             section.property: "group"
             section.delegate: Text {
@@ -232,7 +236,14 @@ Popup {
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onEntered: PaletteModel.highlighted = row.index
+                    // Only a pointer that moves takes the highlight: rows that load or
+                    // scroll under a resting one leave Enter on what was typed.
+                    onPositionChanged: mouse => {
+                        const at = mapToGlobal(mouse.x, mouse.y);
+                        const moved = list.pointer !== null && (at.x !== list.pointer.x || at.y !== list.pointer.y);
+                        list.pointer = at;
+                        if (moved) PaletteModel.highlighted = row.index;
+                    }
                     onClicked: PaletteModel.run(row.index)
                 }
             }
