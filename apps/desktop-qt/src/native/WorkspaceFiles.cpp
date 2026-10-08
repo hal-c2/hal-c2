@@ -95,7 +95,9 @@ void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root
   save(true);
   m_environment = environmentId;
   m_root = root;
-  ++m_generation;
+  // Answers about the workspace left are dropped.
+  m_listRequests.clear();
+  ++m_searchRequest;
   m_tree.clear();
   m_revealing.clear();
   if (!m_query.isEmpty()) {
@@ -115,8 +117,7 @@ void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root
 void WorkspaceFiles::setActive(bool active) {
   m_active = active;
   // The first look at a workspace lists its top folder.
-  if (m_active && !m_root.isEmpty() && m_tree.rootStatus() == QLatin1String("loading") && !m_tree.loaded(QString()) &&
-      m_tree.rowCount() == 0) {
+  if (m_active && !m_root.isEmpty() && !m_tree.requested(QString())) {
     m_tree.reload();
   } else if (m_active && std::exchange(m_stale, false)) {
     m_tree.refresh();
@@ -175,11 +176,13 @@ void WorkspaceFiles::reload() {
 }
 
 void WorkspaceFiles::list(const QString& folder) {
-  const int generation = m_generation;
+  // The MC runs each listing on its own: one asked before this may answer after it.
+  const int request = ++m_listRequest;
+  m_listRequests.insert(folder, request);
   m_client->call(this, m_environment, QStringLiteral("projects.listEntries"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("directoryPath"), folder}},
-                 [this, generation, folder](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (generation != m_generation) return;
+                 [this, request, folder](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_listRequests.value(folder) != request) return;
                    if (error) {
                      m_tree.setFailed(folder, error->isEmpty() ? QStringLiteral("Unable to load folder.") : *error);
                      return;
@@ -192,9 +195,10 @@ void WorkspaceFiles::setQuery(const QString& query) {
   if (query == m_query) return;
   m_query = query;
   emit queryChanged();
-  if (m_query.trimmed().isEmpty()) {
+  // A search on its way is for another query.
+  ++m_searchRequest;
+  if (m_query.trimmed().isEmpty() || m_root.isEmpty()) {
     m_searchDelay.stop();
-    ++m_searchRequest;
     m_searching = false;
     m_searchTruncated = false;
     m_searchProblem.clear();
@@ -202,6 +206,8 @@ void WorkspaceFiles::setQuery(const QString& query) {
     emit searchChanged();
     return;
   }
+  // The user looks for something else than the file being revealed.
+  m_revealing.clear();
   m_searching = true;
   emit searchChanged();
   m_searchDelay.start();
@@ -565,7 +571,7 @@ void WorkspaceFiles::reveal(const QString& path) {
   // Revealing is about the user's tree, not a search's.
   if (!m_query.isEmpty()) setQuery({});
   m_revealing = path;
-  if (m_tree.rowCount() == 0 && m_tree.rootStatus() == QLatin1String("loading") && !m_tree.loaded(QString())) {
+  if (!m_tree.requested(QString())) {
     m_tree.reload();
     return;
   }

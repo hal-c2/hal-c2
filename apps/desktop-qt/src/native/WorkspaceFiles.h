@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -166,6 +167,8 @@ public:
   QString saveProblem() const { return m_saveProblem; }
   // How long an edit waits to be written (saveDelayMs unless a test says).
   void setSaveDelay(int ms) { m_saveDelay.setInterval(ms); }
+  // How long typing pauses before a search goes out (searchDelayMs unless a test says).
+  void setSearchDelay(int ms) { m_searchDelay.setInterval(ms); }
   // The kinds the user reads as source rather than rendered.
   QStringList sourceKinds() const { return m_sourceKinds; }
   void setSourceKinds(const QStringList& kinds);
@@ -217,8 +220,9 @@ private:
   QString m_environment;
   QString m_root;
   bool m_active = false;
-  // Bumped with every new target: answers about an older one are dropped.
-  int m_generation = 0;
+  // The newest listing asked for of each folder: any other answer is stale.
+  int m_listRequest = 0;
+  QHash<QString, int> m_listRequests;
   QString m_query;
   QTimer m_searchDelay;
   int m_searchRequest = 0;
