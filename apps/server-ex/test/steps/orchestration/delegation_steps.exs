@@ -857,11 +857,19 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     parent_id = World.thread_id(context, context.task_parent)
     parent = HalC2.Streams.ensure(parent_id)
     World.await_runs(context, "subagent", ["running"])
-    :ok = :logger.add_handler(:delegation_retry_gate, __MODULE__.RetryGate, %{config: self()})
+    gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
+    :ok = :logger.add_handler(gate, __MODULE__.RetryGate, %{config: self()})
     :sys.suspend(parent)
+
+    # A failing step leaves neither the gate nor a held stream to the next scenario.
+    ExUnit.Callbacks.on_exit(fn ->
+      :logger.remove_handler(gate)
+      catch_exit(:sys.resume(parent))
+    end)
+
     World.send_turn(context, "subagent", "say Done")
     assert_receive {:retrying, reporter}, 15_000
-    :logger.remove_handler(:delegation_retry_gate)
+    :logger.remove_handler(gate)
     :sys.resume(parent)
 
     refute Enum.any?(
@@ -911,8 +919,16 @@ defmodule HalC2.Steps.Orchestration.Delegation.RetryGate do
     text = msg |> elem(1) |> IO.chardata_to_string()
 
     if text =~ "delegated task report" do
+      # Released by the scenario, or by its end if it failed first.
+      ref = Process.monitor(test)
       send(test, {:retrying, self()})
-      receive do: (:retry -> :ok)
+
+      receive do
+        :retry -> :ok
+        {:DOWN, ^ref, _, _, _} -> :ok
+      end
+
+      Process.demonitor(ref, [:flush])
     end
   rescue
     _ -> :ok
