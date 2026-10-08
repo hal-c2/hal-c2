@@ -28,7 +28,8 @@ function(hal_c2_add_glob_tests)
     target_include_directories(${_name} PRIVATE "${_dir}" ${arg_INCLUDES})
     target_link_libraries(${_name} PRIVATE ${arg_LIBRARIES} Qt6::Test)
     add_test(NAME ${_test} COMMAND ${_name})
+    # A soak (RC_PARAMS="max_success=1000") runs one slot far past QtTest's 300 s.
     set_tests_properties(${_test} PROPERTIES LABELS "${arg_LABEL}"
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QTEST_FUNCTION_TIMEOUT=1800000")
   endforeach()
 endfunction()
