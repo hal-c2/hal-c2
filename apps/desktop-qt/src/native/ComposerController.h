@@ -40,6 +40,12 @@ class TimelineModel;
 // to the thread in the draft's place; a background send launches it and
 // leaves the draft ready for another prompt.
 //
+// A send is kept with the drafts until the MC answers it. One the app quit or
+// crashed on comes back as its draft after the restart, once the thread's
+// messages (a new thread's: whether it exists) show the MC never got it,
+// unless a newer user message is in the thread; into a draft with newer
+// typing it waits behind a toast's "Restore prompt" instead.
+//
 // Publishes `composer` (ShellComposerState in packages/contracts/src/shell.ts;
 // null with no thread or draft open), `modelPicker` (ShellModelPickerState)
 // and `turn`, the route thread's requests for the request bricks:
@@ -256,6 +262,26 @@ private:
     QList<Excerpt> excerpts;
     // The text to give back if the send fails; empty for none.
     QString prompt;
+    QString messageId;
+  };
+  // A prompt on its way to the MC, kept with the drafts until the MC answers
+  // it: one a quit or crash cut off comes back to its draft after the restart
+  // (reconcileUnsent), unless the MC has it or the user has said something
+  // newer there since.
+  struct Unsent {
+    // The thread, or the new thread's draft.
+    QString target;
+    // The thread it goes to, or a draft's launch makes.
+    QString thread;
+    QString messageId;
+    // The thread's newest user message when it was sent (empty for none);
+    // nothing when its messages were not known.
+    std::optional<QString> after;
+    QString prompt;
+    QList<Attachment> attachments;
+    QList<Excerpt> excerpts;
+    // Read back from before a restart, waiting to be reconciled.
+    bool kept = false;
   };
 
   bool interrupt();
@@ -286,6 +312,18 @@ private:
   // The message and the mode changes before it; empty `text` implements the plan.
   bool sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp, bool fromDraft);
   void sendNext(const QString& target);
+  // A toast whose "Restore prompt" gives the prompt back once the target's
+  // draft is empty, and opens it.
+  void offerRestore(const QString& target, const QString& title, const QString& description, const QString& restored,
+                    const QList<Attachment>& attachments = {}, const QList<Excerpt>& contexts = {});
+  // The MC answered the send: it is no longer kept.
+  void forgetUnsent(const QString& messageId);
+  // The kept sends from before a restart whose fate can now be told: a
+  // thread's once its stream is live, a launch's once the shell knows
+  // whether its thread exists.
+  void reconcileUnsent();
+  static QJsonObject excerptJson(const Excerpt& excerpt);
+  static Excerpt excerptOf(const QJsonObject& kept);
   void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
   bool attach(const QVariantList& files);
   static QString thumbnail(const QString& dataUrl);
@@ -388,6 +426,11 @@ private:
     // last sent with: a new thread starts from them (the web's sticky model).
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
+    // In the order they were sent.
+    QList<Unsent> unsent;
+    // Each target's send the MC answered last, which its stream may not have
+    // brought yet when the next is sent.
+    QHash<QString, QString> delivered;
     QString path;
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.
@@ -405,6 +448,7 @@ private:
   QString m_draftId;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
+  QMetaObject::Connection m_timelineStatus;
   // The files attached to each question's answer, by request id then
   // question id; they go with the answer and stay out of the thread's draft.
   QHash<QString, QHash<QString, QList<Attachment>>> m_answerFiles;

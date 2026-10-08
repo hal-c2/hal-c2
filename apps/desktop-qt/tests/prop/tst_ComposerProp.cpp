@@ -2,7 +2,9 @@
 // against a fake MC that accepts, refuses or holds each send
 // (ComposerController, DraftController): typing, images, the model and
 // permissions picked, sends and follow-ups while a turn runs, the stash, the
-// connection dropping and the app restarting.
+// connection dropping and the app restarting, with sends in flight that the MC
+// did or did not get: each reaches the thread once or comes back to its draft,
+// unless a newer user message is in the thread by then.
 
 #include <QBuffer>
 #include <QImage>
@@ -16,6 +18,8 @@
 #include "ShellBridge.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "ThreadStore.h"
+#include "TimelineModel.h"
 #include "ToastController.h"
 
 namespace prop = halc2::prop;
@@ -50,12 +54,16 @@ struct Send {
   QString runtime;
   QString delivery;  // auto, steer or queue
   bool refusedAtMc = false;  // what the MC holding it will answer
+  bool superseded = false;   // a newer user message reached the thread since
 };
 
-// A "Failed to send message" toast; `prompt` is what its "Restore prompt" gives back.
+// A "Failed to send message" or "A prompt was not sent" toast; what its
+// "Restore prompt" gives back.
 struct Toast {
   QString thread;
-  QString prompt;  // empty: the toast has no action
+  QString prompt;
+  int images = 0;
+  bool restore = false;  // whether it offers "Restore prompt"
 };
 
 struct Model {
@@ -73,6 +81,9 @@ struct Model {
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
+  // The sends a restart cut off that the MC never got, by thread, until the
+  // thread is open again.
+  QMap<QString, QList<Send>> limbo;
 
   int total() const {
     int count = 0;
@@ -124,9 +135,32 @@ void fail(Model& m, const QString& thread) {
     m.toasts.prepend({thread, QString()});
     if (!restored.isEmpty()) target.text = restored;
   } else {
-    m.toasts.prepend({thread, restored});
+    m.toasts.prepend({thread, restored, 0, true});
   }
   target.images += images;
+}
+
+// The thread is open after a restart: what the MC never got comes back,
+// into an empty draft, else behind a toast. A newer user message drops it.
+void settleLimbo(Model& m, const QString& thread) {
+  QStringList prompts;
+  int images = 0;
+  bool any = false;
+  for (const Send& send : m.limbo.take(thread)) {
+    if (send.superseded) continue;
+    any = true;
+    if (!send.prompt.isEmpty()) prompts.append(send.prompt);
+    images += send.images;
+  }
+  if (!any) return;
+  const QString restored = prompts.join(QStringLiteral("\n\n"));
+  Target& target = m.targets[thread];
+  if (target.text.isEmpty() && target.images == 0) {
+    target.text = restored;
+    target.images = images;
+    return;
+  }
+  m.toasts.prepend({thread, restored, images, true});
 }
 
 void dispatchFirst(Model& m, const QString& thread) {
@@ -195,6 +229,13 @@ struct Sut {
   std::unique_ptr<NativeShell> native;
   QString draftId;
   int edit = 0;
+  // Each thread's user messages, as its stream sends them, and the stream's offset.
+  QMap<QString, QList<QJsonObject>> messages;
+  int seq = 0;
+  // While set, what the MC answers never reached it: a restart cut it off.
+  bool losing = false;
+  // Those commands, by their place in mc.commands.
+  QSet<qsizetype> lost;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -232,6 +273,22 @@ struct Sut {
         stored.append(image);
       }
       mc.reply(rpc, QJsonObject{{QStringLiteral("attachments"), stored}});
+    });
+    // Each thread's messages, whole on every subscription, then as they come.
+    mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) {
+      QJsonArray rows;
+      for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
+        rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
+      }
+      mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
+               {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), seq},
+               {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+      mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), seq},
+               {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    });
+    mc.effects.append([this](const QJsonObject& command) {
+      if (losing || command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
+      addMessage(command.value(QLatin1String("threadId")).toString(), command.value(QLatin1String("messageId")).toString());
     });
     start();
     draftId = native->controller<DraftController>()->start(mc.environmentId, QStringLiteral("p1"));
@@ -274,10 +331,41 @@ struct Sut {
     RC_ASSERT(prop::until([this] { return online(); }));
   }
 
-  void restart() {
+  // A user message reaches the thread, and whoever follows it hears.
+  void addMessage(const QString& thread, const QString& id) {
+    ++seq;
+    const QString at = QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC).addSecs(seq).toString(Qt::ISODateWithMs);
+    const QJsonObject message{{QStringLiteral("id"), id}, {QStringLiteral("role"), QStringLiteral("user")},
+                              {QStringLiteral("createdBy"), QStringLiteral("user")}, {QStringLiteral("createdAt"), at}};
+    messages[thread].append(message);
+    if (!mc.connected()) return;
+    for (const int sub : mc.subscribers(QStringLiteral("stream"))) {
+      if (mc.shapeOf(sub).value(QLatin1String("stream")).toString() != thread) continue;
+      mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), sub}, {QStringLiteral("offset"), seq},
+               {QStringLiteral("events"), QJsonArray{QJsonArray{seq, QStringLiteral("message"), id,
+                                                                QJsonObject{{QStringLiteral("s"), message}}, at}}}});
+    }
+  }
+
+  // The app quits, with the MC holding the first sends of `held` (each the
+  // thread's last command): once it is gone the MC gets them (`received`) or
+  // never did.
+  void restart(const QStringList& held = {}, bool received = false) {
     native.reset();
     bridge.reset();
     RC_ASSERT(prop::until([this] { return !mc.connected(); }));
+    if (!held.isEmpty()) {
+      for (const QString& thread : held) {
+        for (qsizetype i = mc.commands.size() - 1; i >= 0; --i) {
+          if (mc.commands.at(i).value(QLatin1String("threadId")).toString() != thread) continue;
+          if (!received) lost.insert(i);
+          break;
+        }
+      }
+      losing = !received;
+      mc.answerHeld();
+      losing = false;
+    }
     start();
   }
 
@@ -306,7 +394,9 @@ struct Sut {
   // The composer's commands the MC took for each thread, as commandOf writes them.
   QMap<QString, QStringList> commands() const {
     QMap<QString, QStringList> byThread;
-    for (const QJsonObject& command : mc.commands) {
+    for (qsizetype i = 0; i < mc.commands.size(); ++i) {
+      if (lost.contains(i)) continue;
+      const QJsonObject& command = mc.commands.at(i);
       const QString type = command.value(QLatin1String("type")).toString();
       const QString thread = command.value(QLatin1String("threadId")).toString();
       if (type == QLatin1String("thread.runtime-mode.set")) {
@@ -357,6 +447,13 @@ struct Sut {
 
 // What the app shows agrees with the model.
 void verify(const Model& m, Sut& sut) {
+  // An open thread's messages are known: what a restart cut off is settled.
+  if (m.isThread(m.open)) {
+    RC_ASSERT(prop::until([&] {
+      const auto* timeline = sut.native->controller<ThreadStore>()->timeline(keyOf(m.open));
+      return timeline && timeline->status() == QLatin1String("live");
+    }));
+  }
   sut.settle(m.total());
   RC_ASSERT(sut.commands() == m.commands);
   auto* composer = sut.composer();
@@ -370,7 +467,7 @@ void verify(const Model& m, Sut& sut) {
   RC_ASSERT(shown.value(QStringLiteral("text")).toString() == m.targets.value(m.open).text);
   RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
   QList<bool> toasts;
-  for (const Toast& toast : m.toasts) toasts.append(!toast.prompt.isEmpty());
+  for (const Toast& toast : m.toasts) toasts.append(toast.restore);
   RC_ASSERT(sut.toasts() == toasts);
   const QVariantMap stash = sut.bridge->state()->value(QStringLiteral("composerStash")).toMap();
   RC_ASSERT(stash.value(QStringLiteral("entries")).toList().size() == m.stash.size());
@@ -380,7 +477,10 @@ using Command = rc::state::Command<Model, Sut>;
 
 struct Open : Command {
   QString target = pick(kThreads + QStringList{kDraft});
-  void apply(Model& m) const override { m.open = target; }
+  void apply(Model& m) const override {
+    m.open = target;
+    if (m.isThread(target)) settleLimbo(m, target);
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.open(target);
     verify(nextState(m0), sut);
@@ -467,6 +567,8 @@ struct Submit : Command {
     QList<Send>& queue = m.queues[m.open];
     queue.append({target.text, target.images, target.model, target.runtime, delivery});
     m.lastModel = target.model.isEmpty() ? kModels.first() : target.model;
+    // Newer than what a restart cut off.
+    m.limbo.remove(m.open);
     target.text.clear();
     target.images = 0;
     if (queue.size() == 1) dispatchFirst(m, m.open);
@@ -479,6 +581,25 @@ struct Submit : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Submit(" << (alternate ? "alternate" : "foreground") << ")"; }
+};
+
+// Type a prompt and send it at once, so the restart check has sends to cut off.
+struct Prompt : Command {
+  Type type;
+  Submit submit;
+  Prompt() { type.text = pick(kTexts.mid(1, 2)); }
+  void checkPreconditions(const Model& m) const override { submit.checkPreconditions(m); }
+  void apply(Model& m) const override {
+    type.apply(m);
+    submit.apply(m);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    type.run(m0, sut);
+    submit.run(type.nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override {
+    os << "Prompt(\"" << type.text.toStdString() << "\", " << (submit.alternate ? "alternate" : "foreground") << ")";
+  }
 };
 
 // The web's stash: the draft goes aside, or an empty draft takes back the only entry.
@@ -508,16 +629,18 @@ struct Stash : Command {
 // into its thread's draft if that is empty, and the thread opens.
 struct RestorePrompt : Command {
   void checkPreconditions(const Model& m) const override {
-    RC_PRE(std::any_of(m.toasts.cbegin(), m.toasts.cend(), [](const Toast& toast) { return !toast.prompt.isEmpty(); }));
+    RC_PRE(std::any_of(m.toasts.cbegin(), m.toasts.cend(), [](const Toast& toast) { return toast.restore; }));
   }
   void apply(Model& m) const override {
-    const auto newest = std::find_if(m.toasts.cbegin(), m.toasts.cend(), [](const Toast& toast) { return !toast.prompt.isEmpty(); });
+    const auto newest = std::find_if(m.toasts.cbegin(), m.toasts.cend(), [](const Toast& toast) { return toast.restore; });
     const Toast toast = *newest;
     m.toasts.erase(newest);
     Target& target = m.targets[toast.thread];
     if (!target.text.isEmpty()) return;
     target.text = toast.prompt;
+    target.images += toast.images;
     m.open = toast.thread;
+    settleLimbo(m, toast.thread);
   }
   void run(const Model& m0, Sut& sut) const override {
     RC_ASSERT(sut.native->controller<ToastController>()->runAction(QStringLiteral("Restore prompt")));
@@ -605,16 +728,60 @@ struct Drop : Command {
   void show(std::ostream& os) const override { os << "Drop"; }
 };
 
-// The app quits and starts again: the drafts, picks and stash are read back.
-struct Restart : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.held.isEmpty()); }
-  void apply(Model& m) const override { m.toasts.clear(); }
+// Another device's prompt reaches the thread: newer than anything sent here
+// that has not reached it yet.
+struct Elsewhere : Command {
+  QString thread;
+  // Mostly a thread with sends on their way or cut off, where it matters.
+  explicit Elsewhere(const Model& m) {
+    const QStringList pending = m.queues.keys() + m.limbo.keys();
+    thread = pending.isEmpty() || *rc::gen::arbitrary<bool>() ? pick(kThreads) : pick(pending);
+  }
+  void apply(Model& m) const override {
+    for (Send& send : m.queues[thread]) send.superseded = true;
+    if (m.queues.value(thread).isEmpty()) m.queues.remove(thread);
+    for (Send& send : m.limbo[thread]) send.superseded = true;
+    if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
+  }
   void run(const Model& m0, Sut& sut) const override {
-    sut.restart();
+    sut.addMessage(thread, QStringLiteral("elsewhere-%1").arg(sut.seq + 1));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Elsewhere(" << thread.toStdString() << ")"; }
+};
+
+// The app quits and starts again: the drafts, picks and stash are read back.
+// The sends the MC holds are cut off: it gets the first of each thread's
+// (`received`) or never did, and the rest never left. What it never got
+// comes back once the thread is open.
+struct Restart : Command {
+  bool received = *rc::gen::arbitrary<bool>();
+  void apply(Model& m) const override {
+    m.toasts.clear();
+    for (const QString& thread : std::exchange(m.held, {})) {
+      QList<Send> cut = m.queues.take(thread);
+      const Send& first = cut.first();
+      // The held command is the send's message, unless a runtime change goes first.
+      const bool message = commandsOf(first).size() == 1;
+      if (!received) {
+        m.commands[thread].removeLast();
+        if (m.commands.value(thread).isEmpty()) m.commands.remove(thread);
+      }
+      if (received && message && !first.refusedAtMc) cut.removeFirst();
+      m.limbo[thread].append(cut);
+      if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
+      m.holding = false;
+    }
+    if (m.isThread(m.open)) settleLimbo(m, m.open);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.restart(m0.held, received);
     sut.open(m0.open);
     verify(nextState(m0), sut);
   }
-  void show(std::ostream& os) const override { os << "Restart"; }
+  void show(std::ostream& os) const override {
+    os << "Restart(" << (received ? "the MC got what it held" : "the MC never got what it held") << ")";
+  }
 };
 
 }  // namespace
@@ -634,7 +801,30 @@ private slots:
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime, Submit,
                                                    Submit, Submit, Stash, RestorePrompt, SetRunning, SetRunning, Hold, Refuse,
-                                                   AnswerHeld, Drop, Restart>()));
+                                                   AnswerHeld, Drop, Hold, Elsewhere, Restart>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // The same, crowded with sends in flight when the app quits: each reaches
+  // the thread once, or comes back as its draft (or behind a toast when the
+  // draft has newer typing), unless a newer user message is there.
+  void sendsCutOffByARestart() {
+    QVERIFY(rc::check("a send cut off by a restart reaches the MC once or comes back, never lost or doubled", [] {
+      Sut sut;
+      Model model;
+      verify(model, sut);
+      // A thread open with the MC holding its answers, so sends are in flight.
+      Open open;
+      open.target = kThreads.first();
+      open.run(model, sut);
+      open.apply(model);
+      Hold().run(model, sut);
+      Hold().apply(model);
+      const auto commands = *rc::gen::scale(
+          0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, Type, Attach, PickRuntime, Prompt, Prompt, Prompt, Submit, Hold, Hold, Refuse,
+                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
