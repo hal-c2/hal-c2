@@ -471,6 +471,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     complete_unheard(context, fn -> roll_back(context) end)
   end
 
+  step "the subagent completes, and the user rolls back its turn and asks again before the caller hears it",
+       context do
+    complete_unheard(context, fn ->
+      roll_back(context)
+      World.send_turn(context, "subagent", "wait for it")
+      World.await_runs(context, "subagent", ["rolled_back", "running"])
+      cancel_queued_turn(context)
+    end)
+  end
+
   step "{string} is told the task was cancelled without an answer",
        %{args: [parent]} = context do
     message = await_result_message(context, parent)
@@ -879,9 +889,40 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
     assert task(context)["status"] == "running"
     meanwhile.()
+    ref = Process.monitor(reporter)
     send(reporter, :retry)
-    await_task(context, &(&1["status"] in ~w(completed cancelled)))
-    Map.put(context, :result_message, await_result_message(context, context.task_parent))
+    assert_receive {:DOWN, ^ref, _, _, _}, 15_000
+
+    result =
+      context
+      |> World.state(context.task_parent)
+      |> StreamState.list("message")
+      |> Enum.find(&(&1["text"] =~ "<delegated_task_result"))
+
+    Map.put(context, :result_message, result)
+  end
+
+  # A turn the user queued in the child behind the running one, then cancelled: the
+  # child's newest run, and an ended one.
+  defp cancel_queued_turn(context) do
+    child = task(context)["childThreadId"]
+    ordinal = child |> World.await_stream(& &1) |> StreamState.list("run") |> length()
+    at = HalC2.Orchestration.Entities.now()
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"run", "run:cancelled",
+         %{
+           "s" => %{
+             "id" => "run:cancelled",
+             "threadId" => child,
+             "ordinal" => ordinal + 1,
+             "status" => "cancelled",
+             "completedAt" => at,
+             "updatedAt" => at
+           }
+         }}
+      ])
   end
 
   defp roll_back(context) do

@@ -175,6 +175,13 @@ Feature: Delegating tasks to subagents
     Then the task, its node and its turn item are "cancelled"
     And "parent" is told the task was cancelled without an answer
 
+  # Its next turn reports when it ends.
+  @mc
+  Scenario: A task rolled back and at work again when its end report is retried keeps running
+    Given the agent in "parent" delegated a task without waiting
+    When the subagent completes, and the user rolls back its turn and asks again before the caller hears it
+    Then the task, its node and its turn item are "running"
+
   # Its turn is interrupted at boot, and may be continued; it reports when it ends.
   @mc
   Scenario: A task still working when the MC stopped is not settled when it starts

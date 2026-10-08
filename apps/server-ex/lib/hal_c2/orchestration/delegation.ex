@@ -261,7 +261,7 @@ defmodule HalC2.Orchestration.Delegation do
         child = stream(child_id),
         runs = StreamState.list(child, "run"),
         runs != [],
-        not Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
+        not working?(runs),
         {ended, run, ended_at} <- [last_end(runs)],
         settle(
           parent_id,
@@ -292,11 +292,15 @@ defmodule HalC2.Orchestration.Delegation do
   # How the reported run ended and when, not when its report got through; nil when
   # it was rolled back and the child is working again, whose next run reports.
   defp reported(child, run_id, status) do
+    runs = StreamState.list(child, "run")
+
     case StreamState.get(child, "run")[run_id] do
-      %{"status" => "rolled_back"} -> last_end(StreamState.list(child, "run"))
+      %{"status" => "rolled_back"} -> if not working?(runs), do: last_end(runs)
       run -> {status, run || %{"id" => run_id}, run && run["completedAt"]}
     end
   end
+
+  defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
 
   defp latest(runs), do: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
   defp end_of(run), do: run["completedAt"] || run["updatedAt"]
