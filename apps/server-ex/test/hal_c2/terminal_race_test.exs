@@ -65,6 +65,20 @@ defmodule HalC2.TerminalRaceTest do
     assert length(String.split(history <> marker, "early")) == 2
   end
 
+  test "attaching again during the output batch does not resend it", %{input: input} do
+    {:ok, _} = Terminal.attach(input, self())
+    print(input, "once\r\n")
+
+    {:ok, %{"history" => history, "sequence" => sequence}} = Terminal.attach(input, self())
+    {:ok, nil} = Terminal.write(Map.put(input, "data", "marker\n"))
+    events = receive_events("marker\r\nmarker\r\n")
+
+    assert history == "once\r\n"
+    assert Enum.all?(events, &(&1["sequence"] > sequence))
+    output = for %{"type" => "output", "data" => data} <- events, do: data
+    assert history <> Enum.join(output) == "once\r\nmarker\r\nmarker\r\n"
+  end
+
   test "a clear drops what was printed before it, not what follows", %{input: input} do
     {:ok, _} = Terminal.attach(input, self())
     print(input, "stale\r\n")

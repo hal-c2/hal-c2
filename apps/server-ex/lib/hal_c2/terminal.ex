@@ -330,8 +330,10 @@ defmodule HalC2.Terminal do
   end
 
   def handle_call({:attach, input, subscriber}, _from, state) do
-    # The snapshot holds the pending batch already; sending it later would repeat it.
-    state = flush_output(state)
+    # The snapshot holds the pending batch and whatever this attach starts, so a
+    # subscriber attaching again is left out of the events they produce; others get them.
+    {ref, others} = Map.pop(state.subscribers, subscriber)
+    state = flush_output(%{state | subscribers: others})
 
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
@@ -342,8 +344,7 @@ defmodule HalC2.Terminal do
         do: open_session(state, input),
         else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
-    subscribers =
-      Map.put_new_lazy(state.subscribers, subscriber, fn -> Process.monitor(subscriber) end)
+    subscribers = Map.put(state.subscribers, subscriber, ref || Process.monitor(subscriber))
 
     # A shell that failed to start while attaching is explained to the attaching
     # client too; its snapshot alone only says "error".
