@@ -73,6 +73,10 @@ private:
   bool m_open = false;
   bool m_asking = false;
   bool m_running = false;
+  // Counts the camera's runs: a code read off a frame of an earlier run is
+  // not this one's (m_readOf is the run the read in flight began in).
+  quint64 m_run = 0;
+  quint64 m_readOf = 0;
   // The camera failed: not started again until the user asks, here
   // (`scanner.retry`) or by opening the scanner again.
   bool m_failed = false;

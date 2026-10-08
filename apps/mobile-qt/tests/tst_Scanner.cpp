@@ -293,6 +293,26 @@ private slots:
 
   // A camera says only later that it did not start: the scanner then lets
   // go of it and says so, in the place of a preview with nothing in it.
+  // A code read off a frame of the scanner's last showing is not taken by the
+  // next one: the user closed it, and opened it again for another code.
+  void aFrameReadForAnEarlierShowingIsDropped() {
+    Device device;
+    device.camera->held = ScanCamera::Access::Granted;
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    device.camera->show(camera::sees(kLink));
+    // Closed and opened again before that frame is read.
+    device.dispatch(QStringLiteral("scanner.close"));
+    device.dispatch(QStringLiteral("scanner.open"));
+    device.showPreview();
+    QVERIFY(device.camera->running());
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(10000));
+    QCoreApplication::processEvents();
+    QCOMPARE(device.paired, QStringList());
+    QCOMPARE(device.open(), true);
+    QVERIFY(device.camera->running());
+  }
+
   void aCameraThatDoesNotStartSaysSo() {
     Device device;
     device.camera->held = ScanCamera::Access::Granted;
