@@ -82,3 +82,15 @@ hal_c2_target_terminal(tst_Features)
 hal_c2_target_scanner(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+# Regressions the property tests (prop/) found, one tst_*Regression.cpp each,
+# picked up on the next build.
+include("${_desktop}/cmake/GlobTests.cmake")
+hal_c2_add_glob_tests(PATTERN "tst_*Regression.cpp" LABEL regression
+  INCLUDES ../src "${_harness}"
+  LIBRARIES hal_c2_native
+)
+foreach(_target tst_ScannerRegression)
+  if(TARGET ${_target})
+    hal_c2_target_scanner(${_target})
+  endif()
+endforeach()

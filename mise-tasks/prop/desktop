@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Build (when needed) and run the Qt desktop's property tests (apps/desktop-qt/tests/prop) with ctest"
+#MISE dir="{{config_root}}"
+#USAGE arg "[name]" var=#true help="Test names to run, e.g. SidebarProp; every property when none. RC_PARAMS=max_success=1000 soaks"
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
+build=apps/desktop-qt/build/prop
+if [[ ! -f $build/CMakeCache.txt ]]; then
+  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's on PATH, then Homebrew's.
+  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+  cmake -S apps/desktop-qt/tests/prop -B "$build" -DCMAKE_BUILD_TYPE=Debug ${qt:+"-DCMAKE_PREFIX_PATH=$qt"}
+fi
+cmake --build "$build" --parallel
+filter=()
+(($# == 0)) || filter=(-R "^($(IFS='|'; echo "$*"))\$")
+exec ctest --test-dir "$build" --output-on-failure "${filter[@]}"

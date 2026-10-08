@@ -104,3 +104,10 @@ add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
 target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+# Regressions the property tests (tests/prop) found, one tst_*Regression.cpp
+# each, picked up on the next build.
+include(../../cmake/GlobTests.cmake)
+hal_c2_add_glob_tests(PATTERN "tst_*Regression.cpp" LABEL regression
+  INCLUDES ../../src ../../src/native features
+  LIBRARIES hal_c2_native
+)
