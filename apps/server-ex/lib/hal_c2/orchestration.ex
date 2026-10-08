@@ -2224,14 +2224,27 @@ defmodule HalC2.Orchestration do
   end
 
   # Changes to queued runs; positions are renumbered 1.. after each one. A thread
-  # that does not exist, or was deleted, has no queue to change.
+  # that does not exist, or was deleted, has no queue to change; one that is moving or
+  # moved keeps its queue as the move took it, as thread updates do.
   defp queue_change(thread_id, fun) do
     changed =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         case StreamState.get(state, "thread")[thread_id] do
-          nil -> {[], {:error, "unknown thread #{thread_id}"}}
-          %{"deletedAt" => at} when at != nil -> {[], {:error, "Thread #{thread_id} is deleted."}}
-          _ -> {Enum.reject(fun.(state), &is_nil/1), :ok}
+          nil ->
+            {[], {:error, "unknown thread #{thread_id}"}}
+
+          %{"deletedAt" => at} when at != nil ->
+            {[], {:error, "Thread #{thread_id} is deleted."}}
+
+          %{"moving" => %{"label" => to}} = thread ->
+            {[],
+             {:error, "#{thread["title"]} is moving to #{to}. Try again once it has arrived."}}
+
+          %{"movedTo" => %{} = moved} = thread ->
+            {[], {:error, "#{thread["title"]} has moved to #{moved["label"]}."}}
+
+          _ ->
+            {Enum.reject(fun.(state), &is_nil/1), :ok}
         end
       end)
 

@@ -283,6 +283,9 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     })
   end
 
+  def resume_queue(id),
+    do: HalC2.Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => id})
+
   @doc """
   What this machine has of the thread `id`: `:none`, `:forward` (a forwarding record),
   `{:moving, title}` or `{:live, title, messages, attachment, plugin}`, where

@@ -59,6 +59,22 @@ defmodule HalC2.ThreadMoveTest do
     Process.exit(mover, :kill)
   end
 
+  # Queue changes skipped the moving guard: a resume or cancel was taken on the source
+  # after the move had read it, and lost on the destination.
+  test "a moving thread refuses changes to its queue", %{context: context} do
+    {_context, id, mover} = hold_move(context)
+
+    for command <- [
+          %{"type" => "queue.resume", "threadId" => id},
+          %{"type" => "queued-run.cancel", "threadId" => id, "runId" => "run-1"}
+        ] do
+      assert {:error, "Plan is moving to desktop. Try again once it has arrived."} =
+               HalC2.Orchestration.dispatch(command)
+    end
+
+    Process.exit(mover, :kill)
+  end
+
   # A rename of the record a moved thread left behind used to be taken, and lost: the
   # thread lives on where it moved.
   test "a thread's forwarding record refuses to be renamed, but goes with its project", %{
@@ -77,6 +93,9 @@ defmodule HalC2.ThreadMoveTest do
     rename = %{"type" => "thread.metadata.update", "threadId" => id, "title" => "Renamed"}
     assert {:error, "Plan has moved to desktop."} = HalC2.Orchestration.dispatch(rename)
     assert World.thread(context, "Plan")["title"] == "Plan"
+
+    assert {:error, "Plan has moved to desktop."} =
+             HalC2.Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => id})
 
     assert {:ok, _} =
              HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})

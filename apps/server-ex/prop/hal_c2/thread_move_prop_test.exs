@@ -6,7 +6,8 @@ defmodule HalC2.ThreadMovePropTest do
   included. A move can also be held at a stage (the source about to send it, the
   destination having copied it or taking it, the source told it arrived) while other
   things happen: the process that started the move dies, `HalC2.ThreadMove` or the store
-  restarts on either side, the thread is renamed or moved again, other threads move.
+  restarts on either side, the thread is renamed, its queue resumed or it is moved
+  again, other threads move.
   The held move then goes on, or ends where it was held, as a lost connection or a
   crashed machine ends it.
 
@@ -111,6 +112,10 @@ defmodule HalC2.ThreadMovePropTest do
             {2,
              let t <- oneof(free) do
                {:call, __MODULE__, :rename, [t, state.threads[t].at, title()]}
+             end},
+            {1,
+             let t <- oneof(free) do
+               {:call, __MODULE__, :resume_queue, [t, state.threads[t].at]}
              end}
           ],
           else: []
@@ -136,6 +141,7 @@ defmodule HalC2.ThreadMovePropTest do
               {3, {:call, __MODULE__, :release, [state.held, :go]}},
               {2, {:call, __MODULE__, :release, [state.held, :crash]}},
               {1, {:call, __MODULE__, :rename, [state.held.t, state.held.from, title()]}},
+              {1, {:call, __MODULE__, :resume_queue, [state.held.t, state.held.from]}},
               {1, {:call, __MODULE__, :move, [state.held.t, state.held.from, oneof(@mcs)]}}
             ] ++
               if(state.held.stage in [:staged, :taking] and not state.held.killed,
@@ -166,6 +172,9 @@ defmodule HalC2.ThreadMovePropTest do
     do: state.held != nil and Map.delete(held, :ids) == Map.delete(state.held, :ids)
 
   def precondition(state, {:call, _, :rename, [t, at, _]}),
+    do: is_map_key(state.threads, t) and state.threads[t].at == at
+
+  def precondition(state, {:call, _, :resume_queue, [t, at]}),
     do: is_map_key(state.threads, t) and state.threads[t].at == at
 
   def precondition(state, {:call, _, :move, [t, _from, _to]}), do: is_map_key(state.threads, t)
@@ -283,6 +292,11 @@ defmodule HalC2.ThreadMovePropTest do
       settled?(next_state(state, nil, call), world, held(state))
   end
 
+  # Its queue too: a resume while it moves is refused, as a rename is.
+  def postcondition(state, {:call, _, :resume_queue, [t | _]}, {result, world}) do
+    match?({:ok, _}, result) != moving?(state, t) and settled?(state, world, held(state))
+  end
+
   def postcondition(_state, {:call, _, :hold, _}, {result, _world}),
     do: match?({:held, _}, result)
 
@@ -366,6 +380,11 @@ defmodule HalC2.ThreadMovePropTest do
 
   def rename(t, at, title) do
     result = Cluster.on(mcs()[at], :rename, [id(t), title])
+    {result, world()}
+  end
+
+  def resume_queue(t, at) do
+    result = Cluster.on(mcs()[at], :resume_queue, [id(t)])
     {result, world()}
   end
 
