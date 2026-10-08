@@ -84,11 +84,17 @@ defmodule HalC2.Plugins do
   # Enabling or rescanning can compile a package, which takes longer than a call does.
   @compiles 60_000
 
+  @doc """
+  Looks in the plugins directory again: lists plugins put there since the last
+  look, recompiles changed ones and stops those removed. Clients ask for it, and
+  the MC does it after it loads new code in place (`HalC2.Upgrade`).
+  """
+  def rescan, do: GenServer.call(__MODULE__, :rescan, @compiles)
+
   @doc "Serves `plugins.<method>` (`HalC2.Rpc`)."
   def handle("list", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
 
-  def handle("rescan", _input),
-    do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :rescan, @compiles)}}
+  def handle("rescan", _input), do: {:ok, %{"plugins" => rescan()}}
 
   def handle("enable", %{"id" => id} = input) do
     case input["acceptPermissions"] || [] do

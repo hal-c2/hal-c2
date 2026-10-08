@@ -36,6 +36,8 @@ struct FakeMcPlugins {
   // What `plugins.saveSettings` refuses with, when it does.
   QString refusal;
   QJsonArray reviews;
+  // Plugins in the MC's folder that `plugins.rescan` finds, by environment.
+  QHash<QString, QList<QJsonObject>> unscanned;
   // Plugins faked by other steps, by id.
   QHash<QString, FakePluginPart> parts;
   // The page a scenario keeps an eye on, to tell a reload from an update.
@@ -136,18 +138,28 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     const QString environment = environmentOf(mc, rpc.environment);
     const QString id = rpc.payload.value(QLatin1String("id")).toString();
     QList<QJsonObject>& plugins = fake.plugins[environment];
-    const auto entry = std::find_if(plugins.begin(), plugins.end(), [&](const QJsonObject& each) { return each.value(QLatin1String("id")) == id; });
-    if (entry == plugins.end()) return mc.refuse(rpc, QStringLiteral("unknown plugin %1").arg(id));
-    const QString revision = entry->value(QLatin1String("revision")).toString();
-    const auto changed = [&](const QString& status) {
-      entry->insert(QStringLiteral("status"), status);
-      mc.reply(rpc, *entry);
+    const auto push = [&] {
       for (const int subscriber : mc.subscribers(QStringLiteral("plugins"))) {
         if (environmentOf(mc, mc.shapeOf(subscriber).value(QLatin1String("environment")).toString()) != environment) continue;
         QJsonArray list;
         for (const QJsonObject& each : std::as_const(plugins)) list.append(each);
         mc.send({{QStringLiteral("t"), QStringLiteral("plugins")}, {QStringLiteral("id"), subscriber}, {QStringLiteral("plugins"), list}});
       }
+    };
+    if (rpc.method == QLatin1String("plugins.rescan")) {
+      plugins.append(fake.unscanned.take(environment));
+      push();
+      QJsonArray list;
+      for (const QJsonObject& each : std::as_const(plugins)) list.append(each);
+      return mc.reply(rpc, QJsonObject{{QStringLiteral("plugins"), list}});
+    }
+    const auto entry = std::find_if(plugins.begin(), plugins.end(), [&](const QJsonObject& each) { return each.value(QLatin1String("id")) == id; });
+    if (entry == plugins.end()) return mc.refuse(rpc, QStringLiteral("unknown plugin %1").arg(id));
+    const QString revision = entry->value(QLatin1String("revision")).toString();
+    const auto changed = [&](const QString& status) {
+      entry->insert(QStringLiteral("status"), status);
+      mc.reply(rpc, *entry);
+      push();
     };
     const auto part = fake.parts.constFind(id);
     if (rpc.method == QLatin1String("plugins.file")) {
@@ -873,6 +885,23 @@ const Steps steps([] {
   step(QStringLiteral("the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* failure = waitNamed(world, QStringLiteral("pluginSettingsFailure"));
     world.waitFor([&] { return failure->property("text").toString() == c[0]; }, [&] { return failure->property("text").toString(); });
+  });
+  step(QStringLiteral("the MC's plugins folder gains the plugin %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject entry = codeReview();
+    entry.insert(QStringLiteral("id"), c[0]);
+    entry.insert(QStringLiteral("name"), c[0]);
+    entry.insert(QStringLiteral("status"), QStringLiteral("disabled"));
+    world.mc.part<FakeMcPlugins>().unscanned[world.mc.environmentId].append(entry);
+  });
+  step(QStringLiteral("the user looks for plugins on that environment"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    QQuickItem* environment = nullptr;
+    world.waitFor([&] { return (environment = findNamed(list, QStringLiteral("mcPlugins:") + world.mc.environmentId)) != nullptr; },
+                  QStringLiteral("the environment in the plugin list"));
+    clickItem(world, findNamed(environment, QStringLiteral("mcPluginsRescan")));
+  });
+  step(QStringLiteral("%1 is listed as disabled").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitStatus(world, c[0], QStringLiteral("disabled"));
   });
   step(QStringLiteral("the user restarts %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openSettings(world, c[0]);

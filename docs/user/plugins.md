@@ -64,7 +64,8 @@ Some plugins do work on a machine rather than in one app, such as
 each MC runs its own: put the folder in `plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
 them under the machine that has them, with what they do, who made them and
-screenshots.
+screenshots. A folder you put there later shows up after **Look for plugins**
+beside the machine's name, or the MC's next in-place update.
 
 Such a plugin is off until you turn it on. Turning it on shows what it asks to
 do, such as commenting on pull requests or starting threads, and why. It runs

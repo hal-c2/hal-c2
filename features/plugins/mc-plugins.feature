@@ -54,6 +54,12 @@ Feature: MC plugins
     Then "gitea" is listed as disabled
 
   @mc
+  Scenario: A plugin put in the directory is found when the MC loads new code in place
+    Given the plugins directory gains the plugin "gitea"
+    When a developer hot-updates the MC
+    Then "gitea" is listed as disabled
+
+  @mc
   Scenario: Enabling a plugin starts it for that environment only
     Given two environments each have the plugin "ntfy" installed
     When the user enables "ntfy" on the first environment

@@ -215,11 +215,23 @@ SettingsPage {
             Layout.bottomMargin: 8
             spacing: 12
 
-            Label {
-                text: qsTr("On %1").arg(environment.modelData.label)
-                color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.weight: Font.DemiBold
+            RowLayout {
+                Layout.fillWidth: true
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("On %1").arg(environment.modelData.label)
+                    color: page.foreground
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.weight: Font.DemiBold
+                }
+
+                // The MC lists a plugin put in its plugins folder once it looks again.
+                ShellButton {
+                    objectName: "mcPluginsRescan"
+                    text: qsTr("Look for plugins")
+                    onClicked: Shell.dispatch("mcPlugins.rescan", { environment: environment.modelData.id })
+                }
             }
 
             Repeater {

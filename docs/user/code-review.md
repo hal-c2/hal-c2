@@ -10,8 +10,8 @@ Each machine reviews the repositories of its own projects, with its own agents.
 
 ## Start
 
-1. Put the `code-review` folder in the MC's `plugins` folder and turn it on in
-   **Settings → Plugins**. It asks to read and comment on pull requests, start
+1. Put the `code-review` folder in the MC's `plugins` folder, click **Look for
+   plugins** in **Settings → Plugins** and turn it on there. It asks to read and comment on pull requests, start
    threads and give the agent a tool to report with.
 2. Sign in to GitHub with `gh auth login` on the MC's machine. Reviews use that
    login, both to read pull requests and to post reviews.
