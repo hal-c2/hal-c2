@@ -207,7 +207,8 @@ defmodule HalC2Plugins.CodeReview do
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
     with {:ok, review} <- server({:for_thread, thread_id}),
          {:ok, findings} <- findings(arguments, review),
-         {:ok, review} <- GenServer.call(__MODULE__, {:report, thread_id, findings}, 120_000) do
+         # Each GitHub command of the post has a timeout of its own.
+         {:ok, review} <- GenServer.call(__MODULE__, {:report, thread_id, findings}, :infinity) do
       on_lines = Enum.count(review["comments"])
 
       {:ok,
