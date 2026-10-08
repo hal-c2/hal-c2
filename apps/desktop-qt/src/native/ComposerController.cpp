@@ -817,16 +817,18 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (const auto models = m_drafts.value(draftId).multipleModels) {
     return submitToModels(draftId, *models, input, where.strategy, where.environmentId, text, attachments, contexts);
   }
+  // The prompt leaves the composer as a follow-up's does, and comes back if
+  // the launch fails.
+  m_drafts[draftId].attachments.clear();
+  m_drafts[draftId].excerpts.clear();
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
-    m_drafts[draftId].attachments.clear();
-    m_drafts[draftId].excerpts.clear();
     drafts->renew(draftId);
-    setText(draftId, QString(), 0);
   } else {
     m_launching.insert(draftId);
   }
+  setText(draftId, QString(), 0);
   publish();
   const QString threadId = kept->threadId;
   // The images go to the machine the thread starts on, then the thread does.
@@ -842,7 +844,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                        if (background) {
                          launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
                        } else {
-                         launched(draftId, threadKey, error);
+                         launched(draftId, text, attachments, contexts, threadKey, error);
                        }
                      });
     };
@@ -878,7 +880,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                        if (background) {
                          launchedInBackground(draftId, text, attachments, contexts, QString(), error);
                        } else {
-                         launched(draftId, QString(), error);
+                         launched(draftId, text, attachments, contexts, QString(), error);
                        }
                        return;
                      }
@@ -1049,10 +1051,14 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
   return true;
 }
 
-// The launch's answer: the draft becomes the thread, or stays with a toast.
-void ComposerController::launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error) {
+// The launch's answer: the draft becomes the thread, or gets its prompt back
+// with a toast.
+void ComposerController::launched(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                                  const QList<Excerpt>& contexts, const QString& threadKey,
+                                  const std::optional<QString>& error) {
   m_launching.remove(draftId);
   if (error) {
+    restoreLaunch(draftId, text, attachments, contexts);
     toast(QStringLiteral("Could not create thread"), *error);
     publish();
     return;
@@ -1063,6 +1069,20 @@ void ComposerController::launched(const QString& draftId, const QString& threadK
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
   publish();
+}
+
+// A failed launch's prompt back in its draft. Only into an empty one: newer
+// typing is the user's.
+bool ComposerController::restoreLaunch(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
+                                       const QList<Excerpt>& contexts) {
+  if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
+      !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).excerpts.isEmpty()) {
+    return false;
+  }
+  m_drafts[draftId].attachments = attachments;
+  m_drafts[draftId].excerpts = contexts;
+  setText(draftId, text, int(text.size()));
+  return true;
 }
 
 // A background launch's answer, as the web's: a toast that opens the new
@@ -1082,16 +1102,8 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                                          }});
     return;
   }
-  // Only into an empty draft: newer typing is the user's.
   const auto restore = [this, draftId, text, attachments, contexts] {
-    if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
-        !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).excerpts.isEmpty()) {
-      return false;
-    }
-    m_drafts[draftId].attachments = attachments;
-    m_drafts[draftId].excerpts = contexts;
-    setText(draftId, text, int(text.size()));
-    return true;
+    return restoreLaunch(draftId, text, attachments, contexts);
   };
   if (restore()) {
     toast(QStringLiteral("A background prompt could not be sent"), *error);

@@ -92,6 +92,16 @@ Feature: Drafting and sending a message
     When the MC takes the message
     Then the thread no longer says the message is sending
 
+  @desktop
+  Scenario: A new thread's first message leaves the composer as it is sent
+    Given the user starts a new thread in the project
+    And the user has typed "Fix the failing test"
+    When the user sends it before the MC answers
+    Then the composer is empty
+    And the thread says the message is sending
+    When the MC takes the message
+    Then the thread no longer says the message is sending
+
   @tui
   Scenario: Text typed while a message is sending is kept
     Given the user has sent "first"
