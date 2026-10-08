@@ -44,8 +44,12 @@ public:
   // Quits now, whatever the setting.
   void quit();
   QString hint() const { return m_hint; }
-  // Milliseconds for timing presses; a monotonic clock unless tests say.
+  // Milliseconds for timing presses and what waits on them; a monotonic clock
+  // unless tests say. A test that sets it calls poll() as it moves it.
   void setClock(std::function<qint64()> clock) { m_clock = std::move(clock); }
+  // Runs what the clock says is due: a hold given up, a quiet period over, a
+  // hint gone. Its timer calls it.
+  void poll();
 
 signals:
   // main.cpp quits the application.
@@ -63,16 +67,19 @@ private:
   void keyUp(int key);
   void release(bool keepDoublePressHint = false);
   void quitAfterQuietPeriod();
-  void watch(int ms, std::function<void()> then);
+  void watch(qint64 ms, std::function<void()> then);
+  void schedule();
   void showHint(const QString& mode);
   void hideHint();
   void publish();
 
   ShellBridge* m_bridge;
   std::function<qint64()> m_clock;
-  QTimer m_watchdog;
+  QTimer m_timer;
+  // Clock deadlines, 0 for none.
+  qint64 m_watchAt = 0;
   std::function<void()> m_onWatchdog;
-  QTimer m_linger;
+  qint64 m_lingerAt = 0;
   QString m_mode;
   QString m_hintMode;
   QString m_hint;

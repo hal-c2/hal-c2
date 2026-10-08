@@ -31,16 +31,8 @@ QuitController::QuitController(ShellBridge* bridge, McClient*, QObject* parent) 
     // Never 0, which means "no press yet".
     return timer->elapsed() + 1;
   };
-  m_watchdog.setSingleShot(true);
-  m_watchdog.callOnTimeout(this, [this] {
-    if (auto then = std::exchange(m_onWatchdog, nullptr)) then();
-  });
-  m_linger.setSingleShot(true);
-  m_linger.setInterval(kHintLingerMs);
-  m_linger.callOnTimeout(this, [this] {
-    m_hint.clear();
-    publish();
-  });
+  m_timer.setSingleShot(true);
+  m_timer.callOnTimeout(this, &QuitController::poll);
   // From the start: quitting needs no MC.
   if (QCoreApplication* app = QCoreApplication::instance()) app->installEventFilter(this);
 }
@@ -187,8 +179,9 @@ void QuitController::release(bool keepDoublePressHint) {
   m_repeatCadence = 0;
   if (keepHint) return;
   m_mode.clear();
-  m_watchdog.stop();
+  m_watchAt = 0;
   m_onWatchdog = nullptr;
+  schedule();
   if (m_notified) {
     m_notified = false;
     hideHint();
@@ -201,13 +194,42 @@ void QuitController::quitAfterQuietPeriod() {
   watch(std::max<qint64>(kReleaseGraceMs, m_repeatCadence * 2), [this] { quit(); });
 }
 
-void QuitController::watch(int ms, std::function<void()> then) {
+void QuitController::watch(qint64 ms, std::function<void()> then) {
   m_onWatchdog = std::move(then);
-  m_watchdog.start(ms);
+  m_watchAt = m_clock() + ms;
+  schedule();
+}
+
+void QuitController::poll() {
+  const qint64 now = m_clock();
+  if (m_watchAt != 0 && m_watchAt <= now) {
+    m_watchAt = 0;
+    if (auto then = std::exchange(m_onWatchdog, nullptr)) then();
+  }
+  if (m_lingerAt != 0 && m_lingerAt <= now) {
+    m_lingerAt = 0;
+    m_hint.clear();
+    publish();
+  }
+  schedule();
+}
+
+// The timer wakes poll() at the nearest deadline.
+void QuitController::schedule() {
+  qint64 next = 0;
+  for (const qint64 at : {m_watchAt, m_lingerAt}) {
+    if (at != 0 && (next == 0 || at < next)) next = at;
+  }
+  if (next == 0) {
+    m_timer.stop();
+    return;
+  }
+  m_timer.start(int(std::max<qint64>(0, next - m_clock())));
 }
 
 void QuitController::showHint(const QString& mode) {
-  m_linger.stop();
+  m_lingerAt = 0;
+  schedule();
   m_hintMode = mode;
   auto* keys = NativeShell::of(this)->controller<KeybindingController>();
   const QString shortcut = keys ? keys->keyLabel(QStringLiteral("mod+q")) : QStringLiteral("Ctrl+Q");
@@ -221,7 +243,8 @@ void QuitController::hideHint() {
     m_hint.clear();
     publish();
   } else {
-    m_linger.start();
+    m_lingerAt = m_clock() + kHintLingerMs;
+    schedule();
   }
 }
 
