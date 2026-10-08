@@ -60,7 +60,7 @@ hal-c2 pair
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
 in the receiving app. Connection settings are under **Settings → Connections**
-on web and desktop and **Settings → Environments** on mobile. A loopback address
+on web and desktop; the phone's own pairing is under **Settings → Pairing**. A loopback address
 such as `127.0.0.1` reaches only the device opening the link, so Settings shows
 no QR code for one.
 
