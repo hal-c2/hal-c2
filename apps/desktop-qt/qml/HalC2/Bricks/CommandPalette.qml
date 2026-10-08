@@ -44,6 +44,7 @@ Popup {
     }
 
     onOpened: {
+        list.pointer = null;
         field.text = PaletteModel.query;
         field.forceActiveFocus();
     }
@@ -159,12 +160,31 @@ Popup {
         ListView {
             id: list
 
+            objectName: "commandPaletteList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             model: PaletteModel
             currentIndex: PaletteModel.highlighted
+            // Where the pointer last was over the list, in the scene.
+            property var pointer: null
+
             boundsBehavior: Flickable.StopAtBounds
+
+            // Only a pointer that moves takes the highlight: rows that load or
+            // scroll under a resting one leave Enter on what was typed. It is
+            // tracked over the whole list, headers and gaps included, so a row
+            // that appears where it rests is not mistaken for a move.
+            HoverHandler {
+                onPointChanged: {
+                    const at = point.scenePosition;
+                    const moved = list.pointer !== null && (at.x !== list.pointer.x || at.y !== list.pointer.y);
+                    list.pointer = Qt.point(at.x, at.y);
+                    const row = list.indexAt(point.position.x + list.contentX, point.position.y + list.contentY);
+                    if (moved && row >= 0) PaletteModel.highlighted = row;
+                }
+            }
+
             section.property: "group"
             section.delegate: Text {
                 required property string section
@@ -231,8 +251,6 @@ Popup {
 
                 MouseArea {
                     anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: PaletteModel.highlighted = row.index
                     onClicked: PaletteModel.run(row.index)
                 }
             }

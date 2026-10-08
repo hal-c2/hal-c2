@@ -95,6 +95,39 @@ Item {
             tryCompare(popup, "opened", false);
         }
 
+        function test_onlyAPointerThatMovesTakesTheHighlight() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            verify(!!list);
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            const at = list.itemAtIndex(2).mapToItem(list, 20, 10);
+            mouseMove(list, at.x, at.y);
+            mouseMove(list, at.x + 1, at.y);
+            compare(PaletteModel.highlighted, 2);
+            // New rows load under the resting pointer.
+            PaletteModel.clear();
+            for (let n = 1; n <= 3; ++n)
+                PaletteModel.append({ title: "Folder " + n, description: "", group: "Directories", shortcut: "", kind: "action", runnable: true, current: false });
+            PaletteModel.highlighted = 0;
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            mouseMove(list, at.x + 1, at.y);
+            compare(PaletteModel.highlighted, 0);
+            mouseMove(list, at.x + 2, at.y);
+            compare(PaletteModel.highlighted, 2);
+            // The pointer moves over an empty list, and rows load under it there.
+            PaletteModel.clear();
+            PaletteModel.highlighted = -1;
+            tryVerify(() => list.count === 0);
+            mouseMove(list, at.x + 5, at.y);
+            for (let n = 1; n <= 3; ++n)
+                PaletteModel.append({ title: "Folder " + n, description: "", group: "Directories", shortcut: "", kind: "action", runnable: true, current: false });
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            mouseMove(list, at.x + 5, at.y);
+            compare(PaletteModel.highlighted, -1);
+            mouseMove(list, at.x + 6, at.y);
+            compare(PaletteModel.highlighted, 2);
+        }
+
         function test_numberShortcutRunsTheNthEntry() {
             opened();
             keyClick(Qt.Key_3, Qt.ControlModifier);

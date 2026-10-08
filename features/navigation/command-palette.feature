@@ -236,6 +236,13 @@ Feature: Command palette
       And the command palette is closed
 
     @desktop
+    Scenario: Entries that appear under a resting pointer are not highlighted
+      Given the pointer rests where the palette's entries appear
+      When the user types a folder path while adding a project
+      Then no entry is highlighted until the pointer moves
+      And Enter adds the folder typed
+
+    @desktop
     Scenario: A number shortcut runs the Nth entry
       Given the command palette is open
       When the user presses mod+3

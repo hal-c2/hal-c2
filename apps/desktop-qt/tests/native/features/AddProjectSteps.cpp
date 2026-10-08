@@ -159,6 +159,24 @@ const Steps steps([] {
     expect(model.kindAt(row) == QLatin1String("folder") && world.mc.part<AddProject>().highlighted == QLatin1String("/home/sam/code/api"),
            describe(world));
   });
+  // The brick's half, rows under a resting pointer, is tst_CommandPalette.qml's;
+  // here the palette leaves them unhighlighted and Enter on what was typed.
+  step(QStringLiteral("the pointer rests where the palette's entries appear"), [](World& world, const Captures&, const Table&) {
+    browse(world);
+  });
+  step(QStringLiteral("the user types a folder path while adding a project"), [](World& world, const Captures&, const Table&) {
+    type(world, QStringLiteral("/home/sam/code/shop"));
+  });
+  step(QStringLiteral("no entry is highlighted until the pointer moves"), [](World& world, const Captures&, const Table&) {
+    expect(palette(world).count() > 0 && palette(world).highlighted() < 0, describe(world));
+  });
+  step(QStringLiteral("Enter adds the folder typed"), [](World& world, const Captures&, const Table&) {
+    expect(palette(world).runHighlighted(), describe(world));
+    world.sync();
+    const QList<QJsonObject> commands = created(world);
+    expect(commands.size() == 1 && commands.first().value(QLatin1String("workspaceRoot")) == QLatin1String("/home/sam/code/shop"),
+           QStringLiteral("the MC was asked to create %1; %2").arg(show(QVariant::fromValue(commands)), describe(world)));
+  });
   step(QStringLiteral("the highlighted folder is added as a project"), [](World& world, const Captures&, const Table&) {
     const QList<QJsonObject> commands = created(world);
     expect(commands.size() == 1 && commands.first().value(QLatin1String("workspaceRoot")) == world.mc.part<AddProject>().highlighted,
