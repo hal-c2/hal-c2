@@ -413,7 +413,7 @@ void TerminalController::save() {
 }
 
 TerminalController::Facts TerminalController::facts() const {
-  return {available(), isOpen(), m_height, activeTerminalId(), activeGroup(), groupSizes()};
+  return {m_threadKey, available(), isOpen(), m_height, activeTerminalId(), activeGroup(), groupSizes()};
 }
 
 void TerminalController::notify() {

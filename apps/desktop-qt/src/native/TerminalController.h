@@ -307,8 +307,9 @@ private:
   void toast(const QString& title, const QString& description);
   void followLink(const QString& kind, const QString& text, const QString& reportedCwd);
   void save();
-  // What `changed` notifies.
+  // What `changed` notifies (the right panel reads threadKey too).
   struct Facts {
+    QString threadKey;
     bool available = false;
     bool open = false;
     int height = 0;

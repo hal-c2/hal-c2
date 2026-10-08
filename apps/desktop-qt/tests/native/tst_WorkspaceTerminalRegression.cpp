@@ -156,6 +156,17 @@ private slots:
     QCOMPARE(changed.count(), 1);
   }
 
+  // Another thread whose drawer looked the same (closed, no terminal) said
+  // nothing, so the right panel kept offering terminals for the last one.
+  void anotherThreadSaysChanged() {
+    App app;
+    QVERIFY(app.online());
+    QVERIFY(app.show(QStringLiteral("t1")));
+    QSignalSpy changed(app.terminals(), &TerminalController::changed);
+    QVERIFY(app.show(QStringLiteral("t2")));
+    QCOMPARE(changed.count(), 1);
+  }
+
   // A terminal closed by another client while its thread was out of sight
   // stayed attached, and the attach after a reconnect opened it again.
   void aTerminalClosedElsewhereIsNotReopenedOnReconnect() {

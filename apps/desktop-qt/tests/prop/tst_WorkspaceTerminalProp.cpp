@@ -122,8 +122,9 @@ void showValue(const Row& row, std::ostream& os) {
   os << "}";
 }
 
-// What `changed` notifies.
+// What `changed` notifies: the thread too, which the right panel reads.
 struct Facts {
+  QString threadKey;
   bool open = false;
   QString active;
   QString activeGroup;
@@ -132,8 +133,8 @@ struct Facts {
 };
 
 void showValue(const Facts& facts, std::ostream& os) {
-  os << "{" << (facts.open ? "open" : "closed") << " on '" << facts.active.toStdString() << "' in '" << facts.activeGroup.toStdString()
-     << "' groups " << prop::debug(facts.groupSizes) << "}";
+  os << "{" << facts.threadKey.toStdString() << " " << (facts.open ? "open" : "closed") << " on '" << facts.active.toStdString() << "' in '"
+     << facts.activeGroup.toStdString() << "' groups " << prop::debug(facts.groupSizes) << "}";
 }
 
 struct Model {
@@ -314,6 +315,7 @@ struct Model {
   Facts facts() const {
     Facts out;
     const Ui u = ui.value(thread);
+    out.threadKey = threadKeyOf(thread);
     out.open = u.open;
     out.active = u.active;
     if (!u.active.isEmpty()) {
@@ -548,7 +550,7 @@ struct Sut {
 
   Facts facts() const {
     TerminalController* t = terminals();
-    return {t->isOpen(), t->activeTerminalId(), t->activeGroup(), t->groupSizes()};
+    return {t->threadKey(), t->isOpen(), t->activeTerminalId(), t->activeGroup(), t->groupSizes()};
   }
 };
 
