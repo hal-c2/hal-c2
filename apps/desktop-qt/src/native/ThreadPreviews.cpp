@@ -3,12 +3,64 @@
 #include <QJsonArray>
 #include <QSet>
 
+#include <algorithm>
+#include <optional>
+#include <utility>
+
 #include "McClient.h"
 
 namespace {
 
 QJsonObject navOf(const QJsonObject& snapshot) {
   return snapshot.value(QLatin1String("navStatus")).toObject();
+}
+
+// What a row of `snapshot` shows as `role`.
+QVariant shown(const QJsonObject& snapshot, int role) {
+  const QJsonObject nav = navOf(snapshot);
+  const QString tag = nav.value(QLatin1String("_tag")).toString();
+  switch (role) {
+    case ThreadPreviews::TabIdRole:
+      return snapshot.value(QLatin1String("tabId")).toString();
+    case ThreadPreviews::UrlRole:
+      return nav.value(QLatin1String("url")).toString();
+    case ThreadPreviews::TitleRole: {
+      const QString title = nav.value(QLatin1String("title")).toString();
+      if (!title.isEmpty()) return title;
+      const QString url = nav.value(QLatin1String("url")).toString();
+      return url.isEmpty() ? QStringLiteral("New tab") : url;
+    }
+    case ThreadPreviews::StatusRole:
+      if (tag == QLatin1String("Loading")) return QStringLiteral("loading");
+      if (tag == QLatin1String("Success")) return QStringLiteral("loaded");
+      if (tag == QLatin1String("LoadFailed")) return QStringLiteral("failed");
+      return QStringLiteral("idle");
+    case ThreadPreviews::ProblemRole:
+      if (tag != QLatin1String("LoadFailed")) return QString();
+      return nav.value(QLatin1String("description")).toString(QStringLiteral("The page did not load."));
+    default:
+      return {};
+  }
+}
+
+// The tab `event` leaves behind, given the tab as it was; none when it closed or never was.
+std::optional<QJsonObject> after(const QJsonObject& event, const std::optional<QJsonObject>& current) {
+  const QString type = event.value(QLatin1String("type")).toString();
+  if (type == QLatin1String("closed")) return std::nullopt;
+  if (type == QLatin1String("failed")) {
+    if (!current) return std::nullopt;
+    QJsonObject failed = event;
+    for (const QString& drop : {QStringLiteral("type"), QStringLiteral("threadId"), QStringLiteral("tabId"),
+                                QStringLiteral("createdAt"), QStringLiteral("serverEpoch"), QStringLiteral("revision")}) {
+      failed.remove(drop);
+    }
+    failed.insert(QStringLiteral("_tag"), QStringLiteral("LoadFailed"));
+    QJsonObject snapshot = *current;
+    snapshot.insert(QStringLiteral("navStatus"), failed);
+    return snapshot;
+  }
+  if (event.value(QLatin1String("snapshot")).isObject()) return event.value(QLatin1String("snapshot")).toObject();
+  return current;
 }
 
 }  // namespace
@@ -20,6 +72,10 @@ ThreadPreviews::ThreadPreviews(McClient* client, Notify notify, Open open, QObje
   }
   connect(this, &QAbstractItemModel::modelReset, this, &ThreadPreviews::emptyTabChanged);
   connect(this, &QAbstractItemModel::dataChanged, this, &ThreadPreviews::emptyTabChanged);
+  // Events sent while the connection was down are lost, and a restarted MC sends none for what it no longer has.
+  connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
+    if (ready && m_active) reload();
+  });
 }
 
 QString ThreadPreviews::emptyTab() const {
@@ -49,6 +105,8 @@ void ThreadPreviews::setThread(const QString& environmentId, const QString& thre
   if (threadMoved) {
     ++m_generation;
     m_closing.clear();
+    m_listing = false;
+    m_early.clear();
     if (!m_rows.isEmpty()) {
       beginResetModel();
       m_rows.clear();
@@ -180,22 +238,21 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
 void ThreadPreviews::reload() {
   if (m_thread.isEmpty()) return;
   const int generation = ++m_generation;
+  m_listing = true;
+  // The list reads everything before it.
+  m_early.clear();
   if (m_rows.isEmpty()) setStatus(QStringLiteral("loading"));
   m_client->call(this, m_environment, QStringLiteral("preview.list"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation) return;
+                   m_listing = false;
                    if (error) {
                      // What was listed stays; the failure says why it may be stale.
+                     m_early.clear();
                      setStatus(QStringLiteral("failed"), *error);
                      return;
                    }
                    const QJsonObject list = result.toObject();
-                   // A list read before a change this client has already
-                   // seen (the same MC run, an older revision) is stale.
-                   if (m_status == QLatin1String("ready") && list.value(QLatin1String("serverEpoch")).toString() == m_epoch &&
-                       list.value(QLatin1String("revision")).toInteger(-1) < m_revision) {
-                     return;
-                   }
                    QList<QJsonObject> rows;
                    for (const QJsonValue& session : list.value(QLatin1String("sessions")).toArray()) {
                      const QJsonObject snapshot = session.toObject();
@@ -203,7 +260,38 @@ void ThreadPreviews::reload() {
                    }
                    m_epoch = list.value(QLatin1String("serverEpoch")).toString();
                    m_revision = list.value(QLatin1String("revision")).toInteger(-1);
-                   if (rows != m_rows) {
+                   // What changed while the list was on its way, if the list is older: a tab already gone does not come back.
+                   bool restarted = false;
+                   for (const QJsonObject& event : std::exchange(m_early, {})) {
+                     const qint64 revision = event.value(QLatin1String("revision")).toInteger(-1);
+                     if (event.value(QLatin1String("serverEpoch")).toString() != m_epoch) {
+                       restarted = true;
+                       continue;
+                     }
+                     const QString tabId = event.value(QLatin1String("tabId")).toString();
+                     if (revision <= m_revision || m_closing.contains(tabId)) continue;
+                     m_revision = revision;
+                     const auto at = std::find_if(rows.begin(), rows.end(), [&](const QJsonObject& row) {
+                       return row.value(QLatin1String("tabId")).toString() == tabId;
+                     });
+                     const auto next = after(event, at == rows.end() ? std::nullopt : std::optional(*at));
+                     if (!next && at != rows.end()) {
+                       rows.erase(at);
+                     } else if (next && at != rows.end()) {
+                       *at = *next;
+                     } else if (next) {
+                       rows.append(*next);
+                     }
+                   }
+                   const auto tabIds = [](const QList<QJsonObject>& rows) {
+                     QStringList ids;
+                     for (const QJsonObject& row : rows) ids.append(row.value(QLatin1String("tabId")).toString());
+                     return ids;
+                   };
+                   if (tabIds(rows) == tabIds(m_rows)) {
+                     // The same tabs: only those that read differently repaint.
+                     for (const QJsonObject& row : std::as_const(rows)) upsert(row);
+                   } else {
                      const bool counted = rows.size() != m_rows.size();
                      beginResetModel();
                      m_rows = rows;
@@ -211,11 +299,14 @@ void ThreadPreviews::reload() {
                      if (counted) emit countChanged();
                    }
                    setStatus(QStringLiteral("ready"));
+                   if (restarted) reload();
                  });
 }
 
 void ThreadPreviews::onEvent(const QJsonObject& event) {
-  if (event.value(QLatin1String("threadId")).toString() != m_thread || m_status != QLatin1String("ready")) return;
+  if (event.value(QLatin1String("threadId")).toString() != m_thread) return;
+  if (m_listing) m_early.append(event);
+  if (m_status != QLatin1String("ready")) return;
   const QString epoch = event.value(QLatin1String("serverEpoch")).toString();
   const qint64 revision = event.value(QLatin1String("revision")).toInteger(-1);
   if (epoch != m_epoch) {
@@ -227,23 +318,12 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   m_revision = revision;
   const QString tabId = event.value(QLatin1String("tabId")).toString();
   if (m_closing.contains(tabId)) return;
-  const QString type = event.value(QLatin1String("type")).toString();
-  if (type == QLatin1String("closed")) {
+  const int row = rowOf(tabId);
+  const auto next = after(event, row < 0 ? std::nullopt : std::optional(m_rows.at(row)));
+  if (next) {
+    upsert(*next);
+  } else {
     remove(tabId);
-  } else if (type == QLatin1String("failed")) {
-    const int row = rowOf(tabId);
-    if (row < 0) return;
-    QJsonObject failed = event;
-    for (const QString& drop : {QStringLiteral("type"), QStringLiteral("threadId"), QStringLiteral("tabId"),
-                                QStringLiteral("createdAt"), QStringLiteral("serverEpoch"), QStringLiteral("revision")}) {
-      failed.remove(drop);
-    }
-    failed.insert(QStringLiteral("_tag"), QStringLiteral("LoadFailed"));
-    QJsonObject snapshot = m_rows.at(row);
-    snapshot.insert(QStringLiteral("navStatus"), failed);
-    upsert(snapshot);
-  } else if (event.value(QLatin1String("snapshot")).isObject()) {
-    upsert(event.value(QLatin1String("snapshot")).toObject());
   }
 }
 
@@ -260,11 +340,11 @@ void ThreadPreviews::close(const QString& tabId) {
   const QJsonObject snapshot = m_rows.at(row);
   m_closing.insert(tabId);
   remove(tabId);
-  const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("preview.close"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}},
-                 [this, generation, row, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
-                   if (!m_closing.remove(tabId) || generation != m_generation) return;
+                 [this, row, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
+                   // Another thread, opened since, forgot what it was closing.
+                   if (!m_closing.remove(tabId)) return;
                    if (!error) return;
                    // It is still open on the MC: it comes back where it was.
                    if (rowOf(tabId) < 0) {
@@ -296,8 +376,12 @@ void ThreadPreviews::upsert(const QJsonObject& snapshot) {
   const int row = rowOf(snapshot.value(QLatin1String("tabId")).toString());
   if (row >= 0) {
     if (m_rows.at(row) == snapshot) return;
+    // Fields no role shows change without a repaint.
+    const QHash<int, QByteArray> roles = roleNames();
+    const bool redraw =
+        std::any_of(roles.keyBegin(), roles.keyEnd(), [&](int role) { return shown(m_rows.at(row), role) != shown(snapshot, role); });
     m_rows[row] = snapshot;
-    emit dataChanged(index(row), index(row));
+    if (redraw) emit dataChanged(index(row), index(row));
     return;
   }
   beginInsertRows({}, int(m_rows.size()), int(m_rows.size()));
@@ -321,31 +405,7 @@ int ThreadPreviews::rowCount(const QModelIndex& parent) const {
 
 QVariant ThreadPreviews::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= m_rows.size()) return {};
-  const QJsonObject& snapshot = m_rows.at(index.row());
-  const QJsonObject nav = navOf(snapshot);
-  const QString tag = nav.value(QLatin1String("_tag")).toString();
-  switch (role) {
-    case TabIdRole:
-      return snapshot.value(QLatin1String("tabId")).toString();
-    case UrlRole:
-      return nav.value(QLatin1String("url")).toString();
-    case TitleRole: {
-      const QString title = nav.value(QLatin1String("title")).toString();
-      if (!title.isEmpty()) return title;
-      const QString url = nav.value(QLatin1String("url")).toString();
-      return url.isEmpty() ? QStringLiteral("New tab") : url;
-    }
-    case StatusRole:
-      if (tag == QLatin1String("Loading")) return QStringLiteral("loading");
-      if (tag == QLatin1String("Success")) return QStringLiteral("loaded");
-      if (tag == QLatin1String("LoadFailed")) return QStringLiteral("failed");
-      return QStringLiteral("idle");
-    case ProblemRole:
-      if (tag != QLatin1String("LoadFailed")) return QString();
-      return nav.value(QLatin1String("description")).toString(QStringLiteral("The page did not load."));
-    default:
-      return {};
-  }
+  return shown(m_rows.at(index.row()), role);
 }
 
 QHash<int, QByteArray> ThreadPreviews::roleNames() const {
