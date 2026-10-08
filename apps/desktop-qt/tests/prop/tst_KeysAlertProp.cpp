@@ -112,8 +112,6 @@ struct Toast {
   }
 };
 
-constexpr qsizetype kMaxToasts = 5;
-
 struct Model {
   QMap<QString, Thread> threads;
   // The thread that may arrive in this case.
@@ -137,10 +135,8 @@ struct Model {
 
   bool active() const { return mode != QLatin1String("off") || inApp; }
 
-  void toast(const Toast& next) {
-    toasts.prepend(next);
-    while (toasts.size() > kMaxToasts) toasts.removeLast();
-  }
+  // No toast is dropped for lack of room; the brick stacks them.
+  void toast(const Toast& next) { toasts.prepend(next); }
 
   void alert(const QString& id, const QString& kind, const QString& status) {
     const QString key = keyOf(id);

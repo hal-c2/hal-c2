@@ -69,7 +69,7 @@ struct Model {
   QStringList held;
   bool holding = false;
   bool refusing = false;
-  // The toasts, newest first; the app shows five at most.
+  // The toasts, newest first; the app drops none.
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
@@ -126,7 +126,6 @@ void fail(Model& m, const QString& thread) {
   } else {
     m.toasts.prepend({thread, restored});
   }
-  if (m.toasts.size() > 5) m.toasts.removeLast();
   target.images += images;
 }
 

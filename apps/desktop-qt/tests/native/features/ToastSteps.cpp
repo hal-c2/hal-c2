@@ -67,6 +67,15 @@ const Steps steps([] {
     world.sync();
     expect(!toastTitled(world, c[0]), QStringLiteral("the shell shows %1").arg(show(toasts(world))));
   });
+  step(QStringLiteral("the user sees (\\d+) toasts"), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(toasts(world).size() == c[0].toInt(), QStringLiteral("the shell shows %1").arg(show(toasts(world))));
+  });
+  // The pointer over the stack, or a tap on it on a phone, as the brick says.
+  step(QStringLiteral("the user (expands|collapses) the toasts"), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("notification.expand"),
+                            QVariantMap{{QStringLiteral("expanded"), c[0] == QLatin1String("expands")}});
+  });
   step(QStringLiteral("the user sees no toast"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(toasts(world).isEmpty(), QStringLiteral("the shell shows %1").arg(show(toasts(world))));

@@ -225,6 +225,7 @@ ShellWindow {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.topMargin: 64
                         cardWidth: Math.min(340, parent.width - 24)
+                        maximumHeight: parent.height - anchors.topMargin - 12
                         opaque: true
                     }
 

@@ -8,9 +8,6 @@ namespace {
 
 const NativeControllerRegistrar<ToastController> registrar(QStringLiteral("toasts"), {QStringLiteral("toasts")});
 
-// The web app's toasts stack at most this many; older ones drop off the bottom.
-constexpr qsizetype kMaxToasts = 5;
-
 }  // namespace
 
 ToastController::ToastController(ShellBridge* bridge, McClient*, QObject* parent)
@@ -24,6 +21,10 @@ void ToastController::activate() {
 }
 
 bool ToastController::handle(const QString& action, const QVariant& payload) {
+  if (action == QLatin1String("notification.expand")) {
+    setExpanded(payload.toMap().value(QStringLiteral("expanded")).toBool());
+    return true;
+  }
   if (action != QLatin1String("notification.dismiss") && action != QLatin1String("notification.action")) {
     return false;
   }
@@ -56,10 +57,9 @@ QString ToastController::show(const QString& type, const QString& title, const Q
 
 QString ToastController::showActions(const QString& type, const QString& title, const QString& description,
                                      QList<Action> actions, int timeoutMs) {
-  Toast toast{QStringLiteral("native:%1").arg(m_nextId++), type, title, description, std::move(actions), {}};
-  if (timeoutMs > 0) toast.deadline = m_now().addMSecs(timeoutMs);
+  Toast toast{QStringLiteral("native:%1").arg(m_nextId++), type, title, description, std::move(actions)};
+  startTime(toast, timeoutMs);
   m_toasts.prepend(std::move(toast));
-  while (m_toasts.size() > kMaxToasts) m_toasts.removeLast();
   publish();
   schedule();
   return m_toasts.first().id;
@@ -125,7 +125,7 @@ bool ToastController::replace(const QString& id, const QString& type, const QStr
     toast.title = title;
     toast.description = description;
     toast.actions = std::move(actions);
-    toast.deadline = timeoutMs > 0 ? std::optional(m_now().addMSecs(timeoutMs)) : std::nullopt;
+    startTime(toast, timeoutMs);
     ++toast.revision;
     publish();
     schedule();
@@ -142,6 +142,39 @@ void ToastController::expire() {
   schedule();
 }
 
+void ToastController::setExpanded(bool expanded) {
+  if (expanded == m_expanded) return;
+  if (expanded) {
+    // Gone before it holds: a toast already due does not linger.
+    expire();
+    if (m_toasts.isEmpty()) return;
+  }
+  m_expanded = expanded;
+  const QDateTime now = m_now();
+  for (Toast& toast : m_toasts) {
+    if (expanded && toast.deadline) {
+      toast.remainingMs = now.msecsTo(*toast.deadline);
+      toast.deadline.reset();
+    } else if (!expanded && toast.remainingMs > 0) {
+      toast.deadline = now.addMSecs(toast.remainingMs);
+      toast.remainingMs = 0;
+    }
+  }
+  publish();
+  schedule();
+}
+
+void ToastController::startTime(Toast& toast, int timeoutMs) {
+  toast.deadline.reset();
+  toast.remainingMs = 0;
+  if (timeoutMs <= 0) return;
+  if (m_expanded) {
+    toast.remainingMs = timeoutMs;
+  } else {
+    toast.deadline = m_now().addMSecs(timeoutMs);
+  }
+}
+
 void ToastController::schedule() {
   std::optional<QDateTime> next;
   for (const Toast& toast : m_toasts) {
@@ -155,6 +188,8 @@ void ToastController::schedule() {
 }
 
 void ToastController::publish() {
+  // An empty stack has nothing to hold open (Base UI's hover ends with it).
+  if (m_toasts.isEmpty()) m_expanded = false;
   QVariantList items;
   for (const Toast& toast : m_toasts) {
     // The lesser action sits before the primary one.
@@ -176,5 +211,6 @@ void ToastController::publish() {
         {QStringLiteral("actions"), actions},
     });
   }
-  m_bridge->publish(QStringLiteral("toasts"), QVariantMap{{QStringLiteral("items"), items}});
+  m_bridge->publish(QStringLiteral("toasts"),
+                    QVariantMap{{QStringLiteral("items"), items}, {QStringLiteral("expanded"), m_expanded}});
 }

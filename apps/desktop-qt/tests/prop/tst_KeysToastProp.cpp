@@ -1,8 +1,10 @@
 // ToastController as a state machine: toasts shown, dismissed by code or by
-// the user, timing out on a pinned clock, updated and replaced in place, and
-// their actions run by a click or by label (the undo shortcut), an action
-// showing a toast of its own on the way. After every step the published
-// `toasts` is exactly the model's list.
+// the user, timing out on a pinned clock, updated and replaced in place, their
+// actions run by a click or by label (the undo shortcut), an action showing a
+// toast of its own on the way, and the stack expanded and collapsed (which
+// holds every toast's time). After every step the published `toasts` is
+// exactly the model's list, and no toast left it but by its time, a dismiss or
+// an action: there is no cap.
 
 #include "Prop.h"
 
@@ -18,7 +20,6 @@ const QStringList kLabels{QStringLiteral("Undo"), QStringLiteral("Retry"), QStri
 const QStringList kGroups{QString(), QStringLiteral("Settled"), QStringLiteral("Snoozed")};
 const QStringList kTypes{QStringLiteral("info"), QStringLiteral("error"), QStringLiteral("success")};
 const QStringList kTexts{QString(), QStringLiteral("a"), QStringLiteral("b")};
-constexpr qsizetype kMaxToasts = 5;
 
 // rc::gen::elementOf finds begin() by ADL alone, which a QList lacks.
 template <typename T>
@@ -45,7 +46,9 @@ struct ModelToast {
   QString title;
   QString description;
   QList<ActionSpec> actions;
+  // Running time, or while the stack is expanded the time it has left.
   std::optional<qint64> deadline;
+  qint64 remaining = 0;
   int revision = 0;
 };
 
@@ -53,6 +56,7 @@ struct Model {
   QList<ModelToast> toasts;  // newest first
   int nextId = 1;
   qint64 now = 0;
+  bool expanded = false;
   // Every id that left the list, which never comes back.
   QStringList gone;
   // "<toast id>:<label>" per action run, in order.
@@ -68,13 +72,23 @@ struct Model {
   void remove(qsizetype index) {
     gone.append(toasts.at(index).id);
     toasts.removeAt(index);
+    if (toasts.isEmpty()) expanded = false;
+  }
+  void startTime(ModelToast& toast, int timeoutMs) const {
+    toast.deadline.reset();
+    toast.remaining = 0;
+    if (timeoutMs <= 0) return;
+    if (expanded) {
+      toast.remaining = timeoutMs;
+    } else {
+      toast.deadline = now + timeoutMs;
+    }
   }
   QString show(const QString& type, const QString& title, const QString& description, const QList<ActionSpec>& actions,
                int timeoutMs) {
-    ModelToast toast{QStringLiteral("native:%1").arg(nextId++), type, title, description, actions, {}, 0};
-    if (timeoutMs > 0) toast.deadline = now + timeoutMs;
+    ModelToast toast{QStringLiteral("native:%1").arg(nextId++), type, title, description, actions};
+    startTime(toast, timeoutMs);
     toasts.prepend(toast);
-    while (toasts.size() > kMaxToasts) remove(toasts.size() - 1);
     return toast.id;
   }
   // A click on action `index` of toast `id`.
@@ -89,6 +103,23 @@ struct Model {
   void expire() {
     for (qsizetype i = toasts.size() - 1; i >= 0; --i) {
       if (toasts.at(i).deadline && *toasts.at(i).deadline <= now) remove(i);
+    }
+  }
+  void setExpanded(bool to) {
+    if (to == expanded) return;
+    if (to) {
+      expire();
+      if (toasts.isEmpty()) return;
+    }
+    expanded = to;
+    for (ModelToast& toast : toasts) {
+      if (to && toast.deadline) {
+        toast.remaining = *toast.deadline - now;
+        toast.deadline.reset();
+      } else if (!to && toast.remaining > 0) {
+        toast.deadline = now + toast.remaining;
+        toast.remaining = 0;
+      }
     }
   }
   QStringList ids() const {
@@ -151,11 +182,20 @@ QVariantList published(const Model& model) {
   return items;
 }
 
+QVariantMap publishedState(const Model& model) {
+  return {{QStringLiteral("items"), published(model)}, {QStringLiteral("expanded"), model.expanded}};
+}
+
 void check(const Model& expected, Sut& sut) {
-  const QVariantList items =
-      sut.bridge.state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
-  RC_ASSERT(items == published(expected));
+  RC_ASSERT(sut.bridge.state()->value(QStringLiteral("toasts")).toMap() == publishedState(expected));
+  RC_ASSERT(sut.toasts.expanded() == expected.expanded);
   for (const QString& id : expected.ids()) RC_ASSERT(!expected.gone.contains(id));
+  // Every toast ever shown is still up or went by its time, a dismiss or an
+  // action (the model's only ways out).
+  RC_ASSERT(expected.toasts.size() + expected.gone.size() == expected.nextId - 1);
+  // An expanded stack holds every toast's time; a collapsed one runs it.
+  for (const ModelToast& toast : expected.toasts) RC_ASSERT(!(expected.expanded && toast.deadline));
+  for (const ModelToast& toast : expected.toasts) RC_ASSERT(expected.expanded || toast.remaining == 0);
   // The runs the model expects, by label (an id is the model's to check).
   QStringList labels;
   for (const QString& run : expected.ran) labels.append(run.section(QLatin1Char(':'), -1));
@@ -288,7 +328,7 @@ struct Replace : Command {
     toast.title = title;
     toast.description.clear();
     toast.actions = actions;
-    toast.deadline = timeoutMs > 0 ? std::optional(model.now + timeoutMs) : std::nullopt;
+    model.startTime(toast, timeoutMs);
     ++toast.revision;
   }
   void run(const Model& model, Sut& sut) const override {
@@ -340,6 +380,22 @@ struct RunAction : Command {
   void show(std::ostream& os) const override { os << "RunAction(" << label.toStdString() << ")"; }
 };
 
+// The pointer enters or leaves the stack (or a tap opens or closes it on a
+// phone): the brick's `notification.expand`.
+struct Expand : Command {
+  bool expanded = *rc::gen::arbitrary<bool>();
+
+  void apply(Model& model) const override { model.setExpanded(expanded); }
+  void run(const Model& model, Sut& sut) const override {
+    Model expected = model;
+    apply(expected);
+    RC_ASSERT(sut.toasts.handle(QStringLiteral("notification.expand"),
+                                QVariantMap{{QStringLiteral("expanded"), expanded}}));
+    check(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << (expanded ? "Expand" : "Collapse"); }
+};
+
 // Time passes; the timer's expire() runs, as it would at the deadline.
 struct Advance : Command {
   int ms = pick(QList<int>{1, 500, 999, 1000, 4000, 5000});
@@ -368,7 +424,8 @@ private slots:
     QVERIFY(rc::check("toasts publish what the model holds", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Show, Show, Dismiss, Click, Update, Replace, RunAction, Advance>());
+                       rc::state::gen::execOneOfWithArgs<Show, Show, Show, Dismiss, Click, Update, Replace, RunAction,
+                                                                Expand, Advance, Advance>());
     }));
   }
 };
