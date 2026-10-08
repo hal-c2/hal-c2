@@ -1132,7 +1132,6 @@ void ComposerController::sendNext(const QString& target) {
   const Send send = m_queues.value(target).constFirst();
   const auto finish = [this, target](const std::optional<QString>& error) {
     if (error) {
-      toast(QStringLiteral("Failed to send message"), *error);
       // The sends queued behind it would reach the MC out of order, so they
       // stop too and come back with it.
       const QList<Send> unsent = m_queues.take(target);
@@ -1144,10 +1143,27 @@ void ComposerController::sendNext(const QString& target) {
         attachments.append(queued.attachments);
         contexts.append(queued.excerpts);
       }
-      // Only into an untouched draft: newer typing is the user's.
-      if (draft(target).isEmpty() && !prompts.isEmpty()) {
-        const QString restored = prompts.join(QStringLiteral("\n\n"));
-        setText(target, restored, int(restored.size()));
+      const QString restored = prompts.join(QStringLiteral("\n\n"));
+      // Only into an untouched draft: newer typing is the user's, and the
+      // toast gives the prompt back once the draft is empty.
+      if (restored.isEmpty() || draft(target).isEmpty()) {
+        toast(QStringLiteral("Failed to send message"), *error);
+        if (!restored.isEmpty()) setText(target, restored, int(restored.size()));
+      } else {
+        NativeShell::of(this)->controller<ToastController>()->show(
+            QStringLiteral("error"), QStringLiteral("Failed to send message"),
+            QStringLiteral("Your newer draft is unchanged. Restore the failed prompt when this composer is empty."),
+            ToastController::Action{QStringLiteral("Restore prompt"),
+                                    [this, target, restored] {
+                                      if (!draft(target).isEmpty()) return;
+                                      setText(target, restored, int(restored.size()));
+                                      auto* shell = NativeShell::of(this);
+                                      shell->controller<NavigationController>()->open(
+                                          shell->controller<DraftController>()->draft(target)
+                                              ? NavigationController::Route::draft(target)
+                                              : NavigationController::Route::thread(target));
+                                    }},
+            0);
       }
       Draft& draft = m_drafts[target];
       draft.attachments = attachments + draft.attachments;
