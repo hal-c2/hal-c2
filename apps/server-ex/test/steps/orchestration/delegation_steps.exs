@@ -457,6 +457,75 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  step "the user rolled back the task's turn in its thread", context do
+    roll_back(context)
+    context
+  end
+
+  step "the subagent completes while its caller is too busy to hear it", context do
+    complete_unheard(context, fn -> :ok end)
+  end
+
+  step "the subagent completes, and the user rolls back its turn before the caller hears it",
+       context do
+    complete_unheard(context, fn -> roll_back(context) end)
+  end
+
+  step "the subagent completes, and the user rolls back its turn and asks again before the caller hears it",
+       context do
+    complete_unheard(context, fn ->
+      roll_back(context)
+      World.send_turn(context, "subagent", "wait for it")
+      World.await_runs(context, "subagent", ["rolled_back", "running"])
+      cancel_queued_turn(context)
+    end)
+  end
+
+  step "{string} is told the task was cancelled without an answer",
+       %{args: [parent]} = context do
+    message = await_result_message(context, parent)
+    assert message["text"] =~ ~s(status="cancelled")
+    assert message["text"] =~ "\n(no answer)\n"
+    context
+  end
+
+  step "the task ended when its child's turn did", context do
+    task = task(context)
+    child = World.await_stream(task["childThreadId"], & &1)
+    run = child |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"])
+    assert task["completedAt"] == run["completedAt"]
+    context
+  end
+
+  step "the task summary is {string}", %{args: [summary]} = context do
+    assert task(context)["result"] == summary
+    context
+  end
+
+  # The task as its caller had it before the child's end reached it.
+  # Ends the caller's turns first, including the one the result woke.
+  step "the caller was never told the task ended", context do
+    open = %{"status" => "running", "completedAt" => nil}
+    parent = World.thread_id(context, context.task_parent)
+    quiet(parent, 10)
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", context.task_id,
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "result" => nil,
+               "completionDelivery" => %{"state" => "pending", "observedByRunId" => nil}
+             })
+         }},
+        {"node", context.task_id, %{"s" => open}},
+        {"turn-item", "turn-item:subagent:#{context.task_id}", %{"s" => open}}
+      ])
+
+    context
+  end
+
   step "the delivered result says there was no answer", context do
     message = await_result_message(context, "parent")
     assert message["text"] =~ ~s(status="failed")
@@ -790,4 +859,119 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
+
+  # Completes the task's child with its caller's stream held, so the report of its
+  # end times out, and holds that report at its retry; `meanwhile` runs before it.
+  # The caller has no result until the retry.
+  defp complete_unheard(context, meanwhile) do
+    parent_id = World.thread_id(context, context.task_parent)
+    parent = HalC2.Streams.ensure(parent_id)
+    World.await_runs(context, "subagent", ["running"])
+    gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
+    :ok = :logger.add_handler(gate, __MODULE__.RetryGate, %{config: self()})
+    :sys.suspend(parent)
+
+    # A failing step leaves neither the gate nor a held stream to the next scenario.
+    ExUnit.Callbacks.on_exit(fn ->
+      :logger.remove_handler(gate)
+      catch_exit(:sys.resume(parent))
+    end)
+
+    World.send_turn(context, "subagent", "say Done")
+    assert_receive {:retrying, reporter}, 15_000
+    :logger.remove_handler(gate)
+    :sys.resume(parent)
+
+    refute Enum.any?(
+             StreamState.list(World.state(context, context.task_parent), "message"),
+             &(&1["text"] =~ "<delegated_task_result")
+           )
+
+    assert task(context)["status"] == "running"
+    meanwhile.()
+    ref = Process.monitor(reporter)
+    send(reporter, :retry)
+    assert_receive {:DOWN, ^ref, _, _, _}, 15_000
+
+    result =
+      context
+      |> World.state(context.task_parent)
+      |> StreamState.list("message")
+      |> Enum.find(&(&1["text"] =~ "<delegated_task_result"))
+
+    Map.put(context, :result_message, result)
+  end
+
+  # A turn the user queued in the child behind the running one, then cancelled: the
+  # child's newest run, and an ended one.
+  defp cancel_queued_turn(context) do
+    child = task(context)["childThreadId"]
+    ordinal = child |> World.await_stream(& &1) |> StreamState.list("run") |> length()
+    at = HalC2.Orchestration.Entities.now()
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"run", "run:cancelled",
+         %{
+           "s" => %{
+             "id" => "run:cancelled",
+             "threadId" => child,
+             "ordinal" => ordinal + 1,
+             "status" => "cancelled",
+             "completedAt" => at,
+             "updatedAt" => at
+           }
+         }}
+      ])
+  end
+
+  defp roll_back(context) do
+    child = task(context)["childThreadId"]
+    runs = child |> World.await_stream(& &1) |> StreamState.list("run")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        child,
+        :thread,
+        for(run <- runs, do: {"run", run["id"], %{"s" => %{"status" => "rolled_back"}}})
+      )
+  end
+
+  defp quiet(thread_id, attempts) do
+    HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    World.await_stream(
+      thread_id,
+      fn state ->
+        runs = HalC2.StreamState.list(state, "run")
+        if Enum.all?(runs, &(&1["status"] not in ~w(running queued))), do: state
+      end,
+      500
+    )
+  rescue
+    error ->
+      if attempts > 1, do: quiet(thread_id, attempts - 1), else: reraise(error, __STACKTRACE__)
+  end
+end
+
+defmodule HalC2.Steps.Orchestration.Delegation.RetryGate do
+  @moduledoc "A logger handler that holds a delegated task report at its retry."
+  def log(%{msg: msg}, %{config: test}) do
+    text = msg |> elem(1) |> IO.chardata_to_string()
+
+    if text =~ "delegated task report" do
+      # Released by the scenario, or by its end if it failed first.
+      ref = Process.monitor(test)
+      send(test, {:retrying, self()})
+
+      receive do
+        :retry -> :ok
+        {:DOWN, ^ref, _, _, _} -> :ok
+      end
+
+      Process.demonitor(ref, [:flush])
+    end
+  rescue
+    _ -> :ok
+  end
 end

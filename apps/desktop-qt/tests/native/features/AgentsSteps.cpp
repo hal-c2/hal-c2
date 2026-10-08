@@ -4,6 +4,7 @@
 // item). features/timeline/plans-and-subagents.feature.
 
 #include <QJsonObject>
+#include <memory>
 
 #include "AgentsModel.h"
 #include "Harness.h"
@@ -21,6 +22,10 @@ struct FakeAgents {
   QHash<QString, QString> ids;
   QString last;
   QString command;
+  // Resets of the list since the tab opened, which would lose the user's scroll.
+  std::shared_ptr<int> resets = std::make_shared<int>(0);
+  // Redraws of the end times since the day turned over.
+  std::shared_ptr<int> endedRedraws = std::make_shared<int>(0);
 };
 
 AgentsModel& agents(World& world) {
@@ -31,14 +36,29 @@ QString describeAgents(World& world) {
   AgentsModel& model = agents(world);
   QStringList rows;
   for (int row = 0; row < model.rowCount(); ++row) {
-    rows.append(QStringLiteral("%1 %2 \"%3\" %4 (%5) \"%6\"")
-                    .arg(model.value(row, AgentsModel::KindRole).toString(), model.value(row, AgentsModel::IdRole).toString(),
-                         model.value(row, AgentsModel::TitleRole).toString(), model.value(row, AgentsModel::StatusLabelRole).toString(),
-                         model.value(row, AgentsModel::ElapsedRole).toString(), model.value(row, AgentsModel::DetailRole).toString()));
+    rows.append(QStringLiteral("%1 %2 %3 \"%4\" %5 (%6) \"%7\" \"%8\"")
+                    .arg(model.value(row, AgentsModel::SectionRole).toString(), model.value(row, AgentsModel::KindRole).toString(),
+                         model.value(row, AgentsModel::IdRole).toString(), model.value(row, AgentsModel::TitleRole).toString(),
+                         model.value(row, AgentsModel::StatusLabelRole).toString(), model.value(row, AgentsModel::ElapsedRole).toString(),
+                         model.value(row, AgentsModel::DetailRole).toString(), model.value(row, AgentsModel::EndedRole).toString()));
   }
   return QStringLiteral("the Agents tab lists %1%2")
       .arg(rows.isEmpty() ? QStringLiteral("nothing") : rows.join(QStringLiteral("; ")),
            agents(world).ticking() ? QStringLiteral(", ticking") : QString());
+}
+
+// The next local midnight the Agents tab waits for, a second past it; counts the end
+// times it redraws from then on.
+QDateTime pastMidnight(World& world) {
+  const QDateTime midnight(world.now().toLocalTime().date().addDays(1), QTime(0, 0));
+  expect(agents(world).nextDay() == midnight,
+         QStringLiteral("the end times are next redrawn at %1, not midnight; %2").arg(agents(world).nextDay().toString(Qt::ISODate), describeAgents(world)));
+  std::shared_ptr<int> redraws = world.mc.part<FakeAgents>().endedRedraws;
+  QObject::connect(&agents(world), &QAbstractItemModel::dataChanged, &agents(world),
+                   [redraws](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                     if (roles.contains(AgentsModel::EndedRole)) ++*redraws;
+                   });
+  return midnight.addSecs(1);
 }
 
 int rowTitled(World& world, const QString& title) {
@@ -110,6 +130,8 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("agents")}});
     world.sync();
     expect(at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("agents"), QStringLiteral("the Agents tab is not shown"));
+    std::shared_ptr<int> resets = world.mc.part<FakeAgents>().resets;
+    QObject::connect(&agents(world), &QAbstractItemModel::modelReset, &agents(world), [resets] { ++*resets; });
   });
   step(QStringLiteral("the user switches to the Diff tab"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("diff")}});
@@ -128,6 +150,23 @@ const Steps steps([] {
     const int row = rowTitled(world, c[0]);
     expect(model.value(row, AgentsModel::StatusLabelRole) == c[1] && model.value(row, AgentsModel::DetailRole) == c[2], describeAgents(world));
   });
+  step(QStringLiteral("the Agents tab lists, in order:"), [](World& world, const Captures&, const Table& table) {
+    AgentsModel& model = agents(world);
+    bool same = model.rowCount() == table.size();
+    for (int row = 0; same && row < table.size(); ++row) {
+      same = model.value(row, AgentsModel::TitleRole).toString() == table.at(row).at(0) &&
+             model.value(row, AgentsModel::SectionRole).toString() == table.at(row).at(1).toLower();
+    }
+    expect(same, describeAgents(world));
+  });
+  step(QStringLiteral("%1 is shown to have ended %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // ICU puts a narrow no-break space before "AM".
+    const QString ended = agents(world).value(rowTitled(world, c[0]), AgentsModel::EndedRole).toString().replace(QChar(0x202F), QLatin1Char(' '));
+    expect(ended == c[1], describeAgents(world));
+  });
+  step(QStringLiteral("the Agents tab never started its list over"), [](World& world, const Captures&, const Table&) {
+    expect(*world.mc.part<FakeAgents>().resets == 0, QStringLiteral("the list started over %1 times; %2").arg(*world.mc.part<FakeAgents>().resets).arg(describeAgents(world)));
+  });
   step(QStringLiteral("%1 is shown to have taken %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(agents(world).value(rowTitled(world, c[0]), AgentsModel::ElapsedRole) == c[1], describeAgents(world));
   });
@@ -136,6 +175,18 @@ const Steps steps([] {
     expect(agents(world).ticking(), describeAgents(world));
     world.setTime(world.now().addSecs(1));
     agents(world).tick();
+  });
+  step(QStringLiteral("the day turns over"), [](World& world, const Captures&, const Table&) {
+    // The model's own midnight timer, without waiting for midnight.
+    world.setTime(pastMidnight(world));
+    agents(world).redrawEnded();
+  });
+  step(QStringLiteral("the day turns over while the desktop sleeps"), [](World& world, const Captures&, const Table&) {
+    // Midnight passed, and the midnight timer has yet to fire.
+    world.setTime(pastMidnight(world));
+  });
+  step(QStringLiteral("the Agents tab redraws when each subagent ended"), [](World& world, const Captures&, const Table&) {
+    expect(*world.mc.part<FakeAgents>().endedRedraws > 0, describeAgents(world));
   });
   step(QStringLiteral("the Agents tab's times stand still"), [](World& world, const Captures&, const Table&) {
     expect(!agents(world).ticking(), describeAgents(world));

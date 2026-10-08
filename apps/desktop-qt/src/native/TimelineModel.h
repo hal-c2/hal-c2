@@ -144,6 +144,9 @@ public:
   // The long form of a row's time, or of one of its calls' (`entryId`), for
   // its tooltip: "9:41 AM, 23rd September 2026".
   Q_INVOKABLE QString timeTitle(const QString& rowId, const QString& entryId = {}) const;
+  // A time as the rows show theirs: "9:41 AM", "yesterday at 9:41 AM",
+  // "9/20 9:41 AM"; empty for an invalid one.
+  QString stamp(const QDateTime& at) const;
 
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
@@ -231,6 +234,8 @@ signals:
   // After a snapshot, or a command or file change starting or settling: the
   // workspace's files may have changed (WorkspaceFiles lists them again).
   void workspaceChanged();
+  // After the time format or locale changed: stamp() reads differently.
+  void timesChanged();
   // An image on screen has no address yet (loadAttachment).
   void attachmentWanted(const QString& id);
   void earlierChanged();
@@ -293,7 +298,6 @@ private:
   QVariantMap entry(const QJsonObject& item) const;
   // When a row or turn item happened, or invalid.
   QDateTime rowTime(const Row& row) const;
-  QString stamp(const QDateTime& at) const;
   void redrawTimes();
 
   QString m_threadKey;

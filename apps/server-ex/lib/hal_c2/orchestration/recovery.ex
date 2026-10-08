@@ -14,7 +14,8 @@ defmodule HalC2.Orchestration.Recovery do
   that had finished its turn is then told which background commands the restart
   ended (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
-  that ends (`Delegation.finished/3`).
+  that ends (`Delegation.finished/3`); one whose child had already stopped without
+  telling it settles now (`Delegation.reconcile/1`).
 
   Only threads whose sidebar row shows an active run or background work are opened.
   """
@@ -39,14 +40,23 @@ defmodule HalC2.Orchestration.Recovery do
   that could go on are kept for `continue/0`.
   """
   def run do
-    settled =
+    threads =
       for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
           mc == node(),
           # `status` is the latest run's, so a cancelled queued run can hide a running
           # one behind it; `activityRunStatus` is the latest active run's.
           row["status"] in @active_runs or row["activityRunStatus"] != nil or
             (row["pendingBackgroundTasks"] || []) != [],
+          do: thread_id
+
+    # Before any run is interrupted: a child still running when the MC stopped is not
+    # one that ended, and `continue/0` may resume it to report as it should.
+    reconciled = Map.new(threads, &{&1, HalC2.Orchestration.Delegation.reconcile(&1)})
+
+    settled =
+      for thread_id <- threads,
           {count, continuable} = settle(thread_id),
+          count = count + reconciled[thread_id],
           count > 0,
           do: {thread_id, continuable}
 

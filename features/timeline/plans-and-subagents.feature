@@ -187,6 +187,72 @@ Feature: Plans and subagents
     And "Docs" is shown to have taken "1m 15s"
 
   @desktop
+  Scenario: The Agents tab keeps what is running above what has finished
+    Given the agent started the subagents "Docs" and "Tax tests"
+    And "Docs" finished 75 seconds after it started
+    And the agent is running the command "bun test cart"
+    When the user opens the Agents tab
+    Then the Agents tab lists, in order:
+      | Tax tests     | Active   |
+      | bun test cart | Active   |
+      | Docs          | Finished |
+
+  @desktop
+  Scenario: The Agents tab says when each subagent finished, latest first
+    Given the agent started the subagent "Lint" 90000 seconds ago
+    And "Lint" finished 60 seconds after it started
+    And the agent started the subagents "Tax tests" and "Docs"
+    And "Docs" finished 30 seconds after it started
+    And "Tax tests" finished 85 seconds after it started
+    When the user opens the Agents tab
+    Then the Agents tab lists, in order:
+      | Tax tests | Finished |
+      | Docs      | Finished |
+      | Lint      | Finished |
+    And "Tax tests" is shown to have ended "Completed at 9:59 AM"
+    And "Lint" is shown to have ended "Completed yesterday at 9:01 AM"
+
+  # A tab left open overnight: "Completed at" is yesterday's by morning.
+  @desktop
+  Scenario: The Agents tab's end times follow the day over midnight
+    Given the agent started the subagent "Tax tests" 120 seconds ago
+    And "Tax tests" finished 85 seconds after it started
+    When the user opens the Agents tab
+    And the day turns over
+    Then the Agents tab redraws when each subagent ended
+    And "Tax tests" is shown to have ended "Completed yesterday at 9:59 AM"
+
+  # A laptop asleep over midnight wakes to a stream update before its timer fires.
+  @desktop
+  Scenario: The Agents tab's end times follow the day when the desktop wakes after midnight
+    Given the agent started the subagent "Tax tests" 120 seconds ago
+    And "Tax tests" finished 85 seconds after it started
+    And the agent started the subagent "Lint" 5 seconds ago
+    When the user opens the Agents tab
+    And the day turns over while the desktop sleeps
+    And the subagent finishes with "lint clean"
+    Then the Agents tab redraws when each subagent ended
+    And "Tax tests" is shown to have ended "Completed yesterday at 9:59 AM"
+
+  @desktop
+  Scenario: The Agents tab tells the time as the user set it
+    Given the agent started the subagent "Docs" 90 seconds ago
+    And "Docs" finished 75 seconds after it started
+    And the user opens the Agents tab
+    When the user prefers a 24-hour clock
+    Then "Docs" is shown to have ended "Completed at 09:59"
+
+  # A refreshed list would lose where the user had scrolled.
+  @desktop
+  Scenario: The Agents tab keeps its rows as work starts and ends
+    Given the agent started the subagents "Tax tests" and "Docs"
+    And the user opens the Agents tab
+    When the agent is running the command "bun test cart"
+    And the command finishes
+    And the subagent finishes with "docs written"
+    Then the Agents tab never started its list over
+
+  @desktop
   Scenario: A subagent's elapsed time moves only while the Agents tab shows
     Given the agent started the subagent "Tax tests" 12 seconds ago
     When the user opens the Agents tab

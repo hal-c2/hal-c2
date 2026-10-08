@@ -44,21 +44,21 @@ Item {
         }
     }
 
-    // An AgentsModel: a running subagent, a finished one, a running command.
+    // An AgentsModel: a running subagent and a running command, then a finished subagent.
     Component {
         id: fakeAgents
         ListModel {
             ListElement {
-                agentId: "task-tax"; kind: "subagent"; title: "Tax tests"; status: "running"; statusLabel: "Working"
-                elapsed: "12s"; detail: "Writing cart tests"; modelName: "gpt-5.5"; childThreadKey: "env-a:thread-tax"
+                agentId: "task-tax"; kind: "subagent"; section: "active"; title: "Tax tests"; status: "running"; statusLabel: "Working"
+                elapsed: "12s"; detail: "Writing cart tests"; modelName: "gpt-5.5"; childThreadKey: "env-a:thread-tax"; ended: ""
             }
             ListElement {
-                agentId: "task-docs"; kind: "subagent"; title: "Docs"; status: "failed"; statusLabel: "Failed"
-                elapsed: "1m 15s"; detail: "No docs folder"; modelName: ""; childThreadKey: "env-a:thread-docs"
+                agentId: "turn-item:9"; kind: "command"; section: "active"; title: "bun test cart"; status: "running"; statusLabel: "Working"
+                elapsed: "3s"; detail: ""; modelName: ""; childThreadKey: ""; ended: ""
             }
             ListElement {
-                agentId: "turn-item:9"; kind: "command"; title: "bun test cart"; status: "running"; statusLabel: "Working"
-                elapsed: "3s"; detail: ""; modelName: ""; childThreadKey: ""
+                agentId: "task-docs"; kind: "subagent"; section: "finished"; title: "Docs"; status: "failed"; statusLabel: "Failed"
+                elapsed: "1m 15s"; detail: "No docs folder"; modelName: ""; childThreadKey: "env-a:thread-docs"; ended: "Failed at 9:41 AM"
             }
         }
     }

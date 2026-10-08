@@ -12,6 +12,8 @@ defmodule HalC2.Orchestration.Delegation do
   one (`settled_only`) only when the caller's own run is already over.
   """
 
+  require Logger
+
   alias HalC2.{Orchestration, StreamState}
   alias HalC2.Orchestration.Entities
 
@@ -206,8 +208,11 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal do
-      result = answer(child, run_id)
+         true <- task["status"] not in @terminal,
+         # A report that comes late (retried) finds the run as it is now: one the
+         # user rolled back meanwhile ends the task as its other runs say.
+         {status, run, ended_at} <- reported(child, run_id, status) do
+      result = run && answer(child, run["id"])
 
       delivery =
         cond do
@@ -219,13 +224,86 @@ defmodule HalC2.Orchestration.Delegation do
       # A completion reported twice (a provider replaying its turn's end after a
       # reconnect, or two reports racing) settles and wakes once: only the report
       # that finds the task unsettled delivers it.
-      with :ok <- settle(parent_id, task, status, result, delivery, :once),
+      with :ok <- settle(parent_id, task, status, result, delivery, :once, ended_at),
            true <- delivery == "delivered",
            do: wake(parent_id, task, status, result)
     end
 
     :ok
   end
+
+  @doc """
+  `finished/3` from the end of a child's run, tried again while a thread it reads is
+  too busy to answer: a report given up on leaves the task running in its caller for
+  good. Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  """
+  def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
+    finished(thread_id, run_id, status)
+  catch
+    :exit, reason when attempts > 0 ->
+      Logger.warning("delegated task report for #{thread_id} retried: #{inspect(reason)}")
+      Process.sleep(backoff)
+      report(thread_id, run_id, status, attempts - 1, backoff * 2)
+  end
+
+  @doc """
+  Settles the tasks `parent_id` delegated whose child stopped working without its end
+  reaching the caller (a report lost to a crash or a restart): how the child's latest
+  run ended (`last_end/1`) is how the task ended, and when. The caller is not woken;
+  its turn is long over. Recovery calls it before interrupting any run, so a child
+  still working when the MC stopped is not taken for one that ended.
+  Returns how many it settled.
+  """
+  def reconcile(parent_id) do
+    for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
+          StreamState.list(stream(parent_id), "subagent"),
+        status not in @terminal and is_binary(child_id),
+        child = stream(child_id),
+        runs = StreamState.list(child, "run"),
+        runs != [],
+        not working?(runs),
+        {ended, run, ended_at} <- [last_end(runs)],
+        settle(
+          parent_id,
+          task,
+          ended,
+          run && answer(child, run["id"]),
+          "disposed",
+          :once,
+          ended_at
+        ) ==
+          :ok,
+        reduce: 0 do
+      count -> count + 1
+    end
+  end
+
+  # How a child's work ended: its latest run that was not rolled back, or, when the
+  # user rolled back every one, cancelled when the last was. Nil for a status no
+  # task takes.
+  defp last_end(runs) do
+    case runs |> Enum.reject(&(&1["status"] == "rolled_back")) |> latest() do
+      %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
+      nil -> {"cancelled", nil, end_of(latest(runs))}
+      _ -> nil
+    end
+  end
+
+  # How the reported run ended and when, not when its report got through; nil when
+  # it was rolled back and the child is working again, whose next run reports.
+  defp reported(child, run_id, status) do
+    runs = StreamState.list(child, "run")
+
+    case StreamState.get(child, "run")[run_id] do
+      %{"status" => "rolled_back"} -> if not working?(runs), do: last_end(runs)
+      run -> {status, run || %{"id" => run_id}, run && run["completedAt"]}
+    end
+  end
+
+  defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
+
+  defp latest(runs), do: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+  defp end_of(run), do: run["completedAt"] || run["updatedAt"]
 
   # --- tasks -------------------------------------------------------------------------
 
@@ -390,10 +468,11 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # Ends the task in its parent. With `:once`, a task that already ended is left as
-  # it is and `:already` is returned, decided inside the parent's transaction.
-  defp settle(parent_id, task, status, result, delivery, how \\ :always) do
-    at = Entities.now()
+  # Ends the task in its parent, at `at` or now. With `:once`, a task that already
+  # ended is left as it is and `:already` is returned, decided inside the parent's
+  # transaction.
+  defp settle(parent_id, task, status, result, delivery, how \\ :always, at \\ nil) do
+    at = at || Entities.now()
     status = if status in @terminal, do: status, else: "completed"
     item_id = "turn-item:subagent:#{task["id"]}"
 
