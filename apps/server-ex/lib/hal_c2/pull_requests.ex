@@ -47,11 +47,7 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to approve workflows from a fork pull request."
   }
 
-  @verdict_labels %{
-    "comment" => "review",
-    "approve" => "approve",
-    "request-changes" => "request changes on"
-  }
+  @verdict_labels %{"approve" => "approve", "request-changes" => "request changes on"}
 
   @reviewer_refusal "You need write access on this repository to ask for a review."
   @label_refusal "You need triage access on this repository to change its labels."
@@ -616,6 +612,7 @@ defmodule HalC2.PullRequests do
       if verdict != "approve" and String.trim(input["body"] || "") == "" and comments == [] do
         refuse("submitReview", "A review needs a summary or at least one comment.")
       else
+        # Only an author is held to comments (`GitHub.permissions/1`).
         with {:ok, viewer} <- GitHub.viewer_permissions(ctx) do
           if verdict in viewer["verdicts"],
             do:
@@ -623,7 +620,7 @@ defmodule HalC2.PullRequests do
             else:
               refuse(
                 "submitReview",
-                "You need write access on this repository to #{@verdict_labels[verdict]} a change request."
+                "You cannot #{@verdict_labels[verdict]} your own change request."
               )
         end
       end

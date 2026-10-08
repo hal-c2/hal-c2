@@ -100,6 +100,18 @@ Feature: Reviewing a pull request
       | request changes |
 
   @mc
+  Scenario Outline: An author cannot decide on their own pull request
+    Given pull request 42 is the user's own
+    And the user left a comment on line 12 of "src/cart.ts" in pull request 42
+    When the user submits the review as <verdict>
+    Then the user is told "<refusal>"
+
+    Examples:
+      | verdict         | refusal                                                |
+      | approve         | You cannot approve your own change request.            |
+      | request changes | You cannot request changes on your own change request. |
+
+  @mc
   Scenario: A review needs something to say
     When the user submits a comment review with no summary and no line comments
     Then the user is told "A review needs a summary or at least one comment."

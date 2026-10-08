@@ -660,8 +660,26 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     save(context, %{"publishingByRepository" => %{repo => mode}})
   end
 
+  # The report waits for an automatic post, so a held one is reported from a process
+  # of its own; the tool's answer is kept in `context.told`.
   step "the review of \#{int} finishes with two comments", %{args: [number]} = context do
-    context |> running(number) |> report(findings("comment", 2))
+    context = running(context, number)
+
+    if context[:github_gate] do
+      spawn(fn -> call_report(context, findings("comment", 2)) end)
+      context
+    else
+      result = call_report(context, findings("comment", 2))
+      assert result["isError"] != true, inspect(result)
+      Map.put(context, :told, result)
+    end
+  end
+
+  step "the agent is told GitHub's reason and not to post the review itself", context do
+    told = inspect(context.told)
+    assert told =~ "Can not approve your own pull request"
+    assert told =~ "do not post it yourself"
+    context
   end
 
   step "nothing can be posted to {string} and the review stays in HAL-C2", context do
@@ -680,11 +698,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "the review is posted to \#{int} as a review with both line comments",
+  step "the review is posted to \#{int} as a review with both line comments and the agent is told so",
        %{args: [number]} = context do
     context = await_review!(context, number, &(&1["status"] == "published"))
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     assert %{"event" => "COMMENT", "comments" => [_, _]} = JSON.decode!(call["stdin"])
+    assert inspect(context.told) =~ "The review is posted to the pull request."
     context
   end
 
@@ -730,6 +749,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert sha == review["reviewedSha"]
     refute sha == context.pushed
     context
+  end
+
+  step "\#{int} is the user's own pull request", %{args: [number]} = context do
+    put_in(context, [:prs, number], Map.put(context.prs[number] || %{}, "viewerDidAuthor", true))
   end
 
   step "the user posts verdicts as comments", context do
@@ -1054,9 +1077,34 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     context
     |> World.cli_rules([
-      %{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])}
+      %{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])},
+      detail_rule(pr)
     ])
     |> Map.put(:prs, prs)
+  end
+
+  # GitHub's answer when pull request `pr` (as `gh pr list` gives it) is read on its own.
+  defp detail_rule(pr) do
+    graphql =
+      Map.merge(pr, %{
+        "body" => "",
+        "changedFiles" => 1,
+        "isCrossRepository" => false,
+        "baseRef" => %{"compare" => %{"behindBy" => 0}},
+        "labels" => %{"nodes" => pr["labels"]},
+        "reviewRequests" => %{
+          "nodes" => Enum.map(pr["reviewRequests"], &%{"requestedReviewer" => &1})
+        },
+        "commits" => Shared.pr_commits([])
+      })
+
+    %{
+      "args" => ["api graphql"],
+      "stdin" => ["viewerCanUpdateBranch", "refs/pull/#{pr["number"]}/head"],
+      "stdout" => %{
+        "data" => %{"repository" => %{"viewerPermission" => "WRITE", "pullRequest" => graphql}}
+      }
+    }
   end
 
   # A commit off main with `files` at `refs/pull/<number>/head` of the fake GitHub.

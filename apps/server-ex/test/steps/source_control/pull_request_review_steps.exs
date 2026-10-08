@@ -254,6 +254,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestReview do
     ])
   end
 
+  step "pull request {int} is the user's own", %{args: [number]} = context do
+    assert number == context.pr_number
+    Shared.reshape_pr(context, %{"viewerDidAuthor" => true})
+  end
+
   step ~r/^the user submits the review as (?<verdict>comment|approve|request changes)$/,
        %{args: [verdict]} = context do
     verdict = String.replace(verdict, " ", "-")

@@ -16,7 +16,8 @@ defmodule HalC2.CodeReviewPropTest do
     and none before, and a retry replaces a run rather than adding one;
   - every post is the one the model expects, on the commit its run reviewed, and a late
     answer to a superseded post leaves the newer run alone;
-  - a report with nothing to post goes back to the agent as an error;
+  - a report with nothing to post goes back to the agent as an error, and one posted
+    automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - the `reviews` snapshot, and the topic clients follow, match the model;
@@ -350,8 +351,14 @@ defmodule HalC2.CodeReviewPropTest do
 
           r = %{r | status: status, verdict: verdict, comments: comments, publish_error: false}
           m = put_review(m, key, r)
-          {m, _} = if status == :publishing, do: post(m, key), else: {m, nil}
-          {pump(m), :ok}
+
+          # The agent is told how an automatic post went once GitHub has answered.
+          if status == :publishing do
+            {m, posted} = post(m, key)
+            {pump(m), %{ok: :posted, error: :refused, held: :held}[posted]}
+          else
+            {pump(m), :ok}
+          end
         end
 
       _ ->
@@ -641,14 +648,66 @@ defmodule HalC2.CodeReviewPropTest do
           %{"verdict" => "comment", "summary" => " ", "comments" => []}
       end
 
-    observe(
-      case HalC2.Plugins.call_tool("code_review_report", arguments, tid(key, k)) do
-        {:ok, _} -> :ok
-        {:error, _, _} -> :error
-        nil -> nil
-      end
-    )
+    # Asked from a process of its own, as a report posted automatically is answered
+    # only once GitHub has answered.
+    me = self()
+    ref = make_ref()
+    tid = tid(key, k)
+
+    spawn(fn ->
+      send(me, {ref, HalC2.Plugins.call_tool("code_review_report", arguments, tid)})
+    end)
+
+    observe(await_report(ref, key, tid, System.monotonic_time(:millisecond) + 15_000))
   end
+
+  # The report's answer, or `:held` once its post is the plugin's and GitHub holds it.
+  defp await_report(ref, key, tid, deadline) do
+    receive do
+      {^ref, answer} -> told(answer)
+    after
+      0 ->
+        cond do
+          posting?(key, tid) ->
+            drain()
+
+            if posting?(key, tid) do
+              :held
+            else
+              receive do
+                {^ref, answer} -> told(answer)
+              after
+                15_000 -> problem("the report of #{key} was never answered")
+              end
+            end
+
+          System.monotonic_time(:millisecond) > deadline ->
+            problem("the report of #{key} was never answered")
+
+          true ->
+            Process.sleep(5)
+            await_report(ref, key, tid, deadline)
+        end
+    end
+  end
+
+  defp posting?(key, tid) do
+    case get_state(Process.whereis(@server)) do
+      {:ok, %{reviews: %{^key => %{"status" => "publishing", "threadId" => ^tid}}}} -> true
+      _ -> false
+    end
+  end
+
+  defp told({:ok, %{"next" => next}}) do
+    cond do
+      next =~ "is posted" -> :posted
+      next =~ "failed" -> :refused
+      true -> :ok
+    end
+  end
+
+  defp told({:error, _, _}), do: :error
+  defp told(nil), do: nil
 
   def turn_finished({key, k}, status) do
     event = %{"type" => "turn.finished", "threadId" => tid(key, k), "status" => status}

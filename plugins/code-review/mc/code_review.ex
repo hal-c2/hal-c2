@@ -207,7 +207,8 @@ defmodule HalC2Plugins.CodeReview do
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
     with {:ok, review} <- server({:for_thread, thread_id}),
          {:ok, findings} <- findings(arguments, review),
-         {:ok, review} <- server({:report, thread_id, findings}) do
+         # Each GitHub command of the post has a timeout of its own.
+         {:ok, review} <- GenServer.call(__MODULE__, {:report, thread_id, findings}, :infinity) do
       on_lines = Enum.count(review["comments"])
 
       {:ok,
@@ -216,10 +217,12 @@ defmodule HalC2Plugins.CodeReview do
          "commentsOnLines" => on_lines,
          "commentsInSummary" => length(findings.general),
          "next" =>
-           case review["status"] do
-             "kept" -> "The review is kept in HAL-C2."
-             "waiting" -> "The review waits for the user to publish it."
-             _ -> "The review is being posted to the pull request."
+           case review do
+             %{"status" => "kept"} -> "The review is kept in HAL-C2."
+             %{"status" => "published"} -> "The review is posted to the pull request."
+             %{"publishError" => error} when is_binary(error) ->
+               "Posting the review failed: #{error} It waits in HAL-C2 for the user to publish it; do not post it yourself."
+             _ -> "The review waits for the user to publish it."
            end
        }}
     end
@@ -362,7 +365,8 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def handle_call({:report, thread_id, findings}, _from, state) do
+  # An automatic post is answered once it is over, so the agent hears how it went.
+  def handle_call({:report, thread_id, findings}, from, state) do
     case by_thread(state, thread_id) do
       %{"status" => status} = review when status not in ~w(published publishing) ->
         mode = publishing(state.settings, review["repository"])
@@ -385,8 +389,25 @@ defmodule HalC2Plugins.CodeReview do
             "publishError" => nil
           })
 
-        if mode == "automatic", do: spawn_publish(review, state.settings)
-        {:reply, {:ok, review}, state |> put(review) |> pump() |> changed()}
+        state = state |> put(review) |> pump() |> changed()
+
+        if mode == "automatic" do
+          settings = state.settings
+
+          spawn_link(fn ->
+            posted =
+              case publish(review, settings) do
+                {:ok, _} -> %{"status" => "published"}
+                {:error, error} -> %{"status" => "waiting", "publishError" => error}
+              end
+
+            GenServer.reply(from, {:ok, Map.merge(review, posted)})
+          end)
+
+          {:noreply, state}
+        else
+          {:reply, {:ok, review}, state}
+        end
 
       _ ->
         {:reply, {:error, "This thread is not a code review waiting for findings."}, state}
@@ -921,11 +942,11 @@ defmodule HalC2Plugins.CodeReview do
     end)
   end
 
-  defp spawn_publish(review, settings), do: spawn_link(fn -> publish(review, settings) end)
-
-  # Posts the review with the comments the user kept; the server hears how it went.
+  # Posts the review with the comments the user kept; the server hears how it went. A
+  # verdict the user may not give, as on their own pull request, is posted as a comment.
   defp publish(review, settings) do
-    as_comment = settings["verdictAsComment"] == true and review["verdict"] != "comment"
+    as_comment =
+      review["verdict"] != "comment" and (settings["verdictAsComment"] == true or not may_give?(review))
 
     body =
       if as_comment,
@@ -954,6 +975,14 @@ defmodule HalC2Plugins.CodeReview do
       {:error, error} ->
         server({:published, review["key"], review["threadId"], message(error)})
         {:error, message(error)}
+    end
+  end
+
+  defp may_give?(review) do
+    case Host.pull_requests(@id, "detail", Map.take(review, ~w(projectId repository number))) do
+      {:ok, %{"viewerPermissions" => %{"verdicts" => verdicts}}} -> review["verdict"] in verdicts
+      # Unread, GitHub has the last word on the post.
+      _ -> true
     end
   end
 

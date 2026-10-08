@@ -248,10 +248,10 @@ Feature: Agent code review
       Then <outcome>
 
       Examples:
-        | mode      | outcome                                                                     |
-        | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2          |
-        | draft     | the review waits for the user to publish it                                 |
-        | automatic | the review is posted to #12 as a review with both line comments             |
+        | mode      | outcome                                                                                  |
+        | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2                       |
+        | draft     | the review waits for the user to publish it                                              |
+        | automatic | the review is posted to #12 as a review with both line comments and the agent is told so |
 
     @mc
     Scenario: The user publishes a draft review with the comments they kept
@@ -272,6 +272,20 @@ Feature: Agent code review
       Given the user posts verdicts as comments
       When the user publishes the review of #12 with the verdict "changes requested"
       Then #12 gets a commented review rather than a request for changes
+
+    @mc
+    Scenario: A verdict GitHub does not let the user give is posted as a comment
+      Given #12 is the user's own pull request
+      When the user publishes the review of #12 with the verdict "changes requested"
+      Then #12 gets a commented review rather than a request for changes
+
+    @mc
+    Scenario: The agent hears how posting its review went
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub refuses the review
+      When the review of #12 finishes with two comments
+      Then the agent is told GitHub's reason and not to post the review itself
+      And the review of #12 is still waiting with its comments
 
     @mc
     Scenario: A failed publish keeps the review

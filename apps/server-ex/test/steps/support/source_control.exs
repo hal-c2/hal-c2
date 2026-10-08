@@ -261,7 +261,10 @@ defmodule HalC2.Steps.SourceControl.Shared do
       Map.get(fields, "viewerCanUpdate", context.permission in ~w(WRITE MAINTAIN ADMIN))
 
     permissions =
-      permissions_rule(context.permission, %{"viewerCanUpdate" => can_update})
+      permissions_rule(
+        context.permission,
+        fields |> Map.take(["viewerDidAuthor"]) |> Map.put("viewerCanUpdate", can_update)
+      )
 
     World.cli_rules(context, [permissions, core_rule(context, can_update)])
   end
