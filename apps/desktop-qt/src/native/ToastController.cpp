@@ -38,6 +38,9 @@ bool ToastController::handle(const QString& action, const QVariant& payload) {
       if (chosen.run) chosen.run();
       return true;
     }
+    // A click on an action the toast no longer offers (replace() changed
+    // them under the pointer) leaves it be.
+    return true;
   }
   const bool closed = action == QLatin1String("notification.dismiss") &&
                       std::any_of(m_toasts.cbegin(), m_toasts.cend(), [&id](const Toast& toast) { return toast.id == id; });
@@ -73,8 +76,9 @@ bool ToastController::runAction(const QString& label) {
   QList<std::pair<QString, QString>> chosen;  // toast id, action id
   QString group;
   for (const Toast& toast : std::as_const(m_toasts)) {
+    // Of the two actions a toast shows; a third has no button to click.
     qsizetype found = -1;
-    for (qsizetype index = 0; index < toast.actions.size() && found < 0; ++index) {
+    for (qsizetype index = 0; index < std::min<qsizetype>(toast.actions.size(), 2) && found < 0; ++index) {
       if (toast.actions.at(index).label == label) found = index;
     }
     if (found < 0) {
