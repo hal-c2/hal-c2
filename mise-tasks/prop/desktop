@@ -6,8 +6,8 @@ set -euo pipefail
 "$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
 build=apps/desktop-qt/build/prop
 if [[ ! -f $build/CMakeCache.txt ]]; then
-  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's on PATH, then Homebrew's.
-  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's (or qmake's) on PATH, then Homebrew's.
+  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || qmake -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
   cmake -S apps/desktop-qt/tests/prop -B "$build" -DCMAKE_BUILD_TYPE=Debug ${qt:+"-DCMAKE_PREFIX_PATH=$qt"}
 fi
 cmake --build "$build" --parallel
