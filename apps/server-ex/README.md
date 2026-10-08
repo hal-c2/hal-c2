@@ -118,6 +118,9 @@ lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...
 CLIs; `--include parity` compares sidebar rows with the Node server's
 (see `test/hal_c2/projection/shell_parity_test.exs`).
 
+`mix prop` runs the stateful property tests in `prop/`, kept apart because PropCheck is
+GPL-3.0 ([prop/README.md](prop/README.md)).
+
 What this MC serves, what it still lacks, and why anything was dropped is written as
 Gherkin under the repository's `features/` tree: `features/parity/rpc.feature` and
 `features/parity/commands.feature` hold a row per RPC method and orchestration command,

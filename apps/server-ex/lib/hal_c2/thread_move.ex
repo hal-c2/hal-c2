@@ -26,6 +26,8 @@ defmodule HalC2.ThreadMove do
   comes back, and again while a destination is still taking a thread, a thread marked
   `moving` becomes a forwarding record if the destination holds it, and is released if
   it does not. At boot it also discards copies this MC was receiving when it stopped.
+  The settling asks other machines, so it runs in a task, one at a time; what is asked
+  meanwhile runs right after, together.
 
   Results are `{:ok, %{"status" => ...}}`: `"moved"`, `"confirm"` (call again with
   `confirmed: true`) or `"choose_project"` (call again with `project:`), or
@@ -74,7 +76,11 @@ defmodule HalC2.ThreadMove do
              notes = fit["notes"] ++ source_notes(id, thread, archive, dest),
              :ok <- confirmed(notes, opts[:confirmed] == true),
              {:ok, archive, moving} <- begin(id, dest, archive, have) do
-          transfer(id, dest, archive, moving, fit, notes)
+          try do
+            transfer(id, dest, archive, moving, fit, notes)
+          after
+            GenServer.cast(__MODULE__, {:done, id, moving["id"]})
+          end
         end
       after
         ThreadArchive.discard(archive)
@@ -390,11 +396,15 @@ defmodule HalC2.ThreadMove do
 
     with {:ok, unchanged?, moving} <- marked do
       Streams.flush_shell(id)
+      # The process moving the thread may die anywhere from here (its client went
+      # away); this process then settles the move at once rather than leave the thread
+      # read-only until the destination comes back.
+      GenServer.cast(__MODULE__, {:watch, self(), id, move})
 
       with {:ok, archive} <-
              if(unchanged?,
                do: {:ok, archive},
-               else: with_release(id, fn -> build(id, have: have) end)
+               else: with_release(id, move, fn -> build(id, have: have) end)
              ),
            do: {:ok, archive, moving}
     end
@@ -448,7 +458,7 @@ defmodule HalC2.ThreadMove do
          }}
 
       {:error, message} ->
-        release(id)
+        release_own(id, moving["id"])
         error(:thread_not_movable, message)
 
       {:broken, reason} ->
@@ -459,9 +469,6 @@ defmodule HalC2.ThreadMove do
         release(id, moving)
 
         if thread(id)["moving"] do
-          with pid when is_pid(pid) <- Process.whereis(__MODULE__),
-               do: send(pid, {:settle, id})
-
           error(
             :mc_unavailable,
             "The move of #{title} to #{dest.label} was cut off while #{dest.label} was taking it. #{title} stays read-only until #{dest.label} says whether it has it."
@@ -531,19 +538,25 @@ defmodule HalC2.ThreadMove do
     Streams.flush_shell(id)
   end
 
-  defp release(id) do
-    release(id, nil)
+  # Clears `moving` if it is still the move `move`: a mover that comes back after a
+  # later move began must not call that one off.
+  defp release_own(id, move) do
+    release(id, &match?(%{"id" => ^move}, &1))
     :ok
   end
 
   # Clears `moving`, and says whether it did. Given the move as it was last seen
   # (`moving`), only if it still is that: not once the destination was told to take it.
-  defp release(id, seen) do
+  defp release(id, seen) when is_map(seen), do: release(id, &(&1 == seen))
+
+  defp release(id, seen?) do
     released =
       Streams.transact(id, :thread, fn state ->
         case StreamState.get(state, "thread")[id] do
-          %{"moving" => moving} when seen in [nil, moving] ->
-            {[Orchestration.upsert(state, "thread", id, &Map.delete(&1, "moving"))], true}
+          %{"moving" => moving} ->
+            if seen?.(moving),
+              do: {[Orchestration.upsert(state, "thread", id, &Map.delete(&1, "moving"))], true},
+              else: {[], false}
 
           _ ->
             {[], false}
@@ -572,13 +585,13 @@ defmodule HalC2.ThreadMove do
     end)
   end
 
-  defp with_release(id, fun) do
+  defp with_release(id, move, fun) do
     case fun.() do
       {:ok, _} = ok ->
         ok
 
       error ->
-        release(id)
+        release_own(id, move)
         error
     end
   end
@@ -731,6 +744,8 @@ defmodule HalC2.ThreadMove do
   bringing it here, which is neither yet.
   """
   def arrived?(id) do
+    hook(:arrived, id)
+
     case :global.trans(taking_lock(id), fn -> holds?(id) end, [node()], 0) do
       :aborted -> :arriving
       held -> held
@@ -862,11 +877,21 @@ defmodule HalC2.ThreadMove do
 
   @impl true
   def init(_opts) do
+    # A settle that crashes must not take this process down with it: restarted, it
+    # would settle at once and crash again on whatever broke the last one.
+    Process.flag(:trap_exit, true)
     :ok = :net_kernel.monitor_nodes(true)
-    File.rm_rf(incoming())
-    ThreadArchive.clear_scratch()
+
+    # Once an MC: a restart of this process alone must not take the files from under
+    # the moves still staging or sending.
+    unless :persistent_term.get({__MODULE__, :booted, incoming()}, false) do
+      File.rm_rf(incoming())
+      ThreadArchive.clear_scratch()
+      :persistent_term.put({__MODULE__, :booted, incoming()}, true)
+    end
+
     send(self(), {:settle, :all})
-    {:ok, %{after_turn: %{}, again: MapSet.new()}}
+    {:ok, %{after_turn: %{}, again: MapSet.new(), movers: %{}, task: nil, asked: [], queue: nil}}
   end
 
   @impl true
@@ -877,18 +902,41 @@ defmodule HalC2.ThreadMove do
   end
 
   @impl true
-  def handle_info({:settle, which}, state) do
-    # One timer a thread, however many times it is found unsettled meanwhile.
-    waiting = MapSet.delete(state.again, which)
-    again = MapSet.new(settle(which))
+  def handle_cast({:watch, pid, id, move}, state),
+    do: {:noreply, put_in(state, [:movers, Process.monitor(pid)], {id, move})}
 
-    for id <- MapSet.difference(again, waiting),
-        do: Process.send_after(self(), {:settle, id}, @again)
+  # The transfer of the move ended, however it did: it settles if it was cut off.
+  def handle_cast({:done, id, move}, state) do
+    movers =
+      Map.reject(state.movers, fn {ref, {_id, watched}} ->
+        watched == move and Process.demonitor(ref, [:flush])
+      end)
 
-    {:noreply, %{state | again: MapSet.union(waiting, again)}}
+    settle_cut_off(id, move, %{state | movers: movers})
   end
 
+  @impl true
+  def handle_info({:settle, which}, state), do: {:noreply, settle_later(state, which)}
+
   def handle_info({:nodeup, mc}, state), do: handle_info({:settle, mc}, state)
+
+  def handle_info({ref, again}, %{task: %Task{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, settled(state, again)}
+  end
+
+  # A settle that crashed: what it was asked to settle is asked again later.
+  def handle_info({:DOWN, ref, :process, _, reason}, %{task: %Task{ref: ref}} = state) do
+    Logger.warning("settling thread moves failed: #{inspect(reason)}")
+    {:noreply, settled(state, state.asked)}
+  end
+
+  # The process moving a thread died.
+  def handle_info({:DOWN, ref, :process, _, _}, %{movers: movers} = state)
+      when is_map_key(movers, ref) do
+    {{id, move}, movers} = Map.pop(movers, ref)
+    settle_cut_off(id, move, %{state | movers: movers})
+  end
 
   # A thread waiting for its turn to end: every commit may be the one that ends it.
   def handle_info({:hal_c2_stream, id, _}, state), do: handle_info({:turn_check, id}, state)
@@ -912,6 +960,51 @@ defmodule HalC2.ThreadMove do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A move whose transfer ended or whose mover died settles, unless it was over.
+  defp settle_cut_off(id, move, state) do
+    case thread(id) do
+      %{"moving" => %{"id" => ^move}} -> {:noreply, settle_later(state, id)}
+      _ -> {:noreply, state}
+    end
+  end
+
+  # Two settles of a thread would race on `let_go` and `release`, so one runs at a time,
+  # in a task so that this process keeps answering while it waits on other machines.
+  # What is asked meanwhile waits and runs together: `:all`, or the machines and threads.
+  defp settle_later(state, which) do
+    queue =
+      case {state.queue, which} do
+        {:all, _} -> :all
+        {_, :all} -> :all
+        {nil, which} -> MapSet.new([which])
+        {queue, which} -> MapSet.put(queue, which)
+      end
+
+    settle_next(%{state | queue: queue})
+  end
+
+  defp settle_next(%{task: nil, queue: queue} = state) when queue != nil do
+    asked = if queue == :all, do: [:all], else: MapSet.to_list(queue)
+    task = Task.async(fn -> asked |> Enum.flat_map(&settle/1) |> Enum.uniq() end)
+
+    # The timers of what is asked have fired, or are not needed now.
+    again = MapSet.difference(state.again, MapSet.new(asked))
+    %{state | task: task, asked: asked, queue: nil, again: again}
+  end
+
+  defp settle_next(state), do: state
+
+  # A settle ended: `again` are the threads to settle again, or what a crash was asked.
+  defp settled(state, again) do
+    again = MapSet.new(again)
+
+    # One timer a thread, however many times it is found unsettled meanwhile.
+    for which <- MapSet.difference(again, state.again),
+        do: Process.send_after(self(), {:settle, which}, @again)
+
+    settle_next(%{state | task: nil, asked: [], again: MapSet.union(state.again, again)})
+  end
 
   @doc """
   Settles moves that were cut off: to `mc`, of the thread `id`, or all (`:all`). A

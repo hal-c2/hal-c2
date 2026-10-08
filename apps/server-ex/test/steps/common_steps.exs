@@ -879,9 +879,12 @@ defmodule HalC2.Steps.Common do
           Mc.sub(Mc.connect(context.mc, "wsTicket=#{ticket}"), 44, %{"type" => "authAccess"})
 
         "an rpc whose MC has gone away" ->
-          # A peer the shell knows by its environment, but no longer reachable.
+          # A peer the shell knows by its environment, but no longer reachable: it was
+          # up when it sent the environment, then went down.
           gone = :"gone@127.0.0.1"
+          send(HalC2.Shell, {:nodeup, gone})
           GenServer.cast(HalC2.Shell, {:peer_environment, gone, %{"environmentId" => "env-gone"}})
+          send(HalC2.Shell, {:nodedown, gone})
           assert_receive {:hal_c2_shell, {:environment, ^gone, _}}, 1_000
           Mc.rpc(client, "env-gone", 46, "hal-c2.readSettings", %{})
 

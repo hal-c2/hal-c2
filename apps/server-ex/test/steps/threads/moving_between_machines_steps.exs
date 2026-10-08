@@ -1619,6 +1619,29 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "another client renames {string} to {string}", %{args: [title, new_title]} = context do
+    rename =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "threadId" => World.thread_id(context, title),
+        "title" => new_title
+      })
+
+    Map.put(context, :rename, rename)
+  end
+
+  step "the rename is refused because {string} is moving to {string}",
+       %{args: [title, to]} = context do
+    assert context.rename ==
+             {:error, "#{title} is moving to #{to}. Try again once it has arrived."}
+
+    assert World.thread(context, title)["title"] == title
+    send(context.held.pid, :release)
+    context = held_result(context)
+    moved!(context)
+    context
+  end
+
   # --- agents ----------------------------------------------------------------------------
 
   step "the thread {string} runs in full-access mode", %{args: [title]} = context do

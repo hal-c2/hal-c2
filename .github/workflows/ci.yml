@@ -85,6 +85,12 @@ jobs:
       - name: Test
         run: mix test
 
+      # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
+      - name: Property tests
+        run: mix prop
+        env:
+          MIX_ENV: prop
+
   # The @mc scenarios of features/, one directory per job so a slow or hung
   # directory stays visible; mc/ is split in two to fit the time limit.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);

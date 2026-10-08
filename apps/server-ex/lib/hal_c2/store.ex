@@ -32,6 +32,9 @@ defmodule HalC2.Store do
   @schema_version 1
   @compress_over 1024
   @write_timeout 60_000
+  # How long a write waits for the store to restart, and how often it looks.
+  @restart_wait 5_000
+  @restart_poll 5
   @checkpoint_every :timer.seconds(10)
 
   @schema [
@@ -108,21 +111,59 @@ defmodule HalC2.Store do
 
   @doc """
   Appends changes to a stream in one transaction, creating the stream on first use.
-  Each entry is `{stream_kind, stream_id, changes}`. Returns the last `seq` written.
+  Each entry is `{stream_kind, stream_id, changes}`; a stream keeps the kind it was
+  created with. Returns the last `seq` written, or the end of the log when the call
+  writes no changes.
+
+  `at` stamps the changes that carry no time of their own. It is only accepted with an
+  explicit store, so `append(batches, at)` is a `FunctionClauseError` rather than a
+  call that takes `batches` for the store.
   """
   @spec append(GenServer.server(), [{stream_kind, String.t(), [change]}], integer) ::
           {:ok, non_neg_integer} | {:error, term}
-  def append(store \\ __MODULE__, batches, at \\ System.os_time(:millisecond)),
-    do: GenServer.call(store, {:append, batches, at}, @write_timeout)
+  def append(batches) when is_list(batches), do: append(__MODULE__, batches)
 
-  @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term) :: :ok
+  def append(store, batches) when is_list(batches),
+    do: append(store, batches, System.os_time(:millisecond))
+
+  def append(store, batches, at) when is_list(batches) and is_integer(at),
+    do: write(store, {:append, batches, at})
+
+  @doc """
+  Caches a stream's folded state as of `seq`. The stream must already have events:
+  nothing here knows its kind, so it cannot create one.
+  """
+  @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term) ::
+          :ok | {:error, :unknown_stream}
   def put_snapshot(store \\ __MODULE__, stream_id, seq, state),
-    do: GenServer.call(store, {:put_snapshot, stream_id, seq, state}, @write_timeout)
+    do: write(store, {:put_snapshot, stream_id, seq, state})
 
-  @doc "Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`."
-  @spec put_shell(GenServer.server(), String.t(), non_neg_integer, {String.t(), map}) :: :ok
+  @doc """
+  Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`. The stream
+  must already exist, like a snapshot's.
+  """
+  @spec put_shell(GenServer.server(), String.t(), non_neg_integer, {String.t(), map}) ::
+          :ok | {:error, :unknown_stream}
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
-    do: GenServer.call(store, {:put_shell, stream_id, seq, kind, row}, @write_timeout)
+    do: write(store, {:put_shell, stream_id, seq, kind, row})
+
+  # A write waits out a restart of a named store: a call that found no store wrote
+  # nothing, so it is made again once the store is back. Nothing says when that is, so
+  # it looks every few milliseconds. A call the store took and then crashed on may
+  # have landed, and fails as it did.
+  defp write(store, request, deadline \\ nil) do
+    GenServer.call(store, request, @write_timeout)
+  catch
+    :exit, {:noproc, _} = reason when is_atom(store) ->
+      deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
+
+      if System.monotonic_time(:millisecond) < deadline do
+        Process.sleep(@restart_poll)
+        write(store, request, deadline)
+      else
+        exit(reason)
+      end
+  end
 
   @doc "Every stored sidebar row as `{stream_id, kind, row}`."
   @spec list_shell(String.t()) :: [{String.t(), String.t(), map}]
@@ -140,7 +181,11 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "Records finished messages of a stream for search, as `{id, role, text, created_at}`."
+  @doc """
+  Records finished messages of a stream for search, as `{id, role, text, created_at}`.
+  Asynchronous, and ignored for a stream that has no events. A call to the store from the
+  same process afterwards (`:sys.get_state/1`, say) returns once they are indexed.
+  """
   def index_messages(store \\ __MODULE__, stream_id, messages),
     do: GenServer.cast(store, {:index_messages, stream_id, messages})
 
@@ -179,15 +224,16 @@ defmodule HalC2.Store do
   end
 
   def put_meta(store \\ __MODULE__, key, value),
-    do: GenServer.call(store, {:put_meta, key, value}, @write_timeout)
+    do: write(store, {:put_meta, key, value})
 
   @doc """
   Copies the WAL back into the database now rather than at the next periodic
-  checkpoint. Returns the frames the WAL held and how many of them were copied.
+  checkpoint. Returns the frames the WAL held and how many of them were copied, or
+  `{:error, :busy}` when another checkpoint held the lock and nothing ran.
   """
   @spec checkpoint(GenServer.server()) ::
           {:ok, %{log: integer, checkpointed: integer}} | {:error, term}
-  def checkpoint(store \\ __MODULE__), do: GenServer.call(store, :checkpoint, @write_timeout)
+  def checkpoint(store \\ __MODULE__), do: write(store, :checkpoint)
 
   @doc "The MC's database in its data directory, which the application and mix tasks open."
   def home_path, do: Path.join(HalC2.Paths.data_dir(), "hal-c2.sqlite")
@@ -410,6 +456,11 @@ defmodule HalC2.Store do
       end
 
     case result do
+      # Another checkpoint or a recovery held the lock: nothing ran, and SQLite reports
+      # -1 frames for both counts.
+      {:ok, [[1, _, _]]} ->
+        {:error, :busy}
+
       {:ok, [[_busy, log, checkpointed]]} ->
         {:ok, %{log: log, checkpointed: checkpointed}}
 
@@ -455,7 +506,7 @@ defmodule HalC2.Store do
 
     try do
       {last, state} =
-        Enum.reduce(batches, {0, state}, fn {stream_kind, stream_id, changes}, {last, state} ->
+        Enum.reduce(batches, {nil, state}, fn {stream_kind, stream_id, changes}, {last, state} ->
           {key, state} = stream_key(state, stream_kind, stream_id)
 
           last =
@@ -477,6 +528,7 @@ defmodule HalC2.Store do
           {last, state}
         end)
 
+      last = last || log_end(state.db)
       :ok = Sqlite3.execute(state.db, "COMMIT")
       {:reply, {:ok, last}, state}
     rescue
@@ -488,30 +540,27 @@ defmodule HalC2.Store do
   end
 
   def handle_call({:put_snapshot, stream_id, seq, snapshot}, _from, state) do
-    {key, state} = stream_key(state, :thread, stream_id)
-    blob = :erlang.term_to_binary(snapshot, [:compressed])
+    with_existing_stream(state, stream_id, fn key ->
+      blob = :erlang.term_to_binary(snapshot, [:compressed])
 
-    :ok =
-      exec(
-        state.db,
-        "INSERT INTO snapshots (stream, seq, state) VALUES (?1, ?2, ?3) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
-        [key, seq, {:blob, blob}]
-      )
-
-    {:reply, :ok, state}
+      :ok =
+        exec(
+          state.db,
+          "INSERT INTO snapshots (stream, seq, state) VALUES (?1, ?2, ?3) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
+          [key, seq, {:blob, blob}]
+        )
+    end)
   end
 
   def handle_call({:put_shell, stream_id, seq, kind, row}, _from, state) do
-    {key, state} = stream_key(state, :thread, stream_id)
-
-    :ok =
-      exec(
-        state.db,
-        "INSERT INTO shell (stream, seq, kind, row) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, kind = excluded.kind, row = excluded.row",
-        [key, seq, kind, IO.iodata_to_binary(JSON.encode_to_iodata!(row))]
-      )
-
-    {:reply, :ok, state}
+    with_existing_stream(state, stream_id, fn key ->
+      :ok =
+        exec(
+          state.db,
+          "INSERT INTO shell (stream, seq, kind, row) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, kind = excluded.kind, row = excluded.row",
+          [key, seq, kind, IO.iodata_to_binary(JSON.encode_to_iodata!(row))]
+        )
+    end)
   end
 
   def handle_call(:id, _from, state), do: {:reply, read_id(state.db), state}
@@ -534,16 +583,31 @@ defmodule HalC2.Store do
 
   @impl true
   def handle_cast({:index_messages, stream_id, messages}, state) do
-    {key, state} = stream_key(state, :thread, stream_id)
+    {:reply, result, state} =
+      with_existing_stream(state, stream_id, fn key ->
+        # One transaction, so a search sees a batch whole or not at all.
+        :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
 
-    for {id, role, text, created_at} <- messages,
-        do:
-          :ok =
-            exec(
-              state.db,
-              "INSERT INTO messages (stream, id, role, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(stream, id) DO UPDATE SET role = excluded.role, text = excluded.text, created_at = excluded.created_at",
-              [key, id, role, text, created_at]
-            )
+        try do
+          for {id, role, text, created_at} <- messages,
+              do:
+                :ok =
+                  exec(
+                    state.db,
+                    "INSERT INTO messages (stream, id, role, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(stream, id) DO UPDATE SET role = excluded.role, text = excluded.text, created_at = excluded.created_at",
+                    [key, id, role, text, created_at]
+                  )
+
+          :ok = Sqlite3.execute(state.db, "COMMIT")
+        rescue
+          error ->
+            Sqlite3.execute(state.db, "ROLLBACK")
+            {:error, error}
+        end
+      end)
+
+    if result != :ok,
+      do: Logger.warning("the store ignored messages of #{stream_id}: #{inspect(result)}")
 
     {:noreply, state}
   end
@@ -565,6 +629,33 @@ defmodule HalC2.Store do
 
         {key, %{state | keys: Map.put(state.keys, id, key)}}
     end
+  end
+
+  # Derived rows are written for streams that exist: only an append knows the kind a
+  # new stream must be created with.
+  defp with_existing_stream(state, stream_id, fun) do
+    case state.keys do
+      %{^stream_id => key} ->
+        {:reply, fun.(key), state}
+
+      _ ->
+        case run(state.db, state.stmts.stream_key, [stream_id]) do
+          [[key]] ->
+            {:reply, fun.(key), %{state | keys: Map.put(state.keys, stream_id, key)}}
+
+          [] ->
+            {:reply, {:error, :unknown_stream}, state}
+        end
+    end
+  end
+
+  defp log_end(db), do: db |> run_sql("SELECT COALESCE(MAX(seq), 0) FROM events") |> hd() |> hd()
+
+  defp run_sql(db, sql) do
+    {:ok, stmt} = Sqlite3.prepare(db, sql)
+    {:ok, rows} = Sqlite3.fetch_all(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    rows
   end
 
   defp run(db, stmt, args) do

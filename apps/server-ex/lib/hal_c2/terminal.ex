@@ -27,6 +27,7 @@ defmodule HalC2.Terminal do
   @default_rows 30
   @output_ms 8
   @persist_ms 500
+  @stop_ms 5_000
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
@@ -90,7 +91,7 @@ defmodule HalC2.Terminal do
         terminal_id -> List.wrap(lookup(thread_id, terminal_id))
       end
 
-    Enum.each(pids, &call(&1, {:close, delete}))
+    Enum.each(pids, &close_and_wait(&1, delete))
 
     # Scrollback of terminals that are not running is on disk only.
     if delete do
@@ -99,6 +100,19 @@ defmodule HalC2.Terminal do
     end
 
     {:ok, nil}
+  end
+
+  # Returns once the terminal is gone and unregistered, so a `terminal.open` that
+  # follows starts a new one instead of finding the closing one.
+  defp close_and_wait(pid, delete) do
+    ref = Process.monitor(pid)
+    call(pid, {:close, delete})
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @stop_ms -> Process.demonitor(ref, [:flush])
+    end
   end
 
   @doc "Writes the scrollback of a thread's running terminals to disk now."
@@ -316,6 +330,11 @@ defmodule HalC2.Terminal do
   end
 
   def handle_call({:attach, input, subscriber}, _from, state) do
+    # The snapshot holds the pending batch and whatever this attach starts, so a
+    # subscriber attaching again is left out of the events they produce; others get them.
+    {ref, others} = Map.pop(state.subscribers, subscriber)
+    state = flush_output(%{state | subscribers: others})
+
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
         (state.os_pid == nil and input["cwd"] != nil and input["restartIfNotRunning"] == true)
@@ -325,8 +344,7 @@ defmodule HalC2.Terminal do
         do: open_session(state, input),
         else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
-    subscribers =
-      Map.put_new_lazy(state.subscribers, subscriber, fn -> Process.monitor(subscriber) end)
+    subscribers = Map.put(state.subscribers, subscriber, ref || Process.monitor(subscriber))
 
     # A shell that failed to start while attaching is explained to the attaching
     # client too; its snapshot alone only says "error".
@@ -348,13 +366,17 @@ defmodule HalC2.Terminal do
     do: {:reply, {:ok, nil}, resize_to(state, cols, rows)}
 
   def handle_call(:clear, _from, state) do
+    # Output printed before the clear must reach the clients before "cleared".
+    state = flush_output(state)
     state = %{state | history: History.clear(state.history)} |> schedule_persist()
     {:reply, {:ok, nil}, emit(state, %{"type" => "cleared"})}
   end
 
   def handle_call({:restart, input}, _from, state) do
+    # Stopped before the clear, so the old shell's last output is not in the new scrollback.
     state =
       state
+      |> stop_shell()
       |> launch_context(input)
       |> Map.update!(:history, &History.clear/1)
       |> start_shell("restarted")
@@ -388,23 +410,8 @@ defmodule HalC2.Terminal do
   end
 
   @impl true
-  def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = state) do
-    {text, carry} = History.utf8(state.carry, data)
-
-    state = %{
-      state
-      | carry: carry,
-        history: History.append(state.history, text),
-        output: [state.output, text]
-    }
-
-    state =
-      if state.output_timer,
-        do: state,
-        else: %{state | output_timer: Process.send_after(self(), :output, @output_ms)}
-
-    {:noreply, schedule_persist(state)}
-  end
+  def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = state),
+    do: {:noreply, take_output(state, data)}
 
   def handle_info({:DOWN, os_pid, :process, _pid, reason}, %{os_pid: os_pid} = state) do
     {code, signal} =
@@ -446,6 +453,12 @@ defmodule HalC2.Terminal do
 
   def handle_info(:output, state), do: {:noreply, flush_output(state)}
 
+  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
+  def handle_info(:report, state) do
+    Hub.upsert(summary(state), self())
+    {:noreply, state}
+  end
+
   def handle_info(:persist, state) do
     persist(state)
     {:noreply, %{state | persist_timer: nil}}
@@ -471,7 +484,10 @@ defmodule HalC2.Terminal do
 
   @impl true
   def terminate(_reason, state) do
-    stop_shell(state)
+    # Unregister here: the registry drops a dead process's key only afterwards, and
+    # until then a lookup finds the terminal that is already closing.
+    Registry.unregister(@registry, {state.thread_id, state.terminal_id})
+    state = stop_shell(state)
     if state.persist_timer, do: persist(state)
     :ok
   end
@@ -555,7 +571,11 @@ defmodule HalC2.Terminal do
 
       shell ->
         case :exec.run(shell, options) do
-          {:ok, _pid, os_pid} ->
+          {:ok, exec_pid, os_pid} ->
+            # `:exec.run_link` would drop the DOWN message. Linked, the shell is killed
+            # with the terminal even when `terminate/2` never runs (a killed terminal).
+            Process.link(exec_pid)
+
             state = %{
               state
               | status: "running",
@@ -597,9 +617,42 @@ defmodule HalC2.Terminal do
 
   defp stop_shell(%{os_pid: nil} = state), do: state
 
+  # `:exec.stop` only signals the shell; the monitor's DOWN says it is gone (SIGKILL
+  # follows the SIGTERM after `kill_timeout`), so a close or restart that returns has
+  # freed the OS process.
   defp stop_shell(state) do
-    :exec.stop(state.os_pid)
+    state = if :exec.stop(state.os_pid) == :ok, do: await_down(state), else: state
     %{flush_output(state) | os_pid: nil}
+  end
+
+  # erlexec sends all of a shell's output before its DOWN; what arrives in between is
+  # still the shell's and belongs in the scrollback a close saves.
+  defp await_down(%{os_pid: os_pid} = state) do
+    receive do
+      {:stdout, ^os_pid, data} -> await_down(take_output(state, data))
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> state
+    after
+      @stop_ms -> state
+    end
+  end
+
+  # Output of the shell: into the scrollback and the batch sent after `@output_ms`.
+  defp take_output(state, data) do
+    {text, carry} = History.utf8(state.carry, data)
+
+    state = %{
+      state
+      | carry: carry,
+        history: History.append(state.history, text),
+        output: [state.output, text]
+    }
+
+    state =
+      if state.output_timer,
+        do: state,
+        else: %{state | output_timer: Process.send_after(self(), :output, @output_ms)}
+
+    schedule_persist(state)
   end
 
   defp resize_to(state, cols, rows) do

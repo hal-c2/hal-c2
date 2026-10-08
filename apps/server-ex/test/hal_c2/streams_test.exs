@@ -375,6 +375,21 @@ defmodule HalC2.StreamsTest do
     assert_receive {:hal_c2_stream, "th-12", {:page, ^next, [], nil, :done}}
   end
 
+  test "a page is sent before more returns, so it never follows a client into its next subscription" do
+    seq = long_thread("th-21")
+    :ok = Streams.subscribe("th-21", self(), nil, %{window: {:items, 2}})
+    {^seq, _meta, _rows} = client_snapshot("th-21")
+    assert_receive {:hal_c2_stream, "th-21", {:live, ^seq, _}}
+
+    :ok = Streams.more("th-21", self(), 3)
+    # A client moving to another window leaves with what the old one was sent.
+    assert_received {:hal_c2_stream, "th-21", {:page, ^seq, _rows, nil, :done}}
+
+    :ok = Streams.subscribe("th-21", self(), nil, %{window: {:items, 1}})
+    assert_received {:hal_c2_stream, "th-21", first}
+    assert {:snapshot, ^seq, _at, _rows, :done, %{floor: _}} = first
+  end
+
   test "a window never holds a rolled-back run" do
     _ = long_thread("th-13")
 
@@ -532,12 +547,15 @@ defmodule HalC2.StreamsTest do
     :ok = Streams.flush_shell("th-21")
     :ok = HalC2.Shell.subscribe(self())
 
-    # Its state as the version before kept it: subscribers by their monitor alone.
+    # Its state as the version before kept it: subscribers by their monitor alone, in
+    # the state rather than a table, and no versions.
     :ok = :sys.suspend(HalC2.Shell)
+    test = self()
 
     :sys.replace_state(HalC2.Shell, fn state ->
-      subscribers = Map.new(state.subscribers, fn {pid, {ref, _kind}} -> {pid, ref} end)
-      state |> Map.drop([:own, :versions]) |> Map.put(:subscribers, subscribers)
+      :ets.delete(HalC2.Shell.Subscribers)
+      :ets.delete(HalC2.Shell.Versions)
+      %{online: state.online, subscribers: %{test => make_ref()}}
     end)
 
     :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, nil)

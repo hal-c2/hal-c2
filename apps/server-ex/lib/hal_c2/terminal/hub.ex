@@ -36,7 +36,23 @@ defmodule HalC2.Terminal.Hub do
 
   @impl true
   def init(nil) do
-    {:ok, %{terminals: %{}, sessions: %{}, watchers: %{}, activity: %{}, polling: false}}
+    {:ok, %{terminals: %{}, sessions: %{}, watchers: %{}, activity: %{}, polling: false},
+     {:continue, :resync}}
+  end
+
+  # A restarted hub starts empty while the terminals live on: each running terminal is
+  # asked to report its summary again. Watchers have to watch again.
+  @impl true
+  def handle_continue(:resync, state) do
+    pids =
+      try do
+        Registry.select(HalC2.Terminal.Registry, [{{:_, :"$1", :_}, [], [:"$1"]}])
+      rescue
+        ArgumentError -> []
+      end
+
+    for pid <- pids, do: send(pid, :report)
+    {:noreply, state}
   end
 
   @impl true
@@ -85,7 +101,13 @@ defmodule HalC2.Terminal.Hub do
 
       match?(%{^pid => {_, ^ref}}, state.sessions) ->
         {key, _} = state.sessions[pid]
-        {:noreply, drop(%{state | sessions: Map.delete(state.sessions, pid)}, key)}
+        state = %{state | sessions: Map.delete(state.sessions, pid)}
+
+        # A terminal reopened under the same key may have reported before this DOWN.
+        case state.terminals do
+          %{^key => {_summary, ^pid}} -> {:noreply, drop(state, key)}
+          _ -> {:noreply, state}
+        end
 
       true ->
         {:noreply, state}

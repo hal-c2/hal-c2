@@ -49,6 +49,9 @@ defmodule HalC2.Streams do
   @doc "Subscribes `pid` for a client, which is sent only what its view of the stream lacks."
   defdelegate subscribe(stream_id, pid, offset, client), to: Server
 
+  @doc "See `HalC2.Streams.Server.follow/4`."
+  defdelegate follow(stream_id, pid, offset, client), to: Server
+
   @doc "Tells `pid` whenever the stream changes, without sending it the stream."
   defdelegate watch(stream_id, pid), to: Server
 

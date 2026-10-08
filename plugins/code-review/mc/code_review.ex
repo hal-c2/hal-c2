@@ -414,7 +414,12 @@ defmodule HalC2Plugins.CodeReview do
   def handle_cast({:started, key, thread_id, checkout}, state) do
     case state.reviews[key] do
       %{"threadId" => ^thread_id} = review ->
-        review = Map.merge(review, checkout)
+        # A look while the checkout was fetched saw a newer head than the run began with.
+        review = Map.merge(review, checkout, fn
+          "headSha", seen, fetched -> seen || fetched
+          _, _, value -> value
+        end)
+
         {:noreply, state |> put(review) |> changed()}
 
       _ ->
@@ -438,7 +443,8 @@ defmodule HalC2Plugins.CodeReview do
     server = self()
     settings = state.settings
     known = state.reviews
-    {_pid, ref} = spawn_monitor(fn -> send(server, {:polled, look(settings, known)}) end)
+    # Linked, so turning code-review off calls off a look still waiting on GitHub.
+    {_pid, ref} = Process.spawn(fn -> send(server, {:polled, look(settings, known)}) end, [:link, :monitor])
     {:noreply, %{state | polling: ref}}
   end
 
@@ -632,8 +638,9 @@ defmodule HalC2Plugins.CodeReview do
         reviewed == nil ->
           if trigger, do: queue(state, review, trigger), else: put(state, review)
 
+        # A head pushed back to the reviewed commit is no change since the review.
         reviewed == pr["headSha"] ->
-          put(state, review)
+          put(state, Map.put(review, "changed", false))
 
         trigger && settings["reviewNewPushes"] ->
           queue(state, review, trigger)
@@ -751,7 +758,7 @@ defmodule HalC2Plugins.CodeReview do
              "root" => project["root"],
              "mergeBase" => checkout["mergeBase"],
              "reviewedSha" => checkout["headSha"],
-             "headSha" => review["headSha"] || checkout["headSha"]
+             "headSha" => checkout["headSha"]
            }}
         )
 

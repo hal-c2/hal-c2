@@ -38,7 +38,10 @@ defmodule HalC2.Streams.Server do
   enough events accumulated since the last one.
   """
 
-  use GenServer, restart: :transient
+  # Temporary: a restarted stream would hold no subscribers, and `HalC2.Streams.ensure/1`
+  # starts one on demand anyway. Restarting counted crashes toward the supervisor's
+  # intensity, so a burst of failing streams took every stream down.
+  use GenServer, restart: :temporary
 
   alias HalC2.{Store, StreamState}
   alias HalC2.Streams.{Relay, View}
@@ -97,8 +100,21 @@ defmodule HalC2.Streams.Server do
     do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, :plain})
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil, client) :: :ok
-  def subscribe(stream_id, pid, offset, %{} = client),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, client})
+  def subscribe(stream_id, pid, offset, %{} = client) do
+    {:ok, _server} = follow(stream_id, pid, offset, client)
+    :ok
+  end
+
+  @doc """
+  Subscribes a client as `subscribe/4` does, and returns the stream's server for
+  the subscriber to monitor: a stream that stops takes its subscriptions with it.
+  """
+  @spec follow(String.t(), pid, non_neg_integer | nil, client) :: {:ok, pid}
+  def follow(stream_id, pid, offset, %{} = client) do
+    server = HalC2.Streams.ensure(stream_id)
+    :ok = GenServer.call(server, {:subscribe, pid, offset, client})
+    {:ok, server}
+  end
 
   @spec watch(String.t(), pid) :: :ok
   def watch(stream_id, pid),
@@ -107,13 +123,20 @@ defmodule HalC2.Streams.Server do
   @doc """
   Sends a client the runs before its window's floor that together hold at least
   `items` turn items, and moves the floor down to hold them.
+
+  Returns once the page is sent, as `subscribe/4` does with what a client starts
+  from: a subscriber on this MC has it by then, so one that subscribes again next
+  takes it as the old subscription's, never as the start of the new one.
   """
   @spec more(String.t(), pid, pos_integer) :: :ok
   def more(stream_id, pid, items) do
     case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{server, _}] -> GenServer.cast(server, {:more, pid, items})
+      [{server, _}] -> GenServer.call(server, {:more, pid, items}, :infinity)
       [] -> :ok
     end
+  catch
+    # A stream that stopped took the subscription with it: there is nothing to page.
+    :exit, _ -> :ok
   end
 
   @spec unsubscribe(String.t(), pid) :: :ok
@@ -142,8 +165,12 @@ defmodule HalC2.Streams.Server do
                                                              {[Store.change()], reply})) ::
           reply
         when reply: term
-  def transact(server, stream_kind, fun),
-    do: GenServer.call(server, {:transact, stream_kind, fun}, :infinity)
+  def transact(server, stream_kind, fun) do
+    case GenServer.call(server, {:transact, stream_kind, fun}, :infinity) do
+      {:transacted, reply} -> reply
+      {:raised, kind, reason, stack} -> :erlang.raise(kind, reason, stack)
+    end
+  end
 
   @spec state(GenServer.server()) :: StreamState.t()
   def state(server), do: GenServer.call(server, :state)
@@ -192,10 +219,15 @@ defmodule HalC2.Streams.Server do
     {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
   end
 
+  # Nothing to write is nothing to tell anyone; the stream stays where it is.
+  def handle_call({:commit, _stream_kind, []}, _from, state),
+    do: {:reply, {:ok, state.stream.seq}, state, timeout(state)}
+
   def handle_call({:commit, stream_kind, changes}, _from, state) do
-    {:ok, last} = Store.append([{stream_kind, state.id, changes}])
-    first = last - length(changes) + 1
+    # One time for the log and this process, so a restart reads back the same `at`.
     at = System.os_time(:millisecond)
+    {:ok, last} = Store.append(Store, [{stream_kind, state.id, changes}], at)
+    first = last - length(changes) + 1
 
     events =
       changes
@@ -217,17 +249,26 @@ defmodule HalC2.Streams.Server do
     {:reply, {:ok, last}, state, timeout(state)}
   end
 
+  # A `fun` that fails fails its caller, not the stream and everyone subscribed to it.
   def handle_call({:transact, stream_kind, fun}, from, state) do
-    case fun.(state.stream) do
+    case run(fun, state.stream) do
       {[], reply} ->
-        {:reply, reply, state, timeout(state)}
+        {:reply, {:transacted, reply}, state, timeout(state)}
 
       {changes, reply} ->
         {:reply, {:ok, _last}, state, _} =
           handle_call({:commit, stream_kind, changes}, from, state)
 
-        {:reply, reply, state, timeout(state)}
+        {:reply, {:transacted, reply}, state, timeout(state)}
+
+      {:raised, _kind, _reason, _stack} = raised ->
+        {:reply, raised, state, timeout(state)}
     end
+  end
+
+  def handle_call({:more, pid, items}, _from, state) do
+    {:noreply, state, _} = handle_cast({:more, pid, items}, state)
+    {:reply, :ok, state, timeout(state)}
   end
 
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
@@ -245,6 +286,7 @@ defmodule HalC2.Streams.Server do
     {:noreply, state, timeout(state)}
   end
 
+  # `more/3` calls; a cast is what one queued before an upgrade in place still is.
   def handle_cast({:more, pid, items}, state) do
     state =
       case state.subscribers do
@@ -291,9 +333,16 @@ defmodule HalC2.Streams.Server do
 
   def handle_info(:timeout, state), do: {:stop, :normal, state}
 
-  # Linked processes still take the stream down with them, as before it trapped exits.
+  # Linked processes still take the stream down with them, as before it trapped exits,
+  # except a relay: a failed one costs its subscriber alone, as when it was unlinked.
   def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state, timeout(state)}
-  def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
+
+  def handle_info({:EXIT, pid, reason}, state) do
+    case Enum.find(state.relays, fn {_sub, relay} -> relay == pid end) do
+      {sub, _relay} -> {:noreply, drop(state, sub), timeout(state)}
+      nil -> {:stop, reason, state}
+    end
+  end
 
   @impl true
   def terminate(_reason, state) do
@@ -341,7 +390,13 @@ defmodule HalC2.Streams.Server do
     {sub, subscribers} = Map.pop(state.subscribers, pid)
     if sub, do: Process.demonitor(sub.ref, [:flush])
     {relay, relays} = Map.pop(state.relays, pid)
-    if relay, do: Process.exit(relay, :kill)
+
+    # Unlinked first: its exit is no failure of the stream's.
+    if relay do
+      Process.unlink(relay)
+      Process.exit(relay, :kill)
+    end
+
     %{state | subscribers: subscribers, relays: relays}
   end
 
@@ -395,8 +450,12 @@ defmodule HalC2.Streams.Server do
        missed =
          case replay do
            events when is_list(events) ->
+             # A patch that sets nothing has nothing to merge with.
              merged =
-               HalC2.Web.Protocol.coalesce(events) |> then(&View.replayed(view, stream, &1))
+               events
+               |> Enum.reject(&StreamState.void?/1)
+               |> HalC2.Web.Protocol.coalesce()
+               |> then(&View.replayed(view, stream, &1))
 
              # Sent in parts it could be cut off part-way, and a client that had
              # applied the first of them would be sent them again. A patch applied
@@ -513,4 +572,10 @@ defmodule HalC2.Streams.Server do
 
   defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
   defp timeout(_state), do: :infinity
+
+  defp run(fun, stream) do
+    fun.(stream)
+  catch
+    kind, reason -> {:raised, kind, reason, __STACKTRACE__}
+  end
 end

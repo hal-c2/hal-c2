@@ -12,14 +12,15 @@ defmodule HalC2.Streams.Relay do
   @doc """
   Starts a relay for the calling stream. It runs `initial`, which sends `subscriber`
   what it starts from, then passes on every stream message it is sent, in order. It
-  stops with the stream or the subscriber once it is passing messages on; the stream
-  kills it to stop sooner, as it does when it stops itself.
+  stops with the subscriber once it is passing messages on, and with the stream
+  whenever that goes: linked, a stream that crashes takes a relay still sending its
+  `initial` along, which would otherwise mix into the subscription that replaces it.
   """
   @spec start(pid, (-> any)) :: pid
   def start(subscriber, initial) do
     stream = self()
 
-    spawn(fn ->
+    spawn_link(fn ->
       Process.monitor(stream)
       Process.monitor(subscriber)
       initial.()

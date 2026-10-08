@@ -508,6 +508,15 @@ Feature: Moving a thread and its agent to another machine
       When another client moves "Alpha" to "server"
       Then the second move is refused because "Alpha" is already moving
 
+    # The destination takes the thread as the move found it, so a change made meanwhile
+    # would be lost. Read-only covers the thread's own fields, not only its messages.
+    @mc
+    Scenario: A thread cannot be renamed while it is moving
+      Given "Alpha" is moving to "desktop"
+      When another client renames "Alpha" to "Beta"
+      Then the rename is refused because "Alpha" is moving to "desktop"
+      And "Alpha" lives on "desktop"
+
   Rule: Moving threads from the list
 
     @shared @backlog-mobile

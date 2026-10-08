@@ -8,7 +8,12 @@ defmodule HalC2.Cluster.Discovery do
   handshake, since each MC's certificate and name are its own.
 
   A strategy is a module with `addresses/0`, listed in the `:cluster_strategies` config
-  (`HalC2.Cluster.Tailscale` and `HalC2.Cluster.Static` unless set).
+  (`HalC2.Cluster.Tailscale` and `HalC2.Cluster.Static` unless set). Each has five
+  seconds to answer, and the strategies are asked at once.
+
+  One attempt runs at a time, in a task, so this process never waits on the network:
+  a `poll/0` during an attempt makes one more right after it, however many came, and
+  an attempt that crashes only ends early.
   """
 
   use GenServer
@@ -20,8 +25,13 @@ defmodule HalC2.Cluster.Discovery do
   @callback addresses() :: [String.t()]
 
   @interval 10_000
+  @strategy_timeout 5_000
 
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  @doc """
+  Starts the discovery. `attempt:` replaces what one attempt does (connecting the
+  members), for tests that drive the scheduling without a network.
+  """
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc "Looks for members now instead of at the next interval."
   def poll do
@@ -30,15 +40,19 @@ defmodule HalC2.Cluster.Discovery do
   end
 
   @impl true
-  def init(nil) do
+  def init(opts) do
+    # An attempt that crashes must not take the discovery down with it: restarted, it
+    # would poll at once and crash again on whatever broke the last attempt.
+    Process.flag(:trap_exit, true)
     send(self(), :poll)
-    {:ok, %{task: nil, again: false, timer: nil}}
+    attempt = Keyword.get(opts, :attempt, &connect_members/0)
+    {:ok, %{task: nil, again: false, timer: nil, attempt: attempt}}
   end
 
   @impl true
   def handle_info(:poll, %{task: nil} = state) do
     if state.timer, do: Process.cancel_timer(state.timer)
-    {:noreply, %{state | task: Task.async(&connect_members/0), timer: nil}}
+    {:noreply, %{state | task: Task.async(state.attempt), timer: nil}}
   end
 
   def handle_info(:poll, state), do: {:noreply, %{state | again: true}}
@@ -50,6 +64,9 @@ defmodule HalC2.Cluster.Discovery do
 
   def handle_info({:DOWN, ref, :process, _, _}, %{task: %Task{ref: ref}} = state),
     do: {:noreply, finish(state)}
+
+  # The exit of an attempt, which its monitor already reported.
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
 
   defp finish(state) do
     if state.again, do: send(self(), :poll)
@@ -66,7 +83,16 @@ defmodule HalC2.Cluster.Discovery do
           do: {id, addresses}
 
     if missing != [] do
-      found = Enum.flat_map(strategies(), &strategy_addresses/1)
+      found =
+        strategies()
+        |> Task.async_stream(&strategy_addresses/1,
+          timeout: @strategy_timeout,
+          on_timeout: :kill_task
+        )
+        |> Enum.flat_map(fn
+          {:ok, addresses} -> addresses
+          {:exit, _timeout} -> []
+        end)
 
       missing
       |> Task.async_stream(fn {id, addresses} -> connect(id, addresses ++ found) end,
@@ -77,23 +103,40 @@ defmodule HalC2.Cluster.Discovery do
     end
   end
 
-  defp connect(id, addresses) do
+  @doc """
+  Tries to reach the member `id` at each of `candidates/3` in turn with `reach`
+  (`Node.connect/1` but in tests) and returns whether one did. Afterwards the port
+  mapper holds the address that reached it, or else the one it held before.
+  """
+  def connect(id, addresses, reach \\ &Node.connect/1) do
     host = Cluster.host(id)
     last = Epmd.lookup(host)
-    resolved = Enum.flat_map(addresses, &resolve/1)
-    port = Cluster.dist_port()
-
-    candidates =
-      Enum.uniq(List.wrap(last) ++ resolved ++ for({ip, _} <- resolved, do: {ip, port}))
+    mc = Cluster.mc_name(id)
 
     reached =
-      Enum.any?(candidates, fn {ip, port} ->
+      Enum.any?(candidates(last, addresses, Cluster.dist_port()), fn {ip, port} ->
         Epmd.put(host, ip, port)
-        Node.connect(Cluster.mc_name(id)) == true
+        reach.(mc) == true
       end)
 
     # Keep the address that last worked rather than the last one tried.
-    with false <- reached, {ip, port} <- last, do: Epmd.put(host, ip, port)
+    case {reached, last} do
+      {true, _} -> :ok
+      {false, {ip, port}} -> Epmd.put(host, ip, port)
+      {false, nil} -> Epmd.forget(host)
+    end
+
+    reached
+  end
+
+  @doc """
+  Where to look for a member, in order and each once: the address that last reached
+  it, the `addresses` known for it, and then each of their hosts at the cluster
+  `port`, where a member that moved there is found again.
+  """
+  def candidates(last, addresses, port) do
+    resolved = Enum.flat_map(addresses, &resolve/1)
+    Enum.uniq(List.wrap(last) ++ resolved ++ for({ip, _} <- resolved, do: {ip, port}))
   end
 
   defp strategies,
@@ -107,6 +150,8 @@ defmodule HalC2.Cluster.Discovery do
     strategy.addresses()
   rescue
     _ -> []
+  catch
+    :exit, _ -> []
   end
 
   @doc "The IPv4 address and port of `host` or `host:port`, resolved, or none."

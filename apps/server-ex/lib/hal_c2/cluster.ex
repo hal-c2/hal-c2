@@ -20,8 +20,9 @@ defmodule HalC2.Cluster do
   that path and starts distribution before anything reads `node()`, on the cluster
   port (4370, or 4380 in a release so that one runs beside an MC from a checkout) or,
   when that is taken, on the port it had last time or else any free one.
-  `HalC2.Cluster.Epmd` stands in for EPMD and `HalC2.Cluster.Discovery` finds where
-  members are.
+  `HalC2.Cluster.Distribution` does all of that and is the only way this process
+  reaches members, `HalC2.Cluster.Epmd` stands in for EPMD and
+  `HalC2.Cluster.Discovery` finds where members are.
 
   A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
   link for an `access:write` session, presents its fingerprint, and the member admits
@@ -35,7 +36,6 @@ defmodule HalC2.Cluster do
   """
 
   use GenServer
-  require Logger
 
   alias HalC2.Cluster.Epmd
 
@@ -251,7 +251,11 @@ defmodule HalC2.Cluster do
       %{
         "fingerprint" => fp,
         "label" => if(is_binary(entry["label"]), do: entry["label"]),
-        "addresses" => if(is_list(addresses), do: Enum.filter(addresses, &is_binary/1), else: []),
+        "addresses" =>
+          if(is_list(addresses),
+            do: addresses |> Enum.filter(&is_binary/1) |> Enum.uniq(),
+            else: []
+          ),
         "version" => if(is_binary(entry["version"]), do: entry["version"]),
         "admittedAt" => admitted,
         "removedAt" => removed,
@@ -317,13 +321,19 @@ defmodule HalC2.Cluster do
     dir = dir(HalC2.Paths.data_dir())
     id = HalC2.Environment.id()
     fingerprint = identity!(dir, id)
-    state = %{dir: dir, id: id, fingerprint: fingerprint, members: load(dir), off: nil}
-    started = start_distribution(dir, id)
-    forget_boot_flags()
+    transport = transport()
 
-    case started do
+    state = %{
+      dir: dir,
+      id: id,
+      fingerprint: fingerprint,
+      members: load(dir),
+      off: nil,
+      transport: transport
+    }
+
+    case transport.start(dir, id) do
       :ok ->
-        :ok = :net_kernel.monitor_nodes(true)
         {:ok, state |> refresh_own() |> commit()}
 
       {:off, reason} ->
@@ -336,7 +346,7 @@ defmodule HalC2.Cluster do
     do: {:reply, %{"clustered" => false, "reason" => to_string(reason)}, state}
 
   def handle_call(:status, _from, state) do
-    connected = Node.list()
+    connected = state.transport.connected()
 
     members =
       for {id, entry} <- state.members, id != state.id, member?(entry) do
@@ -354,7 +364,7 @@ defmodule HalC2.Cluster do
        "clustered" => true,
        "id" => state.id,
        "label" => state.members[state.id]["label"],
-       "mc" => Atom.to_string(node()),
+       "mc" => Atom.to_string(mc_name(state.id)),
        "addresses" => state.members[state.id]["addresses"],
        "version" => HalC2.Upgrade.version(),
        "members" => Enum.sort_by(members, &{&1["label"], &1["id"]})
@@ -460,11 +470,8 @@ defmodule HalC2.Cluster do
     do: {:noreply, merge_in(state, incoming)}
 
   def handle_cast(:version_changed, %{off: nil} = state) do
-    # An MC updated in place from a version that kept no port has not kept its own yet.
-    keep_port(state.dir)
-    Node.set_cookie(cookie())
+    :ok = state.transport.version_changed(state.dir)
     state = state |> refresh_own() |> commit()
-    for mc <- Node.list(), do: Node.disconnect(mc)
     HalC2.Cluster.Discovery.poll()
     {:noreply, state}
   end
@@ -474,13 +481,20 @@ defmodule HalC2.Cluster do
   @impl true
   def handle_info({:nodeup, mc}, state) do
     state = refresh_own(state) |> commit()
-    GenServer.cast({__MODULE__, mc}, {:merge, state.members})
+    # A machine that is no member any more was cut off by `commit/1`: it is not told
+    # the members, and a send would only connect to it again.
+    if member?(state.members[id_of(mc)]),
+      do: state.transport.send(mc, {:merge, state.members})
+
     {:noreply, state}
   end
 
   def handle_info({:nodedown, _mc}, state), do: {:noreply, state}
 
   # --- members -----------------------------------------------------------------
+
+  defp transport,
+    do: Application.get_env(:hal_c2, :cluster_transport, HalC2.Cluster.Distribution)
 
   defp merge_in(state, incoming) do
     merged = merge(state.members, incoming, state.id)
@@ -489,7 +503,7 @@ defmodule HalC2.Cluster do
       state
     else
       state = commit(%{state | members: merged})
-      for mc <- Node.list(), do: GenServer.cast({__MODULE__, mc}, {:merge, merged})
+      for mc <- state.transport.connected(), do: state.transport.send(mc, {:merge, merged})
       state
     end
   end
@@ -503,7 +517,10 @@ defmodule HalC2.Cluster do
     :ets.insert(@table, pins)
     for pin <- stale, do: :ets.delete_object(@table, pin)
 
-    for mc <- Node.list(), not Map.has_key?(members, id_of(mc)), do: Node.disconnect(mc)
+    for mc <- state.transport.connected(),
+        not Map.has_key?(members, id_of(mc)),
+        do: state.transport.disconnect(mc)
+
     # Its projects and threads leave the sidebar with it.
     for {id, entry} <- state.members, not member?(entry), do: HalC2.Shell.forget(id)
 
@@ -624,104 +641,6 @@ defmodule HalC2.Cluster do
     write(dir, "mc.key", X509.PrivateKey.to_pem(key), 0o600)
     write(dir, "mc.pem", X509.Certificate.to_pem(cert), 0o644)
     cert
-  end
-
-  defp start_distribution(dir, id) do
-    name = mc_name(id)
-
-    cond do
-      # This process restarted; distribution outlives it.
-      node() == name ->
-        :ok
-
-      Node.alive?() ->
-        {:off, :not_booted_for_clustering}
-
-      true ->
-        with {:ok, [[~c"inet_tls"]]} <- :init.get_argument(:proto_dist),
-             {:ok, [[optfile]]} <- :init.get_argument(:ssl_dist_optfile) do
-          File.mkdir_p!(Path.dirname(optfile))
-          File.write!(optfile, ssl_dist_conf(dir))
-          Application.put_env(:kernel, :epmd_module, Epmd)
-
-          with ip when is_binary(ip) <- Application.get_env(:hal_c2, :cluster_listen),
-               {:ok, ip} <- :inet.parse_address(to_charlist(ip)),
-               do: Application.put_env(:kernel, :inet_dist_use_interface, ip)
-
-          if Enum.any?(Enum.uniq([dist_port(), kept_port(dir), 0]), &listen(name, &1)) do
-            keep_port(dir)
-            Node.set_cookie(cookie())
-            :ok
-          else
-            {:off, :distribution_failed}
-          end
-        else
-          _ -> {:off, :not_booted_for_clustering}
-        end
-    end
-  end
-
-  # The port this MC last listened on. Members reach it at the addresses it reported,
-  # so one that could not have the cluster port takes the same other port every time:
-  # members that all restart at once (an update) would otherwise each come back on a
-  # port no other member knows.
-  defp kept_port(dir) do
-    with {:ok, text} <- File.read(Path.join(dir, "port")),
-         {port, ""} when port in 1..65_535 <- Integer.parse(String.trim(text)) do
-      port
-    else
-      _ -> dist_port()
-    end
-  end
-
-  defp keep_port(dir),
-    do: File.write!(Path.join(dir, "port"), Integer.to_string(Epmd.listen_port()))
-
-  defp cookie, do: :"hal_c2_#{HalC2.Upgrade.version()}"
-
-  # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the MC starts (an
-  # agent's `mix test`) would inherit and boot with.
-  defp forget_boot_flags do
-    with options when is_binary(options) <- System.get_env("ELIXIR_ERL_OPTIONS") do
-      case Regex.replace(
-             ~r/\s*-(proto_dist inet_tls|ssl_dist_optfile \S+|setcookie hal_c2)\b/,
-             options,
-             ""
-           ) do
-        "" -> System.delete_env("ELIXIR_ERL_OPTIONS")
-        rest -> System.put_env("ELIXIR_ERL_OPTIONS", rest)
-      end
-    end
-  end
-
-  defp listen(name, port) do
-    Epmd.put_listen_port(port)
-
-    case :net_kernel.start(name, %{name_domain: :longnames}) do
-      {:ok, _} ->
-        true
-
-      {:error, reason} ->
-        Logger.warning("Cluster: could not listen on port #{port}: #{inspect(reason)}")
-        false
-    end
-  end
-
-  # file:consult/1 format: plain terms only, no function calls (an external fun is a term).
-  # The CA file is the MC's own certificate: members' certificates are pinned instead.
-  defp ssl_dist_conf(dir) do
-    opts =
-      [
-        certfile: to_charlist(Path.join(dir, "mc.pem")),
-        keyfile: to_charlist(Path.join(dir, "mc.key")),
-        cacertfile: to_charlist(Path.join(dir, "mc.pem")),
-        verify: :verify_peer,
-        verify_fun: {&__MODULE__.verify_peer/3, []},
-        versions: [:"tlsv1.3"]
-      ]
-
-    conf = [server: opts ++ [fail_if_no_peer_cert: true], client: opts]
-    :io_lib.format(~c"~p.~n", [conf]) |> IO.iodata_to_binary()
   end
 
   defp write(dir, name, contents, mode) do

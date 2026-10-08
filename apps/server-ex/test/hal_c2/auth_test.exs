@@ -195,6 +195,7 @@ defmodule HalC2.AuthTest do
 
     # Another member of the cluster, as its environment reaches the shell.
     member = %{"environmentId" => "env-member", "label" => "Member"}
+    send(HalC2.Shell, {:nodeup, :member@nowhere})
     GenServer.cast(HalC2.Shell, {:peer_environment, :member@nowhere, member})
     :sys.get_state(HalC2.Shell)
 

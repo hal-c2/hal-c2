@@ -21,8 +21,10 @@ defmodule HalC2.Auth do
       own store, so one browser signs in to every worktree on a host.
 
   Pairing tokens and sessions are stored hashed in the MC's SQLite file, so a
-  `mix hal_c2.pair` run next to a running MC can mint a pairing token too. Tickets
-  live in ETS. Sockets register their session (`connected/1`) so Connections can
+  `mix hal_c2.pair` run next to a running MC can mint a pairing token too. Tickets,
+  accepted DPoP proofs, open sockets and watchers live in ETS tables that outlive a
+  crash of this server (`HalC2.Heir`): a proof is never accepted twice, and sockets
+  stay registered. Sockets register their session (`connected/1`) so Connections can
   show which clients are online; watchers of the access list get
   `{:hal_c2_auth_access, event}` (`AuthAccessStreamEvent`, with `current` left false
   for each socket to set).
@@ -38,10 +40,17 @@ defmodule HalC2.Auth do
   # The dev credential's session never expires (the Node server's 9999-12-31).
   @dev_expires_at 253_402_300_799_999
   @ticket_ttl :timer.minutes(5)
+  # Expired pairing tokens, sessions, tickets and proofs are dropped this often.
+  @prune_every :timer.minutes(10)
   @standard_scopes ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin_scopes @standard_scopes ++ ~w(access:read access:write relay:write)
   @desktop_ttl :timer.hours(24)
   @tickets __MODULE__.Tickets
+  # `{{:socket, pid}, session_id}`, `{{:watcher, pid}, monitor}` and `{:revision, n}`,
+  # the last access-list event's.
+  @live __MODULE__.Live
+  @tables [@tickets, HalC2.Auth.Dpop.table(), @live]
+  @heir __MODULE__.Heir
 
   @schema [
     "CREATE TABLE IF NOT EXISTS auth_pairing (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)",
@@ -74,6 +83,12 @@ defmodule HalC2.Auth do
     # What made the session: pairing, desktop-bootstrap or reusable-dev-token-child.
     {"auth_sessions", "subject", "TEXT"}
   ]
+
+  # The heir starts first, and a restart of it takes this server with it.
+  def child_spec(opts) do
+    server = %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
+    HalC2.Heir.supervise(@heir, server, HalC2.Auth.Supervisor)
+  end
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -117,7 +132,25 @@ defmodule HalC2.Auth do
              proof_jkt: String.t() | nil
            }}
           | :error
-  def session(access_token), do: GenServer.call(__MODULE__, {:session, access_token})
+  def session(access_token) do
+    with_db(HalC2.Store.path(), fn db ->
+      case query(
+             db,
+             "SELECT id, scopes, expires_at, proof_jkt FROM auth_sessions WHERE token_hash = ?1",
+             [hash(access_token)]
+           ) do
+        [[id, scopes, expires_at, jkt]] ->
+          if expires_at > now(),
+            do:
+              {:ok,
+               %{id: id, scopes: String.split(scopes), expires_at: expires_at, proof_jkt: jkt}},
+            else: :error
+
+        [] ->
+          :error
+      end
+    end)
+  end
 
   @doc """
   The session an HTTP request authenticates as: `Authorization: Bearer <token>` for a
@@ -182,9 +215,10 @@ defmodule HalC2.Auth do
 
   @doc "A WebSocket ticket for an access token, or for a session `request_session/1` found."
   @spec issue_ticket(String.t() | map) :: {:ok, String.t(), integer} | :error
-  def issue_ticket(%{id: id}) do
+  def issue_ticket(%{id: id} = session) do
     ticket = random_token()
-    expires_at = now() + @ticket_ttl
+    # A ticket never outlives the session it opens a socket for.
+    expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
     :ets.insert(@tickets, {ticket, expires_at, id})
     {:ok, ticket, expires_at}
   end
@@ -237,7 +271,7 @@ defmodule HalC2.Auth do
         {:ok, @admin_scopes}
 
       [{_, _, session_id}] ->
-        GenServer.call(__MODULE__, {:scopes, session_id})
+        session_scopes(session_id)
 
       [] ->
         :error
@@ -248,7 +282,17 @@ defmodule HalC2.Auth do
 
   @doc "A session's scopes, while it is valid: `{:ok, scopes}`."
   @spec session_scopes(String.t()) :: {:ok, [String.t()]} | :error
-  def session_scopes(session_id), do: GenServer.call(__MODULE__, {:scopes, session_id})
+  def session_scopes(session_id) do
+    with_db(HalC2.Store.path(), fn db ->
+      case query(db, "SELECT scopes, expires_at FROM auth_sessions WHERE id = ?1", [session_id]) do
+        [[scopes, expires_at]] ->
+          if expires_at > now(), do: {:ok, String.split(scopes)}, else: :error
+
+        [] ->
+          :error
+      end
+    end)
+  end
 
   @doc "Called by a socket of `session_id` once open; it counts as connected until it exits."
   def connected(session_id), do: GenServer.cast(__MODULE__, {:connected, session_id, self()})
@@ -271,6 +315,13 @@ defmodule HalC2.Auth do
   @doc "`POST /api/auth/clients/revoke-others`: every session but `keep`."
   def revoke_other_clients(keep), do: GenServer.call(__MODULE__, {:revoke_others, keep})
 
+  @doc """
+  Drops what has expired: pairing tokens, sessions, tickets and DPoP replay records.
+  Nothing expired is visible to a reader, so this only bounds what the MC keeps; it
+  runs every ten minutes. Returns how many of each it dropped.
+  """
+  def prune, do: GenServer.call(__MODULE__, :prune)
+
   @doc "Watches the access list; replies with its revision and snapshot."
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
   def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
@@ -279,8 +330,16 @@ defmodule HalC2.Auth do
 
   @impl true
   def init(_opts) do
-    :ets.new(@tickets, [:named_table, :public, write_concurrency: true])
-    HalC2.Auth.Dpop.init()
+    held = HalC2.Heir.claim(@heir, @tables)
+    options = [:named_table, :public, write_concurrency: true] ++ HalC2.Heir.option(@heir)
+    for name <- @tables, name not in held, do: :ets.new(name, options)
+
+    # Sockets and watchers of the last run stay registered.
+    for [pid] <- :ets.match(@live, {{:socket, :"$1"}, :_}), do: Process.monitor(pid)
+
+    for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
+        do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+
     path = HalC2.Store.path()
     with_db(path, &ensure_schema/1)
     dev = dev_credential(path)
@@ -291,8 +350,9 @@ defmodule HalC2.Auth do
         token -> %{hash: hash(token), expires_at: now() + @desktop_ttl}
       end
 
-    # Open sockets: socket pid -> session id.
-    {:ok, %{path: path, desktop: desktop, dev: dev, revision: 0, watchers: %{}, sockets: %{}}}
+    Process.send_after(self(), :prune, @prune_every)
+
+    {:ok, %{path: path, desktop: desktop, dev: dev}}
   end
 
   @impl true
@@ -325,44 +385,6 @@ defmodule HalC2.Auth do
     {:reply, reply, broadcast(state, events)}
   end
 
-  def handle_call({:session, token}, _from, state) do
-    reply =
-      with_db(state.path, fn db ->
-        case query(
-               db,
-               "SELECT id, scopes, expires_at, proof_jkt FROM auth_sessions WHERE token_hash = ?1",
-               [hash(token)]
-             ) do
-          [[id, scopes, expires_at, jkt]] ->
-            if expires_at > now(),
-              do:
-                {:ok,
-                 %{id: id, scopes: String.split(scopes), expires_at: expires_at, proof_jkt: jkt}},
-              else: :error
-
-          [] ->
-            :error
-        end
-      end)
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:scopes, session_id}, _from, state) do
-    reply =
-      with_db(state.path, fn db ->
-        case query(db, "SELECT scopes, expires_at FROM auth_sessions WHERE id = ?1", [session_id]) do
-          [[scopes, expires_at]] ->
-            if expires_at > now(), do: {:ok, String.split(scopes)}, else: :error
-
-          [] ->
-            :error
-        end
-      end)
-
-    {:reply, reply, state}
-  end
-
   def handle_call({:create_link, input}, _from, state) do
     scopes = Enum.filter(input["scopes"] || @standard_scopes, &(&1 in @admin_scopes))
     ttl = input["ttlMs"] || @pairing_ttl
@@ -380,6 +402,8 @@ defmodule HalC2.Auth do
     state = broadcast(state, [event("pairingLinkUpserted", listed)])
     {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
   end
+
+  def handle_call(:prune, _from, state), do: {:reply, prune_expired(state.path), state}
 
   def handle_call(:links, _from, state), do: {:reply, links(state.path), state}
 
@@ -408,15 +432,17 @@ defmodule HalC2.Auth do
   end
 
   def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+    if :ets.lookup(@live, {:watcher, pid}) == [],
+      do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+
     snapshot = %{"pairingLinks" => links(state.path), "clientSessions" => clients(state)}
-    {:reply, {:ok, state.revision, snapshot}, %{state | watchers: watchers}}
+    {:reply, {:ok, revision(), snapshot}, state}
   end
 
   @impl true
   def handle_cast({:connected, id, socket}, state) do
     Process.monitor(socket)
-    state = %{state | sockets: Map.put(state.sockets, socket, id)}
+    :ets.insert(@live, {{:socket, socket}, id})
 
     with_db(state.path, fn db ->
       exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
@@ -426,21 +452,47 @@ defmodule HalC2.Auth do
   end
 
   def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    {:noreply, %{state | watchers: watchers}}
+    for {_, ref} <- :ets.take(@live, {:watcher, pid}), do: Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  def handle_info(:prune, state) do
+    prune_expired(state.path)
+    Process.send_after(self(), :prune, @prune_every)
+    {:noreply, state}
   end
 
   # A watcher left, or a socket closed (its session may now be offline).
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
-    {session, sockets} = Map.pop(state.sockets, pid)
-    state = %{state | watchers: Map.delete(state.watchers, pid), sockets: sockets}
-    events = if session, do: client_events(state, session), else: []
+    :ets.delete(@live, {:watcher, pid})
+
+    events =
+      case :ets.take(@live, {:socket, pid}) do
+        [{_, session}] -> client_events(state, session)
+        [] -> []
+      end
+
     {:noreply, broadcast(state, events)}
   end
 
+  # The heir handing back the tables `init` claimed.
+  def handle_info({:"ETS-TRANSFER", _table, _from, _data}, state), do: {:noreply, state}
+
   # --- store -------------------------------------------------------------------
+
+  defp prune_expired(path) do
+    now = now()
+
+    {pairing, sessions} =
+      with_db(path, fn db ->
+        {length(query(db, "DELETE FROM auth_pairing WHERE expires_at <= ?1 RETURNING 1", [now])),
+         length(query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING 1", [now]))}
+      end)
+
+    tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
+    %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
+  end
 
   defp insert_pairing(db, label, scopes, ttl \\ @pairing_ttl, proof_jkt \\ nil) do
     token = random_token()
@@ -583,7 +635,7 @@ defmodule HalC2.Auth do
   defp clients(state),
     do: with_db(state.path, &session_rows(&1, online(state), "expires_at > ?1", [now()]))
 
-  defp online(state), do: state.sockets |> Map.values() |> MapSet.new()
+  defp online(_state), do: MapSet.new(:ets.match(@live, {{:socket, :_}, :"$1"}), &hd/1)
 
   defp session_rows(db, online, where, args) do
     for [id, scopes, label, created, expires, last, device, os, agent, jkt] <-
@@ -614,16 +666,21 @@ defmodule HalC2.Auth do
   # Deletes matching sessions, returning their ids.
   defp revoke(path, where, args), do: with_db(path, &revoke_rows(&1, where, args))
 
-  defp revoke_rows(db, where, args),
-    do:
-      for(
-        [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args),
-        do: id
-      )
+  # The tickets a revoked session already bought go with it: a ticket opens a socket
+  # for its session, so one outliving the session would let a revoked client in.
+  defp revoke_rows(db, where, args) do
+    ids =
+      for [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args), do: id
+
+    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id})
+    ids
+  end
 
   # A revoked session's open sockets close (`HalC2.Web.Socket`) rather than outlive it.
-  defp close_sockets(state, ids) do
-    for {socket, id} <- state.sockets, id in ids, do: send(socket, {:hal_c2_session_revoked, id})
+  defp close_sockets(_state, ids) do
+    for [socket, id] <- :ets.match(@live, {{:socket, :"$1"}, :"$2"}),
+        id in ids,
+        do: send(socket, {:hal_c2_session_revoked, id})
   end
 
   defp removed_clients(ids), do: for(id <- ids, do: event("clientRemoved", %{"sessionId" => id}))
@@ -659,11 +716,21 @@ defmodule HalC2.Auth do
 
   defp broadcast(state, events) do
     Enum.reduce(events, state, fn {type, payload}, state ->
-      revision = state.revision + 1
+      revision = :ets.update_counter(@live, :revision, 1, {:revision, 0})
       message = %{"version" => 1, "revision" => revision, "type" => type, "payload" => payload}
-      for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_auth_access, message})
-      %{state | revision: revision}
+
+      for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
+          do: send(pid, {:hal_c2_auth_access, message})
+
+      state
     end)
+  end
+
+  defp revision do
+    case :ets.lookup(@live, :revision) do
+      [{_, revision}] -> revision
+      [] -> 0
+    end
   end
 
   # --- helpers -----------------------------------------------------------------
@@ -700,7 +767,18 @@ defmodule HalC2.Auth do
 
   defp random_token, do: Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
   defp hash(token), do: Base.encode16(:crypto.hash(:sha256, token), case: :lower)
-  defp now, do: System.os_time(:millisecond)
+
+  @doc """
+  The time every expiry here is judged by, in milliseconds. The wall clock, unless the
+  `:auth_now` application setting holds a fixed time, which the property tests move.
+  """
+  def now do
+    case Application.get_env(:hal_c2, :auth_now) do
+      nil -> System.os_time(:millisecond)
+      ms -> ms
+    end
+  end
+
   defp iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
 
   defp with_db(path, fun) do

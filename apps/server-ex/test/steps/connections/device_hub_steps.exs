@@ -537,7 +537,9 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     devices()
     peer = :"laptop@offline.example"
     # What a peer's shell pushes on connect; it stays listed after the peer goes down.
+    send(HalC2.Shell, {:nodeup, peer})
     GenServer.cast(HalC2.Shell, {:peer_environment, peer, %{"environmentId" => "env-laptop"}})
+    send(HalC2.Shell, {:nodedown, peer})
     # A call after the cast: the shell has handled it once this answers.
     refute peer in HalC2.Shell.online_mcs()
     assert Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == peer))

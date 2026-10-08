@@ -912,6 +912,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   # that got past the MC would fail as unavailable instead.
   step "another member of the MC's cluster", context do
     member = %{"environmentId" => "env-member", "label" => "Member"}
+    send(HalC2.Shell, {:nodeup, :member@nowhere})
     GenServer.cast(HalC2.Shell, {:peer_environment, :member@nowhere, member})
     :sys.get_state(HalC2.Shell)
     Map.put(context, :member, "env-member")

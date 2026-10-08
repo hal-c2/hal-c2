@@ -40,7 +40,9 @@ defmodule HalC2.Plugins do
 
   Watchers (`subscribe/1`) get `{:hal_c2_plugins, mc, list}` whenever the list
   changes, and topic watchers (`subscribe_topic/3`)
-  `{:hal_c2_plugin_topic, mc, id, topic, value}` whenever a plugin publishes.
+  `{:hal_c2_plugin_topic, mc, id, topic, value}` whenever a plugin publishes. Both,
+  and what each topic last carried, live in a table that outlives a crash of this
+  server (`HalC2.Heir`): clients are not told to follow again.
   """
 
   use GenServer
@@ -55,6 +57,9 @@ defmodule HalC2.Plugins do
   @max_seconds 5
 
   @providers __MODULE__.Providers
+  # `{{:list, pid}, ref}`, `{{:topic, id, topic, pid}, ref}` and `{{:last, id, topic}, value}`.
+  @watchers __MODULE__.Watchers
+  @heir __MODULE__.Heir
 
   @kinds %{
     HalC2.Plugins.ProviderAdapter => "providerAdapter",
@@ -64,6 +69,12 @@ defmodule HalC2.Plugins do
     HalC2.Plugins.TextGeneration => "textGeneration",
     HalC2.Plugins.Extension => "extension"
   }
+
+  # The heir starts first, and a restart of it takes this server with it.
+  def child_spec(_) do
+    server = %{id: __MODULE__, start: {__MODULE__, :start_link, [nil]}}
+    HalC2.Heir.supervise(@heir, server, HalC2.Plugins.Supervisor)
+  end
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -216,10 +227,15 @@ defmodule HalC2.Plugins do
     end
   end
 
-  @doc "Whether plugin `id` is running on this MC."
-  def running?(id) do
-    GenServer.call(__MODULE__, {:running?, id})
+  @doc """
+  Whether plugin `id` is running on this MC. A host too busy to answer in `timeout`,
+  say while it compiles a package, counts it as running, so what waits for a plugin to
+  stop keeps waiting. A host that is not there has taken its plugins down with it.
+  """
+  def running?(id, timeout \\ 5_000) do
+    GenServer.call(__MODULE__, {:running?, id}, timeout)
   catch
+    :exit, {:timeout, _} -> true
     :exit, _ -> false
   end
 
@@ -512,22 +528,23 @@ defmodule HalC2.Plugins do
     :ok = HalC2.Settings.watch(self())
     dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
-    state = %{
-      dir: dir,
-      supervisor: supervisor,
-      plugins: %{},
-      refs: %{},
-      watchers: %{},
-      # What each plugin last published, by `{id, topic}`, and who watches it.
-      topics: %{},
-      topic_watchers: %{}
-    }
+    # Watchers of the last run stay registered.
+    if HalC2.Heir.claim(@heir, [@watchers]) == [],
+      do: :ets.new(@watchers, [:named_table, :protected, :set] ++ HalC2.Heir.option(@heir))
+
+    # A topic's last value has no watcher (`nil` filters it out) and stays as it was.
+    for {key, _ref} <- :ets.tab2list(@watchers),
+        pid = watcher(key),
+        do: :ets.insert(@watchers, {key, Process.monitor(pid)})
+
+    state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}}
 
     {:ok, state, {:continue, :scan}}
   end
 
   @impl true
-  def handle_continue(:scan, state), do: {:noreply, state |> scan() |> reconcile()}
+  # Watchers that outlived a crash are told what this run holds.
+  def handle_continue(:scan, state), do: {:noreply, state |> scan() |> reconcile() |> push()}
 
   @impl true
   def handle_call(:list, _from, state), do: {:reply, list(state), state}
@@ -607,6 +624,13 @@ defmodule HalC2.Plugins do
         fields = fields(plugin)
         input = Map.take(input, Enum.map(fields, & &1["key"]))
         current = config(id)["settings"] || %{}
+
+        # The marker a secret field shows keeps what is stored for it, if anything.
+        input =
+          for %{"key" => key, "secret" => true} <- fields, input[key] == @marker, reduce: input do
+            input -> Map.put(input, key, current[key])
+          end
+
         # A value saved as null goes back to the field's default.
         next = current |> Map.merge(input) |> Map.reject(fn {_key, value} -> value == nil end)
 
@@ -628,17 +652,20 @@ defmodule HalC2.Plugins do
   end
 
   def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
-    {:reply, list(state), %{state | watchers: watchers}}
+    watch({:list, pid})
+    {:reply, list(state), state}
   end
 
   def handle_call({:subscribe_topic, pid, id, topic}, _from, state) do
-    watchers =
-      Map.update(state.topic_watchers, {id, topic}, %{pid => Process.monitor(pid)}, fn pids ->
-        Map.put_new_lazy(pids, pid, fn -> Process.monitor(pid) end)
-      end)
+    watch({:topic, id, topic, pid})
 
-    {:reply, {:ok, state.topics[{id, topic}]}, %{state | topic_watchers: watchers}}
+    last =
+      case :ets.lookup(@watchers, {:last, id, topic}) do
+        [{_, value}] -> value
+        [] -> nil
+      end
+
+    {:reply, {:ok, last}, state}
   end
 
   # What a plugin's MC part is called with, while it runs.
@@ -689,23 +716,21 @@ defmodule HalC2.Plugins do
   end
 
   def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    {:noreply, %{state | watchers: watchers}}
+    unwatch({:list, pid})
+    {:noreply, state}
   end
 
   def handle_cast({:unsubscribe_topic, pid, id, topic}, state) do
-    pids = state.topic_watchers[{id, topic}] || %{}
-    {ref, pids} = Map.pop(pids, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    {:noreply, %{state | topic_watchers: put_watchers(state.topic_watchers, {id, topic}, pids)}}
+    unwatch({:topic, id, topic, pid})
+    {:noreply, state}
   end
 
   def handle_cast({:publish, id, topic, value}, state) do
-    for {pid, _} <- state.topic_watchers[{id, topic}] || %{},
+    for [pid] <- :ets.match(@watchers, {{:topic, id, topic, :"$1"}, :_}),
         do: send(pid, {:hal_c2_plugin_topic, node(), id, topic, value})
 
-    {:noreply, put_in(state.topics[{id, topic}], value)}
+    :ets.insert(@watchers, {{:last, id, topic}, value})
+    {:noreply, state}
   end
 
   def handle_cast({:denied, id, permission}, state) do
@@ -764,13 +789,9 @@ defmodule HalC2.Plugins do
         {:noreply, state |> sync() |> push()}
 
       nil ->
-        topic_watchers =
-          Enum.reduce(state.topic_watchers, state.topic_watchers, fn {key, pids}, acc ->
-            put_watchers(acc, key, Map.delete(pids, pid))
-          end)
-
-        {:noreply,
-         %{state | watchers: Map.delete(state.watchers, pid), topic_watchers: topic_watchers}}
+        :ets.match_delete(@watchers, {{:list, pid}, :_})
+        :ets.match_delete(@watchers, {{:topic, :_, :_, pid}, :_})
+        {:noreply, state}
 
       _gone ->
         {:noreply, state}
@@ -779,8 +800,19 @@ defmodule HalC2.Plugins do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  defp put_watchers(watchers, key, pids) when map_size(pids) == 0, do: Map.delete(watchers, key)
-  defp put_watchers(watchers, key, pids), do: Map.put(watchers, key, pids)
+  # One monitor per watched list or topic, so dropping one leaves the others.
+  defp watch(key) do
+    if :ets.lookup(@watchers, key) == [],
+      do: :ets.insert(@watchers, {key, Process.monitor(watcher(key))})
+  end
+
+  defp unwatch(key) do
+    for {_, ref} <- :ets.take(@watchers, key), do: Process.demonitor(ref, [:flush])
+  end
+
+  defp watcher({:list, pid}), do: pid
+  defp watcher({:topic, _id, _topic, pid}), do: pid
+  defp watcher({:last, _id, _topic}), do: nil
 
   # --- discovery ----------------------------------------------------------------------
 
@@ -941,11 +973,13 @@ defmodule HalC2.Plugins do
         do: File.rm_rf(copy)
   end
 
-  # A file or package that did not load: the old code keeps running, and the next
-  # scan tries again; without old code it is listed with the reason.
+  # A file or package that did not load: the version that loaded (its code, or a
+  # package of UI parts only) keeps running, and the next scan tries again; without
+  # one it is listed with the reason.
   defp failed(previous, message, blank) do
     case previous do
-      [%{module: module, file: file} | _] when module != nil ->
+      [%{file: file} = old | _]
+      when old.module != nil or (old.files != nil and old.sources == [] and old.problem == nil) ->
         Logger.warning("plugin #{Path.basename(file)} did not load: #{message}")
         restore(previous)
         Enum.map(previous, &%{&1 | reload_error: message})
@@ -1293,7 +1327,7 @@ defmodule HalC2.Plugins do
     Enum.find_value(fields, :ok, fn %{"key" => key} = field ->
       value = input[key]
 
-      if value != nil and value != @marker and not Package.typed?(field, value),
+      if value != nil and not Package.typed?(field, value),
         do: {:error, "#{field["label"]} (#{key}) must be #{expected(field)}."}
     end)
   end
@@ -1304,9 +1338,15 @@ defmodule HalC2.Plugins do
   defp expected(%{"type" => "choice"}), do: "one of the choices offered"
   defp expected(_field), do: "text"
 
+  # A marker with nothing stored behind it (the document was written by hand, or came
+  # from another machine) leaves the field at its default.
   defp reveal(id, fields, settings) do
     for %{"key" => key, "secret" => true} <- fields, settings[key] == @marker, reduce: settings do
-      settings -> Map.put(settings, key, File.read!(secret_path(id, key)))
+      settings ->
+        case File.read(secret_path(id, key)) do
+          {:ok, value} -> Map.put(settings, key, value)
+          {:error, _} -> Map.delete(settings, key)
+        end
     end
   end
 
@@ -1476,7 +1516,10 @@ defmodule HalC2.Plugins do
 
   defp push(state) do
     list = list(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_plugins, node(), list})
+
+    for [pid] <- :ets.match(@watchers, {{:list, :"$1"}, :_}),
+        do: send(pid, {:hal_c2_plugins, node(), list})
+
     state
   end
 end
