@@ -125,6 +125,136 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Models as Claude Code 2.1.293 lists them at `initialize`: a `default` row naming the
+  # model it resolves to, aliases with their canonical ids, a model the manifest does
+  # not know (Sonnet 5.5), and one it gates on a newer Claude Code than the fake's 2.1.0
+  # (Opus 5.5).
+  @listed [
+    %{
+      "value" => "default",
+      "resolvedModel" => "claude-opus-5-5",
+      "displayName" => "Default (recommended)",
+      "description" => "Opus 5.5 · Best for everyday, complex tasks",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high xhigh max),
+      "supportsAdaptiveThinking" => true,
+      "supportsFastMode" => true,
+      "supportsAutoMode" => true
+    },
+    %{
+      "value" => "opus",
+      "resolvedModel" => "claude-opus-5-5",
+      "displayName" => "Opus 5.5",
+      "description" => "For complex work and everyday tasks",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high xhigh max),
+      "supportsAdaptiveThinking" => true,
+      "supportsFastMode" => true,
+      "supportsAutoMode" => true
+    },
+    %{
+      "value" => "sonnet",
+      "resolvedModel" => "claude-sonnet-5-5",
+      "displayName" => "Sonnet 5.5",
+      "description" => "Most efficient for simpler tasks",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high xhigh max),
+      "supportsAdaptiveThinking" => true,
+      "supportsAutoMode" => true
+    },
+    %{
+      "value" => "claude-sonnet-4-6",
+      "resolvedModel" => "claude-sonnet-4-6",
+      "displayName" => "Sonnet 4.6",
+      "description" => "Efficient for routine tasks",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high max),
+      "supportsAdaptiveThinking" => true,
+      "supportsAutoMode" => true
+    }
+  ]
+
+  step "the installed Claude lists its models", context do
+    context = World.fake_providers(context)
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed))
+    context
+  end
+
+  step "the installed Claude does not list its models", context do
+    # The fake answers `initialize` without models, as a Claude Code too old to list them.
+    World.fake_providers(context)
+  end
+
+  step "the MC has read the Claude model list", context do
+    :ok = HalC2.Claude.Provider.load()
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :models, claude(providers)["models"])
+  end
+
+  step "Claude Code's models are offered in its order with its default marked", context do
+    # The `default` row is the model it resolves to, marked as the default.
+    assert [
+             %{"slug" => "opus", "name" => "Opus 5.5", "isDefault" => true},
+             %{"slug" => "sonnet", "name" => "Sonnet 5.5", "isDefault" => false},
+             %{"slug" => "claude-sonnet-4-6", "name" => "Sonnet 4.6", "isDefault" => false}
+           ] = context.models
+
+    context
+  end
+
+  step "a thread saved on a model's full id shows the model that covers it", context do
+    assert ["claude-opus-5-5", "default"] == listed_model(context, "opus")["aliases"]
+    assert ["claude-sonnet-5-5"] == listed_model(context, "sonnet")["aliases"]
+    context
+  end
+
+  step "a listed model the manifest knows offers Claude Code's reasoning levels and ultrathink",
+       context do
+    # Sonnet 4.6's manifest profile runs "max" as "high"; this Claude Code runs it itself.
+    assert ~w(low medium high max ultrathink) ==
+             choices(listed_model(context, "claude-sonnet-4-6"), "effort")
+
+    assert ~w(low medium high xhigh max ultracode ultrathink) ==
+             choices(listed_model(context, "opus"), "effort")
+
+    assert descriptor(listed_model(context, "opus"), "fastMode")
+    assert descriptor(listed_model(context, "opus"), "contextWindow")
+    context
+  end
+
+  step "a listed model the manifest does not know offers only Claude Code's reasoning levels",
+       context do
+    model = listed_model(context, "sonnet")
+    assert ~w(low medium high xhigh max) == choices(model, "effort")
+    assert [%{"id" => "effort"}] = model["capabilities"]["optionDescriptors"]
+    context
+  end
+
+  step "the installed Claude lists a model the manifest gates on a newer version", context do
+    context = World.fake_providers(context)
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed))
+    min = Enum.find(claude_manifest()["models"], &(&1["slug"] == "claude-opus-5-5"))
+    assert Version.compare("2.1.0", min["adapter"]["claudeCode"]["minVersion"]) == :lt
+    :ok = HalC2.Claude.Provider.load()
+    Map.put(context, :gated, "claude-opus-5-5")
+  end
+
+  step "the user sends a message to Claude on that model", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"model" => context.gated})
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude answers it on that model", context do
+    # The turn's start, after the one that read the model list.
+    argv = List.last(for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv)
+    assert Enum.any?(pairs(argv), &match?(["--model", "claude-opus-5-5" <> _], &1))
+    assert "--strict-mcp-config" not in argv
+    context
+  end
+
   step "the installed Claude is older than a model requires", context do
     {providers, context} = World.provider_list(context)
     version = claude(providers)["version"]
@@ -1323,6 +1453,10 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp claude(providers), do: Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
+
+  defp listed_model(context, slug), do: Enum.find(context.models, &(&1["slug"] == slug))
+
+  defp choices(model, id), do: Enum.map(descriptor(model, id)["options"], & &1["id"])
 
   # The npm registry's latest release, as the MC last read it.
   defp latest(context, driver, version) do

@@ -82,7 +82,8 @@ defmodule HalC2.Environment do
   `server.refreshProviders`: probes the providers again, for one instance or all,
   and announces the new list to every client, then returns it. As the Node
   server's registry refresh does, each ACP agent is started again to read its
-  version, sign-in and models; `refreshModels` also reads Codex's model list again.
+  version, sign-in and models; `refreshModels` also reads Codex's and Claude's model
+  lists again.
   Subscription quota is read again too (`HalC2.ProviderUsageLimits`), and an untargeted
   refresh re-reads the usage-limit sources, as the Node server's status probe does,
   and a refresh of one ACP instance reads its agent again; a workspace refresh
@@ -107,7 +108,11 @@ defmodule HalC2.Environment do
         HalC2.ModelManifest.refresh()
         HalC2.ProviderUsageLimits.refresh()
         HalC2.UsageLimitSources.refresh()
-        probe(["codex" | HalC2.Acp.instances()], input["refreshModels"] == true)
+
+        probe(
+          ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
+          input["refreshModels"] == true
+        )
     end
 
     {:ok, %{"providers" => providers()}}
@@ -116,6 +121,9 @@ defmodule HalC2.Environment do
   # Agents are probed apart, so one slow agent does not hold up the others.
   defp probe(ids, models?) do
     if models? and "codex" in ids, do: HalC2.Codex.Provider.load()
+
+    claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))
+    if models? and claude != [], do: HalC2.Claude.Provider.load(claude)
 
     ids
     |> Enum.filter(&HalC2.Acp.agent?/1)

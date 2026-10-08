@@ -151,6 +151,11 @@ for line in sys.stdin:
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
         reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": "max", "tokenSource": "claude.ai"},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
+        # FAKE_CLAUDE_MODELS is the JSON list of models it reports (ModelInfo: value,
+        # resolvedModel, displayName, description, supportedEffortLevels, ...). Unset, the
+        # reply has no models, as a Claude Code too old to list them answers.
+        if sub == "initialize" and os.environ.get("FAKE_CLAUDE_MODELS"):
+            reply["models"] = json.loads(os.environ["FAKE_CLAUDE_MODELS"])
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})

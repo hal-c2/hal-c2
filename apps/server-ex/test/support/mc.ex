@@ -3310,7 +3310,7 @@ defmodule HalC2.Test.Mc.World do
 
     ExUnit.Callbacks.on_exit(fn ->
       for key <-
-            ~w(FAKE_CODEX_MODELS FAKE_CODEX_ACCOUNT FAKE_CLAUDE_USAGE FAKE_ACP_MODELS FAKE_ACP_CAPS FAKE_AUTH_FILE FAKE_CODEX_CONSUME_LOG
+            ~w(FAKE_CODEX_MODELS FAKE_CODEX_ACCOUNT FAKE_CLAUDE_USAGE FAKE_CLAUDE_MODELS FAKE_ACP_MODELS FAKE_ACP_CAPS FAKE_AUTH_FILE FAKE_CODEX_CONSUME_LOG
                     FAKE_CODEX_CONSUME_FAIL),
           do: System.delete_env(key)
 
@@ -3426,6 +3426,7 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.Codex.Provider, :models},
           {HalC2.Codex.Provider, :version},
           {HalC2.Claude.Provider, :version},
+          {HalC2.Claude.Provider, :models},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
