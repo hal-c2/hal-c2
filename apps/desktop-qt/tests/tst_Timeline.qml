@@ -39,6 +39,10 @@ Item {
         id: rows
     }
 
+    ListModel {
+        id: otherRows
+    }
+
     // A model that can copy, revert and name its times, like TimelineModel.
     ListModel {
         id: actionRows
@@ -225,6 +229,26 @@ Item {
             wait(0);
             verify(!timeline.following, "only the button returns to the end from mid-thread");
             verify(!atEnd(list));
+        }
+
+        // Scenario: Another thread opens at its end however far the last was scrolled
+        function test_anotherThreadOpensAtItsEnd() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            scrollUp(timeline);
+            tryVerify(() => timeline.scrolledAway, 5000);
+            otherRows.clear();
+            for (let i = 0; i < 30; ++i) {
+                otherRows.append(root.row({
+                    rowId: "other-" + i,
+                    text: "Other " + i + "\n\nSome more words to fill a line or two of the thread."
+                }));
+            }
+            timeline.model = otherRows;
+            verify(!timeline.scrolledAway, "the composer is not resting");
+            verify(timeline.following);
+            tryVerify(() => atEnd(list) && list.contentHeight > list.height, 5000, "the other thread shows its latest output");
+            verify(!findChild(timeline, "jumpToLatest").visible);
         }
 
         // Scenario: The previous tool calls can be shown and hidden again

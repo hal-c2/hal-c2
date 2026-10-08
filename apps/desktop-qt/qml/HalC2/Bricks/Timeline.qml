@@ -382,6 +382,16 @@ Item {
         }
         onFollowingChanged: settleAway()
 
+        // Another thread's rows open at their latest output, however far
+        // the last thread was scrolled.
+        function restart() {
+            heldIndex = -1;
+            settlingIndex = -1;
+            following = true;
+            away = false;
+            Qt.callLater(stick);
+        }
+
         // Moves to the end without counting as the user scrolling.
         function stick() {
             // Never pull the view from under the user's hand.
@@ -466,6 +476,7 @@ Item {
         bottomMargin: 12
         boundsBehavior: Flickable.StopAtBounds
         model: root.model
+        onModelChanged: restart()
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
             onPressedChanged: view.settleAway()

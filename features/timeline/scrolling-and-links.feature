@@ -17,7 +17,7 @@
 #   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
 #   apps/server-ex/lib/hal_c2/streams/view.ex (a window over a thread's newest runs, `more` and `page`)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (windowItems, hasEarlier, loadEarlier)
-#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top)
+#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -47,6 +47,13 @@ Feature: Moving through a thread and following links
     When the user scrolls to the end
     Then the latest output is shown
     And the view follows new output again
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: Another thread opens at its end however far the last was scrolled
+    Given the user has scrolled away from the end of the thread
+    When the user opens another thread
+    Then the other thread shows its latest output
+    And the composer is not resting
 
   @shared @backlog-mobile @backlog-tui
   Scenario: A long thread opens as its newest turns
