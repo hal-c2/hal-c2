@@ -73,6 +73,10 @@ private:
   bool m_open = false;
   bool m_asking = false;
   bool m_running = false;
+  // Moves on with each start of the camera: a frame read from an earlier
+  // run (`m_readFrom`) pairs with nothing, though the camera runs again.
+  quint64 m_run = 0;
+  quint64 m_readFrom = 0;
   // The camera failed: not started again until the user asks, here
   // (`scanner.retry`) or by opening the scanner again.
   bool m_failed = false;
