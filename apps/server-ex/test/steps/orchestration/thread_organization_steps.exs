@@ -259,11 +259,11 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     |> then(&Map.put(&1, {:organized, thread}, World.thread(&1, thread)))
   end
 
-  step "thread {string} is snoozed and settled", %{args: [thread]} = context do
+  step "thread {string} is unsettled and snoozed", %{args: [thread]} = context do
     context
-    |> organize(thread, "thread.snooze", %{"snoozedUntil" => wake_time("tomorrow 09:00")})
+    |> organize(thread, "thread.unsettle")
     |> ok!()
-    |> organize(thread, "thread.settle")
+    |> organize(thread, "thread.snooze", %{"snoozedUntil" => wake_time("tomorrow 09:00")})
     |> ok!()
     |> then(&Map.put(&1, {:organized, thread}, World.thread(&1, thread)))
   end
@@ -276,9 +276,10 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     context
   end
 
-  step "thread {string} is still snoozed and settled", %{args: [thread]} = context do
+  step "thread {string} is still unsettled and snoozed", %{args: [thread]} = context do
     organized = still_organized(context, thread)
-    assert %{"settledOverride" => "settled"} = organized
+    assert %{"settledOverride" => "active"} = organized
+    assert organized["unsettledAt"] != nil
     assert organized["snoozedUntil"] == wake_time("tomorrow 09:00")
     context
   end
@@ -287,7 +288,7 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     organized =
       Map.take(
         World.thread(context, thread),
-        ~w(pinnedAt pinOrderKey snoozedUntil snoozedAt settledOverride settledAt)
+        ~w(pinnedAt pinOrderKey snoozedUntil snoozedAt settledOverride settledAt unsettledAt)
       )
 
     assert organized == Map.take(context[{:organized, thread}], Map.keys(organized))

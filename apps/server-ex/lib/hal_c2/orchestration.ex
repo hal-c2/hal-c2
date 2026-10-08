@@ -1704,8 +1704,8 @@ defmodule HalC2.Orchestration do
   defp thread_fields("thread.unarchive", _, _, _), do: %{"archivedAt" => nil}
   defp thread_fields("thread.delete", _, _, at), do: %{"deletedAt" => at}
 
-  # Settling is "I'm done with this": it parks the thread and clears its pinned and
-  # active places.
+  # Settling is "I'm done with this": it parks the thread, clears its pinned and active
+  # places and ends its snooze, as the Node server's settle does (thread.unsnoozed).
   # Settling a settled thread again keeps the time it was settled.
   defp thread_fields("thread.settle", command, thread, at) do
     kept =
@@ -1718,7 +1718,9 @@ defmodule HalC2.Orchestration do
       "unsettledAt" => nil,
       "pinnedAt" => nil,
       "pinOrderKey" => nil,
-      "activeOrderKey" => nil
+      "activeOrderKey" => nil,
+      "snoozedUntil" => nil,
+      "snoozedAt" => nil
     }
   end
 

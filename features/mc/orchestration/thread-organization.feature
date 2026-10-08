@@ -7,6 +7,8 @@
 #   apps/server/src/orchestration-v2/ (projector for organization fields)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (thread mutation guards and field updates,
 #     message.dispatch unsettling and unsnoozing its thread)
+#   apps/server/src/orchestration/decider.ts (thread.settle also unpins and unsnoozes)
+#   apps/desktop-qt/src/native/SidebarController.cpp (undoing a settle snoozes again)
 #   apps/web/src/hooks/useThreadActions.ts (ThreadSnoozeBlockedError, ThreadArchiveBlockedError)
 #   docs/user/thread-sidebar.md
 Feature: Organizing threads in the engine
@@ -101,6 +103,17 @@ Feature: Organizing threads in the engine
     When a client settles "t1"
     Then thread "t1" is settled by override
     And thread "t1" is not pinned and has no pinned order key
+
+  # The Node server records thread.settled then thread.unsnoozed; the MC records both in
+  # the one change it makes to the thread.
+  @mc
+  Scenario: Settling a snoozed thread ends its snooze
+    Given thread "t1" is snoozed until tomorrow 09:00
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+    And thread "t1" has no snooze time and no snoozed-at time
+    And a thread-settled event is recorded
+    And a thread-unsnoozed event is recorded
 
   @mc
   Scenario Outline: Pinning a settled or snoozed thread brings it back
@@ -213,12 +226,13 @@ Feature: Organizing threads in the engine
       | thread.pin.reorder    |
       | thread.active.reorder |
 
-  # Settling clears a pin and pinning clears a settle, so no one thread holds all three.
+  # Settling clears a pin and a snooze, and pinning clears a settle, so no one thread
+  # holds all three.
   @mc
   Scenario: Organization state is per thread and survives an MC restart
     Given thread "t1" is pinned and snoozed
     And thread "t2" exists in "demo"
-    And thread "t2" is snoozed and settled
+    And thread "t2" is unsettled and snoozed
     When the MC restarts
     Then thread "t1" is still pinned and snoozed
-    And thread "t2" is still snoozed and settled
+    And thread "t2" is still unsettled and snoozed
