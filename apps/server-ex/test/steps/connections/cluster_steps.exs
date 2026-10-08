@@ -1106,8 +1106,12 @@ defmodule HalC2.Steps.Connections.Cluster do
     JSON.decode!(File.read!(path))["origin"]
   end
 
-  # Waits on `machine` itself for its connection to `other` (discovery looks every 10s).
-  defp await_connected(machine, other, timeout \\ 15_000) do
+  # Waits on `machine` itself for its connection to `other`. Discovery looks every 10s,
+  # and a look can take a setup timeout (7s) per address that accepts and never answers,
+  # such as a cluster port another program holds. While one member waits on such an
+  # address for the other, Erlang refuses the other's connection to it, so members that
+  # come back at once can take a look, a wait and another look to connect.
+  defp await_connected(machine, other, timeout \\ 30_000) do
     await_mc(machine, :nodeup, HalC2.Cluster.mc_name(other.id), timeout)
   end
 
