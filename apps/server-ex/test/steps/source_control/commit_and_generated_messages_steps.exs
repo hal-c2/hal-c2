@@ -237,25 +237,67 @@ defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
     context
   end
 
+  # A git's trace record, from a session that is not the commit's.
+  @trace_shaped ~s({"event":"child_exit","sid":"hook-printed","child_id":0,"code":9})
+
   step "the repository has a pre-commit hook that prints {string}", %{args: [text]} = context do
-    hook = Path.join([context.cwd, ".git", "hooks", "pre-commit"])
-    File.write!(hook, "#!/bin/sh\necho '#{text}'\n")
-    File.chmod!(hook, 0o755)
+    hook(context, "echo '#{text}'")
+  end
+
+  step "the repository has a pre-commit hook that prints {string} without a newline and exits with {int}",
+       %{args: [text, code]} = context do
+    hook(context, "printf '%s' '#{text}' >&2\nexit #{code}")
+  end
+
+  step "the repository has a pre-commit hook that prints a line shaped like a git trace record",
+       context do
+    hook(context, "echo '#{@trace_shaped}'")
+  end
+
+  step "the action reports the hook starting, that line as its output and the hook finishing",
+       context do
+    result(context)
+    hook_events(context, @trace_shaped, 0)
     context
+  end
+
+  step "the repository has a pre-commit hook that prints {string} and what {string} prints",
+       %{args: [text, command]} = context do
+    hook(context, ~s[echo "#{text}$(#{command})"])
   end
 
   step "the action reports the hook starting, its output {string} and the hook finishing",
        %{args: [text]} = context do
     result(context)
+    hook_events(context, text, 0)
+    context
+  end
+
+  step "the hook's output {string} is reported before it finishes with exit code {int}",
+       %{args: [text, code]} = context do
+    hook_events(context, text, code)
+    context
+  end
+
+  defp hook(context, script) do
+    hook = Path.join([context.cwd, ".git", "hooks", "pre-commit"])
+    File.write!(hook, "#!/bin/sh\n#{script}\n")
+    File.chmod!(hook, 0o755)
+    context
+  end
+
+  # The hook's start, its output line `text` and its finish with exit `code`, in order.
+  defp hook_events(context, text, code) do
     events = context.git_events
     started = Enum.find_index(events, &(&1["kind"] == "hook_started"))
     output = Enum.find_index(events, &(&1["kind"] == "hook_output" and &1["text"] == text))
     finished = Enum.find_index(events, &(&1["kind"] == "hook_finished"))
     assert started && output && finished, "hook events missing: #{inspect(events)}"
-    assert started < output and output < finished
-    assert Enum.at(events, started)["hookName"] == "pre-commit"
-    assert Enum.at(events, output)["hookName"] == "pre-commit"
-    assert Enum.at(events, finished)["hookName"] == "pre-commit"
-    context
+    assert started < output and output < finished, "out of order: #{inspect(events)}"
+
+    for at <- [started, output, finished],
+        do: assert(Enum.at(events, at)["hookName"] == "pre-commit")
+
+    assert Enum.at(events, finished)["exitCode"] == code
   end
 end

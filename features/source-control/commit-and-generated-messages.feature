@@ -136,6 +136,26 @@ Feature: Committing with written or generated messages
     When the user commits
     Then the action reports the hook starting, its output "lint ok" and the hook finishing
 
+  @mc
+  Scenario: A git that a commit hook runs prints to the hook as it would anywhere
+    Given the repository has a pre-commit hook that prints "inside: " and what "git rev-parse --is-inside-work-tree 2>&1" prints
+    When the user commits
+    Then the action reports the hook starting, its output "inside: true" and the hook finishing
+
+  @mc
+  Scenario: A commit hook that prints what looks like git's trace has it reported as output
+    Given the repository has a pre-commit hook that prints a line shaped like a git trace record
+    When the user commits
+    Then the action reports the hook starting, that line as its output and the hook finishing
+
+  @mc
+  Scenario: A failing commit hook's output and exit code are reported before the commit fails
+    Given the repository has a pre-commit hook that prints "lint failed" without a newline and exits with 3
+    When the user commits
+    Then the hook's output "lint failed" is reported before it finishes with exit code 3
+    And the action fails with "lint failed"
+    And nothing is committed
+
   @desktop @mobile @tui @backlog-mobile
   Scenario: The running action shows its stage, elapsed time and last hook line
     Given the repository has a slow pre-commit hook
