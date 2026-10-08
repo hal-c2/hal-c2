@@ -130,8 +130,6 @@ void SidebarController::refresh() {
       });
     }
   }
-  // A thread that went away is not selected any more.
-  m_selected.removeIf([this](const QString& key) { return !m_store->thread(key); });
   input.selectedKeys = m_selected;
   input.jumpLabels = m_jumpLabels;
   input.showJumpHints = m_showJumpHints;
@@ -141,6 +139,9 @@ void SidebarController::refresh() {
   m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
                           now.toMSecsSinceEpoch());
+  // A thread that went, or left the list (archived), is not selected any more,
+  // so it does not come back selected.
+  m_selected.removeIf([this](const QString& key) { return !m_view.orderedKeys.contains(key); });
   m_bridge->publish(QStringLiteral("sidebar"), m_view.state);
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
