@@ -162,20 +162,18 @@ Feature: Delegating tasks to subagents
   # the child's run ended, and when, not as things stood when the report was sent.
   @mc
   Scenario: A task whose end report timed out settles on the retry
-    Given the agent in "parent" delegated a task that completed
-    And the caller was never told the task ended
-    When the task's end is reported while its caller is too busy to answer
+    Given the agent in "parent" delegated a task without waiting
+    When the subagent completes while its caller is too busy to hear it
     Then the task, its node and its turn item are "completed"
     And the task ended when its child's turn did
-    And "parent" is given the task's result once
+    And "parent" receives one wake turn
 
   @mc
   Scenario: A task rolled back before its end report is retried settles as cancelled
-    Given the agent in "parent" delegated a task that completed
-    And the caller was never told the task ended
-    When the user rolls back the task's turn in its thread before the report is retried
+    Given the agent in "parent" delegated a task without waiting
+    When the subagent completes, and the user rolls back its turn before the caller hears it
     Then the task, its node and its turn item are "cancelled"
-    And "parent" is given the task's result once
+    And "parent" is told the task was cancelled without an answer
 
   # Its turn is interrupted at boot, and may be continued; it reports when it ends.
   @mc
