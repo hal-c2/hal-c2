@@ -754,8 +754,9 @@ void ComposerController::place(const QString& environmentId, const QString& proj
 
 // A new thread's first send, as the web's: the thread is placed, its images
 // are stored, then it is launched with the message in the draft's checkout
-// (or the one it was placed in). The draft (its text and images) stays until
-// the MC confirms; the window then shows the thread in its place. A
+// (or the one it was placed in). The draft empties as it is sent, as a
+// follow-up's composer does, and gets its text and images back if the launch
+// fails; once the MC confirms, the window shows the thread in its place. A
 // background send (mod+alt+Enter) leaves the window on the draft, emptied for
 // another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
@@ -821,6 +822,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   // the launch fails.
   m_drafts[draftId].attachments.clear();
   m_drafts[draftId].excerpts.clear();
+  save();
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
