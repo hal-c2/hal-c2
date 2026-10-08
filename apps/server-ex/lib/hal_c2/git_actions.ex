@@ -218,118 +218,124 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # Runs `git commit` with a trace2 event log, so hooks are reported as they start
-  # and finish (`hook_started`, `hook_finished`) around the output lines they print
-  # (`hook_output`), the way the Node server does. Returns `{exit status, stderr}`.
+  # Runs `git commit` with its trace2 events on the pipe its stderr goes to (fd 3, a
+  # copy of stderr), so hooks are reported as they start and finish (`hook_started`,
+  # `hook_finished`) around the output lines they print (`hook_output`), the way the
+  # Node server does. A hook prints to that pipe too, so its start, its output and its
+  # exit arrive in the order they happened; a trace file read beside the pipe could
+  # show the exit first. Not fd 2: a git a hook runs inherits the target, and would
+  # write its trace into output the hook reads. Returns `{exit status, stderr without
+  # the trace}`.
   defp traced_commit(cwd, args, emit) do
-    trace =
-      Path.join(System.tmp_dir!(), "hal-c2-git-trace2-#{System.unique_integer([:positive])}")
-
-    File.write!(trace, "")
-    Process.put(:git_trace, %{path: trace, offset: 0, hook: nil})
-
-    {status, err, pending} =
-      ["git" | args]
+    {status, trace} =
+      ["sh", "-c", ~s(exec git "$@" 3>&2), "git" | args]
       |> Exile.stream(
         cd: cwd,
-        env: [{"GIT_TRACE2_EVENT", trace}],
+        env: [{"GIT_TRACE2_EVENT", "3"}],
         stderr: :consume,
         ignore_epipe: true
       )
-      |> Enum.reduce({nil, [], %{}}, fn
-        {:exit, {:status, status}}, {_, err, pending} ->
-          {status, err, pending}
-
-        {:exit, _}, {_, err, pending} ->
-          {1, err, pending}
-
-        {stream, data}, {status, err, pending} ->
-          trace_events(emit)
-          buffer = Map.get(pending, stream, "") <> IO.iodata_to_binary(data)
-          [rest | lines] = buffer |> String.split("\n") |> Enum.reverse()
-          for line <- Enum.reverse(lines), do: hook_line(emit, stream, line)
-          err = if stream == :stderr, do: [err, data], else: err
-          {status, err, Map.put(pending, stream, rest)}
+      |> Enum.reduce({nil, %{hook: nil, children: %{}, err: [], pending: %{}}}, fn
+        {:exit, {:status, status}}, {_, trace} -> {status, trace}
+        {:exit, _}, {_, trace} -> {1, trace}
+        {stream, data}, {status, trace} -> {status, trace_chunk(emit, trace, stream, data)}
       end)
 
-    trace_events(emit)
-    for {stream, rest} <- pending, do: hook_line(emit, stream, rest)
-    trace_events(emit)
+    trace =
+      Enum.reduce(trace.pending, trace, fn {stream, rest}, trace ->
+        trace_line(emit, trace, stream, rest)
+      end)
 
-    with %{hook: hook} when hook != nil <- Process.get(:git_trace) do
-      emit.(%{
-        "kind" => "hook_finished",
-        "hookName" => hook,
-        "exitCode" => 0,
-        "durationMs" => nil
-      })
-    end
+    if trace.hook,
+      do: hook_finished(emit, trace.hook, nil)
 
-    File.rm(trace)
-    {status, IO.iodata_to_binary(err)}
+    {status, trace.err |> Enum.reverse() |> Enum.join("\n")}
   end
 
-  defp hook_line(emit, stream, line) do
-    if (line = String.trim(line)) != "" do
-      emit.(%{
-        "kind" => "hook_output",
-        "hookName" => Process.get(:git_trace).hook,
-        "stream" => Atom.to_string(stream),
-        "text" => line
-      })
-    end
+  defp trace_chunk(emit, trace, stream, data) do
+    buffer = Map.get(trace.pending, stream, "") <> IO.iodata_to_binary(data)
+    [rest | lines] = buffer |> String.split("\n") |> Enum.reverse()
+    trace = Enum.reduce(Enum.reverse(lines), trace, &trace_line(emit, &2, stream, &1))
+    put_in(trace.pending[stream], rest)
   end
 
-  # Emits the hook starts and exits git has traced since the last call.
-  defp trace_events(emit) do
-    %{path: path, offset: offset} = trace = Process.get(:git_trace)
-    {:ok, contents} = File.read(path)
-    complete = contents |> binary_part(offset, byte_size(contents) - offset)
+  # A line of this git's trace, of the trace of a git a hook runs (skipped), or one
+  # printed by git or a hook.
+  defp trace_line(emit, trace, stream, line) do
+    case stream == :stderr and trace_record(line) do
+      %{} = record ->
+        trace_event(emit, trace, record)
 
-    case :binary.matches(complete, "\n") do
-      [] ->
-        :ok
+      # A git a hook runs traces there too.
+      :nested ->
+        trace
 
-      matches ->
-        {last, 1} = List.last(matches)
-        chunk = binary_part(complete, 0, last)
-        Process.put(:git_trace, %{trace | offset: offset + last + 1})
-
-        for line <- String.split(chunk, "\n", trim: true),
-            {:ok, record} <- [JSON.decode(line)],
-            record["child_class"] == "hook" or record["category"] == "hook" do
-          trace_event(emit, record)
+      _ ->
+        if (text = String.trim(line)) != "" do
+          emit.(%{
+            "kind" => "hook_output",
+            "hookName" => trace.hook && trace.hook.name,
+            "stream" => Atom.to_string(stream),
+            "text" => text
+          })
         end
+
+        if stream == :stderr, do: %{trace | err: [line | trace.err]}, else: trace
     end
   end
 
-  defp trace_event(emit, %{"event" => "child_start"} = record) do
-    hook = record["hook_name"]
-    Process.put(:git_trace, %{Process.get(:git_trace) | hook: hook})
-    Process.put({:git_hook_started, hook}, System.monotonic_time(:millisecond))
-    emit.(%{"kind" => "hook_started", "hookName" => hook})
+  defp trace_record("{" <> _ = line) do
+    case JSON.decode(line) do
+      {:ok, %{"event" => _, "sid" => sid} = record} ->
+        if String.contains?(sid, "/"), do: :nested, else: record
+
+      _ ->
+        nil
+    end
   end
 
-  defp trace_event(emit, %{"event" => "child_exit"} = record) do
-    hook = record["hook_name"] || Process.get(:git_trace).hook
-    started = Process.delete({:git_hook_started, hook})
-    Process.put(:git_trace, %{Process.get(:git_trace) | hook: nil})
+  defp trace_record(_line), do: nil
 
+  defp trace_event(emit, trace, %{"event" => "child_start", "child_class" => "hook"} = record) do
+    hook = %{name: record["hook_name"], started: System.monotonic_time(:millisecond)}
+    emit.(%{"kind" => "hook_started", "hookName" => hook.name})
+    %{trace | hook: hook, children: Map.put(trace.children, record["child_id"], hook.name)}
+  end
+
+  # The exit of a hook names its child, not the hook.
+  defp trace_event(emit, trace, %{"event" => "child_exit", "child_id" => child} = record)
+       when is_map_key(trace.children, child) do
+    {name, children} = Map.pop(trace.children, child)
+    trace = %{trace | children: children}
+
+    if trace.hook && trace.hook.name == name do
+      hook_finished(emit, trace.hook, record["code"])
+      %{trace | hook: nil}
+    else
+      trace
+    end
+  end
+
+  # Git without child events for hooks still ends the hook's region.
+  defp trace_event(emit, %{hook: %{name: name} = hook} = trace, %{
+         "event" => "region_leave",
+         "category" => "hook",
+         "label" => name
+       }) do
+    hook_finished(emit, hook, nil)
+    %{trace | hook: nil}
+  end
+
+  defp trace_event(_emit, trace, _record), do: trace
+
+  defp hook_finished(emit, hook, code) do
     emit.(%{
       "kind" => "hook_finished",
-      "hookName" => hook,
-      "exitCode" => record["exitCode"],
-      "durationMs" => started && System.monotonic_time(:millisecond) - started
+      "hookName" => hook.name,
+      "exitCode" => code,
+      "durationMs" => System.monotonic_time(:millisecond) - hook.started
     })
   end
-
-  # Newer git runs hooks in parallel and logs only the region's end, not the child's exit.
-  defp trace_event(emit, %{"event" => "region_leave", "label" => hook}) do
-    if Process.get(:git_trace).hook == hook,
-      do: trace_event(emit, %{"event" => "child_exit", "hook_name" => hook, "child_id" => nil})
-  end
-
-  defp trace_event(_emit, _record), do: :ok
 
   # Stages the chosen files (or everything) and writes the message; nil when
   # nothing is staged.
