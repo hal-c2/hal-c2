@@ -69,6 +69,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context = World.create_project(context, title)
     root = World.project(context, title).root
     bare = World.github_remote(context, root, repository)
+    # The plugin's clone fetches over HTTPS; here that goes to the fake GitHub's SSH.
+    World.put_env("GIT_CONFIG_COUNT", "1")
+    World.put_env("GIT_CONFIG_KEY_0", "url.git@github.com:.insteadOf")
+    World.put_env("GIT_CONFIG_VALUE_0", "https://github.com/")
     source = Path.join(Mc.tmp_dir(context.mc, "pr-source"), "repo")
     World.git!(Path.dirname(source), ["clone", "-q", bare, source])
 
@@ -1242,7 +1246,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   defp checkout_state(root) do
     {World.git!(root, ~w(rev-parse HEAD)), World.git!(root, ~w(branch --list)),
-     World.git!(root, ~w(status --porcelain))}
+     World.git!(root, ~w(status --porcelain)), World.git!(root, ~w(worktree list --porcelain)),
+     World.git!(root, ~w(for-each-ref))}
   end
 
   defp thread(thread_id) do

@@ -39,8 +39,9 @@ changed since its review.
 ## The agent and its prompt
 
 Pick the agent, its model and its access in the settings. Each review's agent
-works in a checkout of the pull request's head of its own, so your checkout is
-not touched, but if it runs commands it runs the pull request's code. Choose its
+works in a checkout of the pull request's head of its own, made from the plugin's
+own copy of the repository and fetched over HTTPS with your `gh` sign-in. Your
+repository is not touched, but if it runs commands it runs the pull request's code. Choose its
 access with that in mind. Reviewing a pull request again removes the last
 review's checkout.
 

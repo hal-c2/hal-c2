@@ -3,7 +3,7 @@
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   plugins/code-review/mc/checkout.ex (a pull request's worktree)
+#   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 
 @plugin-code-review

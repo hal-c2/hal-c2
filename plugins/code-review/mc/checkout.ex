@@ -1,48 +1,59 @@
 defmodule HalC2Plugins.CodeReview.Checkout do
   @moduledoc """
-  The checkout a review's agent works in: a detached worktree of the project's
-  repository, at the pull request's head, under the plugin's data directory. The
-  pull request is fetched into refs of the plugin's own (`refs/hal-c2/code-review/`),
-  so the user's branches, index and working tree are never touched.
+  The checkout a review's agent works in: a detached worktree, at the pull request's
+  head, of the plugin's own bare clone of the repository. Both live under the plugin's
+  data directory, so the user's repository is never fetched into or given a worktree.
+  The clone is fetched over HTTPS with gh's credentials, which a service has where it
+  may have no SSH agent.
   """
 
   @doc """
-  Fetches pull request `number` of `repository` and its base branch `base` into the
-  repository at `root`, and puts the worktree at `path` on its head. Answers
-  `{:ok, %{"path", "headSha", "mergeBase"}}`.
+  Fetches pull request `number` and its base branch `base` from `url` into the bare
+  clone at `clone`, made on first use, and puts the worktree at `path` on its head.
+  Answers `{:ok, %{"path", "headSha", "mergeBase"}}`.
   """
-  def prepare(root, path, repository, number, base) do
+  def prepare(clone, path, url, number, base) do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
-    with {:ok, _} <-
-           git(root, [
-             "fetch",
-             "-q",
-             "--no-tags",
-             # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
-             "--no-write-fetch-head",
-             remote(root, repository),
-             "+refs/pull/#{number}/head:#{head_ref}",
-             "+refs/heads/#{base}:#{base_ref}"
-           ]),
-         {:ok, head} <- git(root, ["rev-parse", head_ref]),
-         :ok <- place(root, path, head) do
-      merge_base =
-        case git(root, ["merge-base", base_ref, head]) do
-          {:ok, sha} -> sha
-          _ -> base_ref
-        end
+    alone(clone, fn ->
+      with :ok <- init(clone),
+           {:ok, _} <-
+             git(
+               clone,
+               credentials() ++
+                 [
+                   "fetch",
+                   "-q",
+                   "--no-tags",
+                   # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
+                   "--no-write-fetch-head",
+                   url,
+                   "+refs/pull/#{number}/head:#{head_ref}",
+                   "+refs/heads/#{base}:#{base_ref}"
+                 ]
+             ),
+           {:ok, head} <- git(clone, ["rev-parse", head_ref]),
+           :ok <- place(clone, path, head) do
+        merge_base =
+          case git(clone, ["merge-base", base_ref, head]) do
+            {:ok, sha} -> sha
+            _ -> base_ref
+          end
 
-      {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
-    end
+        {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
+      end
+    end)
   end
 
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."
   def remove(root, path) do
-    git(root, ["worktree", "remove", "--force", path])
-    File.rm_rf(path)
-    git(root, ["worktree", "prune"])
+    alone(root, fn ->
+      git(root, ["worktree", "remove", "--force", path])
+      File.rm_rf(path)
+      git(root, ["worktree", "prune"])
+    end)
+
     :ok
   end
 
@@ -173,42 +184,47 @@ defmodule HalC2Plugins.CodeReview.Checkout do
          do: :ok
   end
 
-  # The remote whose address names `repository`, else origin.
-  defp remote(root, repository) do
-    wanted = String.downcase(repository)
+  # Reviews of one repository share its clone; one at a time changes it, or one's
+  # prune takes another's worktree while it is being added.
+  defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
-    case git(root, ["remote", "-v"]) do
-      {:ok, out} ->
-        Enum.find_value(String.split(out, "\n", trim: true), "origin", fn line ->
-          case String.split(line) do
-            [name, url | _] ->
-              slug = url |> String.downcase() |> String.trim_trailing("/") |> String.trim_trailing(".git")
-              if String.ends_with?(slug, "/" <> wanted) or String.ends_with?(slug, ":" <> wanted), do: name
+  defp init(clone) do
+    if File.dir?(clone) do
+      :ok
+    else
+      File.mkdir_p!(Path.dirname(clone))
 
-            _ ->
-              nil
-          end
-        end)
-
-      _ ->
-        "origin"
+      with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]), do: :ok
     end
   end
 
+  # gh as git's only credential helper, as `gh auth setup-git` would make it.
+  defp credentials do
+    case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
+      nil -> []
+      gh -> ["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"]
+    end
+  end
+
+  # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
+  # can turn the HTTPS address back into SSH, and its hooks have no business here.
   defp git(cwd, args) do
     case System.cmd("git", args,
            cd: cwd,
            stderr_to_stdout: true,
-           env: [{"GIT_TERMINAL_PROMPT", "0"}]
+           env: [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_CONFIG_GLOBAL", "/dev/null"}, {"GIT_CONFIG_NOSYSTEM", "1"}]
          ) do
       {out, 0} ->
         {:ok, String.trim(out)}
 
       {out, _} ->
-        last = out |> String.trim() |> String.split("\n") |> List.last()
-        {:error, "git #{hd(args)} failed: #{last}"}
+        said = out |> String.split("\n", trim: true) |> Enum.map_join(" ", &String.trim/1)
+        {:error, "git #{command(args)} failed: #{said}"}
     end
   rescue
-    e in [ErlangError, File.Error] -> {:error, "git #{hd(args)} failed: #{Exception.message(e)}"}
+    e in [ErlangError, File.Error] -> {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
   end
+
+  defp command(["-c", _ | args]), do: command(args)
+  defp command([command | _]), do: command
 end

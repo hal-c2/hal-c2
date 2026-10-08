@@ -773,8 +773,15 @@ defmodule HalC2Plugins.CodeReview do
            {:ok, model} <- model(settings),
            path =
              Path.join([Host.data_dir(@id), "checkouts", review["projectId"], "pr-#{review["number"]}", thread_id]),
+           clone = Path.join([Host.data_dir(@id), "repos", project["host"], review["repository"] <> ".git"]),
            {:ok, checkout} <-
-             Checkout.prepare(project["root"], path, review["repository"], review["number"], review["baseBranch"]) do
+             Checkout.prepare(
+               clone,
+               path,
+               "https://#{project["host"]}/#{review["repository"]}.git",
+               review["number"],
+               review["baseBranch"]
+             ) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
 
         GenServer.cast(
@@ -782,7 +789,7 @@ defmodule HalC2Plugins.CodeReview do
           {:started, key, thread_id,
            %{
              "checkout" => checkout["path"],
-             "root" => project["root"],
+             "root" => clone,
              "mergeBase" => checkout["mergeBase"],
              "reviewedSha" => checkout["headSha"],
              "headSha" => checkout["headSha"]
