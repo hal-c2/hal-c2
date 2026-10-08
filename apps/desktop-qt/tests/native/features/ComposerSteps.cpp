@@ -1,11 +1,15 @@
 // The composer's turn against the MC: the route the composer shows, what the
 // user types, picks, attaches and sends (as the brick dispatches it), the
-// images the MC stores, and the text the shell's composer holds
-// (features/composer/sending-turns.feature, desktop/native-composer.feature).
+// images the MC stores, the text the shell's composer holds, and what became
+// of a send the app quit on (features/composer/sending-turns.feature,
+// desktop/native-composer.feature).
 
 #include <QBuffer>
+#include <QDir>
+#include <QFile>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QVariantMap>
 
 #include "ComposerController.h"
@@ -14,6 +18,7 @@
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "Stream.h"
 #include "World.h"
 
 namespace {
@@ -73,12 +78,29 @@ QStringList attachmentNames(World& world) {
   return names;
 }
 
+// A user message in the stream of `thread`, as the MC's projection keeps it;
+// only the MC's copy changes while no app is connected.
+void addUserMessage(World& world, const QString& thread, const QString& id, const QString& text) {
+  stream::FakeStreams& fake = world.mc.part<stream::FakeStreams>();
+  const QString current = std::exchange(fake.thread, thread);
+  stream::change(world, QStringLiteral("message"), id,
+                 {{QStringLiteral("s"), QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("role"), QStringLiteral("user")},
+                                                    {QStringLiteral("createdBy"), QStringLiteral("user")}, {QStringLiteral("text"), text},
+                                                    {QStringLiteral("createdAt"), stream::iso(world.now())}}}},
+                 !world.mc.connected());
+  fake.thread = current;
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
   // The composer.
   step(QStringLiteral("the composer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), c[0]}});
+  });
+  // The thread open and its stream live, so the shell knows its messages.
+  step(QStringLiteral("the user is reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    stream::look(world, c[0]);
   });
   step(QStringLiteral("the user stops the turn"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.interrupt"));
@@ -240,6 +262,34 @@ const Steps steps([] {
              !image.toObject().value(QLatin1String("id")).toString().isEmpty();
     });
     expect(found, QStringLiteral("the message carries %1").arg(show(images.toVariantList())));
+  });
+
+  // A send the MC still held when the app quit: it carries it out (its message
+  // is in the thread), or drops it as if it never arrived.
+  step(QStringLiteral("the MC carries out the send"), [](World& world, const Captures&, const Table&) {
+    world.mc.effects.append([&world](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
+      addUserMessage(world, command.value(QLatin1String("threadId")).toString(), command.value(QLatin1String("messageId")).toString(),
+                     command.value(QLatin1String("text")).toString());
+    });
+    world.mc.answerHeld();
+    world.mc.effects.removeLast();
+  });
+  step(QStringLiteral("the MC drops the send"), [](World& world, const Captures&, const Table&) {
+    world.mc.dropHeld();
+  });
+  // Settled, not left waiting: shell-composer.json keeps no send to reconcile.
+  step(QStringLiteral("the desktop keeps no unsent prompts"), [](World& world, const Captures&, const Table&) {
+    const auto unsent = [&] {
+      QFile file(QDir(world.homeDir()).filePath(QStringLiteral("data/shell-composer.json")));
+      if (!file.open(QIODevice::ReadOnly)) return QJsonArray();
+      return QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("unsent")).toArray();
+    };
+    world.waitFor([&] { return unsent().isEmpty(); },
+                  [&] { return QStringLiteral("no unsent prompts; the desktop keeps %1").arg(show(unsent().toVariantList())); });
+  });
+  step(QStringLiteral("the thread %1 gets the user message %1 from another device").arg(q), [](World& world, const Captures& c, const Table&) {
+    addUserMessage(world, c[0], QStringLiteral("message-") + c[1], c[1]);
   });
 
   // The text the composer keeps.

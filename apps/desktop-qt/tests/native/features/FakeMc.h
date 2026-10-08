@@ -108,6 +108,12 @@ public:
   bool holding(const QString& what) const { return m_holds.contains(what); }
   void defer(std::function<void()> answer) { m_held.append(std::move(answer)); }
   void answerHeld();
+  // Lifts every hold and forgets the held answers: what they answer never
+  // reached the MC.
+  void dropHeld() {
+    m_holds.clear();
+    m_held.clear();
+  }
 
   // A domain's state on this MC, made on first use.
   template <class T>
