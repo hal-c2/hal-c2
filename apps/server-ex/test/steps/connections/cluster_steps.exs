@@ -743,6 +743,19 @@ defmodule HalC2.Steps.Connections.Cluster do
     World.put_client(context, client)
   end
 
+  step "the second member's relay to the client fails", context do
+    stream = :erpc.call(context.second.mc, HalC2.Streams, :ensure, ["remote-th"])
+    [relay] = Map.values(:erpc.call(context.second.mc, :sys, :get_state, [stream]).relays)
+    true = :erpc.call(context.second.mc, Process, :exit, [relay, :failed])
+    context
+  end
+
+  step "the client is told to resync the thread and follows it again", context do
+    {resync, client} = Mc.await(World.client(context), &(&1["t"] == "resync"))
+    assert resync == %{"t" => "resync", "id" => 2}
+    follow_second(World.put_client(context, client), %{"mc" => Atom.to_string(context.second.mc)})
+  end
+
   step "the thread streams over the client's one socket", context do
     {:ok, seq} =
       :erpc.call(context.second.mc, HalC2.Streams, :commit, [

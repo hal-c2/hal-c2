@@ -18,6 +18,7 @@
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by MC or by environment)
+#   apps/server-ex/lib/hal_c2/streams/server.ex, streams/relay.ex (a subscriber on another member)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
 #   packages/client-runtime/src/connection/compatibility.ts (descriptorServesEnvironment)
@@ -224,6 +225,14 @@ Feature: Clustering one person's machines
     Given a client connected to the first member
     When it follows a thread that lives on the second member
     Then the thread streams over the client's one socket
+
+  @mc
+  Scenario: A client whose relay on another member fails follows the thread again
+    Given a client connected to the first member
+    And it follows a thread that lives on the second member
+    When the second member's relay to the client fails
+    Then the client is told to resync the thread and follows it again
+    And the thread streams over the client's one socket
 
   @mc
   Scenario: A client follows a thread on another member by its environment
