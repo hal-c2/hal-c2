@@ -37,8 +37,6 @@ mod DELEGATION is
   op wait : Wait -> Item [ctor] .
   --- The report of the end of a child's run: its number and the retries left.
   op rep : Nat Nat -> Item [ctor] .
-  --- A settled task whose result is yet to reach the parent as a message.
-  op wake-todo : -> Item [ctor] .
   --- The MC's phase: running, down, or at a step of its boot.
   op mc : Phase -> Item [ctor] .
   --- A child run the boot interrupted that may continue.
@@ -102,20 +100,19 @@ mod DELEGATION is
     child(true, N, K) mc(up) => child(true, N, s K) mc(up) rep(s K, attempts) if K < N .
   rl [child-start] : child(true, 1, 1) mc(up) => child(true, 2, 1) mc(up) .
 
-  --- A report that gets through finds the task unsettled and settles it, or finds it
-  --- settled and does nothing.
+  --- A report that gets through finds the task unsettled and settles it, with the
+  --- message that wakes the parent in the same transaction, or finds it settled and does
+  --- nothing.
   rl [finished] :
-    rep(N, K) mc(up) task(running, D, W) parent(B) settles(S)
+    rep(N, K) mc(up) task(running, D, W) parent(B) settles(S) wakes(A)
     => mc(up) task(ended, deliver(D, W, B), W) parent(B) settles(s S)
-       (if deliver(D, W, B) == delivered then wake-todo else empty fi) .
+       wakes(if deliver(D, W, B) == delivered then s A else A fi) .
   crl [finished-late] :
     rep(N, K) mc(up) task(T, D, W) => mc(up) task(T, D, W) if T =/= running .
 
   --- report/5 gives up after its attempts.
   rl [report-fail] : rep(N, s K) faults(s F) => rep(N, K) faults(F) .
   rl [report-fail] : rep(N, 0) faults(s F) => faults(F) .
-
-  rl [wake] : wake-todo mc(up) wakes(K) => mc(up) wakes(s K) .
 
   --- cancel/2 -------------------------------------------------------------------------
 
@@ -172,7 +169,6 @@ mod DELEGATION is
 
   op kill : Conf -> Conf .
   eq kill(rep(N, K) C) = kill(C) .
-  eq kill(wake-todo C) = kill(C) .
   eq kill(starting C) = kill(C) .
   eq kill(call(W) C) = kill(C) .
   eq kill(cancel-call C) = kill(C) .
@@ -197,7 +193,7 @@ mod DELEGATION is
 
   --- Settled twice, woken twice, woken though cancelled, or acknowledged to a caller
   --- that gave up waiting and never read it.
-  ops settled-twice woken-twice cancelled-woken unread : Sys -> Bool .
+  ops settled-twice woken-twice cancelled-woken unread lost-wake : Sys -> Bool .
   ceq settled-twice({ settles(S) C }) = true if S > 1 .
   eq settled-twice({ C }) = false [owise] .
   ceq woken-twice({ wakes(K) C }) = true if K > 1 .
@@ -206,6 +202,10 @@ mod DELEGATION is
   eq cancelled-woken({ C }) = false [owise] .
   eq unread({ task(T, acknowledged, W) wait(timedout) C }) = true .
   eq unread({ C }) = false [owise] .
+
+  --- A result marked delivered that no message carries.
+  eq lost-wake({ task(T, delivered, W) wakes(0) C }) = true .
+  eq lost-wake({ C }) = false [owise] .
 endm
 
 mod DELEGATION-PROPS is

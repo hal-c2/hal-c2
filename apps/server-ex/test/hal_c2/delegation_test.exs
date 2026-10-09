@@ -252,4 +252,37 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert task()["status"] == "completed"
     end
   end
+
+  describe "a task whose result is delivered" do
+    test "is never recorded as delivered before its result message, so a crash cannot part them" do
+      delegate("completed")
+
+      Delegation.finished("c", "cr", "completed")
+
+      # The log in order: the first moment the task reads delivered, the message exists.
+      kinds =
+        HalC2.Store.path()
+        |> HalC2.Store.reduce_stream("p", 0, [], &[&1 | &2])
+        |> Enum.reverse()
+        |> Enum.flat_map(fn
+          %{kind: "run", patch: %{"s" => %{"userMessageId" => "message:delegate-result:task"}}} ->
+            [:message]
+
+          %{kind: "subagent", patch: %{"completionDelivery" => %{"state" => "delivered"}}} ->
+            [:delivered]
+
+          %{
+            kind: "subagent",
+            patch: %{"s" => %{"completionDelivery" => %{"state" => "delivered"}}}
+          } ->
+            [:delivered]
+
+          _ ->
+            []
+        end)
+
+      assert kinds == [:message, :delivered]
+      assert woken?()
+    end
+  end
 end
