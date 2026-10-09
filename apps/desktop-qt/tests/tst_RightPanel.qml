@@ -400,6 +400,32 @@ Item {
             tryVerify(() => !border.visible);
         }
 
+        function test_tabsThatDoNotFitScrollAndKeepTheActiveOneInView() {
+            const state = panelState("diff");
+            state.tabs = ["Diff", "Files", "Agents", "Previews", "Terminal with a long name", "Device"].map((title, i) => ({ id: "t" + i, kind: "diff", title: title }));
+            state.activeId = "t0";
+            Shell.state = Object.assign({}, Shell.state, { panel: state });
+            const panel = createTemporaryObject(panelComponent, root, { width: 420 });
+            const scroll = findChild(panel, "panelScrollTabs");
+            tryVerify(() => scroll.visible, 1000, "overflowing tabs get scroll buttons");
+            compare(findChild(panel, "panelScrollLeft").enabled, false);
+            verify(findChild(panel, "panelScrollRight").enabled);
+
+            const next = panelState("t5");
+            next.tabs = state.tabs;
+            Shell.state = Object.assign({}, Shell.state, { panel: next });
+            const close = findChild(panel, "panelClose-t5");
+            verify(close);
+            const strip = findChild(panel, "panelTab-t5").parent.parent;
+            tryVerify(() => {
+                const p = close.mapToItem(strip.parent, close.width, 0).x;
+                return p <= scroll.x + 1 && close.mapToItem(strip.parent, 0, 0).x >= strip.x;
+            }, 1000, "the active tab and its close button are in view");
+            verify(findChild(panel, "panelScrollLeft").enabled);
+            const title = findChild(panel, "panelTab-t4");
+            verify(title.width <= 112 + 13 + 20 + 12 + 16, "a long title is capped");
+        }
+
         function test_openFileGetsMostOfThePanel() {
             const source = createTemporaryObject(fakeFiles, root);
             const files = createTemporaryObject(filesComponent, root, { source: source });
