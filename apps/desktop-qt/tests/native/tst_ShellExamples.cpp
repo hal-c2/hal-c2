@@ -821,6 +821,114 @@ private slots:
     bridge.publish("route", QVariant());
   }
 
+  // Scenario: In a narrow window the right panel opens over the thread, and
+  // Scenario: A docked right panel leaves the thread its room
+  // (features/navigation/layout.feature).
+  void defaultShellGivesWayToTheThread() {
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto panel = QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap();
+    const auto show = [&](bool open, bool details) {
+      panel["isOpen"] = open;
+      panel["detailsOpen"] = details;
+      panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
+      bridge.publish("panel", panel);
+    };
+    show(true, false);
+    auto* window = defaultShell(960, 1000);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* workspace = findVisualItem(root, "workspace");
+    auto* side = findVisualItem(root, "rightPanel");
+    auto* scrim = findVisualItem(root, "panelScrim");
+    auto* details = findVisualItem(root, "threadDetailsPanel");
+    QVERIFY(workspace && side && scrim && details);
+    const auto leftOf = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).x(); };
+    const auto top = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).y(); };
+
+    // At 960 the panel is a sheet: the thread keeps all that the list leaves,
+    // and the panel lies over its right end, under the header.
+    QTRY_VERIFY(side->isVisible());
+    QTRY_COMPARE(workspace->width(), 960.0 - 256);
+    QTRY_COMPARE(side->width(), 403.0);
+    QCOMPARE(leftOf(side) + side->width(), 960.0);
+    QCOMPARE(top(side), workspace->height());
+    QVERIFY(scrim->isVisible());
+    QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
+    QCOMPARE(top(scrim), workspace->height());
+    // Its width is the sheet's, not one to drag or to fill the window from.
+    QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
+    QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
+    // The header's toggle is clear of it, a click beside it closes it, and so
+    // does Escape.
+    auto* toggle = findVisualItem(workspace, "panelToggle");
+    QVERIFY(toggle && toggle->isVisible());
+    QVERIFY(top(toggle) + toggle->height() <= top(side));
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    const auto toggles = [&] {
+      int count = 0;
+      for (const auto& call : actions) count += call.first().toString() == "rightPanel.toggle";
+      return count;
+    };
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(400, 500));
+    QTRY_COMPARE(toggles(), 1);
+    side->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_COMPARE(toggles(), 2);
+    // Closed, nothing is left over the thread.
+    show(false, false);
+    QTRY_VERIFY(!scrim->isVisible());
+    QTRY_COMPARE(side->width(), 0.0);
+    QCOMPARE(workspace->width(), 960.0 - 256);
+
+    // The thread details go over the thread once it would have under 360.
+    show(false, true);
+    QTRY_VERIFY(details->isVisible());
+    QTRY_COMPARE(workspace->width(), 960.0 - 256 - 280);
+    window->resize(880, 1000);
+    QTRY_COMPARE(workspace->width(), 880.0 - 256);
+    QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
+    QCOMPARE(top(details), workspace->height());
+    QVERIFY(findVisualItem(details, "threadDetailsClose")->isVisible());
+
+    // The smallest window: the list is over the thread too, and the sheet is
+    // 384 wide.
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", true}});
+    show(true, false);
+    window->resize(640, 400);
+    QTRY_COMPARE(workspace->width(), 640.0);
+    QTRY_COMPARE(side->width(), 384.0);
+    QCOMPARE(leftOf(side) + side->width(), 640.0);
+
+    // A wide window docks the panel at the width it was given, beside the
+    // thread.
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    window->resize(1400, 800);
+    QTRY_COMPARE(side->width(), 540.0);
+    QTRY_COMPARE(workspace->width(), 1400.0 - 256 - 540);
+    QCOMPARE(top(side), 0.0);
+    QVERIFY(!scrim->isVisible());
+    QVERIFY(findVisualItem(side, "panelEdge")->isVisible());
+    QVERIFY(findVisualItem(side, "panelMaximize")->isVisible());
+    // With the details beside it the panel gives up width, not the thread.
+    show(true, true);
+    QTRY_COMPARE(workspace->width(), 360.0);
+    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 360);
+    QCOMPARE(leftOf(details), 256.0 + 360);
+    // And with no room left for its minimum beside them, it is a sheet.
+    window->resize(1200, 800);
+    QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);
+    QTRY_VERIFY(scrim->isVisible());
+    QCOMPARE(leftOf(side) + side->width(), 1200.0);
+
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
   // Scenario Outline: The window controls are on every page
   // (features/navigation/windows.feature): away from a thread there is no
   // header, so a band of the window's own holds the corner and drags it.

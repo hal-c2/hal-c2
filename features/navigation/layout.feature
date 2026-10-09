@@ -258,6 +258,40 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user drags the right panel's edge
       Then the right panel takes the new width
 
+    # The web's inline floor (apps/web/src/hooks/usePreviewPanelInlineSize.ts).
+    @desktop
+    Scenario: A docked right panel leaves the thread its room
+      Given the window is 1400 pixels wide
+      And the right panel and the thread details are open
+      Then the thread is at least 360 pixels wide
+      And the right panel is narrower than the width it was given
+
+    # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
+    # under, or wherever the panel's minimum does not fit beside the thread.
+    @desktop
+    Scenario: In a narrow window the right panel opens over the thread
+      Given the window is 960 pixels wide
+      When the user opens the right panel
+      Then it is shown as a sheet over the thread, under the header
+      And the thread keeps the full width
+      And the right panel can be neither resized nor maximized
+      When the user presses Escape
+      Then the right panel is closed
+
+    @desktop
+    Scenario: A click beside the right panel's sheet closes it
+      Given the window is 960 pixels wide
+      And the right panel is open
+      When the user clicks the thread beside the right panel
+      Then the right panel is closed
+
+    @desktop
+    Scenario: In a narrow window the thread details open over the thread
+      Given the thread would be under 360 pixels wide beside the thread details
+      When the user opens the thread details
+      Then they are shown over the thread, under the header
+      And the thread keeps the full width
+
     @desktop
     Scenario: Maximizing the right panel
       Given the right panel is open

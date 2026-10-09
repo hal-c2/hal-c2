@@ -8,8 +8,9 @@ import "js/panelTabs.js" as PanelTabs
 // The right panel beside a thread: tabs from Shell.state.panel (the Panel
 // controller's) and a native body for each kind js/panelTabs.js lists. Its
 // left edge drags to resize it (a double click goes back to the default
-// width); the layout keeps the thread `minimumSiblingWidth` of room unless
-// the panel is maximized, when the layout hides the thread instead.
+// width); the layout keeps the thread room of its own (`maximumWidth`), shows
+// the panel over the thread where there is none (`resizable` off), or hides
+// the thread for a maximized panel.
 Rectangle {
     id: panel
 
@@ -28,6 +29,9 @@ Rectangle {
     // Whether the layout hides the thread for a maximized panel
     // (`maximized`); only then is filling the window offered.
     property bool canMaximize: false
+    // Whether its left edge drags. A layout showing the panel over the thread
+    // gives it a width of its own, which is not the one to remember.
+    property bool resizable: true
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
 
@@ -352,7 +356,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 6
-        visible: panel.open && !panel.maximized
+        visible: panel.open && !panel.maximized && panel.resizable
         cursorShape: Qt.SplitHCursor
         preventStealing: true
         onPressed: mouse => {

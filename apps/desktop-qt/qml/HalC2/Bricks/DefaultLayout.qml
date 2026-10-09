@@ -27,12 +27,27 @@ Item {
     // What the corner lies over, which keeps `windowButtonsInset` of its
     // right end clear: the tabs, the right panel's tab strip, the thread
     // details' header, or the thread's header.
-    readonly property string corner: tabsView.visible ? "tabs" : panelView.visible && panelView.open ? "panel" : detailsView.visible ? "details" : "centre"
+    readonly property string corner: tabsView.visible ? "tabs" : panelView.visible && panelView.open && !panelSheet ? "panel" : detailsView.visible && !detailsSheet ? "details" : "centre"
     readonly property real windowButtonsInset: windowButtons ? windowButtonsView.width + 2 * windowButtonsView.anchors.rightMargin : 0
 
     // The window has no room for the thread list beside the thread
     // (LayoutController): shown, the list lies over the thread instead.
     readonly property bool sidebarOverlay: Shell.state.layout?.sidebarOverlay === true
+    // How the columns give way as the window narrows, the thread keeping
+    // `threadMinimumWidth` beside whatever is docked: first the right panel
+    // goes over the thread as a sheet (at the web's 980, apps/web/src/
+    // rightPanelLayout.ts, or sooner when what else is open leaves it no
+    // room), then the thread details do, then the thread list (above).
+    readonly property int threadMinimumWidth: 360
+    readonly property real besideList: width - (navigation.visible && !sidebarOverlay ? navigation.width : 0) - (folderExplorer.visible ? folderExplorer.width : 0)
+    readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
+    readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth
+    readonly property bool panelNarrow: width <= 980 || besidePanel < panelView.minimumWidth
+    readonly property bool panelSheet: panelNarrow && !panelView.maximized
+    // The web's sheet: 42% of the window up to 448, 88% up to 384 under 760.
+    readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
+    // A sheet starts under the header, whose toggle puts it away again.
+    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
     // Where the window is, less what changes while it stays there (the title).
     readonly property string place: [window.route?.kind, window.route?.threadKey, window.route?.draftId, window.route?.section].join("|")
 
@@ -43,6 +58,8 @@ Item {
     Keys.onEscapePressed: event => {
         if (sidebarOverlay && navigation.visible)
             Shell.dispatch("sidebar.toggle");
+        else if (panelScrim.visible)
+            Shell.dispatch("rightPanel.toggle");
         else
             event.accepted = false;
     }
@@ -150,6 +167,7 @@ Item {
 
             // The folder explorer (folders.toggle), beside the thread list.
             Loader {
+                id: folderExplorer
                 objectName: "folderExplorerHost"
                 Layout.fillHeight: true
                 Layout.preferredWidth: active ? 340 : 0
@@ -178,6 +196,7 @@ Item {
                 // there is no header: a band in its place, for a frameless
                 // window to be dragged by and for its buttons to lie over.
                 Rectangle {
+                    id: chromeBand
                     objectName: "chromeBand"
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
@@ -271,21 +290,31 @@ Item {
                 Layout.fillHeight: true
                 trailingInset: layout.corner === "details" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
+                // Over the thread, it takes no room from it.
+                Layout.leftMargin: layout.detailsSheet ? -implicitWidth : 0
+                Layout.topMargin: layout.detailsSheet ? layout.headerHeight : 0
+                z: layout.detailsSheet ? 2 : 0
                 details: Shell.state.panel?.details ?? null
                 visible: details !== null && !panelView.maximized && !layout.pluginTab
             }
 
             RightPanel {
                 id: panelView
+                objectName: "rightPanel"
 
                 Layout.fillHeight: true
                 Layout.fillWidth: maximized
+                // A sheet takes no room from the thread either.
+                Layout.leftMargin: layout.panelSheet ? -implicitWidth : 0
+                Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
+                z: layout.panelSheet ? 2 : 0
                 ownToggle: false
-                canMaximize: true
+                canMaximize: !layout.panelNarrow || maximized
+                resizable: !layout.panelSheet
                 trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
-                maximumWidth: layout.window.width - (navigation.visible ? navigation.width : 0) - minimumWidth
+                maximumWidth: layout.panelSheet ? layout.panelSheetWidth : layout.besidePanel
                 visible: available && !layout.pluginTab
             }
         }
@@ -305,6 +334,7 @@ Item {
     // Beside a thread list shown over the thread: a click there puts the list
     // away, as the web's off-canvas sidebar does.
     Rectangle {
+        id: sidebarScrim
         objectName: "sidebarScrim"
         visible: layout.sidebarOverlay && navigation.visible
         x: navigation.width
@@ -317,6 +347,25 @@ Item {
             anchors.fill: parent
             acceptedButtons: Qt.AllButtons
             onClicked: Shell.dispatch("sidebar.toggle")
+            onWheel: wheel => wheel.accepted = true
+        }
+    }
+
+    // Beside the right panel shown as a sheet: a click there puts it away.
+    Rectangle {
+        id: panelScrim
+        objectName: "panelScrim"
+        visible: layout.panelSheet && panelView.visible && panelView.open
+        x: sidebarScrim.visible ? sidebarScrim.x : 0
+        y: panelView.parent.y + layout.headerHeight
+        width: parent.width - panelView.width - x
+        height: panelView.height
+        color: Theme.palette.color("scrim", "#52000000")
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onClicked: Shell.dispatch("rightPanel.toggle")
             onWheel: wheel => wheel.accepted = true
         }
     }
