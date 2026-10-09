@@ -10,6 +10,7 @@
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
+#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml, CommandPalette.qml (accessible names)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
 
 Feature: Keyboard focus and keyboard-only use
@@ -159,3 +160,16 @@ Feature: Keyboard focus and keyboard-only use
         | Close    |
         | Minimize |
         | Maximize |
+
+  Rule: The conversation and the palette are announced
+
+    @desktop @backlog-mobile @backlog-tui
+    Scenario: Command palette entries are announced by their title
+      Given the command palette is open
+      Then each entry is a list item named by its title, then its description and shortcut
+
+    @desktop @backlog-mobile @backlog-tui
+    Scenario: Tool calls and subagents in the timeline are announced
+      Given the timeline shows tool calls and a subagent
+      Then each tool call is announced by its label
+      And a subagent is announced by its title, its status and its latest line, as a link when it has a thread

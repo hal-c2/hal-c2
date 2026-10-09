@@ -142,6 +142,40 @@ Item {
         view.stick();
     }
 
+    // A page up (-1) or down (1), less a few lines of the page before so the
+    // eye keeps its place. Going up stops the view following; reaching the end
+    // follows again, as the user's own scrolling does.
+    function page(direction) {
+        const top = view.originY - view.topMargin;
+        const bottom = view.originY + view.contentHeight + view.bottomMargin - view.height;
+        const target = Math.max(top, Math.min(Math.max(top, bottom), view.contentY + direction * Math.max(0, view.height - 48)));
+        view.settlingIndex = -1;
+        view.positioning = true;
+        view.contentY = target;
+        view.positioning = false;
+        if (direction > 0 && view.nearEnd()) {
+            root.scrollToEnd();
+            return;
+        }
+        view.following = view.nearEnd();
+        if (target <= top)
+            root.loadEarlier();
+    }
+
+    // The very start of what is loaded (`top`), or the end.
+    function toEdge(top) {
+        if (!top) {
+            root.scrollToEnd();
+            return;
+        }
+        view.settlingIndex = -1;
+        view.positioning = true;
+        view.contentY = view.originY - view.topMargin;
+        view.positioning = false;
+        view.following = view.nearEnd();
+        root.loadEarlier();
+    }
+
     // Whether the turns before the ones loaded are on their way.
     readonly property bool loadingEarlier: root.model !== null && root.model.loadingEarlier === true
     // Asks the model for the turns before the ones it holds, if it has any
@@ -328,7 +362,13 @@ Item {
         property bool interactive: false
         default property alias trailing: trailingRow.data
         readonly property bool hovered: lineHover.hovered
+        // A changed file's path keeps its end, the file name.
+        property int labelElide: Text.ElideRight
         signal clicked(point position)
+        Accessible.role: line.interactive ? Accessible.Button : Accessible.StaticText
+        Accessible.name: line.label
+        Accessible.onPressAction: if (line.interactive)
+            line.clicked(Qt.point(0, 0))
         implicitHeight: 28
         radius: 6
         color: line.interactive && line.hovered ? Qt.alpha(root.hoverColor, 0.2) : "transparent"
@@ -351,7 +391,7 @@ Item {
             font.family: root.uiFamily
             font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: line.labelWeight
-            elide: Text.ElideRight
+            elide: line.labelElide
             maximumLineCount: 1
         }
         Row {
@@ -397,8 +437,9 @@ Item {
 
         // Moves to the end without counting as the user scrolling.
         function stick() {
-            // Never pull the view from under the user's hand.
-            if (moving || dragging || scrollBar.pressed)
+            // Never pull the view from under the user's hand; a queued stick
+            // outlived by the user leaving the end does nothing.
+            if (!following || moving || dragging || scrollBar.pressed)
                 return;
             positioning = true;
             positionViewAtEnd();
@@ -475,6 +516,28 @@ Item {
         anchors.fill: parent
         anchors.bottomMargin: indicator.visible ? indicator.height : 0
         clip: true
+        // A click in the conversation puts the keyboard on it: Page Up and
+        // Page Down page through it, Home and End go to its ends.
+        activeFocusOnTab: true
+        Keys.onPressed: event => {
+            if (event.modifiers & (Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier))
+                return;
+            const ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
+            if (event.key === Qt.Key_PageUp && !ctrl)
+                root.page(-1);
+            else if (event.key === Qt.Key_PageDown && !ctrl)
+                root.page(1);
+            else if (event.key === Qt.Key_Home)
+                root.toEdge(true);
+            else if (event.key === Qt.Key_End)
+                root.toEdge(false);
+            else
+                return;
+            event.accepted = true;
+        }
+        TapHandler {
+            onTapped: view.forceActiveFocus()
+        }
         topMargin: 12
         bottomMargin: 12
         boundsBehavior: Flickable.StopAtBounds
@@ -1166,6 +1229,7 @@ Item {
                                 iconName: call.modelData.icon || "hammer"
                                 iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
                                 label: call.modelData.label ?? ""
+                                labelElide: (call.modelData.path ?? "").length > 0 ? Text.ElideMiddle : Text.ElideRight
                                 interactive: call.hasDetails
                                 onClicked: position => {
                                     // Open takes its own tap.
@@ -1407,6 +1471,10 @@ Item {
                     readonly property string thread: row.model.thread ?? ""
                     readonly property string agentModel: row.model.agentModel ?? ""
                     objectName: "subagentRow"
+                    Accessible.role: subagentRow.thread.length > 0 ? Accessible.Link : Accessible.StaticText
+                    Accessible.name: [row.title, row.statusLabel, subagentRow.hasDetail ? row.text : ""].filter(part => (part ?? "").length > 0).join(", ")
+                    Accessible.onPressAction: if (subagentRow.thread.length > 0)
+                        root.threadActivated(subagentRow.thread)
                     implicitHeight: Math.max(24, subagentText.implicitHeight) + 12
                     HoverHandler {
                         enabled: subagentRow.thread.length > 0
@@ -1492,9 +1560,10 @@ Item {
                         id: errorLine
                         width: parent.width
                         iconName: row.icon || "circle-alert"
-                        iconTint: root.errorColor
+                        // A usage limit is a wait, not a crash.
+                        iconTint: row.model.warning === true ? root.warningColor : root.errorColor
                         label: row.title ?? ""
-                        labelColor: root.errorColor
+                        labelColor: row.model.warning === true ? root.warningColor : root.errorColor
                         labelWeight: Font.Medium
                         Stamp {
                             anchors.verticalCenter: parent.verticalCenter
@@ -1673,41 +1742,42 @@ Item {
 
     // Back to the latest output once the user scrolled away (the web's glass
     // "Scroll to end" button).
-    Rectangle {
+    ShellButton {
         id: jump
         objectName: "jumpToLatest"
         visible: !view.following && view.count > 0
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: view.bottom
         anchors.bottomMargin: 12
-        width: jumpRow.implicitWidth + 16
         height: 24
         radius: 12
-        color: jumpHover.hovered ? root.hoverColor : root.canvasColor
-        border.color: Qt.alpha(root.borderColor, 0.6)
-        Row {
-            id: jumpRow
-            anchors.centerIn: parent
-            spacing: 4
-            ShellIcon {
-                anchors.verticalCenter: parent.verticalCenter
-                name: "chevron-down"
-                size: 14
-                color: root.textColor
+        iconName: "chevron-down"
+        iconSize: 14
+        text: qsTr("Scroll to end")
+        font.pixelSize: Math.round(12 * Theme.fontScale)
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        Accessible.onPressAction: clicked()
+        // Reached by Tab, but a click does not take the composer's focus.
+        focusPolicy: Qt.TabFocus
+        onClicked: root.scrollToEnd()
+        // A raised pill: its own surface, a full border and a still shadow, so
+        // it reads as a control over the message beneath it.
+        background: Item {
+            Rectangle {
+                y: 1
+                width: parent.width
+                height: parent.height
+                radius: jump.radius
+                color: Qt.alpha("black", 0.25)
             }
-            RowText {
-                anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("Scroll to end")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                wrapMode: Text.NoWrap
+            Rectangle {
+                anchors.fill: parent
+                radius: jump.radius
+                color: jump.hovered || jump.down ? root.hoverColor : Theme.palette.color("surfaceRaised", "#1f1f24")
+                border.color: jump.visualFocus ? jump.focusRing : root.borderColor
+                border.width: 1
             }
-        }
-        HoverHandler {
-            id: jumpHover
-            cursorShape: Qt.PointingHandCursor
-        }
-        TapHandler {
-            onTapped: root.scrollToEnd()
         }
     }
 }
