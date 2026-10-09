@@ -645,8 +645,11 @@ Rectangle {
                 visible: card.advisory !== null
                 spacing: 4
 
+                // The detail often opens with the title ("Update available: install …"); say it once.
                 Label {
+                    objectName: "advisoryTitle"
                     Layout.fillWidth: true
+                    visible: !!card.advisory && !card.advisory.detail.startsWith(card.advisory.title)
                     text: card.advisory ? card.advisory.title : ""
                     color: card.advisory && card.advisory.strong ? page.warning : page.foreground
                     font.pixelSize: Math.round(12 * Theme.fontScale)

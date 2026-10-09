@@ -132,7 +132,18 @@ Item {
             verify(update.visible);
             verify(!update.enabled);
         }
-    
+
+        // "Update available" is said once: the detail already opens with it.
+        function test_an_update_advisory_does_not_repeat_its_title() {
+            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+                               targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            verify(!findChild(card, "advisoryTitle").visible);
+            compare(findChild(card, "advisory").visible, true);
+        }
+
         function wizard(overrides) {
             return Object.assign({
                 step: 1, steps: ["Provider", "Identity", "Config"],
