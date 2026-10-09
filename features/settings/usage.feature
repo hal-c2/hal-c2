@@ -52,6 +52,12 @@ Feature: Usage and limits
       Then the repeated turns count once
 
     @mc
+    Scenario: Claude's local error replies are not counted as a model
+      Given Claude Code's history holds a local error reply beside a real model's replies
+      When a client asks for the usage summary
+      Then only the real model is listed
+
+    @mc
     Scenario: A second scan only reads what changed
       Given the MC has scanned the history once
       And one transcript has grown since
