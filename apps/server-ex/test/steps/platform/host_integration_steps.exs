@@ -174,6 +174,26 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> Map.put(:entry, entry)
   end
 
+  step ~r/^the host's default text editor is "(?<id>[^"]+)", installed as "(?<file>[^"]+)"$/,
+       %{args: [id, file]} = context do
+    data = Mc.tmp_dir(context.mc, "xdg-data")
+    entry = Path.join([data, "applications", file])
+    File.mkdir_p!(Path.dirname(entry))
+    File.write!(entry, "[Desktop Entry]\nName=Editor\nExec=editor %F\n")
+    World.put_os_env("XDG_DATA_HOME", data)
+
+    context
+    |> with_display()
+    |> install_script("xdg-mime", ~s([ "$*" = "query default text/plain" ] && echo #{id}))
+    |> install("gio")
+  end
+
+  step "DISPLAY is set but empty and there is no Wayland display", context do
+    World.put_os_env("DISPLAY", "")
+    World.put_os_env("WAYLAND_DISPLAY", nil)
+    context
+  end
+
   step "the host's xdg-mime never answers", context do
     context |> with_display() |> install_script("xdg-mime", "exec sleep 30") |> install("gio")
   end

@@ -57,6 +57,20 @@ Feature: The MC working with its host machine
     Then macOS opens "src/app.ts" in its default text editor
 
   @mc
+  Scenario: A default editor installed in a vendor folder is found by its id
+    Given the host's default text editor is "acme-editor.desktop", installed as "acme/editor.desktop"
+    When a client reads the MC's server config
+    Then the default editor is listed first
+
+  @mc
+  Scenario: An empty DISPLAY is no display
+    Given the host's default text editor is Neovim
+    And DISPLAY is set but empty and there is no Wayland display
+    When a client reads the available editors
+    Then the default editor is not offered
+    And the file manager is not offered
+
+  @mc
   Scenario: A hung default editor lookup does not hold up the server config
     Given the host's xdg-mime never answers
     When a client reads the MC's server config

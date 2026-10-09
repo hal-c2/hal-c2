@@ -139,16 +139,28 @@ defmodule HalC2.Editors do
   end
 
   # The file of desktop entry `id`, searched for as the XDG base directory spec says: a
-  # variable that is unset, empty or relative falls back to its default.
+  # variable that is unset, empty or relative falls back to its default. An entry in a
+  # subfolder has the folders in its id (`vendor/editor.desktop` is `vendor-editor.desktop`),
+  # so a folder without the file by name is searched for one with that id.
   defp desktop_entry(""), do: nil
 
   defp desktop_entry(id) do
     home = xdg_dirs("XDG_DATA_HOME", Path.join(System.user_home!(), ".local/share"))
     dirs = xdg_dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
 
-    (home ++ dirs)
-    |> Enum.map(&Path.join([&1, "applications", id]))
-    |> Enum.find(&File.regular?/1)
+    Enum.find_value(home ++ dirs, fn dir ->
+      applications = Path.join(dir, "applications")
+      direct = Path.join(applications, id)
+
+      if File.regular?(direct) do
+        direct
+      else
+        applications
+        |> Path.join("*/**/*.desktop")
+        |> Path.wildcard()
+        |> Enum.find(&(Path.relative_to(&1, applications) |> String.replace("/", "-") == id))
+      end
+    end)
   end
 
   defp xdg_dirs(name, default) do
@@ -160,7 +172,7 @@ defmodule HalC2.Editors do
 
   defp absolute?(path), do: Path.type(path) == :absolute
 
-  defp display?, do: (System.get_env("DISPLAY") || System.get_env("WAYLAND_DISPLAY")) != nil
+  defp display?, do: Enum.any?(["DISPLAY", "WAYLAND_DISPLAY"], &(System.get_env(&1, "") != ""))
 
   # `config :hal_c2, os_type:` stands in for `:os.type()` in tests.
   defp file_manager do
