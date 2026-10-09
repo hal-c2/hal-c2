@@ -115,6 +115,13 @@ Feature: Browsing pull requests
     Then the pull requests of "acme/shop" are listed
     And "acme/api" reports its own error with the host's reason, phrased for the user
 
+  @backlog-desktop
+  Scenario: A project the host could not read is named once with a retry
+    Given "acme/api" cannot be read
+    When the user opens the pull requests page
+    Then the page says "acme/api could not be read" once, without the host's raw text
+    And the user can retry from the page
+
   @mc
   Scenario: Clients hear when the list changed
     Given the user is looking at the pull request list
@@ -198,10 +205,10 @@ Feature: Browsing pull requests
     Then the thread "Fix tax" opens
 
   @desktop
-  Scenario: A pull request no thread works on says so
+  Scenario: A pull request no thread works on offers to start one
     Given the user is on the pull requests page
     When the user opens #7 from the pull requests page
-    Then the pull requests page says "No thread works on #7 yet."
+    Then the user is offered to start a thread on #7
 
   @desktop
   Scenario: A pull request opens on its host

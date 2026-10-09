@@ -362,7 +362,11 @@ void PullRequestListController::publish() {
     const QJsonObject viewers = answer.result.value(QLatin1String("viewers")).toObject();
     for (const QJsonValue& value : answer.result.value(QLatin1String("errors")).toArray()) {
       const QJsonObject error = value.toObject();
-      problems.append(QStringLiteral("%1: %2").arg(text(error, "projectTitle"), text(error, "message")));
+      // The MC phrases the reason (and keeps the host's own text in `detail`); the
+      // project is named here, once.
+      const QString reason = text(error, "reason");
+      problems.append(reason.isEmpty() ? QStringLiteral("%1: %2").arg(text(error, "projectTitle"), text(error, "message"))
+                                       : tr("%1 could not be read: %2").arg(text(error, "projectTitle"), reason));
     }
     for (const QJsonValue& value : answer.result.value(QLatin1String("entries")).toArray()) {
       const QJsonObject entry = value.toObject();

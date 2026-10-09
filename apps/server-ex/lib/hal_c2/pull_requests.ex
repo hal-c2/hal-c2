@@ -14,6 +14,8 @@ defmodule HalC2.PullRequests do
   `HalC2.PullRequests.Refreshes`, which clients follow to read again.
   """
 
+  require Logger
+
   alias HalC2.PullRequests.{GitHub, Refreshes}
 
   @default_limit 99
@@ -280,13 +282,49 @@ defmodule HalC2.PullRequests do
   end
 
   # Says why, so a caller that only sees the message (a plugin, the list's banner) can
-  # tell a host that is down from a pull request that is not there.
-  defp unreadable(project, error),
-    do: %{
+  # tell a host that is down from a pull request that is not there. `reason` is what a
+  # client shows the user; `detail` keeps what the host or its CLI said, for diagnostics.
+  # Every host's failure passes here, so the wording does not depend on the provider.
+  defp unreadable(project, error) do
+    detail = reason(error)
+    Logger.warning("#{project.repository} could not be read: #{detail}")
+    reason = phrase(detail, project)
+
+    %{
       "projectId" => project.id,
       "projectTitle" => project.title,
-      "message" => "#{project.repository} could not be read: #{reason(error)}"
+      "repository" => project.repository,
+      "reason" => reason,
+      "detail" => detail,
+      "message" => "#{project.repository} could not be read: #{reason}"
     }
+  end
+
+  # A host's failure in words a user can act on; what matches nothing here is the
+  # host's own text (a plugin's "not running", the CLI requirements).
+  defp phrase(detail, project) do
+    host = project.host || "The host"
+
+    cond do
+      detail =~ ~r/HTTP 429|rate limit/i ->
+        "#{host}'s rate limit was reached. Try again in a few minutes."
+
+      detail =~ ~r/HTTP 5\d\d|timed? ?out|deadline exceeded|connection (reset|refused)|temporarily unavailable|could not resolve|no such host/i ->
+        "#{host} did not answer in time. Try again."
+
+      detail =~ ~r/HTTP 401|bad credentials/i ->
+        "#{host} did not accept the sign-in. Sign in again and retry."
+
+      detail =~ ~r/HTTP 403/ ->
+        "#{host} refused access to #{project.repository}. Check that this account may read it."
+
+      detail =~ ~r/HTTP 404/ ->
+        "#{project.repository} was not found on #{host}, or this account cannot see it."
+
+      true ->
+        detail
+    end
+  end
 
   defp reason({:error, {reason, detail}}) when is_atom(reason),
     do: @requirements[reason] || detail
