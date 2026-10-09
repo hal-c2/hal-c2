@@ -2,7 +2,8 @@ defmodule HalC2.DelegationPropTest do
   @moduledoc """
   A state machine over one delegated task: how its child thread's runs start, queue,
   end and are rolled back, how each end is reported to the caller (at once, late, never,
-  or again), and the MC restarting (`Delegation.reconcile/1` at boot).
+  or again), and the MC restarting (`Delegation.reconcile/2` at boot), also when the
+  restart interrupts the child's working run and nothing continues it (`Recovery`).
 
   The child's runs are written to its stream as the turn writer leaves them, with no
   provider behind them; the caller has a turn running, so the result message a report
@@ -72,6 +73,7 @@ defmodule HalC2.DelegationPropTest do
 
     frequency(
       [{1, {:call, __MODULE__, :restart, []}}] ++
+        if(running == [], do: [], else: [{1, {:call, __MODULE__, :restart_unresumed, []}}]) ++
         if(working?(state), do: [], else: [{4, {:call, __MODULE__, :start, [next(state)]}}]) ++
         if(running != [] and queued == [],
           do: [{1, {:call, __MODULE__, :queue, [next(state)]}}],
@@ -144,6 +146,17 @@ defmodule HalC2.DelegationPropTest do
 
   def next_state(state, _result, {:call, _, :restart, []}), do: state
 
+  def next_state(state, _result, {:call, _, :restart_unresumed, []}) do
+    runs =
+      for run <- state.runs do
+        if run.status == "running",
+          do: %{run | status: "interrupted", ended_as: "interrupted"},
+          else: run
+      end
+
+    %{state | runs: runs}
+  end
+
   defp update(state, id, fun),
     do: %{state | runs: Enum.map(state.runs, &if(&1.id == id, do: fun.(&1), else: &1))}
 
@@ -162,7 +175,7 @@ defmodule HalC2.DelegationPropTest do
     settled?(before) or not settled?(task) or
       Enum.any?(runs, fn run ->
         run["completedAt"] == task["subagent"]["completedAt"] and
-          task["subagent"]["result"] in [nil, answer(run["id"])]
+          task["subagent"]["result"] in [nil, answered(run["id"])]
       end)
   end
 
@@ -190,7 +203,8 @@ defmodule HalC2.DelegationPropTest do
   end
 
   # A restart settles a task whose child has stopped, and only then.
-  defp expected?(_state, :restart, [], before, task, runs) do
+  defp expected?(_state, call, [], before, task, runs)
+       when call in [:restart, :restart_unresumed] do
     cond do
       settled?(before) -> true
       runs == [] -> not settled?(task)
@@ -207,8 +221,12 @@ defmodule HalC2.DelegationPropTest do
 
     task["subagent"]["status"] == status and
       task["subagent"]["completedAt"] == run["completedAt"] and
-      task["subagent"]["result"] == answer(id)
+      task["subagent"]["result"] == answered(id)
   end
+
+  # What the run said before it ended: nothing for one boot interrupted.
+  defp answered(id),
+    do: if(StreamState.get(stream(@child), "message")["answer-#{id}"], do: answer(id))
 
   defp settled?(task), do: task["subagent"]["status"] in @ended
 
@@ -245,7 +263,13 @@ defmodule HalC2.DelegationPropTest do
        })},
       {"node", @task, Map.put(open, "id", @task)},
       {"turn-item", "turn-item:subagent:#{@task}",
-       Map.put(open, "id", "turn-item:subagent:#{@task}")}
+       Map.merge(open, %{
+         "id" => "turn-item:subagent:#{@task}",
+         "type" => "subagent",
+         "runId" => "parent-run",
+         "nodeId" => @task,
+         "ordinal" => 0
+       })}
     ])
 
     commit(@child, [
@@ -288,6 +312,19 @@ defmodule HalC2.DelegationPropTest do
     observe(fn ->
       HalC2.Prop.restart_service(HalC2.Streams)
       Delegation.reconcile(@parent)
+    end)
+  end
+
+  # Boot interrupts the child's working run, and the project does not continue it. The
+  # caller's turn is over by then: boot would interrupt its turn item, which the task
+  # outlives.
+  def restart_unresumed do
+    observe(fn ->
+      commit(@parent, [{"run", "parent-run", %{"status" => "completed"}}])
+      HalC2.Prop.restart_service(HalC2.Streams)
+      for id <- [@parent, @child], do: HalC2.Streams.flush_shell(id)
+      HalC2.Orchestration.Recovery.run()
+      HalC2.Orchestration.Recovery.continue()
     end)
   end
 

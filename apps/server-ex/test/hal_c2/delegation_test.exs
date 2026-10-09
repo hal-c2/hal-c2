@@ -1,7 +1,7 @@
 defmodule HalC2.Orchestration.DelegationTest do
   use ExUnit.Case, async: false
 
-  alias HalC2.Orchestration.Delegation
+  alias HalC2.Orchestration.{Delegation, Recovery}
   alias HalC2.StreamState
 
   @moduletag :tmp_dir
@@ -84,6 +84,56 @@ defmodule HalC2.Orchestration.DelegationTest do
 
   defp completed(status) when status in ["running", "queued"], do: %{}
   defp completed(_), do: %{"completedAt" => @at}
+
+  defp task do
+    "p"
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.get("subagent")
+    |> Map.get("task")
+  end
+
+  describe "a task whose child was interrupted at boot" do
+    test "is interrupted when the project does not continue it" do
+      :ok = HalC2.Shell.subscribe(self())
+      delegate("running")
+      assert_receive {:hal_c2_shell, {:rows, _, [{"c", {"thread", _}}]}}, 1_000
+
+      assert "c" in Recovery.run()
+      assert task()["status"] == "running"
+
+      Recovery.continue()
+
+      assert %{"status" => "interrupted", "completionDelivery" => %{"state" => "disposed"}} =
+               task()
+    end
+  end
+
+  describe "a task whose child thread was never created" do
+    test "fails at boot but is left alone once a launch may be under way" do
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p"),
+          {"subagent", "task",
+           %{
+             "s" => %{
+               "id" => "task",
+               "origin" => "app_owned",
+               "childThreadId" => "c",
+               "status" => "running",
+               "completionDelivery" => %{"state" => "pending"}
+             }
+           }},
+          {"node", "task",
+           %{"s" => %{"id" => "task", "kind" => "subagent", "status" => "running"}}}
+        ])
+
+      assert Delegation.reconcile("p", false) == 0
+      assert task()["status"] == "running"
+      assert Delegation.reconcile("p") == 1
+      assert %{"status" => "failed", "completionDelivery" => %{"state" => "disposed"}} = task()
+    end
+  end
 
   describe "a request the provider instance refuses" do
     test "ends the task failed instead of leaving it running" do

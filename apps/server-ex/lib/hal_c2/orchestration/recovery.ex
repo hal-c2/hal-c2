@@ -15,7 +15,8 @@ defmodule HalC2.Orchestration.Recovery do
   ended (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
   that ends (`Delegation.finished/3`); one whose child had already stopped without
-  telling it settles now (`Delegation.reconcile/1`).
+  telling it settles now (`Delegation.reconcile/2`), and one whose child this boot
+  interrupted settles once `continue/0` has seen whether the child goes on.
 
   Only threads whose sidebar row shows an active run or background work are opened.
   """
@@ -52,6 +53,7 @@ defmodule HalC2.Orchestration.Recovery do
     # Before any run is interrupted: a child still running when the MC stopped is not
     # one that ended, and `continue/0` may resume it to report as it should.
     reconciled = Map.new(threads, &{&1, HalC2.Orchestration.Delegation.reconcile(&1)})
+    :persistent_term.put({__MODULE__, :delegating}, threads)
 
     settled =
       for thread_id <- threads,
@@ -161,6 +163,11 @@ defmodule HalC2.Orchestration.Recovery do
     for {thread_id, run, commands} <- background,
         continue?(thread_id, run),
         do: continuation(thread_id, run, background_text(commands))
+
+    # A child this boot interrupted and nothing continued will not report: its task ends.
+    delegating = :persistent_term.get({__MODULE__, :delegating}, [])
+    :persistent_term.erase({__MODULE__, :delegating})
+    for thread_id <- delegating, do: HalC2.Orchestration.Delegation.reconcile(thread_id, false)
 
     :ok
   end
