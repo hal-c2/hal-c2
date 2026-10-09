@@ -45,7 +45,7 @@ yet.
 
 There is no `hal-c2` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/hal-c2/hal-c2#install-vp)):
+([Install vp](https://github.com/hal-c2/hal-c2#running-from-source)):
 
 ```bash
 git clone https://github.com/hal-c2/hal-c2

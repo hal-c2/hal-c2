@@ -2,7 +2,7 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp) and [mise](https://mise.jdx.dev).
+Install `vp` using the [root README](../../README.md#running-from-source) and [mise](https://mise.jdx.dev).
 From the repository root:
 
 ```sh
