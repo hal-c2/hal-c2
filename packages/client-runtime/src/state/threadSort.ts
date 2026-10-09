@@ -165,9 +165,12 @@ export function getLatestThreadForProject<
 // never touched, and every client connected to the same servers converges
 // on the same order.
 const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
+// The longest key the MC stores (apps/server-ex/lib/hal_c2/orchestration.ex).
+// A move that would need a longer one rewrites the section instead.
+const PIN_ORDER_KEY_MAX_LENGTH = 64;
 
 function isValidPinOrderKey(key: string): boolean {
-  if (key.length === 0) return false;
+  if (key.length === 0 || key.length > PIN_ORDER_KEY_MAX_LENGTH) return false;
   for (const char of key) {
     if (!PIN_ORDER_DIGITS.includes(char)) return false;
   }
@@ -200,15 +203,17 @@ function pinOrderMidpoint(a: string, b: string): string {
 
 /** Key that sorts strictly between two neighbors; null bounds mean "top of
     the pinned block" / "bottom of the keyed run". Returns null instead of
-    throwing when existing keys are corrupt or out of order — callers fall
-    back to rewriting the section. */
+    throwing when existing keys are corrupt or out of order, or when the key
+    would outgrow PIN_ORDER_KEY_MAX_LENGTH — callers fall back to rewriting
+    the section. */
 export function pinOrderKeyBetween(before: string | null, after: string | null): string | null {
   const a = before ?? "";
   const b = after ?? "";
   if (a !== "" && !isValidPinOrderKey(a)) return null;
   if (b !== "" && !isValidPinOrderKey(b)) return null;
   if (b !== "" && a >= b) return null;
-  return pinOrderMidpoint(a, b);
+  const key = pinOrderMidpoint(a, b);
+  return key.length > PIN_ORDER_KEY_MAX_LENGTH ? null : key;
 }
 
 /** Evenly spaced keys for materializing an order. Wider keys keep a large

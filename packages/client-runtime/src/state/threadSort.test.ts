@@ -294,6 +294,34 @@ describe("generateSpreadPinOrderKeys", () => {
   );
 });
 
+describe("pinOrderKeyBetween key length", () => {
+  it("stops at the MC's 64 letters, and the planner rewrites the section", () => {
+    // Dropping a thread into the same gap again and again grows its key.
+    let after = "n";
+    let drops = 0;
+    for (;;) {
+      const key = pinOrderKeyBetween("m", after);
+      if (key === null) break;
+      expect(key.length).toBeLessThanOrEqual(64);
+      after = key;
+      drops += 1;
+    }
+    expect(drops).toBeGreaterThan(10);
+    expect(pinOrderKeyBetween("m", "b".repeat(65))).toBeNull();
+
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "moved", "b"],
+      keysById: new Map([
+        ["a", "m"],
+        ["b", after],
+      ]),
+      movedId: "moved",
+    });
+    expect(assignments.length).toBeGreaterThan(1);
+    for (const { orderKey } of assignments) expect(orderKey.length).toBeLessThanOrEqual(64);
+  });
+});
+
 describe("sortActiveThreadsByOrderKey", () => {
   it("keeps new and reopened threads ahead of the saved order", () => {
     const sorted = sortActiveThreadsByOrderKey([
