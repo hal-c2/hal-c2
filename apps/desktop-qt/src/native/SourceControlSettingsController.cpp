@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "JsonNumbers.h"
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -85,7 +86,7 @@ int fetchSeconds(const QJsonObject& settings) {
   const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
   const QJsonObject overrides = activity.value(QLatin1String("overrides")).toObject();
   if (activity.value(QLatin1String("profile")) == QLatin1String("custom") && overrides.value(kFetchKey).isDouble()) {
-    return int(std::lround(overrides.value(kFetchKey).toDouble() / 1000));
+    return jsonnumbers::saturate<int>(std::round(overrides.value(kFetchKey).toDouble() / 1000));
   }
   return presetFetchSeconds(baseProfile(activity));
 }

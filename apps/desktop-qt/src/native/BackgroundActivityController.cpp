@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "JsonNumbers.h"
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -130,7 +131,7 @@ private:
                                         {QStringLiteral("profile"), profile},
                                         {QStringLiteral("mixed"), reading.mixed},
                                         {QStringLiteral("advanced"), custom && !reading.mixed},
-                                        {QStringLiteral("fetchSeconds"), overrides.value(kFetch).isDouble() ? int(std::lround(overrides.value(kFetch).toDouble() / 1000))
+                                        {QStringLiteral("fetchSeconds"), overrides.value(kFetch).isDouble() ? jsonnumbers::saturate<int>(std::round(overrides.value(kFetch).toDouble() / 1000))
                                                                                                          : presetFetch(baseOf(activity))},
                                         // Every preset pauses while the host is locked.
                                         {QStringLiteral("pauseWhenLocked"), overrides.value(kLocked).toBool(true)},
