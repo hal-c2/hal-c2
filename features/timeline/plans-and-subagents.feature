@@ -175,6 +175,20 @@ Feature: Plans and subagents
     Then it says which thread it came from
     And the user can open that thread
 
+  @shared @backlog-mobile
+  Scenario: The agent's own background wake-up is not a message from another agent
+    Given the agent's background work woke it up
+    When the user reads the parent thread
+    Then the timeline says "Background activity updated"
+    And nothing says a message was sent by another agent
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A wake-up a thread stored as a user message is not from another agent either
+    Given a thread stored the agent's own wake-up as a user message
+    When the user reads the parent thread
+    Then the timeline says "Background activity updated"
+    And nothing says a message was sent by another agent
+
   @mc @shared @backlog-mobile
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
