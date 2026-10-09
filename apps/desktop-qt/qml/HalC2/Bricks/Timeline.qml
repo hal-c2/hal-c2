@@ -482,6 +482,7 @@ Item {
         onModelChanged: restart()
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
+            Accessible.name: qsTr("Scroll conversation")
             onPressedChanged: view.settleAway()
         }
 

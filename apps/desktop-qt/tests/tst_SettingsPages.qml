@@ -95,6 +95,29 @@ Item {
             compare(Rows.groupingFromToggle(true, ""), "repository");
         }
 
+        // The scroll bar is named for the page, not for the row text next to it.
+        function test_the_settings_scroll_bar_has_its_own_name() {
+            const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
+            compare(findChild(page, "scrollBar").Accessible.name, "Scroll settings");
+        }
+
+        // The text generation combo sits in the same control column as the other combos on General.
+        function test_the_text_generation_combo_is_as_wide_as_the_other_combos() {
+            const host = createTemporaryObject(hostComponent, root, { section: "/settings/general" });
+            tryCompare(host, "status", Loader.Ready);
+            const page = host.item;
+            const generation = findChild(findChild(page, "settingsRow:text-generation-model"), "control");
+            const timestamp = findChild(findChild(page, "settingsRow:timestampFormat"), "control");
+            compare(generation.width, timestamp.width);
+        }
+
+        // The desktop has no browser, so the time format copy must name the system clock.
+        function test_timeFormatDescribesTheSystemClockNotABrowser() {
+            const spec = Rows.general.find(row => row.key === "timestampFormat");
+            verify(!spec.description.includes("browser"), spec.description);
+            verify(spec.description.includes("system"), spec.description);
+        }
+
         function test_inactiveSettlingStartsFromTheDefault() {
             verify(!Rows.settleOn(null));
             verify(Rows.settleOn(7));

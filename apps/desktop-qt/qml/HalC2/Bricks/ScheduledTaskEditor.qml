@@ -82,7 +82,9 @@ Dialog {
         contentHeight: form.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar {}
+        ScrollBar.vertical: ScrollBar {
+            Accessible.name: qsTr("Scroll task form")
+        }
 
         ColumnLayout {
             id: form
