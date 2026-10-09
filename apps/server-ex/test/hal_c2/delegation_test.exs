@@ -92,12 +92,33 @@ defmodule HalC2.Orchestration.DelegationTest do
   defp completed(status) when status in ["running", "queued"], do: %{}
   defp completed(_), do: %{"completedAt" => @at}
 
+  defp end_child(status) do
+    _ =
+      HalC2.Streams.transact("c", :thread, fn state ->
+        {[
+           HalC2.Orchestration.upsert(state, "run", "cr", fn run ->
+             Map.merge(run, %{"status" => status, "completedAt" => @at})
+           end)
+         ], :ok}
+      end)
+
+    :ok
+  end
+
   defp task do
     "p"
     |> HalC2.Streams.ensure()
     |> HalC2.Streams.Server.state()
     |> StreamState.get("subagent")
     |> Map.get("task")
+  end
+
+  defp woken? do
+    "p"
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.get("message")
+    |> Map.has_key?("message:delegate-result:task")
   end
 
   describe "a task whose child was interrupted at boot" do
@@ -162,6 +183,26 @@ defmodule HalC2.Orchestration.DelegationTest do
         |> Enum.find(&(&1["id"] != "task"))
 
       assert %{"status" => "failed", "completionDelivery" => %{"state" => "disposed"}} = failed
+    end
+  end
+
+  describe "a wait that times out as the child ends" do
+    test "answers with the end and does not leave the caller to be woken" do
+      delegate("running", %{"completionWake" => "settled_only"})
+
+      hook_with(fn
+        :expiring, _ ->
+          end_child("completed")
+          Delegation.finished("c", "cr", "completed")
+
+        _, _ ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "completed"} = answer} = Delegation.wait("p", "task", 1)
+      refute answer["waitTimedOut"]
+      assert task()["completionDelivery"]["state"] == "acknowledged"
+      refute woken?()
     end
   end
 
