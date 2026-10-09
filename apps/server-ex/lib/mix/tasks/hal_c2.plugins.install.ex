@@ -40,7 +40,9 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
     case HalC2.Cluster.Command.request(:post, "/api/plugins/rescan", %{}, 90_000) do
       {:ok, %{"plugins" => listed}} ->
         for %{"id" => id} = entry <- listed, id in ids do
-          Mix.shell().info("#{id} #{entry["version"]}: #{entry["error"] || entry["status"]}")
+          # A package that failed to reload leaves the one before it running.
+          said = entry["reloadError"] || entry["error"] || entry["status"]
+          Mix.shell().info("#{id} #{entry["version"]}: #{said}")
         end
 
       {:error, message} ->
@@ -71,11 +73,16 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
         cd: @checkout
       )
 
+    package = Path.join(@checkout, "plugins/#{id}")
+
+    # A link that leads out of the package is left out, as `HalC2.Plugins.Package.copy/2` does.
     for file <- String.split(files, <<0>>, trim: true),
-        File.regular?(Path.join(@checkout, file)) do
-      to = Path.join(staged, Path.relative_to(file, "plugins/#{id}"))
+        relative = Path.relative_to(file, "plugins/#{id}"),
+        File.regular?(Path.join(package, relative)),
+        {:ok, _} <- [Path.safe_relative(relative, package)] do
+      to = Path.join(staged, relative)
       File.mkdir_p!(Path.dirname(to))
-      File.cp!(Path.join(@checkout, file), to)
+      File.cp!(Path.join(package, relative), to)
     end
 
     if File.exists?(target), do: File.rename!(target, old)

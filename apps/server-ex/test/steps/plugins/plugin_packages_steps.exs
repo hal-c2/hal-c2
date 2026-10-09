@@ -217,17 +217,29 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     Map.put(context, :plugin, id)
   end
 
+  # The checkout's files are those git has or would have; what it ignores stays behind.
   step "the MC's copy holds the checkout's files and no others", context do
-    files = fn dir ->
-      for path <- Path.wildcard(Path.join(dir, "**"), match_dot: true),
+    installed = Packages.dir(context, context.plugin)
+    package = "plugins/#{context.plugin}"
+
+    {listed, 0} =
+      System.cmd("git", ~w(ls-files -z --cached --others --exclude-standard) ++ [package],
+        cd: @checkout
+      )
+
+    checkout =
+      for file <- String.split(listed, <<0>>, trim: true),
+          File.regular?(Path.join(@checkout, file)),
+          into: %{},
+          do: {Path.relative_to(file, package), File.read!(Path.join(@checkout, file))}
+
+    copy =
+      for path <- Path.wildcard(Path.join(installed, "**"), match_dot: true),
           File.regular?(path),
           into: %{},
-          do: {Path.relative_to(path, dir), File.read!(path)}
-    end
+          do: {Path.relative_to(path, installed), File.read!(path)}
 
-    assert files.(Packages.dir(context, context.plugin)) ==
-             files.(Path.join([@checkout, "plugins", context.plugin]))
-
+    assert copy == checkout
     context
   end
 
