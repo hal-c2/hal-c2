@@ -520,11 +520,16 @@ defmodule HalC2.Diagnostics do
 
   # Every process under `root`, root first, with its depth and children.
   defp tree(root) do
-    ps = ~w(-axo pid=,ppid=,pgid=,stat=,%cpu=,rss=,vsz=,time=,etime=,lstart=,command=)
+    format = "pid=,ppid=,pgid=,stat=,%cpu=,rss=,vsz=,time=,etime=,lstart=,command="
 
-    case System.cmd("ps", ps, stderr_to_stdout: true, env: [{"LC_ALL", "C"}]) do
+    case System.cmd("ps", ["-axo", format], stderr_to_stdout: true, env: [{"LC_ALL", "C"}]) do
       {out, 0} ->
-        rows = for line <- String.split(out, "\n", trim: true), row = row(line), do: row
+        # `ps` is a child of the MC and lists itself; its row is not a process the MC started.
+        rows =
+          for line <- String.split(out, "\n", trim: true),
+              row = row(line),
+              not String.ends_with?(row.command, " -axo " <> format),
+              do: row
         children = Enum.group_by(rows, & &1.ppid)
 
         case Enum.find(rows, &(&1.pid == root)) do

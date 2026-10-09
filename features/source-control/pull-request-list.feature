@@ -138,6 +138,12 @@ Feature: Browsing pull requests
     When the user opens the pull requests page
     Then the user is told "Nothing under these filters" and to widen the filters
 
+  @desktop @backlog-desktop
+  Scenario: The pull requests page keeps its filters in place while it loads
+    Given the pull requests are still being read
+    When the user opens the pull requests page
+    Then the header and filters stay at the top and "Loading pull requests…" takes the list's place
+
   @desktop
   Scenario Outline: The page's filters narrow the list
     Given the user is on the pull requests page

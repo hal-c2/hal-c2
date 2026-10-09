@@ -198,6 +198,13 @@ Rectangle {
             }
         }
 
+        // Takes the spare height while there are no rows, as the list does
+        // once there are, so the header and filters stay at the top.
+        Item {
+            Layout.fillHeight: true
+            visible: page.items.length === 0
+        }
+
         ListView {
             id: list
 
