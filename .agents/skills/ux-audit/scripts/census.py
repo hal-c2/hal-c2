@@ -14,8 +14,18 @@ import sqlite3
 import sys
 from collections import Counter
 
-MARKUP = re.compile(r"^\s*(<[A-Za-z_][\w-]*[\s>]|[{\[]\s*\")")
+MARKUP = re.compile(r"^\s*<[A-Za-z_][\w-]*[\s>]")
 PER_GROUP = 5
+
+
+def is_payload(text: str) -> bool:
+    """Markup, or a JSON object or array: what tools and agents inject, not what people type."""
+    if MARKUP.match(text):
+        return True
+    try:
+        return isinstance(json.loads(text), (dict, list))
+    except ValueError:
+        return False
 
 
 def main() -> None:
@@ -29,7 +39,7 @@ def main() -> None:
     stream_of = dict(con.execute("select id, key from streams where kind = 'thread'"))
     markup = Counter()
     for stream, text in con.execute("select stream, text from messages where role = 'user'"):
-        if MARKUP.match(text):
+        if is_payload(text):
             markup[stream] += 1
     subagents = Counter(dict(con.execute("select stream, count(*) from events where kind = 'subagent' group by stream")))
     # A scheduled run's message names its task; the thread keeps the creator of the task.

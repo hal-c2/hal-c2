@@ -9,7 +9,7 @@ scratch one seeded with a copy of real data. Nothing is stubbed, and nothing
 touches the developer's display, session bus or HAL-C2 home.
 
 Base severities on the **ui-ux-pro-max** skill. Its search tool
-(`python3 ~/.claude/skills/ui-ux-pro-max/scripts/search.py "<outcome>" --domain ux`)
+(`ux guide "<outcome>"`)
 gives you a named guideline to argue a severity against and to phrase a fix
 in (contrast, truncation, feedback, error messages, focus, navigation,
 density). Also read the **qt-qml** skill before proposing QML fixes. Fixes go

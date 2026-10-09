@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ux <command> ...: drive the desktop:cua sandbox for an audit. bootstrap.sh copies this into
 # $UX_AUDIT_DIR with the checkout filled in; run `ux help` for the commands.
+@ROOT@
 set -euo pipefail
-root="@ROOT@"
 dir="${UX_AUDIT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 home="${HAL_C2_CUA_HOME:-$root/.hal-c2/cua}"
 runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -120,6 +120,7 @@ case ${1:-help} in
   sheet) shift && sheet "$@" ;;
   census) python3 "$dir/census.py" "$home/mc/data/hal-c2.sqlite" ;;
   ledger) python3 "$dir/ledger.py" "$root/features" "${2:-}" ;;
+  guide) python3 "$guide" "${2:?usage: ux guide <outcome>}" --domain ux ;;
   logs) tail -n "${2:-40}" "$home/app.log" "$home/mc.log" ;;
   help | *)
     cat << 'HELP'
@@ -135,6 +136,7 @@ ux cov <area> <size> <appearance> <shot> | ux cov <area> --skip <reason>
 ux sheet <out> <shot>...    contact sheet of shots for side-by-side comparison
 ux census                   the seeded threads worth visiting, grouped by what makes them unusual
 ux ledger [path filter]     @desktop scenarios as claimed / backlog / dropped with file:line
+ux guide <outcome>          the ui-ux-pro-max guidelines for an outcome, to argue a severity against
 ux logs [n]                 tail the app's and the MC's logs
 HELP
     ;;

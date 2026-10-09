@@ -18,8 +18,16 @@ if ((${#missing[@]})); then
   exit 1
 fi
 # Severities are argued against ui-ux-pro-max; an audit without it would claim a basis it never had.
-if [[ ! -f $HOME/.claude/skills/ui-ux-pro-max/scripts/search.py ]]; then
-  echo "bootstrap: the ui-ux-pro-max skill is missing; install it, then re-run:" >&2
+# Looked up in every place Claude Code, Codex and the Agent Skills installer put skills.
+guide=
+for skills in "$root/.agents/skills" "$root/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/skills" "${CODEX_HOME:-$HOME/.codex}/skills"; do
+  if [[ -f $skills/ui-ux-pro-max/scripts/search.py ]]; then
+    guide="$skills/ui-ux-pro-max/scripts/search.py"
+    break
+  fi
+done
+if [[ -z $guide ]]; then
+  echo "bootstrap: the ui-ux-pro-max skill is missing from .agents/skills, .claude/skills and ~/.codex/skills; install it, then re-run:" >&2
   echo "  npx skills add https://github.com/nextlevelbuilder/ui-ux-pro-max-skill --skill ui-ux-pro-max" >&2
   exit 1
 fi
@@ -37,7 +45,10 @@ if [[ -s $out/findings.jsonl && ${UX_AUDIT_RESUME:-} != 1 ]]; then
 fi
 touch "$out/findings.jsonl" "$out/coverage.jsonl"
 cp "$here/build_report.py" "$here/github_issues.py" "$here/census.py" "$here/ledger.py" "$out/"
-sed "s|@ROOT@|$root|" "$here/ux" > "$out/ux"
+# Shell-quoted and substituted without sed, so any legal path survives.
+while IFS= read -r line; do
+  if [[ $line == @ROOT@ ]]; then printf 'root=%q\nguide=%q\n' "$root" "$guide"; else printf '%s\n' "$line"; fi
+done < "$here/ux" > "$out/ux"
 chmod +x "$out/ux"
 command -v montage > /dev/null || echo "bootstrap: ImageMagick's montage is missing; ux sheet will not work" >&2
 
