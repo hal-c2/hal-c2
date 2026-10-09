@@ -15,6 +15,10 @@ mise fuzz:valgrind desktop                     # unit-test mode under Memcheck
 mise fuzz:valgrind desktop TimelineModelFuzz
 ```
 
+`FUZZ_STACK_KB` (8192, the main thread's stack) is the stack limit of every
+run; fuzztest's own default is 128 KB, which reports deep but legitimate
+recursion as a crash.
+
 There are two builds of the same files:
 
 - `fuzz:desktop` builds `build/fuzz` with Clang, coverage instrumentation,

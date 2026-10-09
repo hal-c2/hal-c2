@@ -65,6 +65,12 @@ int main(int argc, char** argv) {
   if (const QByteArray corpus = qgetenv("HAL_C2_FUZZ_CORPUS"); argc == 1 && !corpus.isEmpty()) {
     flags = {"--corpus_database=" + corpus.toStdString(), "--replay_corpus_for=inf"};
   }
+  // fuzztest's stack limit is 128 KB, far below the 8 MB of the main thread
+  // the code runs on, and reports recursion over deep input as a crash.
+  // FUZZ_STACK_KB (8192) sets it unless a flag does.
+  bool hasStackLimit = false;
+  for (int i = 1; i < argc; ++i) hasStackLimit = hasStackLimit || std::string(argv[i]).starts_with("--stack_limit_kb");
+  if (!hasStackLimit) flags.push_back("--stack_limit_kb=" + qEnvironmentVariable("FUZZ_STACK_KB", QStringLiteral("8192")).toStdString());
   std::vector<char*> args(argv, argv + argc);
   for (std::string& flag : flags) args.push_back(flag.data());
   args.push_back(nullptr);

@@ -21,6 +21,16 @@ const std::vector<std::string> kWords{"diff --git a/", " b/", "--- a/", "+++ b/"
                                       "\n ", "\\ No newline at end of file", "rename from", "new file mode",
                                       "Binary files", "/dev/null", "\n"};
 
+// A path of `folders` folders and a file.
+std::string deepPath(int folders) {
+  std::string path;
+  for (int i = 0; i < folders; ++i) path += "d/";
+  return path + "f";
+}
+
+// Room for the seed with a path of PATH_MAX; the engine's own default is 5000.
+constexpr size_t kMaxPatch = 20000;
+
 // An index the engine mostly keeps small (so ranges overlap the patch's line
 // numbers) but also sends out of range, negative, or huge.
 auto Index() { return fuzztest::OneOf(fuzztest::InRange<int>(-5, 40), fuzztest::Arbitrary<int>()); }
@@ -118,16 +128,14 @@ void PatchReads(const std::string& text, bool split, int file, const std::string
   ASSERT_EQ(model.fileCount(), 0);
 }
 FUZZ_TEST(DiffModel, PatchReads)
-    .WithDomains(fuzz::Text(kWords), fuzztest::Arbitrary<bool>(), Index(), fuzz::Word({"old", "new", "other"}), Index(),
-                 Index())
+    .WithDomains(fuzz::Text(kWords).WithMaxSize(kMaxPatch), fuzztest::Arbitrary<bool>(), Index(),
+                 fuzz::Word({"old", "new", "other"}), Index(), Index())
     .WithSeeds([] {
       // Real diffs: a modified file, added and renamed and binary files, a
-      // deleted file with no newline at its end, and a path 150 segments deep
-      // (tree() recurses once per segment: about 440 bytes of stack each, against
-      // fuzztest's 128 KB default, so 300 segments would stop the run).
-      std::string deep;
-      for (int i = 0; i < 149; ++i) deep += "d/";
-      deep += "f";
+      // deleted file with no newline at its end, and a path 2000 segments deep
+      // (about what PATH_MAX allows; tree() recurses once per segment, about 440
+      // bytes of stack each, which fits the 8 MB the fuzz run allows).
+      const std::string deep = deepPath(1999);
       const std::string nested = "diff --git a/" + deep + " b/" + deep + "\n--- a/" + deep + "\n+++ b/" + deep +
                                  "\n@@ -1 +1 @@\n-x\n+y\n";
       return std::vector<std::tuple<std::string, bool, int, std::string, int, int>>{
@@ -173,6 +181,7 @@ FUZZ_TEST(DiffModel, TreeOfPaths)
       return std::vector<std::tuple<std::vector<std::string>>>{
           {{"src/cart.ts", "src/tax.ts", "README"}},
           {{"a/b", "a", "a/", "/", ""}},
+          {{deepPath(1999)}},
       };
     });
 
