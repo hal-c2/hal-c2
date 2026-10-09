@@ -37,6 +37,16 @@ Feature: Connection health
     Then the client retries with delays that grow up to a cap
     And reconnects when the environment answers again
 
+  # Proved by tst_ShellExamples.cpp (the notice's place) and tst_ThreadView.qml (the thread
+  # stays quiet), not yet by a step (hal-c2/hal-c2#145, #163).
+  @desktop @backlog-desktop
+  Scenario: A dropped connection is reported once, with one way to retry
+    Given the user is reading a thread
+    When the connection drops
+    Then one notice says the environment is being reconnected, with one Try again
+    And the thread does not say its MC cannot be reached
+    And the notice covers neither the window controls, the header nor the thread
+
   @desktop @mobile @backlog-mobile
   Scenario: An offline device waits instead of retrying
     Given the device has no network
