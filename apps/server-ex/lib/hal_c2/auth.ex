@@ -444,14 +444,21 @@ defmodule HalC2.Auth do
 
   @impl true
   def handle_cast({:connected, id, socket}, state) do
-    Process.monitor(socket)
-    :ets.insert(@live, {{:socket, socket}, id})
+    # The socket read its session before it connected, so a revoke may have come first:
+    # it is told to close, as the sockets open at a revoke are.
+    if session_exists?(state.path, id) do
+      Process.monitor(socket)
+      :ets.insert(@live, {{:socket, socket}, id})
 
-    with_db(state.path, fn db ->
-      exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
-    end)
+      with_db(state.path, fn db ->
+        exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
+      end)
 
-    {:noreply, broadcast(state, client_events(state, id))}
+      {:noreply, broadcast(state, client_events(state, id))}
+    else
+      send(socket, {:hal_c2_session_revoked, id})
+      {:noreply, state}
+    end
   end
 
   def handle_cast({:unsubscribe, pid}, state) do
@@ -761,6 +768,9 @@ defmodule HalC2.Auth do
       []
     )
   end
+
+  defp session_exists?(path, id),
+    do: with_db(path, &(query(&1, "SELECT 1 FROM auth_sessions WHERE id = ?1", [id]) != []))
 
   defp scopes(nil), do: @standard_scopes
   defp scopes(text), do: String.split(text)
