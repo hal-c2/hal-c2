@@ -836,7 +836,7 @@ defmodule HalC2.Orchestration do
   @doc """
   Stops an idle thread's provider processes and marks its sessions stopped; the
   next run starts them again and resumes the provider's thread. Refused while a
-  run is active.
+  run is active, and by a runtime that took a turn since.
   """
   def release_session(thread_id) do
     released =
@@ -861,8 +861,7 @@ defmodule HalC2.Orchestration do
         end
       end)
 
-    if released == :ok, do: stop_session(thread_id)
-    released
+    if released == :ok, do: stop_session(thread_id), else: released
   end
 
   # A runtime runs under its provider plugin's sessions supervisor (`HalC2.Plugins`).
@@ -885,12 +884,33 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
+  # Each runtime stops if it is idle. The thread was idle when its caller looked, but a
+  # message may have started a turn since; that runtime keeps it (`:busy`).
+  defp release_runtimes(thread_id) do
+    kept =
+      for registry <- [
+            HalC2.Codex.Registry,
+            HalC2.Claude.Registry,
+            HalC2.Acp.Registry,
+            HalC2.Pi.Registry
+          ],
+          Process.whereis(registry) != nil,
+          {pid, _} <- Registry.lookup(registry, thread_id),
+          (try do
+             GenServer.call(pid, :release, 15_000) == :busy
+           catch
+             :exit, _ -> false
+           end),
+          do: pid
+
+    if kept == [], do: :ok, else: :busy
+  end
+
   # The stopped session's agent loses its HAL-C2 tools; the next session gets new ones.
   # A deleted thread only stops its runtimes: its agent's credential still reaches
   # the tools, which answer that the calling thread is gone.
   defp stop_session(thread_id) do
-    stop_runtimes(thread_id)
-    HalC2.Mcp.revoke(thread_id)
+    with :ok <- release_runtimes(thread_id), do: HalC2.Mcp.revoke(thread_id)
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -932,7 +952,7 @@ defmodule HalC2.Orchestration do
   defp begin_turn(thread_id, turn) do
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-    :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
+    :ok = start_turn(thread_id, turn)
   catch
     kind, reason ->
       require Logger
@@ -944,6 +964,15 @@ defmodule HalC2.Orchestration do
         "failed",
         HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
       )
+  end
+
+  # A runtime that released itself as idle just before this run began stops with the
+  # call unanswered (or is gone by the call); a new one takes the turn.
+  defp start_turn(thread_id, turn) do
+    runtime(turn.ids.instance).start_turn(thread_id, turn)
+  catch
+    :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
+      runtime(turn.ids.instance).start_turn(thread_id, turn)
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
