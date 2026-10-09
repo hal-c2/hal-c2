@@ -95,6 +95,13 @@ Item {
             compare(Rows.groupingFromToggle(true, ""), "repository");
         }
 
+        // The desktop has no browser, so the time format copy must name the system clock.
+        function test_timeFormatDescribesTheSystemClockNotABrowser() {
+            const spec = Rows.general.find(row => row.key === "timestampFormat");
+            verify(!spec.description.includes("browser"), spec.description);
+            verify(spec.description.includes("system"), spec.description);
+        }
+
         function test_inactiveSettlingStartsFromTheDefault() {
             verify(!Rows.settleOn(null));
             verify(Rows.settleOn(7));
