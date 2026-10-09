@@ -196,6 +196,31 @@ defmodule HalC2.ThreadMoveTest do
     assert holders(context, id) == ["laptop"]
   end
 
+  # The mover checked the thread was still in its move, then stopped its session, with
+  # nothing between: a settle let go meanwhile, "desktop" moved the thread back, and the
+  # mover stopped the session of the thread that came back. One lets go at a time now.
+  # Found by proof/hal_c2/thread_move_proof_test.exs.
+  test "a settle waits for the mover letting go, so a thread that comes back keeps its session",
+       %{context: context} do
+    {context, id, mover} = hold_move(context, :letting_go)
+    Application.delete_env(:hal_c2, :thread_move_hook)
+
+    assert HalC2.ThreadMove.settle(id) == [id]
+
+    assert {:error, _} =
+             Machines.on(context, "desktop", HalC2.ThreadMove, :move, [
+               id,
+               "laptop",
+               [confirmed: true]
+             ])
+
+    send(mover, :release)
+    assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
+
+    assert HalC2.ThreadMove.settle(id) == []
+    assert holders(context, id) == ["desktop"]
+  end
+
   # Starts moving a thread "Plan" from "laptop" to "desktop" and holds it at `stage`.
   # Each of `others` joins the cluster with a project "shop".
   defp hold_move(context, stage \\ :sending, others \\ ["desktop"]) do
