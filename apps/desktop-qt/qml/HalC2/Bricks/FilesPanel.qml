@@ -100,7 +100,7 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: root.fileOpen ? 2 : 1
+            Layout.verticalStretchFactor: 1
             Layout.minimumHeight: 80
 
             ColumnLayout {
@@ -219,7 +219,7 @@ Rectangle {
             objectName: "fileViewer"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: 3
+            Layout.verticalStretchFactor: 3
             visible: root.fileOpen
             spacing: 0
 

@@ -214,6 +214,21 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the thread has no pull request
       When the user looks at what can be added to the right panel
       Then pull request cannot be added
+      And the Add menu says "This thread's branch has no pull request yet." for pull request
+
+    @desktop @backlog-desktop
+    Scenario: The right panel is set apart from the thread by a border
+      Given the right panel is open
+      Then a 1 px border in the theme's border colour marks its leading edge
+      When the user maximizes the right panel
+      Then the border is not drawn
+
+    @desktop @backlog-desktop
+    Scenario: Tabs that do not fit scroll and keep the active one in view
+      Given the right panel has more tabs than fit
+      When the user adds a Device tab
+      Then the Device tab and its close button are in view
+      And scroll buttons are offered
 
     @desktop
     Scenario: Right panel contents survive closing the panel

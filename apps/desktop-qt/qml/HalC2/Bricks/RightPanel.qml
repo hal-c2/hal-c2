@@ -101,12 +101,42 @@ Rectangle {
             ListView {
                 id: tabs
 
+                // The room before the scroll buttons take any, so whether the
+                // strip overflows does not depend on the buttons being shown.
+                readonly property real fullWidth: (maximizeButton.visible ? maximizeButton.x : addButton.x) - x
+                readonly property bool overflowing: contentWidth > fullWidth
+
+                function showActive() {
+                    const index = (panel.model?.tabs ?? []).findIndex(entry => entry.id === panel.activeId);
+                    if (index < 0)
+                        return;
+                    positionViewAtIndex(index, ListView.Contain);
+                    // The view guesses the size of tabs it has not built yet,
+                    // so settle on the built tab's real edges.
+                    const item = itemAtIndex(index);
+                    if (!item)
+                        return;
+                    if (item.x < contentX)
+                        contentX = item.x;
+                    else if (item.x + item.width > contentX + width)
+                        contentX = item.x + item.width - width;
+                }
+
                 anchors.left: parent.left
                 anchors.leftMargin: panel.ownToggle ? 36 : 8
-                anchors.right: maximizeButton.visible ? maximizeButton.left : addButton.left
+                anchors.right: scrollButtons.visible ? scrollButtons.left : maximizeButton.visible ? maximizeButton.left : addButton.left
                 anchors.top: parent.top
                 height: 36
                 visible: panel.open
+                onCountChanged: showActive()
+                onWidthChanged: showActive()
+                onContentWidthChanged: showActive()
+                Connections {
+                    target: panel
+                    function onActiveIdChanged() {
+                        tabs.showActive();
+                    }
+                }
                 orientation: ListView.Horizontal
                 spacing: 2
                 clip: true
@@ -125,6 +155,9 @@ Rectangle {
                     width: tabRow.implicitWidth + 16
                     height: 36
                     hoverEnabled: true
+                    ToolTip.visible: hovered && titleText.truncated
+                    ToolTip.delay: 600
+                    ToolTip.text: modelData.title
                     Accessible.role: Accessible.PageTab
                     Accessible.name: modelData.title
                     Keys.onReturnPressed: clicked()
@@ -150,7 +183,11 @@ Rectangle {
                         }
 
                         Text {
+                            id: titleText
+
                             text: tab.modelData.title
+                            width: Math.min(implicitWidth, 112)
+                            elide: Text.ElideRight
                             color: tab.active ? panel.foreground : panel.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             anchors.verticalCenter: parent.verticalCenter
@@ -170,6 +207,41 @@ Rectangle {
                             onClicked: Shell.dispatch("rightPanel.close", { id: tab.modelData.id })
                         }
                     }
+                }
+            }
+
+            Row {
+                id: scrollButtons
+
+                objectName: "panelScrollTabs"
+                anchors.right: maximizeButton.visible ? maximizeButton.left : addButton.left
+                anchors.top: parent.top
+                visible: panel.open && tabs.overflowing
+
+                ShellButton {
+                    objectName: "panelScrollLeft"
+                    subtle: true
+                    width: 28
+                    height: 36
+                    iconName: "chevron-left"
+                    iconSize: 14
+                    iconTint: panel.muted
+                    enabled: !tabs.atXBeginning
+                    Accessible.name: qsTr("Scroll tabs left")
+                    onClicked: tabs.contentX = Math.max(tabs.originX, tabs.contentX - tabs.width / 2)
+                }
+
+                ShellButton {
+                    objectName: "panelScrollRight"
+                    subtle: true
+                    width: 28
+                    height: 36
+                    iconName: "chevron-right"
+                    iconSize: 14
+                    iconTint: panel.muted
+                    enabled: !tabs.atXEnd
+                    Accessible.name: qsTr("Scroll tabs right")
+                    onClicked: tabs.contentX = Math.min(tabs.originX + tabs.contentWidth - tabs.width, tabs.contentX + tabs.width / 2)
                 }
             }
 
@@ -226,6 +298,7 @@ Rectangle {
                         text: qsTr("Files")
                         iconName: "files"
                         enabled: panel.open && panel.model.canAdd.files
+                        reason: enabled ? "" : panel.model?.addReasons?.files ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "files"
                         })
@@ -253,18 +326,22 @@ Rectangle {
                     }
 
                     ShellMenuItem {
+                        objectName: "panelAddPullRequests"
                         text: qsTr("Pull requests")
-                        iconName: "git-pull-request"
+                        iconName: "link-2"
                         enabled: panel.open && panel.model.canAdd.pullRequests === true
+                        reason: enabled ? "" : panel.model?.addReasons?.pullRequests ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-requests"
                         })
                     }
 
                     ShellMenuItem {
+                        objectName: "panelAddPullRequest"
                         text: qsTr("Pull request review")
-                        iconName: "git-pull-request"
+                        iconName: "git-pull-request-arrow"
                         enabled: panel.open && panel.model.canAdd.pullRequest === true
+                        reason: enabled ? "" : panel.model?.addReasons?.pullRequest ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-request"
                         })
@@ -335,6 +412,19 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // The panel's leading edge, so it reads apart from the thread in themes
+    // where `chrome` and `canvas` match.
+    Rectangle {
+        objectName: "panelBorder"
+
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+        visible: panel.open && !panel.maximized
+        color: Theme.palette.color("border", "#27272a")
     }
 
     // The left edge: drag to resize, double click for the default width.

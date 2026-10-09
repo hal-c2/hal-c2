@@ -95,7 +95,9 @@ RowLayout {
                     required property var modelData
                     required property int index
 
-                    text: modelData.disabledReason ? modelData.label + "  · " + modelData.disabledReason : modelData.label
+                    objectName: "gitMenu-" + modelData.id
+                    text: modelData.label
+                    reason: modelData.disabledReason ?? ""
                     enabled: modelData.disabledReason === null
                     onTriggered: {
                         if (modelData.id === "commit") {
