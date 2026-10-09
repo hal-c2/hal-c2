@@ -422,8 +422,10 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step ~r/^the GitHub CLI on the host is (?<state>signed in to github.com|not signed in)$/,
        %{args: [state]} = context do
-    context = bin(context)
-    gh = Path.join(context.bin, "gh")
+    # gh in a directory with a space, as under a home or install path that has one.
+    dir = Mc.tmp_dir(context.mc, "gh cli")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    gh = Path.join(dir, "gh")
 
     File.write!(gh, """
     #!/usr/bin/env bash

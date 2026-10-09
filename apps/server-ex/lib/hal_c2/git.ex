@@ -177,7 +177,8 @@ defmodule HalC2.Git do
     count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
 
     with gh when is_binary(gh) <- System.find_executable("gh"),
-         helper = "!#{gh} auth git-credential",
+         # Git runs the helper through a shell, which would split a path with a space.
+         helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential",
          # Set up once: a hot update asks again.
          false <-
            Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == helper)),
