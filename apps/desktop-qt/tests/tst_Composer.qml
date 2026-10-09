@@ -48,6 +48,24 @@ Item {
             compare(input.text, qsTr("Plan & review (v2)"));
         }
 
+        function test_eachModelOptionShowsOnce() {
+            // The real composer state is a QVariantMap: each read of options
+            // hands out fresh objects, so the options are built per read here too.
+            const options = () => [
+                { id: "reasoningEffort", label: "Reasoning", type: "select", value: "high", choices: [{ id: "low", label: "Low" }, { id: "high", label: "High" }] },
+                { id: "contextWindow", label: "Context", type: "select", value: "1m", choices: [{ id: "1m", label: "1M" }] },
+                { id: "fastMode", label: "Fast Mode", type: "boolean", value: false, choices: [] }
+            ];
+            const state = Object.assign({}, Shell.defaultComposer());
+            Object.defineProperty(state, "options", { get: options, enumerable: true });
+            Shell.state = { composer: state, workspace: null };
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!findChild(composer, "effortPicker"));
+            verify(!findChild(composer, "optionPicker:reasoningEffort"), "the effort is not repeated");
+            verify(!!findChild(composer, "optionPicker:contextWindow"));
+            verify(!!findChild(composer, "optionToggle:fastMode"));
+        }
+
         function test_submitKeepsDraftUntilPageClearsIt() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");

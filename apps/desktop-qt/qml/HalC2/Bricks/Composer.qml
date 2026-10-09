@@ -35,7 +35,8 @@ Rectangle {
     readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
-    readonly property var otherOptions: ready ? model.options.filter(option => option !== effortOption) : []
+    // By id: every read of model.options converts to fresh objects, so identity never matches.
+    readonly property var otherOptions: ready ? model.options.filter(option => option.id !== effortOption?.id) : []
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
