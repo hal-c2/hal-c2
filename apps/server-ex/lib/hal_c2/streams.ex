@@ -40,6 +40,33 @@ defmodule HalC2.Streams do
     end
   end
 
+  @tries 3
+
+  @doc """
+  Calls `fun` with the stream's server, started if needed.
+
+  A stream can stop between `ensure/1` and the call: the call then exits `:noproc`,
+  or `:normal` if it was queued as the stream stopped. Either way it was not read, so
+  `fun` asks again for a server, a few times.
+  """
+  def with_server(stream_id, fun, tries \\ @tries) do
+    server = ensure(stream_id)
+    hook(:ensured, stream_id)
+    fun.(server)
+  catch
+    :exit, {reason, {GenServer, :call, _}} when reason in [:noproc, :normal] and tries > 1 ->
+      with_server(stream_id, fun, tries - 1)
+  end
+
+  # Tests stop a stream at a stage: `{module, function, args}`, called with the stage
+  # and the stream id.
+  defp hook(stage, stream_id) do
+    case Application.get_env(:hal_c2, :streams_hook) do
+      {m, f, a} -> apply(m, f, a ++ [stage, stream_id])
+      nil -> :ok
+    end
+  end
+
   @doc """
   Subscribes `pid` to a stream. Delivers either the full state or, when `offset` is
   recent enough, only the events after it; see `HalC2.Streams.Server`.
@@ -61,14 +88,14 @@ defmodule HalC2.Streams do
 
   @doc "See `HalC2.Streams.Server.transact/3`."
   def transact(stream_id, stream_kind, fun),
-    do: stream_id |> ensure() |> Server.transact(stream_kind, fun)
+    do: with_server(stream_id, &Server.transact(&1, stream_kind, fun))
 
   @doc "See `HalC2.Streams.Server.flush_shell/1`."
-  def flush_shell(stream_id), do: stream_id |> ensure() |> Server.flush_shell()
+  def flush_shell(stream_id), do: with_server(stream_id, &Server.flush_shell/1)
 
   @doc "Commits changes to a stream and fans them out to its subscribers."
   @spec commit(String.t(), HalC2.Store.stream_kind(), [HalC2.Store.change()]) ::
           {:ok, non_neg_integer}
   def commit(stream_id, stream_kind, changes),
-    do: stream_id |> ensure() |> Server.commit(stream_kind, changes)
+    do: with_server(stream_id, &Server.commit(&1, stream_kind, changes))
 end

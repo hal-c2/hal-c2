@@ -210,6 +210,13 @@ Feature: The protocol 3 WebSocket
     And the next subscription starts it again from the store
 
   @mc
+  Scenario: A write that reaches a stream as it stops still lands
+    Given a thread's stream stops just after a writer found it
+    When the writer commits to it
+    Then the commit is acknowledged
+    And the event is in the store
+
+  @mc
   Scenario: Open sockets survive a hot upgrade
     Given the client follows the shell and a thread
     When the MC loads a new version in place

@@ -595,4 +595,36 @@ defmodule HalC2.StreamsTest do
     assert [{"thread", %{"title" => "Renamed"}}] =
              for({{_, "th-4"}, kind_row} <- HalC2.Shell.rows(), do: kind_row)
   end
+
+  # A stream stopping between `Streams.ensure/1` and the call that follows it, as its
+  # idle timeout can: the hook stops it, once, as the caller is about to call.
+  def stop_once(:ensured, id) do
+    unless Process.get(:stopped) do
+      Process.put(:stopped, true)
+      :ok = GenServer.stop(Streams.ensure(id))
+    end
+  end
+
+  def stop_once(_stage, _id), do: :ok
+
+  describe "a stream that stops after the caller found it" do
+    setup do
+      Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :stop_once, []})
+      on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+    end
+
+    test "still takes a commit" do
+      assert {:ok, 1} = Streams.commit("th-30", :thread, thread("th-30"))
+    end
+
+    test "still takes a transact" do
+      assert :done = Streams.transact("th-31", :thread, fn _ -> {thread("th-31"), :done} end)
+    end
+
+    test "still takes a subscriber" do
+      assert {:ok, server} = Streams.follow("th-32", self(), nil, %{})
+      assert Process.alive?(server)
+      assert_receive {:hal_c2_stream, "th-32", {:live, _, _}}
+    end
+  end
 end
