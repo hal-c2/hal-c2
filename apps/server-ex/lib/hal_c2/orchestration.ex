@@ -511,6 +511,14 @@ defmodule HalC2.Orchestration do
 
       if type == "thread.delete", do: stop_runtimes(thread_id)
 
+      # The archived threads are read from the sidebar rows, which a stream writes a
+      # moment after its events: this one is in place before the reply, so a client
+      # that lists them next sees the change.
+      if type in ~w(thread.archive thread.unarchive thread.delete) do
+        HalC2.Streams.flush_shell(thread_id)
+        HalC2.Shell.sync()
+      end
+
       {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
@@ -2056,13 +2064,17 @@ defmodule HalC2.Orchestration do
   end
 
   # Commands the thread's state refuses, as the Node server guards them; nil to go ahead.
-  defp refusal("thread.archive", command, %{"archivedAt" => archived}, _state)
+  # These two reach the user as they are, so they name the thread by its title.
+  defp refusal("thread.archive", command, %{"archivedAt" => archived} = thread, _state)
        when archived != nil,
-       do: {:error, "Thread #{command["threadId"]} is already archived."}
+       do: {:error, "#{titled(thread, command)} is already archived."}
 
   defp refusal("thread.unarchive", command, thread, _state) do
-    if thread["archivedAt"] == nil, do: {:error, "Thread #{command["threadId"]} is not archived."}
+    if thread["archivedAt"] == nil, do: {:error, "#{titled(thread, command)} is not archived."}
   end
+
+  defp titled(%{"title" => title}, _command) when is_binary(title) and title != "", do: title
+  defp titled(_thread, command), do: "Thread #{command["threadId"]}"
 
   # An archived thread is out of the lists these arrange; unarchiving brings it back.
   defp refusal(type, command, %{"archivedAt" => archived}, _state)

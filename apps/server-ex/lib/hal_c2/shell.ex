@@ -135,6 +135,16 @@ defmodule HalC2.Shell do
   def put_row(stream_id, kind_row),
     do: GenServer.cast(__MODULE__, {:put_row, stream_id, kind_row})
 
+  @doc """
+  Returns once the rows put before this call are in the table: a caller that had a
+  stream write its row (`HalC2.Streams.flush_shell/1`) can read it back. A no-op
+  where no shell runs.
+  """
+  @spec sync() :: :ok
+  def sync do
+    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :sync), else: :ok
+  end
+
   # --- server ------------------------------------------------------------------
 
   @impl true
@@ -254,6 +264,7 @@ defmodule HalC2.Shell do
   @impl true
   def handle_call(:online_mcs, _from, state), do: {:reply, MapSet.to_list(state.online), state}
   def handle_call(:version, _from, state), do: {:reply, state.own, state}
+  def handle_call(:sync, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:subscribe, pid}, _from, state) do
     put_subscriber(pid, :plain)

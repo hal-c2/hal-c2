@@ -329,6 +329,11 @@ defmodule HalC2.OrchestrationPropTest do
     next = next_state(state, nil, {:call, __MODULE__, fun, args})
     wanted = Map.new(@threads, &{&1, model_projection(next.threads[&1])})
 
+    wanted =
+      if fun in [:archive, :unarchive, :delete],
+        do: Map.put(wanted, :archived, archived(next)),
+        else: wanted
+
     reply_ok? = reply_matches?(expected, reply)
 
     unless reply_ok?,
@@ -363,11 +368,11 @@ defmodule HalC2.OrchestrationPropTest do
       %{status: :deleted} ->
         {:error, "Thread #{tid} is deleted."}
 
-      %{status: :archived} when command == :archive ->
-        {:error, "Thread #{tid} is already archived."}
+      %{status: :archived, title: title} when command == :archive ->
+        {:error, "#{title} is already archived."}
 
-      %{status: status} when command == :unarchive and status != :archived ->
-        {:error, "Thread #{tid} is not archived."}
+      %{status: status, title: title} when command == :unarchive and status != :archived ->
+        {:error, "#{title} is not archived."}
 
       thread when command == :interrupt ->
         if running(thread), do: nil, else: {:error, "no running turn"}
@@ -495,6 +500,9 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  defp archived(state),
+    do: for({tid, %{status: :archived}} <- state.threads, do: tid) |> Enum.sort()
+
   defp model_projection(nil), do: nil
 
   defp model_projection(thread) do
@@ -564,9 +572,9 @@ defmodule HalC2.OrchestrationPropTest do
   def rename(tid, title),
     do: thread_command(%{"type" => "thread.metadata.update", "threadId" => tid, "title" => title})
 
-  def archive(tid), do: thread_command(%{"type" => "thread.archive", "threadId" => tid})
-  def unarchive(tid), do: thread_command(%{"type" => "thread.unarchive", "threadId" => tid})
-  def delete(tid), do: thread_command(%{"type" => "thread.delete", "threadId" => tid})
+  def archive(tid), do: archive_command(%{"type" => "thread.archive", "threadId" => tid})
+  def unarchive(tid), do: archive_command(%{"type" => "thread.unarchive", "threadId" => tid})
+  def delete(tid), do: archive_command(%{"type" => "thread.delete", "threadId" => tid})
   def resume(tid), do: thread_command(%{"type" => "queue.resume", "threadId" => tid})
 
   def interrupt(tid) do
@@ -649,6 +657,18 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   defp thread_command(command), do: reply(Orchestration.dispatch(command), [])
+
+  # The archived threads as a client that asks right after the command's reply gets
+  # them (`orchestration.getArchivedShellSnapshot`): no waiting on the sidebar rows.
+  defp archive_command(command) do
+    result = Orchestration.dispatch(command)
+
+    {:ok, %{"threads" => threads}} =
+      Orchestration.handle("orchestration.getArchivedShellSnapshot", %{})
+
+    {reply, projection} = reply(result, [])
+    {reply, Map.put(projection, :archived, threads |> Enum.map(& &1["id"]) |> Enum.sort())}
+  end
 
   # --- the real side ----------------------------------------------------------------
 
