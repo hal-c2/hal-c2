@@ -90,6 +90,13 @@ Feature: Scheduled tasks
       Then the user is told "Schedule task is already running."
 
     @mc
+    Scenario: Deleting a task during its run ends the run
+      Given a task is running and the user waits for it with "run now"
+      When the user deletes the task
+      Then the run is stopped and the waiting user is told "Schedule task not found."
+      And a task made later with the same id starts with no run history
+
+    @mc
     Scenario: Pausing a task stops its runs and resuming schedules it again
       Given a task that runs every hour
       When the user pauses the task

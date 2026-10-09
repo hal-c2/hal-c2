@@ -80,8 +80,11 @@ defmodule HalC2.ScheduledTasks do
 
   def handle_call({:delete, id}, _from, state) do
     case Map.pop(state.tasks, id) do
-      {nil, _} -> {:reply, error("Schedule task not found.", id), state}
-      {_, tasks} -> {:reply, {:ok, %{"id" => id}}, changed(%{state | tasks: tasks})}
+      {nil, _} ->
+        {:reply, error("Schedule task not found.", id), state}
+
+      {_, tasks} ->
+        {:reply, {:ok, %{"id" => id}}, changed(stop_runs(%{state | tasks: tasks}, id))}
     end
   end
 
@@ -189,6 +192,20 @@ defmodule HalC2.ScheduledTasks do
       &Map.put(&1, pid, %{ref: ref, id: task["id"], started: at, from: from, trigger: trigger})
     )
     |> changed()
+  end
+
+  # A deleted task's runs end with it, so a task created later under the same id does
+  # not take the result of a run that was not its own.
+  defp stop_runs(state, id) do
+    {gone, runs} = Enum.split_with(state.runs, fn {_, run} -> run.id == id end)
+
+    for {pid, %{ref: ref, from: from}} <- gone do
+      Process.demonitor(ref, [:flush])
+      Process.exit(pid, :kill)
+      if from, do: GenServer.reply(from, error("Schedule task not found.", id))
+    end
+
+    %{state | runs: Map.new(runs)}
   end
 
   defp complete(state, pid, result) do
