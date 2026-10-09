@@ -755,6 +755,38 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  step "a thread's stream stops just after a writer found it", context do
+    stream = stream_id()
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :stop_once, []})
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+    Map.put(context, :stream, stream)
+  end
+
+  step "the writer commits to it", context do
+    changes = [{"note", "kept", %{"s" => %{"text" => "stored"}}}]
+    Map.put(context, :commit, HalC2.Streams.commit(context.stream, :thread, changes))
+  end
+
+  step "the commit is acknowledged", context do
+    assert {:ok, seq} = context.commit
+    Map.put(context, :seq, seq)
+  end
+
+  step "the event is in the store", context do
+    assert context.seq == HalC2.Streams.Server.state(HalC2.Streams.ensure(context.stream)).seq
+    context
+  end
+
+  # Called by the stream hook as the writer is about to call: stops the stream, once.
+  def stop_once(:ensured, id) do
+    unless Process.get(:stopped) do
+      Process.put(:stopped, true)
+      :ok = GenServer.stop(HalC2.Streams.ensure(id))
+    end
+  end
+
+  def stop_once(_stage, _id), do: :ok
+
   step "the client follows the shell and a thread", context do
     context = World.create_thread(context, "Hot")
     stream = World.thread_id(context, "Hot")
