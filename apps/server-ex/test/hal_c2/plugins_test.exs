@@ -124,6 +124,48 @@ defmodule HalC2.PluginsTest do
     assert %{restarts: 1, last_error: ":boom"} = plugin("notes")
   end
 
+  test "a host updated in place from before crashes were charged to supervisors still charges them" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    %{sup: sup} = plugin("notes")
+    worker = spawn(fn -> receive do: (:never -> :ok) end)
+    GenServer.cast(Plugins, {:worker, "notes", sup, worker})
+
+    # What the version before kept: no `gave_up`, and workers by plugin alone.
+    :sys.replace_state(Plugins, fn state ->
+      %{
+        state
+        | plugins: Map.new(state.plugins, fn {id, p} -> {id, Map.delete(p, :gave_up)} end),
+          refs:
+            Map.new(state.refs, fn
+              {ref, {:worker, id, _sup}} -> {ref, {:worker, id}}
+              entry -> entry
+            end)
+      }
+    end)
+
+    # What `HalC2.Hot` does for a process whose module changed.
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, nil, :hot)
+    :ok = :sys.resume(Plugins)
+
+    assert %{gave_up: nil} = plugin("notes")
+    ref = Process.monitor(worker)
+    Process.exit(worker, :boom)
+    assert_receive {:DOWN, ^ref, _, _, :boom}
+    assert %{restarts: 1, last_error: ":boom"} = plugin("notes")
+
+    # A worker the version before announced, its cast still queued.
+    worker = spawn(fn -> receive do: (:never -> :ok) end)
+    ref = Process.monitor(worker)
+    GenServer.cast(Plugins, {:worker, "notes", worker})
+    :sys.get_state(Plugins)
+    Process.exit(worker, :boom)
+    assert_receive {:DOWN, ^ref, _, _, :boom}
+    assert %{restarts: 2} = plugin("notes")
+  end
+
   defp save(id, settings),
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 

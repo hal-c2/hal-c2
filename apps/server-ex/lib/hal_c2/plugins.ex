@@ -732,6 +732,10 @@ defmodule HalC2.Plugins do
       else: {:noreply, state}
   end
 
+  # Sent by a worker started before an update in place, still queued.
+  def handle_cast({:worker, id, pid}, state),
+    do: handle_cast({:worker, id, state.plugins[id][:sup], pid}, state)
+
   def handle_cast({:unsubscribe, pid}, state) do
     unwatch({:list, pid})
     {:noreply, state}
@@ -817,6 +821,22 @@ defmodule HalC2.Plugins do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A host updated in place (`HalC2.Hot`) from before crashes were charged to the
+  # supervisor that reported them: its workers are the running supervisors'.
+  @impl true
+  def code_change(_old, state, _extra) do
+    plugins =
+      Map.new(state.plugins, fn {id, plugin} -> {id, Map.put_new(plugin, :gave_up, nil)} end)
+
+    refs =
+      Map.new(state.refs, fn
+        {ref, {:worker, id}} -> {ref, {:worker, id, plugins[id][:sup]}}
+        entry -> entry
+      end)
+
+    {:ok, %{state | plugins: plugins, refs: refs}}
+  end
 
   # One monitor per watched list or topic, so dropping one leaves the others.
   defp watch(key) do
