@@ -156,14 +156,18 @@ defmodule HalC2.PluginsTest do
     assert_receive {:DOWN, ^ref, _, _, :boom}
     assert %{restarts: 1, last_error: ":boom"} = plugin("notes")
 
-    # A worker the version before announced, its cast still queued.
+    # A worker the version before announced, its cast queued behind the plugin stopping
+    # and starting again: it is not the new supervisor's.
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "notes"})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    %{restarts: restarts} = plugin("notes")
     worker = spawn(fn -> receive do: (:never -> :ok) end)
     ref = Process.monitor(worker)
     GenServer.cast(Plugins, {:worker, "notes", worker})
     :sys.get_state(Plugins)
     Process.exit(worker, :boom)
     assert_receive {:DOWN, ^ref, _, _, :boom}
-    assert %{restarts: 2} = plugin("notes")
+    assert %{restarts: ^restarts} = plugin("notes")
   end
 
   test "a worker announced before an update in place, its plugin since stopped, is not charged to it" do

@@ -32,8 +32,6 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_call :rescan" => "rescan",
       "HalC2.Plugins handle_call {:subscribe, _}" => "subscribe",
       "HalC2.Plugins handle_cast {:worker, _, _, _}" => "worker",
-      # Queued across an update in place; it is the cast above, from the running supervisor.
-      "HalC2.Plugins handle_cast {:worker, _, _}" => "worker",
       "HalC2.Plugins handle_cast {:unsubscribe, _}" => "unsubscribed",
       "HalC2.Plugins handle_info {:hal_c2_settings, _, _}" => "settings",
       "HalC2.Plugins handle_info {:DOWN, _, :process, _, _}" =>
@@ -72,6 +70,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_cast {:unsubscribe_topic, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:publish, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:denied, _, _}" => @consent,
+      "HalC2.Plugins handle_cast {:worker, _, _}" =>
+        "a worker announced before an update in place, its supervisor unknown: ignored",
       "HalC2.Plugins handle_info _" => "ignores what it does not know",
       "HalC2.Plugins state :dir" =>
         "where plugins are scanned from; the model has two fixed plugins",

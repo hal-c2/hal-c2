@@ -397,17 +397,8 @@ defmodule HalC2.PluginsPropTest do
      :ok}
   end
 
-  # A worker of the running supervisor, if there is one, is charged to the plugin; with
-  # none it is no one's.
-  defp step(s, {:call, _, :stale_worker, [id]}) do
-    case s.held[id] do
-      %{running: true} = e ->
-        {put_in(s.held[id], %{e | restarts: e.restarts && e.restarts + 1}), :ok}
-
-      _ ->
-        {s, :ok}
-    end
-  end
+  # Its supervisor is not known, so it is no one's, whatever runs now.
+  defp step(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
 
   # Killed until its supervisor gives up: how many kills that took is not known.
   defp step(s, {:call, _, :crash_hard, [id]}) do
