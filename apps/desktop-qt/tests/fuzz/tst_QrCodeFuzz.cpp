@@ -52,9 +52,6 @@ QBitArray drawn(const QString& path, int size, bool& wellFormed) {
 
 void EncodeRenders(const std::string& text, std::size_t pad, int scale) {
   const QString entered = fuzz::utf8(text + std::string(pad, 'a'));
-  // A NUL byte ends the text where encode reads it (QrCode.cpp constData), so
-  // what is encoded is a prefix and the laws below do not hold for it.
-  if (entered.contains(QChar(0))) return;
   const qr::Code code = qr::encode(entered);
   const QString svg = qr::path(code);
   const QImage image = qr::image(code, scale);
@@ -104,7 +101,6 @@ FUZZ_TEST(QrCode, EncodeRenders)
 // largest code is slow to draw.
 void OverLongIsNoCode(const std::string& text, std::size_t pad) {
   const QString entered = fuzz::utf8(text + std::string(pad, 'a'));
-  if (entered.contains(QChar(0))) return;  // see EncodeRenders
   if (entered.isEmpty()) return;
   const qr::Code code = qr::encode(entered);
   if (entered.toUtf8().size() > int(kMaxBytesM)) {
@@ -120,5 +116,20 @@ FUZZ_TEST(QrCode, OverLongIsNoCode)
     .WithSeeds([] {
       return std::vector<std::tuple<std::string, std::size_t>>{{"", 2331}, {"", 2332}, {"x", 2400}, {"https://mc.example/pair#token=x", 0}};
     });
+
+// A NUL byte is not the end of the text: what follows it is in the code, so the
+// code of the whole is not the code of the part before the NUL.
+void NulIsNotTheEnd(const std::string& before, const std::string& after) {
+  const QString prefix = fuzz::utf8(before);
+  const QString whole = prefix + QChar(0) + fuzz::utf8(after);
+  const qr::Code code = qr::encode(whole);
+  if (code.isNull()) return;
+  const qr::Code cut = qr::encode(prefix);
+  fuzz::print(whole);
+  EXPECT_FALSE(code.size == cut.size && code.modules == cut.modules) << "the text after a NUL is dropped";
+}
+FUZZ_TEST(QrCode, NulIsNotTheEnd)
+    .WithDomains(fuzz::Text(kTextWords), fuzz::Text(kTextWords))
+    .WithSeeds({{"https://mc.example/pair#token=x", "y"}, {"a", ""}});
 
 }  // namespace
