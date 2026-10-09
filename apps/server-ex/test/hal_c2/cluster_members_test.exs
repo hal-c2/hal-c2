@@ -91,7 +91,10 @@ defmodule HalC2.ClusterMembersTest do
       "c" => %{"fingerprint" => 1}
     }
 
-    assert Cluster.merge(own, incoming, "a") == own
+    merged = Cluster.merge(own, incoming, "a")
+    assert Map.keys(merged) == ["a"]
+    # Only the time of a copy that says the same is taken.
+    assert merged["a"] == %{own["a"] | "updatedAt" => 9}
   end
 
   test "a machine's own changes outrank a member's later copy of its entry" do
@@ -104,5 +107,16 @@ defmodule HalC2.ClusterMembersTest do
     assert merged["a"]["admittedAt"] == 1
     # The member that holds the copy takes the move.
     assert Cluster.merge(copy, merged, "b")["a"]["addresses"] == ["10.0.0.9:4370"]
+  end
+
+  test "a member's later copy that says the same lends its time to the machine's next change" do
+    # The inviter's clock ran an hour ahead when it re-admitted "a", as "a" was.
+    ahead = System.os_time(:millisecond) + 3_600_000
+    own = %{"a" => entry(updatedAt: 5)}
+    copy = %{"a" => entry(admittedAt: ahead, updatedAt: ahead)}
+
+    merged = Cluster.merge(own, copy, "a")
+    assert merged["a"]["admittedAt"] == 1
+    assert Cluster.stamp(merged) > ahead
   end
 end

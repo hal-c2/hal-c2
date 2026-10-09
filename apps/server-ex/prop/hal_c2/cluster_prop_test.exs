@@ -100,18 +100,20 @@ defmodule HalC2.ClusterPropTest do
 
   # Entries as a member gossips them: newer than anything this machine has seen, or,
   # for machines it knows, older than what it has; now and then an entry for this
-  # machine itself, or one that is not an entry at all.
+  # machine itself (or a copy of what it says of itself), or one that is not an entry at
+  # all.
   defp gossip_entries(state) do
     resize(
       3,
       list(
         let {id, kind, fp, label, addresses} <-
               {oneof([state.own | @ids]),
-               oneof([:admitted, :removed, :stale_admitted, :stale_removed, :malformed]),
+               oneof([:admitted, :removed, :stale_admitted, :stale_removed, :malformed, :echo]),
                oneof(@fingerprints), label(), addresses()} do
           # An entry older than what this machine knows needs one it knows.
           stale? = kind in [:stale_admitted, :stale_removed]
           kind = if stale? and not Map.has_key?(state.members, id), do: :admitted, else: kind
+          kind = if kind == :echo and id != state.own, do: :admitted, else: kind
 
           {id, kind, %{fp: fp, label: label, addresses: addresses}}
         end
@@ -256,11 +258,13 @@ defmodule HalC2.ClusterPropTest do
   end
 
   # A member's copy of this machine's entry, newer than its own, has its own entry
-  # stamped after it, so the copy does not hide what this machine says of itself.
+  # stamped after it, so the copy does not hide what this machine says of itself. A copy
+  # that says the same lends its time, so the next change is stamped after it too.
   def postcondition(state, {:call, _, :gossip, [entries]} = call, {newer, seen}) do
-    copied? = Map.new(entries, &{elem(&1, 0), elem(&1, 1)})[state.own] in [:admitted, :removed]
+    kind = Map.new(entries, &{elem(&1, 0), elem(&1, 1)})[state.own]
 
-    (not copied? or seen.own_updated > newer) and
+    (kind not in [:admitted, :removed] or seen.own_updated > newer) and
+      (kind != :echo or seen.own_updated >= newer) and
       observed?(state, next_state(state, newer, call), seen)
   end
 
@@ -316,7 +320,7 @@ defmodule HalC2.ClusterPropTest do
   def remove(id), do: observe(Cluster.remove(id))
 
   def gossip(entries) do
-    members = :sys.get_state(Cluster).members
+    %{members: members, id: own} = :sys.get_state(Cluster)
 
     seen =
       for {_, entry} <- members,
@@ -339,6 +343,7 @@ defmodule HalC2.ClusterPropTest do
             :stale_admitted -> %{"admittedAt" => 1, "removedAt" => nil, "updatedAt" => 1}
             :stale_removed -> %{"admittedAt" => 1, "removedAt" => 2, "updatedAt" => 2}
             :malformed -> %{"admittedAt" => "yesterday"}
+            :echo -> %{members[own] | "admittedAt" => newer, "updatedAt" => newer}
           end
 
         {id, Map.merge(fields, entry)}

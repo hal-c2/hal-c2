@@ -132,7 +132,8 @@ mod CLUSTER is
 
   --- merge(local, incoming, own_id): an entry for own_id in incoming changes nothing in
   --- the own entry, but one that says something else and was updated no earlier gets
-  --- the own entry stamped after it.
+  --- the own entry stamped after it, and one that says the same and was updated later
+  --- gives the own entry its time.
   op merge : Table Table Id -> Table .
   eq merge(t(E1, E2, E3), t(F1, F2, F3), N) =
        t(mg(a, N, E1, F1), mg(b, N, E2, F2), mg(c, N, E3, F3)) .
@@ -142,6 +143,7 @@ mod CLUSTER is
   op own : Entry Entry -> Entry .
   ceq own(e(D, A, R, U, V), e(D', A', R', U', V')) = e(D, A, R, s U', V)
     if U' >= U /\ (D =/= D' or V =/= V') .
+  ceq own(e(D, A, R, U, V), e(D, A', R', U', V)) = e(D, A, R, U', V) if U' > U .
   eq own(E, E') = E [owise] .
 
   --- stamp/1, at `now` on the MC's own clock.

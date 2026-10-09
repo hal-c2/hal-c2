@@ -218,7 +218,9 @@ defmodule HalC2.Cluster do
   for itself: an entry for `own_id` in `incoming` changes nothing in its own, but one
   that says something else and was updated no earlier (an admission stamped by a
   member whose clock runs ahead) has its own entry stamped after it, or that copy
-  would outrank every change this machine makes until its clock catches up.
+  would outrank every change this machine makes until its clock catches up. One that
+  says the same and was updated later lends its own entry that time, so the next
+  change (`stamp/1`) is stamped after the copy too.
   """
   def merge(local, incoming, own_id) do
     Enum.reduce(incoming, local, fn
@@ -226,9 +228,8 @@ defmodule HalC2.Cluster do
         case {acc[own_id], sanitize(copy)} do
           {%{"updatedAt" => ours} = own, %{"updatedAt" => theirs} = copy}
           when theirs >= ours ->
-            if Map.take(copy, @says) == Map.take(sanitize(own) || own, @says),
-              do: acc,
-              else: put_in(acc[own_id]["updatedAt"], theirs + 1)
+            same? = Map.take(copy, @says) == Map.take(sanitize(own) || own, @says)
+            put_in(acc[own_id]["updatedAt"], if(same?, do: theirs, else: theirs + 1))
 
           _ ->
             acc
