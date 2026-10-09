@@ -391,9 +391,17 @@ defmodule HalC2.Streams.Server do
     if sub, do: Process.demonitor(sub.ref, [:flush])
     {relay, relays} = Map.pop(state.relays, pid)
 
-    # Unlinked first: its exit is no failure of the stream's.
+    # Unlinked first: its exit is no failure of the stream's. An exit it sent before
+    # is in the mailbox already, and would stop the stream as a stranger's does.
     if relay do
       Process.unlink(relay)
+
+      receive do
+        {:EXIT, ^relay, _} -> :ok
+      after
+        0 -> :ok
+      end
+
       Process.exit(relay, :kill)
     end
 
