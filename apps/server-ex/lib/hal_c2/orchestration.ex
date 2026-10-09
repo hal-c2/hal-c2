@@ -515,10 +515,8 @@ defmodule HalC2.Orchestration do
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
       # that lists them next sees the change.
-      if type in ~w(thread.archive thread.unarchive thread.delete) do
-        HalC2.Streams.flush_shell(thread_id)
-        HalC2.Shell.sync()
-      end
+      if type in ~w(thread.archive thread.unarchive thread.delete),
+        do: HalC2.Streams.flush_shell(thread_id)
 
       {:ok, %{"sequence" => sequence(thread_id)}}
     end
