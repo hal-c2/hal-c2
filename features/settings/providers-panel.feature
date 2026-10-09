@@ -331,6 +331,14 @@ Feature: Providers settings panel
       Then the environment removes it
       And the card offers installing Antigravity again
 
+    # Covered by HalC2.Acp's ExUnit tests (acp_test.exs); no scenario step runs it yet.
+    @backlog @mc @desktop
+    Scenario: A disabled provider shows no version until it is turned on
+      Given an ACP provider is disabled
+      When the user opens the Providers settings
+      Then its card shows no version
+      And an Antigravity runtime that is not on the environment is not reported installed
+
   # Sign-in is MC-addressed (provider.auth.*), so only environments a cluster MC serves
   # sign in from the panel. Signing out is in providers/provider-setup.feature.
   Rule: Signing in
