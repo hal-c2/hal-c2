@@ -53,6 +53,7 @@ class ThemeStore : public QObject {
 
 public:
   explicit ThemeStore(const QString& configDir, QObject* parent = nullptr);
+  ~ThemeStore() override;
 
   bool loaded() const { return m_loaded; }
   QString path() const { return m_path; }
@@ -97,6 +98,10 @@ private:
   void scheduleReload();
   void applyDefaults();
   void resolveColors();
+  // Makes fontUi() the application's font, so text that names no family is
+  // written in it without binding to the theme: a label made later starts in
+  // it, and the ones already drawn are rewritten once, when the family changes.
+  void applyInterfaceFont();
   int fontSize(const char* part, int fallback) const;
 
   QString m_configDir;
@@ -116,6 +121,8 @@ private:
   QString m_radius;
   QString m_fontUi;
   QString m_fontMono;
+  // The family applyInterfaceFont() last gave the application; empty is the system's.
+  QString m_interfaceFont;
   QVariantMap m_baseTheme;
   QVariantMap m_baseColors;
   QString m_baseAppearance;

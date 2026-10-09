@@ -226,6 +226,12 @@ Feature: Appearance
         | terminal  | JetBrains Mono | 12   | the terminal                              |
 
     @desktop
+    Scenario: A new interface font reaches the text already on screen
+      Given a label that names no font is on screen
+      When the user sets the interface font to "Inter" at 14
+      Then the label is written in "Inter"
+
+    @desktop
     Scenario: A font preference can be reset to the system font
       Given the user set the interface font to "Inter"
       When the user resets the interface font
