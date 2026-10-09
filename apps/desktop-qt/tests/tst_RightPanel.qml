@@ -21,6 +21,16 @@ Item {
     }
 
     Component {
+        id: menuItemComponent
+        ShellMenuItem {
+            width: 200
+            text: "Commit"
+            enabled: false
+            reason: "No uncommitted changes in this branch at all."
+        }
+    }
+
+    Component {
         id: filesComponent
         FilesPanel {
             width: 400
@@ -345,6 +355,35 @@ Item {
             source.wrap = true;
             compare(lines.contentWidth, lines.width);
             compare(lines.flickableDirection, Flickable.VerticalFlick);
+        }
+
+        function test_menuItemShowsItsReasonInFull() {
+            const item = createTemporaryObject(menuItemComponent, root);
+            const reason = findChild(item, "menuItemReason");
+            verify(reason && reason.visible);
+            compare(reason.text, item.reason);
+            verify(reason.lineCount > 1, "the reason wraps instead of eliding");
+            verify(item.implicitHeight >= 28 + reason.contentHeight, "the row grows to hold it");
+            verify(reason.width <= item.width);
+            item.reason = "";
+            verify(!reason.visible);
+            compare(item.implicitHeight, 28);
+        }
+
+        function test_unavailablePullRequestKindsSayWhy() {
+            const state = panelState("diff");
+            state.canAdd = { diff: true, files: true, agents: true, terminal: true, pullRequests: false, pullRequest: false };
+            state.addReasons = { pullRequests: "No linked pull requests are available for this thread.", pullRequest: "This thread's branch has no pull request yet." };
+            Shell.state = Object.assign({}, Shell.state, { panel: state });
+            const panel = createTemporaryObject(panelComponent, root);
+            mouseClick(findChild(panel, "panelAdd"));
+            const list = findChild(panel, "panelAddPullRequests");
+            const review = findChild(panel, "panelAddPullRequest");
+            verify(list && review);
+            verify(!list.enabled && !review.enabled);
+            compare(findChild(list, "menuItemReason").text, state.addReasons.pullRequests);
+            compare(findChild(review, "menuItemReason").text, state.addReasons.pullRequest);
+            verify(list.iconName !== review.iconName, "the two kinds have their own icons");
         }
 
         function test_openFileGetsMostOfThePanel() {

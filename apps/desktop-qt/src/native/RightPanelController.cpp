@@ -679,6 +679,11 @@ void RightPanelController::publish() {
                                      {QStringLiteral("pullRequest"), m_pullRequests.count() > 0},
                                      {QStringLiteral("previews"), true},
                                      {QStringLiteral("device"), true}}},
+                        // Why a kind cannot be added, for the Add menu to show under it.
+                        {QStringLiteral("addReasons"),
+                         QVariantMap{{QStringLiteral("files"), m_files.root().isEmpty() ? tr("Files are only available when a project is open.") : QString()},
+                                     {QStringLiteral("pullRequests"), m_pullRequests.count() > 0 ? QString() : tr("No linked pull requests are available for this thread.")},
+                                     {QStringLiteral("pullRequest"), m_pullRequests.count() > 0 ? QString() : tr("This thread's branch has no pull request yet.")}}},
                     });
 }
 

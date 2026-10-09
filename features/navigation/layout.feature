@@ -214,6 +214,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the thread has no pull request
       When the user looks at what can be added to the right panel
       Then pull request cannot be added
+      And the Add menu says "This thread's branch has no pull request yet." for pull request
 
     @desktop
     Scenario: Right panel contents survive closing the panel

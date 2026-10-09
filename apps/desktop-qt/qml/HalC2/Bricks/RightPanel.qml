@@ -226,6 +226,7 @@ Rectangle {
                         text: qsTr("Files")
                         iconName: "files"
                         enabled: panel.open && panel.model.canAdd.files
+                        reason: enabled ? "" : panel.model?.addReasons?.files ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "files"
                         })
@@ -253,18 +254,22 @@ Rectangle {
                     }
 
                     ShellMenuItem {
+                        objectName: "panelAddPullRequests"
                         text: qsTr("Pull requests")
-                        iconName: "git-pull-request"
+                        iconName: "link-2"
                         enabled: panel.open && panel.model.canAdd.pullRequests === true
+                        reason: enabled ? "" : panel.model?.addReasons?.pullRequests ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-requests"
                         })
                     }
 
                     ShellMenuItem {
+                        objectName: "panelAddPullRequest"
                         text: qsTr("Pull request review")
-                        iconName: "git-pull-request"
+                        iconName: "git-pull-request-arrow"
                         enabled: panel.open && panel.model.canAdd.pullRequest === true
+                        reason: enabled ? "" : panel.model?.addReasons?.pullRequest ?? ""
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-request"
                         })
