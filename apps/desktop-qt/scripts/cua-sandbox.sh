@@ -37,7 +37,8 @@ pid_of() {
 stop_one() {
   local pid
   if pid=$(pid_of "$1"); then
-    kill "$pid"
+    # A setsid'd process leads its own group: the MC's mix wrapper leaves beam.smp behind otherwise.
+    kill -- "-$pid" 2> /dev/null || kill "$pid"
     for _ in $(seq 100); do
       pid_of "$1" > /dev/null || break
       sleep 0.1
