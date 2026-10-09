@@ -115,10 +115,16 @@ Feature: Adding a project from the command palette
     Then the palette offers "Create & Add" with "Enter"
 
   @desktop
-  Scenario: A highlighted folder is added with mod+Enter
-    Given the user is browsing for a project folder
+  Scenario Outline: A highlighted folder is added with mod+Enter
+    Given the user is on <platform>
+    And the user is browsing for a project folder
     And a folder is highlighted
-    Then the palette offers "Add" with "Ctrl+Enter"
+    Then the palette offers "Add" with "<keys>"
+
+    Examples:
+      | platform | keys       |
+      | Linux    | Ctrl+Enter |
+      | macOS    | ⌘Enter     |
 
   @desktop
   Scenario: mod+Enter adds the highlighted folder

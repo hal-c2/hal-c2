@@ -617,7 +617,8 @@ QString CommandPaletteController::submitLabel() const {
 
 QString CommandPaletteController::submitShortcut() const {
   if (submitLabel().isEmpty()) return {};
-  return folderHighlighted() ? QStringLiteral("Ctrl+Enter") : QStringLiteral("Enter");
+  // The platform's own name for the key: Command on macOS, as CommandPalette.qml reads it.
+  return NativeShell::of(this)->controller<KeybindingController>()->keyLabel(folderHighlighted() ? QStringLiteral("mod+enter") : QStringLiteral("enter"));
 }
 
 bool CommandPaletteController::addBrowsedFolder() {
