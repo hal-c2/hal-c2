@@ -42,22 +42,25 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], input["interactionMode"], :interaction) do
-      task_id =
-        start(thread, run, %{
-          "task" => input["task"],
-          "title" => input["title"],
-          "modelSelection" => selection,
-          "runtimeMode" => runtime,
-          "interactionMode" => interaction,
-          "completionWake" => if(input["mode"] == "wait", do: "settled_only", else: "always"),
-          "createdBy" => "agent",
-          "creationSource" => "mcp"
-        })
+      spec = %{
+        "task" => input["task"],
+        "title" => input["title"],
+        "modelSelection" => selection,
+        "runtimeMode" => runtime,
+        "interactionMode" => interaction,
+        "completionWake" => if(input["mode"] == "wait", do: "settled_only", else: "always"),
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      }
 
-      if input["mode"] == "wait" do
-        wait(thread["id"], task_id, wait_budget(input["timeoutMs"]))
-      else
-        {:ok, status(thread["id"], task_id)}
+      case start(thread, run, spec) do
+        {:ok, task_id} ->
+          if input["mode"] == "wait",
+            do: wait(thread["id"], task_id, wait_budget(input["timeoutMs"])),
+            else: {:ok, status(thread["id"], task_id)}
+
+        {:error, message} ->
+          {:error, "task_not_started", message}
       end
     end
   end
@@ -77,18 +80,18 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], command["interactionMode"], :interaction) do
-      start(thread, run, %{
-        "task" => command["task"],
-        "title" => command["title"],
-        "modelSelection" => command["modelSelection"] || thread["modelSelection"],
-        "runtimeMode" => runtime,
-        "interactionMode" => interaction,
-        "completionWake" => command["completionWake"] || "settled_only",
-        "createdBy" => command["createdBy"] || "user",
-        "creationSource" => command["creationSource"] || "web"
-      })
-
-      :ok
+      with {:ok, _task_id} <-
+             start(thread, run, %{
+               "task" => command["task"],
+               "title" => command["title"],
+               "modelSelection" => command["modelSelection"] || thread["modelSelection"],
+               "runtimeMode" => runtime,
+               "interactionMode" => interaction,
+               "completionWake" => command["completionWake"] || "settled_only",
+               "createdBy" => command["createdBy"] || "user",
+               "creationSource" => command["creationSource"] || "web"
+             }),
+           do: :ok
     else
       {:error, _code, message} -> {:error, message}
       {:error, _} = error -> error
@@ -307,8 +310,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   # --- tasks -------------------------------------------------------------------------
 
-  # Records the task in the parent, then launches the child thread; returns its id.
-  # The record comes first: a child turn that ends at once reports to it.
+  # Records the task in the parent, then launches the child thread; returns its id, or
+  # why the child did not start, the task failed. The record comes first: a child turn
+  # that ends at once reports to it.
   defp start(thread, run, spec) do
     child_id = HalC2.Environment.uuid4()
     task_id = "node:subagent:" <> HalC2.Environment.uuid4()
@@ -319,7 +323,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     record(thread, run, task_id, child_id, selection, title, spec["task"], spec["completionWake"])
 
-    {:ok, _} =
+    launched =
       Orchestration.launch_thread(%{
         "commandId" => "command:delegate:#{task_id}",
         "threadId" => child_id,
@@ -343,7 +347,15 @@ defmodule HalC2.Orchestration.Delegation do
         }
       })
 
-    task_id
+    case launched do
+      {:ok, _} ->
+        {:ok, task_id}
+
+      {:error, reason} ->
+        message = if is_binary(reason), do: reason, else: inspect(reason)
+        settle(thread["id"], %{"id" => task_id}, "failed", message, "disposed")
+        {:error, message}
+    end
   end
 
   defp update(parent_id, task_id, fields) do
