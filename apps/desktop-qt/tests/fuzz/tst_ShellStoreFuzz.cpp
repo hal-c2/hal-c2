@@ -217,14 +217,28 @@ fuzz::JsonSteps WithRev(double value) {
   return steps;
 }
 
+// Two MCs claiming one environment: a frame naming no MC, and a member
+// announced under a new name. ShellStore once listed the environment's
+// threads under both, so a key named two rows
+// (tests/native/tst_SidebarRegression.cpp).
+const char* const kSecondClaims[] = {
+    R"j({"t":"shell.rows","id":1,"rows":[["t3","thread",{"id":"t3","projectId":"p2","title":"Moved"}]]})j",
+    R"j({"t":"shell.environment","id":1,"environment":{"environmentId":"env-b"}})j",
+    R"j({"t":"shell.environment","id":1,"mc":"mc-c","environment":{"environmentId":"env-b"}})j",
+    R"j({"t":"shell.rows","id":1,"mc":"mc-c","rows":[["t3","thread",{"id":"t3","projectId":"p2","title":"Moved"}]]})j",
+};
+
 FUZZ_TEST(ShellStore, FramesFold)
     .WithDomains(fuzztest::VectorOf(fuzz::Json(kKeys, kTexts)).WithMaxSize(12))
     .WithSeeds([] {
       std::vector<fuzz::JsonSteps> whole = Seeded({kSnapshot});
       for (const char* change : kChanges) whole.push_back(fuzz::steps(change));
+      std::vector<fuzz::JsonSteps> claimed = Seeded({kSnapshot});
+      for (const char* claim : kSecondClaims) claimed.push_back(fuzz::steps(claim));
       return std::vector<std::tuple<std::vector<fuzz::JsonSteps>>>{
           {Seeded({kSnapshot})},
           {whole},
+          {claimed},
           {{fuzz::steps(kSnapshot), WithRev(1e300)}},
           {{fuzz::steps(kSnapshot), WithRev(-1e300)}},
           {{fuzz::steps(kSnapshot), WithRev(9.3e18)}},

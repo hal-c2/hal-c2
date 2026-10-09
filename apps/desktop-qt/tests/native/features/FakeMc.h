@@ -188,6 +188,9 @@ public:
   void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
   // Rows of the cluster member `mc` as `shell.rows`: each [id, kind, fields].
   void sendRows(const QString& mc, const QJsonArray& rows);
+  // A frame of the shell subscription as given, its id added: what a
+  // misbehaving MC sends.
+  void sendShell(QJsonObject frame);
   // A member's row, kept and sent as its `shell.rows` once it has joined.
   void sendPeerRow(const QString& environment, const QString& id, const QJsonObject& row,
                    const QString& kind = QStringLiteral("thread"));

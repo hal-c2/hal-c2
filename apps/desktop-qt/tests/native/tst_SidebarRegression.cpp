@@ -64,6 +64,12 @@ struct Shell {
   std::unique_ptr<NativeShell> native;
 };
 
+// How many times the store lists the thread at `key`.
+int listed(const ShellStore& store, const QString& key) {
+  const QList<sidebar::Thread> threads = store.threads();
+  return int(std::count_if(threads.begin(), threads.end(), [&key](const sidebar::Thread& thread) { return thread.key() == key; }));
+}
+
 }  // namespace
 
 class SidebarRegression : public QObject {
@@ -144,6 +150,48 @@ private slots:
 
     QCOMPARE(shell.sidebar().value(QStringLiteral("selectedKeys")).toList(), QVariantList());
     QVERIFY(shell.native->sidebar()->selection().isEmpty());
+  }
+
+  // A frame that names no MC is no member's: it once made a member of its own
+  // that took the environment's rows too, so the thread was listed twice
+  // (tst_ShellStoreFuzz).
+  void aFrameNamingNoMcChangesNothing() {
+    QTemporaryDir home;
+    Shell shell(home.path(), {});
+    shell.mc.join(QStringLiteral("b"));
+    shell.mc.sendPeerRow(QStringLiteral("b"), QStringLiteral("t3"), threadRow(QStringLiteral("t3")));
+    ShellStore* store = shell.native->store();
+    HAL_C2_TRY_VERIFY(store->thread(QStringLiteral("b:t3")).has_value());
+
+    shell.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.rows")},
+                        {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("t3"), QStringLiteral("thread"), threadRow(QStringLiteral("t3"))})}}});
+    shell.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                        {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("b")}}}});
+    // The frames come in order: once this row is in, so are they.
+    shell.send(QStringLiteral("t1"), threadRow(QStringLiteral("t1")));
+
+    QCOMPARE(listed(*store, QStringLiteral("b:t3")), 1);
+    QCOMPARE(store->mcServing(QStringLiteral("b")), QStringLiteral("mc-b"));
+  }
+
+  // A member announced under another name (an MC's node name changes when it
+  // becomes distributed) is the same machine: its former name goes, and its
+  // threads are listed once.
+  void aMemberUnderANewNameIsListedOnce() {
+    QTemporaryDir home;
+    Shell shell(home.path(), {});
+    shell.mc.join(QStringLiteral("b"));
+    shell.mc.sendPeerRow(QStringLiteral("b"), QStringLiteral("t3"), threadRow(QStringLiteral("t3")));
+    ShellStore* store = shell.native->store();
+    HAL_C2_TRY_VERIFY(store->thread(QStringLiteral("b:t3")).has_value());
+
+    shell.mc.join(QStringLiteral("mc-b2"), QStringLiteral("b"));
+    shell.send(QStringLiteral("t1"), threadRow(QStringLiteral("t1")));
+
+    QCOMPARE(listed(*store, QStringLiteral("b:t3")), 1);
+    QCOMPARE(store->mcServing(QStringLiteral("b")), QStringLiteral("mc-b2"));
+    QCOMPARE(store->environmentOf(QStringLiteral("mc-b")), QString());
+    QVERIFY(store->threadOnline(QStringLiteral("b:t3")));
   }
 
   // Back does not open a thread deleted since the window left it.

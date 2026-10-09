@@ -167,6 +167,12 @@ void FakeMc::join(const QString& peer, const QString& peerEnvironment) {
   setOnline(peerEnvironment, !offline.contains(peerEnvironment));
 }
 
+void FakeMc::sendShell(QJsonObject frame) {
+  if (!m_socket || m_shellSubscription < 0) return;
+  frame.insert(QStringLiteral("id"), m_shellSubscription);
+  send(frame);
+}
+
 void FakeMc::sendPeerRow(const QString& environment, const QString& id, const QJsonObject& row, const QString& kind) {
   const QJsonArray entry{id, kind, row};
   peerRows[environment].insert(id, entry);

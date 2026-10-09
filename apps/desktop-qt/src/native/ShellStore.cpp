@@ -348,6 +348,30 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
   entry.environment = environment;
   unsaved(mc);
+  // An environment is one machine, served by one MC: another listed with it is
+  // that machine under a former name (its node name changes when it becomes
+  // distributed), and goes, as the MC forgets it (lib/hal_c2/shell.ex
+  // forget_former_names). So a thread's key names one row.
+  const QString environmentId = entry.environmentId;
+  if (environmentId.isEmpty()) return;
+  QStringList former;
+  for (auto it = m_mcs.cbegin(); it != m_mcs.cend(); ++it) {
+    if (it.key() != mc && it->environmentId == environmentId) former.append(it.key());
+  }
+  for (const QString& name : former) removeMc(name);
+}
+
+void ShellStore::takeRows(const QString& mc, const QString& former) {
+  if (former.isEmpty() || former == mc) return;
+  const Mc old = m_mcs.value(former);
+  Mc& entry = m_mcs[mc];
+  if (!entry.threads.isEmpty() || !entry.projects.isEmpty()) return;
+  entry.threads = old.threads;
+  entry.projects = old.projects;
+  Unsaved& change = unsaved(mc);
+  change.reset = true;
+  for (auto it = old.threads.cbegin(); it != old.threads.cend(); ++it) change.put.insert(it.key(), {it.key(), QStringLiteral("thread"), *it});
+  for (auto it = old.projects.cbegin(); it != old.projects.cend(); ++it) change.put.insert(it.key(), {it.key(), QStringLiteral("project"), *it});
 }
 
 bool ShellStore::clear() {
@@ -369,6 +393,10 @@ bool ShellStore::clear() {
 
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
+  // Every member, row and change is of an MC by its node name; one that names
+  // none is of no member, and changes nothing.
+  const QString mc = frame.value(QLatin1String("mc")).toString();
+  if (type.startsWith(QLatin1String("shell.")) && mc.isEmpty()) return;
   if (type == QLatin1String("shell")) {
     // The cluster's members, and the rows this client lacks of each: all of
     // them for an MC marked `reset` (or sent by an MC that keeps no versions),
@@ -376,19 +404,22 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     QSet<QString> listed;
     QSet<QString> replaced;
     for (const QJsonValue& value : frame.value(QLatin1String("mcs")).toArray()) {
-      const QJsonObject mc = value.toObject();
-      const QString name = mc.value(QLatin1String("mc")).toString();
+      const QJsonObject member = value.toObject();
+      const QString name = member.value(QLatin1String("mc")).toString();
+      if (name.isEmpty()) continue;
       listed.insert(name);
-      if (mc.value(QLatin1String("reset")).toBool(true)) resetRows(name, replaced);
-      setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
-      m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
-      setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
+      if (member.value(QLatin1String("reset")).toBool(true)) resetRows(name, replaced);
+      setEnvironment(name, member.value(QLatin1String("environment")).toObject());
+      m_mcs[name].online = member.value(QLatin1String("online")).toBool();
+      setVersion(name, member.value(QLatin1String("epoch")), member.value(QLatin1String("rev")));
     }
     for (const QString& name : m_mcs.keys()) {
       if (!listed.contains(name)) removeMc(name);
     }
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
+      // Rows are of the members listed.
+      if (!listed.contains(row.at(0).toString())) continue;
       putRow(row.at(0).toString(), row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
     }
     forgetThreads(replaced);
@@ -400,10 +431,11 @@ void ShellStore::onFrame(const QJsonObject& frame) {
   } else if (type == QLatin1String("error")) {
     m_problem = frame.value(QLatin1String("reason")).toString(QStringLiteral("The MC did not send its projects and threads."));
   } else if (type == QLatin1String("shell.environment")) {
-    setEnvironment(frame.value(QLatin1String("mc")).toString(),
-                   frame.value(QLatin1String("environment")).toObject());
+    const QJsonObject environment = frame.value(QLatin1String("environment")).toObject();
+    const QString environmentId = environment.value(QLatin1String("environmentId")).toString();
+    if (!environmentId.isEmpty()) takeRows(mc, mcServing(environmentId));
+    setEnvironment(mc, environment);
   } else if (type == QLatin1String("shell.mc")) {
-    const QString mc = frame.value(QLatin1String("mc")).toString();
     // A machine removed from the cluster takes its rows with it; an offline one keeps them.
     if (frame.value(QLatin1String("removed")).toBool()) {
       removeMc(mc);
@@ -411,7 +443,6 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       m_mcs[mc].online = frame.value(QLatin1String("online")).toBool();
     }
   } else if (type == QLatin1String("shell.rows")) {
-    const QString mc = frame.value(QLatin1String("mc")).toString();
     QSet<QString> replaced;
     if (frame.value(QLatin1String("reset")).toBool()) resetRows(mc, replaced);
     putRows(mc, frame.value(QLatin1String("rows")).toArray());
