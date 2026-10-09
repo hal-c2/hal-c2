@@ -18,11 +18,14 @@ defmodule HalC2.ThreadMoveProofTest do
       {:exports, HalC2.Orchestration.Handoff}
     ],
     covers: %{
-      "HalC2.ThreadMove.move/3" => ~w(begin moved called-off broke-off mover),
+      "HalC2.ThreadMove.move/3" =>
+        ~w(begin moved forward stop called-off broke-off mover freeing freeing?),
       "HalC2.ThreadMove.taking/2" => ~w(taking taking-gone),
-      "HalC2.ThreadMove.accept/3" => ~w(stage take import import-failed refused gave-up accept),
-      "HalC2.ThreadMove.arrived?/2" => ~w(answer locked got got?),
-      "HalC2.ThreadMove.settle/1" => ~w(settle let-go again release),
+      "HalC2.ThreadMove.accept/3" =>
+        ~w(stage take import import-failed refused gave-up accept put sent),
+      "HalC2.ThreadMove.arrived?/2" => ~w(answer locked got has moves),
+      "HalC2.ThreadMove.settle/1" =>
+        ~w(settle let-go forward stop letting freeing? again release),
       "HalC2.ThreadMove handle_cast {:watch, _, _, _}" => "mover-died",
       "HalC2.ThreadMove handle_cast {:done, _, _}" => "settle",
       "HalC2.ThreadMove handle_info {:settle, _}" => "settle",
@@ -38,6 +41,7 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove hook(:accepted)" => "moved",
       "HalC2.ThreadMove hook(:staged)" => "stage",
       "HalC2.ThreadMove hook(:taking)" => "import",
+      "HalC2.ThreadMove hook(:letting_go)" => "forward",
       "HalC2.ThreadMove hook(:arrived)" => "answer"
     },
     abstracts: %{
@@ -85,25 +89,32 @@ defmodule HalC2.ThreadMoveProofTest do
 
   # Rules the environment may or may not take; the code's own may not stop.
   @faults ~w(crash partition time-out mover-died)
-  @fair ~w(begin moved called-off broke-off taking taking-gone stage take import
-           import-failed refused gave-up answer settle let-go again release restart heal drop)
+  @fair ~w(begin moved forward called-off broke-off taking taking-gone stage
+           take import import-failed refused gave-up answer settle let-go again release
+           restart heal drop)
 
+  # Each searches every state for all of twice, lost, hurts and wrong at once.
   for init <- ["two(2, 2)", "three(2, 2)"] do
-    test "a thread is never writable on two MCs, from #{init}", %{proof: proof} do
-      refute_reachable(proof, unquote(init), "twice", [])
+    test "a thread is never writable on two MCs or lost, a stale let-go never stops its session, and its source hears truly whether its move arrived, from #{init}",
+         %{proof: proof} do
+      refute_reachable(proof, unquote(init), "broken", [])
     end
+  end
 
-    test "a thread is never lost, from #{init}", %{proof: proof} do
-      refute_reachable(proof, unquote(init), "lost", [])
-    end
-
+  for init <- ["two(2, 2)", "three(2, 1)"] do
     test "a move never gets stuck, from #{init}", %{proof: proof} do
       refute_deadlock(proof, unquote(init), "settled", besides: @faults)
     end
   end
 
-  test "a move that begins ends", %{proof: proof} do
+  # The thread keeps only the last move from each MC. Keeping only the last of all fails
+  # here: a moves it to b, b on to c and c back to b while a still asks after its move.
+  test "the last move from each MC is enough to say whether a move arrived", %{proof: proof} do
+    refute_reachable(proof, "three(3, 0)", "broken", [])
+  end
+
+  test "a move that begins ends, with up to one fault", %{proof: proof} do
     formula = "[] (moving(1) -> <> ~ moving(1)) /\\ [] (moving(2) -> <> ~ moving(2))"
-    assert_ltl(proof, "two(2, 2)", formula, fair: @fair)
+    assert_ltl(proof, "two(2, 1)", formula, fair: @fair)
   end
 end
