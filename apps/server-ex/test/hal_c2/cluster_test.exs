@@ -161,6 +161,32 @@ defmodule HalC2.ClusterTest do
     assert Streams.ensure("left-th") == stream
   end
 
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a client whose relay fails is told to resync, and follows the thread again",
+       %{port: port, b: b} do
+    {:ok, _} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n1")]])
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "stream", "mc" => Atom.to_string(b), "stream" => "relayed-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+
+    stream = :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"])
+    [relay] = Map.values(:erpc.call(b, :sys, :get_state, [stream]).relays)
+    true = :erpc.call(b, Process, :exit, [relay, :failed])
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    assert resync == %{"t" => "resync", "id" => 1}
+    assert :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"]) == stream
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {:ok, seq} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n2")]])
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    assert [[^seq, "note", "n2", _, _at]] = events["events"]
+  end
+
+  defp note(id), do: {"note", id, %{"s" => %{"v" => 1}}}
+
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
