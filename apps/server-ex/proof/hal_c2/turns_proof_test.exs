@@ -103,8 +103,6 @@ defmodule HalC2.TurnsProofTest do
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
-      "HalC2.Orchestration.Recovery.auto_turns?/0" =>
-        "on in the MC modelled here; a scratch MC with it off leaves next's requeued run queued",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"
     },

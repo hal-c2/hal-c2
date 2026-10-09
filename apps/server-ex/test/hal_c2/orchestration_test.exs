@@ -2210,12 +2210,12 @@ defmodule HalC2.OrchestrationTest do
       assert length(runs(current(thread_id))) == 2
     end
 
-    test "an MC that starts no turns by itself leaves a cut-off turn where it stopped" do
+    test "an MC without automatic actions leaves a cut-off turn where it stopped" do
       start_supervised!(HalC2.Settings)
       {_, version} = HalC2.Settings.get()
       {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => true}, version)
-      Application.put_env(:hal_c2, :auto_turns, false)
-      on_exit(fn -> Application.delete_env(:hal_c2, :auto_turns) end)
+      Application.put_env(:hal_c2, :auto_actions, false)
+      on_exit(fn -> Application.delete_env(:hal_c2, :auto_actions) end)
 
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")

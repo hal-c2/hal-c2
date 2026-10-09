@@ -32,6 +32,9 @@ def main() -> None:
         if MARKUP.match(text):
             markup[stream] += 1
     subagents = Counter(dict(con.execute("select stream, count(*) from events where kind = 'subagent' group by stream")))
+    # A scheduled run's message names its task; the thread keeps the creator of the task.
+    scheduled = Counter(dict(con.execute(
+        "select stream, count(*) from events where kind = 'message' and patch like '%\"scheduledTaskId\":\"%' group by stream")))
 
     def project(t):
         return projects.get(t.get("projectId"), {})
@@ -59,7 +62,8 @@ def main() -> None:
         ("Archived", lambda t: bool(t.get("archivedAt"))),
         ("Forked", lambda t: bool(t.get("forkedFrom"))),
         ("Longest titles", lambda t: len(t.get("title") or "")),
-        ("Created by an agent or a schedule", lambda t: t.get("createdBy") not in (None, "user") and t.get("visibleItemCount", 0)),
+        ("Created by an agent", lambda t: t.get("createdBy") not in (None, "user") and t.get("visibleItemCount", 0)),
+        ("Runs of a scheduled task", lambda t: n(scheduled, t)),
     ]
     print(f"{len(threads)} threads in {len(projects)} projects ({db})")
     by_provider = Counter(t.get("providerInstanceId") for t in threads)

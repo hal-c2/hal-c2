@@ -40,8 +40,6 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",
-      "HalC2.Orchestration.Recovery.auto_turns?/0" =>
-        "a boot switch continue/0 reads; off, it is the model's skip-continue",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "tells the MC is shutting down; the model has crash"
     },

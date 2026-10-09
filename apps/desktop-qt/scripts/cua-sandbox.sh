@@ -8,9 +8,9 @@
 #   cua-sandbox.sh stop
 #
 # start brings up what is not running and (re)launches the app, so it also picks up a QML
-# change. --seed snapshots an MC database (read-only) into a fresh scratch MC, which starts no
-# turn nobody sent, since a seeded thread names a real project; --url attaches to another MC
-# instead. call fills in the app's pid, a shared session label and foreground
+# change. --seed snapshots an MC database (read-only) into a fresh scratch MC, which takes no
+# automatic action (turns nobody sent, boot pulls), since a seeded project is a real checkout;
+# --url attaches to another MC instead. call fills in the app's pid, a shared session label and foreground
 # delivery where the tool takes them. Files go under HAL_C2_CUA_HOME, default
 # <checkout>/.hal-c2/cua.
 set -euo pipefail
@@ -125,7 +125,7 @@ start_mc() {
     rm -rf "$home/mc" && mkdir -p "$home/mc/data"
     sqlite3 -readonly "$seed" "VACUUM INTO '$home/mc/data/hal-c2.sqlite'"
   fi
-  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_TURNS=1 exec setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
+  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 exec setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
   track $! mc
   wait_for 300 "the MC on port $port" mc_up
 }

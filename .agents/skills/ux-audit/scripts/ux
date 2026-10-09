@@ -82,7 +82,7 @@ mc_start() {
   local port pid
   port=$(< "$home/mc.port")
   ! mc_pid > /dev/null 2>&1 || die "the MC is already running"
-  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_TURNS=1 exec setsid mise exec -- mix hal_c2.server >> "$home/mc.log" 2>&1) &
+  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 exec setsid mise exec -- mix hal_c2.server >> "$home/mc.log" 2>&1) &
   pid=$!
   echo "$pid $(start_time "$pid")" > "$home/mc.pid"
   for _ in $(seq 600); do mc_pid > /dev/null 2>&1 && { echo "the MC is back on port $port"; return; }; sleep 0.5; done
