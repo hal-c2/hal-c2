@@ -215,4 +215,39 @@ describe("orchestration V2 TUI presentation", () => {
       },
     });
   });
+
+  it("leaves what the MC sent the agent for itself out of the user's messages", () => {
+    const base = projection();
+    const message = (id: string, fields: Record<string, unknown>) => ({
+      id,
+      threadId,
+      runId: null,
+      nodeId: null,
+      role: "user",
+      text: `<delegated_task_result taskId="task:1">${id}</delegated_task_result>`,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: "system",
+      creationSource: "server",
+      ...fields,
+    });
+    const notification = {
+      source: { kind: "delegated_task", taskIds: ["task:1"] },
+      outcome: "completed",
+      summary: "Tax tests finished",
+    };
+    const result = presentTuiThread({
+      ...base,
+      messages: [
+        message("typed", { createdBy: "user", creationSource: "web", text: "Add tax" }),
+        message("result", { notification }),
+        // A thread stored before the MC put the notification on the message.
+        message("stored", { delegatedCompletion: { taskId: "task:1", status: "completed" } }),
+      ],
+    } as never);
+
+    expect(result.messages.map((entry) => entry.id as string)).toEqual(["typed"]);
+  });
 });

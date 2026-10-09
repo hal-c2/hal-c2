@@ -123,3 +123,71 @@ step("the user can open that thread", async (ctx: TurnWorld) => {
   expect(openThreadId(ctx)).toBe(CHILD.id);
   expect(hostState(ctx, "page").title).toBe(CHILD.title);
 });
+
+// --- what the MC sent the agent for itself ---------------------------------------------
+
+/** A run the MC started for the agent: its message carries the notification its item shows. */
+async function startNotifiedRun(ctx: TurnWorld, text: string, notification: object) {
+  const run = await startRun(ctx);
+  const fixture = await turns(ctx);
+  Object.assign(fixture.messages.at(-1)!, { text, notification });
+  await addItem(ctx, "notification", { id: `turn-item:user:message:${run}`, ...notification });
+}
+
+step("a task the agent delegated as {string} finished", async (ctx: TurnWorld, title: string) => {
+  await listChildThread(ctx);
+  // delegation.ex: the agent reads the envelope, the timeline the notification.
+  await startNotifiedRun(
+    ctx,
+    `<delegated_task_result taskId="task-1" title="${title}" status="completed" childThreadId="${CHILD.id}">\n12 tests added\n</delegated_task_result>`,
+    {
+      source: { kind: "delegated_task", taskIds: ["task-1"] },
+      outcome: "completed",
+      summary: `${title} finished`,
+    },
+  );
+  const fixture = await turns(ctx);
+  Object.assign(fixture.messages.at(-1)!, {
+    createdBy: "system",
+    creationSource: "server",
+    delegatedCompletion: { taskId: "task-1", status: "completed" },
+  });
+  await sync(ctx);
+});
+
+step("the agent's background work woke it up", async (ctx: TurnWorld) => {
+  // claude/thread_runtime.ex wake.
+  await startNotifiedRun(ctx, "Background task completed.", {
+    source: { kind: "background_task" },
+    outcome: "updated",
+    summary: "Background activity updated",
+  });
+  const fixture = await turns(ctx);
+  Object.assign(fixture.messages.at(-1)!, { createdBy: "agent", creationSource: "provider" });
+  await sync(ctx);
+});
+
+step("the user reads the parent thread", (ctx: TurnWorld) => {
+  expect(openThreadId(ctx)).toBe("t1");
+});
+
+step("the timeline says {string}", async (ctx: TurnWorld, text: string) => {
+  expect(
+    shownItems(ctx)
+      .flatMap(linesOf)
+      .some((line) => line.includes(text)),
+  ).toBe(true);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("the result is not shown as a message of the user's", async (ctx: TurnWorld) => {
+  expect(shownItems(ctx).filter((item) => item.kind === "message")).toEqual([]);
+  expect(await snapshot(ctx)).not.toContain("delegated_task_result");
+});
+
+step("nothing says a message was sent by another agent", async (ctx: TurnWorld) => {
+  expect(shownItems(ctx).filter((item) => item.kind === "message")).toEqual([]);
+  const screen = await snapshot(ctx);
+  expect(screen).not.toContain("↩");
+  expect(screen).not.toContain("Background task completed.");
+});

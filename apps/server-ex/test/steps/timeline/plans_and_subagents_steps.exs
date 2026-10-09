@@ -124,6 +124,34 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert_result_runs(context, title, text)
   end
 
+  step "the parent's timeline shows a notification that the task finished, not a message of the user's",
+       context do
+    state = World.stream(context, World.current(context))
+    task_id = context.delegated["taskId"] || context.delegated["id"]
+
+    assert [message] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))
+
+    assert %{
+             "type" => "notification",
+             "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
+             "outcome" => "completed",
+             "summary" => summary
+           } = item = StreamState.get(state, "turn-item")["turn-item:user:#{message["id"]}"]
+
+    assert String.ends_with?(summary, " finished")
+    refute Map.has_key?(item, "text")
+
+    assert [] ==
+             for(
+               %{"type" => "user_message", "text" => text} <- StreamState.list(state, "turn-item"),
+               text =~ "<delegated_task_result",
+               do: text
+             )
+
+    context
+  end
+
   step "a subagent sent a message to its parent", context do
     context = World.working_thread(context, World.current(context))
     HalC2.Test.Mc.ensure(HalC2.Mcp)

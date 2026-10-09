@@ -741,6 +741,29 @@ defmodule HalC2.OrchestrationTest do
              }
            } =
              call.("task_status", %{"taskId" => task_id})
+
+    # Once the parent is free the result starts a run. The transcript says the task
+    # finished; the envelope is the agent's to read, not a message from the user.
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => parent_id})
+    state = await_statuses(parent_id, ["interrupted", "running"])
+    [_, woken] = runs(state)
+    item = StreamState.get(state, "turn-item")["turn-item:user:#{woken["userMessageId"]}"]
+
+    assert %{
+             "type" => "notification",
+             "runId" => run_id,
+             "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
+             "outcome" => "completed",
+             "summary" => "Say hello finished"
+           } = item
+
+    assert run_id == woken["id"]
+    refute Map.has_key?(item, "text")
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["type"] == "user_message" and &1["text"] =~ "delegated_task_result")
+           )
   end
 
   describe "queued messages" do

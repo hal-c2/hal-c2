@@ -3,6 +3,10 @@
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (proposed_plan, todo_list)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (delegate_task, completion wake, no answer)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (message_item: a message with a notification is a notification item; users_run)
+#   apps/server/src/orchestration-v2/Notification.ts (notificationTurnItem)
+#   apps/web/src/session-logic.ts (notification work rows, getUserQueuedThreadRuns)
+#   apps/desktop-qt/src/native/TimelineModel.cpp (noticeOf: notification rows, and results stored as user messages)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (fork marker)
 #   apps/web/src/components/chat/ProposedPlanCard.tsx
 #   apps/web/src/proposedPlan.ts (stripDisplayedPlanMarkdown)
@@ -108,11 +112,26 @@ Feature: Plans and subagents
     Given the agent delegated a task and chose to <wait>
     When the subagent finishes <answer>
     Then the parent receives <message>
+    And the parent's timeline shows a notification that the task finished, not a message of the user's
 
     Examples:
       | wait        | answer                | message                                |
       | carry on    | with "12 tests added" | "12 tests added" once it is free       |
       | wait for it | without an answer     | "(no answer)" once its own run is over |
+
+  @shared @backlog-mobile
+  Scenario: A delegated task's result shows as a notification, not a message of the user's
+    Given a task the agent delegated as "Tax tests" finished
+    When the user reads the parent thread
+    Then the timeline says "Tax tests finished"
+    And the result is not shown as a message of the user's
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A result a thread stored as a user message still shows as a notification
+    Given a thread stored the failed result of the delegated task "Tax tests" as a user message
+    When the user reads the parent thread
+    Then the timeline says "Tax tests failed"
+    And the result is not shown as a message of the user's
 
   @shared @backlog-mobile
   Scenario Outline: A subagent's status is shown in the parent

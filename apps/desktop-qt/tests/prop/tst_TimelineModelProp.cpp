@@ -203,7 +203,7 @@ struct Run {
 struct Item {
   QString id;
   // user_message, assistant_message, command_execution, reasoning,
-  // proposed_plan, subagent or error
+  // proposed_plan, subagent, error or notification
   QString type;
   QString run;
   int ordinal = 0;
@@ -214,6 +214,13 @@ struct Item {
   QString status;
   // A subagent's agent.
   QString agent;
+  // The message that started its run: the user's, or one the MC sent the agent
+  // for itself, a notification.
+  bool opener = false;
+  // A user_message a thread stored before the MC recorded those as
+  // notifications: "envelope", a delegated task's result as the agent reads
+  // it (its text is the task's title), or "wake", the provider waking itself.
+  QString legacy;
   bool operator==(const Item&) const = default;
 };
 
@@ -264,6 +271,7 @@ QString field(const QString& type) {
   if (type == QLatin1String("command_execution")) return QStringLiteral("output");
   if (type == QLatin1String("proposed_plan")) return QStringLiteral("markdown");
   if (type == QLatin1String("subagent")) return QStringLiteral("progress");
+  if (type == QLatin1String("notification")) return QStringLiteral("summary");
   return QStringLiteral("text");
 }
 
@@ -280,6 +288,16 @@ QJsonObject json(const Item& item) {
                      {QStringLiteral("streaming"), item.streaming}};
   if (item.type == QLatin1String("error")) {
     entity.insert(QStringLiteral("failure"), QJsonObject{{QStringLiteral("message"), item.text}});
+  } else if (item.legacy == QLatin1String("envelope")) {
+    entity.insert(QStringLiteral("createdBy"), QStringLiteral("system"));
+    entity.insert(QStringLiteral("creationSource"), QStringLiteral("server"));
+    entity.insert(QStringLiteral("text"),
+                  QStringLiteral("<delegated_task_result taskId=\"task:1\" title=\"%1\" status=\"failed\" childThreadId=\"thread:2\">\nno\n</delegated_task_result>")
+                      .arg(item.text));
+  } else if (item.legacy == QLatin1String("wake")) {
+    entity.insert(QStringLiteral("createdBy"), QStringLiteral("agent"));
+    entity.insert(QStringLiteral("creationSource"), QStringLiteral("provider"));
+    entity.insert(QStringLiteral("text"), item.text);
   } else {
     entity.insert(field(item.type), item.text);
   }
@@ -358,7 +376,18 @@ void showValue(const Row& row, std::ostream& os) {
   os << ")";
 }
 
-QString kindOf(const QString& type) {
+// What the MC sent the agent for itself shows as a marker naming it, not as a
+// message of the user's.
+QString noticeOf(const Item& item) {
+  if (item.legacy == QLatin1String("envelope")) return item.text + QStringLiteral(" failed");
+  if (item.legacy == QLatin1String("wake")) return QStringLiteral("Background activity updated");
+  if (item.type != QLatin1String("notification")) return {};
+  return item.text.isEmpty() ? QStringLiteral("Notification") : item.text;
+}
+
+QString kindOf(const Item& item) {
+  const QString& type = item.type;
+  if (!noticeOf(item).isEmpty()) return QStringLiteral("marker");
   if (type == QLatin1String("user_message") || type == QLatin1String("assistant_message")) return QStringLiteral("message");
   if (type == QLatin1String("proposed_plan")) return QStringLiteral("plan");
   if (type == QLatin1String("subagent") || type == QLatin1String("error")) return type;
@@ -388,7 +417,7 @@ QList<Row> project(const Model& model) {
   QSet<QString> streaming;           // runs with a reply streaming
   QHash<QString, QString> first;     // run -> its first item after the user's message
   for (const Item& item : std::as_const(shown)) {
-    if (item.type == QLatin1String("user_message")) continue;
+    if (item.opener) continue;
     if (!first.contains(item.run)) first.insert(item.run, item.id);
     if (item.type == QLatin1String("assistant_message")) {
       terminal.insert(item.run, item.id);
@@ -405,8 +434,8 @@ QList<Row> project(const Model& model) {
     if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id)) continue;
     QStringList hidden;
     for (const Item& item : std::as_const(shown)) {
-      if (item.run != run.id || item.type == QLatin1String("user_message") || item.id == terminal.value(run.id)) continue;
-      const QString kind = kindOf(item.type);
+      if (item.run != run.id || item.opener || item.id == terminal.value(run.id)) continue;
+      const QString kind = kindOf(item);
       if ((kind == QLatin1String("work") && item.status != QLatin1String("running")) || kind == QLatin1String("message")) {
         hidden.append(item.id);
       }
@@ -434,14 +463,14 @@ QList<Row> project(const Model& model) {
       ++i;
       continue;
     }
-    const QString kind = kindOf(item.type);
+    const QString kind = kindOf(item);
     if (kind == QLatin1String("work")) {
       Row row{QStringLiteral("work:") + item.id, kind};
       QStringList calls;
       for (; i < shown.size(); ++i) {
         const Item& call = shown.at(i);
         if (!calls.isEmpty() && foldBefore.contains(call.id)) break;
-        if (kindOf(call.type) != QLatin1String("work") || folded.contains(call.id) || call.run != item.run) break;
+        if (kindOf(call) != QLatin1String("work") || folded.contains(call.id) || call.run != item.run) break;
         calls.append(call.id);
       }
       row.summarized = calls.size() > 1 && settled(thread.runs.value(item.run));
@@ -460,7 +489,8 @@ QList<Row> project(const Model& model) {
       continue;
     }
     Row row{item.id, kind};
-    row.text = item.text;
+    row.text = kind == QLatin1String("marker") ? QString() : item.text;
+    if (kind == QLatin1String("marker")) row.title = noticeOf(item);
     row.streaming = item.streaming;
     if (kind == QLatin1String("plan")) row.title = QStringLiteral("Proposed plan");
     if (kind == QLatin1String("subagent")) {
@@ -689,19 +719,28 @@ struct Change : Command {
   }
 };
 
-// A new turn: its run and the user's message that asked for it, in one frame.
+// A new turn: its run and the message that asked for it, in one frame. The
+// message is the user's, or the MC's to the agent: a notification, or what a
+// thread stored of one before the MC recorded them so.
 struct StartRun : Change {
+  QString how;
+  explicit StartRun(const Model&)
+      : how(*rc::gen::weightedElement<QString>(
+            {{4, QStringLiteral("user")}, {2, QStringLiteral("notification")}, {1, QStringLiteral("envelope")}, {1, QStringLiteral("wake")}})) {}
   void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
   void apply(Model& model) const override {
     const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("running")};
-    const Item message{QStringLiteral("ask-") + run.id, QStringLiteral("user_message"), run.id, ++model.ordinal,
-                       QStringLiteral("ask"), false, QStringLiteral("completed")};
+    Item message{QStringLiteral("ask-") + run.id,
+                 how == QLatin1String("notification") ? QStringLiteral("notification") : QStringLiteral("user_message"), run.id,
+                 ++model.ordinal, QStringLiteral("ask"), false, QStringLiteral("completed")};
+    message.opener = true;
+    if (how == QLatin1String("envelope") || how == QLatin1String("wake")) message.legacy = how;
     model.mc.runs.insert(run.id, run);
     model.mc.items.insert(message.id, message);
     commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}}),
                    event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id)});
   }
-  void show(std::ostream& os) const override { os << "StartRun"; }
+  void show(std::ostream& os) const override { os << "StartRun(" << how.toStdString() << ")"; }
 };
 
 QStringList running(const Model& model) {
@@ -726,7 +765,8 @@ struct AddItem : Change {
                                                {2, QStringLiteral("reasoning")},
                                                {1, QStringLiteral("proposed_plan")},
                                                {1, QStringLiteral("subagent")},
-                                               {1, QStringLiteral("error")}});
+                                               {1, QStringLiteral("error")},
+                                               {1, QStringLiteral("notification")}});
     if (type == QLatin1String("subagent")) agent = pick(kAgents);
   }
   void checkPreconditions(const Model& model) const override {
@@ -831,7 +871,7 @@ struct Finish : Change {
 struct DeleteItem : Change {
   QString item;
   explicit DeleteItem(const Model& model) {
-    const QStringList ids = itemsWhere(model, [](const Item& item) { return item.type != QLatin1String("user_message"); });
+    const QStringList ids = itemsWhere(model, [](const Item& item) { return !item.opener; });
     RC_PRE(!ids.isEmpty());
     item = pick(ids);
   }
