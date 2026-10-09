@@ -60,7 +60,7 @@ defmodule HalC2.DelegationProofTest do
         "A waited-for task that finishes after the caller went idle is delivered",
         "A task whose end never reached its caller settles when the MC starts",
         "A task whose end report timed out settles on the retry",
-        "A task still working when the MC stopped is not settled when it starts",
+        "A task still working when the MC stopped ends with the turn that continues it",
         "A task whose subagent is not continued after a restart is interrupted",
         "Cancelling a running task interrupts the subagent",
         "Cancelling a finished task is refused"
