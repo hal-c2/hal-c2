@@ -166,4 +166,28 @@ defmodule HalC2.ScheduledTasksRunsTest do
     _ = :sys.get_state(scheduler)
     refute_received {:DOWN, ^down, _, _, _}
   end
+
+  test "a run started before the scheduler was updated in place does not outlive it" do
+    scheduler = Process.whereis(ScheduledTasks)
+    blocking_fire()
+    interval_task()
+    advance(60_000)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    # What the version before was: a scheduler that did not trap exits, nor link its runs.
+    :sys.replace_state(scheduler, fn state ->
+      Process.flag(:trap_exit, false)
+      Process.unlink(run)
+      state
+    end)
+
+    :ok = :sys.suspend(scheduler)
+    :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+    :ok = :sys.resume(scheduler)
+
+    Process.exit(scheduler, :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+  end
 end
