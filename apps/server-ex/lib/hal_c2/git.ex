@@ -167,39 +167,54 @@ defmodule HalC2.Git do
 
   @doc """
   Has every git the MC starts (its own, its agents' and its terminals') reach GitHub
-  with the GitHub CLI's sign-in: GitHub's SSH addresses go over HTTPS, and
-  `gh auth git-credential` answers for them. An MC running as a service has no SSH
-  agent, so a key behind a passphrase never answers there. Does nothing when gh is
-  not installed or not signed in to github.com.
+  with the GitHub CLI's sign-in when there is one: GitHub's SSH addresses go over
+  HTTPS, and `gh auth git-credential` answers for them. An MC running as a service
+  has no SSH agent, so a key behind a passphrase never answers there.
+
+  Git includes a file the MC owns and writes again on each call (at boot and after
+  a hot update), so a later sign-in or sign-out reaches git already running too.
   """
   def use_gh_for_github do
+    file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
+    tmp = file <> ".tmp"
+
+    # A file that could not be written is left out: git skips a missing include.
+    with :ok <- File.mkdir_p(Path.dirname(file)),
+         :ok <- File.write(tmp, github_config()),
+         do: File.rename(tmp, file)
+
     # GIT_CONFIG_COUNT entries come after every config file, as `-c` does.
     count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
 
-    with gh when is_binary(gh) <- System.find_executable("gh"),
-         # Git runs the helper through a shell, which would split a path with a space.
-         helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential",
-         # Set up once: a hot update asks again.
-         false <-
-           Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == helper)),
-         true <- gh_signed_in?() do
-      entries = [
-        {"url.https://github.com/.insteadOf", "git@github.com:"},
-        {"url.https://github.com/.insteadOf", "ssh://git@github.com/"},
-        # An empty helper drops the ones configured before, as `gh auth setup-git` does.
-        {"credential.https://github.com.helper", ""},
-        {"credential.https://github.com.helper", helper}
-      ]
-
-      for {{key, value}, i} <- Enum.with_index(entries, count) do
-        System.put_env("GIT_CONFIG_KEY_#{i}", key)
-        System.put_env("GIT_CONFIG_VALUE_#{i}", value)
-      end
-
-      System.put_env("GIT_CONFIG_COUNT", Integer.to_string(count + length(entries)))
+    unless Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == file)) do
+      System.put_env(%{
+        "GIT_CONFIG_KEY_#{count}" => "include.path",
+        "GIT_CONFIG_VALUE_#{count}" => file,
+        "GIT_CONFIG_COUNT" => Integer.to_string(count + 1)
+      })
     end
 
     :ok
+  end
+
+  defp github_config do
+    with gh when is_binary(gh) <- System.find_executable("gh"),
+         true <- gh_signed_in?() do
+      # Git runs the helper through a shell, which would split a path with a space.
+      helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+
+      """
+      [url "https://github.com/"]
+      \tinsteadOf = git@github.com:
+      \tinsteadOf = ssh://git@github.com/
+      [credential "https://github.com"]
+      \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
+      \thelper =
+      \thelper = "#{String.replace(helper, ~w(\\ "), &("\\" <> &1))}"
+      """
+    else
+      _ -> ""
+    end
   end
 
   # Read from gh's hosts file rather than asked of gh, which would open the keyring

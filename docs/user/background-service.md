@@ -104,7 +104,8 @@ Downloads, it may need Full Disk Access for the `hal-c2` executable listed in
 The service has no SSH agent, so an SSH key with a passphrase cannot reach your
 remotes from it. GitHub still works when the GitHub CLI is signed in
 (`gh auth login`): HAL-C2 and its agents reach `git@github.com:` remotes over HTTPS
-with that sign-in. A sign-in made later is picked up when HAL-C2 next starts or updates.
+with that sign-in. Signing in or out later takes effect when HAL-C2 next starts or
+updates.
 
 For failures after signing in to HAL-C2 Connect, see
 [connection troubleshooting](./remote-access.md#hal-c2-connect-troubleshooting).

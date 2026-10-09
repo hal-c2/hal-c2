@@ -131,10 +131,22 @@ Feature: The MC working with its host machine
     When the MC sets up the git it starts
     Then git fetches "git@github.com:acme/shop.git" over HTTPS
     And the GitHub CLI answers git's request for a GitHub credential
-    And setting up git again, as a hot update does, changes nothing
 
   @mc
   Scenario: Without the GitHub CLI's sign-in git reaches GitHub as configured
     Given the GitHub CLI on the host is not signed in
     When the MC sets up the git it starts
     Then git fetches "git@github.com:acme/shop.git" over SSH
+
+  @mc
+  Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update
+    Given the GitHub CLI on the host is <before>
+    And the MC sets up the git it starts
+    And an agent's git is already running
+    When the GitHub CLI <change> and the MC is hot-updated
+    Then the agent's git fetches "git@github.com:acme/shop.git" over <transport>
+
+    Examples:
+      | before                  | change                  | transport |
+      | not signed in           | signs in to github.com  | HTTPS     |
+      | signed in to github.com | signs out               | SSH       |

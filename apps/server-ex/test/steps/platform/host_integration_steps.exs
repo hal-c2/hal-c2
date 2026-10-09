@@ -439,7 +439,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       do: File.write!(Path.join(config, "hosts.yml"), "github.com:\n    user: acme\n")
 
     World.put_os_env("GH_CONFIG_DIR", config)
-    context
+    Map.put(context, :gh_config, config)
   end
 
   step "the MC sets up the git it starts", context do
@@ -454,9 +454,36 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^git fetches "(?<url>[^"]+)" over (?<transport>HTTPS|SSH)$/,
-       %{args: [url, transport]} = context do
-    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+  # What it was started with stays in an agent's git; the MC only changes its own.
+  step "an agent's git is already running", context do
+    Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
+  end
+
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
+       %{args: [change]} = context do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+
+    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step ~r/^(?<who>git|the agent's git) fetches "(?<url>[^"]+)" over (?<transport>HTTPS|SSH)$/,
+       %{args: [who, url, transport]} = context do
+    env =
+      if who == "git",
+        do: [],
+        # Variables the MC set after the agent started are not in the agent's.
+        else:
+          for({"GIT_CONFIG_" <> _ = n, _} <- System.get_env(), into: %{}, do: {n, nil})
+          |> Map.merge(Map.new(context.agent_env))
+          |> Map.to_list()
+
+    {fetched, 0} =
+      System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home, env: env)
 
     expected =
       if transport == "HTTPS",
@@ -477,13 +504,6 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       )
 
     assert answer =~ "password=from-gh"
-    context
-  end
-
-  step "setting up git again, as a hot update does, changes nothing", context do
-    before = System.get_env("GIT_CONFIG_COUNT")
-    :ok = HalC2.Git.use_gh_for_github()
-    assert System.get_env("GIT_CONFIG_COUNT") == before
     context
   end
 end
