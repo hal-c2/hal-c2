@@ -41,6 +41,7 @@ qt_add_qml_module(hal_c2_bricks
     ShellSplitButton.qml
     ShellMenu.qml
     ShellMenuItem.qml
+    ShellMenuSeparator.qml
     ShellTextField.qml
     ShellSwitch.qml
     ShellSpinBox.qml

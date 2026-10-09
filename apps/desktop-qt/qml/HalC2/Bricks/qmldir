@@ -30,6 +30,7 @@ ShellCheckBox 1.0 ShellCheckBox.qml
 ShellWindow 1.0 ShellWindow.qml
 ShellMenuItem 1.0 ShellMenuItem.qml
 ShellMenu 1.0 ShellMenu.qml
+ShellMenuSeparator 1.0 ShellMenuSeparator.qml
 ShellComboBox 1.0 ShellComboBox.qml
 ShellButton 1.0 ShellButton.qml
 ShellCard 1.0 ShellCard.qml

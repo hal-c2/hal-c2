@@ -49,6 +49,14 @@ MenuItem {
         }
 
         ShellIcon {
+            visible: control.subMenu !== null
+            name: "chevron-right"
+            size: 14
+            color: Qt.alpha(Theme.palette.color("textMuted", "#8b8b93"), 0.8)
+            Layout.alignment: Qt.AlignVCenter
+        }
+
+        ShellIcon {
             visible: control.current
             name: "check"
             size: 14

@@ -14,33 +14,11 @@ Item {
     readonly property var request: Shell.state.menu ?? null
     readonly property bool mine: request !== null && request.surfaceId === surfaceId
     property string shownRequestId: ""
+    readonly property alias menu: menu
+    // Everything built for the current request, destroyed with the next one.
+    property var built: []
 
     anchors.fill: parent
-
-    function entries() {
-        // Submenus flatten into a labelled section: one level is all the app uses.
-        const out = [];
-        for (const item of host.request.items) {
-            if (item.children && item.children.length > 0) {
-                out.push({
-                    id: item.id,
-                    label: item.label,
-                    header: true,
-                    separatorBefore: item.separatorBefore === true
-                });
-                for (const child of item.children) {
-                    out.push(Object.assign({}, child, {
-                        separatorBefore: child.separatorBefore === true
-                    }));
-                }
-                continue;
-            }
-            out.push(Object.assign({}, item, {
-                separatorBefore: item.separatorBefore === true
-            }));
-        }
-        return out;
-    }
 
     function choose(id) {
         if (host.request === null) {
@@ -66,6 +44,7 @@ Item {
         }
         shownRequestId = request.requestId;
         menu.chosen = false;
+        rebuild();
         menu.popup(Math.min(request.x, host.width - menu.implicitWidth - 8), Math.min(request.y, host.height - menu.implicitHeight - 8));
     }
 
@@ -80,27 +59,76 @@ Item {
                 host.choose(null);
             }
         }
+    }
 
-        Instantiator {
-            model: host.mine ? host.entries() : []
+    Component {
+        id: itemComponent
 
-            delegate: ShellMenuItem {
-                required property var modelData
+        ShellMenuItem {
+            id: row
 
-                text: modelData.label
-                enabled: modelData.disabled !== true && modelData.enabled !== false && modelData.header !== true
-                destructive: modelData.destructive === true
-                current: modelData.checked === true
-                iconName: modelData.icon ?? ""
-                font.bold: modelData.header === true
-                onTriggered: {
-                    menu.chosen = true;
-                    host.choose(modelData.id);
-                }
+            required property var entry
+
+            text: entry.label
+            enabled: entry.disabled !== true && entry.enabled !== false
+            destructive: entry.destructive === true
+            current: entry.checked === true
+            iconName: entry.icon ?? ""
+            onTriggered: {
+                menu.chosen = true;
+                host.choose(entry.id);
             }
+        }
+    }
 
-            onObjectAdded: (index, object) => menu.insertItem(index, object)
-            onObjectRemoved: (index, object) => menu.removeItem(object)
+    Component {
+        id: submenuComponent
+
+        ShellMenu {}
+    }
+
+    Component {
+        id: separatorComponent
+
+        ShellMenuSeparator {}
+    }
+
+    // Fills `target` from the request's entries; a group with children is a
+    // submenu reached through one row, and `separatorBefore` is a hairline.
+    function fill(target, items) {
+        for (const entry of items) {
+            if (entry.separatorBefore === true && target.count > 0) {
+                const line = separatorComponent.createObject(null);
+                built.push(line);
+                target.addItem(line);
+            }
+            if (entry.children && entry.children.length > 0) {
+                const sub = submenuComponent.createObject(null, {
+                    title: entry.label
+                });
+                built.push(sub);
+                fill(sub, entry.children);
+                target.addMenu(sub);
+                continue;
+            }
+            const row = itemComponent.createObject(null, {
+                entry: entry
+            });
+            built.push(row);
+            target.addItem(row);
+        }
+    }
+
+    function rebuild() {
+        while (menu.count > 0) {
+            menu.takeItem(0);
+        }
+        for (const object of built) {
+            object.destroy();
+        }
+        built = [];
+        if (request !== null) {
+            fill(menu, request.items);
         }
     }
 }
