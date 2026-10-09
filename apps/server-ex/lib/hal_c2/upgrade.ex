@@ -268,6 +268,9 @@ defmodule HalC2.Upgrade do
   # The state is nil while idle, and `{:running, monitor, caller}` while an update runs.
   @impl true
   def init(nil) do
+    # Here rather than in HalC2.Application, which a hot update cannot change: the
+    # agents, terminals and pulls started after this reach GitHub through gh too.
+    :ok = HalC2.Git.use_gh_for_github()
     {:ok, nil, {:continue, :outcome}}
   end
 
