@@ -1057,6 +1057,16 @@ private slots:
     QCOMPARE(band->mapToScene(QPointF(0, 0)).y(), 0.0);
     QTRY_COMPARE(band->mapToScene(QPointF(band->width(), 0)).x(), 1400.0);
     QVERIFY(buttons->y() >= 0 && buttons->y() + buttons->height() <= band->height());
+    // A toast hangs under the band, not over the buttons in it.
+    bridge.publish("toasts", QVariantMap{{"expanded", false},
+                                         {"items", QVariantList{QVariantMap{{"id", "t1"}, {"type", "info"}, {"title", "Updates available"},
+                                                                            {"description", "2 providers"}, {"actions", QVariantList{}},
+                                                                            {"updateKey", ""}, {"revision", 0}}}}});
+    auto* toasts = findVisualItem(root, "toasts");
+    QVERIFY(toasts);
+    QTRY_VERIFY(toasts->height() > 0);
+    QTRY_VERIFY(toasts->mapToScene(QPointF()).y() >= band->mapToScene(QPointF(0, band->height())).y());
+    bridge.publish("toasts", QVariant());
     // And they work from here.
     QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
     QTRY_COMPARE(window->visibility(), QWindow::Maximized);

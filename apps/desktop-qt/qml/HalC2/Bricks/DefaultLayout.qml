@@ -410,15 +410,16 @@ Item {
         anchors.fill: parent
     }
 
-    // Toasts stack from the top right, under the header strip, as the web's
-    // viewport does: clear of the window controls, the composer and the
-    // terminal drawer's toolbar. Over a right-hand panel they cover its
-    // top, which is the price of a stack that never moves with the panels.
+    // Toasts stack from the top right, under the header strip (or the band
+    // a page without one has), as the web's viewport does: clear of the
+    // window controls, the composer and the terminal drawer's toolbar. Over
+    // a right-hand panel they cover its top, which is the price of a stack
+    // that never moves with the panels.
     Notifications {
         objectName: "toasts"
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: body.y + centre.y + (workspaceView.visible ? workspaceView.y + workspaceView.height : 0) + 16
+        anchors.topMargin: body.y + centre.y + layout.headerHeight + 16
         anchors.rightMargin: 16
         opaque: true
         maximumHeight: parent.height - anchors.topMargin - 16
