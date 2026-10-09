@@ -833,8 +833,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: Enum.any?(state.plan_modes, fn {id, plan} -> state.config[id] == plan end)
 
   defp saved_build_modes(state) do
-    HalC2.Streams.ensure(state.thread_id)
-    |> HalC2.Streams.Server.state()
+    HalC2.Streams.state(state.thread_id)
     |> HalC2.StreamState.get("provider-thread")
     |> get_in([state.turn.ids.provider_thread, "buildModes"])
     |> case do

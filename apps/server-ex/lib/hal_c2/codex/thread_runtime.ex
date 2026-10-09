@@ -1220,7 +1220,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # archived or deleted thread is left alone.
   defp wake(thread_id, item) do
     Task.start(fn ->
-      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      stream = HalC2.Streams.state(thread_id)
       thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
 
       latest =

@@ -836,7 +836,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     thread_id = state.thread_id
 
     Task.start(fn ->
-      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      stream = HalC2.Streams.state(thread_id)
       latest = stream |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
       message_id = Entities.new_id("message")
 
@@ -1281,8 +1281,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # The subagent of this thread that Claude knows as the agent `to` (its task id).
   defp resumable(state, to) when is_binary(to) do
-    HalC2.Streams.ensure(state.thread_id)
-    |> HalC2.Streams.Server.state()
+    HalC2.Streams.state(state.thread_id)
     |> StreamState.list("subagent")
     |> Enum.find(&(&1["origin"] == "provider_native" and &1["nativeTaskId"] == to))
   end
@@ -1568,7 +1567,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # Fills in the latest turn's ids from the thread when this runtime has not run one
   # (it started, or was upgraded, after that turn).
   defp with_ids(%{turn: nil, last_ids: nil} = state) do
-    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(state.thread_id))
+    stream = HalC2.Streams.state(state.thread_id)
 
     case stream
          |> StreamState.list("run")

@@ -58,9 +58,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
         row["lastErrorClass"] == "usage_limit" or row["limitRecovery"] != nil,
         # Rows trail their streams; decide on the thread as it is now.
         shell =
-          HalC2.Projection.Shell.thread_shell(
-            HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
-          ),
+          HalC2.Projection.Shell.thread_shell(HalC2.Streams.state(thread_id)),
         command = command(shell, auto_resume, now_ms, snooze),
         command != nil do
       case HalC2.Orchestration.dispatch(command) do

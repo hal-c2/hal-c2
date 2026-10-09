@@ -90,6 +90,9 @@ defmodule HalC2.Streams do
   def transact(stream_id, stream_kind, fun),
     do: with_server(stream_id, &Server.transact(&1, stream_kind, fun))
 
+  @doc "The stream's current state, started if needed."
+  def state(stream_id), do: with_server(stream_id, &Server.state/1)
+
   @doc "See `HalC2.Streams.Server.flush_shell/1`."
   def flush_shell(stream_id), do: with_server(stream_id, &Server.flush_shell/1)
 

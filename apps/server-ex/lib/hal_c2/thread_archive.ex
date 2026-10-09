@@ -1110,7 +1110,7 @@ defmodule HalC2.ThreadArchive do
 
   defp state(id) do
     if Process.whereis(HalC2.Streams),
-      do: Streams.Server.state(Streams.ensure(id)),
+      do: HalC2.Streams.state(id),
       else: StreamState.load(Store.path(), id)
   end
 
