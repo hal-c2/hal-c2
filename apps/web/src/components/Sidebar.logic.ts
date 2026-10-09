@@ -993,6 +993,7 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@hal-c2/cl
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
 export {
+  isValidPinOrderKey,
   pinOrderKeyBetween,
   planPinnedReorder,
   planPinToTop,

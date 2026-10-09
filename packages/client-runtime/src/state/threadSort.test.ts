@@ -9,6 +9,7 @@ import {
   planPinnedMove,
   planPinnedReorder,
   planPinToTop,
+  isValidPinOrderKey,
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -320,6 +321,17 @@ describe("pinOrderKeyBetween key length", () => {
     });
     expect(assignments.length).toBeGreaterThan(1);
     for (const { orderKey } of assignments) expect(orderKey.length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("isValidPinOrderKey", () => {
+  it("refuses the historical and overlong keys the MC refuses", () => {
+    expect(isValidPinOrderKey("m")).toBe(true);
+    expect(isValidPinOrderKey("a0")).toBe(false);
+    expect(isValidPinOrderKey("ma")).toBe(false);
+    expect(isValidPinOrderKey("")).toBe(false);
+    expect(isValidPinOrderKey("b".repeat(64))).toBe(true);
+    expect(isValidPinOrderKey("b".repeat(65))).toBe(false);
   });
 });
 

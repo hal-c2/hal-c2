@@ -18,7 +18,11 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete, planPinToTop } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isValidPinOrderKey,
+  planPinToTop,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -620,23 +624,18 @@ export function useThreadActions() {
       // order) pass their own key; everyone else (chat header, context menus)
       // gets the default so the same action never places differently.
       // orderKey rides only to servers that decode it; pre-reorder servers
-      // get the bare pin they understand and the thread stays keyless.
+      // get the bare pin they understand and the thread stays keyless. A key
+      // the MC would refuse (an Undo restoring a historical key) takes the top.
       const supportsReorder = readEnvironmentSupportsPinReorder(target.environmentId);
-      const placement =
-        supportsReorder && opts.orderKey === undefined
-          ? pinToTopOfRunWrites(target)
-          : { orderKey: supportsReorder ? opts.orderKey : undefined, rewrites: [] };
-      ThreadUndo.invalidate("pin", scopedThreadKey(target));
-      const result = await pinThreadMutation({
-        environmentId: target.environmentId,
-        input: {
-          threadId: target.threadId,
-          ...(placement.orderKey !== undefined ? { orderKey: placement.orderKey } : {}),
-        },
-      });
-      if (result._tag !== "Success") return result;
-      // The rest of a rewritten run. Stop on failure: the pin itself stands,
-      // and a partly rewritten run still sorts, just not in the planned order.
+      const placement = !supportsReorder
+        ? { orderKey: undefined, rewrites: [] }
+        : opts.orderKey !== undefined && isValidPinOrderKey(opts.orderKey)
+          ? { orderKey: opts.orderKey, rewrites: [] }
+          : pinToTopOfRunWrites(target);
+      // A rewritten run goes first: it keeps the run's own order and leaves
+      // the top slot free, so the run never moves if the pin then lands
+      // elsewhere (the MC ignores a raced re-pin's key). Stop on failure;
+      // the pin still goes through, placement never blocks pinning.
       for (const rewrite of placement.rewrites) {
         ThreadUndo.invalidate("pin", scopedThreadKey(rewrite.target));
         const written = await reorderPinnedThreadMutation({
@@ -645,7 +644,14 @@ export function useThreadActions() {
         });
         if (written._tag !== "Success") break;
       }
-      return result;
+      ThreadUndo.invalidate("pin", scopedThreadKey(target));
+      return pinThreadMutation({
+        environmentId: target.environmentId,
+        input: {
+          threadId: target.threadId,
+          ...(placement.orderKey !== undefined ? { orderKey: placement.orderKey } : {}),
+        },
+      });
     },
     [pinThreadMutation, reorderPinnedThreadMutation],
   );

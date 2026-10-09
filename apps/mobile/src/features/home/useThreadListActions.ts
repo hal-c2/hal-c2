@@ -394,24 +394,24 @@ export function useThreadListActions(): {
         }
         writes = planPinToTop(targetKey, keysById);
       }
+      // A rewritten run goes first: it keeps the run's own order and leaves
+      // the top slot free, so the run never moves if the pin then lands
+      // elsewhere (the MC ignores a raced re-pin's key). Stop on failure;
+      // the pin still goes through, placement never blocks pinning.
+      for (const write of writes) {
+        const shell = write.id === targetKey ? undefined : shellsByKey.get(write.id);
+        if (shell === undefined) continue;
+        const written = await reorderPinnedMutation({
+          environmentId: shell.environmentId,
+          input: { threadId: shell.id, orderKey: write.orderKey },
+        });
+        if (written._tag !== "Success") break;
+      }
       const orderKey = writes.find((write) => write.id === targetKey)?.orderKey;
       const result = await pinMutation({
         environmentId: thread.environmentId,
         input: { threadId: thread.id, ...(orderKey !== undefined ? { orderKey } : {}) },
       });
-      if (result._tag === "Success") {
-        // The rest of a rewritten run. Stop on failure: the pin stands, and a
-        // partly rewritten run still sorts, just not in the planned order.
-        for (const write of writes) {
-          const shell = write.id === targetKey ? undefined : shellsByKey.get(write.id);
-          if (shell === undefined) continue;
-          const written = await reorderPinnedMutation({
-            environmentId: shell.environmentId,
-            input: { threadId: shell.id, orderKey: write.orderKey },
-          });
-          if (written._tag !== "Success") break;
-        }
-      }
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
         Alert.alert(

@@ -169,7 +169,8 @@ const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
 // A move that would need a longer one rewrites the section instead.
 const PIN_ORDER_KEY_MAX_LENGTH = 64;
 
-function isValidPinOrderKey(key: string): boolean {
+/** Whether the MC stores `key`: 1–64 letters a–z, not ending in "a". */
+export function isValidPinOrderKey(key: string): boolean {
   if (key.length === 0 || key.length > PIN_ORDER_KEY_MAX_LENGTH) return false;
   for (const char of key) {
     if (!PIN_ORDER_DIGITS.includes(char)) return false;
