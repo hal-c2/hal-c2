@@ -23,7 +23,9 @@ cmake --build "$build" --parallel
 
 # <corpus>/<executable>/<Suite.Test>/{coverage,crashing,regression}: what fuzzing
 # found new coverage with, the inputs that failed, and the ones kept to replay.
-corpus=$(realpath -m "${FUZZ_CORPUS:-$app/build/fuzz-corpus}")
+corpus=${FUZZ_CORPUS:-$app/build/fuzz-corpus}
+mkdir -p "$corpus"
+corpus=$(cd "$corpus" && pwd) # absolute; realpath -m is GNU only
 fuzz_for=${FUZZ_FOR:-30s}
 logs=$build/logs
 mkdir -p "$logs"

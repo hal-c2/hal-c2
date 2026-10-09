@@ -34,7 +34,9 @@ cmake --build "$build" --parallel
 filter=()
 ((${#names[@]} == 0)) || filter=(-R "^($(IFS='|'; echo "${names[*]}"))\$")
 # The corpus fuzz:desktop and fuzz:mobile grow (FuzzMain.cpp replays it).
-export HAL_C2_FUZZ_CORPUS=$(realpath -m "${FUZZ_CORPUS:-$app/build/fuzz-corpus}")
+corpus=${FUZZ_CORPUS:-$app/build/fuzz-corpus}
+mkdir -p "$corpus"
+export HAL_C2_FUZZ_CORPUS=$(cd "$corpus" && pwd) # absolute; realpath -m is GNU only
 export FUZZTEST_FUZZ_FOR=${FUZZ_FOR:-10s}
 export HAL_C2_VALGRIND_LOGS=$PWD/$build/valgrind
 rm -rf "$HAL_C2_VALGRIND_LOGS"
