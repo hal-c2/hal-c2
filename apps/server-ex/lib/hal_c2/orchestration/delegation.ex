@@ -720,8 +720,8 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  defp mode(parent, requested, kind) when requested in [nil, "inherit"],
-    do: mode(parent, parent, kind)
+  # Inheriting never escalates, and a parent without a mode leaves the child its default.
+  defp mode(parent, requested, _kind) when requested in [nil, "inherit"], do: {:ok, parent}
 
   defp mode(parent, requested, :runtime) do
     if Map.get(@runtime_ranks, requested, 3) > Map.get(@runtime_ranks, parent, 3),
