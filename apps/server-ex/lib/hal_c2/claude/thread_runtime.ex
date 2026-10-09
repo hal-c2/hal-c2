@@ -189,6 +189,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     wake = state.wake || %{open: false, buffer: nil}
     buffer = Enum.reverse(wake.buffer || [])
+    last_ids = state.last_ids
 
     state = %{
       state
@@ -200,27 +201,12 @@ defmodule HalC2.Claude.ThreadRuntime do
         wake: nil
     }
 
-    started(state)
-    state = Enum.reduce(buffer, state, &receive_message/2)
-
-    # Replayed to its end, or Claude is still at it; a wake a user's turn took over
-    # (`take_wake/2`) leaves its run nothing to show.
-    state =
-      cond do
-        state.turn == nil ->
-          state
-
-        state.session == nil and (wake.open or buffer != []) ->
-          end_turn(state, "failed", "Claude exited")
-
-        wake.open ->
-          state
-
-        true ->
-          end_turn(state, "completed", nil)
-      end
-
-    {:reply, :ok, state}
+    case started(state) do
+      :ok -> {:reply, :ok, replay_wake(state, wake, buffer)}
+      # The run ended before it started: Claude stops the turn it began, and its
+      # messages go on as between turns.
+      :ended -> {:reply, :ok, drop_wake(state, wake, buffer, last_ids)}
+    end
   end
 
   def handle_call({:start_turn, turn}, _from, state) do
@@ -234,6 +220,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
+    last_ids = state.last_ids
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
     session = state.session
 
@@ -251,11 +238,17 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       {:ok, state, turn} ->
         state = %{state | turn: turn}
-        started(state)
-        {state, opts} = take_wake(state, session)
-        Session.send_message(state.session, claude_content(turn), opts)
 
-        {:reply, :ok, state}
+        # A run that ended while the session opened never reaches Claude.
+        case started(state) do
+          :ok ->
+            {state, opts} = take_wake(state, session)
+            Session.send_message(state.session, claude_content(turn), opts)
+            {:reply, :ok, state}
+
+          :ended ->
+            {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
+        end
 
       {:error, reason} ->
         Logger.warning("claude turn failed to start: #{inspect(reason)}")
@@ -866,6 +859,40 @@ defmodule HalC2.Claude.ThreadRuntime do
     end)
 
     %{state | wake: %{open: not result?(message), buffer: [message]}}
+  end
+
+  # A wake's run started: the messages Claude sent meanwhile are its turn's.
+  defp replay_wake(state, wake, buffer) do
+    state = Enum.reduce(buffer, state, &receive_message/2)
+
+    # Replayed to its end, or Claude is still at it; a wake a user's turn took over
+    # (`take_wake/2`) leaves its run nothing to show.
+    cond do
+      state.turn == nil ->
+        state
+
+      state.session == nil and (wake.open or buffer != []) ->
+        end_turn(state, "failed", "Claude exited")
+
+      wake.open ->
+        state
+
+      true ->
+        end_turn(state, "completed", nil)
+    end
+  end
+
+  defp drop_wake(state, wake, buffer, last_ids) do
+    if wake.open and state.session != nil, do: Session.control(state.session, "interrupt")
+
+    state = %{
+      state
+      | turn: nil,
+        last_ids: last_ids,
+        wake: if(wake.open, do: %{wake | buffer: nil})
+    }
+
+    Enum.reduce(buffer, state, &message/2)
   end
 
   # A user's turn that starts while Claude runs a wake takes it over: what the wake said
