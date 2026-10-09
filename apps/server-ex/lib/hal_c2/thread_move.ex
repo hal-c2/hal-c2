@@ -724,7 +724,12 @@ defmodule HalC2.ThreadMove do
     case remote(from, :taking, [id, opts[:move]]) do
       :ok ->
         hook(:taking, id)
-        ThreadArchive.import_archive(archive, project: opts[:project], move: opts[:move])
+
+        ThreadArchive.import_archive(archive,
+          project: opts[:project],
+          from: Atom.to_string(from),
+          move: opts[:move]
+        )
 
       _ ->
         {:error, "The move of #{title} was called off. #{title} was not moved."}
@@ -767,7 +772,7 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  defp imported?(id, move), do: move in (ThreadArchive.local_thread(id)["moves"] || [])
+  defp imported?(id, move), do: move in Map.values(ThreadArchive.local_thread(id)["moves"] || %{})
 
   @doc "Whether this MC can run the agent `instance`: `:ok`, `:missing` or `:signed_out`."
   def agent(instance) do
