@@ -100,6 +100,21 @@ defmodule HalC2.AuthTest do
     assert {:ok, %{}} = HalC2.Auth.session(previous)
   end
 
+  # A socket reads its session's scopes, then connects; a revoke between the two must
+  # not leave the socket open with them. This process is the socket: its connected cast
+  # is handled before `clients/0` (a call from the same process) returns.
+  test "a socket connecting after its session was revoked is told to close", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, %{id: id}} = HalC2.Auth.session(access)
+
+    assert {:ok, _} = HalC2.Auth.session_scopes(id)
+    assert HalC2.Auth.revoke_client(id)
+
+    HalC2.Auth.connected(id)
+    HalC2.Auth.clients()
+    assert_received {:hal_c2_session_revoked, ^id}
+  end
+
   defp assert_exchange_fails(path, token) do
     {:ok, db} = Sqlite3.open(path)
 
