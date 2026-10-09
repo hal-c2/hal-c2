@@ -618,6 +618,42 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # The first message's runtime waits to claim its run while the start gives up on it,
+  # as begin_turn/2 does when its call to the runtime times out.
+  step "the start of a turn in {string} gave up while a second message waits",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    id = World.thread_id(context, thread)
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    runtime = await_claim(watch)
+    assert {:ok, _} = HalC2.Orchestration.dispatch(start(id))
+    state = World.await_runs(context, thread, ["starting", "queued"])
+    [first, _] = state |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+    :erlang.trace(runtime, true, [:receive])
+    failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+    HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
+  end
+
+  step "the provider starts the first turn anyway", context do
+    :ok = :sys.resume(context.watch)
+    context
+  end
+
+  step "the first run of {string} stays failed and the second runs alone",
+       %{args: [thread]} = context do
+    World.await_runs(context, thread, ["failed", "running"])
+    # The first turn's end, which Codex sends as the runtime lets go of it, is not the second's.
+    :ok = GenServer.call(context.runtime, :settle)
+    World.await_runs(context, thread, ["failed", "running"])
+    context
+  end
+
   step "{string} has a running turn and a queued message {string}",
        %{args: [thread, text]} = context do
     context

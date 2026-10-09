@@ -1,10 +1,10 @@
 defmodule HalC2.TurnLifecycleTest do
   # Regressions proof/hal_c2/turns_proof_test.exs found: a run's start and end racing a
-  # delete, and a start that could not reach its runtime.
+  # delete, a start that gave up, and a start that could not reach its runtime.
   use ExUnit.Case, async: false
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.TurnWatch
+  alias HalC2.Orchestration.{TurnWatch, TurnWriter}
 
   @moduletag :tmp_dir
   @fake_codex Path.expand("../support/fake_codex.py", __DIR__)
@@ -99,6 +99,31 @@ defmodule HalC2.TurnLifecycleTest do
     assert_receive {:deleted, {:ok, _}}, 5_000
     assert_receive {:sent, {:ok, _}}, 5_000
     assert ["cancelled"] = statuses(thread_id)
+  end
+
+  # A start that gave up waiting on the runtime failed the run and started the next
+  # message, then the runtime marked the failed run running: two runs at once, the
+  # first never to end.
+  test "a turn that starts after its start gave up stays failed, and the next one runs alone",
+       %{thread_id: thread_id} do
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, send_message(thread_id, "m1")}) end)
+    runtime = await_claim(watch)
+    {:ok, _} = send_message(thread_id, "m2")
+    [first, _] = await_statuses(thread_id, ["starting", "queued"])
+
+    # As begin_turn/2 does when its call to the runtime times out.
+    :erlang.trace(runtime, true, [:receive])
+    TurnWriter.abandon(thread_id, first["id"], "failed", TurnWriter.start_failure(nil, :closed))
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    :ok = :sys.resume(watch)
+
+    await_statuses(thread_id, ["failed", "running"])
+    # The first turn's end, which Codex sends as it lets go of it, is not the second's.
+    :ok = GenServer.call(runtime, :settle)
+    assert ["failed", "running"] = statuses(thread_id)
   end
 
   defp suspend_watch do
