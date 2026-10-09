@@ -112,85 +112,98 @@ SettingsPage {
         Layout.fillWidth: true
         spacing: 6
 
+        // The name and summary share a left column; the switch centres on both lines.
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
 
-            Rectangle {
-                implicitWidth: 8
-                implicitHeight: 8
-                radius: 4
-                color: tool.modelData.comingSoon ? tool.sourceControl.muted
-                     : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : tool.sourceControl.warning
-            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
 
-            Label {
-                text: tool.modelData.label
-                color: tool.sourceControl.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.weight: Font.Medium
-            }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
 
-            Label {
-                objectName: "version"
-                visible: text.length > 0
-                text: tool.modelData.version
-                color: tool.sourceControl.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: "monospace"
-            }
+                    Rectangle {
+                        implicitWidth: 8
+                        implicitHeight: 8
+                        radius: 4
+                        color: tool.modelData.comingSoon ? tool.sourceControl.muted
+                             : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : tool.sourceControl.warning
+                    }
 
-            Label {
-                objectName: "badge"
-                visible: tool.modelData.comingSoon || tool.modelData.authWarning
-                text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
-                color: tool.sourceControl.warning
-                font.pixelSize: Math.round(11 * Theme.fontScale)
-                font.weight: Font.DemiBold
-            }
+                    Label {
+                        text: tool.modelData.label
+                        color: tool.sourceControl.foreground
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.weight: Font.Medium
+                    }
 
-            Item { Layout.fillWidth: true }
+                    Label {
+                        objectName: "version"
+                        visible: text.length > 0
+                        text: tool.modelData.version
+                        color: tool.sourceControl.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.family: "monospace"
+                    }
+
+                    Label {
+                        objectName: "badge"
+                        visible: tool.modelData.comingSoon || tool.modelData.authWarning
+                        text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
+                        color: tool.sourceControl.warning
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.weight: Font.DemiBold
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    // Alone it takes the row and wraps; with an account it is one
+                    // word ("Authenticated") and the account sits beside it.
+                    Caption {
+                        objectName: "summary"
+                        Layout.fillWidth: !tool.modelData.hasAccount
+                        text: tool.modelData.summary
+                    }
+
+                    Caption {
+                        visible: tool.modelData.hasAccount
+                        Layout.fillWidth: false
+                        text: qsTr("as")
+                    }
+
+                    ShellButton {
+                        objectName: "account"
+                        visible: tool.modelData.hasAccount
+                        subtle: true
+                        text: tool.modelData.revealed ? tool.modelData.account : "••••••"
+                        Accessible.name: qsTr("Toggle source control account visibility")
+                        ToolTip.visible: hovered
+                        ToolTip.text: tool.modelData.revealed ? qsTr("Click to hide account") : qsTr("Click to reveal account")
+                        onClicked: tool.sourceControl.send("reveal", { kind: tool.modelData.kind, revealed: !tool.modelData.revealed })
+                    }
+
+                    Item {
+                        visible: tool.modelData.hasAccount
+                        Layout.fillWidth: true
+                    }
+                }
+            }
 
             Switch {
+                objectName: "availability"
+                Layout.alignment: Qt.AlignVCenter
                 visible: !tool.modelData.comingSoon
                 enabled: false
                 checked: tool.modelData.enabled
                 Accessible.name: qsTr("%1 availability").arg(tool.modelData.label)
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 4
-
-            // Alone it takes the row and wraps; with an account it is one
-            // word ("Authenticated") and the account sits beside it.
-            Caption {
-                objectName: "summary"
-                Layout.fillWidth: !tool.modelData.hasAccount
-                text: tool.modelData.summary
-            }
-
-            Caption {
-                visible: tool.modelData.hasAccount
-                Layout.fillWidth: false
-                text: qsTr("as")
-            }
-
-            ShellButton {
-                objectName: "account"
-                visible: tool.modelData.hasAccount
-                subtle: true
-                text: tool.modelData.revealed ? tool.modelData.account : "••••••"
-                Accessible.name: qsTr("Toggle source control account visibility")
-                ToolTip.visible: hovered
-                ToolTip.text: tool.modelData.revealed ? qsTr("Click to hide account") : qsTr("Click to reveal account")
-                onClicked: tool.sourceControl.send("reveal", { kind: tool.modelData.kind, revealed: !tool.modelData.revealed })
-            }
-
-            Item {
-                visible: tool.modelData.hasAccount
-                Layout.fillWidth: true
             }
         }
 
@@ -304,10 +317,10 @@ SettingsPage {
                 visible: (page.discovery?.status ?? "none") !== "none"
                 subtle: true
                 enabled: !(page.discovery?.scanning ?? false)
-                text: page.discovery?.scanning ? qsTr("Scanning…") : qsTr("Rescan")
+                iconName: "refresh-cw"
                 Accessible.name: qsTr("Rescan server environment")
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("Rescan Git and hosting integrations")
+                ToolTip.text: page.discovery?.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
                 onClicked: page.send("scan")
             }
         }

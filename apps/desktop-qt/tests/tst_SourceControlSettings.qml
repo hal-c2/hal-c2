@@ -80,6 +80,28 @@ Item {
             compare(Shell.dispatchedActions[0].payload.revealed, true);
         }
 
+        // The summary is the second line of the name's column: it starts above the switch's bottom edge.
+        function test_the_summary_sits_beside_the_switch_not_under_it() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({}) };
+            const page = createTemporaryObject(pageComponent, root);
+            const tool = findChild(page, "sourceControlTool:github");
+            const summary = findChild(tool, "summary");
+            const availability = findChild(tool, "availability");
+            verify(summary.mapToItem(tool, 0, 0).y < availability.mapToItem(tool, 0, 0).y + availability.height,
+                   "the summary starts beside the switch, not below it");
+        }
+
+        // Rescan is a named icon, not a bare word that reads as a column label.
+        function test_rescan_is_an_icon_button() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [root.github({})],
+                             providers: [] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            const scan = findChild(page, "scan");
+            verify(scan.iconOnly, "Rescan has no text beside its icon");
+            compare(scan.iconName, "refresh-cw");
+        }
+
         // A tool that is missing says how to get it, at any length.
         function test_a_long_summary_wraps_inside_the_page() {
             const hint = "Not available on this server: Install the GitLab command-line tool (`glab`) from "
