@@ -192,7 +192,13 @@ const Steps steps([] {
     // The client asked nothing of the MC on its own: no cancel, no steer, no send.
     expect(world.mc.commands.size() == world.mc.part<Orchestration>().commandsBefore && queued(world).size() == 2,
            QStringLiteral("the client sent %1").arg(world.describeCommands()));
-    expect(shows(timeline(world), QStringLiteral("You've hit your usage limit.")), QStringLiteral("the thread shows %1").arg(describe(timeline(world))));
+    // The limit is one line, the row's title; the provider's own words are not shown.
+    TimelineModel& model = timeline(world);
+    bool limited = false;
+    for (int row = 0; row < model.rowCount(); ++row) {
+      limited = limited || role(model, row, TimelineModel::TitleRole).toString().startsWith(QLatin1String("Usage limit reached"));
+    }
+    expect(limited, QStringLiteral("the thread shows %1").arg(describe(model)));
   });
 
   // A plan Codex marked finished (providers/codex.feature).
