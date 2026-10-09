@@ -42,22 +42,25 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], input["interactionMode"], :interaction) do
-      task_id =
-        start(thread, run, %{
-          "task" => input["task"],
-          "title" => input["title"],
-          "modelSelection" => selection,
-          "runtimeMode" => runtime,
-          "interactionMode" => interaction,
-          "completionWake" => if(input["mode"] == "wait", do: "settled_only", else: "always"),
-          "createdBy" => "agent",
-          "creationSource" => "mcp"
-        })
+      spec = %{
+        "task" => input["task"],
+        "title" => input["title"],
+        "modelSelection" => selection,
+        "runtimeMode" => runtime,
+        "interactionMode" => interaction,
+        "completionWake" => if(input["mode"] == "wait", do: "settled_only", else: "always"),
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      }
 
-      if input["mode"] == "wait" do
-        wait(thread["id"], task_id, wait_budget(input["timeoutMs"]))
-      else
-        {:ok, status(thread["id"], task_id)}
+      case start(thread, run, spec) do
+        {:ok, task_id} ->
+          if input["mode"] == "wait",
+            do: wait(thread["id"], task_id, wait_budget(input["timeoutMs"])),
+            else: {:ok, status(thread["id"], task_id)}
+
+        {:error, message} ->
+          {:error, "task_not_started", message}
       end
     end
   end
@@ -77,18 +80,18 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], command["interactionMode"], :interaction) do
-      start(thread, run, %{
-        "task" => command["task"],
-        "title" => command["title"],
-        "modelSelection" => command["modelSelection"] || thread["modelSelection"],
-        "runtimeMode" => runtime,
-        "interactionMode" => interaction,
-        "completionWake" => command["completionWake"] || "settled_only",
-        "createdBy" => command["createdBy"] || "user",
-        "creationSource" => command["creationSource"] || "web"
-      })
-
-      :ok
+      with {:ok, _task_id} <-
+             start(thread, run, %{
+               "task" => command["task"],
+               "title" => command["title"],
+               "modelSelection" => command["modelSelection"] || thread["modelSelection"],
+               "runtimeMode" => runtime,
+               "interactionMode" => interaction,
+               "completionWake" => command["completionWake"] || "settled_only",
+               "createdBy" => command["createdBy"] || "user",
+               "creationSource" => command["creationSource"] || "web"
+             }),
+           do: :ok
     else
       {:error, _code, message} -> {:error, message}
       {:error, _} = error -> error
@@ -186,14 +189,19 @@ defmodule HalC2.Orchestration.Delegation do
     with %{} = task <-
            subagent(thread_id, task_id) ||
              {:error, "task_not_found", "The task was not found for this thread."},
-         true <-
-           task["status"] not in @terminal ||
-             {:error, "task_not_cancellable", "The task has already finished."} do
+         # Settled before the child is interrupted, so the report of the interrupted run
+         # finds the task ended and wakes nobody; a task that ended meanwhile is not
+         # cancelled.
+         {:settled, _} <- settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
+      hook(:cancelling, task_id)
+
       _ =
         Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => task["childThreadId"]})
 
-      settle(thread_id, task, "cancelled", task["result"], "disposed")
       {:ok, status(thread_id, task_id)}
+    else
+      :already -> {:error, "task_not_cancellable", "The task has already finished."}
+      error -> error
     end
   end
 
@@ -214,18 +222,13 @@ defmodule HalC2.Orchestration.Delegation do
          {status, run, ended_at} <- reported(child, run_id, status) do
       result = run && answer(child, run["id"])
 
-      delivery =
-        cond do
-          task["completionDelivery"]["state"] == "disposed" -> "disposed"
-          task["completionWake"] == "always" or idle?(parent_id) -> "delivered"
-          true -> "acknowledged"
-        end
-
       # A completion reported twice (a provider replaying its turn's end after a
       # reconnect, or two reports racing) settles and wakes once: only the report
-      # that finds the task unsettled delivers it.
-      with :ok <- settle(parent_id, task, status, result, delivery, :once, ended_at),
-           true <- delivery == "delivered",
+      # that finds the task unsettled delivers it. Whether it is delivered is decided
+      # with the task's end, so a wait that times out meanwhile (`wait/3`) either
+      # hears of the end or leaves the task to wake the caller.
+      with {:settled, "delivered"} <-
+             settle(parent_id, task, status, result, &delivery/2, :once, ended_at),
            do: wake(parent_id, task, status, result)
     end
 
@@ -234,13 +237,14 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer: a report given up on leaves the task running in its caller for
-  good. Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  too busy to answer, or it fails: a report given up on leaves the task running in its
+  caller until the MC next starts (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
+    hook(:reporting, thread_id)
     finished(thread_id, run_id, status)
   catch
-    :exit, reason when attempts > 0 ->
+    _kind, reason when attempts > 0 ->
       Logger.warning("delegated task report for #{thread_id} retried: #{inspect(reason)}")
       Process.sleep(backoff)
       report(thread_id, run_id, status, attempts - 1, backoff * 2)
@@ -251,18 +255,17 @@ defmodule HalC2.Orchestration.Delegation do
   reaching the caller (a report lost to a crash or a restart): how the child's latest
   run ended (`last_end/1`) is how the task ended, and when. The caller is not woken;
   its turn is long over. Recovery calls it before interrupting any run, so a child
-  still working when the MC stopped is not taken for one that ended.
+  still working when the MC stopped is not taken for one that ended, and again once
+  the runs it continues have started. With `boot?`, a task whose child was never
+  launched (the MC stopped between recording it and launching) failed; later a child
+  may be about to launch, so Recovery leaves those out.
   Returns how many it settled.
   """
-  def reconcile(parent_id) do
+  def reconcile(parent_id, boot? \\ true) do
     for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
           StreamState.list(stream(parent_id), "subagent"),
         status not in @terminal and is_binary(child_id),
-        child = stream(child_id),
-        runs = StreamState.list(child, "run"),
-        runs != [],
-        not working?(runs),
-        {ended, run, ended_at} <- [last_end(runs)],
+        {ended, run, ended_at, child} <- [stopped(child_id, boot?)],
         settle(
           parent_id,
           task,
@@ -271,10 +274,21 @@ defmodule HalC2.Orchestration.Delegation do
           "disposed",
           :once,
           ended_at
-        ) ==
-          :ok,
+        ) != :already,
         reduce: 0 do
       count -> count + 1
+    end
+  end
+
+  # How a child ended and when, with its state; nil while it works or has not run yet.
+  defp stopped(child_id, boot?) do
+    child = stream(child_id)
+    runs = StreamState.list(child, "run")
+
+    cond do
+      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
+      runs == [] or working?(runs) -> nil
+      true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
     end
   end
 
@@ -307,8 +321,10 @@ defmodule HalC2.Orchestration.Delegation do
 
   # --- tasks -------------------------------------------------------------------------
 
-  # Records the task in the parent, then launches the child thread; returns its id.
-  # The record comes first: a child turn that ends at once reports to it.
+  # Records the task in the parent, then launches the child thread; returns its id, or
+  # why the child did not start, the task failed. The record comes first: a child turn
+  # that ends at once reports to it. A launch the MC stopped in the middle of is
+  # settled at the next boot (`reconcile/2`).
   defp start(thread, run, spec) do
     child_id = HalC2.Environment.uuid4()
     task_id = "node:subagent:" <> HalC2.Environment.uuid4()
@@ -319,7 +335,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     record(thread, run, task_id, child_id, selection, title, spec["task"], spec["completionWake"])
 
-    {:ok, _} =
+    launched =
       Orchestration.launch_thread(%{
         "commandId" => "command:delegate:#{task_id}",
         "threadId" => child_id,
@@ -343,7 +359,15 @@ defmodule HalC2.Orchestration.Delegation do
         }
       })
 
-    task_id
+    case launched do
+      {:ok, _} ->
+        {:ok, task_id}
+
+      {:error, reason} ->
+        message = if is_binary(reason), do: reason, else: inspect(reason)
+        settle(thread["id"], %{"id" => task_id}, "failed", message, "disposed")
+        {:error, message}
+    end
   end
 
   defp update(parent_id, task_id, fields) do
@@ -468,9 +492,10 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # Ends the task in its parent, at `at` or now. With `:once`, a task that already
-  # ended is left as it is and `:already` is returned, decided inside the parent's
-  # transaction.
+  # Ends the task in its parent, at `at` or now, and returns `{:settled, delivery}`.
+  # `delivery` is a state, or a function of the task and the parent's state that
+  # decides it inside the transaction. With `:once`, a task that already ended is left
+  # as it is and `:already` is returned, decided in the same transaction.
   defp settle(parent_id, task, status, result, delivery, how \\ :always, at \\ nil) do
     at = at || Entities.now()
     status = if status in @terminal, do: status, else: "completed"
@@ -479,6 +504,7 @@ defmodule HalC2.Orchestration.Delegation do
     HalC2.Streams.transact(parent_id, :thread, fn state ->
       finish = &Map.merge(&1, %{"status" => status, "completedAt" => at})
       current = StreamState.get(state, "subagent")[task["id"]] || %{}
+      delivery = if is_function(delivery), do: delivery.(current, state), else: delivery
 
       changes =
         [
@@ -506,8 +532,19 @@ defmodule HalC2.Orchestration.Delegation do
 
       if how == :once and current["status"] in @terminal,
         do: {[], :already},
-        else: {changes, :ok}
+        else: {changes, {:settled, delivery}}
     end)
+  end
+
+  # Whether a finished task's result reaches the caller as a message: not once disposed,
+  # when the task always wakes it, or when it is idle; else it is only acknowledged,
+  # which is the caller's wait reading it (`wait/3`).
+  defp delivery(task, parent_state) do
+    cond do
+      task["completionDelivery"]["state"] == "disposed" -> "disposed"
+      task["completionWake"] == "always" or idle?(parent_state) -> "delivered"
+      true -> "acknowledged"
+    end
   end
 
   # The parent hears the result as a message that runs once it is free. The
@@ -564,8 +601,8 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp subagent(thread_id, task_id), do: StreamState.get(stream(thread_id), "subagent")[task_id]
 
-  # Waits for the task to end; a timeout leaves it running and returns its state.
-  defp wait(thread_id, task_id, timeout) do
+  @doc "Waits for the task to end; a timeout leaves it running and returns its state."
+  def wait(thread_id, task_id, timeout) do
     :ok = HalC2.Streams.watch(thread_id, self())
     deadline = System.monotonic_time(:millisecond) + timeout
 
@@ -584,12 +621,13 @@ defmodule HalC2.Orchestration.Delegation do
       task["status"] in @terminal ->
         {:ok, task}
 
-      # A child that ends after the caller stopped waiting still wakes it.
       left <= 0 ->
-        if task["status"] not in @terminal,
-          do: update(thread_id, task_id, %{"completionWake" => "always"})
+        hook(:expiring, task_id)
 
-        {:ok, Map.put(task, "waitTimedOut", true)}
+        case expire(thread_id, task_id) do
+          :expired -> {:ok, Map.put(task, "waitTimedOut", true)}
+          :ended -> {:ok, status(thread_id, task_id)}
+        end
 
       true ->
         receive do
@@ -598,6 +636,26 @@ defmodule HalC2.Orchestration.Delegation do
           min(left, 5_000) -> wait_loop(thread_id, task_id, deadline)
         end
     end
+  end
+
+  # The wait is over: a child that ends from now on wakes the caller. A task that ended
+  # meanwhile was acknowledged to this wait, so it is answered with that end instead;
+  # `finished/3` and this decide in transactions of the same thread, one after the other.
+  defp expire(thread_id, task_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "subagent")[task_id] do
+        %{"status" => status} when status in @terminal ->
+          {[], :ended}
+
+        _ ->
+          change =
+            Orchestration.upsert(state, "subagent", task_id, fn task ->
+              Map.merge(task, %{"completionWake" => "always", "updatedAt" => Entities.now()})
+            end)
+
+          {[change], :expired}
+      end
+    end)
   end
 
   # The child's last answer in the run that ended.
@@ -609,8 +667,7 @@ defmodule HalC2.Orchestration.Delegation do
     |> Map.get("text")
   end
 
-  defp idle?(thread_id),
-    do: not Enum.any?(StreamState.list(stream(thread_id), "run"), &(&1["status"] in @active))
+  defp idle?(state), do: not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @active))
 
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
 
@@ -676,4 +733,13 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp number(value, _default) when is_number(value), do: round(value)
   defp number(_value, default), do: default
+
+  # Tests pause or break a task at a stage: `{module, function, args}`, called with the
+  # stage and the thread or task id.
+  defp hook(stage, id) do
+    case Application.get_env(:hal_c2, :delegation_hook) do
+      {m, f, a} -> apply(m, f, a ++ [stage, id])
+      nil -> :ok
+    end
+  end
 end
