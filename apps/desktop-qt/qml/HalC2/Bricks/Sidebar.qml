@@ -114,6 +114,11 @@ Rectangle {
         }
     }
 
+    // The open thread, however it was opened (search, palette, a link), is
+    // brought into view once its row is in the list.
+    readonly property string activeKey: model ? (model.activeThreadKey ?? "") : ""
+    onActiveKeyChanged: Qt.callLater(() => list.revealActive())
+
     onRowsChanged: syncRows()
     Component.onCompleted: syncRows()
 
@@ -175,10 +180,11 @@ Rectangle {
                 count: items.length,
                 open: open
             });
-            if (!open) {
-                return;
-            }
             for (const item of items) {
+                // A folded shelf still shows the open thread, as the web does.
+                if (!open && item.key !== state.activeThreadKey) {
+                    continue;
+                }
                 out.push({
                     kind: "slim",
                     section: key,
@@ -468,6 +474,14 @@ Rectangle {
                         positionViewAtIndex(i, ListView.Contain);
                         return;
                     }
+                }
+            }
+
+            function revealActive() {
+                const i = sidebar.rows.findIndex(r => r.rowKey !== undefined && r.kind !== "draft" && r.rowKey === sidebar.activeKey);
+                if (i >= 0) {
+                    cursorKey = sidebar.rows[i].rowKey;
+                    positionViewAtIndex(i, ListView.Contain);
                 }
             }
 

@@ -211,3 +211,10 @@ Feature: The thread list
     Given a thread of "qml-ghostty" stopped on a usage limit
     When the user opens the scope menu
     Then the entry for "qml-ghostty" says "a thread hit a usage limit"
+
+  @desktop @backlog-desktop
+  Scenario: A thread opened from search is brought into view in the sidebar
+    Given more settled threads than the sidebar lists
+    When the user opens a settled thread past the listed ones from search
+    Then the sidebar has a row for it and scrolls it into view
+    And a folded Settled section still shows it

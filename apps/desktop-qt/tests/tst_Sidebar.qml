@@ -454,5 +454,38 @@ Item {
             compare(found.text, "qml-ghostty");
             compare(found.detail, "a thread hit a usage limit");
         }
+
+        // Scenario: Opening a thread from search shows its row in the list (features/threads/sidebar-list.feature)
+        function test_openedThreadIsBroughtIntoView() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.settled = [];
+            for (let n = 0; n < 60; ++n) {
+                next.settled.push(Object.assign({}, next.active[0], { key: "s" + n, title: "Settled " + n }));
+            }
+            next.settledTotal = 60;
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            let list = findChild(sidebar, "list");
+            tryCompare(list, "count", 62);
+            compare(list.contentY, 0);
+            const opened = JSON.parse(JSON.stringify(next));
+            opened.activeThreadKey = "s58";
+            Shell.state = { sidebar: opened };
+            const inView = () => {
+                const found = findChild(sidebar, "threadRow:s58");
+                if (!found) {
+                    return false;
+                }
+                const y = found.mapToItem(list, 0, 0).y;
+                return y >= 0 && y < list.height;
+            };
+            tryVerify(inView, 2000);
+            verify(findChild(sidebar, "threadRow:s58").active, "the open thread's row is active");
+
+            // A folded shelf keeps showing the open thread.
+            sidebar.toggleSection("settled");
+            tryCompare(list, "count", 3);
+            verify(!!findChild(sidebar, "threadRow:s58"));
+        }
     }
 }
