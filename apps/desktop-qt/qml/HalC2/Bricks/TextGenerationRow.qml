@@ -67,7 +67,7 @@ RowLayout {
         visible: row.unavailable.length === 0
         enabled: Shell.state.settingsScope?.editable ?? false
         outline: true
-        implicitWidth: 260
+        implicitWidth: 220
         model: row.models
         textRole: "label"
         currentIndex: row.models.findIndex(model => model.key === (row.model?.value ?? ""))
