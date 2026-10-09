@@ -1,0 +1,4 @@
+interface:
+  display_name: "HAL-C2 Desktop UX Audit"
+  short_description: "Audit the Qt desktop in the cua sandbox against real data"
+  default_prompt: "Use $ux-audit to audit the Qt desktop in the desktop:cua sandbox and build a findings report."
