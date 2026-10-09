@@ -254,18 +254,17 @@ defmodule HalC2.Orchestration.Delegation do
   reaching the caller (a report lost to a crash or a restart): how the child's latest
   run ended (`last_end/1`) is how the task ended, and when. The caller is not woken;
   its turn is long over. Recovery calls it before interrupting any run, so a child
-  still working when the MC stopped is not taken for one that ended.
+  still working when the MC stopped is not taken for one that ended, and again once
+  the runs it continues have started. With `boot?`, a task whose child was never
+  launched (the MC stopped between recording it and launching) failed; later a child
+  may be about to launch, so Recovery leaves those out.
   Returns how many it settled.
   """
-  def reconcile(parent_id) do
+  def reconcile(parent_id, boot? \\ true) do
     for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
           StreamState.list(stream(parent_id), "subagent"),
         status not in @terminal and is_binary(child_id),
-        child = stream(child_id),
-        runs = StreamState.list(child, "run"),
-        runs != [],
-        not working?(runs),
-        {ended, run, ended_at} <- [last_end(runs)],
+        {ended, run, ended_at, child} <- [stopped(child_id, boot?)],
         settle(
           parent_id,
           task,
@@ -278,6 +277,18 @@ defmodule HalC2.Orchestration.Delegation do
           :ok,
         reduce: 0 do
       count -> count + 1
+    end
+  end
+
+  # How a child ended and when, with its state; nil while it works or has not run yet.
+  defp stopped(child_id, boot?) do
+    child = stream(child_id)
+    runs = StreamState.list(child, "run")
+
+    cond do
+      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
+      runs == [] or working?(runs) -> nil
+      true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
     end
   end
 
@@ -312,7 +323,8 @@ defmodule HalC2.Orchestration.Delegation do
 
   # Records the task in the parent, then launches the child thread; returns its id, or
   # why the child did not start, the task failed. The record comes first: a child turn
-  # that ends at once reports to it.
+  # that ends at once reports to it. A launch the MC stopped in the middle of is
+  # settled at the next boot (`reconcile/2`).
   defp start(thread, run, spec) do
     child_id = HalC2.Environment.uuid4()
     task_id = "node:subagent:" <> HalC2.Environment.uuid4()
