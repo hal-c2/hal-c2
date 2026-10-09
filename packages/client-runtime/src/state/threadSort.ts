@@ -268,8 +268,9 @@ export function planPinnedReorder(input: {
   const afterId = movedIndex < orderedIds.length - 1 ? orderedIds[movedIndex + 1] : null;
   const beforeKey = beforeId != null ? (keysById.get(beforeId) ?? null) : null;
   const afterKey = afterId != null ? (keysById.get(afterId) ?? null) : null;
-  const beforeUsable = beforeId === null || beforeKey != null;
-  const afterUsable = afterId === null || afterKey != null;
+  // A corrupt key (such as a historical "") bounds nothing: rewrite instead.
+  const beforeUsable = beforeId === null || (beforeKey != null && isValidPinOrderKey(beforeKey));
+  const afterUsable = afterId === null || (afterKey != null && isValidPinOrderKey(afterKey));
   if (beforeUsable && afterUsable) {
     let key = pinOrderKeyBetween(beforeKey, afterKey);
     while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
@@ -279,10 +280,24 @@ export function planPinnedReorder(input: {
   const keys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
     .filter((key) => !reservedKeys.has(key))
     .slice(0, orderedIds.length);
-  return orderedIds.flatMap((id, index) => {
+  const writes = orderedIds.flatMap((id, index) => {
     const key = keys[index]!;
     return keysById.get(id) === key ? [] : [{ id, orderKey: key }];
   });
+  // The writes are separate commands, any of which can fail. Sent in this
+  // order, every prefix keeps the other rows in their current order: rows
+  // whose key grows go first, from the last; then rows whose key shrinks (or
+  // that gain one), from the first; the moved row goes last.
+  const grows = (write: { id: string; orderKey: string }) => {
+    const key = keysById.get(write.id);
+    return key != null && write.orderKey > key;
+  };
+  const others = writes.filter((write) => write.id !== movedId);
+  return [
+    ...others.filter(grows).reverse(),
+    ...others.filter((write) => !grows(write)),
+    ...writes.filter((write) => write.id === movedId),
+  ];
 }
 
 /**
