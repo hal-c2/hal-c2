@@ -23,7 +23,8 @@ defmodule HalC2.Streams.Server do
   subscriber that follows the stream again tells the messages of the subscription it
   left, still on their way, from those of the new one. A client resumes only with
   the `handle/0` its offset came from; any other starts fresh. A tagged subscription
-  whose relay fails is ended with `:resync`, and the client follows the stream again.
+  whose relay fails, or that another subscription of its subscriber replaces, is
+  ended with `:resync`, and the client follows the stream again.
 
   A plain subscription (`subscribe/3`) is for this MC's own processes: whole
   entities, as `{:snapshot, seq, updated_at, rows, :more | :done}` or
@@ -68,7 +69,7 @@ defmodule HalC2.Streams.Server do
           optional(:handle) => String.t() | nil,
           optional(:kinds) => View.kinds(),
           optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil,
-          optional(:tag) => reference
+          optional(:tag) => term
         }
 
   @doc "How long a stream without subscribers stays up."
@@ -215,6 +216,9 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def handle_call({:subscribe, pid, offset, client}, _from, state) do
+    # One this replaces may be what its subscriber follows now: a follow that gave up
+    # can be taken after the next one.
+    resync(state, pid)
     state = drop(state, pid)
     {view, initial} = initial(state, pid, offset, client)
 

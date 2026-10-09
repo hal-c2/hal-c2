@@ -111,12 +111,41 @@ defmodule HalC2.Web.SocketStreamDownTest do
   end
 
   # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a follow that gave up and is taken after all is ended once it goes live" do
+    [socket] = Map.keys(:sys.get_state(Streams.ensure("th-down")).subscribers)
+    late = Streams.ensure("th-late")
+    :erlang.trace(late, true, [:receive])
+
+    # What the follow/4 of a call that gave up does when it runs at last.
+    tag = {node(), make_ref()}
+    :ok = Streams.subscribe("th-late", socket, nil, %{tag: tag})
+    assert_receive {:trace, ^late, :receive, {:"$gen_cast", {:unsubscribe, ^socket, ^tag}}}, 1_000
+    :erlang.trace(late, false, [:receive])
+    assert :sys.get_state(late).subscribers == %{}
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a follow that gave up and is taken after the next one is told to resync",
+       %{client: client, shape: shape, live: live} do
+    [socket] = Map.keys(:sys.get_state(Streams.ensure("th-down")).subscribers)
+    :ok = Streams.subscribe("th-down", socket, nil, %{tag: {node(), make_ref()}})
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    assert resync == %{"t" => "resync", "id" => 7}
+
+    {%{"t" => "live"}, _, client} = resubscribe(client, shape, live)
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _, _} =
+             WsClient.recv_until(client, &(&1["t"] == "events"))
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
   test "the unsubscribe of a follow that gave up does not end the one after it",
        %{client: client} do
     stream = Streams.ensure("th-down")
     [socket] = Map.keys(:sys.get_state(stream).subscribers)
     # What the socket casts for a follow that failed, landing after it followed again.
-    :ok = Streams.unsubscribe("th-down", socket, make_ref())
+    :ok = Streams.unsubscribe("th-down", socket, {node(), make_ref()})
     {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
 
     assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
