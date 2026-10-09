@@ -466,7 +466,7 @@ defmodule HalC2.Plugins do
   end
 
   defp thread(thread_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     HalC2.StreamState.get(state, "thread")[thread_id] || %{}
   end
 

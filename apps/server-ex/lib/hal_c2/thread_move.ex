@@ -1069,7 +1069,7 @@ defmodule HalC2.ThreadMove do
   # --- helpers ---------------------------------------------------------------------
 
   defp thread(id), do: StreamState.get(state(id), "thread")[id]
-  defp state(id), do: Streams.Server.state(Streams.ensure(id))
+  defp state(id), do: HalC2.Streams.state(id)
 
   defp ask(dest, fun, args, thread) do
     case remote(dest.mc, fun, args) do

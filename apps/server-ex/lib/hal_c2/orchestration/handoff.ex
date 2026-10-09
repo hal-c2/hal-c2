@@ -248,8 +248,7 @@ defmodule HalC2.Orchestration.Handoff do
   # turn after the fork point, or nothing when the fork point is the source's latest turn.
   defp next_turn(transfer, turn_ref) do
     turns =
-      HalC2.Streams.ensure(transfer["sourceThreadId"])
-      |> HalC2.Streams.Server.state()
+      HalC2.Streams.state(transfer["sourceThreadId"])
       |> StreamState.list("provider-turn")
 
     case Enum.find(turns, &(get_in(&1, ["nativeTurnRef", "nativeId"]) == turn_ref["nativeId"])) do
@@ -273,7 +272,7 @@ defmodule HalC2.Orchestration.Handoff do
     |> Enum.filter(&(&1["type"] == "merge_back"))
     |> Enum.reduce({[], []}, fn transfer, {texts, changes} ->
       fork_id = transfer["sourceThreadId"]
-      fork = HalC2.Streams.Server.state(HalC2.Streams.ensure(fork_id))
+      fork = HalC2.Streams.state(fork_id)
       runs = StreamState.get(fork, "run")
       to = get_in(runs, [transfer["sourcePoint"]["runId"], "ordinal"]) || 0
       from = get_in(runs, [get_in(transfer, ["basePoint", "runId"]), "ordinal"]) || 0

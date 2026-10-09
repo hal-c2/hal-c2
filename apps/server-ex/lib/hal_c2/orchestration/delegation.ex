@@ -750,7 +750,7 @@ defmodule HalC2.Orchestration.Delegation do
       {:error, "parent_not_active",
        "Delegated tasks require an active run owned by this MCP provider session."}
 
-  defp stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+  defp stream(thread_id), do: HalC2.Streams.state(thread_id)
 
   defp number(value, _default) when is_number(value), do: round(value)
   defp number(_value, default), do: default

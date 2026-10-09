@@ -124,7 +124,7 @@ defmodule HalC2.Orchestration.Fork do
     end
   end
 
-  defp state(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+  defp state(thread_id), do: HalC2.Streams.state(thread_id)
 
   # A deleted thread is gone as far as forking and merging go.
   defp live(state, thread_id) do

@@ -118,8 +118,7 @@ defmodule HalC2.Mcp do
   end
 
   defp running?(thread_id) do
-    HalC2.Streams.ensure(thread_id)
-    |> HalC2.Streams.Server.state()
+    HalC2.Streams.state(thread_id)
     |> HalC2.StreamState.list("run")
     |> Enum.any?(&(&1["status"] in ~w(preparing starting running waiting)))
   end

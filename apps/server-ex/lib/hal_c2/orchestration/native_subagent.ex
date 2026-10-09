@@ -330,5 +330,5 @@ defmodule HalC2.Orchestration.NativeSubagent do
   defp nilify(""), do: nil
   defp nilify(text), do: text
 
-  defp stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+  defp stream(thread_id), do: HalC2.Streams.state(thread_id)
 end

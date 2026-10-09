@@ -212,7 +212,7 @@ defmodule HalC2.Orchestration.Recovery do
 
   # A message the user sent since takes precedence.
   defp latest?(thread_id, run) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     Enum.all?(StreamState.list(state, "run"), &(&1["ordinal"] <= run["ordinal"]))
   end
 

@@ -644,7 +644,7 @@ defmodule HalC2.Mcp.Tools do
     do: Map.take(row, ~w(id title workspaceRoot defaultModelSelection createdAt updatedAt))
 
   @doc "A thread's stream state."
-  def stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+  def stream(thread_id), do: HalC2.Streams.state(thread_id)
 
   @doc "The run a message of the thread belongs to, or nil."
   def message_run(thread_id, message_id) do
