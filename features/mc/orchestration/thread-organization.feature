@@ -57,49 +57,63 @@ Feature: Organizing threads in the engine
 
   @mc
   Scenario: Pinning a thread places it among the pinned threads
-    When a client pins "t1" with order key "a0"
-    Then thread "t1" is pinned with order key "a0"
+    When a client pins "t1" with order key "n"
+    Then thread "t1" is pinned with order key "n"
     And a thread-pinned event is recorded
 
   @mc
   Scenario: Unpinning a thread forgets its pinned place
-    Given thread "t1" is pinned with order key "a0"
+    Given thread "t1" is pinned with order key "n"
     When a client unpins "t1"
     Then thread "t1" is not pinned and has no pinned order key
     And a thread-unpinned event is recorded
 
   @mc
   Scenario: Reordering pinned threads changes only the order key
-    Given thread "t1" is pinned with order key "a0"
-    When a client moves pinned thread "t1" to order key "b0"
-    Then thread "t1" is pinned with order key "b0"
+    Given thread "t1" is pinned with order key "n"
+    When a client moves pinned thread "t1" to order key "t"
+    Then thread "t1" is pinned with order key "t"
     And the time it was pinned is unchanged
 
   @mc
   Scenario: Reordering active threads records an active order key
-    When a client moves active thread "t1" to order key "c0"
-    Then thread "t1" has active order key "c0"
+    When a client moves active thread "t1" to order key "g"
+    Then thread "t1" has active order key "g"
     And a thread-active-reordered event is recorded
 
   @mc
   Scenario: Only a pinned thread can be reordered among the pinned
-    When a client moves pinned thread "t1" to order key "b0"
+    When a client moves pinned thread "t1" to order key "t"
     Then the command fails with "Thread t1 is not pinned and cannot be reordered."
 
   @mc
   Scenario Outline: Only an active thread can be reordered among the active
     Given thread "t1" <state>
-    When a client moves active thread "t1" to order key "c0"
+    When a client moves active thread "t1" to order key "g"
     Then the command fails with "Thread t1 is not active and cannot be reordered."
 
     Examples:
-      | state                         |
-      | is pinned with order key "a0" |
-      | is settled                    |
+      | state                        |
+      | is pinned with order key "n" |
+      | is settled                   |
+
+  # Keys sort as text, and a client places a thread between two keys it can read: one
+  # that is empty, not a-z, too long or ends in "a" leaves no room to place beside it.
+  @mc
+  Scenario Outline: An order key no client writes is refused
+    Given thread "t1" is pinned with order key "n"
+    When a client moves pinned thread "t1" to order key "<key>"
+    Then the command fails with "Thread t1 order key is not 1 to 64 letters a-z ending in b-z."
+
+    Examples:
+      | key |
+      | n0  |
+      | B   |
+      | na  |
 
   @mc
   Scenario: Settling a pinned thread takes it out of the pinned threads
-    Given thread "t1" is pinned with order key "a0"
+    Given thread "t1" is pinned with order key "n"
     When a client settles "t1"
     Then thread "t1" is settled by override
     And thread "t1" is not pinned and has no pinned order key
@@ -118,8 +132,8 @@ Feature: Organizing threads in the engine
   @mc
   Scenario Outline: Pinning a settled or snoozed thread brings it back
     Given thread "t1" <parked>
-    When a client pins "t1" with order key "a0"
-    Then thread "t1" is pinned with order key "a0"
+    When a client pins "t1" with order key "n"
+    Then thread "t1" is pinned with order key "n"
     And thread "t1" is neither settled nor snoozed
 
     Examples:

@@ -327,22 +327,22 @@ defmodule HalC2.Steps.Parity.Commands do
     do:
       on_thread(
         context,
-        %{"orderKey" => "a0"},
-        &(&1["pinnedAt"] != nil and &1["pinOrderKey"] == "a0")
+        %{"orderKey" => "n"},
+        &(&1["pinnedAt"] != nil and &1["pinOrderKey"] == "n")
       )
 
   defp prepare("thread.unpin", context) do
-    setup!(context, "thread.pin", %{"orderKey" => "a0"})
+    setup!(context, "thread.pin", %{"orderKey" => "n"})
     on_thread(context, %{}, &(&1["pinnedAt"] == nil))
   end
 
   defp prepare("thread.pin.reorder", context) do
-    setup!(context, "thread.pin", %{"orderKey" => "a0"})
-    on_thread(context, %{"orderKey" => "b0"}, &(&1["pinOrderKey"] == "b0"))
+    setup!(context, "thread.pin", %{"orderKey" => "n"})
+    on_thread(context, %{"orderKey" => "t"}, &(&1["pinOrderKey"] == "t"))
   end
 
   defp prepare("thread.active.reorder", context),
-    do: on_thread(context, %{"orderKey" => "c0"}, &(&1["activeOrderKey"] == "c0"))
+    do: on_thread(context, %{"orderKey" => "g"}, &(&1["activeOrderKey"] == "g"))
 
   defp prepare("thread.visit", context) do
     at = World.iso_from_now(0)

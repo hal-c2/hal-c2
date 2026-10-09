@@ -245,14 +245,14 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     World.command(context, %{
       "type" => type,
       "threadId" => thread,
-      "orderKey" => "a0",
+      "orderKey" => "n",
       "snoozedUntil" => wake_time("tomorrow 09:00")
     })
   end
 
   step "thread {string} is pinned and snoozed", %{args: [thread]} = context do
     context
-    |> organize(thread, "thread.pin", %{"orderKey" => "a0"})
+    |> organize(thread, "thread.pin", %{"orderKey" => "n"})
     |> ok!()
     |> organize(thread, "thread.snooze", %{"snoozedUntil" => wake_time("tomorrow 09:00")})
     |> ok!()
@@ -270,7 +270,7 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
 
   step "thread {string} is still pinned and snoozed", %{args: [thread]} = context do
     organized = still_organized(context, thread)
-    assert %{"pinOrderKey" => "a0"} = organized
+    assert %{"pinOrderKey" => "n"} = organized
     assert organized["pinnedAt"] != nil
     assert organized["snoozedUntil"] == wake_time("tomorrow 09:00")
     context

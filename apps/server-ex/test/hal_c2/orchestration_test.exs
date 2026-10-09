@@ -353,7 +353,7 @@ defmodule HalC2.OrchestrationTest do
             {"thread.metadata.update", %{"title" => "Renamed"}},
             {"thread.interaction-mode.set", %{"interactionMode" => "plan"}},
             {"thread.runtime-mode.set", %{"runtimeMode" => "approval-required"}},
-            {"thread.pin", %{"orderKey" => "a0"}},
+            {"thread.pin", %{"orderKey" => "n"}},
             {"thread.visit", %{"visitedAt" => "2026-09-23T12:00:00.000Z"}},
             {"thread.visit", %{"visitedAt" => "2026-09-23T11:00:00.000Z"}},
             {"thread.archive", %{}}
@@ -366,13 +366,49 @@ defmodule HalC2.OrchestrationTest do
                "title" => "Renamed",
                "interactionMode" => "plan",
                "runtimeMode" => "approval-required",
-               "pinOrderKey" => "a0",
+               "pinOrderKey" => "n",
                "pinnedAt" => pinned,
                "lastVisitedAt" => "2026-09-23T12:00:00.000Z",
                "archivedAt" => archived
              } = StreamState.get(current(thread_id), "thread")[thread_id]
 
       assert is_binary(pinned) and is_binary(archived)
+    end
+
+    # The clients place a thread between two keys they can read, so a key they would not
+    # write is refused rather than stored (tst_SidebarOrderFuzz found the sidebar misorder
+    # around an empty one the MC had kept).
+    test "an order key no client writes is refused and changes nothing" do
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.create",
+          "threadId" => "keyed",
+          "projectId" => "project-1",
+          "title" => "Keyed"
+        })
+
+      organize = fn type, fields ->
+        Orchestration.dispatch(Map.merge(%{"type" => type, "threadId" => "keyed"}, fields))
+      end
+
+      thread = fn -> StreamState.get(current("keyed"), "thread")["keyed"] end
+      longest = String.duplicate("z", 64)
+      refused = "Thread keyed order key is not 1 to 64 letters a-z ending in b-z."
+
+      for key <- ["", "B", "na", "n0", "\u00df", longest <> "z", 7] do
+        assert {:error, ^refused} = organize.("thread.active.reorder", %{"orderKey" => key})
+        assert {:error, ^refused} = organize.("thread.pin", %{"orderKey" => key})
+      end
+
+      assert [nil, nil] == Enum.map(~w(pinnedAt activeOrderKey), &thread.()[&1])
+      assert {:error, ^refused} = organize.("thread.active.reorder", %{})
+      assert {:error, ^refused} = organize.("thread.active.reorder", %{"orderKey" => nil})
+      assert {:ok, _} = organize.("thread.active.reorder", %{"orderKey" => longest})
+      assert {:ok, _} = organize.("thread.pin", %{"orderKey" => "b"})
+      assert %{"pinOrderKey" => "b", "activeOrderKey" => ^longest} = thread.()
+      assert {:error, ^refused} = organize.("thread.pin.reorder", %{"orderKey" => ""})
+      assert {:ok, _} = organize.("thread.pin.reorder", %{"orderKey" => "mz"})
+      assert %{"pinOrderKey" => "mz"} = thread.()
     end
 
     test "regenerating a title marks it in flight until the attempt ends" do
