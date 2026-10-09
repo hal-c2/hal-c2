@@ -279,7 +279,10 @@ QJsonObject json(const Item& item) {
                      {QStringLiteral("status"), item.status},
                      {QStringLiteral("streaming"), item.streaming}};
   if (item.type == QLatin1String("error")) {
-    entity.insert(QStringLiteral("failure"), QJsonObject{{QStringLiteral("message"), item.text}});
+    QJsonObject failure{{QStringLiteral("message"), item.text}};
+    // A usage limit has its own text, "limit" here.
+    if (item.text == QLatin1String("limit")) failure.insert(QStringLiteral("class"), QStringLiteral("usage_limit"));
+    entity.insert(QStringLiteral("failure"), failure);
   } else {
     entity.insert(field(item.type), item.text);
   }
@@ -467,7 +470,12 @@ QList<Row> project(const Model& model) {
       row.title = QStringLiteral("Subagent");
       row.agentModel = thread.agents.value(item.agent);
     }
-    if (kind == QLatin1String("error")) row.title = QStringLiteral("Error");
+    if (kind == QLatin1String("error")) {
+      // A usage limit is one line naming the wait, with no body.
+      const bool limit = item.text == QLatin1String("limit");
+      row.title = limit ? QStringLiteral("Usage limit reached.") : QStringLiteral("Error");
+      if (limit) row.text.clear();
+    }
     if (terminal.value(item.run) == item.id) row.meta = !streaming.contains(item.run) && settled(thread.runs.value(item.run));
     rows.append(row);
     ++i;
@@ -717,6 +725,8 @@ struct AddItem : Change {
   QString run;
   QString type;
   QString agent;
+  // An error that is the provider's usage limit.
+  bool limit = false;
   explicit AddItem(const Model& model) {
     const QStringList runs = running(model);
     RC_PRE(!runs.isEmpty());
@@ -728,6 +738,7 @@ struct AddItem : Change {
                                                {1, QStringLiteral("subagent")},
                                                {1, QStringLiteral("error")}});
     if (type == QLatin1String("subagent")) agent = pick(kAgents);
+    if (type == QLatin1String("error")) limit = *rc::gen::arbitrary<bool>();
   }
   void checkPreconditions(const Model& model) const override {
     RC_PRE(model.mc.items.size() < kMaxItems);
@@ -735,7 +746,7 @@ struct AddItem : Change {
   }
   void apply(Model& model) const override {
     Item item{QStringLiteral("%1-%2").arg(type.left(4)).arg(model.ordinal + 1), type, run, ++model.ordinal};
-    item.text = type == QLatin1String("command_execution") ? QString() : QStringLiteral("t");
+    item.text = type == QLatin1String("command_execution") ? QString() : limit ? QStringLiteral("limit") : QStringLiteral("t");
     item.streaming = type == QLatin1String("assistant_message");
     item.status = type == QLatin1String("command_execution") ? QStringLiteral("running") : QStringLiteral("completed");
     item.agent = agent;

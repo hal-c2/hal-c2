@@ -163,6 +163,44 @@ const Steps steps([] {
            QStringLiteral("the group does not say a call failed"));
   });
 
+  // What a call is labelled by.
+  step(QStringLiteral("the agent ran %1 through a shell and changed a file in the workspace").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world, 30);
+    addItem(world, QStringLiteral("command_execution"), {{QStringLiteral("input"), QStringLiteral("bash -lc '%1'").arg(c[0])}, {QStringLiteral("exitCode"), 0}});
+    const QString root = world.mc.projects.value(kProject).value(QLatin1String("workspaceRoot")).toString();
+    addItem(world, QStringLiteral("file_change"), {{QStringLiteral("fileName"), root + QStringLiteral("/src/cart.ts")}});
+    finishTurn(world);
+    openFold(world);
+  });
+  step(QStringLiteral("the user opens the activity group"), [](World& world, const Captures&, const Table&) {
+    click(world, drawn(world, QStringLiteral("workGroupToggle")));
+    world.waitFor([&] { return entries(world).size() == 2; }, [&] { return QStringLiteral("the group to open; %1").arg(describe(timeline(world))); });
+  });
+  step(QStringLiteral("the command is labelled %1 and the file change %2").arg(q, q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList calls = entries(world);
+    expect(calls.at(0).toMap().value(QStringLiteral("label")) == c[0] && calls.at(1).toMap().value(QStringLiteral("label")) == c[1],
+           QStringLiteral("the calls read %1").arg(show(calls)));
+  });
+
+  // A usage limit on the thread's timeline.
+  step(QStringLiteral("the provider stopped the turn at its usage limit, resetting at the top of an hour"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, QStringLiteral("error"),
+            {{QStringLiteral("status"), QStringLiteral("failed")},
+             {QStringLiteral("failure"), QJsonObject{{QStringLiteral("class"), QStringLiteral("usage_limit")},
+                                                     {QStringLiteral("message"), QStringLiteral("You've hit your usage limit.")},
+                                                     {QStringLiteral("resetAt"), iso(now().addSecs(3 * 3600))}}}});
+    settleRun(world, QStringLiteral("failed"), 5);
+  });
+  step(QStringLiteral("the timeline shows one warning line naming when to retry"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    const int row = lastRowOf(world, QStringLiteral("error"));
+    const QString title = role(model, row, TimelineModel::TitleRole).toString();
+    expect(title.startsWith(QLatin1String("Usage limit reached. Retry after ")) && title.endsWith(QLatin1Char('.')) &&
+               role(model, row, TimelineModel::TextRole).toString().isEmpty() && role(model, row, TimelineModel::WarningRole).toBool(),
+           QStringLiteral("the error row is %1").arg(describe(model)));
+  });
+
   // Opening a group.
   step(QStringLiteral("a collapsed group of tool calls"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);

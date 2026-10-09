@@ -47,9 +47,9 @@ Feature: Streaming the agent's reply
     Then the reasoning is labelled "<label>"
 
     Examples:
-      | state     | label    |
-      | streaming | Thinking |
-      | finished  | Thought  |
+      | state     | label                 |
+      | streaming | Thinking              |
+      | finished  | The cart total needs  |
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
   @shared @backlog-mobile @backlog-tui

@@ -129,6 +129,16 @@ Feature: Plans and subagents
       | cancelled            | Stopped          |
 
   @shared @backlog-mobile
+  Scenario: A finished subagent shows its result, a working one its latest progress
+    Given a subagent that reported "Reading the tax code" and then finished with "12 tests added"
+    Then the subagent's row reads "12 tests added"
+
+  @shared @backlog-mobile
+  Scenario: A working subagent shows its latest progress
+    Given a subagent that is still working after reporting "Reading the tax code"
+    Then the subagent's row reads "Reading the tax code"
+
+  @shared @backlog-mobile
   Scenario: The user moves between a subagent and its parent
     Given the agent has a subagent
     When the user opens the subagent's thread

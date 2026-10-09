@@ -378,4 +378,53 @@ GroupSummary summarize(const QList<QJsonObject>& all) {
   return {sentence, std::any_of(named.cbegin(), named.cend(), [](const Named& summary) { return summary.failed; })};
 }
 
+QString plainDetail(const QString& markdown) {
+  static const QRegularExpression link(QStringLiteral(R"(\[([^\]]+)\]\([^)]*\))"));
+  static const QRegularExpression bullet(QStringLiteral(R"(^[ \t]*[-*][ \t]+)"), QRegularExpression::MultilineOption);
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  QString plain = markdown;
+  plain.replace(link, QStringLiteral("\\1"));
+  plain.remove(QLatin1Char('`'));
+  plain.remove(bullet);
+  plain.replace(space, QStringLiteral(" "));
+  return plain.trimmed();
+}
+
+bool subagentSettled(const QString& status) {
+  return status != QLatin1String("pending") && status != QLatin1String("running") && status != QLatin1String("waiting");
+}
+
+QString subagentDetail(bool settled, const QString& progress, const QString& result) {
+  static const QRegularExpression placeholder(QStringLiteral(R"(^Child task ended with status\b)"),
+                                              QRegularExpression::CaseInsensitiveOption);
+  const QString first = settled ? result.trimmed() : progress.trimmed();
+  const QString second = settled ? progress.trimmed() : result.trimmed();
+  const QString raw = first.isEmpty() ? second : first;
+  return raw.isEmpty() || placeholder.match(raw).hasMatch() ? QString() : plainDetail(raw);
+}
+
+QString commandDisplayText(const QString& command) {
+  // sh, bash, zsh, dash or ksh, flags such as -lc, then the script alone.
+  static const QRegularExpression wrapper(
+      QStringLiteral(R"re(^(?:\S*/)?(?:ba|z|da|k)?sh(?:\.exe)?(?:\s+-[A-Za-z]+)*?\s+-[A-Za-z]*c\s+)re"
+                     R"re((?:'((?:[^']|'\\'')*)'|"((?:[^"\\]|\\.)*)"|([^\s'"]+))$)re"),
+      QRegularExpression::DotMatchesEverythingOption);
+  static const QRegularExpression escaped(QStringLiteral(R"(\\(.))"));
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  const QString trimmed = command.trimmed();
+  QString shown = trimmed;
+  if (const auto match = wrapper.match(trimmed); match.hasMatch()) {
+    if (match.capturedStart(1) >= 0) {
+      shown = match.captured(1).replace(QStringLiteral("'\\''"), QStringLiteral("'"));
+    } else if (match.capturedStart(2) >= 0) {
+      shown = match.captured(2).replace(escaped, QStringLiteral("\\1"));
+    } else {
+      shown = match.captured(3);
+    }
+  }
+  shown = shown.trimmed();
+  if (shown.isEmpty()) shown = trimmed;
+  return shown.section(QLatin1Char('\n'), 0, 0).replace(space, QStringLiteral(" ")).trimmed();
+}
+
 }  // namespace timeline

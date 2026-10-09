@@ -194,6 +194,20 @@ const Steps steps([] {
            QStringLiteral("the subagent reads \"%1\"").arg(detail));
   });
 
+  // What a subagent's row says it did.
+  step(QStringLiteral("a subagent that reported %1 and then finished with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world, 30);
+    delegate(world, {{QStringLiteral("progress"), c[0]}, {QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("result"), c[1]}});
+  });
+  step(QStringLiteral("a subagent that is still working after reporting %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world, 30);
+    delegate(world, {{QStringLiteral("progress"), c[0]}, {QStringLiteral("result"), QStringLiteral("Earlier result")}});
+  });
+  step(QStringLiteral("the subagent's row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString shown = role(timeline(world), rowOf(world, QStringLiteral("subagent")), TimelineModel::TextRole).toString();
+    expect(shown == c[0], QStringLiteral("the row reads \"%1\"").arg(shown));
+  });
+
   // A finished subagent that left work running.
   step(QStringLiteral("a subagent returned its result while background work it started is still running"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
