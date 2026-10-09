@@ -585,13 +585,11 @@ void ThreadMenuController::unpin(const QString& key) {
   const auto run = [this, key, threadId = thread->id, orderKey = thread->pinOrderKey] {
     command(key, {{QStringLiteral("type"), QStringLiteral("thread.unpin")}, {QStringLiteral("threadId"), threadId}},
             QStringLiteral("Failed to unpin thread"), [this, key, threadId, orderKey] {
-              toasts()->show(QStringLiteral("success"), QStringLiteral("Unpinned"), QString(),
-                             ToastController::Action{QStringLiteral("Undo"), [this, key, threadId, orderKey] {
-                               QJsonObject pin{{QStringLiteral("type"), QStringLiteral("thread.pin")},
-                                               {QStringLiteral("threadId"), threadId}};
-                               if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
-                               command(key, pin, QStringLiteral("Failed to undo unpin"));
-                             }, false, QStringLiteral("Unpinned")});
+              toasts()->showUndo(QStringLiteral("Unpinned"), QStringLiteral("Unpinned"), [this, key, threadId, orderKey] {
+                QJsonObject pin{{QStringLiteral("type"), QStringLiteral("thread.pin")}, {QStringLiteral("threadId"), threadId}};
+                if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
+                command(key, pin, QStringLiteral("Failed to undo unpin"));
+              });
             });
   };
   if (setting(this, "confirmThreadUnpin")) {
