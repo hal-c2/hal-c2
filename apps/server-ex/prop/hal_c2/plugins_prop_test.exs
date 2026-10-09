@@ -9,7 +9,8 @@ defmodule HalC2.PluginsPropTest do
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
   enable with whatever a client sends as accepted permissions, disable, restart, save
   settings, call the running plugin, read its files, follow, publish and drop topics,
-  kill a client, crash a plugin's process once or until its supervisor gives up, and
+  kill a client, crash a plugin's process once or until its supervisor gives up, crash
+  a worker announced the way a host from before an update in place heard of them, and
   kill the host itself. After every step the listing, the document, the code that is
   loaded and running, what the packages' code did at compile time, and the host's
   monitors must agree with the model.
@@ -129,7 +130,8 @@ defmodule HalC2.PluginsPropTest do
         {2, {:call, __MODULE__, :publish, [topic_id(), topic(), integer(1, 9)]}},
         {2, {:call, __MODULE__, :inbox, [client()]}},
         {1, {:call, __MODULE__, :kill_client, [client()]}},
-        {1, {:call, __MODULE__, :kill_plugins, []}}
+        {1, {:call, __MODULE__, :kill_plugins, []}},
+        {1, {:call, __MODULE__, :stale_worker, [held]}}
       ] ++
         if workers == [] do
           []
@@ -393,6 +395,18 @@ defmodule HalC2.PluginsPropTest do
 
     {put_in(s.held[id], %{e | crashes: e.crashes + 1, restarts: e.restarts && e.restarts + 1}),
      :ok}
+  end
+
+  # A worker of the running supervisor, if there is one, is charged to the plugin; with
+  # none it is no one's.
+  defp step(s, {:call, _, :stale_worker, [id]}) do
+    case s.held[id] do
+      %{running: true} = e ->
+        {put_in(s.held[id], %{e | restarts: e.restarts && e.restarts + 1}), :ok}
+
+      _ ->
+        {s, :ok}
+    end
   end
 
   # Killed until its supervisor gives up: how many kills that took is not known.
@@ -764,6 +778,22 @@ defmodule HalC2.PluginsPropTest do
     end
 
     :sys.get_state(sup)
+    {:ok, observe()}
+  end
+
+  # A worker announced in the form a host from before an update in place took, queued
+  # across the update, crashes.
+  def stale_worker(id) do
+    worker = spawn(fn -> receive do: (:never -> :ok) end)
+    ref = Process.monitor(worker)
+    GenServer.cast(Plugins, {:worker, id, worker})
+    :sys.get_state(Plugins)
+    Process.exit(worker, :boom)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
     {:ok, observe()}
   end
 

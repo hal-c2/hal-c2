@@ -1300,7 +1300,10 @@ defmodule HalC2.Plugins do
 
   # Whether `sup` is the supervisor the plugin runs, or the one that gave up and left it
   # failed (`gave_up`, until the plugin is enabled or started again); a crash reported by
-  # an earlier supervisor is not this plugin's now.
+  # an earlier supervisor is not this plugin's now. A worker announced before an update
+  # in place while the plugin was stopped comes with no supervisor, and is no one's.
+  defp current?(_state, _id, sup) when not is_pid(sup), do: false
+
   defp current?(state, id, sup) do
     case state.plugins[id] do
       %{sup: ^sup} -> true

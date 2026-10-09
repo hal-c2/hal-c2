@@ -166,6 +166,25 @@ defmodule HalC2.PluginsTest do
     assert %{restarts: 2} = plugin("notes")
   end
 
+  test "a worker announced before an update in place, its plugin since stopped, is not charged to it" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "notes"})
+    assert %{sup: nil, gave_up: nil} = plugin("notes")
+
+    # Its cast from the version before, queued while the plugin stopped.
+    worker = spawn(fn -> receive do: (:never -> :ok) end)
+    ref = Process.monitor(worker)
+    GenServer.cast(Plugins, {:worker, "notes", worker})
+    :sys.get_state(Plugins)
+    Process.exit(worker, :boom)
+    assert_receive {:DOWN, ^ref, _, _, :boom}
+    :sys.get_state(Plugins)
+
+    assert %{restarts: 0, last_error: nil} = plugin("notes")
+  end
+
   defp save(id, settings),
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 
