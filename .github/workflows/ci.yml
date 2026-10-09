@@ -102,6 +102,8 @@ jobs:
         run: mix proof
         env:
           MIX_ENV: proof
+          # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
 
   # The @mc scenarios of features/, one directory per job so a slow or hung
   # directory stays visible; mc/ is split in two to fit the time limit.
