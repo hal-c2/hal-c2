@@ -8,6 +8,8 @@
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand, provider.uploadFeedback)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, begin_turn, release_session)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn)
+#   apps/server-ex/proof/models/turns.maude
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/provider/Errors.ts (ProviderInstanceNotFoundError),
 #     apps/server/src/provider/Services/ProviderInstanceRegistry.ts
@@ -178,6 +180,18 @@ Feature: Runs and turns
     Given the provider's session cannot be opened while "t1" starts a turn
     Then the run is failed
     And "t1" can take its next message
+
+  # A delete ends a run while its provider turn still starts or ends; that end stands.
+  @mc
+  Scenario: A turn that ends after its thread was deleted stays cancelled
+    Given "t1" has a running turn
+    When the provider ends the turn while "t1" is deleted
+    Then the run of "t1" stays cancelled
+
+  @mc
+  Scenario: A turn that starts after its thread was deleted stays cancelled
+    When "t1" is deleted while its turn starts
+    Then the run of "t1" stays cancelled
 
   # Whether and how often to retry is each provider plugin's own behaviour; the core
   # only waits for the plugin to give up.

@@ -479,7 +479,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   Marks the turn as running: its provider turn (`ids.provider_turn`), attempt, run,
   root node, and provider thread, which becomes the thread's active one. The calling
   process drives the turn from here: if it crashes before `finish/3`, the turn ends
-  as failed (`HalC2.Orchestration.TurnWatch`).
+  as failed (`HalC2.Orchestration.TurnWatch`). Returns `:ended`, writing nothing, if
+  the run ended while the turn started (the thread was deleted, or the start gave up
+  waiting); the caller then has no turn to drive.
   """
   def started(state) do
     %{turn: turn} = state
@@ -487,7 +489,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     at = Entities.now()
     TurnWatch.claim(state.thread_id, ids.run)
 
-    commit(state, fn stream ->
+    commit_active(state, ids.run, fn stream ->
       [
         Orchestration.create(
           "provider-turn",
@@ -551,18 +553,33 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
-    queue? =
+    ended =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
-        changes =
-          baseline_changes(stream, baselines) ++
-            checkpoint_changes(stream, state.turn, checkpoint, at) ++
-            ended(stream, state.turn.ids, status, failure, checkpoint, at)
+        if active?(stream, state.turn.ids.run) do
+          changes =
+            baseline_changes(stream, baselines) ++
+              checkpoint_changes(stream, state.turn, checkpoint, at) ++
+              ended(stream, state.turn.ids, status, failure, checkpoint, at)
 
-        {Enum.filter(changes, &is_tuple/1), queue_starts?(stream, state.thread_id)}
+          {Enum.filter(changes, &is_tuple/1), {:ended, queue_starts?(stream, state.thread_id)}}
+        else
+          {[], :already}
+        end
       end)
 
-    finished(state, status, failure, queue?)
+    case ended do
+      {:ended, queue?} ->
+        finished(state, status, failure, queue?)
+
+      # Deleted, or abandoned, before the provider's turn ended: that end stands.
+      :already ->
+        TurnWatch.release(state.turn.ids.run)
+        :ok
+    end
   end
+
+  defp active?(stream, run_id),
+    do: (StreamState.get(stream, "run")[run_id] || %{})["status"] in @active_runs
 
   # Whether the thread's queue starts once the run has ended, decided with the end: a
   # turn that ends while its thread is archived leaves the queue to the user, so an
@@ -1017,5 +1034,21 @@ defmodule HalC2.Orchestration.TurnWriter do
     HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
       {fun.(stream) |> Enum.filter(&is_tuple/1), :ok}
     end)
+  end
+
+  @doc """
+  As `commit/2`, if run `run_id` is still active; `:ended`, committing nothing, if it
+  is not. The claim of a run that ended is released.
+  """
+  def commit_active(state, run_id, fun) do
+    committed =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        if active?(stream, run_id),
+          do: {fun.(stream) |> Enum.filter(&is_tuple/1), :ok},
+          else: {[], :ended}
+      end)
+
+    if committed == :ended, do: TurnWatch.release(run_id)
+    committed
   end
 end

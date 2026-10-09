@@ -1,5 +1,6 @@
 defmodule HalC2.TurnLifecycleTest do
-  # Regressions proof/hal_c2/turns_proof_test.exs found.
+  # Regressions proof/hal_c2/turns_proof_test.exs found: a run's start and end racing a
+  # delete, and a start that could not reach its runtime.
   use ExUnit.Case, async: false
 
   alias HalC2.{Orchestration, StreamState}
@@ -59,6 +60,63 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["failed", "failed"])
   end
 
+  # The provider's turn ending after a delete cancelled its run wrote the run as
+  # interrupted over the cancel.
+  test "a turn that ends after its thread was deleted stays cancelled", %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    stream = HalC2.Streams.ensure(thread_id)
+    test = self()
+
+    :ok = :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+    deleter = spawn(fn -> send(test, {:deleted, delete(thread_id)}) end)
+    await_call(stream, deleter)
+    # Codex ends the turn as interrupted; the runtime writes the end behind the delete.
+    :ok = HalC2.Codex.ThreadRuntime.interrupt(thread_id, running["id"])
+    await_call(stream, runtime)
+    :erlang.trace(stream, false, [:receive])
+    :ok = :sys.resume(stream)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    assert ["cancelled"] = statuses(thread_id)
+  end
+
+  # A delete that cancelled the run while Codex started its turn was undone by the
+  # runtime marking the run running once the turn had started.
+  test "a turn that starts after its thread was deleted stays cancelled",
+       %{thread_id: thread_id} do
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, send_message(thread_id, "m1")}) end)
+    _runtime = await_claim(watch)
+
+    spawn(fn -> send(test, {:deleted, delete(thread_id)}) end)
+    await_statuses(thread_id, ["cancelled"])
+    :ok = :sys.resume(watch)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    assert_receive {:sent, {:ok, _}}, 5_000
+    assert ["cancelled"] = statuses(thread_id)
+  end
+
+  defp suspend_watch do
+    watch = Process.whereis(TurnWatch)
+    :ok = :sys.suspend(watch)
+    :erlang.trace(watch, true, [:receive])
+    watch
+  end
+
+  # The runtime claiming a run from the suspended TurnWatch, once the turn started.
+  defp await_claim(watch) do
+    assert_receive {:trace, ^watch, :receive, {:"$gen_call", {runtime, _}, {:claim, _, _, _}}},
+                   5_000
+
+    :erlang.trace(watch, false, [:receive])
+    runtime
+  end
+
   defp send_message(thread_id, message_id) do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
@@ -69,6 +127,12 @@ defmodule HalC2.TurnLifecycleTest do
       "dispatchMode" => %{"type" => "queue_after_active"}
     })
   end
+
+  defp delete(thread_id),
+    do: Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+
+  defp await_call(stream, from),
+    do: assert_receive({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}}, 5_000)
 
   defp statuses(thread_id) do
     HalC2.Streams.ensure(thread_id)

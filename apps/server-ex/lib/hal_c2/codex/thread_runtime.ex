@@ -480,7 +480,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       # As `started/1` does, with Codex's native turn and thread.
       TurnWatch.claim(state.thread_id, ids.run)
 
-      commit(state, fn stream ->
+      commit_active(state, ids.run, fn stream ->
         [
           Orchestration.create(
             "provider-turn",
@@ -527,8 +527,19 @@ defmodule HalC2.Codex.ThreadRuntime do
           )
         ]
       end)
+      |> case do
+        :ok ->
+          {:ok, %{state | turn: turn}}
 
-      {:ok, %{state | turn: turn}}
+        # The run ended while Codex started its turn: nothing wants the turn now.
+        :ended ->
+          Connection.call(state.conn, "turn/interrupt", %{
+            "threadId" => state.native_thread_id,
+            "turnId" => native_turn
+          })
+
+          {:ok, %{state | turn: nil}}
+      end
     end
   end
 
