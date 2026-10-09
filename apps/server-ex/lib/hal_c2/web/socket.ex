@@ -31,7 +31,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 5
+  @state_version 6
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -48,6 +48,7 @@ defmodule HalC2.Web.Socket do
       # What the session may do; the MC's own token may do anything.
       scopes: session_scopes(session),
       subs: %{},
+      # stream id => {the subscription's id, the tag its messages carry}
       by_stream: %{},
       # The monitor of each stream subscription's server => {its id, the server}.
       monitors: %{},
@@ -107,9 +108,19 @@ defmodule HalC2.Web.Socket do
       when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version,
       do: handle_info(message, migrate(state))
 
+  # One for a subscription followed before this one, still on its way, is not this
+  # one's.
+  def handle_info({:hal_c2_stream, {stream_id, tag}, message}, state) do
+    case state.by_stream do
+      %{^stream_id => {id, ^tag}} -> stream_message(state, id, message)
+      _ -> {:ok, state}
+    end
+  end
+
+  # From an MC that sends no tags.
   def handle_info({:hal_c2_stream, stream_id, message}, state) do
     case state.by_stream do
-      %{^stream_id => id} -> stream_message(state, id, message)
+      %{^stream_id => {id, _tag}} -> stream_message(state, id, message)
       _ -> {:ok, state}
     end
   end
@@ -672,7 +683,8 @@ defmodule HalC2.Web.Socket do
     if Map.has_key?(state.by_stream, stream_id) do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
-      client = Map.take(resume, [:handle, :window, :kinds])
+      tag = make_ref()
+      client = resume |> Map.take([:handle, :window, :kinds]) |> Map.put(:tag, tag)
 
       # The owning MC may be gone or slow; the client retries when it is back.
       case remote(mc, HalC2.Streams, :follow, [stream_id, self(), resume.offset, client]) do
@@ -685,7 +697,7 @@ defmodule HalC2.Web.Socket do
            %{
              state
              | subs: Map.put(state.subs, id, shape),
-               by_stream: Map.put(state.by_stream, stream_id, id),
+               by_stream: Map.put(state.by_stream, stream_id, {id, tag}),
                monitors: monitors,
                buffers: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true})
            }}
@@ -1138,7 +1150,14 @@ defmodule HalC2.Web.Socket do
   defp migrate(%{v: 3} = state), do: state |> Map.merge(%{monitors: %{}, v: 4}) |> migrate()
 
   # Version 5: sidebar rows are buffered per MC, like stream events.
-  defp migrate(%{v: 4} = state), do: Map.merge(state, %{shell: %{}, v: 5})
+  defp migrate(%{v: 4} = state), do: state |> Map.merge(%{shell: %{}, v: 5}) |> migrate()
+
+  # Version 6: a stream subscription's messages carry its tag. Those followed before
+  # carry none.
+  defp migrate(%{v: 5} = state) do
+    by_stream = Map.new(state.by_stream, fn {stream_id, id} -> {stream_id, {id, nil}} end)
+    %{state | by_stream: by_stream, v: 6}
+  end
 
   defp migrate(state), do: state
 
