@@ -799,6 +799,29 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     assert_released(context, context.thread)
   end
 
+  # The idle check's release reaches the provider process just ahead of the message's
+  # start: the process is held until both wait on it.
+  step "the MC releases the session of {string} as the user sends {string} to {string}",
+       %{args: [thread, text, thread]} = context do
+    Mc.ensure(IdleSessions)
+    pid = context.runtime
+    test = self()
+    :ok = :sys.suspend(pid)
+    :erlang.trace(pid, true, [:receive])
+    spawn(fn -> send(test, {:released, IdleSessions.check()}) end)
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, :release}}
+    message = World.message_command(context, thread, text)
+    spawn(fn -> send(test, {:sent, World.command(%{}, message).reply}) end)
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}}
+    :erlang.trace(pid, false, [:receive])
+    :ok = :sys.resume(pid)
+    assert_receive {:released, released}
+    assert World.thread_id(context, thread) in released
+    assert_receive {:DOWN, _, :process, ^pid, {:shutdown, :released}}
+    assert_receive {:sent, reply}
+    Map.merge(context, %{released: released, reply: reply})
+  end
+
   step "the provider starts again and resumes its conversation", context do
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     assert %{"ordinal" => 2} = World.await_latest_run(context, context.thread, "completed")

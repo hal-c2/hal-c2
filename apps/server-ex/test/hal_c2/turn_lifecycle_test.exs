@@ -1,6 +1,7 @@
 defmodule HalC2.TurnLifecycleTest do
   # Regressions proof/hal_c2/turns_proof_test.exs found: a run's start and end racing a
-  # delete, a start that gave up, and a start that could not reach its runtime.
+  # delete, a start that gave up, a start that could not reach its runtime, and an idle
+  # session's release.
   use ExUnit.Case, async: false
 
   alias HalC2.{Orchestration, StreamState}
@@ -126,6 +127,46 @@ defmodule HalC2.TurnLifecycleTest do
     assert ["failed", "running"] = statuses(thread_id)
   end
 
+  # IdleSessions found the thread idle and released its runtime just as a message
+  # started a run there: the runtime stopped under the start, and the run failed.
+  test "a turn that starts as its idle runtime is released runs on a new one",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1", "say done")
+    await_statuses(thread_id, ["completed"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    test = self()
+
+    :ok = :sys.suspend(runtime)
+    :erlang.trace(runtime, true, [:receive])
+    spawn(fn -> send(test, {:released, Orchestration.release_session(thread_id)}) end)
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, :release}}, 5_000
+    spawn(fn -> send(test, {:sent, send_message(thread_id, "m2")}) end)
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    :ok = :sys.resume(runtime)
+
+    assert_receive {:released, :ok}, 5_000
+    assert_receive {:sent, {:ok, _}}, 5_000
+    await_statuses(thread_id, ["completed", "running"])
+    assert [{fresh, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    assert fresh != runtime
+  end
+
+  # The other order: the runtime took a turn after the thread looked idle. Stopping it
+  # left the run running with nothing driving it, for IdleSessions to fail.
+  test "a runtime asked to release itself keeps the turn it drives", %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+
+    assert :busy = GenServer.call(runtime, :release)
+    :ok = HalC2.Codex.ThreadRuntime.interrupt(thread_id, running["id"])
+    await_statuses(thread_id, ["interrupted"])
+    ref = Process.monitor(runtime)
+    assert :ok = Orchestration.release_session(thread_id)
+    assert_receive {:DOWN, ^ref, :process, _, {:shutdown, :released}}, 5_000
+  end
+
   defp suspend_watch do
     watch = Process.whereis(TurnWatch)
     :ok = :sys.suspend(watch)
@@ -142,12 +183,12 @@ defmodule HalC2.TurnLifecycleTest do
     runtime
   end
 
-  defp send_message(thread_id, message_id) do
+  defp send_message(thread_id, message_id, text \\ nil) do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
       "threadId" => thread_id,
       "messageId" => message_id,
-      "text" => "wait #{message_id}",
+      "text" => text || "wait #{message_id}",
       "attachments" => [],
       "dispatchMode" => %{"type" => "queue_after_active"}
     })
