@@ -100,6 +100,22 @@ defmodule HalC2.AuthTest do
     assert {:ok, %{}} = HalC2.Auth.session(previous)
   end
 
+  test "a failed desktop exchange keeps the tickets of the desktop's previous session",
+       %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    :ok = HalC2.Desktop.apply_bootstrap(%{"desktopBootstrapToken" => "desk-token"})
+    on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
+    start_supervised!(HalC2.Auth)
+
+    {:ok, previous, _, _} = HalC2.Auth.exchange("desk-token")
+    {:ok, %{id: id}} = HalC2.Auth.session(previous)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(previous)
+    # Its tables outlive the crash with their heir, as they do in a running MC.
+    assert_exchange_fails(path, "desk-token", restart: false)
+
+    assert {:ok, ^id} = HalC2.Auth.take_ticket(ticket)
+  end
+
   # A socket reads its session's scopes, then connects; a revoke between the two must
   # not leave the socket open with them. This process is the socket: its connected cast
   # is handled before `clients/0` (a call from the same process) returns.
@@ -125,7 +141,7 @@ defmodule HalC2.AuthTest do
     assert :error = HalC2.Auth.issue_ticket(session)
   end
 
-  defp assert_exchange_fails(path, token) do
+  defp assert_exchange_fails(path, token, opts \\ []) do
     {:ok, db} = Sqlite3.open(path)
 
     :ok =
@@ -142,8 +158,10 @@ defmodule HalC2.AuthTest do
     Sqlite3.close(db)
 
     # The crashed server is restarted by its supervisor; the new one reads the store.
-    :ok = stop_supervised(HalC2.Auth)
-    start_supervised!(HalC2.Auth)
+    if Keyword.get(opts, :restart, true) do
+      :ok = stop_supervised(HalC2.Auth)
+      start_supervised!(HalC2.Auth)
+    end
   end
 
   test "an administrator makes pairing links, and sees and revokes paired clients", %{port: port} do

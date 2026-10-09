@@ -263,14 +263,20 @@ defmodule HalC2.AuthPropTest do
   def next_state(state, _r, {:call, _, :exchange, [lh, sh, req, key]}) do
     link = state.links[lh]
 
-    if link == nil or (link.bound != nil and link.bound != key) do
-      state
-    else
-      state = %{state | links: Map.delete(state.links, lh)}
-
-      if link.expires <= state.clock or not subset?(req, link.scopes) do
+    cond do
+      link == nil or (link.bound != nil and link.bound != key) ->
         state
-      else
+
+      # Refused for asking more than it grants, a link stays unused.
+      link.expires > state.clock and not subset?(req, link.scopes) ->
+        state
+
+      link.expires <= state.clock ->
+        %{state | links: Map.delete(state.links, lh)}
+
+      true ->
+        state = %{state | links: Map.delete(state.links, lh)}
+
         session = %{
           scopes: req || link.scopes,
           expires: state.clock + if(key, do: @dpop_ttl, else: @session_ttl),
@@ -283,7 +289,6 @@ defmodule HalC2.AuthPropTest do
             sessions: Map.put(state.sessions, sh, session),
             sessions_seen: state.sessions_seen ++ [sh]
         }
-      end
     end
   end
 

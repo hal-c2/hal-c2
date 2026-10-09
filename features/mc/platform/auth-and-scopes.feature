@@ -271,6 +271,13 @@ Feature: MC authentication and scopes
     Then its session carries only orchestration:read
 
   @mc
+  Scenario: A token exchange asking for more than its link grants leaves the link unused
+    Given a pairing link with standard scopes
+    When a client exchanges it asking for access:write
+    Then the exchange is refused as an invalid scope
+    And the link still pairs a client that asks for what it grants
+
+  @mc
   Scenario: A client proves possession of its key with DPoP
     Given a client that paired with a DPoP key
     When it presents its access token with a proof

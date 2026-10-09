@@ -383,7 +383,7 @@ defmodule HalC2.Auth do
                 {reply, created} = create_session(db, requested, subject, client, state)
                 {reply, events ++ removed_clients(replaced) ++ created, replaced}
               else
-                {{:error, :scope_not_granted}, events, []}
+                {:rollback, {{:error, :scope_not_granted}, [], []}}
               end
 
             {:error, events} ->
@@ -392,6 +392,7 @@ defmodule HalC2.Auth do
         end)
       end)
 
+    drop_tickets(replaced)
     close_sockets(state, replaced)
     {:reply, reply, broadcast(state, events)}
   end
@@ -682,14 +683,20 @@ defmodule HalC2.Auth do
   end
 
   # Deletes matching sessions, returning their ids.
-  defp revoke(path, where, args), do: with_db(path, &revoke_rows(&1, where, args))
+  defp revoke(path, where, args),
+    do: path |> with_db(&revoke_rows(&1, where, args)) |> drop_tickets()
+
+  # The ids of the sessions deleted; their tickets go once that commits (`drop_tickets/1`).
+  defp revoke_rows(db, where, args),
+    do:
+      for(
+        [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args),
+        do: id
+      )
 
   # The tickets a revoked session already bought go with it: a ticket opens a socket
   # for its session, so one outliving the session would let a revoked client in.
-  defp revoke_rows(db, where, args) do
-    ids =
-      for [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args), do: id
-
+  defp drop_tickets(ids) do
     for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id})
     ids
   end
@@ -813,14 +820,21 @@ defmodule HalC2.Auth do
     end
   end
 
-  # All or nothing: an exception in `fun` rolls the statements back, then propagates.
+  # All or nothing: `fun` returning `{:rollback, result}` rolls the statements back and
+  # returns `result`; an exception in it rolls them back, then propagates.
   defp transaction(db, fun) do
     :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
 
     try do
-      result = fun.()
-      :ok = Sqlite3.execute(db, "COMMIT")
-      result
+      case fun.() do
+        {:rollback, result} ->
+          :ok = Sqlite3.execute(db, "ROLLBACK")
+          result
+
+        result ->
+          :ok = Sqlite3.execute(db, "COMMIT")
+          result
+      end
     rescue
       error ->
         Sqlite3.execute(db, "ROLLBACK")
