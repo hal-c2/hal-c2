@@ -192,7 +192,8 @@ defmodule HalC2.Orchestration.Delegation do
          # Settled before the child is interrupted, so the report of the interrupted run
          # finds the task ended and wakes nobody; a task that ended meanwhile is not
          # cancelled.
-         {:settled, _} <- settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
+         {:settled, _, _} <-
+           settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
       hook(:cancelling, task_id)
 
       _ =
@@ -226,10 +227,12 @@ defmodule HalC2.Orchestration.Delegation do
       # reconnect, or two reports racing) settles and wakes once: only the report
       # that finds the task unsettled delivers it. Whether it is delivered is decided
       # with the task's end, so a wait that times out meanwhile (`wait/3`) either
-      # hears of the end or leaves the task to wake the caller.
-      with {:settled, "delivered"} <-
-             settle(parent_id, task, status, result, &delivery/2, :once, ended_at),
-           do: wake(parent_id, task, status, result)
+      # hears of the end or leaves the task to wake the caller. The result message is
+      # recorded in the same transaction, so a crash cannot leave a task delivered
+      # without it.
+      with {:settled, "delivered", {:ok, _} = sent} <-
+             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
+           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
     end
 
     :ok
@@ -492,11 +495,22 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # Ends the task in its parent, at `at` or now, and returns `{:settled, delivery}`.
+  # Ends the task in its parent, at `at` or now, and returns `{:settled, delivery, sent}`.
   # `delivery` is a state, or a function of the task and the parent's state that
   # decides it inside the transaction. With `:once`, a task that already ended is left
-  # as it is and `:already` is returned, decided in the same transaction.
-  defp settle(parent_id, task, status, result, delivery, how \\ :always, at \\ nil) do
+  # as it is and `:already` is returned, decided in the same transaction. With `wake?`,
+  # a delivered result's message is recorded with the end, and `sent` is what
+  # `Orchestration.decide_dispatch/3` decided for it.
+  defp settle(
+         parent_id,
+         task,
+         status,
+         result,
+         delivery,
+         how \\ :always,
+         at \\ nil,
+         wake? \\ false
+       ) do
     at = at || Entities.now()
     status = if status in @terminal, do: status, else: "completed"
     item_id = "turn-item:subagent:#{task["id"]}"
@@ -506,33 +520,40 @@ defmodule HalC2.Orchestration.Delegation do
       current = StreamState.get(state, "subagent")[task["id"]] || %{}
       delivery = if is_function(delivery), do: delivery.(current, state), else: delivery
 
+      {message, sent} =
+        if wake? and delivery == "delivered",
+          do:
+            Orchestration.decide_dispatch(state, parent_id, wake(parent_id, task, status, result)),
+          else: {[], nil}
+
       changes =
-        [
-          Orchestration.upsert(state, "subagent", task["id"], fn entity ->
-            Map.merge(entity, %{
-              "status" => status,
-              "result" => result,
-              "completedAt" => at,
-              "updatedAt" => at,
-              "completionDelivery" => %{"state" => delivery, "observedByRunId" => nil}
-            })
-          end),
-          Orchestration.upsert(state, "node", task["id"], finish),
-          StreamState.get(state, "turn-item")[item_id] &&
-            Orchestration.upsert(state, "turn-item", item_id, fn item ->
-              Map.merge(item, %{
-                "status" => status,
-                "result" => result,
-                "completedAt" => at,
-                "updatedAt" => at
-              })
-            end)
-        ]
+        (message ++
+           [
+             Orchestration.upsert(state, "subagent", task["id"], fn entity ->
+               Map.merge(entity, %{
+                 "status" => status,
+                 "result" => result,
+                 "completedAt" => at,
+                 "updatedAt" => at,
+                 "completionDelivery" => %{"state" => delivery, "observedByRunId" => nil}
+               })
+             end),
+             Orchestration.upsert(state, "node", task["id"], finish),
+             StreamState.get(state, "turn-item")[item_id] &&
+               Orchestration.upsert(state, "turn-item", item_id, fn item ->
+                 Map.merge(item, %{
+                   "status" => status,
+                   "result" => result,
+                   "completedAt" => at,
+                   "updatedAt" => at
+                 })
+               end)
+           ])
         |> Enum.reject(&(&1 in [nil, false]))
 
       if how == :once and current["status"] in @terminal,
         do: {[], :already},
-        else: {changes, {:settled, delivery}}
+        else: {changes, {:settled, delivery, sent}}
     end)
   end
 
@@ -557,7 +578,7 @@ defmodule HalC2.Orchestration.Delegation do
     </delegated_task_result>
     """
 
-    Orchestration.dispatch(%{
+    %{
       "type" => "message.dispatch",
       "commandId" => "command:delegate-result:#{task["id"]}",
       "threadId" => parent_id,
@@ -572,7 +593,7 @@ defmodule HalC2.Orchestration.Delegation do
         "taskIds" => [task["id"]],
         "acceptedAt" => nil
       }
-    })
+    }
   end
 
   defp status(thread_id, task_id) do
