@@ -131,6 +131,33 @@ defmodule HalC2.ClusterTest do
     assert for({"turn-item", id, _} <- page, do: id) == ["item-1"]
   end
 
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a relay that failed before its subscriber left does not take the stream down",
+       %{b: b} do
+    alias HalC2.Streams
+
+    {:ok, _} = Streams.commit("left-th", :thread, [{"note", "n1", %{"s" => %{"v" => 1}}}])
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    :ok = Streams.subscribe("left-th", subscriber, nil)
+    assert_receive {:hal_c2_stream, "left-th", {:live, _}}, 1_000
+    stream = Streams.ensure("left-th")
+    %{relays: %{^subscriber => relay}} = :sys.get_state(stream)
+
+    # The subscriber leaves, and its relay fails before the stream gets to it.
+    :ok = :sys.suspend(stream)
+    :ok = Streams.unsubscribe("left-th", subscriber)
+    ref = Process.monitor(relay)
+    Process.exit(relay, :failed)
+    assert_receive {:DOWN, ^ref, :process, ^relay, :failed}
+    # Taken while suspended: the relay's exit is in the stream's mailbox now.
+    %{relays: %{^subscriber => ^relay}} = :sys.get_state(stream)
+    :ok = :sys.resume(stream)
+
+    assert %{relays: relays, subscribers: subscribers} = :sys.get_state(stream)
+    assert relays == %{} and subscribers == %{}
+    assert Streams.ensure("left-th") == stream
+  end
+
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
