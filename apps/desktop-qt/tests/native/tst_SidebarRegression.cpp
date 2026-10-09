@@ -12,6 +12,7 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -55,7 +56,7 @@ struct Shell {
   void send(const QString& id, const QJsonObject& row) {
     mc.threads.insert(id, row);
     mc.sendRow(id, row);
-    QTRY_VERIFY(native->store()->threadRow(key(id)) == row);
+    HAL_C2_TRY_VERIFY(native->store()->threadRow(key(id)) == row);
   }
 
   FakeMc mc;
@@ -100,7 +101,7 @@ private slots:
     QTemporaryDir home;
     Shell shell(home.path(), {QStringLiteral("t1")});
     const QString key = shell.key(QStringLiteral("t1"));
-    QTRY_VERIFY(shell.native->store()->thread(key).has_value());
+    HAL_C2_TRY_VERIFY(shell.native->store()->thread(key).has_value());
     QJsonObject archived = threadRow(QStringLiteral("t1"));
     archived.insert(QStringLiteral("archivedAt"), kAt);
     shell.send(QStringLiteral("t1"), archived);
@@ -117,7 +118,7 @@ private slots:
     QTemporaryDir home;
     Shell shell(home.path(), {QStringLiteral("t1")});
     const QString key = shell.key(QStringLiteral("t1"));
-    QTRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
+    HAL_C2_TRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
     shell.bridge.dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     QCOMPARE(shell.route().threadKey, key);
     shell.bridge.dispatch(QStringLiteral("settings.open"), QVariantMap());
@@ -125,7 +126,7 @@ private slots:
 
     shell.mc.threads.remove(QStringLiteral("t1"));
     shell.mc.sendRow(QStringLiteral("t1"), {{QStringLiteral("id"), QStringLiteral("t1")}, {QStringLiteral("deletedAt"), kAt}});
-    QTRY_VERIFY(!shell.native->store()->thread(key));
+    HAL_C2_TRY_VERIFY(!shell.native->store()->thread(key));
     shell.navigation()->back();
 
     QCOMPARE(shell.route().kind, QStringLiteral("draft"));
@@ -136,7 +137,7 @@ private slots:
   void forwardSurvivesBackPastTheOldestPlace() {
     QTemporaryDir home;
     Shell shell(home.path(), {});
-    QTRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
+    HAL_C2_TRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
     shell.bridge.dispatch(QStringLiteral("settings.open"), QVariantMap());
     shell.navigation()->back();
     QCOMPARE(shell.route().kind, QStringLiteral("draft"));

@@ -11,6 +11,7 @@
 #include "FakeMc.h"
 #include "McClient.h"
 #include "ThreadPreviews.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -50,10 +51,10 @@ struct Fixture {
 
   // Shown and listing: the list call is held.
   bool show() {
-    if (!QTest::qWaitFor([this] { return client->isReady(); })) return false;
+    if (!halc2::test::waitFor([this] { return client->isReady(); })) return false;
     previews->setThread(kEnvironment, kThread, kMc);
     previews->setActive(true);
-    return QTest::qWaitFor([this] { return !held.value(QStringLiteral("preview.list")).isEmpty() && !mc.subscribers(QStringLiteral("preview")).isEmpty(); });
+    return halc2::test::waitFor([this] { return !held.value(QStringLiteral("preview.list")).isEmpty() && !mc.subscribers(QStringLiteral("preview")).isEmpty(); });
   }
 
   bool answerList(const QJsonObject& list) {
@@ -78,7 +79,7 @@ struct Fixture {
     bool answered = false;
     client->call(&context, kEnvironment, QStringLiteral("test.barrier"), QJsonObject(),
                  [&answered](const QJsonValue&, const std::optional<QString>&) { answered = true; });
-    return QTest::qWaitFor([&answered] { return answered; });
+    return halc2::test::waitFor([&answered] { return answered; });
   }
 
   QStringList tabIds() const {
@@ -115,7 +116,7 @@ private slots:
     QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
     QCOMPARE(f.tabIds(), QStringList{QStringLiteral("tab-1")});
     f.mc.drop();
-    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(halc2::test::waitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
     QVERIFY(f.answerList(list({}, 0, QStringLiteral("epoch-2"))));
     QCOMPARE(f.tabIds(), QStringList());
   }
@@ -129,7 +130,7 @@ private slots:
     f.previews->setActive(false);
     // The MC closes tab-1 (revision 2) unwatched, then lists, then opens tab-2.
     f.previews->setActive(true);
-    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty() && !f.mc.subscribers(QStringLiteral("preview")).isEmpty(); }));
+    QVERIFY(halc2::test::waitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty() && !f.mc.subscribers(QStringLiteral("preview")).isEmpty(); }));
     f.emitEvent(QStringLiteral("opened"), QStringLiteral("tab-2"), 3, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-2"))}});
     QVERIFY(f.barrier());
     f.mc.reply(f.held[QStringLiteral("preview.list")].takeFirst(), list({}, 2));
@@ -144,9 +145,9 @@ private slots:
     QVERIFY(f.show());
     QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
     f.previews->close(QStringLiteral("tab-1"));
-    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    QVERIFY(halc2::test::waitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
     f.previews->reload();
-    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(halc2::test::waitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
     f.mc.reply(f.held[QStringLiteral("preview.list")].takeFirst(), list({tab(QStringLiteral("tab-1"))}, 1));
     QVERIFY(f.barrier());
     QCOMPARE(f.tabIds(), QStringList());
@@ -169,7 +170,7 @@ private slots:
     f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), titled)}});
     QVERIFY(f.barrier());
     f.previews->reload();
-    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(halc2::test::waitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
     QJsonObject later = tab(QStringLiteral("tab-1"), loaded);
     later.insert(QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z"));
     f.mc.reply(f.held[QStringLiteral("preview.list")].takeFirst(), list({later}, 2));

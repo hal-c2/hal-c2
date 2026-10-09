@@ -8,6 +8,7 @@
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -60,7 +61,7 @@ struct Shell {
     bool done = false;
     native->client()->call(native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                            [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-    return QTest::qWaitFor([&done] { return done; });
+    return halc2::test::waitFor([&done] { return done; });
   }
 
   // The first row of `command`.
@@ -95,13 +96,13 @@ private slots:
     QTemporaryDir home;
     Shell shell(home.path());
     shell.rules = {rule(QStringLiteral("chat.new"), QStringLiteral("shift+mod+y"))};
-    QTRY_VERIFY(shell.native->isActive());
-    QTRY_COMPARE(shell.keys()->customCount(), 1);
+    HAL_C2_TRY_VERIFY(shell.native->isActive());
+    HAL_C2_TRY_COMPARE(shell.keys()->customCount(), 1);
     const QVariantMap row = shell.row(QStringLiteral("chat.new"));
     QCOMPARE(row.value(QStringLiteral("key")).toString(), QStringLiteral("mod+shift+y"));
 
     shell.keys()->remove(row);
-    QTRY_COMPARE(shell.keys()->customCount(), 0);
+    HAL_C2_TRY_COMPARE(shell.keys()->customCount(), 0);
     QVERIFY(shell.rules.isEmpty());
   }
 
@@ -112,8 +113,8 @@ private slots:
     Shell shell(home.path());
     shell.rules = {rule(QStringLiteral("chat.new"), QStringLiteral("mod+y")),
                    rule(QStringLiteral("diff.toggle"), QStringLiteral("mod+u"))};
-    QTRY_VERIFY(shell.native->isActive());
-    QTRY_COMPARE(shell.keys()->customCount(), 2);
+    HAL_C2_TRY_VERIFY(shell.native->isActive());
+    HAL_C2_TRY_COMPARE(shell.keys()->customCount(), 2);
     QSignalSpy saving(shell.keys(), &KeybindingController::savingChanged);
     shell.mc.hold(QStringLiteral("keys"));
     shell.keys()->remove(shell.row(QStringLiteral("chat.new")));
@@ -121,9 +122,9 @@ private slots:
     QCOMPARE(saving.count(), 1);
     QVERIFY(shell.keys()->saving());
 
-    QTRY_COMPARE(shell.removes, 2);
+    HAL_C2_TRY_COMPARE(shell.removes, 2);
     shell.mc.answerHeld();
-    QTRY_VERIFY(!shell.keys()->saving());
+    HAL_C2_TRY_VERIFY(!shell.keys()->saving());
     QCOMPARE(saving.count(), 2);
   }
 
@@ -133,8 +134,8 @@ private slots:
     QTemporaryDir home;
     Shell shell(home.path());
     shell.rules = {rule(QStringLiteral("chat.new"), QStringLiteral("mod+k+j"))};
-    QTRY_VERIFY(shell.native->isActive());
-    QTRY_COMPARE(shell.keys()->customCount(), 1);
+    HAL_C2_TRY_VERIFY(shell.native->isActive());
+    HAL_C2_TRY_COMPARE(shell.keys()->customCount(), 1);
     const QVariantList rows = shell.keys()->bindings();
     QSignalSpy bindings(shell.keys(), &KeybindingController::bindingsChanged);
 
@@ -147,7 +148,7 @@ private slots:
     // Its count still tells: one more is a change.
     shell.rules.append(rule(QStringLiteral("diff.toggle"), QStringLiteral("mod+j+k")));
     shell.push();
-    QTRY_COMPARE(shell.keys()->customCount(), 2);
+    HAL_C2_TRY_COMPARE(shell.keys()->customCount(), 2);
     QCOMPARE(bindings.count(), 1);
   }
 

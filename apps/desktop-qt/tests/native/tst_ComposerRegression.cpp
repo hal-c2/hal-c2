@@ -15,6 +15,7 @@
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "ToastController.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -90,12 +91,12 @@ struct Shell {
   bool restart(bool received) {
     native.reset();
     bridge.reset();
-    if (!QTest::qWaitFor([this] { return !mc.connected(); })) return false;
+    if (!halc2::test::waitFor([this] { return !mc.connected(); })) return false;
     losing = !received;
     mc.answerHeld();
     losing = false;
     start();
-    return QTest::qWaitFor([this] { return native->isActive() && native->store()->threadOnline(key); });
+    return halc2::test::waitFor([this] { return native->isActive() && native->store()->threadOnline(key); });
   }
 
   // A user message reaches the thread (this app's send, or another device's).
@@ -117,7 +118,7 @@ struct Shell {
   // Opens the thread and waits for its messages.
   bool open() {
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
-    return QTest::qWaitFor([this] {
+    return halc2::test::waitFor([this] {
       const auto* timeline = native->controller<ThreadStore>()->timeline(key);
       return timeline && timeline->status() == QLatin1String("live") &&
              bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString() == key;
@@ -191,20 +192,20 @@ private slots:
   void aRefusedPromptBehindNewerTypingCanBeRestored() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     QVERIFY(shell.open());
 
     shell.mc.hold(QStringLiteral("answers"));
     shell.mc.refusals.insert(QStringLiteral("message.dispatch"), QStringLiteral("The thread is busy."));
     shell.type(QStringLiteral("first prompt"));
     shell.submit(QStringLiteral("first prompt"));
-    QTRY_COMPARE(shell.dispatched(), 1);
+    HAL_C2_TRY_COMPARE(shell.dispatched(), 1);
     QCOMPARE(shell.composer()->draft(shell.key), QString());
     shell.type(QStringLiteral("newer"));
     shell.mc.answerHeld();
 
     auto* toasts = shell.native->controller<ToastController>();
-    QTRY_VERIFY(shell.offersRestore());
+    HAL_C2_TRY_VERIFY(shell.offersRestore());
     QCOMPARE(shell.composer()->draft(shell.key), QStringLiteral("newer"));
     shell.type(QString());
     QVERIFY(toasts->runAction(QStringLiteral("Restore prompt")));
@@ -218,12 +219,12 @@ private slots:
   void aPromptCutOffByAQuitComesBackAsTheDraft() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     QVERIFY(shell.open());
     shell.mc.hold(QStringLiteral("answers"));
     shell.type(QStringLiteral("first prompt"));
     shell.submit(QStringLiteral("first prompt"));
-    QTRY_COMPARE(shell.dispatched(), 1);
+    HAL_C2_TRY_COMPARE(shell.dispatched(), 1);
     QCOMPARE(shell.composer()->draft(shell.key), QString());
 
     QVERIFY(shell.restart(false));
@@ -237,12 +238,12 @@ private slots:
   void aPromptTheMcGotBeforeTheQuitIsNotRestored() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     QVERIFY(shell.open());
     shell.mc.hold(QStringLiteral("answers"));
     shell.type(QStringLiteral("first prompt"));
     shell.submit(QStringLiteral("first prompt"));
-    QTRY_COMPARE(shell.dispatched(), 1);
+    HAL_C2_TRY_COMPARE(shell.dispatched(), 1);
 
     QVERIFY(shell.restart(true));
     QVERIFY(shell.open());
@@ -258,12 +259,12 @@ private slots:
   void aCutOffPromptBehindNewerTypingWaitsBehindTheToast() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     QVERIFY(shell.open());
     shell.mc.hold(QStringLiteral("answers"));
     shell.type(QStringLiteral("first prompt"));
     shell.submit(QStringLiteral("first prompt"));
-    QTRY_COMPARE(shell.dispatched(), 1);
+    HAL_C2_TRY_COMPARE(shell.dispatched(), 1);
     shell.type(QStringLiteral("newer"));
 
     QVERIFY(shell.restart(false));
@@ -280,12 +281,12 @@ private slots:
   void aCutOffPromptBehindANewerMessageIsDropped() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     QVERIFY(shell.open());
     shell.mc.hold(QStringLiteral("answers"));
     shell.type(QStringLiteral("first prompt"));
     shell.submit(QStringLiteral("first prompt"));
-    QTRY_COMPARE(shell.dispatched(), 1);
+    HAL_C2_TRY_COMPARE(shell.dispatched(), 1);
     shell.addMessage(QStringLiteral("t1"), QStringLiteral("from-the-phone"));
 
     QVERIFY(shell.restart(false));
@@ -301,21 +302,21 @@ private slots:
     Shell shell(home.path());
     QList<FakeMc::Rpc> launches;
     shell.mc.onRpc(QStringLiteral("orchestration.launchThread"), [&launches](const FakeMc::Rpc& rpc) { launches.append(rpc); });
-    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    HAL_C2_TRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
     const QString draftId = shell.native->controller<DraftController>()->start(shell.mc.environmentId, QStringLiteral("p1"));
     QVERIFY(!draftId.isEmpty());
     shell.bridge->dispatch(QStringLiteral("draft.open"), QVariantMap{{QStringLiteral("draftId"), draftId}});
-    QTRY_COMPARE(shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draftId);
+    HAL_C2_TRY_COMPARE(shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draftId);
     shell.bridge->dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), draftId},
                                                                            {QStringLiteral("edit"), shell.edit()},
                                                                            {QStringLiteral("text"), QStringLiteral("start here")},
                                                                            {QStringLiteral("cursor"), 10}});
     shell.submit(QStringLiteral("start here"));
-    QTRY_COMPARE(launches.size(), 1);
+    HAL_C2_TRY_COMPARE(launches.size(), 1);
     QCOMPARE(shell.composer()->draft(draftId), QString());
 
     QVERIFY(shell.restart(false));
-    QTRY_COMPARE(shell.composer()->draft(draftId), QStringLiteral("start here"));
+    HAL_C2_TRY_COMPARE(shell.composer()->draft(draftId), QStringLiteral("start here"));
   }
 };
 

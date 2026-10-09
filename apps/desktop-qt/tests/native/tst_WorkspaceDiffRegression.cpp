@@ -10,6 +10,7 @@
 #include "McClient.h"
 #include "ThreadDiff.h"
 #include "TimelineModel.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -39,7 +40,7 @@ struct Held {
     client.open(mc.origin(), QStringLiteral("token"));
   }
 
-  bool ready() { return QTest::qWaitFor([this] { return client.isReady(); }); }
+  bool ready() { return halc2::test::waitFor([this] { return client.isReady(); }); }
   bool asked(qsizetype count) { return sync() && calls.size() == count; }
   // Once this comes back, every call sent before it reached the MC and every
   // answer sent before it was read.
@@ -47,7 +48,7 @@ struct Held {
     bool done = false;
     QObject context;
     client.call(&context, {}, QStringLiteral("test.barrier"), {}, [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-    return QTest::qWaitFor([&done] { return done; });
+    return halc2::test::waitFor([&done] { return done; });
   }
   bool answer(qsizetype call, const QJsonObject& result) {
     mc.reply(calls.at(call), result);

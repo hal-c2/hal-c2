@@ -13,6 +13,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -72,7 +73,7 @@ struct App {
   }
 
   bool online() {
-    return QTest::qWaitFor([this] {
+    return halc2::test::waitFor([this] {
       return native->isActive() && native->client()->isReady() && mc.connected() &&
              native->store()->threadOnline(QStringLiteral("env-a:t1")) && native->store()->threadOnline(QStringLiteral("env-a:t2")) &&
              !mc.subscribers(QStringLiteral("terminals")).isEmpty();
@@ -92,7 +93,7 @@ struct App {
       bool done = false;
       QObject context;
       native->client()->call(&context, {}, QStringLiteral("test.barrier"), {}, [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-      if (!QTest::qWaitFor([&done] { return done; })) return false;
+      if (!halc2::test::waitFor([&done] { return done; })) return false;
     }
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     return true;

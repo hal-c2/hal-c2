@@ -12,6 +12,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
+#include "TestTime.h"
 
 class SyncThreadRegression : public QObject {
   Q_OBJECT
@@ -34,11 +35,11 @@ private slots:
     native.controller<PluginController>()->setConfigDir(home.filePath(QStringLiteral("config")));
     native.open(mc.origin(), QStringLiteral("token"));
     ShellStore* store = native.store();
-    QTRY_VERIFY(native.client()->isReady() && store->synchronized() && store->thread(QStringLiteral("env-a:t1")));
+    HAL_C2_TRY_VERIFY(native.client()->isReady() && store->synchronized() && store->thread(QStringLiteral("env-a:t1")));
 
     mc.stopAccepting();
     mc.drop();
-    QTRY_VERIFY(!native.client()->isReady());
+    HAL_C2_TRY_VERIFY(!native.client()->isReady());
 
     // Work queued ahead of the copy keeps it loading until the reconnect lands.
     LocalCache* cache = native.cache();
@@ -56,12 +57,12 @@ private slots:
     const quint64 snapshots = store->snapshots();
     mc.threads.remove(QStringLiteral("t1"));
     mc.startAccepting();
-    QTRY_VERIFY(store->snapshots() > snapshots && store->synchronized());
+    HAL_C2_TRY_VERIFY(store->snapshots() > snapshots && store->synchronized());
     QVERIFY2(!loaded, "the copy was in before the reconnect: the case did not happen");
     QVERIFY(!store->thread(QStringLiteral("env-a:t1")));
 
-    QTRY_VERIFY(loaded);
-    QTRY_COMPARE(threads->openThreads(), QStringList());
+    HAL_C2_TRY_VERIFY(loaded);
+    HAL_C2_TRY_COMPARE(threads->openThreads(), QStringList());
   }
 };
 

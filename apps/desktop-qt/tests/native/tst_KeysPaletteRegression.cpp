@@ -11,6 +11,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -90,7 +91,7 @@ private slots:
   void reopeningReadsTheRowsItHas() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.started());
+    HAL_C2_TRY_VERIFY(shell.started());
     CommandPaletteController* palette = shell.palette();
     palette->show();
     const QStringList listed = shell.titles();
@@ -110,12 +111,12 @@ private slots:
   void aRowThatStaysRepaintsWhenItChanges() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.started());
+    HAL_C2_TRY_VERIFY(shell.started());
     CommandPaletteController* palette = shell.palette();
     palette->setSearchDelay(0);
     palette->show();
     palette->setQuery(QStringLiteral("slow"));
-    QTRY_VERIFY(!palette->searching());
+    HAL_C2_TRY_VERIFY(!palette->searching());
     const int row = shell.indexOf(QStringLiteral("thread"), QStringLiteral("env-a:t1"));
     QVERIFY(row >= 0);
     QCOMPARE(palette->index(row).data(CommandPaletteController::DescriptionRole).toString(), QStringLiteral("slow login"));
@@ -138,7 +139,7 @@ private slots:
   void reopeningKeepsAnUnmovedHighlightQuiet() {
     QTemporaryDir home;
     Shell shell(home.path());
-    QTRY_VERIFY(shell.started());
+    HAL_C2_TRY_VERIFY(shell.started());
     CommandPaletteController* palette = shell.palette();
     palette->show();
     QCOMPARE(palette->highlighted(), 0);

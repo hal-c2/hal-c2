@@ -7,6 +7,7 @@
 #include "FakeMc.h"
 #include "McClient.h"
 #include "WorkspaceFiles.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -24,8 +25,8 @@ struct Held {
     client.open(mc.origin(), QStringLiteral("token"));
   }
 
-  bool ready() { return QTest::qWaitFor([this] { return client.isReady(); }); }
-  bool asked(qsizetype count) { return QTest::qWaitFor([this, count] { return calls.size() == count; }); }
+  bool ready() { return halc2::test::waitFor([this] { return client.isReady(); }); }
+  bool asked(qsizetype count) { return halc2::test::waitFor([this, count] { return calls.size() == count; }); }
   // Answers the call with one file, and waits for the client to read it.
   bool answer(qsizetype call, const QString& file) {
     const FakeMc::Rpc rpc = calls.at(call);
@@ -34,7 +35,7 @@ struct Held {
     bool done = false;
     QObject context;
     client.call(&context, {}, QStringLiteral("test.barrier"), {}, [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-    return QTest::qWaitFor([&done] { return done; });
+    return halc2::test::waitFor([&done] { return done; });
   }
 };
 

@@ -34,6 +34,8 @@
 #include <rapidcheck.h>
 #include <rapidcheck/state.h>
 
+#include "TestTime.h"
+
 #include <cstdlib>
 #include <functional>
 #include <ostream>
@@ -116,8 +118,9 @@ std::string debug(const T& value) {
   return out.toStdString();
 }
 
-// Runs the event loop until `done` holds, or `ms` pass. For a property's
-// assertions (RC_ASSERT(prop::until(...))), where QTRY_* cannot return.
+// Runs the event loop until `done` holds, or `ms` pass (stretched by
+// HAL_C2_TEST_TIME_SCALE, see TestTime.h). For a property's assertions
+// (RC_ASSERT(prop::until(...))), where QTRY_* cannot return.
 inline bool until(const std::function<bool()>& done, int ms = 5000) {
   if (done()) {
     return true;
@@ -132,7 +135,7 @@ inline bool until(const std::function<bool()>& done, int ms = 5000) {
       loop.quit();
     }
   });
-  limit.start(ms);
+  limit.start(test::scaled(ms));
   poll.start(0);
   loop.exec();
   return done();
@@ -142,7 +145,7 @@ inline bool until(const std::function<bool()>& done, int ms = 5000) {
 template <typename Signal>
 bool await(const typename QtPrivate::FunctionPointer<Signal>::Object* sender, Signal signal, int ms = 5000) {
   QSignalSpy spy(sender, signal);
-  return spy.wait(ms);
+  return spy.wait(test::scaled(ms));
 }
 
 // Delivers what is posted, deferred deletes included, without waiting for more.

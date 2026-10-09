@@ -26,9 +26,9 @@ definite or indirect leaks; each test's report is `build/prop-valgrind/valgrind/
 `tests/valgrind/qt.supp` the suppressions, for library noise only. To add one, run with
 `HAL_C2_VALGRIND_FLAGS=--gen-suppressions=all`, check the stack has no frame of `src/`,
 and paste the narrowest entry (by `obj:`/`fun:`, not `...` alone) with a comment.
-Memcheck is 10-50x slower, so a few tests fail on their own 5 s waits with no
-Memcheck report (`SidebarProp`, `SyncThreadRegression`, `WorkspaceTerminalRegression`
-at the time of writing); only a `memcheck:` line names a memory error.
+Memcheck is 10-50x slower, so test waits stretch by `HAL_C2_TEST_TIME_SCALE` (default 1,
+20 under `prop:valgrind`; `native/features/TestTime.h`): wait through `prop::until`,
+`HAL_C2_TRY_VERIFY` and `halc2::test::waitFor`, never a bare `QTRY_*` or `qWaitFor`.
 On a distro whose `ld.so` is stripped and whose debuginfo is not served (Arch ahead of
 its debuginfod), valgrind refuses to start; `HAL_C2_VALGRIND_LD` in `memcheck.sh` says
 how to run with a glibc you unpacked.

@@ -5,6 +5,8 @@
 #
 #   HAL_C2_VALGRIND_LOGS   where <exe>.log goes (default $TMPDIR/hal-c2-valgrind)
 #   HAL_C2_VALGRIND_FLAGS  extra valgrind flags, e.g. --gen-suppressions=all
+#   HAL_C2_TEST_TIME_SCALE multiplier for the tests' wait deadlines (native/features/
+#                          TestTime.h), 20 here unless set, as Memcheck is 10-50x slower
 #   HAL_C2_VALGRIND_LD     a glibc ld.so to run the test with when the system's is
 #                          stripped ("Fatal error at startup ... memcmp") and its
 #                          debuginfo cannot be fetched: unpack a glibc and its
@@ -22,6 +24,7 @@ shift
 # PCRE2's JIT code has no unwind info and reads past its subject, which Memcheck
 # reports as uninitialised jumps under two nameless frames; the interpreter is exact.
 export QT_ENABLE_REGEXP_JIT=0
+export HAL_C2_TEST_TIME_SCALE=${HAL_C2_TEST_TIME_SCALE:-20}
 logs=${HAL_C2_VALGRIND_LOGS:-${TMPDIR:-/tmp}/hal-c2-valgrind}
 mkdir -p "$logs"
 log=$logs/$(basename "$exe").log
