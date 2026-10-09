@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Build (when needed) the QML phone client's fuzz tests (apps/mobile-qt/tests/fuzz) with Clang, ASan and UBSan, and fuzz each for FUZZ_FOR"
+#MISE dir="{{config_root}}"
+#USAGE arg "[name]" var=#true help="Executables or tests to fuzz, e.g. QrReaderFuzz; every FUZZ_TEST when none. FUZZ_FOR (30s) is per test, FUZZ_CORPUS the corpus database"
+set -euo pipefail
+HAL_C2_FUZZ_SURFACE=mobile exec "$MISE_CONFIG_ROOT/mise-tasks/fuzz/desktop" "$@"

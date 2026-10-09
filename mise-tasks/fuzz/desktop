@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#MISE description="Build (when needed) the Qt desktop's fuzz tests (apps/desktop-qt/tests/fuzz) with Clang, ASan and UBSan, and fuzz each for FUZZ_FOR"
+#MISE dir="{{config_root}}"
+#USAGE arg "[name]" var=#true help="Executables or tests to fuzz, e.g. KeybindingsFuzz or Keybindings.RulesResolve; every FUZZ_TEST when none. FUZZ_FOR (30s) is per test, FUZZ_CORPUS the corpus database"
+# mise fuzz:mobile runs this with HAL_C2_FUZZ_SURFACE=mobile.
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
+surface=${HAL_C2_FUZZ_SURFACE:-desktop}
+cc=${FUZZ_CC:-clang}
+cxx=${FUZZ_CXX:-clang++}
+command -v "$cxx" >/dev/null || { echo "fuzz:$surface: $cxx is not installed; fuzzing mode needs Clang (pacman -S clang, apt install clang, xcode-select --install)" >&2; exit 1; }
+app=apps/$surface-qt
+build=$app/build/fuzz
+# The phone has no fuzz tests of its own yet (apps/desktop-qt/tests/fuzz/README.md).
+[[ -f $app/tests/fuzz/CMakeLists.txt ]] || { echo "fuzz:$surface: $app has no fuzz tests (tests/fuzz)"; exit 0; }
+if [[ ! -f $build/CMakeCache.txt ]]; then
+  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's (or qmake's) on PATH, then Homebrew's.
+  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || qmake -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+  cmake -S "$app/tests/fuzz" -B "$build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFUZZTEST_FUZZING_MODE=on \
+    "-DCMAKE_C_COMPILER=$cc" "-DCMAKE_CXX_COMPILER=$cxx" ${qt:+"-DCMAKE_PREFIX_PATH=$qt"}
+fi
+cmake --build "$build" --parallel
+
+# <corpus>/<executable>/<Suite.Test>/{coverage,crashing,regression}: what fuzzing
+# found new coverage with, the inputs that failed, and the ones kept to replay.
+corpus=$(realpath -m "${FUZZ_CORPUS:-$app/build/fuzz-corpus}")
+fuzz_for=${FUZZ_FOR:-30s}
+logs=$build/logs
+mkdir -p "$logs"
+wanted() { # wanted <executable short name> <Suite.Test>
+  ((${#names[@]} == 0)) && return 0
+  local name
+  for name in "${names[@]}"; do
+    [[ $name == "$1" || $name == "$2" || $name == "${2%%.*}" ]] && return 0
+  done
+  return 1
+}
+names=("$@")
+failed=()
+ran=0
+for exe in "$build"/tst_*Fuzz; do
+  [[ -x $exe ]] || continue
+  binary=$(basename "$exe")
+  while read -r test; do
+    wanted "${binary#tst_}" "$test" || continue
+    ran=$((ran + 1))
+    dir=$corpus/$binary/$test
+    mkdir -p "$dir/coverage" "$dir/crashing" "$dir/regression"
+    log=$logs/$test.log
+    echo "fuzz:$surface: $test for $fuzz_for"
+    status=0
+    FUZZTEST_TESTSUITE_OUT_DIR=$dir/coverage FUZZTEST_REPRODUCERS_OUT_DIR=$dir/crashing \
+      "$exe" "--fuzz=$test" "--fuzz_for=$fuzz_for" "--corpus_database=$corpus" >"$log" 2>&1 || status=$?
+    grep -E '^(Total runs|Edges covered|Corpus size):' "$log" | tr '\n' ' ' | sed 's/^/  /;s/ $/\n/' || true
+    if ((status != 0)); then
+      failed+=("$test")
+      echo "fuzz:$surface: $test failed (exit $status), log $log" >&2
+      # What failed, then how to replay it.
+      { grep -m1 -E 'runtime error|ERROR: [A-Za-z]+Sanitizer|Failure$|Counterexample found|SIGSEGV|SIGABRT' "$log" || true
+        grep -A4 -m1 'ERROR: [A-Za-z]*Sanitizer' "$log" | tail -n +2 || true; } | sed 's/^/  /' >&2
+      reproducer=$(grep -A1 'Reproducer file was dumped at:' "$log" | tail -1 || true)
+      if [[ -n $reproducer ]]; then
+        echo "  reproducer $reproducer" >&2
+        echo "  replay:  FUZZTEST_REPLAY=$reproducer $exe --fuzz=$test" >&2
+        echo "  print:   HAL_C2_FUZZ_PRINT=1 FUZZTEST_REPLAY=$reproducer $exe --fuzz=$test" >&2
+        echo "  keep it: cp $reproducer $dir/regression/ (replayed by both builds until fixed)" >&2
+      fi
+    fi
+  done < <("$exe" --list_fuzz_tests 2>/dev/null | sed -n 's/^\[\*\] Fuzz test: //p')
+done
+((ran > 0)) || { echo "fuzz:$surface: no FUZZ_TEST matches ${names[*]:-anything}" >&2; exit 1; }
+if ((${#failed[@]})); then
+  echo "fuzz:$surface: ${#failed[@]} of $ran failed: ${failed[*]}" >&2
+  exit 1
+fi
+echo "fuzz:$surface: $ran fuzz tests clean, corpus in $corpus"

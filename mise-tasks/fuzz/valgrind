@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Run a Qt client's fuzz tests in unit-test mode under Valgrind Memcheck: seeds, the saved corpus and regressions, then FUZZ_FOR of random inputs"
+#MISE dir="{{config_root}}"
+#USAGE arg "[surface]" help="desktop or mobile" default="desktop" {
+#USAGE   choices "desktop" "mobile"
+#USAGE }
+#USAGE arg "[name]" var=#true help="Executables to run, e.g. KeybindingsFuzz; every one when none. FUZZ_FOR (10s) of random inputs per FUZZ_TEST, FUZZ_CORPUS the corpus database, VALGRIND_JOBS (4) in parallel"
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
+command -v valgrind >/dev/null || { echo "fuzz:valgrind: valgrind is not installed (pacman -S valgrind, apt install valgrind, brew install valgrind)" >&2; exit 1; }
+surface=${usage_surface:-desktop}
+names=(${usage_name:-})
+app=apps/$surface-qt
+build=$app/build/fuzz-valgrind
+# The phone has no fuzz tests of its own yet (apps/desktop-qt/tests/fuzz/README.md).
+[[ -f $app/tests/fuzz/CMakeLists.txt ]] || { echo "fuzz:valgrind: $app has no fuzz tests (tests/fuzz)"; exit 0; }
+tools=$PWD/apps/desktop-qt/tests/valgrind
+if [[ ! -f $build/CMakeCache.txt ]]; then
+  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's (or qmake's) on PATH, then Homebrew's.
+  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || qmake -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+  # Unit-test mode (no FUZZTEST_FUZZING_MODE): no instrumentation, which Memcheck
+  # cannot run under. -O1 keeps its reports exact; memcheck.sh wraps every ctest
+  # command, so its flags change without a reconfigure.
+  cmake -S "$app/tests/fuzz" -B "$build" -DCMAKE_BUILD_TYPE=None \
+    "-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer" "-DCMAKE_TEST_LAUNCHER=$tools/memcheck.sh" \
+    ${qt:+"-DCMAKE_PREFIX_PATH=$qt"}
+fi
+cmake --build "$build" --parallel
+filter=()
+((${#names[@]} == 0)) || filter=(-R "^($(IFS='|'; echo "${names[*]}"))\$")
+# The corpus fuzz:desktop and fuzz:mobile grow (FuzzMain.cpp replays it).
+export HAL_C2_FUZZ_CORPUS=$(realpath -m "${FUZZ_CORPUS:-$app/build/fuzz-corpus}")
+export FUZZTEST_FUZZ_FOR=${FUZZ_FOR:-10s}
+export HAL_C2_VALGRIND_LOGS=$PWD/$build/valgrind
+rm -rf "$HAL_C2_VALGRIND_LOGS"
+echo "fuzz:valgrind: $surface, FUZZ_FOR=$FUZZTEST_FUZZ_FOR, corpus $HAL_C2_FUZZ_CORPUS, logs in $HAL_C2_VALGRIND_LOGS"
+exec ctest --test-dir "$build" --output-on-failure --timeout "${VALGRIND_TIMEOUT:-1800}" -j "${VALGRIND_JOBS:-4}" "${filter[@]}"
