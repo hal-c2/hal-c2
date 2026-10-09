@@ -95,4 +95,35 @@ defmodule HalC2.ScheduledTasksRunsTest do
     assert {:ok, %{"task" => %{"nextRunAt" => ^next}}} =
              ScheduledTasks.set_enabled(%{"id" => "t1", "enabled" => true})
   end
+
+  defp blocking_fire do
+    test = self()
+
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, fn _, _ ->
+      send(test, {:started, self()})
+
+      receive do
+        :release -> {:ok, %{}}
+      end
+    end)
+  end
+
+  test "a task deleted and made again during a run does not take the old run's result" do
+    blocking_fire()
+    interval_task()
+    caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    assert {:ok, %{"id" => "t1"}} = ScheduledTasks.delete(%{"id" => "t1"})
+    assert {:error, %{"message" => "Schedule task not found."}} = Task.await(caller)
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+
+    interval_task()
+    assert %{"lastRunStatus" => "never", "runCount" => 0} = task()
+
+    # Nothing of the old run is left to block the new task.
+    Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, _}
+  end
 end
