@@ -1431,6 +1431,25 @@ defmodule HalC2.Web.Socket do
     }
   end
 
+  # The stream ended the subscription: its relay failed. What came first goes out,
+  # then the client follows the stream again from what it holds.
+  defp stream_message(state, id, :resync) do
+    {frames, state} = flush(state)
+
+    state =
+      case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
+        {ref, _} ->
+          Process.demonitor(ref, [:flush])
+          %{state | monitors: Map.delete(state.monitors, ref)}
+
+        nil ->
+          state
+      end
+
+    resync = Protocol.encode(%{"t" => "resync", "id" => id})
+    {:push, frames ++ [resync], forget_stream(state, id)}
+  end
+
   defp stream_message(state, id, {:snapshot, seq, updated_at, rows, part_state, meta}) do
     part = get_in(state.buffers, [id, :snapshot_part]) || 0
 

@@ -22,7 +22,8 @@ defmodule HalC2.Streams.Server do
   `{:hal_c2_stream, {stream_id, tag}, message}` when the client gave a `tag`: a
   subscriber that follows the stream again tells the messages of the subscription it
   left, still on their way, from those of the new one. A client resumes only with
-  the `handle/0` its offset came from; any other starts fresh.
+  the `handle/0` its offset came from; any other starts fresh. A tagged subscription
+  whose relay fails is ended with `:resync`, and the client follows the stream again.
 
   A plain subscription (`subscribe/3`) is for this MC's own processes: whole
   entities, as `{:snapshot, seq, updated_at, rows, :more | :done}` or
@@ -341,10 +342,15 @@ defmodule HalC2.Streams.Server do
   # except a relay: a failed one costs its subscriber alone, as when it was unlinked.
   def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state, timeout(state)}
 
+  # A relay that failed took its subscription with it, and its subscriber is told.
   def handle_info({:EXIT, pid, reason}, state) do
     case Enum.find(state.relays, fn {_sub, relay} -> relay == pid end) do
-      {sub, _relay} -> {:noreply, drop(state, sub), timeout(state)}
-      nil -> {:stop, reason, state}
+      {sub, _relay} ->
+        resync(state, sub)
+        {:noreply, drop(state, sub), timeout(state)}
+
+      nil ->
+        {:stop, reason, state}
     end
   end
 
@@ -414,6 +420,14 @@ defmodule HalC2.Streams.Server do
     end
 
     %{state | subscribers: subscribers, relays: relays}
+  end
+
+  # Only a tagged subscriber knows `:resync`; one that sends no tag hears nothing.
+  defp resync(state, pid) do
+    case state.subscribers do
+      %{^pid => %{name: {_id, _tag} = name}} -> send(pid, {:hal_c2_stream, name, :resync})
+      _ -> :ok
+    end
   end
 
   # What a subscription's messages carry for the stream.
