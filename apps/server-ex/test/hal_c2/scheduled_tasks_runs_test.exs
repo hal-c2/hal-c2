@@ -126,4 +126,16 @@ defmodule HalC2.ScheduledTasksRunsTest do
     Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
     assert_receive {:started, _}
   end
+
+  test "a run does not outlive the scheduler that started it" do
+    blocking_fire()
+    interval_task()
+    advance(60_000)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    Process.exit(Process.whereis(ScheduledTasks), :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+  end
 end

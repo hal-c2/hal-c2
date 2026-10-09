@@ -37,6 +37,9 @@ defmodule HalC2.ScheduledTasks do
 
   @impl true
   def init(nil) do
+    # Runs are linked to this process; trapping exits keeps one that exits from taking
+    # the scheduler down.
+    Process.flag(:trap_exit, true)
     path = Path.join(HalC2.Paths.data_dir(), "scheduled-tasks.json")
 
     tasks =
@@ -179,11 +182,15 @@ defmodule HalC2.ScheduledTasks do
     at = now()
     fire_key = "#{task["id"]}:#{DateTime.to_unix(at, :millisecond)}:#{trigger}"
     running = Map.merge(task, %{"lastRunStatus" => "running", "updatedAt" => iso(at)})
-    # Not linked: a run that exits must fail its task, not take the scheduler down.
+    # Linked, so a scheduler that dies takes its runs with it, and monitored, so a run
+    # that exits fails its task.
     parent = self()
 
     {pid, ref} =
-      spawn_monitor(fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end)
+      :erlang.spawn_opt(
+        fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end,
+        [:link, :monitor]
+      )
 
     state
     |> put(running)
