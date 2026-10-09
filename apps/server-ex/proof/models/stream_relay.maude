@@ -1,0 +1,525 @@
+sload model-checker
+
+--- A thread's stream, HalC2.Streams.Server, and two sockets following it: sa on the
+--- stream's MC, sent to directly, and sb on another, sent to through a relay,
+--- HalC2.Streams.Relay. The sockets follow, stop and follow again, while the stream
+--- commits, relays crash, a socket dies and the MCs lose each other.
+--- proof/hal_c2/stream_relay_proof_test.exs maps it to the code and checks it.
+---
+--- Every message travels a lane to its receiver's mailbox. With `pairs`, a lane per
+--- sender and receiver: all Erlang promises. With `nodes`, a send on one MC lands at
+--- once and each way between the MCs is one lane: what the runtime does. A lane
+--- with one receiver lands a message only when its mailbox is empty, which yields
+--- every order landing early could; such a lane holds the mailbox's tail.
+
+mod STREAM-RELAY is
+  protecting NAT .
+
+  sorts Node Pid Mode Key Body Msg Msgs Env Envs Why Via Phase Seen Sock Oops Item Conf Sys .
+  subsort Msg < Msgs .
+  subsort Env < Envs .
+  subsort Item < Conf .
+
+  ops a b : -> Node [ctor] .
+
+  --- The stream, the sockets, relay K, and the processes :erpc spawns on a for a
+  --- socket's subscription G: follow/4 and unsubscribe/3.
+  ops st sa sb : -> Pid [ctor] .
+  op rl : Nat -> Pid [ctor] .
+  ops fc uc : Pid Nat -> Pid [ctor] .
+
+  op node : Pid -> Node .
+  eq node(sb) = b .
+  eq node(fc(P:Pid, G:Nat)) = a .
+  eq node(uc(P:Pid, G:Nat)) = a .
+  eq node(rl(K:Nat)) = a .
+  eq node(st) = a .
+  eq node(sa) = a .
+
+  ops pairs nodes : -> Mode [ctor] .
+  op pp : Pid Pid -> Key [ctor] .
+  op nn : Node Node -> Key [ctor] .
+  op here : -> Key [ctor] .
+
+  --- What a stream sends the subscription G, `sm(G, _)`: init(N), what the
+  --- subscriber starts from, as of N (a snapshot, or the events it missed); live(N);
+  --- then ev(N) for each commit N. resync tells it to follow the stream again.
+  ops init live ev : Nat -> Body [ctor] .
+  op resync : -> Body [ctor] .
+  op sm : Nat Body -> Msg [ctor] .
+
+  --- {:subscribe, P, offset, client} from the follow/4 of G; {:unsubscribe, P, G}; a
+  --- DOWN the stream gets of the subscriber P it monitors as G; one a relay gets, of
+  --- its stream or subscriber; one a socket gets of the stream; the EXIT of relay K;
+  --- and :erpc's answer to the socket.
+  op call : Pid Nat -> Msg [ctor] .
+  op unsub : Pid Nat -> Msg [ctor] .
+  op dn : Pid Nat -> Msg [ctor] .
+  op dnr : -> Msg [ctor] .
+  op dst : Why -> Msg [ctor] .
+  op ex : Nat Why -> Msg [ctor] .
+  op rep : Nat Why -> Msg [ctor] .
+  ops normal crash killed noconn done fail : -> Why [ctor] .
+
+  op nomsg : -> Msgs [ctor] .
+  op _;_ : Msgs Msgs -> Msgs [ctor assoc id: nomsg] .
+  op to : Pid Msg -> Env [ctor] .
+  op run : Item -> Env [ctor] .
+  op noenv : -> Envs [ctor] .
+  op _;_ : Envs Envs -> Envs [ctor assoc id: noenv] .
+
+  op mode : Mode -> Item [ctor] .
+  op mb : Pid Msgs -> Item [ctor] .
+  op ln : Key Envs -> Item [ctor] .
+
+  --- The stream: running, and its seq. Its subscriber map holds `of(P, G, via)`:
+  --- P, monitored as G, sent to directly or through relay K.
+  op st : Bool Nat -> Item [ctor] .
+  op of : Pid Nat Via -> Item [ctor] .
+  op direct : -> Via [ctor] .
+  op via : Nat -> Via [ctor] .
+
+  --- Relay K for P: still to run `initial`, the stream as of N for G, or passing
+  --- messages on; and whether it is linked to the stream. A kill on its way to it.
+  op rly : Nat Pid Phase Bool -> Item [ctor] .
+  op starting : Nat Nat -> Phase [ctor] .
+  op passing : -> Phase [ctor] .
+  op kill : Nat -> Item [ctor] .
+
+  --- follow/4 for G, once it has called the stream; unsubscribe/3 for G.
+  op fol : Pid Nat Bool -> Item [ctor] .
+  op unf : Pid Nat -> Item [ctor] .
+
+  --- A socket: following nothing, in follow/4 for G (and the MCs parted since it
+  --- asked), following as G (before or after `live`, at seq N), or gone.
+  op sk : Pid Sock -> Item [ctor] .
+  op off : -> Sock [ctor] .
+  ops asking parted : Nat -> Sock [ctor] .
+  op on : Nat Seen Nat -> Sock [ctor] .
+  op gone : -> Sock [ctor] .
+  ops pre up : -> Seen [ctor] .
+
+  --- The MCs cannot reach each other; what is left to happen; ids; what went wrong.
+  op split : -> Item [ctor] .
+  ops commits subs faults gen nk : Nat -> Item [ctor] .
+  op oops : Oops -> Item [ctor] .
+  ops order halt : -> Oops [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars P Q R S : Pid .
+  vars G G' K N M J F : Nat .
+  var T : Bool .
+  var O : Mode .
+  var Y : Key .
+  var B : Body .
+  var X : Msg .
+  vars L L' : Msgs .
+  vars E E' : Envs .
+  var W : Why .
+  var V : Via .
+  var H : Phase .
+  var Z : Seen .
+  var U : Sock .
+  vars C D : Conf .
+  var A : Item .
+  var I : Env .
+
+  --- sending -------------------------------------------------------------------------
+
+  op split? : Conf -> Bool .
+  eq split?(split C) = true .
+  eq split?(C) = false [owise] .
+
+  op key : Mode Pid Pid -> Key .
+  eq key(pairs, S, R) = pp(S, R) .
+  eq key(nodes, S, R) = if node(S) == node(R) then here else nn(node(S), node(R)) fi .
+
+  op send : Pid Pid Msg Conf -> Conf .
+  eq send(S, R, X, mode(O) C) =
+    if split?(C) and node(S) =/= node(R) then mode(O) C
+    else post(key(O, S, R), R, X, mode(O) C) fi .
+  op post : Key Pid Msg Conf -> Conf .
+  eq post(here, R, X, mb(R, L) C) = mb(R, L ; X) C .
+  eq post(here, R, X, C) = C [owise] .
+  ceq post(Y, R, X, C) = queue(Y, to(R, X), C) if Y =/= here .
+  op queue : Key Env Conf -> Conf .
+  eq queue(Y, I, ln(Y, E) C) = ln(Y, E ; I) C .
+  eq queue(Y, I, C) = ln(Y, I) C [owise] .
+  eq ln(Y, noenv) = empty .
+
+  --- What the runtime puts in a mailbox itself: a DOWN for a monitor that is set up
+  --- on a process already gone, and the DOWNs of a lost connection.
+  op inbox : Pid Msg Conf -> Conf .
+  eq inbox(R, X, mb(R, L) C) = mb(R, L ; X) C .
+  eq inbox(R, X, C) = C [owise] .
+
+  --- P is gone, or on an MC a cannot reach.
+  op lost? : Pid Conf -> Bool .
+  eq lost?(P, sk(P, gone) C) = true .
+  eq lost?(P, C) = node(P) =/= a and split?(C) [owise] .
+
+  crl [deliver] : ln(Y, to(R, X) ; E) mb(R, L) => ln(Y, E) mb(R, L ; X) if lands?(Y, X, L) .
+  crl [deliver] : { ln(Y, to(R, X) ; E) C } => { ln(Y, E) C } if not has?(R, C) .
+  rl [deliver] : ln(Y, run(A) ; E) => ln(Y, E) A .
+  --- An answer lands at any time, since a socket waits for it alone. sb is all
+  --- there is on b.
+  op lands? : Key Msg Msgs -> Bool .
+  eq lands?(nn(b, a), X, L) = true .
+  eq lands?(Y, X, L) = L == nomsg or reply?(X) [owise] .
+  op reply? : Msg -> Bool .
+  eq reply?(rep(G, W)) = true .
+  eq reply?(X) = false [owise] .
+  op has? : Pid Conf -> Bool .
+  eq has?(R, mb(R, L) C) = true .
+  eq has?(R, C) = false [owise] .
+
+  --- the stream ----------------------------------------------------------------------
+
+  --- handle_call {:subscribe, ...}: resync/2 and drop/2, then initial/4, run by the stream for a
+  --- subscriber on its MC, or by a relay it starts for one on another; then the
+  --- subscriber is monitored and follow/4 answered.
+  rl [subscribe] :
+    { st(true, N) mb(st, call(P, G) ; L) fol(P, G, true) C }
+    => { send(fc(P, G), P, rep(G, done), watch(P, G, start(P, G, N, drop(P, replaced(P, st(true, N) mb(st, L) C))))) } .
+
+  --- The subscription P had is told to resync.
+  op replaced : Pid Conf -> Conf .
+  eq replaced(P, of(P, G, V) C) = send(st, P, sm(G, resync), of(P, G, V) C) .
+  eq replaced(P, C) = C [owise] .
+
+  op start : Pid Nat Nat Conf -> Conf .
+  ceq start(P, G, N, C) =
+    of(P, G, direct) send(st, P, sm(G, live(N)), send(st, P, sm(G, init(N)), C))
+    if node(P) == a .
+  ceq start(P, G, N, nk(K) C) =
+    of(P, G, via(K)) nk(s K) rly(K, P, starting(G, N), true)
+    mb(rl(K), if lost?(P, C) then dnr else nomsg fi) C
+    if node(P) =/= a .
+
+  op watch : Pid Nat Conf -> Conf .
+  eq watch(P, G, C) = if lost?(P, C) then inbox(st, dn(P, G), C) else C fi .
+
+  --- drop/2: Process.demonitor(ref, [:flush]); Process.unlink(relay), after which no
+  --- EXIT of the relay comes, and the receive that takes one already here; then
+  --- Process.exit(relay, :kill), which lands in its time.
+  op drop : Pid Conf -> Conf .
+  eq drop(P, of(P, G, direct) C) = unwatch(P, G, C) .
+  eq drop(P, of(P, G, via(K)) C) = unlink(K, unwatch(P, G, C)) .
+  eq drop(P, C) = C [owise] .
+
+  op unwatch : Pid Nat Conf -> Conf .
+  eq unwatch(P, G, mb(st, L ; dn(P, G) ; L') C) = unwatch(P, G, mb(st, L ; L') C) .
+  eq unwatch(P, G, ln(Y, E ; to(st, dn(P, G)) ; E') C) = unwatch(P, G, ln(Y, E ; E') C) .
+  eq unwatch(P, G, C) = C [owise] .
+
+  op unlink : Nat Conf -> Conf .
+  eq unlink(K, rly(K, P, H, T) C) = kill(K) rly(K, P, H, false) unexit(K, C) .
+  eq unlink(K, C) = unexit(K, C) [owise] .
+  op unexit : Nat Conf -> Conf .
+  eq unexit(K, mb(st, L ; ex(K, W) ; L') C) = unexit(K, mb(st, L ; L') C) .
+  eq unexit(K, ln(Y, E ; to(st, ex(K, W)) ; E') C) = unexit(K, ln(Y, E ; E') C) .
+  eq unexit(K, C) = C [owise] .
+
+  --- Only the subscription of that tag.
+  rl [unsubscribe] :
+    { st(true, N) mb(st, unsub(P, G) ; L) C } => { dropping(P, G, st(true, N) mb(st, L) C) } .
+  op dropping : Pid Nat Conf -> Conf .
+  eq dropping(P, G, of(P, G, V) C) = drop(P, of(P, G, V) C) .
+  eq dropping(P, G, C) = C [owise] .
+
+  rl [down] : { st(true, N) mb(st, dn(P, G) ; L) C } => { drop(P, st(true, N) mb(st, L) C) } .
+
+  rl [relay-exit] : st(true, N) mb(st, ex(K, normal) ; L) => st(true, N) mb(st, L) .
+
+  --- A relay that failed costs its subscriber alone, who is told to resync.
+  crl [relay-failed] :
+    { st(true, N) mb(st, ex(K, W) ; L) of(P, G, via(K)) C }
+    => { drop(P, send(st, P, sm(G, resync), st(true, N) mb(st, L) of(P, G, via(K)) C)) }
+    if W =/= normal .
+
+  --- Any other process linked to the stream that fails takes it down.
+  crl [stop] :
+    { st(true, N) mb(st, ex(K, W) ; L) C } => { stop(st(false, N) oops(halt) C) }
+    if W =/= normal /\ not relaying?(K, C) .
+
+  op relaying? : Nat Conf -> Bool .
+  eq relaying?(K, of(P, G, via(K)) C) = true .
+  eq relaying?(K, C) = false [owise] .
+
+  --- terminate/2 kills the relays; the sockets' monitors go off.
+  op stop : Conf -> Conf .
+  eq stop(C) = tell(sa, tell(sb, unlinked(forgot(C)))) .
+  op forgot : Conf -> Conf .
+  eq forgot(of(P, G, V) C) = forgot(C) .
+  eq forgot(C) = C [owise] .
+  op unlinked : Conf -> Conf .
+  eq unlinked(rly(K, P, H, true) C) = kill(K) rly(K, P, H, false) unlinked(C) .
+  eq unlinked(C) = C [owise] .
+  op tell : Pid Conf -> Conf .
+  eq tell(P, sk(P, on(G, Z, N)) C) = send(st, P, dst(crash), sk(P, on(G, Z, N)) C) .
+  eq tell(P, C) = C [owise] .
+
+  --- broadcast/3, to each subscriber or its relay.
+  rl [commit] :
+    { st(true, N) commits(s J) C } => { cast(s N, subscribers(C), st(true, s N) commits(J) C) } .
+
+  op subscribers : Conf -> Conf .
+  eq subscribers(of(P, G, V) C) = of(P, G, V) subscribers(C) .
+  eq subscribers(C) = empty [owise] .
+  op cast : Nat Conf Conf -> Conf .
+  eq cast(N, of(P, G, direct) D, C) = cast(N, D, send(st, P, sm(G, ev(N)), C)) .
+  eq cast(N, of(P, G, via(K)) D, C) = cast(N, D, send(st, rl(K), sm(G, ev(N)), C)) .
+  eq cast(N, empty, C) = C .
+
+  --- a relay ---------------------------------------------------------------------------
+
+  --- start/2: monitors the stream and the subscriber, and runs `initial` first.
+  rl [relay-start] :
+    { rly(K, P, starting(G, N), T) C }
+    => { send(rl(K), P, sm(G, live(N)), send(rl(K), P, sm(G, init(N)), rly(K, P, passing, T) C)) } .
+
+  --- loop/1: passes a stream message on, and stops normally on a DOWN.
+  rl [relay-loop] :
+    { rly(K, P, passing, T) mb(rl(K), sm(G, B) ; L) C }
+    => { send(rl(K), P, sm(G, B), rly(K, P, passing, T) mb(rl(K), L) C) } .
+  rl [relay-loop] : { rly(K, P, passing, T) mb(rl(K), dnr ; L) C } => { exit(K, normal, T, C) } .
+
+  rl [killed] : { kill(K) rly(K, P, H, T) mb(rl(K), L) C } => { exit(K, killed, T, C) } .
+  crl [killed] : { kill(K) C } => { C } if not alive?(K, C) .
+  op alive? : Nat Conf -> Bool .
+  eq alive?(K, rly(K, P, H, T) C) = true .
+  eq alive?(K, C) = false [owise] .
+
+  op exit : Nat Why Bool Conf -> Conf .
+  eq exit(K, W, T, C) = if T then send(rl(K), st, ex(K, W), C) else C fi .
+
+  --- follow/4 and unsubscribe/3, run by :erpc ----------------------------------------
+
+  --- The process :erpc spawns for them runs in its time, and is not stopped when
+  --- the call gives up; the stream's reply to follow/4 goes on to the socket.
+  rl [call] : { fol(P, G, false) C } => { send(fc(P, G), st, call(P, G), fol(P, G, true) C) } .
+  --- The stream stopped under the call.
+  rl [answer] :
+    { fol(P, G, true) st(false, N) C } => { send(fc(P, G), P, rep(G, fail), st(false, N) C) } .
+
+  --- Registry.lookup/2, then the cast.
+  rl [cast] : { unf(P, G) C } => { send(uc(P, G), st, unsub(P, G), C) } .
+
+  --- :erpc asks the stream's MC to spawn it, behind what P sent there before.
+  op spawn : Pid Item Conf -> Conf .
+  ceq spawn(P, A, C) = C if lost?(P, C) .
+  eq spawn(P, A, mode(nodes) C) =
+    if node(P) == a then A mode(nodes) C else queue(nn(node(P), a), run(A), mode(nodes) C) fi [owise] .
+  eq spawn(P, A, C) = A C [owise] .
+
+  --- a socket ------------------------------------------------------------------------
+
+  --- subscribe/4 calls follow/4 through remote/4.
+  crl [follow] :
+    { sk(P, off) subs(s J) gen(G) C }
+    => { spawn(P, fol(P, G, false), sk(P, asking(G)) subs(J) gen(s G) C) }
+    if not lost?(P, C) .
+
+  --- :erpc answers: the socket monitors the stream, or casts unsubscribe/2.
+  crl [followed] :
+    { sk(P, asking(G)) mb(P, L ; rep(G, done) ; L') C }
+    => { seeing(P, sk(P, on(G, pre, 0)) mb(P, L ; L') C) }
+    if not answered?(G, L) .
+  crl [follow-failed] :
+    { sk(P, asking(G)) mb(P, L ; rep(G, fail) ; L') C }
+    => { spawn(P, unf(P, G), sk(P, off) mb(P, L ; L') C) }
+    if not answered?(G, L) .
+  --- follow/4: a {:nodedown, mc} since it asked fails it, whatever the answer.
+  crl [follow-failed] :
+    { sk(P, parted(G)) mb(P, L ; rep(G, W) ; L') C }
+    => { spawn(P, unf(P, G), sk(P, off) mb(P, L ; L') C) }
+    if not answered?(G, L) .
+
+  op answered? : Nat Msgs -> Bool .
+  eq answered?(G, L ; rep(G, W) ; L') = true .
+  eq answered?(G, L) = false [owise] .
+
+  op seeing : Pid Conf -> Conf .
+  eq seeing(P, st(false, N) C) = send(st, P, dst(normal), st(false, N) C) .
+  eq seeing(P, C) = if lost?(P, C) then inbox(P, dst(noconn), C) else C fi [owise] .
+
+  --- handle_info {:hal_c2_stream, {stream_id, tag}, _}: the subscription's own, by
+  --- its tag, or dropped; another's `live` is cast unsubscribe/3. Every follow has a
+  --- tag of its own, so no message is taken as another subscription's.
+  crl [stream-message] :
+    sk(P, on(G, Z, N)) mb(P, sm(G, B) ; L) => sk(P, took(G, Z, N, B)) mb(P, L) wrong(Z, N, B)
+    if B =/= resync .
+  crl [stream-message] :
+    { sk(P, U) mb(P, sm(G, B) ; L) C } => { stale(P, G, B, sk(P, U) mb(P, L) C) }
+    if not current?(G, U) /\ not asking?(U) /\ U =/= gone .
+
+  op stale : Pid Nat Body Conf -> Conf .
+  eq stale(P, G, live(N), C) = spawn(P, unf(P, G), C) .
+  eq stale(P, G, B, C) = C [owise] .
+  op current? : Nat Sock -> Bool .
+  eq current?(G, on(G, Z, N)) = true .
+  eq current?(G, U) = false [owise] .
+  op asking? : Sock -> Bool .
+  eq asking?(asking(G)) = true .
+  eq asking?(parted(G)) = true .
+  eq asking?(U) = false [owise] .
+  --- stream_message/3 for :resync: the socket forgets the subscription, and its
+  --- client follows the stream again.
+  rl [stream-resync] :
+    { sk(P, on(G, Z, N)) mb(P, sm(G, resync) ; L) C } => { sk(P, off) unseen(P, mb(P, L) C) } .
+
+  op took : Nat Seen Nat Body -> Sock .
+  eq took(G, Z, N, init(M)) = on(G, pre, M) .
+  eq took(G, Z, N, live(M)) = on(G, up, M) .
+  eq took(G, Z, N, ev(M)) = on(G, up, M) .
+
+  --- What it starts from, `live` as of that, then each commit after it in turn:
+  --- anything else is an oops.
+  op wrong : Seen Nat Body -> Conf .
+  eq wrong(pre, N, init(M)) = empty .
+  eq wrong(pre, N, live(N)) = empty .
+  eq wrong(up, N, ev(s N)) = empty .
+  eq wrong(Z, N, B) = oops(order) [owise] .
+
+  --- The stream's DOWN: the socket tells its client to resync (or that the MC is
+  --- unavailable) and forgets the subscription.
+  rl [stream-down] : sk(P, on(G, Z, N)) mb(P, dst(W) ; L) => sk(P, off) mb(P, L) .
+  rl [stream-down] : sk(P, off) mb(P, dst(W) ; L) => sk(P, off) mb(P, L) .
+
+  --- An answer to a call that gave up.
+  crl [stale-reply] :
+    sk(P, U) mb(P, rep(G, W) ; L) => sk(P, U) mb(P, L) if U =/= asking(G) /\ U =/= parted(G) .
+
+  --- unsubscribe/2's stream clause: demonitors the stream, flushing, and casts to it.
+  rl [unfollow] : { sk(P, on(G, Z, N)) C } => { send(P, st, unsub(P, G), sk(P, off) unseen(P, C)) } .
+  op unseen : Pid Conf -> Conf .
+  eq unseen(P, mb(P, L ; dst(W) ; L') C) = unseen(P, mb(P, L ; L') C) .
+  eq unseen(P, ln(Y, E ; to(P, dst(W)) ; E') C) = unseen(P, ln(Y, E ; E') C) .
+  eq unseen(P, C) = C [owise] .
+
+  --- environment --------------------------------------------------------------------
+
+  --- `initial` raises in a relay.
+  rl [relay-crash] :
+    { rly(K, P, starting(G, N), T) mb(rl(K), L) faults(s F) C } => { exit(K, crash, T, faults(F) C) } .
+
+  --- A socket goes, and the monitors on it go off.
+  crl [subscriber-down] :
+    { sk(P, U) mb(P, L) faults(s F) C } => { died(P, sk(P, gone) faults(F) C) }
+    if U =/= gone .
+
+  op died : Pid Conf -> Conf .
+  eq died(P, C) = downs(P, relays(P, C), stDown(P, C)) .
+  op stDown : Pid Conf -> Conf .
+  eq stDown(P, of(P, G, V) C) = send(P, st, dn(P, G), of(P, G, V) C) .
+  eq stDown(P, C) = C [owise] .
+  op relays : Pid Conf -> Conf .
+  eq relays(P, rly(K, P, H, T) C) = rly(K, P, H, T) relays(P, C) .
+  eq relays(P, C) = empty [owise] .
+  op downs : Pid Conf Conf -> Conf .
+  eq downs(P, rly(K, P, H, T) D, C) = downs(P, D, send(P, rl(K), dnr, C)) .
+  eq downs(P, empty, C) = C .
+
+  --- The MCs lose each other: what was between them is lost, and the monitors and
+  --- calls across go off with :noconnection.
+  crl [nodedown] : { faults(s F) C } => { noconn(lose(split faults(F) C)) } if not split?(C) .
+
+  op lose : Conf -> Conf .
+  ceq lose(ln(Y, E) C) = lose(C) if crosses?(Y) .
+  eq lose(C) = C [owise] .
+  op crosses? : Key -> Bool .
+  eq crosses?(pp(S, R)) = node(S) =/= node(R) .
+  eq crosses?(nn(N:Node, N':Node)) = true .
+  eq crosses?(here) = false .
+
+  op noconn : Conf -> Conf .
+  eq noconn(C) = sbSide(downs(sb, relays(sb, C), stSide(C))) .
+  op stSide : Conf -> Conf .
+  eq stSide(of(sb, G, V) C) = of(sb, G, V) inbox(st, dn(sb, G), C) .
+  eq stSide(C) = C [owise] .
+  op sbSide : Conf -> Conf .
+  eq sbSide(sk(sb, on(G, Z, N)) C) = sk(sb, on(G, Z, N)) inbox(sb, dst(noconn), C) .
+  eq sbSide(sk(sb, asking(G)) C) = sk(sb, parted(G)) inbox(sb, rep(G, fail), C) .
+  eq sbSide(sk(sb, parted(G)) C) = sk(sb, parted(G)) inbox(sb, rep(G, fail), C) .
+  eq sbSide(C) = C [owise] .
+
+  rl [heal] : split => empty .
+
+  --- An :erpc call to follow/4 gives up.
+  crl [time-out] :
+    { sk(P, U) faults(s F) C } => { spawn(P, unf(P, G), sk(P, off) faults(F) C) }
+    if asking?(U) /\ G := ask(U) .
+  op ask : Sock -> Nat .
+  eq ask(asking(G)) = G .
+  eq ask(parted(G)) = G .
+
+  --- states -------------------------------------------------------------------------
+
+  --- Messages in `O` order; J commits, I subscriptions and F faults to come.
+  op relay : Mode Nat Nat Nat -> Sys .
+  eq relay(O, J, M, F) =
+    { mode(O) st(true, 0) mb(st, nomsg) sk(sa, off) mb(sa, nomsg) sk(sb, off) mb(sb, nomsg)
+      commits(J) subs(M) faults(F) gen(1) nk(1) } .
+
+  --- The streams and sockets but P's.
+  op alone : Pid Mode Nat Nat Nat -> Sys .
+  ceq alone(P, O, J, M, F) = { C }
+    if { sk(Q, off) mb(Q, nomsg) C } := relay(O, J, M, F) /\ Q =/= P .
+
+  --- A subscription sent something out of order, or the stream down.
+  op broken : Sys -> Bool .
+  eq broken({ oops(O:Oops) C }) = true .
+  eq broken({ C }) = false [owise] .
+endm
+
+mod STREAM-RELAY-PROPS is
+  including STREAM-RELAY .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- P follows the stream and lacks a commit; P follows a subscription the stream
+  --- does not have; a relay no subscription has; the stream has a subscription for P
+  --- that P does not follow.
+  ops behind orphan leaked : Pid -> Prop [ctor] .
+  op stray : -> Prop [ctor] .
+
+  vars P Q : Pid .
+  vars G K N M : Nat .
+  var T : Bool .
+  var Z : Seen .
+  var V : Via .
+  var H : Phase .
+  var U : Sock .
+  var C : Conf .
+
+  eq { sk(P, on(G, pre, N)) C } |= behind(P) = true .
+  eq { sk(P, on(G, up, N)) st(T, M) C } |= behind(P) = N < M .
+  eq { C } |= behind(P) = false [owise] .
+
+  ceq { sk(P, on(G, Z, N)) C } |= orphan(P) = true if not subscribed?(P, G, C) .
+  eq { C } |= orphan(P) = false [owise] .
+  op subscribed? : Pid Nat Conf -> Bool .
+  eq subscribed?(P, G, of(P, G, V) C) = true .
+  eq subscribed?(P, G, C) = false [owise] .
+
+  ceq { rly(K, P, H, T) C } |= stray = true if not relaying?(K, C) .
+  eq { C } |= stray = false [owise] .
+
+  ceq { of(P, G, V) sk(P, U) C } |= leaked(P) = true if not follows?(G, U) .
+  eq { C } |= leaked(P) = false [owise] .
+  op follows? : Nat Sock -> Bool .
+  eq follows?(G, on(G, Z, N)) = true .
+  eq follows?(G, asking(G)) = true .
+  eq follows?(G, parted(G)) = true .
+  eq follows?(G, U) = false [owise] .
+
+  --- Nothing left undone: no socket behind or following nothing, no relay or
+  --- subscription left over.
+  op settled : Sys -> Bool .
+  var S : Sys .
+  eq settled(S) = not (S |= behind(sa) or S |= behind(sb) or S |= orphan(sa) or
+    S |= orphan(sb) or S |= stray or S |= leaked(sa) or S |= leaked(sb)) .
+endm
