@@ -848,6 +848,8 @@ export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Typ
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
+  // The provider woke its own agent with this message; nobody sent it.
+  providerWake: Schema.optional(Schema.Boolean),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   // The sending agent's thread in this environment, separate from the receiving thread.

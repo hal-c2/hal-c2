@@ -245,18 +245,29 @@ describe("orchestration V2 TUI presentation", () => {
         message("result", { notification }),
         // A thread stored before the MC put the notification on the message.
         message("stored", { delegatedCompletion: { taskId: "task:1", status: "completed" } }),
-        // A wake-up stored before the MC marked it, and what another agent really sent.
-        message("wake", { createdBy: "agent", creationSource: "provider", text: "Monitor fired" }),
+        // A wake-up stored before the MC put the notification on it.
+        message("wake", {
+          createdBy: "agent",
+          creationSource: "provider",
+          providerWake: true,
+          text: "Background task completed.",
+        }),
+        // What the provider's agent wrote is the conversation, its reply included.
+        message("reply", {
+          role: "assistant",
+          createdBy: "agent",
+          creationSource: "provider",
+          text: "Adding the tax",
+        }),
         message("sent", {
           createdBy: "agent",
           creationSource: "provider",
           senderThreadId: "thread:child",
           text: "Done",
         }),
-        message("mcp", { createdBy: "agent", creationSource: "mcp", text: "Over MCP" }),
       ],
     } as never);
 
-    expect(result.messages.map((entry) => entry.id as string)).toEqual(["typed", "sent", "mcp"]);
+    expect(result.messages.map((entry) => entry.id as string)).toEqual(["typed", "reply", "sent"]);
   });
 });
