@@ -220,7 +220,9 @@ Popup {
             clip: true
             spacing: 4
             model: editor.advanced ? editor.rows : []
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar {
+                Accessible.name: qsTr("Scroll theme colours")
+            }
 
             delegate: Item {
                 id: roleRow

@@ -98,7 +98,7 @@ Item {
         // The scroll bar is named for the page, not for the row text next to it.
         function test_the_settings_scroll_bar_has_its_own_name() {
             const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
-            compare(findChild(page, "scroll").ScrollBar.vertical.Accessible.name, "Scroll settings");
+            compare(findChild(page, "scrollBar").Accessible.name, "Scroll settings");
         }
 
         // The text generation combo sits in the same control column as the other combos on General.

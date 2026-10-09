@@ -289,6 +289,7 @@ Item {
         interactive: Qt.platform.os === "android" || Qt.platform.os === "ios"
         contentHeight: height
         ScrollBar.horizontal: ScrollBar {
+            Accessible.name: qsTr("Scroll sideways")
             height: 7
             policy: flick.contentWidth > flick.width + 0.5 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             contentItem: Rectangle {

@@ -180,7 +180,9 @@ Pane {
                 onCurrentChanged: explorer.selectedPath = folders.pathForIndex(currentIndex)
             }
             editTriggers: TableView.NoEditTriggers
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar {
+                Accessible.name: qsTr("Scroll folders")
+            }
             delegate: TreeViewDelegate {
                 id: folderRow
                 required property string fileName
