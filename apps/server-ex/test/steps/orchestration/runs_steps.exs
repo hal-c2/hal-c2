@@ -575,6 +575,49 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # The delete reaches the thread's stream first, the end of the turn right behind it.
+  step "the provider ends the turn while {string} is deleted", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, id)
+    stream = HalC2.Streams.ensure(id)
+    test = self()
+
+    :ok = :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+    deleter = spawn(fn -> send(test, {:deleted, delete(id)}) end)
+    await_call(stream, deleter)
+    :ok = HalC2.Codex.ThreadRuntime.interrupt(id, context.running)
+    await_call(stream, runtime)
+    :erlang.trace(stream, false, [:receive])
+    :ok = :sys.resume(stream)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    context
+  end
+
+  # The delete lands while the runtime waits to claim the run its turn started.
+  step "{string} is deleted while its turn starts", %{args: [thread]} = context do
+    context = World.providers(context)
+    id = World.thread_id(context, thread)
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    await_claim(watch)
+
+    spawn(fn -> send(test, {:deleted, delete(id)}) end)
+    World.await_runs(context, thread, ["cancelled"])
+    :ok = :sys.resume(watch)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    assert_receive {:sent, {:ok, _}}, 5_000
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run of {string} stays cancelled", %{args: [thread]} = context do
+    World.await_runs(context, thread, ["cancelled"])
+    context
+  end
+
   step "{string} has a running turn and a queued message {string}",
        %{args: [thread, text]} = context do
     context
@@ -1093,4 +1136,35 @@ defmodule HalC2.Steps.Orchestration.Runs do
     World.await_state(context, context.thread, &(&1.entities["run"][run_id]["status"] == status))
   end
 
+  defp start(id),
+    do: %{
+      "type" => "message.dispatch",
+      "threadId" => id,
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => "wait",
+      "attachments" => [],
+      "dispatchMode" => %{"type" => "queue_after_active"}
+    }
+
+  defp delete(id),
+    do: HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+
+  defp await_call(stream, from),
+    do: assert_receive({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}}, 5_000)
+
+  defp suspend_watch do
+    watch = Process.whereis(HalC2.Orchestration.TurnWatch)
+    :ok = :sys.suspend(watch)
+    :erlang.trace(watch, true, [:receive])
+    watch
+  end
+
+  # The runtime claiming a run from the suspended TurnWatch, once the turn started.
+  defp await_claim(watch) do
+    assert_receive {:trace, ^watch, :receive, {:"$gen_call", {runtime, _}, {:claim, _, _, _}}},
+                   5_000
+
+    :erlang.trace(watch, false, [:receive])
+    runtime
+  end
 end
