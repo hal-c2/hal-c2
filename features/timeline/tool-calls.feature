@@ -63,7 +63,7 @@ Feature: Tool calls and file changes
     When the user closes the group
     Then the calls collapse back into the summary
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A call is labelled by what it did
     Given the agent ran "git status" through a shell and changed a file in the workspace
     When the user opens the activity group

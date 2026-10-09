@@ -33,7 +33,7 @@ Feature: Shared controls follow the theme
     Given the glass opacity setting was never changed
     Then the overlay surface used by menus, palettes and dialogs has an alpha of 96 percent
 
-  @backlog-desktop
+  @desktop @backlog-desktop
   Scenario: Menus, palettes and dialogs blur what is behind them
     When a menu, palette or dialog opens over the timeline
     Then the content behind it is blurred as the web client's dropdown-glass does

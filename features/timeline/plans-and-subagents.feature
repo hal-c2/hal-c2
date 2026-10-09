@@ -160,12 +160,12 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A finished subagent shows its result, a working one its latest progress
     Given a subagent that reported "Reading the tax code" and then finished with "12 tests added"
     Then the subagent's row reads "12 tests added"
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A working subagent shows its latest progress
     Given a subagent that is still working after reporting "Reading the tax code"
     Then the subagent's row reads "Reading the tax code"

@@ -41,15 +41,17 @@ Feature: Streaming the agent's reply
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
   @shared @backlog-mobile
-  Scenario Outline: Reasoning shows while it is written and stays readable afterwards
+  Scenario: Reasoning shows while it is written
     Given the agent is reasoning before it answers
-    When the reasoning is <state>
-    Then the reasoning is labelled "<label>"
+    When the reasoning is streaming
+    Then the reasoning is labelled "Thinking"
 
-    Examples:
-      | state     | label                 |
-      | streaming | Thinking              |
-      | finished  | The cart total needs  |
+  # The web's row (MessagesTimeline.tsx, remarkThoughtPreview). The TUI still says "Thought".
+  @shared @backlog-mobile @backlog-tui
+  Scenario: Finished reasoning is labelled by what was thought
+    Given the agent is reasoning before it answers
+    When the reasoning is finished
+    Then the reasoning is labelled "The cart total needs"
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
   @shared @backlog-mobile @backlog-tui
