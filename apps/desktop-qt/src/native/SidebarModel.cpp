@@ -395,9 +395,12 @@ Partition partition(const QList<Thread>& threads, const std::optional<QSet<QStri
   }
   sortPinned(result.pinned);
   sortActive(result.active);
-  // Soonest wake first.
-  std::stable_sort(result.snoozed.begin(), result.snoozed.end(), [](const Thread& left, const Thread& right) {
-    return sortableMs(left.snoozedUntil) < sortableMs(right.snoozedUntil);
+  // Soonest wake first; a tie reads the same whichever MC sent its rows first.
+  std::sort(result.snoozed.begin(), result.snoozed.end(), [](const Thread& left, const Thread& right) {
+    const qint64 leftMs = sortableMs(left.snoozedUntil);
+    const qint64 rightMs = sortableMs(right.snoozedUntil);
+    if (leftMs != rightMs) return leftMs < rightMs;
+    return compareIdentity(left, right) < 0;
   });
   sortSettled(result.settled);
   return result;

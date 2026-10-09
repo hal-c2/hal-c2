@@ -67,19 +67,23 @@ defmodule HalC2.WorktreeSetupTest do
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
     {:ok, %{"threadId" => ^thread_id}} =
-      Orchestration.launch_thread(%{
-        "commandId" => "c",
-        "threadId" => thread_id,
-        "projectId" => "p1",
-        "title" => "Work",
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
-        "runtimeMode" => "full-access",
-        "interactionMode" => "default",
-        "workspaceStrategy" => Map.merge(%{"type" => "worktree", "baseRef" => "main"}, strategy),
-        "initialMessage" => %{"messageId" => "m1", "text" => text, "attachments" => []}
-      })
+      Orchestration.launch_thread(launch_input(thread_id, text, strategy))
 
     thread_id
+  end
+
+  defp launch_input(thread_id, text, strategy) do
+    %{
+      "commandId" => "c",
+      "threadId" => thread_id,
+      "projectId" => "p1",
+      "title" => "Work",
+      "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+      "runtimeMode" => "full-access",
+      "interactionMode" => "default",
+      "workspaceStrategy" => Map.merge(%{"type" => "worktree", "baseRef" => "main"}, strategy),
+      "initialMessage" => %{"messageId" => "m1", "text" => text, "attachments" => []}
+    }
   end
 
   defp await_phase(thread_id, phase) do
@@ -113,6 +117,24 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"worktreePath" => ^path} = StreamState.get(state, "thread")[thread_id]
     assert [%{"status" => "completed"}] = StreamState.list(state, "run")
     assert [%{"cwd" => ^path}] = StreamState.list(state, "checkpoint-scope")
+  end
+
+  test "a launch retried after a reconnect while its worktree is prepared sends one message",
+       %{repo: repo} do
+    project(repo, [])
+    thread_id = launch("list the files")
+
+    # The client lost the answer and sends the same launch again, before the worktree
+    # is ready.
+    assert {:ok, %{"threadId" => ^thread_id, "resumed" => true}} =
+             Orchestration.launch_thread(launch_input(thread_id, "list the files", %{}))
+
+    await_phase(thread_id, "done")
+    state = await_completed(thread_id)
+    assert [%{"status" => "completed"}] = StreamState.list(state, "run")
+
+    assert [%{"id" => "m1"}] =
+             state |> StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
   end
 
   test "a branch named hal-c2 does not stop a new worktree", %{repo: repo} do

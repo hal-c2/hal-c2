@@ -304,6 +304,7 @@ void KeybindingController::setMac(bool mac) {
 
 void KeybindingController::setRules(const QJsonArray& rules) {
   if (rules == m_rules && !m_sequences.isEmpty()) return;
+  const qsizetype count = m_rules.size();
   m_rules = rules;
   m_bindings = keybindings::merge(rules);
   m_sequences.clear();
@@ -316,7 +317,8 @@ void KeybindingController::setRules(const QJsonArray& rules) {
   }
   m_commands.setShortcuts([this](const QString& command) { return shortcutLabel(command); });
   refreshShortcuts();
-  refreshRows();
+  // A rule that changes nothing in force (one that does not parse) still counts.
+  if (refreshRows() || m_rules.size() != count) emit bindingsChanged();
 }
 
 keybindings::Context KeybindingController::context(const QVariantMap& focus) const {
@@ -420,8 +422,8 @@ QString KeybindingController::shortcutLabel(const QString& command) const {
   return {};
 }
 
-// buildKeybindingRows in KeybindingsSettings.logic.ts.
-void KeybindingController::refreshRows() {
+// buildKeybindingRows in KeybindingsSettings.logic.ts. Whether they changed.
+bool KeybindingController::refreshRows() {
   const QList<keybindings::Binding>& defaults = keybindings::defaultBindings();
   QVariantList rows;
   for (qsizetype index = 0; index < m_bindings.size(); ++index) {
@@ -454,6 +456,7 @@ void KeybindingController::refreshRows() {
         {QStringLiteral("key"), key},
         {QStringLiteral("keyLabel"), keybindings::label(binding.shortcut, m_mac)},
         {QStringLiteral("when"), when},
+        {QStringLiteral("rule"), binding.rule.toJson().toVariantMap()},
         {QStringLiteral("source"), source},
         {QStringLiteral("defaultKey"), defaultKey},
         {QStringLiteral("defaultWhen"), standard ? keybindings::whenText(standard->when) : QString()},
@@ -472,7 +475,7 @@ void KeybindingController::refreshRows() {
     return QString::localeAwareCompare(a.value(QStringLiteral("key")).toString(),
                                        b.value(QStringLiteral("key")).toString()) < 0;
   });
-  m_rows = rows;
+  std::swap(m_rows, rows);
   for (QVariant& row : m_rows) {
     QVariantMap map = row.toMap();
     map.insert(QStringLiteral("conflicts"),
@@ -480,7 +483,7 @@ void KeybindingController::refreshRows() {
                          map.value(QStringLiteral("when")).toString()));
     row = map;
   }
-  emit bindingsChanged();
+  return m_rows != rows;
 }
 
 QStringList KeybindingController::conflicts(const QString& rowId, const QString& key, const QString& when) const {
@@ -539,8 +542,12 @@ QStringList KeybindingController::commandOptions() const {
 
 namespace {
 
-// The rule a row stands for, as the MC stores it.
+// The rule a row stands for, as the MC stores it: as written, since the MC
+// matches it exactly, else as shown.
 QJsonObject target(const QVariantMap& row) {
+  if (const QVariantMap rule = row.value(QStringLiteral("rule")).toMap(); !rule.isEmpty()) {
+    return QJsonObject::fromVariantMap(rule);
+  }
   QJsonObject rule{{QStringLiteral("command"), row.value(QStringLiteral("command")).toString()},
                    {QStringLiteral("key"), row.value(QStringLiteral("key")).toString()}};
   if (const QString when = row.value(QStringLiteral("when")).toString().trimmed(); !when.isEmpty()) {
@@ -599,17 +606,17 @@ void KeybindingController::call(const QString& method, const QJsonObject& input,
       environments.append(environmentId);
     }
   }
+  const bool idle = m_saving == 0;
   for (const QString& environmentId : std::as_const(environments)) {
     ++m_saving;
     m_client->call(this, environmentId, method, input,
                    [this, failureTitle, failure](const QJsonValue&, const std::optional<QString>& error) {
-                     --m_saving;
-                     emit savingChanged();
+                     if (--m_saving == 0) emit savingChanged();
                      if (error) {
                        NativeShell::of(this)->controller<ToastController>()->error(
                            failureTitle, error->isEmpty() ? failure : *error);
                      }
                    });
   }
-  emit savingChanged();
+  if (idle) emit savingChanged();
 }

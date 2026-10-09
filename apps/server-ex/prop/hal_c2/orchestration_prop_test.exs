@@ -2,8 +2,9 @@ defmodule HalC2.OrchestrationPropTest do
   @moduledoc """
   A state machine over two threads driven through the orchestration commands a client
   sends: create, rename, archive, unarchive and delete a thread; send a message that
-  starts a turn, waits in the queue, steers the running turn or restarts it; cancel,
-  edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
+  starts a turn, waits in the queue, steers the running turn or restarts it; send a
+  message again with its message id, as a client retrying after a reconnect does;
+  cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; and restart the MC mid-turn (boot recovery).
 
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`. Every
@@ -102,6 +103,11 @@ defmodule HalC2.OrchestrationPropTest do
           {3, let({t, m} <- oneof(sent), do: {:call, __MODULE__, :cancel, [t, m]})},
           {2,
            let(
+             [{t, m} <- oneof(sent), mode <- oneof([:queue, :auto, :restart])],
+             do: {:call, __MODULE__, :resend, [t, m, mode]}
+           )},
+          {2,
+           let(
              [{t, m} <- oneof(sent), k <- range(1, 3)],
              do: {:call, __MODULE__, :edit, [t, m, "wait edit #{k}"]}
            )},
@@ -134,7 +140,7 @@ defmodule HalC2.OrchestrationPropTest do
     do: Enum.any?(threads, fn {_, t} -> running(t) != nil end)
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
-      when fun in [:cancel, :edit, :reorder, :promote],
+      when fun in [:cancel, :edit, :reorder, :promote, :resend],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
 
   def precondition(_state, _call), do: true
@@ -147,6 +153,10 @@ defmodule HalC2.OrchestrationPropTest do
       _ -> state
     end
   end
+
+  # A message the thread already has was sent: sending it again changes nothing, in
+  # whatever state the first one is now (running, queued, steered, cancelled, edited).
+  def next_state(state, _result, {:call, _, :resend, _}), do: state
 
   def next_state(state, _result, {:call, _, :create, [tid]}) do
     if Map.has_key?(state.threads, tid),
@@ -381,6 +391,7 @@ defmodule HalC2.OrchestrationPropTest do
     do: refusal(state, tid, :queue) || :ok
 
   defp expected_reply(state, :promote, [tid, msg]), do: promote_refusal(state, tid, msg) || :ok
+  defp expected_reply(_state, :resend, _args), do: :ok
   defp expected_reply(_state, _fun, _args), do: :ok
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
@@ -505,7 +516,15 @@ defmodule HalC2.OrchestrationPropTest do
 
   def send(tid, msg, mode) do
     ending = active_runs(tid)
+    result = Orchestration.dispatch(message(tid, msg, mode))
+    # Only a run the message steered or restarted ends.
+    reply(result, if(match?({:ok, _}, result) and mode != :queue, do: ending, else: []))
+  end
 
+  # The same message again, as first sent; a message the thread has ends no run.
+  def resend(tid, msg, mode), do: reply(Orchestration.dispatch(message(tid, msg, mode)), [])
+
+  defp message(tid, msg, mode) do
     extra =
       case mode do
         :queue ->
@@ -518,21 +537,16 @@ defmodule HalC2.OrchestrationPropTest do
           %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "restart"}
       end
 
-    command =
-      Map.merge(
-        %{
-          "type" => "message.dispatch",
-          "threadId" => tid,
-          "messageId" => msg,
-          "text" => "wait #{msg}",
-          "attachments" => []
-        },
-        extra
-      )
-
-    result = Orchestration.dispatch(command)
-    # Only a run the message steered or restarted ends.
-    reply(result, if(match?({:ok, _}, result) and mode != :queue, do: ending, else: []))
+    Map.merge(
+      %{
+        "type" => "message.dispatch",
+        "threadId" => tid,
+        "messageId" => msg,
+        "text" => "wait #{msg}",
+        "attachments" => []
+      },
+      extra
+    )
   end
 
   def rename(tid, title),

@@ -402,8 +402,8 @@ void TimelineModel::snapshot(const QJsonObject& frame) {
     if (folds(kind, entity)) m_incoming[kind].insert(row.at(1).toString(), entity);
   }
   if (!frame.value(QLatin1String("done")).toBool()) return;
-  // Everything may have changed: the rows keep their ids and are redrawn.
-  m_entities = std::exchange(m_incoming, {});
+  // The rows keep their ids; only the ones that read differently are redrawn.
+  const Entities before = std::exchange(m_entities, std::exchange(m_incoming, {}));
   m_catchUp.clear();
   const bool hadEarlier = hasEarlier();
   const QJsonValue offset = frame.value(QLatin1String("offset"));
@@ -411,15 +411,31 @@ void TimelineModel::snapshot(const QJsonObject& frame) {
   m_cursor.handle = frame.value(QLatin1String("handle")).toString();
   m_cursor.offset = offset.isDouble() ? qint64(offset.toDouble()) : 0;
   m_cursor.floor = floor.isDouble() ? std::optional<qint64>(qint64(floor.toDouble())) : std::nullopt;
-  everythingChanged();
+  everythingChanged(changedSince(before));
   if (hasEarlier() != hadEarlier) emit earlierChanged();
   m_dirtyAll = true;
   flush();
 }
 
-void TimelineModel::everythingChanged() {
+QSet<QString> TimelineModel::changedSince(const Entities& before) const {
+  const QHash<QString, QJsonObject> items = m_entities.value(QStringLiteral("turn-item"));
+  const QHash<QString, QJsonObject> wereItems = before.value(QStringLiteral("turn-item"));
+  const auto differs = [&](const QString& kind, const QString& id) {
+    return !id.isEmpty() && before.value(kind).value(id) != entity(kind, id);
+  };
+  QSet<QString> changed;
+  for (auto it = items.cbegin(); it != items.cend(); ++it) {
+    if (wereItems.value(it.key()) != *it || differs(QStringLiteral("runtime-request"), text(*it, QLatin1String("requestId"))) ||
+        differs(QStringLiteral("subagent"), text(*it, QLatin1String("subagentId")))) {
+      changed.insert(it.key());
+    }
+  }
+  return changed;
+}
+
+void TimelineModel::everythingChanged(const QSet<QString>& changed) {
   sortItems();
-  restructure({}, true);
+  restructure(changed);
   emit turnChanged();
   emit checkpointsChanged();
   emit agentsChanged();
@@ -436,17 +452,26 @@ void TimelineModel::eventsFrame(const QJsonObject& frame) {
     m_catchUp.append(frame.value(QLatin1String("events")).toArray());
     return;
   }
-  for (const QJsonArray& part : std::exchange(m_catchUp, {})) events(part);
-  events(frame.value(QLatin1String("events")).toArray());
+  // As one change: an item added and removed again while away redraws nothing.
+  m_catchUp.append(frame.value(QLatin1String("events")).toArray());
+  events(caughtUp());
   // Only a copy has an offset to move: events before any snapshot do not make one.
   if (m_cursor.offset >= 0 && reached > m_cursor.offset) m_cursor.offset = reached;
   m_cursorDirty = true;
   if (!m_flushTimer.isActive()) m_flushTimer.start();
 }
 
+QJsonArray TimelineModel::caughtUp() {
+  QJsonArray all;
+  for (const QJsonArray& part : std::exchange(m_catchUp, {})) {
+    for (const QJsonValue& event : part) all.append(event);
+  }
+  return all;
+}
+
 void TimelineModel::live(const QJsonObject& frame) {
   m_catchingUp = false;
-  for (const QJsonArray& part : std::exchange(m_catchUp, {})) events(part);
+  if (!m_catchUp.isEmpty()) events(caughtUp());
   const QJsonValue offset = frame.value(QLatin1String("offset"));
   if (m_cursor.offset >= 0 && offset.isDouble() && qint64(offset.toDouble()) > m_cursor.offset) {
     m_cursor.offset = qint64(offset.toDouble());
@@ -484,7 +509,7 @@ void TimelineModel::page(const QJsonObject& frame) {
   m_loadingEarlier = false;
   // The earlier turns' rows go in above; the ones held keep their place.
   sortItems();
-  restructure({}, false);
+  restructure({});
   emit turnChanged();
   emit agentsChanged();
   emit earlierChanged();
@@ -511,6 +536,7 @@ cache::Entity TimelineModel::cached(const QString& kind, const QString& id, cons
 void TimelineModel::restore(const cache::Thread& thread) {
   // Without the handle its offset came with, a copy cannot say what it is a copy of.
   if (!thread.found() || thread.cursor.handle.isEmpty() || m_cursor.offset >= 0) return;
+  const Entities before = m_entities;
   for (const cache::Entity& entity : thread.entities) {
     if (!folds(entity.kind, entity.fields)) continue;
     // Another window on the thread may have held more of it than the cursor says.
@@ -518,7 +544,7 @@ void TimelineModel::restore(const cache::Thread& thread) {
     m_entities[entity.kind].insert(entity.id, entity.fields);
   }
   m_cursor = thread.cursor;
-  everythingChanged();
+  everythingChanged(changedSince(before));
   if (hasEarlier()) emit earlierChanged();
 }
 
@@ -581,22 +607,31 @@ void TimelineModel::events(const QJsonArray& events) {
   m_agentsTouched = false;
   m_workspaceTouched = false;
   m_reshaped.clear();
+  m_agentModels.clear();
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
+    // An event the copy already holds (a frame sent again on a reconnect) would append its text twice.
+    if (m_cursor.offset >= 0 && event.at(0).isDouble() && qint64(event.at(0).toDouble()) <= m_cursor.offset) continue;
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
-  if (m_agentsTouched) {
-    emit agentsChanged();
-    // A subagent's row shows its entity's model.
+  if (m_agentsTouched) emit agentsChanged();
+  // A subagent's row shows its entity's model.
+  if (!m_agentModels.isEmpty()) {
+    const QHash<QString, QJsonObject>& items = m_entities[QStringLiteral("turn-item")];
     for (int row = 0; row < m_rows.size(); ++row) {
-      if (m_rows.at(row).kind == QLatin1String("subagent")) emit dataChanged(index(row), index(row), {ModelRole});
+      if (m_rows.at(row).kind != QLatin1String("subagent")) continue;
+      const QString agent = text(items.value(m_rows.at(row).items.value(0)), QLatin1String("subagentId"));
+      const auto was = m_agentModels.constFind(agent);
+      if (was != m_agentModels.cend() && *was != text(entity(QStringLiteral("subagent"), agent), QLatin1String("model"))) {
+        emit dataChanged(index(row), index(row), {ModelRole});
+      }
     }
   }
   if (m_workspaceTouched) emit workspaceChanged();
   if (structural) {
-    restructure(changed, false);
+    restructure(changed);
     return;
   }
   // A row whose items only grew by streamed text says which role that is, so
@@ -604,7 +639,7 @@ void TimelineModel::events(const QJsonArray& events) {
   QHash<int, bool> redraw;  // row -> only its text grew
   for (const QString& id : std::as_const(changed)) {
     const int row = m_rowOfItem.value(id, -1);
-    if (row < 0) continue;
+    if (row < 0 || !shows(m_rows.at(row), id)) continue;
     const bool textOnly = !m_reshaped.contains(id);
     const auto known = redraw.find(row);
     if (known == redraw.end()) {
@@ -622,6 +657,12 @@ void TimelineModel::events(const QJsonArray& events) {
   }
 }
 
+bool TimelineModel::shows(const Row& row, const QString& item) const {
+  // A collapsed work group draws its last entries and, summarized, a summary of all of them.
+  if (row.kind != QLatin1String("work") || row.summarized || m_expandedGroups.contains(row.id) != row.startsOpen) return true;
+  return row.items.indexOf(item) >= row.items.size() - visibleWorkEntries;
+}
+
 bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObject& patch, QSet<QString>& changed) {
   if (!kKinds.contains(kind)) return false;
   m_dirty.insert({kind, id});
@@ -632,6 +673,7 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   if (kind == QLatin1String("checkpoint") || kind == QLatin1String("subagent")) {
     (kind == QLatin1String("subagent") ? m_agentsTouched : m_checkpointsTouched) = true;
     if (kind == QLatin1String("checkpoint")) m_workspaceTouched = true;
+    if (kind == QLatin1String("subagent") && !m_agentModels.contains(id)) m_agentModels.insert(id, existed ? text(*current, QLatin1String("model")) : QString());
     if (next) {
       byKind.insert(id, *next);
     } else {
@@ -726,8 +768,8 @@ void TimelineModel::sortItems() {
 
 // --- The projection ---------------------------------------------------------------
 
-void TimelineModel::restructure(const QSet<QString>& changed, bool all) {
-  applyRows(project(), changed, all);
+void TimelineModel::restructure(const QSet<QString>& changed) {
+  applyRows(project(), changed);
   m_rowOfItem.clear();
   for (int row = 0; row < m_rows.size(); ++row) {
     for (const QString& item : std::as_const(m_rows.at(row).items)) m_rowOfItem.insert(item, row);
@@ -919,7 +961,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
 
 // Brings the rows in line with `rows` by id: removes, inserts and moves them,
 // and redraws the ones whose shape or items changed.
-void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& changed, bool all) {
+void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& changed) {
   const qsizetype before = m_rows.size();
   QSet<QString> wanted;
   for (const Row& row : rows) wanted.insert(row.id);
@@ -935,9 +977,8 @@ void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& chang
   QSet<QString> present;
   for (const Row& row : std::as_const(m_rows)) present.insert(row.id);
   const auto dirty = [&](const Row& row) {
-    if (all) return true;
     for (const QString& item : row.items) {
-      if (changed.contains(item)) return true;
+      if (changed.contains(item) && shows(row, item)) return true;
     }
     return !row.checkpoint.isEmpty() && changed.contains(row.checkpoint);
   };
@@ -986,14 +1027,14 @@ void TimelineModel::updateWorking() {
 void TimelineModel::keepOpen(const QString& runId) {
   if (runId.isEmpty() || m_keptOpen.contains(runId)) return;
   m_keptOpen.insert(runId);
-  restructure({}, false);
+  restructure({});
 }
 
 void TimelineModel::toggle(const QString& rowId) {
   if (rowId.startsWith(QLatin1String("fold:"))) {
     const QString runId = rowId.mid(5);
     if (!m_expandedFolds.remove(runId)) m_expandedFolds.insert(runId);
-    restructure({}, false);
+    restructure({});
     return;
   }
   const int row = indexOf(rowId);

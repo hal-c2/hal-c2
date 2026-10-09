@@ -865,6 +865,31 @@ private slots:
     QVERIFY(!QFile::exists(phone.file));
   }
 
+  // A forget that fails forgets nothing: a pairing with another environment
+  // that was under way goes on, and is not told it was cancelled.
+  void aForgetThatFailsKeepsAPairingInFlight() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    // An environment that takes the request and does not answer yet.
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+    phone.dispatch(QStringLiteral("pairing.add"));
+    phone.dispatch(QStringLiteral("pairing.pair"),
+                   {{QStringLiteral("link"), QStringLiteral("http://127.0.0.1:%1/?token=pair-silent").arg(silent.serverPort())}});
+    QVERIFY(silent.waitForNewConnection(5000));
+    QCOMPARE(phone.phase(), QStringLiteral("pairing"));
+    const QString data = QFileInfo(phone.file).absolutePath();
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner));
+
+    phone.dispatch(QStringLiteral("pairing.forget"));
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(phone.error().contains(QStringLiteral("could not be forgotten")));
+    QCOMPARE(phone.phase(), QStringLiteral("pairing"));
+  }
+
   // A session that cannot be saved on the device is not reported as paired:
   // the next start would know nothing of it.
   void aSessionThatCannotBeSavedIsNotPaired() {

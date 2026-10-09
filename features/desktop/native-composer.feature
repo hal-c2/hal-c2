@@ -1,5 +1,8 @@
 # Sources:
-#   apps/desktop-qt/src/native/ComposerController.cpp (the composer's text, send and stop against the MC)
+#   apps/desktop-qt/src/native/ComposerController.cpp (the composer's text, send and stop against the MC;
+#     unsent sends kept in shell-composer.json and reconciled against the thread's messages after a restart
+#     or a dropped connection)
+#   apps/desktop-qt/src/native/McClient.cpp ("disconnected": a call whose answer the drop took)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   apps/web/src/components/ChatView.tsx (onSend: offline toast, upload, restore on failure,
 #     standalone /plan and /default, a draft's first send: title seed, launchThread, the draft kept
@@ -85,6 +88,172 @@ Feature: The desktop shell sends a thread's turns to its MC
       And the sidebar lists no drafts
       When the user goes back
       Then the window shows "env-a:t1"
+
+  Rule: A send cut off by a quit or a dropped connection is never lost and never sent twice
+
+    @desktop
+    Scenario: A prompt the MC never got comes back as the draft
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the composer's text for "env-a:t1" is "Fix the tests"
+      And the user sees no toast
+
+    @desktop
+    Scenario: A prompt the MC got before the quit is not restored
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC receives a "message.dispatch" command for "t1"
+      When the desktop quits and starts again
+      And the MC carries out the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the MC receives no other commands
+
+    @desktop
+    Scenario: A cut-off prompt behind newer typing waits behind a toast
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the user types "Something else" into the composer
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the user sees an "error" toast "A prompt was not sent" offering "Restore prompt"
+      And the composer's text for "env-a:t1" is "Something else"
+      When the user types "" into the composer
+      And the user chooses "Restore prompt" on the toast "A prompt was not sent"
+      Then the composer's text for "env-a:t1" is "Fix the tests"
+
+    @desktop
+    Scenario: A cut-off prompt is dropped when the thread has a newer message
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the thread "t1" gets the user message "Done it another way" from another device
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the user sees no toast
+
+    @desktop
+    Scenario: A prompt sent while its thread loads is dropped when the thread has a newer message
+      Given the MC holds its answers
+      And the MC is slow to send threads
+      And the composer shows "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC sends the thread
+      And the thread "t1" gets the user message "Done it another way" from another device
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the user sees no toast
+
+    @desktop
+    Scenario: A new thread's first prompt cut off by a quit comes back to its draft
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the desktop quits and starts again
+      And the MC drops the send
+      And the desktop shell is connected to its MC
+      Then the composer offers the new thread's text "Set up the linter"
+      And the MC launches 1 thread
+
+    @desktop
+    Scenario: A prompt the MC got before the connection dropped is not restored
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC receives a "message.dispatch" command for "t1"
+      When the MC drops the connection
+      And the MC carries out the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the user sees no toast
+      And the MC receives no other commands
+
+    @desktop
+    Scenario: A prompt the dropped connection cut off comes back once the MC is heard from
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC receives a "message.dispatch" command for "t1"
+      When the MC drops the connection
+      And the MC drops the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      And the user is reading "env-a:t1"
+      Then the composer's text for "env-a:t1" is "Fix the tests"
+      And the user sees no toast
+      And the desktop keeps no unsent prompts
+
+    @desktop
+    Scenario: A new thread the MC made before the connection dropped takes its draft's place
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC answers
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the window shows the launched thread in the draft's place
+      And the desktop keeps no unsent prompts
+      And the user sees no toast
+      And the MC launches 1 thread
+
+    @desktop
+    Scenario: A new thread the dropped connection cut off is asked for again under its command id
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC drops the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the MC is asked for the same thread again
+      And the window shows the launched thread in the draft's place
+      And the desktop keeps no unsent prompts
+      And the user sees no toast
+
+    @desktop
+    Scenario: A new thread the MC refuses when asked again gets its prompt back
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC drops the send
+      And the MC refuses "orchestration.launchThread" with "Provider unavailable"
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the MC is asked for the same thread again
+      And the new thread still reads "Set up the linter"
+      And the desktop keeps no unsent prompts
 
   Rule: Slash commands the composer knows act, the rest go to the agent
 

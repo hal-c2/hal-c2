@@ -101,6 +101,9 @@ signals:
 
 private:
   void go(const Route& to, bool replace);
+  // Pops the newest place of `stack` the window can go to: not a thread that
+  // was deleted since, and not where the window already is.
+  std::optional<Route> takeReachable(QList<Route>& stack) const;
   void publish();
   // Brings a setting of the settings page showing into view (route.target).
   void reveal(const QString& target);

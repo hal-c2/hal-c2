@@ -1,6 +1,7 @@
 #include "ComposerController.h"
 
 #include <QBuffer>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
@@ -9,6 +10,7 @@
 #include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -50,6 +52,12 @@ const QString kProviderGone = QStringLiteral("Provider process is gone — inter
 
 QString str(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
+}
+
+// McClient's answer to a call the connection dropped under: the MC may or
+// may not have carried it out ("not connected" is one that never left).
+bool unanswered(const std::optional<QString>& error) {
+  return error && *error == QLatin1String("disconnected");
 }
 
 // apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx fallbackLabel.
@@ -127,6 +135,27 @@ QString newId() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
 
+// The id of the newest of a thread's `message` entities the user sent (not an
+// agent or automation), leaving out `except`; empty for none.
+QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSet<QString>& except) {
+  QString newest;
+  QString newestAt;
+  for (auto it = messages.cbegin(); it != messages.cend(); ++it) {
+    const QString by = str(*it, QLatin1String("createdBy"));
+    if (except.contains(it.key()) || str(*it, QLatin1String("role")) != QLatin1String("user") ||
+        (!by.isEmpty() && by != QLatin1String("user"))) {
+      continue;
+    }
+    // The MC's ISO times, to the millisecond, read in order as text.
+    const QString at = str(*it, QLatin1String("createdAt"));
+    if (newest.isEmpty() || at > newestAt || (at == newestAt && it.key() > newest)) {
+      newest = it.key();
+      newestAt = at;
+    }
+  }
+  return newest;
+}
+
 // apps/web/src/promptStashStore.ts MAX_STASH_ENTRIES.
 constexpr qsizetype kMaxStashEntries = 20;
 // packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
@@ -192,6 +221,7 @@ void ComposerController::activate() {
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
+    reconcileUnsent();
     publish();
   });
   // The route environment's providers are the picker's catalogue.
@@ -706,11 +736,18 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
       fromDraft ? std::exchange(draft.excerpts, {}) : QList<Excerpt>();
   withExcerpts(message, contexts);
   commands.append(message);
-  if (fromDraft) setText(target, QString(), 0);
   // A send made while an earlier one is still in flight waits its turn.
   QList<Send>& queue = m_queues[target];
-  queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString()});
+  const QString messageId = str(message, QLatin1String("messageId"));
+  queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString(), messageId});
   const bool first = queue.size() == 1;
+  // Kept until the MC answers. Sending again is newer than what a restart
+  // left of the thread's sends.
+  m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.kept && unsent.target == target; });
+  if (fromDraft && (!text.isEmpty() || !attachments.isEmpty() || !contexts.isEmpty())) {
+    m_kept.unsent.append({target, target, messageId, newestBefore(target), text, attachments, contexts});
+  }
+  if (fromDraft) setText(target, QString(), 0);
   save();
   publish();
   if (first) sendNext(target);
@@ -793,6 +830,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (filesBlock(attachments, QStringLiteral("sending"))) return true;
   const QString trimmed = text.trimmed();
   const QJsonObject modelSelection = selection(draftId);
+  const QString messageId = newId();
   QJsonObject input{
       {QStringLiteral("commandId"), newId()},
       {QStringLiteral("creationSource"), QStringLiteral("web")},
@@ -803,7 +841,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
       {QStringLiteral("runtimeMode"), runtimeModeOf(draftId)},
       {QStringLiteral("interactionMode"), interactionModeOf(draftId)},
       {QStringLiteral("workspaceStrategy"), where.strategy},
-      {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), newId()},
+      {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), messageId},
                                                      {QStringLiteral("text"), trimmed},
                                                      {QStringLiteral("attachments"), QJsonArray()}}},
   };
@@ -822,6 +860,10 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   // the launch fails.
   m_drafts[draftId].attachments.clear();
   m_drafts[draftId].excerpts.clear();
+  const QString threadId = kept->threadId;
+  // Kept, before the draft lets go of it, until the MC answers the launch.
+  m_kept.unsent.append({draftId, where.environmentId + QLatin1Char(':') + threadId, messageId, std::nullopt, text,
+                        attachments, contexts});
   save();
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
@@ -832,14 +874,26 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   }
   setText(draftId, QString(), 0);
   publish();
-  const QString threadId = kept->threadId;
   // The images go to the machine the thread starts on, then the thread does.
-  const auto begin = [this, draftId, threadId, background, text, attachments, contexts](const QString& environmentId,
-                                                                                         QJsonObject input) {
-    const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
+  const auto begin = [this, draftId, threadId, messageId, background, text, attachments, contexts](
+                         const QString& environmentId, QJsonObject input) {
+    for (Unsent& unsent : m_kept.unsent) {
+      if (unsent.messageId == messageId) unsent.thread = environmentId + QLatin1Char(':') + threadId;
+    }
+    save();
+    const auto start = [this, draftId, environmentId, messageId, background, text, attachments, contexts](const QJsonObject& input) {
       m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
-                     [this, draftId, environmentId, input, background, text, attachments, contexts](
+                     [this, draftId, environmentId, input, messageId, background, text, attachments, contexts](
                          const QJsonValue& result, const std::optional<QString>& error) {
+                       if (unanswered(error)) {
+                         // The thread may be there: the draft becomes it if so
+                         // (DraftController::reconcile), else it is asked for again.
+                         keepUnanswered(messageId, input);
+                         m_launching.remove(draftId);
+                         publish();
+                         return;
+                       }
+                       forgetUnsent(messageId);
                        QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
                        if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
                        const QString threadKey = environmentId + QLatin1Char(':') + threadId;
@@ -876,9 +930,10 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                    QJsonObject{{QStringLiteral("threadId"), threadId},
                                {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                                {QStringLiteral("attachments"), images}},
-                   [this, draftId, input, message, start, background, text, attachments, contexts, files](
+                   [this, draftId, input, message, messageId, start, background, text, attachments, contexts, files](
                        const QJsonValue& result, const std::optional<QString>& error) mutable {
                      if (error) {
+                       forgetUnsent(messageId);
                        if (background) {
                          launchedInBackground(draftId, text, attachments, contexts, QString(), error);
                        } else {
@@ -949,7 +1004,8 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
 // As the web's send to multiple models: each gets a thread of its own, in a
 // new worktree off the draft's branch, and the draft is ready for the next
 // prompt. A thread that fails to start says so; if none starts the prompt
-// comes back.
+// comes back, then or, for launches a quit or drop left unanswered, once the
+// shell shows none of their threads.
 bool ComposerController::submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
                                         const QJsonObject& strategy, const QString& environmentId, const QString& text,
                                         const QList<Attachment>& attachments, const QList<Excerpt>& contexts) {
@@ -975,17 +1031,26 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
   struct Progress {
     qsizetype pending = 0;
     qsizetype started = 0;
+    qsizetype unanswered = 0;
     QString first;
   };
   const auto progress = std::make_shared<Progress>();
   progress->pending = models.size();
-  const auto settled = [this, progress, draftId, text, attachments, contexts](const QString& model, const QString& threadKey,
-                                                                               const std::optional<QString>& error) {
+  const QString batch = newId();
+  const auto settled = [this, progress, batch, draftId, text, attachments, contexts](
+                           const QString& model, const QString& threadKey, const QString& messageId,
+                           const std::optional<QString>& error, bool lost, const QJsonObject& launch) {
     auto* shell = NativeShell::of(this);
-    if (error) {
+    if (lost) {
+      keepUnanswered(messageId, launch);
+      ++progress->unanswered;
+    } else if (error) {
+      forgetUnsent(messageId);
       toast(tr("Could not start a thread on %1").arg(model), *error);
-    } else if (progress->started++ == 0) {
-      progress->first = threadKey;
+    } else {
+      // A thread has the prompt: none of the launches brings it back.
+      if (m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.batch == batch; }) > 0) save();
+      if (progress->started++ == 0) progress->first = threadKey;
     }
     if (--progress->pending > 0) return;
     if (progress->started > 0) {
@@ -996,7 +1061,9 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
           ToastController::Action{QStringLiteral("Open"), [navigation, first] { navigation->open(NavigationController::Route::thread(first)); }});
       return;
     }
-    // Nothing started: the prompt goes back into an untouched draft.
+    // Nothing started: the prompt goes back into an untouched draft, unless
+    // a launch may have (reconcileUnsent).
+    if (progress->unanswered > 0) return;
     if (!shell->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty()) return;
     m_drafts[draftId].attachments = attachments;
     m_drafts[draftId].excerpts = contexts;
@@ -1017,7 +1084,8 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     QJsonObject launch = input;
     QJsonObject message = launch.value(QLatin1String("initialMessage")).toObject();
     const QString threadId = newId();
-    message.insert(QStringLiteral("messageId"), newId());
+    const QString messageId = newId();
+    message.insert(QStringLiteral("messageId"), messageId);
     message.insert(QStringLiteral("attachments"), files);
     launch.insert(QStringLiteral("commandId"), newId());
     launch.insert(QStringLiteral("threadId"), threadId);
@@ -1026,9 +1094,13 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     launch.insert(QStringLiteral("initialMessage"), message);
     const QString name = str(model, QLatin1String("model"));
     const QString threadKey = environmentId + QLatin1Char(':') + threadId;
-    const auto start = [this, environmentId, name, threadKey, settled](const QJsonObject& launch) {
+    // Kept until the MC answers this model's launch.
+    m_kept.unsent.append({draftId, threadKey, messageId, std::nullopt, text, attachments, contexts, batch});
+    const auto start = [this, environmentId, name, threadKey, messageId, settled](const QJsonObject& launch) {
       m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
-                     [name, threadKey, settled](const QJsonValue&, const std::optional<QString>& error) { settled(name, threadKey, error); });
+                     [name, threadKey, messageId, settled, launch](const QJsonValue&, const std::optional<QString>& error) {
+                       settled(name, threadKey, messageId, error, unanswered(error), launch);
+                     });
     };
     if (images.isEmpty()) {
       start(launch);
@@ -1037,9 +1109,11 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
                    QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                                {QStringLiteral("attachments"), images}},
-                   [launch, message, files, start, name, threadKey, settled](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                   [launch, message, files, start, name, threadKey, messageId, settled](
+                       const QJsonValue& result, const std::optional<QString>& error) mutable {
                      if (error) {
-                       settled(name, threadKey, error);
+                       // No thread was launched, whatever became of the images.
+                       settled(name, threadKey, messageId, error, false, {});
                        return;
                      }
                      QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
@@ -1049,6 +1123,7 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
                      start(launch);
                    });
   }
+  save();
   publish();
   return true;
 }
@@ -1130,10 +1205,16 @@ void ComposerController::sendNext(const QString& target) {
   const Send send = m_queues.value(target).constFirst();
   const auto finish = [this, target](const std::optional<QString>& error) {
     if (error) {
-      toast(QStringLiteral("Failed to send message"), *error);
       // The sends queued behind it would reach the MC out of order, so they
       // stop too and come back with it.
       const QList<Send> unsent = m_queues.take(target);
+      if (unanswered(error)) {
+        // The MC may have the first: the thread's messages tell once it is
+        // back, and the ones behind it come back with it or without it.
+        for (const Send& queued : unsent) keepUnanswered(queued.messageId);
+        publish();
+        return;
+      }
       QStringList prompts;
       QList<Attachment> attachments;
       QList<Excerpt> contexts;
@@ -1141,11 +1222,18 @@ void ComposerController::sendNext(const QString& target) {
         if (!queued.prompt.isEmpty()) prompts.append(queued.prompt);
         attachments.append(queued.attachments);
         contexts.append(queued.excerpts);
+        forgetUnsent(queued.messageId);
       }
-      // Only into an untouched draft: newer typing is the user's.
-      if (draft(target).isEmpty() && !prompts.isEmpty()) {
-        const QString restored = prompts.join(QStringLiteral("\n\n"));
-        setText(target, restored, int(restored.size()));
+      const QString restored = prompts.join(QStringLiteral("\n\n"));
+      // Only into an untouched draft: newer typing is the user's, and the
+      // toast gives the prompt back once the draft is empty.
+      if (restored.isEmpty() || draft(target).isEmpty()) {
+        toast(QStringLiteral("Failed to send message"), *error);
+        if (!restored.isEmpty()) setText(target, restored, int(restored.size()));
+      } else {
+        offerRestore(target, QStringLiteral("Failed to send message"),
+                     QStringLiteral("Your newer draft is unchanged. Restore the failed prompt when this composer is empty."),
+                     restored);
       }
       Draft& draft = m_drafts[target];
       draft.attachments = attachments + draft.attachments;
@@ -1158,7 +1246,13 @@ void ComposerController::sendNext(const QString& target) {
     // already has).
     NativeShell::of(this)->controller<DraftController>()->promote(target);
     QList<Send>& queue = m_queues[target];
-    queue.removeFirst();
+    const QString delivered = queue.takeFirst().messageId;
+    // The sends behind it come after it in the thread.
+    for (Unsent& unsent : m_kept.unsent) {
+      if (unsent.target == target && !unsent.kept && unsent.after) unsent.after = delivered;
+    }
+    m_kept.delivered.insert(target, delivered);
+    forgetUnsent(delivered);
     if (queue.isEmpty()) {
       m_queues.remove(target);
       publish();
@@ -1205,6 +1299,207 @@ void ComposerController::sendNext(const QString& target) {
                    stored.commands.last() = message;
                    dispatchAll(stored, 0, finish);
                  });
+}
+
+void ComposerController::offerRestore(const QString& target, const QString& title, const QString& description,
+                                      const QString& restored, const QList<Attachment>& attachments,
+                                      const QList<Excerpt>& contexts) {
+  NativeShell::of(this)->controller<ToastController>()->show(
+      QStringLiteral("error"), title, description,
+      ToastController::Action{QStringLiteral("Restore prompt"),
+                              [this, target, restored, attachments, contexts] {
+                                if (!draft(target).isEmpty()) return;
+                                Draft& kept = m_drafts[target];
+                                kept.attachments = attachments + kept.attachments;
+                                kept.excerpts = contexts + kept.excerpts;
+                                setText(target, restored, int(restored.size()));
+                                save();
+                                auto* shell = NativeShell::of(this);
+                                shell->controller<NavigationController>()->open(
+                                    shell->controller<DraftController>()->draft(target)
+                                        ? NavigationController::Route::draft(target)
+                                        : NavigationController::Route::thread(target));
+                              }},
+      0);
+}
+
+void ComposerController::forgetUnsent(const QString& messageId) {
+  if (m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.messageId == messageId; }) > 0) save();
+}
+
+void ComposerController::keepUnanswered(const QString& messageId, const QJsonObject& launch) {
+  for (Unsent& unsent : m_kept.unsent) {
+    if (unsent.messageId != messageId) continue;
+    unsent.kept = true;
+    unsent.seen = m_store->snapshots();
+    unsent.launch = launch;
+    save();
+  }
+}
+
+// The MC may have taken the launch and not made its thread yet: asked again
+// under its command id, it answers once, and only a refusal brings the
+// prompt back (reconcileUnsent).
+void ComposerController::retryLaunch(const QString& messageId) {
+  const auto found = std::find_if(m_kept.unsent.begin(), m_kept.unsent.end(), [&](const Unsent& unsent) { return unsent.messageId == messageId; });
+  if (found == m_kept.unsent.end()) return;
+  const QJsonObject launch = std::exchange(found->launch, {});
+  found->kept = false;
+  const QString environmentId = found->thread.section(QLatin1Char(':'), 0, 0);
+  m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
+                 [this, messageId, launch](const QJsonValue&, const std::optional<QString>& error) {
+                   if (unanswered(error)) {
+                     keepUnanswered(messageId, launch);
+                     return;
+                   }
+                   const auto it = std::find_if(m_kept.unsent.begin(), m_kept.unsent.end(),
+                                                [&](const Unsent& unsent) { return unsent.messageId == messageId; });
+                   if (it == m_kept.unsent.end()) return;
+                   if (error) {
+                     it->kept = true;
+                   } else {
+                     // A thread has the prompt, the draft becomes it (DraftController::reconcile).
+                     const QString batch = it->batch;
+                     m_kept.unsent.removeIf([&](const Unsent& unsent) {
+                       return unsent.messageId == messageId || (!batch.isEmpty() && unsent.batch == batch);
+                     });
+                   }
+                   save();
+                   reconcileUnsent();
+                 });
+}
+
+// The thread's newest user message ahead of the sends still on their way to
+// it, once its messages are known.
+std::optional<QString> ComposerController::newestBefore(const QString& thread) const {
+  if (!m_timeline || m_timeline->threadKey() != thread || m_timeline->status() != QLatin1String("live")) return std::nullopt;
+  QSet<QString> pending;
+  for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
+    if (unsent.target == thread) pending.insert(unsent.messageId);
+  }
+  const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
+  const QString delivered = m_kept.delivered.value(thread);
+  if (!delivered.isEmpty() && !messages.contains(delivered)) return delivered;
+  return newestUserMessage(messages, pending);
+}
+
+// A kept send's fate shows once the thread's messages do: one the MC got is
+// there and is dropped; one behind a newer user message (another device's, or
+// this one's after the restart) is dropped too, as the user moved on. The
+// rest come back to the draft: into it when it is empty, else behind a toast
+// that restores them once it is. A new thread's first send waits for the
+// shell to know whether the thread exists.
+void ComposerController::reconcileUnsent() {
+  // A send made before its thread's messages were known measures from when
+  // they are, so a newer message from elsewhere still drops it.
+  const auto unmeasured = [this](const Unsent& unsent) {
+    return !unsent.kept && !unsent.after && unsent.target == m_timeline->threadKey();
+  };
+  if (m_timeline && std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), unmeasured)) {
+    if (const std::optional<QString> newest = newestBefore(m_timeline->threadKey())) {
+      for (Unsent& unsent : m_kept.unsent) {
+        if (unmeasured(unsent)) unsent.after = newest;
+      }
+      save();
+    }
+  }
+  if (!m_active || std::none_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [](const Unsent& u) { return u.kept; })) return;
+  auto* drafts = NativeShell::of(this)->controller<DraftController>();
+  const auto online = [this](const QString& key) {
+    return m_store->synchronized() && m_store->environmentOnline(key.section(QLatin1Char(':'), 0, 0));
+  };
+  const bool live = m_timeline && m_timeline->status() == QLatin1String("live");
+  const QHash<QString, QJsonObject> messages = live ? m_timeline->entities(QStringLiteral("message")) : QHash<QString, QJsonObject>();
+  // What each target gets back, in the order the targets were sent to.
+  QStringList targets;
+  QHash<QString, QList<Unsent>> back;
+  QSet<QString> settled;
+  QSet<QString> mine;
+  for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
+    if (unsent.kept) mine.insert(unsent.messageId);
+  }
+  const QString newest = live ? newestUserMessage(messages, mine) : QString();
+  // The sends to several models that started a thread, or have come back;
+  // and those with a launch still to be answered, which may yet start one.
+  QSet<QString> started;
+  QSet<QString> waiting;
+  for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
+    if (unsent.batch.isEmpty()) continue;
+    const bool exists = m_store->thread(m_store->located(unsent.thread)).has_value();
+    if (unsent.kept && exists) started.insert(unsent.batch);
+    if (!unsent.kept || (!unsent.launch.isEmpty() && !exists)) waiting.insert(unsent.batch);
+  }
+  QStringList retries;
+  for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
+    // One whose answer a drop took waits for the shell as it is after the drop.
+    if (!unsent.kept || m_store->snapshots() <= unsent.seen) continue;
+    const QString key = m_store->located(unsent.thread);
+    QString into;
+    if (unsent.target != unsent.thread) {
+      // A launch: the thread it made, or the draft it came from.
+      if (!online(key)) continue;
+      if (!m_store->thread(key) && !unsent.launch.isEmpty()) {
+        retries.append(unsent.messageId);
+        continue;
+      }
+      if (!m_store->thread(key) && waiting.contains(unsent.batch) && !started.contains(unsent.batch)) continue;
+      if (!m_store->thread(key) && drafts->draft(unsent.target) && !started.contains(unsent.batch)) into = unsent.target;
+      if (!unsent.batch.isEmpty()) started.insert(unsent.batch);
+    } else if (online(key) && !m_store->thread(key)) {
+      // The thread is gone.
+    } else if (!live || m_timeline->threadKey() != key) {
+      continue;
+    } else if (!messages.contains(unsent.messageId) && (!unsent.after || *unsent.after == newest)) {
+      into = key;
+    }
+    settled.insert(unsent.messageId);
+    if (into.isEmpty()) continue;
+    if (!back.contains(into)) targets.append(into);
+    back[into].append(unsent);
+  }
+  for (const QString& messageId : std::as_const(retries)) retryLaunch(messageId);
+  if (settled.isEmpty()) return;
+  m_kept.unsent.removeIf([&](const Unsent& unsent) { return settled.contains(unsent.messageId); });
+  for (const QString& target : std::as_const(targets)) {
+    QStringList prompts;
+    QList<Attachment> attachments;
+    QList<Excerpt> contexts;
+    for (const Unsent& unsent : back.value(target)) {
+      if (!unsent.prompt.isEmpty()) prompts.append(unsent.prompt);
+      attachments.append(unsent.attachments);
+      contexts.append(unsent.excerpts);
+    }
+    const QString restored = prompts.join(QStringLiteral("\n\n"));
+    const Draft& there = m_drafts.value(target);
+    if (draft(target).isEmpty() && there.attachments.isEmpty() && there.excerpts.isEmpty()) {
+      Draft& kept = m_drafts[target];
+      kept.attachments = attachments;
+      kept.excerpts = contexts;
+      setText(target, restored, int(restored.size()));
+    } else {
+      offerRestore(target, QStringLiteral("A prompt was not sent"),
+                   QStringLiteral("HAL-C2 closed before it was sent. Your newer draft is unchanged. Restore the prompt when this composer is empty."),
+                   restored, attachments, contexts);
+    }
+  }
+  save();
+  publish();
+}
+
+QJsonObject ComposerController::excerptJson(const Excerpt& excerpt) {
+  QJsonObject kept{{QStringLiteral("id"), excerpt.id}, {QStringLiteral("terminalId"), excerpt.terminalId},
+                   {QStringLiteral("terminalLabel"), excerpt.terminalLabel}, {QStringLiteral("lineStart"), excerpt.lineStart},
+                   {QStringLiteral("lineEnd"), excerpt.lineEnd}, {QStringLiteral("text"), excerpt.text}};
+  if (!excerpt.citation.isEmpty()) kept.insert(QStringLiteral("citation"), excerpt.citation);
+  if (!excerpt.review.isEmpty()) kept.insert(QStringLiteral("review"), excerpt.review);
+  return kept;
+}
+
+ComposerController::Excerpt ComposerController::excerptOf(const QJsonObject& kept) {
+  return {str(kept, QLatin1String("id")), str(kept, QLatin1String("terminalId")), str(kept, QLatin1String("terminalLabel")),
+          kept.value(QLatin1String("lineStart")).toInt(1), kept.value(QLatin1String("lineEnd")).toInt(1),
+          str(kept, QLatin1String("text")), kept.value(QLatin1String("citation")).toObject(),
+          kept.value(QLatin1String("review")).toObject()};
 }
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index,
@@ -1895,9 +2190,15 @@ void ComposerController::follow() {
   TimelineModel* timeline = thread.isEmpty() ? nullptr : NativeShell::of(this)->controller<ThreadStore>()->timeline(thread);
   if (timeline != m_timeline) {
     disconnect(m_timelineConnection);
+    disconnect(m_timelineStatus);
     m_timeline = timeline;
-    if (timeline) m_timelineConnection = connect(timeline, &TimelineModel::turnChanged, this, &ComposerController::publish);
+    if (timeline) {
+      m_timelineConnection = connect(timeline, &TimelineModel::turnChanged, this, &ComposerController::publish);
+      // A thread's messages are known once its stream is live.
+      m_timelineStatus = connect(timeline, &TimelineModel::statusChanged, this, &ComposerController::reconcileUnsent);
+    }
   }
+  reconcileUnsent();
   publish();
 }
 
@@ -2681,11 +2982,7 @@ void ComposerController::setStorePath(const QString& path) {
       if (const auto attachment = attachmentOf(image.toObject())) kept.attachments.append(*attachment);
     }
     for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
-      const QJsonObject t = context.toObject();
-      kept.excerpts.append({str(t, QLatin1String("id")), str(t, QLatin1String("terminalId")),
-                                    str(t, QLatin1String("terminalLabel")), t.value(QLatin1String("lineStart")).toInt(1),
-                                    t.value(QLatin1String("lineEnd")).toInt(1), str(t, QLatin1String("text")),
-                                    t.value(QLatin1String("citation")).toObject(), t.value(QLatin1String("review")).toObject()});
+      kept.excerpts.append(excerptOf(context.toObject()));
     }
     if (!kept.id.isEmpty()) m_kept.stash.append(kept);
   }
@@ -2705,16 +3002,33 @@ void ComposerController::setStorePath(const QString& path) {
     kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
   }
   QFile images(imagesPath());
+  QJsonObject unsentImages;
   if (images.open(QIODevice::ReadOnly)) {
-    const QByteArray data = images.readAll();
-    const QJsonObject kept = QJsonDocument::fromJson(data).object().value(QLatin1String("targets")).toObject();
+    const QJsonObject data = QJsonDocument::fromJson(images.readAll()).object();
+    const QJsonObject kept = data.value(QLatin1String("targets")).toObject();
     for (auto it = kept.begin(); it != kept.end(); ++it) {
       QList<Attachment>& attachments = m_drafts[it.key()].attachments;
       for (const QJsonValue& value : it.value().toArray()) {
         if (const auto attachment = attachmentOf(value.toObject())) attachments.append(*attachment);
       }
     }
-    m_kept.images = imagesSignature(kept);
+    unsentImages = data.value(QLatin1String("unsent")).toObject();
+    m_kept.images = imagesSignature(kept) + u'\n' + imagesSignature(unsentImages);
+  }
+  // The sends the app quit or crashed on, waiting to be reconciled.
+  m_kept.unsent.clear();
+  for (const QJsonValue& value : stored.value(QLatin1String("unsent")).toArray()) {
+    const QJsonObject entry = value.toObject();
+    Unsent kept{str(entry, QLatin1String("target")), str(entry, QLatin1String("thread")), str(entry, QLatin1String("messageId")),
+                std::nullopt, str(entry, QLatin1String("text")), {}, {}, str(entry, QLatin1String("batch")), true};
+    if (entry.value(QLatin1String("after")).isString()) kept.after = str(entry, QLatin1String("after"));
+    for (const QJsonValue& image : unsentImages.value(kept.messageId).toArray()) {
+      if (const auto attachment = attachmentOf(image.toObject())) kept.attachments.append(*attachment);
+    }
+    for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
+      kept.excerpts.append(excerptOf(context.toObject()));
+    }
+    if (!kept.target.isEmpty() && !kept.messageId.isEmpty()) m_kept.unsent.append(kept);
   }
   publish();
 }
@@ -2753,24 +3067,35 @@ void ComposerController::save() const {
     QJsonArray images;
     for (const Attachment& a : entry.attachments) images.append(attachmentJson(a));
     QJsonArray contexts;
-    for (const Excerpt& t : entry.excerpts) {
-      QJsonObject context{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
-                          {QStringLiteral("terminalLabel"), t.terminalLabel}, {QStringLiteral("lineStart"), t.lineStart},
-                          {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text}};
-      if (!t.citation.isEmpty()) context.insert(QStringLiteral("citation"), t.citation);
-      if (!t.review.isEmpty()) context.insert(QStringLiteral("review"), t.review);
-      contexts.append(context);
-    }
+    for (const Excerpt& t : entry.excerpts) contexts.append(excerptJson(t));
     stash.append(QJsonObject{{QStringLiteral("id"), entry.id},
                              {QStringLiteral("createdAt"), entry.createdAt.toString(Qt::ISODateWithMs)},
                              {QStringLiteral("text"), entry.text},
                              {QStringLiteral("attachments"), images},
                              {QStringLiteral("terminalContexts"), contexts}});
   }
-  QFile file(m_kept.path);
-  if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+  QJsonArray unsent;
+  QJsonObject unsentImages;
+  for (const Unsent& entry : m_kept.unsent) {
+    QJsonObject kept{{QStringLiteral("target"), entry.target}, {QStringLiteral("thread"), entry.thread},
+                     {QStringLiteral("messageId"), entry.messageId}, {QStringLiteral("text"), entry.prompt}};
+    if (entry.after) kept.insert(QStringLiteral("after"), *entry.after);
+    if (!entry.batch.isEmpty()) kept.insert(QStringLiteral("batch"), entry.batch);
+    QJsonArray contexts;
+    for (const Excerpt& t : entry.excerpts) contexts.append(excerptJson(t));
+    if (!contexts.isEmpty()) kept.insert(QStringLiteral("terminalContexts"), contexts);
+    unsent.append(kept);
+    QJsonArray list;
+    for (const Attachment& attachment : entry.attachments) list.append(attachmentJson(attachment));
+    if (!list.isEmpty()) unsentImages.insert(entry.messageId, list);
+  }
+  // Whole or not at all: a write cut short would lose every thread's draft.
+  QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
+  QSaveFile file(m_kept.path);
+  if (file.open(QIODevice::WriteOnly)) {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
+    if (!unsent.isEmpty()) stored.insert(QStringLiteral("unsent"), unsent);
     if (!m_kept.lastInstance.isEmpty()) {
       QJsonObject lastModels;
       for (auto it = m_kept.lastModels.cbegin(); it != m_kept.lastModels.cend(); ++it) lastModels.insert(it.key(), it.value());
@@ -2778,6 +3103,7 @@ void ComposerController::save() const {
       stored.insert(QStringLiteral("lastModels"), lastModels);
     }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
+    file.commit();
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;
@@ -2786,14 +3112,17 @@ void ComposerController::save() const {
     for (const Attachment& attachment : it.value().attachments) list.append(attachmentJson(attachment));
     if (!list.isEmpty()) images.insert(it.key(), list);
   }
-  const QString joined = imagesSignature(images);
+  const QString joined = imagesSignature(images) + u'\n' + imagesSignature(unsentImages);
   if (joined == m_kept.images) return;
-  m_kept.images = joined;
-  QFile imagesFile(imagesPath());
-  if (images.isEmpty()) {
-    imagesFile.remove();
+  if (images.isEmpty() && unsentImages.isEmpty()) {
+    if (QFile::remove(imagesPath()) || !QFile::exists(imagesPath())) m_kept.images = joined;
     return;
   }
-  if (!imagesFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-  imagesFile.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), images}}).toJson(QJsonDocument::Compact));
+  QSaveFile imagesFile(imagesPath());
+  if (!imagesFile.open(QIODevice::WriteOnly)) return;
+  QJsonObject kept{{QStringLiteral("targets"), images}};
+  if (!unsentImages.isEmpty()) kept.insert(QStringLiteral("unsent"), unsentImages);
+  imagesFile.write(QJsonDocument(kept).toJson(QJsonDocument::Compact));
+  // Remembered once written, so a failed write is tried again on the next save.
+  if (imagesFile.commit()) m_kept.images = joined;
 }

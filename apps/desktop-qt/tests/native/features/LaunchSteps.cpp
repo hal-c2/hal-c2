@@ -201,6 +201,14 @@ const Steps steps([] {
     world.sync();
     expect(calls(world).isEmpty(), QStringLiteral("the MC launched %1").arg(describe(calls(world).value(0))));
   });
+  // A launch whose answer a drop took, sent again as it was: the MC carries
+  // out a command id once.
+  step(QStringLiteral("the MC is asked for the same thread again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return calls(world).size() >= 2; }, [&] { return QStringLiteral("a second launch; the MC got %1").arg(calls(world).size()); });
+    world.sync();
+    expect(calls(world).size() == 2 && calls(world).at(0) == calls(world).at(1),
+           QStringLiteral("the MC got %1, then %2").arg(describe(calls(world).at(0)), describe(calls(world).constLast())));
+  });
   step(QStringLiteral("the MC launches (\\d+) threads?"), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(calls(world).size() == c[0].toInt(), QStringLiteral("the MC launched %1 threads").arg(calls(world).size()));

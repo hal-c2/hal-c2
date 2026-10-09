@@ -253,5 +253,7 @@ Item {
         anchors.right: parent.right
         anchors.bottomMargin: 180
         anchors.rightMargin: 16
+        fromBottom: true
+        maximumHeight: parent.height - anchors.bottomMargin - 16
     }
 }

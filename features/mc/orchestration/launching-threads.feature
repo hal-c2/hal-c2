@@ -2,7 +2,8 @@
 #   packages/contracts/src/rpc.ts (orchestration.launchThread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, message.dispatch, prepared-run.release,
 #     prepared-run.progress, prepared-run.fail, run.created, run.updated)
-#   apps/server-ex/lib/hal_c2/orchestration.ex (launch_thread, release_prepared, fail_prepared)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (launch_thread, decide_message, release_prepared,
+#     fail_prepared)
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/server/src/orchestration-v2/ (launch and prepared run handling)
 Feature: Launching a thread with its first message
@@ -47,6 +48,17 @@ Feature: Launching a thread with its first message
   Scenario: The first message's command id derives from the launch command
     When a client launches a thread with command "c1" and message "Hello"
     Then the first message is dispatched as command "c1:initial-message"
+
+  # A desktop client that lost a launch's answer to a dropped connection sends the same
+  # launch again, while the first may still be running in the old connection.
+  @mc
+  Scenario: A launch retried after a reconnect starts one thread with one message
+    Given a launched thread's first run is preparing its worktree
+    When the client sends the same launch again after a reconnect
+    Then the launch reports the thread was resumed
+    When the worktree and its setup script are ready
+    Then the run starts with the message it was waiting with
+    And the thread has one user message
 
   @mc
   Scenario: Launching with title generation titles the thread from its first message

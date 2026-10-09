@@ -132,6 +132,8 @@ public:
   QString idAt(int row) const;
   // Whether a search against the MC is on its way.
   bool searching() const { return m_pending > 0 || m_debounce.isActive(); }
+  // How long typing pauses before a search (kSearchDelayMs); tests set 0.
+  void setSearchDelay(int ms) { m_debounce.setInterval(ms); }
 
   // Opens it in command mode with an empty query and the first entry
   // highlighted.
@@ -228,11 +230,15 @@ private:
 
   struct Row {
     QString group;
+    // Its index in m_entries (and a submenu's choices) when it was listed.
     int entry;
     // Its group and entry id, which say whether a row moved.
     QString key;
     // A thread found by its messages shows the matching snippet.
     QString description;
+    // What it shows, kept with it: a row reads the same until the model says
+    // it changed, whatever m_entries holds meanwhile.
+    Entry item;
   };
 
   // A submenu: the menu's title, its choices when it opened, and where they

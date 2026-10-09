@@ -221,17 +221,18 @@ void Pairing::askToForget() {
 }
 
 void Pairing::forget() {
-  // An exchange in flight has nobody to answer.
-  ++m_attempt;
-  m_pairing = false;
   // The session goes from the device first: one that stays would be opened
-  // again at the next start, whatever the app says now.
+  // again at the next start, whatever the app says now. Until it is gone,
+  // nothing is forgotten, an exchange in flight included.
   if (QFile::exists(m_path) && !QFile::remove(m_path)) {
     qWarning("pairing not forgotten: %s", qPrintable(m_path));
     m_error = tr("This environment could not be forgotten: its session could not be deleted from this device.");
     publish();
     return;
   }
+  // An exchange in flight has nobody to answer.
+  ++m_attempt;
+  m_pairing = false;
   // The session is gone, so the environment is forgotten whatever follows;
   // what the device had kept of its threads may still be on disk.
   const bool emptied = !m_paired || m_shell->close();

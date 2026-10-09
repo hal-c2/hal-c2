@@ -8,6 +8,8 @@
 #include <QUuid>
 #include <QWebSocket>
 
+#include <algorithm>
+
 namespace {
 
 // A fresh W3C trace id: 32 hex digits.
@@ -31,6 +33,8 @@ McClient::McClient(QObject* parent) : QObject(parent) {
 }
 
 McClient::~McClient() {
+  // Whoever is owed a reply is going too.
+  m_calls.clear();
   close();
 }
 
@@ -65,12 +69,23 @@ void McClient::close() {
     socket->abort();
     socket->deleteLater();
   }
-  if (m_ready) {
-    m_ready = false;
-    m_pingTimer.stop();
-    emit readyChanged(false);
-  }
+  const bool wasReady = std::exchange(m_ready, false);
+  m_pingTimer.stop();
+  // The socket that carried them is gone: they are answered as by a drop.
+  failCalls();
+  if (wasReady) emit readyChanged(false);
   setPhase(Phase::Closed);
+}
+
+void McClient::failCalls() {
+  const auto calls = std::exchange(m_calls, {});
+  // In the order they were made, so a caller's later call fails after its earlier one.
+  QList<int> ids = calls.keys();
+  std::sort(ids.begin(), ids.end());
+  for (int id : ids) {
+    const Call call = calls.value(id);
+    if (call.context && call.reply) call.reply(QJsonValue(), QStringLiteral("disconnected"));
+  }
 }
 
 void McClient::setPhase(Phase phase) {
@@ -423,10 +438,7 @@ void McClient::onClosed(QWebSocket* socket) {
   m_ready = false;
   m_pingTimer.stop();
   m_pongTimer.stop();
-  const auto calls = std::exchange(m_calls, {});
-  for (const Call& call : calls) {
-    if (call.context && call.reply) call.reply(QJsonValue(), QStringLiteral("disconnected"));
-  }
+  failCalls();
   if (wasReady) emit readyChanged(false);
   if (m_closed) return;
   m_failure = reason;

@@ -148,6 +148,17 @@ Feature: Creating threads
     And each thread works in its own new worktree
 
   @desktop
+  Scenario: A request to several models cut off by a quit comes back to its draft once
+    Given "shop" is a Git project
+    And the MC holds its answers
+    When the user sends the first message to the models "Opus", "GPT-5" and "Gemini"
+    And the desktop quits and starts again
+    And the MC drops the send
+    And the desktop shell is connected to its MC
+    Then the composer offers the new thread's text "Add caching"
+    And the desktop keeps no unsent prompts
+
+  @desktop
   Scenario: Several models cannot be chosen outside a Git project
     Given "notes" is not a Git project
     When the user tries to pick more than one model for the first message

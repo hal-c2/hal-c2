@@ -119,6 +119,7 @@ void Scanner::update() {
   const bool wanted = m_open && !m_failed && m_access == ScanCamera::Access::Granted && m_sink && qGuiApp->applicationState() == Qt::ApplicationActive;
   if (wanted && !m_running) {
     m_running = true;
+    ++m_run;
     m_camera->start(m_sink, this, [this](ScanCamera::Failure why) { failed(why); });
   } else if (!wanted && m_running) {
     m_camera->stop();
@@ -131,12 +132,13 @@ void Scanner::frame(const QVideoFrame& frame) {
   if (!m_running || m_reading.isRunning()) return;
   const QImage picture = qr::luminance(frame);
   if (picture.isNull()) return;
+  m_readFrom = m_run;
   m_reading.setFuture(QtConcurrent::run([picture] { return qr::read(picture); }));
 }
 
 void Scanner::found(const QStringList& codes) {
-  // Read off a frame from before the camera stopped.
-  if (!m_running || codes.isEmpty()) return;
+  // Read off a frame from before the camera stopped, even if it runs again.
+  if (!m_running || m_readFrom != m_run || codes.isEmpty()) return;
   for (const QString& code : codes) {
     const auto invitation = pairing::readInvitation(code);
     if (!invitation) continue;

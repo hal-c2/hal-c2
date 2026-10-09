@@ -654,7 +654,7 @@ QVariant pickerKey(const QList<keybindings::Binding>& bindings, bool mac, const 
 
 std::optional<Trigger> trigger(const QString& text, int cursor) {
   cursor = std::clamp(cursor, 0, int(text.size()));
-  const int lineStart = int(text.lastIndexOf(u'\n', std::max(0, cursor - 1))) + 1;
+  const int lineStart = cursor > 0 ? int(text.lastIndexOf(u'\n', cursor - 1)) + 1 : 0;
   const QString linePrefix = text.mid(lineStart, cursor - lineStart);
   if (linePrefix.startsWith(u'/')) {
     static const QRegularExpression command(QStringLiteral("^/(\\S*)$"));

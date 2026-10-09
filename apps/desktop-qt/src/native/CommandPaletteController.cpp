@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <tuple>
 
 #include "DraftController.h"
 #include "KeybindingController.h"
@@ -181,7 +182,7 @@ int CommandPaletteController::rowCount(const QModelIndex& parent) const {
 QVariant CommandPaletteController::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= m_rows.size()) return {};
   const Row& row = m_rows.at(index.row());
-  const Entry& entry = m_entries.at(row.entry);
+  const Entry& entry = row.item;
   switch (role) {
     case TitleRole:
       return entry.title;
@@ -302,7 +303,7 @@ QString CommandPaletteController::status() const {
 
 QString CommandPaletteController::kindAt(int row) const {
   if (row < 0 || row >= m_rows.size()) return {};
-  switch (m_entries.at(m_rows.at(row).entry).kind) {
+  switch (m_rows.at(row).item.kind) {
     case Kind::Action:
       return QStringLiteral("action");
     case Kind::Thread:
@@ -326,7 +327,7 @@ QString CommandPaletteController::kindAt(int row) const {
 }
 
 QString CommandPaletteController::idAt(int row) const {
-  return row >= 0 && row < m_rows.size() ? m_entries.at(m_rows.at(row).entry).id : QString();
+  return row >= 0 && row < m_rows.size() ? m_rows.at(row).item.id : QString();
 }
 
 // --- Opening and closing -------------------------------------------------------------
@@ -419,8 +420,7 @@ void CommandPaletteController::open(Mode mode) {
   m_target = target();
   rebuild();
   // A browsed path is added with Enter unless a folder is highlighted.
-  m_highlighted = mode == Mode::Browse ? -1 : 0;
-  emit highlightedChanged();
+  setHighlighted(mode == Mode::Browse ? -1 : 0);
   if (mode != Mode::Command && mode != Mode::Ask) scheduleSearch();
   if (!wasOpen) emit openChanged();
 }
@@ -592,7 +592,7 @@ bool CommandPaletteController::addBrowsedFolder() {
   // The folder highlighted, else the path typed.
   QString path = browsedPath();
   if (m_highlighted >= 0 && m_highlighted < count()) {
-    const Entry& entry = m_entries.at(m_rows.at(m_highlighted).entry);
+    const Entry& entry = m_rows.at(m_highlighted).item;
     if (entry.kind == Kind::Folder) path = entry.id;
   }
   if (path.isEmpty()) return false;
@@ -610,7 +610,7 @@ bool CommandPaletteController::addBrowsedFolder() {
 
 bool CommandPaletteController::run(int row) {
   if (!m_open || row < 0 || row >= m_rows.size()) return false;
-  const Entry entry = m_entries.at(m_rows.at(row).entry);
+  const Entry entry = m_rows.at(row).item;
   if (!entry.enabled) return false;
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
   // What moves the palette on keeps it open.
@@ -869,7 +869,7 @@ void CommandPaletteController::rebuildCommand() {
 void CommandPaletteController::refilter(bool refreshed) {
   QList<Row> next;
   const auto add = [this, &next](const QString& group, int entry, const QString& description = {}) {
-    next.append({group, entry, group + QLatin1Char('\n') + m_entries.at(entry).id, description});
+    next.append({group, entry, group + QLatin1Char('\n') + m_entries.at(entry).id, description, m_entries.at(entry)});
   };
 
   if (m_mode != Mode::Command) {
@@ -986,6 +986,21 @@ void CommandPaletteController::apply(QList<Row> next, bool refreshed) {
          m_rows.at(before - 1 - tail).key == next.at(after - 1 - tail).key) {
     ++tail;
   }
+  // The rows that stay and now show something else, by their index after.
+  const auto shows = [](const Row& row) {
+    const Entry& entry = row.item;
+    return std::tuple(entry.title, row.description.isEmpty() ? entry.description : row.description, row.group,
+                      entry.shortcut, entry.kind, entry.enabled, entry.current);
+  };
+  int firstChanged = after;
+  int lastChanged = -1;
+  const auto compare = [&](int row, int was) {
+    if (shows(m_rows.at(was)) == shows(next.at(row))) return;
+    firstChanged = std::min(firstChanged, row);
+    lastChanged = row;
+  };
+  for (int row = 0; row < head; ++row) compare(row, row);
+  for (int row = after - tail; row < after; ++row) compare(row, row - after + before);
   if (before - tail > head) {
     beginRemoveRows({}, head, before - tail - 1);
     m_rows.remove(head, before - tail - head);
@@ -998,7 +1013,7 @@ void CommandPaletteController::apply(QList<Row> next, bool refreshed) {
     endInsertRows();
   }
   m_rows = std::move(next);
-  if (refreshed && !m_rows.isEmpty()) emit dataChanged(index(0), index(count() - 1));
+  if (lastChanged >= 0) emit dataChanged(index(firstChanged), index(lastChanged));
   emit resultsChanged();
   if (refreshed && !highlightedKey.isEmpty()) {
     const auto found =

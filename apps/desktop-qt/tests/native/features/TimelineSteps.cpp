@@ -26,9 +26,8 @@ using namespace stream;
 // Answers a `sub` to a thread's stream as the MC does (lib/hal_c2/streams/server.ex):
 // the events since its offset when it resumes the MC's log, else a snapshot
 // of what its view holds; then `live`.
-void answer(FakeMc& mc, int id, const QJsonObject& shape) {
+void answer(FakeMc& mc, int id, const QJsonObject& shape, const QJsonObject& sub) {
   FakeStreams& fake = mc.part<FakeStreams>();
-  const QJsonObject sub = mc.subscriptions.last();
   const QString thread = shape.value(QLatin1String("stream")).toString();
   fake.asked.append({thread, sub, fake.sent.size(), fake.unfollowed.take(thread)});
   const QMap<QString, QJsonObject> entities = fake.threads.value(thread);
@@ -114,7 +113,11 @@ const FakeMc::Extension streams([](FakeMc& mc) {
       mc.forget(id);
       return;
     }
-    answer(mc, id, shape);
+    if (fake.slow) {
+      fake.waiting.append([&mc, id, shape, sub = mc.subscriptions.last()] { answer(mc, id, shape, sub); });
+      return;
+    }
+    answer(mc, id, shape, mc.subscriptions.last());
   });
   mc.onFrame(QStringLiteral("more"), [&mc](const QJsonObject& frame) {
     const int id = frame.value(QLatin1String("id")).toInt();
@@ -378,6 +381,18 @@ const Steps steps([] {
     world.waitFor([&] { return !fake.cutCatchUp && fake.asked.size() >= asked + 2 && timeline(world).status() == QLatin1String("live"); },
                   [&] { return QStringLiteral("the thread to catch up on a second connection; it was asked for %1 times and %2").arg(fake.asked.size() - asked).arg(describe(timeline(world))); });
     world.sync();
+  });
+  // A thread opened while the MC is slow is shown loading until it sends it.
+  step(QStringLiteral("the MC is slow to send threads"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeStreams>().slow = true;
+  });
+  step(QStringLiteral("the MC sends the thread"), [](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    world.waitFor([&] { return !fake.waiting.isEmpty(); }, QStringLiteral("the shell to ask for the thread"));
+    fake.slow = false;
+    for (const auto& send : std::exchange(fake.waiting, {})) send();
+    world.waitFor([&] { return timeline(world).status() == QLatin1String("live"); },
+                  [&] { return QStringLiteral("the thread to follow its MC; %1").arg(describe(timeline(world))); });
   });
   step(QStringLiteral("the client asked again from where it was"), [](World& world, const Captures&, const Table&) {
     const FakeStreams& fake = world.mc.part<FakeStreams>();

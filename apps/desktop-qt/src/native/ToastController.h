@@ -14,9 +14,12 @@ class McClient;
 class ShellBridge;
 
 // The shell's toasts. Controllers call show() directly; the Notifications
-// brick renders `toasts`. Publishes `toasts`: {items}, newest first, each {id,
-// type, title, description, updateKey, actions} as the web app's
-// ShellNotification. Dismiss and action clicks come back by id.
+// brick renders `toasts`. Publishes `toasts`: {items, expanded}, items newest
+// first, each {id, type, title, description, updateKey, actions} as the web
+// app's ShellNotification. Dismiss and action clicks come back by id. No toast
+// is dropped for lack of room: the brick stacks them, and `expanded` (the
+// pointer over the stack, or a tap on a phone) spreads them out and holds
+// every toast's time, as the web app's Base UI toasts do.
 class ToastController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -62,6 +65,11 @@ public:
   bool runAction(const QString& label);
   // Drops the toasts whose time is up; the timer calls it at the next deadline.
   void expire();
+  // Spreads the stack out and holds every toast's remaining time until it
+  // collapses again; `notification.expand` {expanded} from the brick. It
+  // collapses by itself once the last toast goes.
+  void setExpanded(bool expanded);
+  bool expanded() const { return m_expanded; }
 
   QDateTime now() const { return m_now(); }
   // Tests pin the clock; the app uses the system's.
@@ -82,13 +90,19 @@ private:
     QString title;
     QString description;
     QList<Action> actions;
+    // Set while its time runs; while the stack is expanded the time left
+    // sits in `remainingMs` instead.
     std::optional<QDateTime> deadline;
+    qint64 remainingMs = 0;
     int revision = 0;
   };
+
+  void startTime(Toast& toast, int timeoutMs);
 
   ShellBridge* m_bridge;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   QList<Toast> m_toasts;
   QTimer m_timer;
   int m_nextId = 1;
+  bool m_expanded = false;
 };

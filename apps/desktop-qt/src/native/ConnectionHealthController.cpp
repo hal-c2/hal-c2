@@ -109,9 +109,13 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
       }),
       m_network{[] { return false; }, hasNetwork},
       m_clientVersion(QCoreApplication::applicationVersion()) {
-  connect(client, &McClient::phaseChanged, this, &ConnectionHealthController::update);
-  connect(client, &McClient::readyChanged, this, [this](bool ready) {
-    if (ready) m_snapshotsAtReady = m_store->snapshots();
+  // Counted as the phase turns Ready, before update() reads it: the hello
+  // says Ready before readyChanged, and a drop says not ready while the
+  // phase still reads Ready, so readyChanged is no moment to look.
+  connect(client, &McClient::phaseChanged, this, [this] {
+    const bool ready = m_client->phase() == McClient::Phase::Ready;
+    if (ready && !m_ready) m_snapshotsAtReady = m_store->snapshots();
+    m_ready = ready;
     update();
   });
   connect(store, &ShellStore::changed, this, &ConnectionHealthController::update);

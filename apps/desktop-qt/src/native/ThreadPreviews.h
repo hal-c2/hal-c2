@@ -115,6 +115,9 @@ private:
   QList<QJsonObject> m_rows;
   // Tabs being closed: their events do not bring them back.
   QSet<QString> m_closing;
+  // A list is on its way; the thread's events since it was asked for, which it may predate.
+  bool m_listing = false;
+  QList<QJsonObject> m_early;
   int m_servers = -1;
   // The MC's machine's web servers: {url, processName}.
   QList<QJsonObject> m_serverList;

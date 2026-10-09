@@ -325,6 +325,93 @@ defmodule HalC2.OrchestrationTest do
     assert {:error, "Only an empty active thread" <> _} = reuse.(thread_id, "project-1")
   end
 
+  test "a launch retried with its command id after a reconnect starts one thread with one message" do
+    thread_id = "thread-retried"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    input = %{
+      "commandId" => "cmd-retried",
+      "threadId" => thread_id,
+      "projectId" => "project-1",
+      "title" => "Retried",
+      "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+      "runtimeMode" => "full-access",
+      "interactionMode" => "default",
+      "workspaceStrategy" => %{"type" => "root"},
+      "initialMessage" => %{"messageId" => "m1", "text" => "wait for me", "attachments" => []}
+    }
+
+    # Both calls run at once, as when the first is still in the dropped socket's process.
+    [first, second] =
+      [input, input]
+      |> Enum.map(&Task.async(fn -> Orchestration.launch_thread(&1) end))
+      |> Task.await_many()
+
+    assert {:ok, %{"threadId" => ^thread_id}} = first
+    assert {:ok, %{"threadId" => ^thread_id}} = second
+    # And once more after both have answered.
+    assert {:ok, %{"threadId" => ^thread_id, "resumed" => true}} =
+             Orchestration.launch_thread(input)
+
+    state = await_run(thread_id, "running")
+    assert [_] = StreamState.list(state, "run")
+    assert [%{"id" => "m1", "role" => "user"}] = StreamState.list(state, "message")
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    await_run(thread_id, "interrupted")
+  end
+
+  test "a message sent twice with its message id is one message, even while it waits in the queue" do
+    thread_id = launch("wait for me")
+    _ = await_run(thread_id, "running")
+
+    send_queued = fn ->
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "messageId" => "m2",
+        "text" => "next",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+    end
+
+    assert {:ok, %{"sequence" => _}} = send_queued.()
+    assert {:ok, %{"sequence" => _}} = send_queued.()
+    # The first message, already running, is not sent again either.
+    assert {:ok, %{"sequence" => _}} =
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "threadId" => thread_id,
+               "messageId" => "msg-user-1",
+               "text" => "wait for me",
+               "attachments" => []
+             })
+
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    [_, queued] = runs_by_ordinal(state)
+    assert ["msg-user-1", "m2"] = state |> runs_by_ordinal() |> Enum.map(& &1["userMessageId"])
+
+    assert ["m2", "msg-user-1"] =
+             state |> StreamState.list("message") |> Enum.map(& &1["id"]) |> Enum.sort()
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "queued-run.cancel",
+        "threadId" => thread_id,
+        "runId" => queued["id"]
+      })
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    await_run(thread_id, "interrupted")
+  end
+
+  defp runs_by_ordinal(state),
+    do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
   test "feedback goes to Codex for the thread's provider thread" do
     thread_id = launch("list the files")
     _ = await_run(thread_id, "completed")

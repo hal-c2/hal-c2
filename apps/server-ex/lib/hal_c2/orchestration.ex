@@ -1107,6 +1107,9 @@ defmodule HalC2.Orchestration do
            HalC2.Streams.transact(thread_id, :thread, &decide_message(&1, thread_id, command)) do
       :ok = HalC2.WorktreeSetup.start(thread_id, run_id, project, strategy, command["text"])
       {:ok, %{"sequence" => sequence(thread_id)}}
+    else
+      {:ok, :sent} -> {:ok, %{"sequence" => sequence(thread_id)}}
+      refused -> refused
     end
   end
 
@@ -1436,6 +1439,9 @@ defmodule HalC2.Orchestration do
   defp dispatch_message(thread_id, command) do
     decide = fn state ->
       case decide_message(state, thread_id, command) do
+        {[], {:ok, :sent}} = sent ->
+          sent
+
         {changes, {:ok, _} = result} ->
           {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
 
@@ -1445,7 +1451,7 @@ defmodule HalC2.Orchestration do
     end
 
     case HalC2.Streams.transact(thread_id, :thread, decide) do
-      {:ok, :queued} ->
+      {:ok, status} when status in [:queued, :sent] ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:ok, {:steer, run}} ->
@@ -1704,8 +1710,8 @@ defmodule HalC2.Orchestration do
   defp thread_fields("thread.unarchive", _, _, _), do: %{"archivedAt" => nil}
   defp thread_fields("thread.delete", _, _, at), do: %{"deletedAt" => at}
 
-  # Settling is "I'm done with this": it parks the thread and clears its pinned and
-  # active places.
+  # Settling is "I'm done with this": it parks the thread, clears its pinned and active
+  # places and ends its snooze, as the Node server's settle does (thread.unsnoozed).
   # Settling a settled thread again keeps the time it was settled.
   defp thread_fields("thread.settle", command, thread, at) do
     kept =
@@ -1718,7 +1724,9 @@ defmodule HalC2.Orchestration do
       "unsettledAt" => nil,
       "pinnedAt" => nil,
       "pinOrderKey" => nil,
-      "activeOrderKey" => nil
+      "activeOrderKey" => nil,
+      "snoozedUntil" => nil,
+      "snoozedAt" => nil
     }
   end
 
@@ -2315,6 +2323,13 @@ defmodule HalC2.Orchestration do
     cond do
       thread == nil ->
         {[], {:error, "unknown thread #{thread_id}"}}
+
+      # A client retrying a send after a reconnect repeats its message id, possibly
+      # while the first send is still in flight. A message the thread already has
+      # (started, queued, prepared or steered) was sent: nothing more to decide.
+      is_binary(command["messageId"]) and
+          StreamState.get(state, "message")[command["messageId"]] != nil ->
+        {[], {:ok, :sent}}
 
       thread["deletedAt"] != nil ->
         {[], {:error, "Thread #{thread_id} is deleted."}}
