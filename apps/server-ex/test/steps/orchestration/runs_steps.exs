@@ -562,6 +562,19 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the provider's session cannot be opened while {string} starts a turn",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    sessions = HalC2.Plugins.sessions("codex")
+    :sys.replace_state(sessions, &%{&1 | max_children: 0})
+    context = context |> Map.put(:thread, thread) |> World.dispatch_message(thread, "Hi")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_latest_run(context, thread, "failed")
+    # Sessions open again for the next message.
+    :sys.replace_state(sessions, &%{&1 | max_children: :infinity})
+    context
+  end
+
   step "{string} has a running turn and a queued message {string}",
        %{args: [thread, text]} = context do
     context
@@ -1079,4 +1092,5 @@ defmodule HalC2.Steps.Orchestration.Runs do
   defp await_status(context, run_id, status) do
     World.await_state(context, context.thread, &(&1.entities["run"][run_id]["status"] == status))
   end
+
 end
