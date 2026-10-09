@@ -54,4 +54,17 @@ defmodule HalC2.ClusterServerTest do
 
     assert_received {:sent, ^member, {:merge, %{"m1" => %{"fingerprint" => ^fp}}}}
   end
+
+  test "a cluster process that restarts still reports the port distribution listens on" do
+    on_exit(fn -> :persistent_term.erase({HalC2.Cluster.Epmd, :listen_port}) end)
+    # What distribution does as it starts, once per VM: the cluster process does not.
+    {:ok, _} = HalC2.Cluster.Epmd.register_node(:hal_c2, 4999)
+    stop_supervised!(Cluster)
+    start_supervised!(Cluster)
+
+    assert Cluster.status()["addresses"] == ["127.0.0.1:4999"]
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    assert {:ok, %{"port" => 4999}} = Cluster.admit(entry)
+  end
 end
