@@ -389,8 +389,7 @@ Item {
             iconName: "alarm-clock-off"
             objectName: "wakeAction"
             Accessible.name: qsTr("Wake")
-            ToolTip.visible: hovered && !!row.item.wakeDescription
-            ToolTip.text: qsTr("Wakes %1").arg(row.item.wakeDescription ?? "")
+            toolTip: row.item.wakeDescription ? qsTr("Wakes %1").arg(row.item.wakeDescription) : ""
             onClicked: row.unsnoozeRequested()
         }
 
