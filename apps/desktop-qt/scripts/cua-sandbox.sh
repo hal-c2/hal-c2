@@ -35,12 +35,18 @@ pid_of() {
   [[ $(sed 's/.*) //' "/proc/$pid/stat" 2> /dev/null | cut -d' ' -f20) == "$start" ]] && echo "$pid"
 }
 stop_one() {
-  local pid
+  local pid alive
   if pid=$(pid_of "$1"); then
-    # A setsid'd process leads its own group: the MC's mix wrapper leaves beam.smp behind otherwise.
-    kill -- "-$pid" 2> /dev/null || kill "$pid"
+    # A setsid'd process leads its own group: the MC's mix wrapper leaves beam.smp behind
+    # otherwise. Wait for the whole group, since beam.smp holds the MC's port until it exits.
+    if kill -- "-$pid" 2> /dev/null; then
+      alive=(kill -0 -- "-$pid")
+    else
+      kill "$pid"
+      alive=(pid_of "$1")
+    fi
     for _ in $(seq 100); do
-      pid_of "$1" > /dev/null || break
+      "${alive[@]}" > /dev/null 2>&1 || break
       sleep 0.1
     done
   fi
