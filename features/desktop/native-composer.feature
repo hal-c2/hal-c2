@@ -223,6 +223,38 @@ Feature: The desktop shell sends a thread's turns to its MC
       And the user sees no toast
       And the MC launches 1 thread
 
+    @desktop
+    Scenario: A new thread the dropped connection cut off is asked for again under its command id
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC drops the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the MC is asked for the same thread again
+      And the window shows the launched thread in the draft's place
+      And the desktop keeps no unsent prompts
+      And the user sees no toast
+
+    @desktop
+    Scenario: A new thread the MC refuses when asked again gets its prompt back
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC drops the send
+      And the MC refuses "orchestration.launchThread" with "Provider unavailable"
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the MC is asked for the same thread again
+      And the new thread still reads "Set up the linter"
+      And the desktop keeps no unsent prompts
+
   Rule: Slash commands the composer knows act, the rest go to the agent
 
     @desktop

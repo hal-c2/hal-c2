@@ -289,6 +289,10 @@ private:
     // The shell snapshots in when its answer was lost: it is reconciled
     // against a newer one, not rows from before the drop.
     quint64 seen = 0;
+    // A launch whose answer a drop took, as it was sent: asked again under
+    // its command id, which the MC carries out once, if the shell after the
+    // drop has no thread for it. Not kept across a restart.
+    QJsonObject launch;
   };
 
   bool interrupt();
@@ -327,7 +331,9 @@ private:
   void forgetUnsent(const QString& messageId);
   // The connection dropped before the MC answered: the send is kept as one a
   // restart cut off, as the MC may or may not have it.
-  void keepUnanswered(const QString& messageId);
+  void keepUnanswered(const QString& messageId, const QJsonObject& launch = {});
+  // A launch the drop left unanswered and the shell does not show, again.
+  void retryLaunch(const QString& messageId);
   // The kept sends from before a restart whose fate can now be told: a
   // thread's once its stream is live, a launch's once the shell knows
   // whether its thread exists. Sends still on their way take the open

@@ -887,8 +887,8 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                          const QJsonValue& result, const std::optional<QString>& error) {
                        if (unanswered(error)) {
                          // The thread may be there: the draft becomes it if so
-                         // (DraftController::reconcile), else gets its prompt back.
-                         keepUnanswered(messageId);
+                         // (DraftController::reconcile), else it is asked for again.
+                         keepUnanswered(messageId, input);
                          m_launching.remove(draftId);
                          publish();
                          return;
@@ -1039,10 +1039,10 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
   const QString batch = newId();
   const auto settled = [this, progress, batch, draftId, text, attachments, contexts](
                            const QString& model, const QString& threadKey, const QString& messageId,
-                           const std::optional<QString>& error, bool lost) {
+                           const std::optional<QString>& error, bool lost, const QJsonObject& launch) {
     auto* shell = NativeShell::of(this);
     if (lost) {
-      keepUnanswered(messageId);
+      keepUnanswered(messageId, launch);
       ++progress->unanswered;
     } else if (error) {
       forgetUnsent(messageId);
@@ -1098,8 +1098,8 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     m_kept.unsent.append({draftId, threadKey, messageId, std::nullopt, text, attachments, contexts, batch});
     const auto start = [this, environmentId, name, threadKey, messageId, settled](const QJsonObject& launch) {
       m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
-                     [name, threadKey, messageId, settled](const QJsonValue&, const std::optional<QString>& error) {
-                       settled(name, threadKey, messageId, error, unanswered(error));
+                     [name, threadKey, messageId, settled, launch](const QJsonValue&, const std::optional<QString>& error) {
+                       settled(name, threadKey, messageId, error, unanswered(error), launch);
                      });
     };
     if (images.isEmpty()) {
@@ -1113,7 +1113,7 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
                        const QJsonValue& result, const std::optional<QString>& error) mutable {
                      if (error) {
                        // No thread was launched, whatever became of the images.
-                       settled(name, threadKey, messageId, error, false);
+                       settled(name, threadKey, messageId, error, false, {});
                        return;
                      }
                      QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
@@ -1327,13 +1327,46 @@ void ComposerController::forgetUnsent(const QString& messageId) {
   if (m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.messageId == messageId; }) > 0) save();
 }
 
-void ComposerController::keepUnanswered(const QString& messageId) {
+void ComposerController::keepUnanswered(const QString& messageId, const QJsonObject& launch) {
   for (Unsent& unsent : m_kept.unsent) {
     if (unsent.messageId != messageId) continue;
     unsent.kept = true;
     unsent.seen = m_store->snapshots();
+    unsent.launch = launch;
     save();
   }
+}
+
+// The MC may have taken the launch and not made its thread yet: asked again
+// under its command id, it answers once, and only a refusal brings the
+// prompt back (reconcileUnsent).
+void ComposerController::retryLaunch(const QString& messageId) {
+  const auto found = std::find_if(m_kept.unsent.begin(), m_kept.unsent.end(), [&](const Unsent& unsent) { return unsent.messageId == messageId; });
+  if (found == m_kept.unsent.end()) return;
+  const QJsonObject launch = std::exchange(found->launch, {});
+  found->kept = false;
+  const QString environmentId = found->thread.section(QLatin1Char(':'), 0, 0);
+  m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
+                 [this, messageId, launch](const QJsonValue&, const std::optional<QString>& error) {
+                   if (unanswered(error)) {
+                     keepUnanswered(messageId, launch);
+                     return;
+                   }
+                   const auto it = std::find_if(m_kept.unsent.begin(), m_kept.unsent.end(),
+                                                [&](const Unsent& unsent) { return unsent.messageId == messageId; });
+                   if (it == m_kept.unsent.end()) return;
+                   if (error) {
+                     it->kept = true;
+                   } else {
+                     // A thread has the prompt, the draft becomes it (DraftController::reconcile).
+                     const QString batch = it->batch;
+                     m_kept.unsent.removeIf([&](const Unsent& unsent) {
+                       return unsent.messageId == messageId || (!batch.isEmpty() && unsent.batch == batch);
+                     });
+                   }
+                   save();
+                   reconcileUnsent();
+                 });
 }
 
 // The thread's newest user message ahead of the sends still on their way to
@@ -1386,11 +1419,17 @@ void ComposerController::reconcileUnsent() {
     if (unsent.kept) mine.insert(unsent.messageId);
   }
   const QString newest = live ? newestUserMessage(messages, mine) : QString();
-  // The sends to several models that started a thread, or have come back.
+  // The sends to several models that started a thread, or have come back;
+  // and those with a launch still to be answered, which may yet start one.
   QSet<QString> started;
+  QSet<QString> waiting;
   for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
-    if (unsent.kept && !unsent.batch.isEmpty() && m_store->thread(m_store->located(unsent.thread))) started.insert(unsent.batch);
+    if (unsent.batch.isEmpty()) continue;
+    const bool exists = m_store->thread(m_store->located(unsent.thread)).has_value();
+    if (unsent.kept && exists) started.insert(unsent.batch);
+    if (!unsent.kept || (!unsent.launch.isEmpty() && !exists)) waiting.insert(unsent.batch);
   }
+  QStringList retries;
   for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
     // One whose answer a drop took waits for the shell as it is after the drop.
     if (!unsent.kept || m_store->snapshots() <= unsent.seen) continue;
@@ -1399,6 +1438,11 @@ void ComposerController::reconcileUnsent() {
     if (unsent.target != unsent.thread) {
       // A launch: the thread it made, or the draft it came from.
       if (!online(key)) continue;
+      if (!m_store->thread(key) && !unsent.launch.isEmpty()) {
+        retries.append(unsent.messageId);
+        continue;
+      }
+      if (!m_store->thread(key) && waiting.contains(unsent.batch) && !started.contains(unsent.batch)) continue;
       if (!m_store->thread(key) && drafts->draft(unsent.target) && !started.contains(unsent.batch)) into = unsent.target;
       if (!unsent.batch.isEmpty()) started.insert(unsent.batch);
     } else if (online(key) && !m_store->thread(key)) {
@@ -1413,6 +1457,7 @@ void ComposerController::reconcileUnsent() {
     if (!back.contains(into)) targets.append(into);
     back[into].append(unsent);
   }
+  for (const QString& messageId : std::as_const(retries)) retryLaunch(messageId);
   if (settled.isEmpty()) return;
   m_kept.unsent.removeIf([&](const Unsent& unsent) { return settled.contains(unsent.messageId); });
   for (const QString& target : std::as_const(targets)) {
