@@ -895,14 +895,34 @@ defmodule HalC2.Orchestration do
           ],
           Process.whereis(registry) != nil,
           {pid, _} <- Registry.lookup(registry, thread_id),
-          (try do
-             GenServer.call(pid, :release, 15_000) == :busy
-           catch
-             :exit, _ -> false
-           end),
+          release(pid) == :busy,
           do: pid
 
     if kept == [], do: :ok, else: :busy
+  end
+
+  # A runtime replies to its release before it stops: it is gone once this returns,
+  # as it was when the release was a supervisor's stop.
+  defp release(pid) do
+    ref = Process.monitor(pid)
+
+    reply =
+      try do
+        GenServer.call(pid, :release, 15_000)
+      catch
+        :exit, _ -> :gone
+      end
+
+    if reply == :ok do
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      after
+        15_000 -> :ok
+      end
+    end
+
+    Process.demonitor(ref, [:flush])
+    reply
   end
 
   # The stopped session's agent loses its HAL-C2 tools; the next session gets new ones.
