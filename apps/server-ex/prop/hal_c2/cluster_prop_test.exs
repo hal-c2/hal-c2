@@ -9,7 +9,8 @@ defmodule HalC2.ClusterPropTest do
   clock an hour ahead, or older than what is known), connect members, fire the gossip
   timer, change version and restart the process. After each one the cluster must say
   what the model says: in `peers/0` (what discovery tries), `status/0`, the tables it
-  gossips, the certificates it pins and the members it stays connected to.
+  gossips, the certificates it pins and the members it stays connected to; and a copy
+  of its own entry gossiped an hour ahead leaves its own stamped later still.
 
   `HalC2.Cluster.Discovery` runs against an attempt the test holds open, so the test
   decides when each attempt ends and how: one attempt at a time, polls during one
@@ -254,6 +255,15 @@ defmodule HalC2.ClusterPropTest do
       observed?(state, state, seen)
   end
 
+  # A member's copy of this machine's entry, newer than its own, has its own entry
+  # stamped after it, so the copy does not hide what this machine says of itself.
+  def postcondition(state, {:call, _, :gossip, [entries]} = call, {newer, seen}) do
+    copied? = Map.new(entries, &{elem(&1, 0), elem(&1, 1)})[state.own] in [:admitted, :removed]
+
+    (not copied? or seen.own_updated > newer) and
+      observed?(state, next_state(state, newer, call), seen)
+  end
+
   def postcondition(state, call, {result, seen}),
     do: observed?(state, next_state(state, result, call), seen)
 
@@ -335,7 +345,7 @@ defmodule HalC2.ClusterPropTest do
       end)
 
     GenServer.cast(Cluster, {:merge, incoming})
-    observe(:ok)
+    observe(newer)
   end
 
   def nodeup(id) do
@@ -368,8 +378,16 @@ defmodule HalC2.ClusterPropTest do
     fp = GenServer.call(Cluster, :fingerprint)
     pins = for {{:pin, fp}, true} <- :ets.match_object(Cluster, {{:pin, :_}, :_}), do: fp
 
+    own = :sys.get_state(Cluster).members[HalC2.Environment.id()]
+
     {result,
-     %{sent: drain(), pins: MapSet.new(pins), connected: ClusterTransport.connected(), fp: fp}}
+     %{
+       sent: drain(),
+       pins: MapSet.new(pins),
+       connected: ClusterTransport.connected(),
+       fp: fp,
+       own_updated: own["updatedAt"]
+     }}
   end
 
   defp drain do
