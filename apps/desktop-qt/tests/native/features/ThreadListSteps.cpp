@@ -188,11 +188,15 @@ const Steps steps([] {
     world.sync();
     for (const QString& title : {c[0], c[1]}) {
       const QString settledAt = world.mc.threads.value(titleId(title)).value(QLatin1String("settledAt")).toString();
-      for (const QVariant& row : world.state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("settled")).toList()) {
+      const QVariantList settled = world.state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("settled")).toList();
+      bool listed = false;
+      for (const QVariant& row : settled) {
         if (row.toMap().value(QStringLiteral("title")) != title) continue;
+        listed = true;
         expect(row.toMap().value(QStringLiteral("timeAt")) == settledAt,
                QStringLiteral("%1 settled at %2; its row is %3").arg(title, settledAt, show(row)));
       }
+      expect(listed, QStringLiteral("%1 is not among the settled rows %2").arg(title, show(settled)));
     }
   });
   step(QStringLiteral("the user looks at the settled section"), [](World& world, const Captures&, const Table&) {
