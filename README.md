@@ -45,22 +45,19 @@ We have a qml desktop app which allows for customising your app as much as you w
 
 Every client pairs with an MC by a one-time link, locally, over the LAN or Tailscale.
 
-`apps/server` (Node), `apps/web`, `apps/desktop` (Electron) and `apps/mobile` (React Native) are
-upstream's and on their way out. They still build, but new work targets the list above.
-
 ## Running from source
 
 Everything runs through [mise](https://mise.jdx.dev), which pins Erlang, Elixir, Node and Bun
 in [`mise.toml`](./mise.toml). Besides mise you need:
 
-- `vp`, the [Vite+](https://viteplus.dev/guide/) CLI, for the JS workspace:
-  `curl -fsSL https://vite.plus | bash` (Windows: `irm https://vite.plus/ps1 | iex`).
+- `vp`, the [Vite+](https://viteplus.dev/guide/) CLI, which installs the TUI's packages:
+  `curl -fsSL https://vite.plus | bash`.
 - For the desktop and phone app: Qt 6.9+ and cmake from your system package manager. The
   desktop's [README](./apps/desktop-qt/README.md) lists the Qt modules and the optional FFmpeg.
 
 ```sh
 mise install          # Erlang, Elixir, Node and Bun
-mise run install      # vp i, then the MC's Elixir deps
+mise run install      # the TUI's packages and the MC's Elixir deps
 mise run deps:check   # what is installed and what is missing, Qt and cmake included
 ```
 
@@ -137,22 +134,16 @@ mise run features:mobile                 # the phone app's tests
 ```
 
 [docs/operations/development.md](./docs/operations/development.md) has the rest: state and ports,
-driving the desktop headlessly, release builds, and the legacy Node dev server.
+driving the desktop headlessly, and release builds.
 
 ## Documentation
 
-Docs live in [docs/](./docs). There's no docs site yet. Some user guides still describe the
-legacy Node server and web app.
+Docs live in [docs/](./docs). There's no docs site yet.
 
 - [Plugins](./docs/user/plugins.md)
 - [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run HAL-C2 as a background service](./docs/user/background-service.md)
 
 Working on the code? Start at [docs/internals/overview.md](./docs/internals/overview.md) and the
 MC's [README](./apps/server-ex/README.md).
