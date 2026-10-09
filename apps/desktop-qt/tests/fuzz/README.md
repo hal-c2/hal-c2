@@ -82,6 +82,7 @@ Behaviour that depends on the order of calls is a property test's job
    Take the dictionaries from the string literals in the code under test.
    Qt is not instrumented, so the engine cannot learn the words Qt compares
    with.
+
 4. Add seeds that reach deep code: real messages in the shape the MC sends,
    written as JSON. Use `.WithSeeds({{"mod+k"}, ...})` for plain values. For
    JSON, use the lazy form, since `fuzz::steps()` needs Qt:
