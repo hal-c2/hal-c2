@@ -66,6 +66,87 @@ Item {
             verify(!!findChild(composer, "optionToggle:fastMode"));
         }
 
+        function test_aTriggerWithNothingToOfferSaysSo() {
+            const empty = "No skills found. Try / to browse provider commands.";
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                triggerKind: "skill", suggestions: [], suggestionsEmptyText: empty
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root);
+            const label = findChild(composer, "suggestionsEmpty");
+            verify(label.visible);
+            compare(label.text, empty);
+            verify(label.height > 0);
+            // The box around it holds the label, not a sliver.
+            const box = label.parent;
+            verify(box.height >= label.height + 16, "box " + box.height + " label " + label.height);
+            verify(label.y >= 0 && label.y + label.height <= box.height);
+        }
+
+        function test_theBranchPickerSizesToItsBranches() {
+            const branches = n => Array.from({ length: n }, (_, i) => ({ name: "b" + i, current: i === 0, isDefault: false, isRemote: false }));
+            const workspace = n => ({
+                environments: [], activeEnvironmentId: "here", environmentChangeable: false, envMode: "local",
+                envModeLabel: "Local", envModeChangeable: false, git: null, canOpenPullRequest: false,
+                branch: "b0", branchChangeable: true, branchSwitchPending: false, branches: branches(n),
+                branchesTotal: n, branchesLoading: false
+            });
+            let composer = createTemporaryObject(composerComponent, root);
+            const picker = findChild(composer, "branchPicker");
+            Shell.state = Object.assign({}, Shell.state, { workspace: workspace(1) });
+            picker.open();
+            tryCompare(picker, "opened", true);
+            verify(picker.height < 120, "one branch: " + picker.height);
+            Shell.state = Object.assign({}, Shell.state, { workspace: workspace(40) });
+            tryCompare(picker, "height", 368);
+            picker.close();
+        }
+
+        function test_wrappedToolbarLinesDoNotOpenWithABar() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [
+                    { id: "reasoningEffort", label: "Reasoning", type: "select", value: "high", choices: [{ id: "high", label: "High" }] },
+                    { id: "fastMode", label: "Fast Mode", type: "boolean", value: true, choices: [] }
+                ],
+                runtimeModes: [{ value: "full-access", label: "Full access" }], runtimeMode: "full-access",
+                showInteractionModeToggle: true
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 300 });
+            waitForRendering(composer);
+            const flow = findChild(composer, "toolbarControls");
+            verify(!!flow);
+            let lines = new Set();
+            for (let i = 0; i < flow.children.length; ++i) {
+                const chunk = flow.children[i];
+                if (!chunk.visible) continue;
+                lines.add(chunk.y);
+                for (let j = 0; j < chunk.children.length; ++j) {
+                    const bar = chunk.children[j];
+                    if (bar.objectName === "toolbarSeparator" && chunk.x === 0) compare(bar.opacity, 0);
+                    else if (bar.objectName === "toolbarSeparator") compare(bar.opacity, 1);
+                }
+            }
+            verify(lines.size > 1, "the toolbar wrapped");
+            const send = findChild(composer, "primaryAction");
+            const last = Math.max(...Array.from(lines));
+            const lastBottom = flow.mapToItem(composer, 0, last).y + 32;
+            const sendBottom = send.mapToItem(composer, 0, 0).y + send.height;
+            verify(Math.abs(sendBottom - lastBottom) < 16, "Send sits by the last line");
+        }
+
+        function test_fastModeSaysItIsOn() {
+            const state = fast => ({ composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [{ id: "fastMode", label: "Fast Mode", type: "boolean", value: fast, choices: [] }]
+            }), workspace: null });
+            Shell.state = state(true);
+            let composer = createTemporaryObject(composerComponent, root);
+            const toggle = findChild(composer, "optionToggle:fastMode");
+            compare(toggle.iconName, "zap");
+            verify(toggle.Accessible.name.indexOf("Fast Mode, on") >= 0);
+            Shell.state = state(false);
+            compare(toggle.iconName, "");
+            verify(toggle.Accessible.name.indexOf("Fast Mode, off") >= 0);
+        }
+
         function test_submitKeepsDraftUntilPageClearsIt() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");
