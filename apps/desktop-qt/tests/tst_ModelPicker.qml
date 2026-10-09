@@ -115,6 +115,8 @@ Item {
             const picker = findChild(composer, "modelPicker");
             verify(!!picker, "Object exists");
             tryCompare(picker, "enabled", true);
+            // Where the toolbar puts it, as the user sees it before clicking.
+            verify(waitForPolish(picker.parent));
             return picker;
         }
 

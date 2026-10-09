@@ -70,19 +70,33 @@ const FakeMc::Extension config([](FakeMc& mc) {
   });
 });
 
+// A model at three reasoning levels; Opus, as Claude lists it, also offers fast
+// mode and a 200k or 1M context window.
 QJsonObject model(const QString& slug, const QString& name) {
   QJsonArray levels;
   for (const char* level : {"Low", "Medium", "High"}) {
     levels.append(QJsonObject{{QStringLiteral("id"), QString::fromLatin1(level).toLower()}, {QStringLiteral("label"), QString::fromLatin1(level)}});
   }
+  QJsonArray descriptors{QJsonObject{{QStringLiteral("id"), QStringLiteral("reasoningEffort")},
+                                     {QStringLiteral("label"), QStringLiteral("Reasoning")},
+                                     {QStringLiteral("type"), QStringLiteral("select")},
+                                     {QStringLiteral("options"), levels},
+                                     {QStringLiteral("currentValue"), QStringLiteral("low")}}};
+  if (slug == QLatin1String("claude-opus")) {
+    descriptors.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("fastMode")},
+                                   {QStringLiteral("label"), QStringLiteral("Fast Mode")},
+                                   {QStringLiteral("type"), QStringLiteral("boolean")}});
+    descriptors.append(QJsonObject{
+        {QStringLiteral("id"), QStringLiteral("contextWindow")},
+        {QStringLiteral("label"), QStringLiteral("Context Window")},
+        {QStringLiteral("type"), QStringLiteral("select")},
+        {QStringLiteral("options"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("200k")}, {QStringLiteral("label"), QStringLiteral("200k")}},
+                                               QJsonObject{{QStringLiteral("id"), QStringLiteral("1m")}, {QStringLiteral("label"), QStringLiteral("1M")}}}},
+        {QStringLiteral("currentValue"), QStringLiteral("200k")}});
+  }
   return {{QStringLiteral("slug"), slug},
           {QStringLiteral("name"), name},
-          {QStringLiteral("capabilities"),
-           QJsonObject{{QStringLiteral("optionDescriptors"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("reasoningEffort")},
-                                                                                   {QStringLiteral("label"), QStringLiteral("Reasoning")},
-                                                                                   {QStringLiteral("type"), QStringLiteral("select")},
-                                                                                   {QStringLiteral("options"), levels},
-                                                                                   {QStringLiteral("currentValue"), QStringLiteral("low")}}}}}}};
+          {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("optionDescriptors"), descriptors}}}};
 }
 
 QVariantMap composer(World& world) {
@@ -170,6 +184,41 @@ void offerProviders(FakeMc& mc, const QJsonArray& providers) {
 
 namespace {
 
+// Claude offers Sonnet and Opus, and the thread runs on Sonnet: the user picks
+// `name` from the model picker.
+void pickModel(World& world, const QString& name) {
+  using S = QString;
+  offerProviders(world.mc, {QJsonObject{{S("instanceId"), S("claudeAgent")},
+                                        {S("driver"), S("claudeAgent")},
+                                        {S("displayName"), S("Claude")},
+                                        {S("enabled"), true},
+                                        {S("installed"), true},
+                                        {S("status"), S("ready")},
+                                        {S("models"), QJsonArray{model(S("claude-sonnet"), S("Sonnet")), model(S("claude-opus"), S("Opus"))}}}});
+  world.sync();
+  world.waitFor([&] { return world.item(S("modelPicker"))->isEnabled(); }, [&] { return S("the model picker; the composer is %1").arg(show(composer(world))); });
+  const auto [instance, slug] = listedModel(world, name);
+  expect(composer(world).value(S("selectedModel")).toString() != slug, S("the thread already runs on %1").arg(name));
+
+  world.tap(S("modelPicker"));
+  const QString row = S("modelPickerRow:%1:%2").arg(instance, slug);
+  world.waitFor([&] { return world.find(row) != nullptr || world.find(S("modelPickerProvider:") + instance) != nullptr; },
+                [&] { return S("the picker; the screen says: %1").arg(screenTexts(world)); });
+  if (world.find(row) == nullptr) world.tap(S("modelPickerProvider:") + instance);
+  world.tap(row);
+  world.waitFor([&] { return composer(world).value(S("selectedModel")).toString() == slug; },
+                [&] { return S("the composer to choose %1; it is %2").arg(name, show(composer(world))); });
+  // The picker closes as the user sees it, once its fade is done.
+  world.waitFor(
+      [&] {
+        return world.findWhere([](QQuickItem* item) {
+                 const QObject* owner = item->parent() ? item->parent()->parent() : nullptr;
+                 return item->inherits("QQuickPopupItem") && item->isVisible() && owner && owner->objectName() == QLatin1String("modelPicker");
+               }) == nullptr;
+      },
+      S("the model picker to close"));
+}
+
 const Steps steps([] {
   using S = QString;
 
@@ -244,30 +293,10 @@ const Steps steps([] {
                   [&] { return S("the draft; the composer reads: %1").arg(input->property("text").toString()); });
   });
 
-  // Claude offers Sonnet and Opus, each at three reasoning levels, and the
-  // thread runs on Sonnet at low: picking Opus and high changes both.
+  // Each model has three reasoning levels and the thread runs at low: picking
+  // Opus and high changes both.
   step(S("the user picks the model %1 with (low|medium|high) reasoning").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    offerProviders(world.mc, {QJsonObject{{S("instanceId"), S("claudeAgent")},
-                                          {S("driver"), S("claudeAgent")},
-                                          {S("displayName"), S("Claude")},
-                                          {S("enabled"), true},
-                                          {S("installed"), true},
-                                          {S("status"), S("ready")},
-                                          {S("models"), QJsonArray{model(S("claude-sonnet"), S("Sonnet")), model(S("claude-opus"), S("Opus"))}}}});
-    world.sync();
-    world.waitFor([&] { return world.item(S("modelPicker"))->isEnabled(); }, [&] { return S("the model picker; the composer is %1").arg(show(composer(world))); });
-    const auto [instance, slug] = listedModel(world, c[0]);
-    expect(composer(world).value(S("selectedModel")).toString() != slug, S("the thread already runs on %1").arg(c[0]));
-
-    world.tap(S("modelPicker"));
-    const QString row = S("modelPickerRow:%1:%2").arg(instance, slug);
-    world.waitFor([&] { return world.find(row) != nullptr || world.find(S("modelPickerProvider:") + instance) != nullptr; },
-                  [&] { return S("the picker; the screen says: %1").arg(screenTexts(world)); });
-    if (world.find(row) == nullptr) world.tap(S("modelPickerProvider:") + instance);
-    world.tap(row);
-    world.waitFor([&] { return composer(world).value(S("selectedModel")).toString() == slug; },
-                  [&] { return S("the composer to choose %1; it is %2").arg(c[0], show(composer(world))); });
-
+    pickModel(world, c[0]);
     // The level, among the ones the reasoning picker lists once it is open.
     world.tap(S("effortPicker"));
     QQuickItem* level = nullptr;
@@ -305,6 +334,45 @@ const Steps steps([] {
     expect(message.value(QLatin1String("threadId")) == world.thread && selection.value(QLatin1String("instanceId")) == instance &&
                selection.value(QLatin1String("model")) == slug && effort,
            S("the message was %1").arg(show(message.toVariantMap())));
+  });
+
+  // Opus's other options, from the toolbar beside its reasoning picker.
+  step(S("the user picks the model %1 with the 1M context window and fast mode on").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    pickModel(world, c[0]);
+    world.tap(S("optionPicker:contextWindow"));
+    QQuickItem* choice = nullptr;
+    world.waitFor(
+        [&] {
+          choice = world.findWhere([&](QQuickItem* candidate) {
+            const auto* label = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
+            return label && label->property("text").toString() == QLatin1String("1M");
+          });
+          return choice != nullptr;
+        },
+        [&] { return S("the 1M context window to be offered; the screen says: %1").arg(screenTexts(world)); });
+    world.tap(choice);
+    QQuickItem* picker = world.item(S("optionPicker:contextWindow"));
+    world.waitFor([&] { return picker->property("displayText").toString() == QLatin1String("1M"); },
+                  [&] { return S("the composer to show the 1M context window; it shows %1").arg(picker->property("displayText").toString()); });
+
+    world.tap(S("optionToggle:fastMode"));
+    world.waitFor([&] { return world.item(S("optionToggle:fastMode"))->property("checked").toBool(); }, S("fast mode to be on"));
+  });
+
+  step(S("the next message is sent to %1 with the 1M context window and fast mode on").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const auto [instance, slug] = listedModel(world, c[0]);
+    typeMessage(world, S("next turn"));
+    world.tap(S("primaryAction"));
+    world.waitFor([&] { return !commandsOf(world, S("message.dispatch")).isEmpty(); }, [&] { return S("the message; the MC has %1").arg(describeCommands(world)); });
+    const QJsonObject selection = commandsOf(world, S("message.dispatch")).last().value(QLatin1String("modelSelection")).toObject();
+    const QJsonArray options = selection.value(QLatin1String("options")).toArray();
+    const auto has = [&](const char* id, const QJsonValue& value) {
+      return std::any_of(options.begin(), options.end(), [&](const QJsonValue& option) {
+        return option.toObject().value(QLatin1String("id")) == QLatin1String(id) && option.toObject().value(QLatin1String("value")) == value;
+      });
+    };
+    expect(selection.value(QLatin1String("model")) == slug && has("contextWindow", S("1m")) && has("fastMode", true),
+           S("the message runs with %1").arg(show(selection.toVariantMap())));
   });
 });
 
