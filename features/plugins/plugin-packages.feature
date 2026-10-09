@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (the host API a plugin calls, gated by its granted permissions)
 #   docs/user/plugins.md (plugin packages)
 #   plugins/code-review/plugin.json (the first package)
+#   apps/server-ex/lib/mix/tasks/hal_c2.plugins.install.ex (mise run plugins:install)
 
 Feature: Plugin packages
   A plugin package is a directory that can live anywhere: a manifest that says what the
@@ -128,6 +129,13 @@ Feature: Plugin packages
     Given a client watches the plugin list
     When the user enables "code-review" accepting its permissions
     Then the client is told that "code-review" is running
+
+  @mc
+  Scenario: A developer installs a package from a checkout over the copy the MC had
+    Given the plugins directory contains the package "code-review" with a name, description, author, icon and two screenshots
+    When a developer installs "code-review" from the checkout
+    Then "code-review" is listed at the version in the checkout
+    And the MC's copy holds the checkout's files and no others
 
   @mc
   Scenario: The settings a package declares have types and defaults

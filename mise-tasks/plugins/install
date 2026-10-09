@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Install or update this checkout's plugins in the dev MC, and have it load them (mix hal_c2.plugins.install)"
+#MISE dir="{{config_root}}/apps/server-ex"
+#USAGE flag "--release" help="Install into the installed MC (the hal-c2 service) instead of the dev MC"
+#USAGE arg "[ids]..." help="Plugin ids under plugins/ to install instead of all of them"
+set -euo pipefail
+args=()
+if [[ ${usage_release:-false} == true ]]; then
+  args+=(--release)
+fi
+# shellcheck disable=SC2086 # usage joins the ids with spaces
+exec mix hal_c2.plugins.install "${args[@]}" ${usage_ids:-}
