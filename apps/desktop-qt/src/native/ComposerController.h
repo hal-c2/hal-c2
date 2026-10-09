@@ -280,6 +280,9 @@ private:
     QString prompt;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
+    // A send to several models: each model's launch is kept under its id,
+    // and the prompt comes back once, only if none of them started.
+    QString batch;
     // Read back from before a restart, or its answer lost with the
     // connection: waiting to be reconciled.
     bool kept = false;
