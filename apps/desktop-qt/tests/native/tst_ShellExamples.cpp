@@ -821,6 +821,47 @@ private slots:
     bridge.publish("route", QVariant());
   }
 
+  // Scenario Outline: The window controls are on every page
+  // (features/navigation/windows.feature): away from a thread there is no
+  // header, so a band of the window's own holds the corner and drags it.
+  void defaultShellHasTheWindowButtonsOnEveryPage_data() {
+    QTest::addColumn<QVariantMap>("route");
+    QTest::newRow("home") << QVariantMap{{"kind", "home"}};
+    QTest::newRow("pull requests") << QVariantMap{{"kind", "pullRequests"}};
+    QTest::newRow("usage") << QVariantMap{{"kind", "usage"}};
+    QTest::newRow("settings") << QVariantMap{{"kind", "settings"}, {"section", "general"}};
+  }
+  void defaultShellHasTheWindowButtonsOnEveryPage() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    QFETCH(QVariantMap, route);
+    bridge.publish("workspace", QVariant());
+    bridge.publish("route", route);
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* band = findVisualItem(root, "chromeBand");
+    auto* workspace = findVisualItem(root, "workspace");
+    QVERIFY(buttons && band && workspace);
+    QTRY_VERIFY(!workspace->isVisible());
+    QTRY_VERIFY(buttons->isVisible());
+    QTRY_COMPARE(buttons->mapToScene(QPointF(buttons->width(), 0)).x(), 1396.0);
+    // The band is the page's top, reaches the corner, and holds the buttons
+    // clear of the page under it.
+    QTRY_VERIFY(band->isVisible());
+    QCOMPARE(band->mapToScene(QPointF(0, 0)).y(), 0.0);
+    QTRY_COMPARE(band->mapToScene(QPointF(band->width(), 0)).x(), 1400.0);
+    QVERIFY(buttons->y() >= 0 && buttons->y() + buttons->height() <= band->height());
+    // And they work from here.
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+  }
+
   void shellsShowThePendingQuestion_data() {
     QTest::addColumn<QString>("example");
     for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {

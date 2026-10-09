@@ -174,6 +174,28 @@ Item {
                 visible: !panelView.maximized && !layout.pluginTab
                 spacing: 0
 
+                // Away from a thread (home, pull requests, usage, settings)
+                // there is no header: a band in its place, for a frameless
+                // window to be dragged by and for its buttons to lie over.
+                Rectangle {
+                    objectName: "chromeBand"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 36
+                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
+                    color: Theme.palette.color("canvas", "#0f0f12")
+
+                    DragHandler {
+                        target: null
+                        grabPermissions: PointerHandler.CanTakeOverFromAnything
+                        onActiveChanged: if (active)
+                            layout.window.startSystemMove()
+                    }
+
+                    TapHandler {
+                        onDoubleTapped: layout.window.visibility === Window.Maximized ? layout.window.showNormal() : layout.window.showMaximized()
+                    }
+                }
+
                 Workspace {
                     id: workspaceView
                     objectName: "workspace"
@@ -309,7 +331,7 @@ Item {
         buttonHeight: 28
         anchors.right: parent.right
         anchors.rightMargin: 4
-        y: layout.corner === "centre" ? 12 : layout.corner === "details" ? 8 : 4
+        y: layout.corner === "centre" && workspaceView.visible ? 12 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {

@@ -63,6 +63,23 @@ Feature: Windows, zoom and quitting
       Then the window controls have not moved
       And nothing of the right panel is under them
 
+    @desktop
+    Scenario Outline: The window controls are on every page
+      Given the user is on Linux
+      When the user opens <page>
+      Then the window controls are in the window's top right corner
+      And the window can be dragged by the band they are in
+
+      Examples:
+        | page                        |
+        | a thread                    |
+        | the home page               |
+        | Pull requests               |
+        | Usage                       |
+        | Settings                    |
+        | a maximized right panel     |
+        | a plugin's page             |
+
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols
