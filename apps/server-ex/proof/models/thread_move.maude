@@ -1,0 +1,298 @@
+sload model-checker
+
+--- Moving a thread between MCs (HalC2.ThreadMove), through every interleaving of the
+--- cluster's messages, MC crashes, partitions, timeouts and movers that die.
+--- proof/hal_c2/thread_move_proof_test.exs maps it to the code and checks it.
+
+mod THREAD-MOVE is
+  protecting NAT .
+
+  sorts Mc Moving Rec Slot Wait Ans Body Item Conf Sys .
+  subsort Item < Conf .
+
+  ops a b c : -> Mc [ctor] .
+
+  --- What an MC keeps of the thread: nothing, the thread, or a forwarding record,
+  --- `movedTo`. The thread is writable while `still`; a move marks it read-only,
+  --- `mv(move, destination, taking)`.
+  ops nothing fwd : -> Rec [ctor] .
+  op live : Moving -> Rec [ctor] .
+  op still : -> Moving [ctor] .
+  op mv : Nat Mc Bool -> Moving [ctor] .
+
+  --- An MC: whether it runs, its record of the thread, and its settle, which runs one at
+  --- a time: idle, or waiting on a destination's `arrived?/2` for the move as it saw it.
+  op mc : Mc Bool Rec Slot -> Item [ctor] .
+  op idle : -> Slot [ctor] .
+  op asked : Mc Moving -> Slot [ctor] .
+
+  --- The process moving the thread (`move/3`) waits on the destination's `accept/3`,
+  --- which stages the files and then holds the thread's lock while it asks to take it.
+  --- A call that breaks off or times out is `cut`.
+  ops waiting staging held cut : -> Wait [ctor] .
+  op mover : Nat Mc Mc Wait -> Item [ctor] .
+  op accept : Nat Mc Mc Wait -> Item [ctor] .
+
+  op msg : Mc Mc Body -> Item [ctor] .
+  ops acceptReq acceptOk acceptErr takingReq takingOk takingGone : Nat -> Body [ctor] .
+  op arrivedReq : Nat -> Body [ctor] .
+  op arrivedAns : Ans -> Body [ctor] .
+  ops yes no arriving : -> Ans [ctor] .
+
+  --- A broken connection, and what is left to happen: moves, faults, the next move id.
+  --- `got(D, N)`: the move N brought the thread to D, as its record there says for good.
+  op split : Mc Mc -> Item [ctor] .
+  op got : Mc Nat -> Item [ctor] .
+  op moves : Nat -> Item [ctor] .
+  op faults : Nat -> Item [ctor] .
+  op next : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars S D X Y : Mc .
+  vars N K F : Nat .
+  vars T U : Bool .
+  vars R R' : Rec .
+  vars Q Q' : Slot .
+  var M : Moving .
+  var W : Wait .
+  var A : Ans .
+  var B : Body .
+  vars C C' : Conf .
+
+  op _<<_ : Mc Mc -> Bool .
+  eq a << b = true .
+  eq a << c = true .
+  eq b << c = true .
+  eq X << Y = false [owise] .
+
+  --- Whether X and Y are up and reach each other.
+  op linked : Mc Mc Conf -> Bool .
+  eq linked(X, Y, mc(X, true, R, Q) mc(Y, true, R', Q') C) = not split?(X, Y, C) .
+  eq linked(X, Y, C) = false [owise] .
+  op split? : Mc Mc Conf -> Bool .
+  eq split?(X, Y, split(X, Y) C) = true .
+  eq split?(X, Y, split(Y, X) C) = true .
+  eq split?(X, Y, C) = false [owise] .
+
+  --- Whether D holds the thread's lock: an `accept/3` there is asking to take it.
+  op locked : Mc Conf -> Bool .
+  eq locked(D, accept(N, S, D, held) C) = true .
+  eq locked(D, C) = false [owise] .
+
+  --- Whether the move N brought the thread to D.
+  op got? : Mc Nat Conf -> Bool .
+  eq got?(D, N, got(D, N) C) = true .
+  eq got?(D, N, C) = false [owise] .
+
+  --- Whether a call still waits for the answer B from X to Y.
+  op awaited : Mc Mc Body Conf -> Bool .
+  eq awaited(D, S, acceptOk(N), mover(N, S, D, waiting) C) = true .
+  eq awaited(D, S, acceptErr(N), mover(N, S, D, waiting) C) = true .
+  eq awaited(S, D, takingOk(N), accept(N, S, D, held) C) = true .
+  eq awaited(S, D, takingGone(N), accept(N, S, D, held) C) = true .
+  eq awaited(D, S, arrivedAns(A), mc(S, true, R, asked(D, M)) C) = true .
+  eq awaited(X, Y, B, C) = false [owise] .
+  op answer? : Body -> Bool .
+  eq answer?(acceptOk(N)) = true .
+  eq answer?(acceptErr(N)) = true .
+  eq answer?(takingOk(N)) = true .
+  eq answer?(takingGone(N)) = true .
+  eq answer?(arrivedAns(A)) = true .
+  eq answer?(B) = false [owise] .
+
+  --- The connection between X and Y breaks: what was in flight is lost, calls between
+  --- them are cut, and an `accept/3` staging files from the other dies.
+  op sever : Mc Mc Conf -> Conf .
+  eq sever(X, Y, msg(X, Y, B) C) = sever(X, Y, C) .
+  eq sever(X, Y, msg(Y, X, B) C) = sever(X, Y, C) .
+  eq sever(X, Y, mover(N, X, Y, waiting) C) = mover(N, X, Y, cut) sever(X, Y, C) .
+  eq sever(X, Y, mover(N, Y, X, waiting) C) = mover(N, Y, X, cut) sever(X, Y, C) .
+  eq sever(X, Y, accept(N, X, Y, held) C) = accept(N, X, Y, cut) sever(X, Y, C) .
+  eq sever(X, Y, accept(N, Y, X, held) C) = accept(N, Y, X, cut) sever(X, Y, C) .
+  eq sever(X, Y, accept(N, X, Y, staging) C) = sever(X, Y, C) .
+  eq sever(X, Y, accept(N, Y, X, staging) C) = sever(X, Y, C) .
+  eq sever(X, Y, mc(X, T, R, asked(Y, M)) C) = mc(X, T, R, idle) sever(X, Y, C) .
+  eq sever(X, Y, mc(Y, T, R, asked(X, M)) C) = mc(Y, T, R, idle) sever(X, Y, C) .
+  eq sever(X, Y, C) = C [owise] .
+
+  --- An MC that stops loses its processes; its store stays.
+  op down : Mc Conf -> Conf .
+  eq down(X, mover(N, X, Y, W) C) = down(X, C) .
+  eq down(X, accept(N, Y, X, W) C) = down(X, C) .
+  eq down(X, mc(X, T, R, Q) C) = mc(X, false, R, idle) down(X, C) .
+  eq down(X, C) = C [owise] .
+
+  --- source: move/3 ------------------------------------------------------------------
+
+  --- begin/4 marks the thread moving; transfer/6 calls the destination's accept/3.
+  crl [begin] :
+    { mc(S, true, live(still), Q) moves(s K) next(N) C }
+    => { mc(S, true, live(mv(N, D, false)), Q) moves(K) next(s N)
+         mover(N, S, D, waiting) msg(S, D, acceptReq(N)) C }
+    if mc(D, T, R, Q') C' := C /\ linked(S, D, mc(S, true, live(still), Q) C) .
+
+  --- accept/3 returned the thread imported: let_go/4 keeps a forwarding record, if
+  --- the thread is still in this move here.
+  rl [moved] :
+    msg(D, S, acceptOk(N)) mover(N, S, D, waiting) mc(S, true, R, Q)
+    => mc(S, true, gone(N, R), Q) .
+  op gone : Nat Rec -> Rec .
+  eq gone(N, live(mv(N, D, T))) = fwd .
+  eq gone(N, R) = R [owise] .
+
+  --- accept/3 refused: release_own/2 clears this move, not a later one.
+  rl [called-off] :
+    msg(D, S, acceptErr(N)) mover(N, S, D, waiting) mc(S, true, R, Q)
+    => mc(S, true, own(N, R), Q) .
+  op own : Nat Rec -> Rec .
+  eq own(N, live(mv(N, D, T))) = live(still) .
+  eq own(N, R) = R [owise] .
+
+  --- The call broke off: release/2 clears the move as it was begun, not once the
+  --- destination was told it may take it.
+  rl [broke-off] :
+    mover(N, S, D, cut) mc(S, true, R, Q)
+    => mc(S, true, seen(mv(N, D, false), R), Q) .
+  op seen : Moving Rec -> Rec .
+  eq seen(M, live(M)) = live(still) .
+  eq seen(M, R) = R [owise] .
+
+  --- taking/2: the destination may take the thread while it is still in that move.
+  rl [taking] :
+    msg(D, S, takingReq(N)) mc(S, true, live(mv(N, D, T)), Q)
+    => mc(S, true, live(mv(N, D, true)), Q) msg(S, D, takingOk(N)) .
+
+  crl [taking-gone] :
+    msg(D, S, takingReq(N)) mc(S, true, R, Q)
+    => mc(S, true, R, Q) msg(S, D, takingGone(N))
+    if not in?(N, D, R) .
+  op in? : Nat Mc Rec -> Bool .
+  eq in?(N, D, live(mv(N, D, T))) = true .
+  eq in?(N, D, R) = false [owise] .
+
+  --- destination: accept/3 ------------------------------------------------------------
+
+  rl [stage] : msg(S, D, acceptReq(N)) => accept(N, S, D, staging) .
+
+  --- take/5, under the thread's lock.
+  crl [take] :
+    { accept(N, S, D, staging) C } => { accept(N, S, D, held) msg(D, S, takingReq(N)) C }
+    if not locked(D, C) .
+
+  --- import_archive/2; not_here/2 refuses a thread that is here already.
+  rl [import] :
+    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, nothing, Q)
+    => mc(D, true, live(still), Q) got(D, N) msg(D, S, acceptOk(N)) .
+  rl [import] :
+    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, fwd, Q)
+    => mc(D, true, live(still), Q) got(D, N) msg(D, S, acceptOk(N)) .
+
+  --- The import failed: the thread is here already, or its project went away.
+  rl [import-failed] :
+    msg(S, D, takingOk(N)) accept(N, S, D, held) => msg(D, S, acceptErr(N)) .
+
+  rl [refused] :
+    msg(S, D, takingGone(N)) accept(N, S, D, held) => msg(D, S, acceptErr(N)) .
+
+  --- Asking broke off: nothing is imported, and the source hears so if it can.
+  crl [gave-up] :
+    { accept(N, S, D, cut) C } => { msg(D, S, acceptErr(N)) C } if linked(S, D, C) .
+  crl [gave-up] :
+    { accept(N, S, D, cut) C } => { C } if not linked(S, D, C) .
+
+  --- arrived?/2
+  rl [answer] :
+    { msg(S, D, arrivedReq(N)) mc(D, true, R, Q) C }
+    => { msg(D, S, arrivedAns(if locked(D, C) then arriving
+                              else if got?(D, N, C) then yes else no fi fi))
+         mc(D, true, R, Q) C } .
+
+  --- source: settle/1, for a move cut off -------------------------------------------
+
+  crl [settle] :
+    { mc(S, true, live(M), idle) C }
+    => { mc(S, true, live(M), asked(D, M)) msg(S, D, arrivedReq(N)) C }
+    if mv(N, D, T) := M /\ linked(S, D, mc(S, true, live(M), idle) C) .
+
+  rl [let-go] :
+    msg(D, S, arrivedAns(yes)) mc(S, true, R, asked(D, mv(N, D, T)))
+    => mc(S, true, gone(N, R), idle) .
+
+  rl [again] :
+    msg(D, S, arrivedAns(arriving)) mc(S, true, R, asked(D, M)) => mc(S, true, R, idle) .
+
+  rl [release] :
+    msg(D, S, arrivedAns(no)) mc(S, true, R, asked(D, M)) => mc(S, true, seen(M, R), idle) .
+
+  --- environment --------------------------------------------------------------------
+
+  rl [crash] :
+    { mc(X, true, R, Q) faults(s F) C }
+    => { down(X, sever(X, a, sever(X, b, sever(X, c, mc(X, true, R, Q) C)))) faults(F) } .
+
+  rl [restart] : mc(X, false, R, Q) => mc(X, true, R, idle) .
+
+  crl [partition] :
+    { faults(s F) C } => { split(X, Y) sever(X, Y, C) faults(F) }
+    if mc(X, T, R, Q) mc(Y, U, R', Q') C' := C /\ X << Y /\ not split?(X, Y, C) .
+
+  rl [heal] : split(X, Y) => empty .
+
+  rl [time-out] : mover(N, S, D, waiting) faults(s F) => mover(N, S, D, cut) faults(F) .
+  rl [time-out] : accept(N, S, D, held) faults(s F) => accept(N, S, D, cut) faults(F) .
+  --- arrived?/2 changes nothing, so a call given up on may as well not have run.
+  rl [time-out] :
+    { mc(S, true, R, asked(D, M)) faults(s F) C }
+    => { mc(S, true, R, idle) faults(F) forget(S, D, C) } .
+  op forget : Mc Mc Conf -> Conf .
+  eq forget(S, D, msg(S, D, arrivedReq(N)) C) = forget(S, D, C) .
+  eq forget(S, D, msg(D, S, arrivedAns(A)) C) = forget(S, D, C) .
+  eq forget(S, D, C) = C [owise] .
+
+  --- The client that asked for the move went away, and its process with it.
+  rl [mover-died] : mover(N, S, D, W) faults(s F) => faults(F) .
+
+  --- An answer nobody waits for any more.
+  crl [drop] : { msg(X, Y, B) C } => { C } if answer?(B) /\ not awaited(X, Y, B, C) .
+
+  --- states -------------------------------------------------------------------------
+
+  --- The thread on a, with b (and c) in the cluster; K moves and F faults to come.
+  ops two three : Nat Nat -> Sys .
+  eq two(K, F) = { mc(a, true, live(still), idle) mc(b, true, nothing, idle)
+                   moves(K) faults(F) next(1) } .
+  eq three(K, F) = { mc(a, true, live(still), idle) mc(b, true, nothing, idle)
+                     mc(c, true, nothing, idle) moves(K) faults(F) next(1) } .
+
+  --- The thread writable on two MCs; on none; and nothing left to do.
+  ops twice lost settled : Sys -> Bool .
+  eq twice({ mc(X, T, live(still), Q) mc(Y, U, live(still), Q') C }) = true .
+  eq twice({ C }) = false [owise] .
+  eq lost({ mc(X, T, live(M), Q) C }) = false .
+  eq lost({ C }) = true [owise] .
+  eq settled({ mc(X, T, live(mv(N, D, U)), Q) C }) = false .
+  eq settled({ mc(X, T, R, asked(D, M)) C }) = false .
+  eq settled({ msg(X, Y, B) C }) = false .
+  eq settled({ mover(N, S, D, W) C }) = false .
+  eq settled({ accept(N, S, D, W) C }) = false .
+  eq settled({ C }) = true [owise] .
+endm
+
+mod THREAD-MOVE-PROPS is
+  including THREAD-MOVE .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- The move N is under way: its source has the thread marked moving.
+  op moving : Nat -> Prop [ctor] .
+  var N : Nat .
+  vars X D : Mc .
+  vars T U : Bool .
+  var Q : Slot .
+  var C : Conf .
+  eq { mc(X, U, live(mv(N, D, T)), Q) C } |= moving(N) = true .
+  eq { C } |= moving(N) = false [owise] .
+endm
