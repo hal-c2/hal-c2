@@ -133,15 +133,23 @@ Item {
             verify(!update.enabled);
         }
 
-        // "Update available" is said once: the detail already opens with it.
-        function test_an_update_advisory_does_not_repeat_its_title() {
-            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+        // The update command is copied from a button; its path is not printed on the card.
+        function test_an_update_advisory_keeps_the_command_off_the_card() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "/opt/mise/claude update",
                                targetVersion: null, strong: false };
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
-            verify(!findChild(card, "advisoryTitle").visible);
-            compare(findChild(card, "advisory").visible, true);
+            const copy = findChild(card, "copyUpdateCommand");
+            verify(copy.visible);
+            verify(copy.iconOnly);
+            const shown = [];
+            const visit = item => {
+                if (item.visible && typeof item.text === "string") shown.push(item.text);
+                for (const child of item.children) visit(child);
+            };
+            visit(findChild(card, "advisory"));
+            verify(!shown.some(text => text.includes("/opt/mise")), shown.join("|"));
         }
 
         function wizard(overrides) {

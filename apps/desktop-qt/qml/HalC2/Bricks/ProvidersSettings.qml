@@ -645,11 +645,8 @@ Rectangle {
                 visible: card.advisory !== null
                 spacing: 4
 
-                // The detail often opens with the title ("Update available: install …"); say it once.
                 Label {
-                    objectName: "advisoryTitle"
                     Layout.fillWidth: true
-                    visible: !!card.advisory && !card.advisory.detail.startsWith(card.advisory.title)
                     text: card.advisory ? card.advisory.title : ""
                     color: card.advisory && card.advisory.strong ? page.warning : page.foreground
                     font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -673,21 +670,15 @@ Rectangle {
                         onClicked: page.act(install ? "install" : "update", card.provider)
                     }
 
-                    Label {
-                        Layout.fillWidth: true
-                        visible: !!(card.advisory && card.advisory.updateCommand)
-                        text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
-                        color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.family: "monospace"
-                        elide: Text.ElideMiddle
-                    }
-
+                    // The command is a filesystem path on most installs: copy it, show it only on hover.
                     ShellButton {
+                        objectName: "copyUpdateCommand"
                         visible: !!(card.advisory && card.advisory.updateCommand)
                         subtle: true
-                        text: qsTr("Copy")
+                        iconName: "copy"
                         Accessible.name: qsTr("Copy the update command")
+                        ToolTip.visible: hovered
+                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
                         onClicked: page.act("copyUpdateCommand", card.provider)
                     }
                 }

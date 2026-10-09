@@ -176,10 +176,12 @@ QVariant advisory(const QJsonObject& provider) {
     return null();
   }
   const QString latest = versionLabel(text(version.value(QLatin1String("latestVersion"))));
+  // The title already says "Update available"; the detail only adds what to install.
   QString detail = text(version.value(QLatin1String("message")));
+  static const QRegularExpression leadingTitle(QStringLiteral("^Update available[.:]?\\s*"), QRegularExpression::CaseInsensitiveOption);
+  detail.remove(leadingTitle);
   if (detail.isEmpty()) {
-    detail = latest.isEmpty() ? QStringLiteral("Update available: install the latest provider version.")
-                              : QStringLiteral("Update available: install %1.").arg(latest);
+    detail = latest.isEmpty() ? QStringLiteral("Install the latest provider version.") : QStringLiteral("Install %1.").arg(latest);
   }
   return QVariantMap{{QStringLiteral("title"), QStringLiteral("Update available")},
                      {QStringLiteral("detail"), detail},
