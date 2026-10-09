@@ -165,6 +165,71 @@ defmodule HalC2.Git do
     end)
   end
 
+  @doc """
+  Has every git the MC starts (its own, its agents' and its terminals') reach GitHub
+  with the GitHub CLI's sign-in when there is one: GitHub's SSH addresses go over
+  HTTPS, and `gh auth git-credential` answers for them. An MC running as a service
+  has no SSH agent, so a key behind a passphrase never answers there.
+
+  Git includes a file the MC owns and writes again on each call (at boot and after
+  a hot update), so a later sign-in or sign-out reaches git already running too.
+  """
+  def use_gh_for_github do
+    file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
+    tmp = file <> ".tmp"
+
+    # A file that could not be written is left out: git skips a missing include.
+    with :ok <- File.mkdir_p(Path.dirname(file)),
+         :ok <- File.write(tmp, github_config()),
+         do: File.rename(tmp, file)
+
+    # GIT_CONFIG_COUNT entries come after every config file, as `-c` does.
+    count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
+
+    unless Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == file)) do
+      System.put_env(%{
+        "GIT_CONFIG_KEY_#{count}" => "include.path",
+        "GIT_CONFIG_VALUE_#{count}" => file,
+        "GIT_CONFIG_COUNT" => Integer.to_string(count + 1)
+      })
+    end
+
+    :ok
+  end
+
+  defp github_config do
+    with gh when is_binary(gh) <- System.find_executable("gh"),
+         true <- gh_signed_in?() do
+      # Git runs the helper through a shell, which would split a path with a space.
+      helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+
+      """
+      [url "https://github.com/"]
+      \tinsteadOf = git@github.com:
+      \tinsteadOf = ssh://git@github.com/
+      [credential "https://github.com"]
+      \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
+      \thelper =
+      \thelper = "#{String.replace(helper, ~w(\\ "), &("\\" <> &1))}"
+      """
+    else
+      _ -> ""
+    end
+  end
+
+  # Read from gh's hosts file rather than asked of gh, which would open the keyring
+  # holding the token at boot.
+  defp gh_signed_in? do
+    dir =
+      System.get_env("GH_CONFIG_DIR") ||
+        Path.join(System.get_env("XDG_CONFIG_HOME") || Path.expand("~/.config"), "gh")
+
+    case File.read(Path.join(dir, "hosts.yml")) do
+      {:ok, hosts} -> Regex.match?(~r/^github\.com:/m, hosts)
+      {:error, _} -> false
+    end
+  end
+
   defp ref?(root, ref),
     do: match?({:ok, _}, ok(root, ["show-ref", "--verify", "--quiet", ref]))
 

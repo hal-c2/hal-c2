@@ -417,4 +417,95 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     HalC2.Subprocess.stop(context.sub, 1_000)
     context
   end
+
+  # --- GitHub over the GitHub CLI ----------------------------------------------------
+
+  step ~r/^the GitHub CLI on the host is (?<state>signed in to github.com|not signed in)$/,
+       %{args: [state]} = context do
+    # gh in a directory with a space, as under a home or install path that has one.
+    dir = Mc.tmp_dir(context.mc, "gh cli")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/usr/bin/env bash
+    [ "$*" = "auth git-credential get" ] && printf 'username=x-access-token\\npassword=from-gh\\n'
+    """)
+
+    File.chmod!(gh, 0o755)
+    config = Mc.tmp_dir(context.mc, "gh")
+
+    if state == "signed in to github.com",
+      do: File.write!(Path.join(config, "hosts.yml"), "github.com:\n    user: acme\n")
+
+    World.put_os_env("GH_CONFIG_DIR", config)
+    Map.put(context, :gh_config, config)
+  end
+
+  step "the MC sets up the git it starts", context do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  # What it was started with stays in an agent's git; the MC only changes its own.
+  step "an agent's git is already running", context do
+    Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
+  end
+
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
+       %{args: [change]} = context do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+
+    # As an MC that runs as one: a test MC leaves its host alone otherwise.
+    World.put_app_env(:start_mc, true)
+    assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
+    context
+  end
+
+  step ~r/^(?<who>git|the agent's git) fetches "(?<url>[^"]+)" over (?<transport>HTTPS|SSH)$/,
+       %{args: [who, url, transport]} = context do
+    env =
+      if who == "git",
+        do: [],
+        # Variables the MC set after the agent started are not in the agent's.
+        else:
+          for({"GIT_CONFIG_" <> _ = n, _} <- System.get_env(), into: %{}, do: {n, nil})
+          |> Map.merge(Map.new(context.agent_env))
+          |> Map.to_list()
+
+    {fetched, 0} =
+      System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home, env: env)
+
+    expected =
+      if transport == "HTTPS",
+        do: String.replace(url, "git@github.com:", "https://github.com/"),
+        else: url
+
+    assert String.trim(fetched) == expected
+    context
+  end
+
+  step "the GitHub CLI answers git's request for a GitHub credential", context do
+    {answer, 0} =
+      System.cmd(
+        "sh",
+        ["-c", "printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill"],
+        cd: context.mc.home,
+        env: [{"GIT_TERMINAL_PROMPT", "0"}]
+      )
+
+    assert answer =~ "password=from-gh"
+    context
+  end
 end
