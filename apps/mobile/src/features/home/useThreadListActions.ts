@@ -637,34 +637,28 @@ export function useThreadListActions(): {
           );
       let succeeded = false;
       const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
+      const movedKey = scopedThreadKey(thread.environmentId, thread.id);
+      const pins = crossSection && section === "pinned";
+      const moveFailed = (result: { readonly cause: Cause.Cause<unknown> }) => {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not move thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be moved.",
+        );
+      };
       try {
-        if (crossSection) {
-          if (section === "pinned") {
-            const orderKey = assignments.find(
-              ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
-            )?.orderKey;
-            const result = await pinMutation({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
-            });
-            if (result._tag === "Failure") {
-              Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
-              return false;
-            }
-          } else {
-            if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-            if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
-            if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
-          }
+        if (crossSection && !pins) {
+          if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+          if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
+        // The planner sends the moved row last, so a pin goes after the rest
+        // of the section and a failure before it leaves that section in its
+        // current order.
         for (const assignment of assignments) {
-          if (
-            crossSection &&
-            section === "pinned" &&
-            thread.pinnedAt == null &&
-            assignment.id === scopedThreadKey(thread.environmentId, thread.id)
-          )
-            continue;
+          if (pins && assignment.id === movedKey) continue;
           if (pending !== null && !pending.isPending()) return false;
           const target = shellByKey.get(assignment.id);
           if (target === undefined) continue;
@@ -673,15 +667,31 @@ export function useThreadListActions(): {
             input: { threadId: target.id, orderKey: assignment.orderKey },
           });
           if (result._tag === "Failure") {
-            const error = Cause.squash(result.cause);
-            Alert.alert(
-              "Could not move thread",
-              error instanceof Error && error.message.trim().length > 0
-                ? error.message
-                : "The thread could not be moved.",
-            );
+            moveFailed(result);
             // Keep confirmed keys when a later environment rejects its write.
             return false;
+          }
+        }
+        if (pins) {
+          const orderKey = assignments.find(({ id }) => id === movedKey)?.orderKey;
+          const result = await pinMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
+          });
+          if (result._tag === "Failure") {
+            Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
+            return false;
+          }
+          // An already pinned thread keeps its key on a re-pin: write it.
+          if (thread.pinnedAt != null && orderKey !== undefined) {
+            const written = await reorder({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, orderKey },
+            });
+            if (written._tag === "Failure") {
+              moveFailed(written);
+              return false;
+            }
           }
         }
         succeeded = true;
