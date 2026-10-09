@@ -115,6 +115,16 @@ defmodule HalC2.AuthTest do
     assert_received {:hal_c2_session_revoked, ^id}
   end
 
+  # A ticket request reads its session, then inserts the ticket; a revoke between the
+  # two must not leave a ticket for the revoked session.
+  test "a ticket requested just before its session was revoked is refused", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, session} = HalC2.Auth.session(access)
+
+    assert HalC2.Auth.revoke_client(session.id)
+    assert :error = HalC2.Auth.issue_ticket(session)
+  end
+
   defp assert_exchange_fails(path, token) do
     {:ok, db} = Sqlite3.open(path)
 
