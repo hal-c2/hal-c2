@@ -101,6 +101,19 @@ private slots:
     QCOMPARE(expansion.count(), 1);
   }
 
+  // excerpt returned early on first <= 0 before swapping a reversed range, so
+  // lines 1 to 0 read as line 1 while 0 to 1 read as nothing.
+  void anExcerptReadsTheSameEitherWayRound() {
+    DiffModel model;
+    model.setPatch(QStringLiteral("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n same\n-old\n+new\n"));
+    QCOMPARE(model.excerpt(0, QStringLiteral("new"), 3, 1), model.excerpt(0, QStringLiteral("new"), 1, 3));
+    QVERIFY(!model.excerpt(0, QStringLiteral("new"), 1, 3).isEmpty());
+    QCOMPARE(model.excerpt(0, QStringLiteral("new"), 1, 0), model.excerpt(0, QStringLiteral("new"), 0, 1));
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), 1, 0).isEmpty());
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), -2, 2).isEmpty());
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), 2, -2).isEmpty());
+  }
+
   // The latest turn's file summary came after its checkpoint was ready, and
   // turnsChanged stayed quiet: the right panel never opened the diff of a
   // turn that changed many files.

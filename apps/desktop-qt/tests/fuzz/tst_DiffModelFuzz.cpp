@@ -6,6 +6,7 @@
 #include "Fuzz.h"
 #include "DiffModel.h"
 
+#include <algorithm>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -91,11 +92,11 @@ void PatchReads(const std::string& text, bool split, int file, const std::string
   }
   ASSERT_LE(treeFiles, model.fileCount());
 
-  // An excerpt of a range reads the same reversed (first > last is swapped),
-  // and a file out of range or a first line of zero or less reads as nothing.
+  // An excerpt of a range reads the same reversed, and a file out of range or
+  // a range that starts at line zero or less reads as nothing.
   const QVariantMap excerpt = model.excerpt(file, which, first, last);
   checkExcerpt(excerpt, which);
-  if (file < 0 || file >= model.fileCount() || first <= 0) {
+  if (file < 0 || file >= model.fileCount() || std::min(first, last) <= 0) {
     ASSERT_TRUE(excerpt.isEmpty());
   } else {
     ASSERT_TRUE(model.excerpt(file, which, last, first) == excerpt);
