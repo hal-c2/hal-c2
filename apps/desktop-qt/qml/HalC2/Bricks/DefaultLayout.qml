@@ -21,6 +21,15 @@ Item {
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive
+    // A frameless window's buttons (WindowControls), drawn once in the
+    // window's corner so they stay there whatever is open; macOS draws its own.
+    readonly property bool windowButtons: framesWindow && Theme.frameless && Qt.platform.os !== "osx"
+    // What the corner lies over, which keeps `windowButtonsInset` of its
+    // right end clear: the tabs, the right panel's tab strip, the thread
+    // details' header, or the thread's header.
+    readonly property string corner: tabsView.visible ? "tabs" : panelView.visible && panelView.open ? "panel" : detailsView.visible ? "details" : "centre"
+    readonly property real windowButtonsInset: windowButtons ? windowButtonsView.width + 2 * windowButtonsView.anchors.rightMargin : 0
+
     // The window has no room for the thread list beside the thread
     // (LayoutController): shown, the list lies over the thread instead.
     readonly property bool sidebarOverlay: Shell.state.layout?.sidebarOverlay === true
@@ -54,10 +63,13 @@ Item {
         spacing: 0
 
         ShellTabs {
+            id: tabsView
             objectName: "shellTabs"
             Layout.fillWidth: true
             visible: pages.length > 0 && !layout.window.settingsActive
             window: layout.framesWindow ? layout.window : null
+            windowControls: false
+            trailingInset: layout.windowButtonsInset
         }
 
         RowLayout {
@@ -172,6 +184,8 @@ Item {
                     panelToggle: panelView.available ? panelView.open : null
                     detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
                     window: layout.framesWindow ? layout.window : null
+                    windowControls: false
+                    trailingInset: layout.corner === "centre" ? layout.windowButtonsInset : 0
                 }
 
                 Loader {
@@ -231,7 +245,9 @@ Item {
 
             // The thread details column (threadPanel.toggle), beside the thread.
             ThreadDetailsPanel {
+                id: detailsView
                 Layout.fillHeight: true
+                trailingInset: layout.corner === "details" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 details: Shell.state.panel?.details ?? null
                 visible: details !== null && !panelView.maximized && !layout.pluginTab
@@ -244,6 +260,7 @@ Item {
                 Layout.fillWidth: maximized
                 ownToggle: false
                 canMaximize: true
+                trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
                 maximumWidth: layout.window.width - (navigation.visible ? navigation.width : 0) - minimumWidth
@@ -280,6 +297,19 @@ Item {
             onClicked: Shell.dispatch("sidebar.toggle")
             onWheel: wheel => wheel.accepted = true
         }
+    }
+
+    // In the window's corner, level with the buttons of the band under it.
+    WindowControls {
+        id: windowButtonsView
+        objectName: "windowButtons"
+        visible: layout.windowButtons
+        window: layout.window
+        buttonWidth: 32
+        buttonHeight: 28
+        anchors.right: parent.right
+        anchors.rightMargin: 4
+        y: layout.corner === "centre" ? 12 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {

@@ -36,6 +36,11 @@ Rectangle {
     // carries the window buttons.
     property Window window: null
     readonly property bool framelessChrome: window !== null && Theme.frameless
+    // Whether the strip carries the window buttons. A layout that draws them
+    // once, in the window's corner, turns this off and says with
+    // `trailingInset` how much of the strip's right end they cover.
+    property bool windowControls: true
+    property real trailingInset: 0
     // Narrow strips (a wide right panel) drop the pill labels.
     readonly property bool compact: width < 720
 
@@ -78,7 +83,7 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: strip.sidebarToggle === true ? 52 : 20
-        anchors.rightMargin: 20
+        anchors.rightMargin: Math.max(20, strip.trailingInset)
         spacing: 12
 
         // Breadcrumb: project / title.
@@ -394,6 +399,7 @@ Rectangle {
         }
 
         ShellButton {
+            objectName: "panelToggle"
             visible: strip.panelToggle !== null
             subtle: true
             implicitHeight: 28
@@ -407,7 +413,7 @@ Rectangle {
 
         WindowControls {
             objectName: "windowControls"
-            visible: strip.framelessChrome && Qt.platform.os !== "osx"
+            visible: strip.framelessChrome && strip.windowControls && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32
             buttonHeight: 28

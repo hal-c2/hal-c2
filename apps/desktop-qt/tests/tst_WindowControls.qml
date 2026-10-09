@@ -182,7 +182,31 @@ Item {
             verify(right > window.header.width - 40, "controls end at " + right);
         }
 
-        // Scenario: macOS controls show their symbols only on hover (features/navigation/windows.feature)
+        // A layout that draws the window's buttons itself (DefaultLayout): the
+        // header has none, and keeps the corner they are in clear.
+        function test_headerLeavesTheCornerToTheLayout() {
+            Theme.frameless = true;
+            Shell.state = {
+                workspace: {
+                    projectTitle: "Project",
+                    threadTitle: "Thread",
+                    isDraft: false,
+                    renameRequestId: 0,
+                    scripts: [],
+                    editors: []
+                }
+            };
+            const window = createTemporaryObject(headerComponent, null);
+            window.header.windowControls = false;
+            window.header.trailingInset = 104;
+            window.header.panelToggle = false;
+            verify(waitForRendering(window.contentItem));
+            verify(!findChild(window.header, "windowControls").visible);
+            const toggle = findChild(window.header, "panelToggle");
+            verify(toggle.visible);
+            tryVerify(() => Math.round(toggle.mapToItem(window.header, toggle.width, 0).x) === window.header.width - 104);
+        }
+
         function test_trafficLightsShowSymbolsOnHover() {
             const window = shown();
             window.controls.trafficLights = true;

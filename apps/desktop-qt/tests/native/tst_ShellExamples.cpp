@@ -739,6 +739,88 @@ private slots:
     bridge.publish("layout", initialState.value("layout"));
   }
 
+  // Scenario: The window controls stay in the window's corner
+  // (features/navigation/windows.feature): one set of buttons, the layout's,
+  // which the right panel, the thread details and the tabs leave where it is,
+  // and which whatever lies under the corner keeps clear of.
+  void defaultShellKeepsTheWindowButtonsInTheCorner() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    QVERIFY(theme->frameless());
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* workspace = findVisualItem(root, "workspace");
+    QVERIFY(buttons && workspace);
+    QTRY_VERIFY(buttons->isVisible());
+    // The header no longer carries a set of its own.
+    QVERIFY(!findVisualItem(workspace, "windowControls")->isVisible());
+    const auto left = [&] { return buttons->mapToScene(QPointF(0, 0)).x(); };
+    const auto rightOf = [&](const char* name) {
+      auto* item = findVisualItem(root, name);
+      return item && item->isVisible() ? item->mapToScene(QPointF(item->width(), 0)).x() : -1.0;
+    };
+    QTRY_COMPARE(left() + buttons->width(), 1396.0);
+    const qreal corner = left();
+    auto panel = QJsonDocument::fromJson(R"({
+      "isOpen": false, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap();
+    const auto show = [&](bool open, bool details, bool maximized) {
+      panel["isOpen"] = open;
+      panel["maximized"] = maximized;
+      panel["detailsOpen"] = details;
+      panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
+      bridge.publish("panel", panel);
+    };
+    // Under the corner: the thread's header, whose buttons end before it.
+    show(false, false, false);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") > 0);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") <= corner);
+    QCOMPARE(left(), corner);
+    // The thread details' header.
+    show(false, true, false);
+    QTRY_VERIFY(rightOf("threadDetailsClose") > 0);
+    QTRY_VERIFY(rightOf("threadDetailsClose") <= corner);
+    QCOMPARE(left(), corner);
+    // The right panel's tab strip, with the details beside it or closed.
+    show(true, true, false);
+    QTRY_VERIFY(rightOf("panelAdd") > 0);
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    QVERIFY(buttons->y() + buttons->height() <= 36);
+    show(true, false, false);
+    QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    // A panel filling the window still has them.
+    show(true, false, true);
+    QTRY_VERIFY(!workspace->isVisible());
+    QVERIFY(buttons->isVisible());
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    // The tabs of a plugin's page.
+    show(false, false, false);
+    bridge.publish("mcPlugins", QVariantMap{{"pages", QVariantList{QVariantMap{{"key", "board"}, {"title", "Board"}}}}});
+    auto* tabs = findVisualItem(root, "shellTabs");
+    QVERIFY(tabs);
+    QTRY_VERIFY(tabs->isVisible());
+    QCOMPARE(left(), corner);
+    QTRY_VERIFY(buttons->y() + buttons->height() <= tabs->height());
+    // The header under the tabs has its whole width again.
+    QTRY_VERIFY(rightOf("threadDetailsToggle") > corner);
+    // And they are the window's: nothing over the corner takes their clicks.
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(corner) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("mcPlugins", QVariant());
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+  }
+
   void shellsShowThePendingQuestion_data() {
     QTest::addColumn<QString>("example");
     for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {

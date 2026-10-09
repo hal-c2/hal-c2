@@ -35,6 +35,8 @@ Rectangle {
     // the toggle in the header strip (Workspace.panelToggle) turns this off,
     // and the closed panel then takes no width.
     property bool ownToggle: true
+    // How much of the tab strip's right end the layout's window buttons cover.
+    property real trailingInset: 0
 
     // Snaps by default: a width animation relays out the thread on every
     // frame. With Panel animations set, a toggle slides for that long
@@ -195,6 +197,7 @@ Rectangle {
                 subtle: true
 
                 anchors.right: parent.right
+                anchors.rightMargin: panel.trailingInset
                 anchors.top: parent.top
                 width: 36
                 height: 36
