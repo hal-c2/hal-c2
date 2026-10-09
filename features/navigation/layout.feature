@@ -84,6 +84,18 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
+    # The web's off-canvas sidebar (AppSidebarLayout.tsx): showing it over the thread is not
+    # remembered, so a window with room again has the sidebar it had.
+    @desktop
+    Scenario: A window too narrow for the sidebar and the thread shows the sidebar over the thread
+      Given the sidebar is shown
+      When the window becomes too narrow for the sidebar beside the thread
+      Then the sidebar is hidden
+      When the user asks to show the sidebar
+      Then the sidebar opens over the thread at its minimum width
+      When the window becomes wide again
+      Then the sidebar is back beside the thread
+
     @desktop
     Scenario: Resetting the sidebar width
       Given the user resized the sidebar

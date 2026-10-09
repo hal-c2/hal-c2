@@ -102,15 +102,32 @@ const Steps steps([] {
     expect(width(world) == LayoutController::kSidebarMinWidth, show(world.state(QStringLiteral("layout"))));
   });
   step(QStringLiteral("the window becomes narrower than the sidebar allows"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 640}});
+    world.bridge().dispatch(QStringLiteral("sidebar.resize"), QVariantMap{{QStringLiteral("width"), 340}});
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 780}});
   });
   step(QStringLiteral("the sidebar shrinks to fit"), [width](World& world, const Captures&, const Table&) {
     // The thread keeps its room; the list gets what is left.
-    expect(width(world) == 640 - LayoutController::kContentMinWidth && width(world) < LayoutController::kSidebarMinWidth,
-           show(world.state(QStringLiteral("layout"))));
+    expect(width(world) == 780 - LayoutController::kContentMinWidth, show(world.state(QStringLiteral("layout"))));
     // And is its own width again in a window with room.
     world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 1280}});
-    expect(width(world) == LayoutController::kSidebarMinWidth, show(world.state(QStringLiteral("layout"))));
+    expect(width(world) == 340, show(world.state(QStringLiteral("layout"))));
+  });
+  // A window with no room for the list at its minimum beside the thread: the
+  // layout then draws the list over the thread (tst_ShellWindow).
+  const auto overlay = [](World& world) { return world.state(QStringLiteral("layout")).toMap().value(QStringLiteral("sidebarOverlay")).toBool(); };
+  step(QStringLiteral("the window becomes too narrow for the sidebar beside the thread"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 640}});
+  });
+  step(QStringLiteral("the sidebar opens over the thread at its minimum width"), [width, overlay](World& world, const Captures&, const Table&) {
+    expect(overlay(world) && !collapsed(world) && width(world) == LayoutController::kSidebarMinWidth,
+           show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the window becomes wide again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 1280}});
+  });
+  step(QStringLiteral("the sidebar is back beside the thread"), [overlay](World& world, const Captures&, const Table&) {
+    expect(!overlay(world), show(world.state(QStringLiteral("layout"))));
+    expectCollapsed(world, false);
   });
   step(QStringLiteral("the user resets the sidebar width"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("sidebar.resize"), {});

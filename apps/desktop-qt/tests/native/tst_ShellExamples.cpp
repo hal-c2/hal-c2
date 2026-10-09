@@ -671,6 +671,74 @@ private slots:
     QVERIFY(!settingsNav->isVisible());
   }
 
+  // The built-in layout in a window this size, with no shell of the user's.
+  QQuickWindow* defaultShell(int width, int height) {
+    QFile::remove(directory.filePath("shell.qml"));
+    runtime->reload();
+    if (runtime->usingUserShell() || !runtime->lastError().isEmpty()) return nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    auto* window = engine ? qobject_cast<QQuickWindow*>(engine->rootObjects().last()) : nullptr;
+    if (!window) return nullptr;
+    window->resize(width, height);
+    return QTest::qWaitForWindowExposed(window) ? window : nullptr;
+  }
+
+  // Scenario: A window too narrow for the sidebar and the thread shows the
+  // sidebar over the thread (features/navigation/layout.feature): at the
+  // smallest window the list is its minimum wide with its content inside it,
+  // the thread keeps the window under it, and a click beside the list, an
+  // Escape, or going somewhere puts it away.
+  void defaultShellShowsTheThreadListOverTheThread() {
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", true}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto* window = defaultShell(640, 400);
+    QVERIFY(window);
+    auto* sidebar = findVisualItem(window->contentItem(), "threadSidebar");
+    auto* workspace = findVisualItem(window->contentItem(), "workspace");
+    auto* scrim = findVisualItem(window->contentItem(), "sidebarScrim");
+    QVERIFY(sidebar && workspace && scrim);
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(sidebar->width(), 208.0);
+    QTRY_COMPARE(workspace->width(), 640.0);
+    QCOMPARE(workspace->mapToScene(QPointF(0, 0)).x(), 0.0);
+    for (auto* child : sidebar->childItems()) {
+      if (child->isVisible() && child->width() > 0) QVERIFY2(child->x() >= 0, qPrintable(QString::number(child->x())));
+    }
+    QVERIFY(scrim->isVisible());
+    QCOMPARE(scrim->mapToScene(QPointF(0, 0)).x(), 208.0);
+
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    const auto toggles = [&] {
+      int count = 0;
+      for (const auto& call : actions) count += call.first().toString() == "sidebar.toggle";
+      return count;
+    };
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(420, 200));
+    QTRY_COMPARE(toggles(), 1);
+    sidebar->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_COMPARE(toggles(), 2);
+    // A new title is the same place; another thread is not.
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Renamed"}});
+    QCOMPARE(toggles(), 2);
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-2"}, {"title", "Other"}});
+    QTRY_COMPARE(toggles(), 3);
+
+    // With room again the list is beside the thread, and nothing covers it.
+    window->resize(1000, 600);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", false}});
+    QTRY_COMPARE(workspace->width(), 792.0);
+    QCOMPARE(workspace->mapToScene(QPointF(0, 0)).x(), 208.0);
+    QVERIFY(!scrim->isVisible());
+    // Dragged to its minimum, its content is laid out that wide.
+    for (auto* child : sidebar->childItems()) {
+      if (child->isVisible() && child->width() > 0) QVERIFY2(child->x() >= 0, qPrintable(QString::number(child->x())));
+    }
+    bridge.publish("route", QVariant());
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
   void shellsShowThePendingQuestion_data() {
     QTest::addColumn<QString>("example");
     for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {

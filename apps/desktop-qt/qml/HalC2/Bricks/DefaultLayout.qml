@@ -21,6 +21,22 @@ Item {
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive
+    // The window has no room for the thread list beside the thread
+    // (LayoutController): shown, the list lies over the thread instead.
+    readonly property bool sidebarOverlay: Shell.state.layout?.sidebarOverlay === true
+    // Where the window is, less what changes while it stays there (the title).
+    readonly property string place: [window.route?.kind, window.route?.threadKey, window.route?.draftId, window.route?.section].join("|")
+
+    // Going somewhere from a list over the thread puts the list away, and so
+    // does an Escape nothing inside wanted.
+    onPlaceChanged: if (sidebarOverlay && !window.sidebarCollapsed)
+        Shell.dispatch("sidebar.toggle")
+    Keys.onEscapePressed: event => {
+        if (sidebarOverlay && navigation.visible)
+            Shell.dispatch("sidebar.toggle");
+        else
+            event.accepted = false;
+    }
 
     // Local QML extensions can customize one brick without copying the layout.
     property alias sidebar: sidebarView
@@ -56,6 +72,9 @@ Item {
                 Layout.preferredWidth: columns === 2 ? sidebarView.shownWidth + sidebarExtension.implicitWidth : sidebarExtension.active ? Math.max(300, sidebarView.shownWidth) : sidebarView.shownWidth
                 Layout.maximumWidth: Layout.preferredWidth
                 Layout.minimumWidth: 0
+                // Over the thread, it takes no room from it.
+                Layout.rightMargin: layout.sidebarOverlay ? -Layout.preferredWidth : 0
+                z: layout.sidebarOverlay ? 2 : 0
                 columns: sidebarExtension.active && layout.window.width >= 1100 ? 2 : 1
                 rowSpacing: 0
                 columnSpacing: 0
@@ -241,6 +260,25 @@ Item {
             Layout.leftMargin: 12
             Layout.topMargin: 4
             Layout.bottomMargin: 4
+        }
+    }
+
+    // Beside a thread list shown over the thread: a click there puts the list
+    // away, as the web's off-canvas sidebar does.
+    Rectangle {
+        objectName: "sidebarScrim"
+        visible: layout.sidebarOverlay && navigation.visible
+        x: navigation.width
+        y: navigation.parent.y
+        width: parent.width - x
+        height: navigation.height
+        color: Theme.palette.color("scrim", "#52000000")
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onClicked: Shell.dispatch("sidebar.toggle")
+            onWheel: wheel => wheel.accepted = true
         }
     }
 

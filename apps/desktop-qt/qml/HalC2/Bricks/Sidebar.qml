@@ -83,6 +83,8 @@ Rectangle {
     Component.onCompleted: syncRows()
 
     implicitWidth: 256
+    // The narrowest a layout shows it (LayoutController's kSidebarMinWidth).
+    readonly property int minimumWidth: 208
     color: Theme.palette.color("sidebar", "#0a0a0a")
     // Content keeps its width while the shell animates ours.
     clip: true
@@ -165,7 +167,7 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: Math.min(0, sidebar.width - sidebar.implicitWidth)
+        anchors.leftMargin: Math.min(0, sidebar.width - sidebar.minimumWidth)
         spacing: 0
 
         // Brand band: sidebar toggle and wordmark.
