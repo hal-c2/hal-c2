@@ -21,6 +21,13 @@ if port = present.("HAL_C2_MC_PORT"), do: config(:hal_c2, port: String.to_intege
 if host = present.("HAL_C2_MC_HOST") || present.("HAL_C2_HOST"),
   do: config(:hal_c2, host: host)
 
+# A scratch MC on a copy of real data, whose projects are real checkouts, does nothing nobody
+# asked for: no restart continuations or requeued runs (`HalC2.Orchestration.Recovery`), no
+# limit resumes (`HalC2.Orchestration.LimitRecovery`), no boot pulls (`HalC2.Projects`), no
+# background fetches (`HalC2.Vcs.Watch`), no scheduled runs (`HalC2.ScheduledTasks`).
+if System.get_env("HAL_C2_MC_NO_AUTO_ACTIONS") in ~w(1 true),
+  do: config(:hal_c2, auto_actions: false)
+
 # Local trace file and the collector client spans are forwarded to (`HalC2.Traces`).
 if System.get_env("HAL_C2_TRACE") in ~w(1 true), do: config(:hal_c2, trace: true)
 if url = System.get_env("HAL_C2_OTLP_TRACES_URL"), do: config(:hal_c2, otlp_traces_url: url)

@@ -141,7 +141,8 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Asks each thread whose turn the restart cut off to continue, when its project's
   `continueThreadsAfterServerUpdate` is on and nothing newer was sent, as the Node
-  server does. Runs once the MC can start turns.
+  server does. Runs once the MC can start turns; an MC without automatic actions
+  (`HAL_C2_MC_NO_AUTO_ACTIONS`) only ends the tasks of interrupted children.
   """
   def continue do
     runs = :persistent_term.get({__MODULE__, :continuable}, [])
@@ -152,17 +153,19 @@ defmodule HalC2.Orchestration.Recovery do
     background = :persistent_term.get({__MODULE__, :background}, [])
     :persistent_term.erase({__MODULE__, :background})
 
-    for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
+    if Application.get_env(:hal_c2, :auto_actions, true) do
+      for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
 
-    for {thread_id, run} <- runs,
-        continue?(thread_id, run),
-        do: continuation(thread_id, run, "Continue where you left off.")
+      for {thread_id, run} <- runs,
+          continue?(thread_id, run),
+          do: continuation(thread_id, run, "Continue where you left off.")
 
-    # A thread whose turn had finished hears which of its background commands the
-    # restart ended, so its agent can start them again rather than wait on them.
-    for {thread_id, run, commands} <- background,
-        continue?(thread_id, run),
-        do: continuation(thread_id, run, background_text(commands))
+      # A thread whose turn had finished hears which of its background commands the
+      # restart ended, so its agent can start them again rather than wait on them.
+      for {thread_id, run, commands} <- background,
+          continue?(thread_id, run),
+          do: continuation(thread_id, run, background_text(commands))
+    end
 
     # A child this boot interrupted and nothing continued will not report: its task ends.
     delegating = :persistent_term.get({__MODULE__, :delegating}, [])

@@ -902,6 +902,22 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  step "the MC runs without automatic actions", context do
+    Application.put_env(:hal_c2, :auto_actions, false)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :auto_actions) end)
+    context
+  end
+
+  step "nothing is sent to {string}", %{args: [thread]} = context do
+    assert context.resumed == []
+
+    runs =
+      context |> World.thread_id(thread) |> HalC2.Streams.state() |> HalC2.StreamState.list("run")
+
+    assert length(runs) == 1
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   # The continuation messages a recovery sweep at `at` sends to the thread.

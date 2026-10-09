@@ -13,6 +13,7 @@
 #     thread/backgroundTerminals/terminate, background command continuation)
 #   apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
+#   apps/server-ex/config/runtime.exs (HAL_C2_MC_NO_AUTO_ACTIONS)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
 #   apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts (limit recovery at the reset time)
@@ -280,3 +281,12 @@ Feature: Recovering from restarts and releasing idle sessions
     And "t1" records a limit recovery with auto-resume for that run and reset
     When 14:00 passes
     Then the engine continues "t1" once, without a new message from the user
+
+  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  @mc
+  Scenario: An MC without automatic actions resumes nothing at the reset time
+    Given the MC runs without automatic actions
+    And the latest run of "t1" failed on a usage limit that resets at 14:00
+    And "t1" records a limit recovery with auto-resume for that run and reset
+    When 14:00 passes
+    Then nothing is sent to "t1"

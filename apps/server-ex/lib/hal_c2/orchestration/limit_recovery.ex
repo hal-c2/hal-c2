@@ -46,7 +46,8 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   @doc """
   Arms and resumes every limited thread on this MC as of `now_ms` (the clock by
-  default); returns the commands dispatched.
+  default); returns the commands dispatched. An MC without automatic actions
+  (`HAL_C2_MC_NO_AUTO_ACTIONS`) dispatches none.
   """
   def sweep(now_ms \\ System.system_time(:millisecond)) do
     settings = HalC2.Settings.settings()
@@ -54,6 +55,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
     snooze = settings["snoozeLimitedThreads"] == true
 
     for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+        Application.get_env(:hal_c2, :auto_actions, true),
         mc == node(),
         row["lastErrorClass"] == "usage_limit" or row["limitRecovery"] != nil,
         # Rows trail their streams; decide on the thread as it is now.

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ux <command> ...: drive the desktop:cua sandbox for an audit. bootstrap.sh copies this into
+# $UX_AUDIT_DIR with the checkout filled in; run `ux help` for the commands.
+@ROOT@
+set -euo pipefail
+dir="${UX_AUDIT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+home="${HAL_C2_CUA_HOME:-$root/.hal-c2/cua}"
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+[[ -d $runtime ]] || runtime=/tmp
+run="$runtime/hal-c2-cua-$(printf %s "$home" | cksum | cut -d' ' -f1)"
+
+die() { echo "ux: $*" >&2; exit 1; }
+call() { (cd "$root" && mise run -q desktop:cua:call "$@"); }
+json_str() { python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"; }
+start_time() { sed 's/.*) //' "/proc/$1/stat" | cut -d' ' -f20; }
+
+# The element list: index, role, label, value and click centre in screenshot pixels.
+elements() {
+  python3 - "$1" "${2:-}" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); flt = sys.argv[2].lower()
+print(f"{d.get('window_title')} window={d['window_bounds']['width']}x{d['window_bounds']['height']} shot={d['screenshot_width']}x{d['screenshot_height']} elements={d.get('element_count')} truncated={d.get('truncated')}")
+for e in d["elements"]:
+    f = e.get("screenshot_frame") or {}
+    at = (f["x"] + f["w"] // 2, f["y"] + f["h"] // 2) if f else None
+    line = f"[{e['element_index']}] {e.get('role')} {e.get('label') or ''!r} value={e.get('value', '')!r} at={at}{'' if e.get('enabled', True) else ' DISABLED'}"
+    if not flt or flt in line.lower():
+        print(line)
+PY
+}
+
+shot() {
+  local name=${1:?usage: ux shot <name> [filter]}
+  mkdir -p "$dir/shots"
+  call get_window_state "{\"screenshot_out_file\":\"$dir/shots/$name.png\"}" > "$dir/shots/$name.json"
+  elements "$dir/shots/$name.json" "${2:-}"
+}
+
+click_name() {
+  local label=${1:?usage: ux click-name <label> [nth]} nth=${2:-1} xy x y
+  shot _click-name > /dev/null
+  xy=$(python3 - "$dir/shots/_click-name.json" "$label" "$nth" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+hits = [e for e in d["elements"] if (e.get("label") or "") == sys.argv[2] and e.get("screenshot_frame")]
+n = int(sys.argv[3])
+if len(hits) < n:
+    sys.exit(f"ux: {len(hits)} elements labelled {sys.argv[2]!r}")
+f = hits[n - 1]["screenshot_frame"]
+print(f["x"] + f["w"] // 2, f["y"] + f["h"] // 2)
+PY
+  )
+  read -r x y <<< "$xy"
+  call click "{\"x\":$x,\"y\":$y}"
+}
+
+size() {
+  local w=${1:?usage: ux size <width> <height>} h=${2:?} sock pid
+  sock=$(compgen -G "$run/sway-ipc.*.sock" | head -1) || die "the sandbox's sway is not running"
+  read -r pid _ < "$home/app.pid" || die "the app is not running"
+  SWAYSOCK=$sock swaymsg "[pid=$pid] floating enable, resize set width $w px height $h px, move position 0 0" > /dev/null
+  echo "resized to ${w}x${h}; shoot before clicking, and expect the first click after floating to be swallowed"
+}
+
+mc_pid() {
+  local port pid
+  port=$(< "$home/mc.port")
+  pid=$(ss -H -ltnp "sport = :$port" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2) || true
+  [[ -n $pid ]] || return 1
+  # Only the sandbox's own MC: its home is this sandbox's.
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -qx "HAL_C2_MC_HOME=$home/mc" || die "port $port belongs to pid $pid, which is not this sandbox's MC"
+  echo "$pid"
+}
+mc_stop() {
+  local pid
+  pid=$(mc_pid) || die "the sandbox's MC is not listening"
+  kill "$pid"
+  for _ in $(seq 100); do [[ -d /proc/$pid ]] || break; sleep 0.1; done
+  echo "stopped the MC (pid $pid); the app keeps running"
+}
+mc_start() {
+  local port pid
+  port=$(< "$home/mc.port")
+  ! mc_pid > /dev/null 2>&1 || die "the MC is already running"
+  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 exec setsid mise exec -- mix hal_c2.server >> "$home/mc.log" 2>&1) &
+  pid=$!
+  echo "$pid $(start_time "$pid")" > "$home/mc.pid"
+  for _ in $(seq 600); do mc_pid > /dev/null 2>&1 && { echo "the MC is back on port $port"; return; }; sleep 0.5; done
+  die "the MC did not come back; see $home/mc.log"
+}
+
+cov() {
+  local area=${1:?usage: ux cov <area> <size> <appearance> <shot> | ux cov <area> --skip <reason>}
+  if [[ ${2:-} == --skip ]]; then
+    python3 -c 'import json,sys;print(json.dumps({"area":sys.argv[1],"skipped":sys.argv[2]}))' "$area" "${3:?reason}"
+  else
+    python3 -c 'import json,sys;print(json.dumps({"area":sys.argv[1],"size":sys.argv[2],"appearance":sys.argv[3],"shot":sys.argv[4]}))' "$area" "${2:?}" "${3:?}" "${4:?}"
+  fi >> "$dir/coverage.jsonl"
+}
+
+sheet() {
+  local out=${1:?usage: ux sheet <out> <shot>...}
+  shift
+  command -v montage > /dev/null || die "needs ImageMagick's montage"
+  (cd "$dir/shots" && montage "${@/%/.png}" -tile 3x -geometry 800x500+8+8 -title "$out" "$out.png")
+  echo "$dir/shots/$out.png"
+}
+
+case ${1:-help} in
+  shot) shift && shot "$@" ;;
+  click) call click "{\"x\":${2:?x},\"y\":${3:?y}${4:+,\"count\":$4}}" ;;
+  click-name) shift && click_name "$@" ;;
+  key) shift && keys=$(printf '%s\n' "$@" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().split()))') && call hotkey "{\"keys\":$keys}" ;;
+  type) call type_text "{\"text\":$(json_str "${2:?text}")}" ;;
+  scroll) call scroll "{\"x\":${2:?x},\"y\":${3:?y},\"direction\":\"${4:-down}\",\"amount\":${5:-3}}" ;;
+  size) shift && size "$@" ;;
+  mc-stop) mc_stop ;;
+  mc-start) mc_start ;;
+  cov) shift && cov "$@" ;;
+  sheet) shift && sheet "$@" ;;
+  census) python3 "$dir/census.py" "$home/mc/data/hal-c2.sqlite" ;;
+  ledger) python3 "$dir/ledger.py" "$root/features" "${2:-}" ;;
+  guide) python3 "$guide" "${2:?usage: ux guide <outcome>}" --domain ux ;;
+  logs) tail -n "${2:-40}" "$home/app.log" "$home/mc.log" ;;
+  help | *)
+    cat << 'HELP'
+ux shot <name> [filter]     screenshot to shots/<name>.png, tree to <name>.json, print the elements (filtered)
+ux click <x> <y> [count]    click at screenshot pixels of the last shot
+ux click-name <label> [n]   shoot, then click the nth element with exactly that accessible label
+ux key <key>...             a chord: ux key ctrl k, ux key ctrl shift '[' (punctuation as the character)
+ux type <text>              type into the focused control
+ux scroll <x> <y> [up|down] [amount]
+ux size <w> <h>             float the window in the sandbox's sway and resize it
+ux mc-stop | ux mc-start    stop or restart only the scratch MC, to watch the app degrade and recover
+ux cov <area> <size> <appearance> <shot> | ux cov <area> --skip <reason>
+ux sheet <out> <shot>...    contact sheet of shots for side-by-side comparison
+ux census                   the seeded threads worth visiting, grouped by what makes them unusual
+ux ledger [path filter]     @desktop scenarios as claimed / backlog / dropped with file:line
+ux guide <outcome>          the ui-ux-pro-max guidelines for an outcome, to argue a severity against
+ux logs [n]                 tail the app's and the MC's logs
+HELP
+    ;;
+esac

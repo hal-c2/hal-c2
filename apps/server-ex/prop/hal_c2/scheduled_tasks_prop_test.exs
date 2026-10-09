@@ -10,7 +10,9 @@ defmodule HalC2.ScheduledTasksPropTest do
   fixed time is the next wall-clock slot on a permitted weekday; a due task fires once
   per tick however late the tick; a fixed-time run missed by ten minutes or more moves
   to its next slot instead of firing; a run asked for by hand neither shifts nor doubles
-  the schedule; paused and deleted tasks never fire; a task that fails or whose run
+  the schedule; paused and deleted tasks never fire; an MC without automatic actions
+  (`HAL_C2_MC_NO_AUTO_ACTIONS`) only aims a due task afresh, and still runs one asked
+  for by hand; a task that fails or whose run
   crashes is recorded and the scheduler lives on; everything survives a restart, and a
   restart that slept through due times fires them once.
 
@@ -50,6 +52,7 @@ defmodule HalC2.ScheduledTasksPropTest do
 
   defp setup do
     HalC2.Prop.scratch_home("scheduled-tasks")
+    Application.delete_env(:hal_c2, :auto_actions)
     :persistent_term.put(@clock, DateTime.to_unix(@start, :millisecond))
 
     Application.put_env(:hal_c2, :scheduled_tasks_clock, fn ->
@@ -77,12 +80,14 @@ defmodule HalC2.ScheduledTasksPropTest do
     :persistent_term.erase(@clock)
     Application.delete_env(:hal_c2, :scheduled_tasks_clock)
     Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+    Application.delete_env(:hal_c2, :auto_actions)
   end
 
   # --- model ------------------------------------------------------------------
 
   # tasks: id => %{schedule, enabled, next (ms or nil), prompt, status, count}.
   # offset: the machine's wall clock minus UTC, which does not change in June.
+  # auto: whether the MC takes automatic actions.
   def initial_state do
     start = DateTime.to_unix(@start, :millisecond)
 
@@ -91,7 +96,7 @@ defmodule HalC2.ScheduledTasksPropTest do
 
     local = :calendar.datetime_to_gregorian_seconds({{y, mo, d}, {h, mi, s}})
     utc = :calendar.datetime_to_gregorian_seconds({{2026, 6, 1}, {0, 0, 0}})
-    %{now: start, offset: (local - utc) * 1000, tasks: %{}}
+    %{now: start, offset: (local - utc) * 1000, tasks: %{}, auto: true}
   end
 
   def command(state) do
@@ -107,6 +112,7 @@ defmodule HalC2.ScheduledTasksPropTest do
         {3, {:call, __MODULE__, :run_now, [ids]}},
         {8, {:call, __MODULE__, :advance, [delta(state)]}},
         {2, {:call, __MODULE__, :restart_after, [oneof([0, 5_000, 1_800_000, 7_200_000])]}},
+        {2, {:call, __MODULE__, :set_auto, [boolean()]}},
         {1, {:call, __MODULE__, :list, []}}
       ] ++
         if(known == [],
@@ -203,17 +209,21 @@ defmodule HalC2.ScheduledTasksPropTest do
     state
   end
 
+  def next_state(state, _result, {:call, _, :set_auto, [auto]}), do: %{state | auto: auto}
+
   def next_state(state, _result, _call), do: state
 
   # Every enabled task that is due at `now` runs once, and is aimed afresh, however
-  # long overdue; a fixed time that is ten minutes or more overdue is only re-aimed.
+  # long overdue; a fixed time that is ten minutes or more overdue is only re-aimed,
+  # and so is every due task on an MC without automatic actions.
   defp tick(state) do
     Enum.reduce(Enum.sort(state.tasks), {state, []}, fn {id, task}, {state, fired} ->
       cond do
         not task.enabled or task.next == nil or task.next > state.now ->
           {state, fired}
 
-        match?({:fixed, _, _}, task.schedule) and state.now - task.next >= @grace ->
+        not state.auto or
+            (match?({:fixed, _, _}, task.schedule) and state.now - task.next >= @grace) ->
           {put_in(state.tasks[id].next, next_run(state, task.schedule, state.now)), fired}
 
         true ->
@@ -413,6 +423,17 @@ defmodule HalC2.ScheduledTasksPropTest do
     flush()
     {:ok, %{"tasks" => tasks}} = ScheduledTasks.list()
     {:ok, view_of(tasks), []}
+  end
+
+  # What HAL_C2_MC_NO_AUTO_ACTIONS sets when the MC starts.
+  def set_auto(auto) do
+    flush()
+    Application.put_env(:hal_c2, :auto_actions, auto)
+
+    {:ok, tasks} =
+      ScheduledTasks.list() |> then(fn {:ok, %{"tasks" => t}} -> {:ok, view_of(t)} end)
+
+    {:ok, tasks, []}
   end
 
   # The clock moves and the service ticks; every run it starts has been reported and

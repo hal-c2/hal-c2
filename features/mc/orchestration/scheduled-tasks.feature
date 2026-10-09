@@ -4,6 +4,7 @@
 #     scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, watchers)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task,
 #     update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
+#   apps/server-ex/config/runtime.exs (HAL_C2_MC_NO_AUTO_ACTIONS)
 #   apps/server/src/scheduledTasks/ScheduledTaskService.ts, Schedule.ts and their tests
 #   packages/contracts/src/scheduledTask.ts, rpc.ts (scheduledTasks.subscribe)
 #   V2 commands issued: message.dispatch (queue_after_active, scheduledTaskId), and a
@@ -161,6 +162,20 @@ Feature: Scheduled tasks
     Given task "a" runs every hour and was due while the MC was asleep
     When the MC checks its schedule
     Then task "a" runs
+
+  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  @mc
+  Scenario: An MC without automatic actions skips a due run
+    Given the MC runs without automatic actions
+    And task "a" runs every hour and was due while the MC was asleep
+    When the MC checks its schedule
+    Then task "a" does not run and is next due in an hour
+
+  @mc
+  Scenario: An MC without automatic actions still runs a task now
+    Given the MC runs without automatic actions
+    When a client runs task "a" now
+    Then the answer is task "a" after the run, with its outcome
 
   @mc
   Scenario: The schedule is checked at least once a minute

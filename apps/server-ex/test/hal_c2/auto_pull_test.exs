@@ -71,4 +71,19 @@ defmodule HalC2.AutoPullTest do
     :ok = HalC2.Projects.auto_pull()
     assert head_message(repo) == "second"
   end
+
+  test "an MC without automatic actions pulls nothing at boot", %{repo: repo} do
+    Application.put_env(:hal_c2, :auto_actions, false)
+    on_exit(fn -> Application.delete_env(:hal_c2, :auto_actions) end)
+    {_, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{"projectSettingsOverrides" => %{"p1" => %{"defaultAutoPull" => true}}},
+        version
+      )
+
+    :ok = HalC2.Projects.auto_pull()
+    assert head_message(repo) == "first"
+  end
 end
