@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "../ShellBridge.h"
+#include "CommandPaletteController.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -134,6 +135,9 @@ void KeybindingController::activate() {
     refreshShortcuts();
   });
   m_terminalOpen = terminals->isOpen();
+  // The palette is not modal: while it is open the thread's keys wait.
+  connect(shell->controller<CommandPaletteController>(), &CommandPaletteController::openChanged, this,
+          &KeybindingController::refreshShortcuts);
   // Conditions on the route and the running turn (draftThreadRoute, turnRunning).
   connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
     if (key == QLatin1String("turn") || key == QLatin1String("route") || key == QLatin1String("panel") ||
@@ -334,8 +338,13 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
       previewOpen = panel->isOpen() && panel->activeTab() == QLatin1String("previews");
     }
   }
+  bool paletteOpen = false;
+  if (auto* shell = NativeShell::of(this)) {
+    if (auto* palette = shell->controller<CommandPaletteController>()) paletteOpen = palette->isOpen();
+  }
   return {
       {QStringLiteral("previewOpen"), previewOpen},
+      {QStringLiteral("commandPaletteOpen"), paletteOpen},
       {QStringLiteral("modelPickerOpen"), m_modelPickerOpen},
       // The composer holds text the user has not sent.
       {QStringLiteral("composerDraft"),
