@@ -363,6 +363,13 @@ const Steps steps([] {
   step(QStringLiteral("the user opens #(\\d+) from the pull requests page"), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("pullRequestList.open"), QVariantMap{{QStringLiteral("key"), rowKey(world, c[0].toInt())}});
   });
+  // The dialog that starts a thread on it, rather than a line that reflows the list.
+  step(QStringLiteral("the user is offered to start a thread on #(\\d+)"), [](World& world, const Captures& c, const Table&) {
+    const QString url = QStringLiteral("https://github.com/acme/api/pull/") + c[0];
+    const auto offered = [&] { return at(world.state(QStringLiteral("pullRequestThread")).toMap(), QStringLiteral("reference")) == url; };
+    world.waitFor(offered, [&] { return QStringLiteral("the dialog to be on %1; it is %2").arg(url, show(world.state(QStringLiteral("pullRequestThread")))); });
+    expect(at(page(world), QStringLiteral("notice")).isNull(), QStringLiteral("the page shows a notice: %1").arg(show(page(world))));
+  });
   step(QStringLiteral("the user opens #(\\d+) on GitHub from the pull requests page"), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("pullRequestList.openOnHost"), QVariantMap{{QStringLiteral("key"), rowKey(world, c[0].toInt())}});
   });

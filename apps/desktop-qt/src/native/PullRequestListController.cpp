@@ -283,7 +283,7 @@ QVariantMap PullRequestListController::row(const QString& key) const {
   return {};
 }
 
-// The thread working on the pull request opens; with none, the page says so.
+// The thread working on the pull request opens; with none, the dialog offers to start one.
 void PullRequestListController::open(const QString& key) {
   const QVariantMap entry = row(key);
   if (entry.isEmpty()) return;
@@ -296,11 +296,12 @@ void PullRequestListController::open(const QString& key) {
   if (!entry.value(QStringLiteral("host")).toString().isEmpty()) {
     reference.insert(QStringLiteral("host"), entry.value(QStringLiteral("host")).toString());
   }
-  const QString number = QStringLiteral("#%1").arg(entry.value(QStringLiteral("number")).toInt());
+  const QString projectId = entry.value(QStringLiteral("projectId")).toString();
+  const QString url = entry.value(QStringLiteral("url")).toString();
   m_notice.clear();
   publish();
   m_client->call(this, environmentId, QStringLiteral("pullRequests.linkedThreads"), reference,
-                 [this, key, environmentId, number](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, key, environmentId, projectId, url](const QJsonValue& result, const std::optional<QString>& error) {
                    if (!m_open) return;
                    if (error) {
                      m_notice = {{QStringLiteral("key"), key}, {QStringLiteral("kind"), QStringLiteral("error")},
@@ -321,9 +322,11 @@ void PullRequestListController::open(const QString& key) {
                      }
                    }
                    if (threadId.isEmpty()) {
-                     m_notice = {{QStringLiteral("key"), key}, {QStringLiteral("kind"), QStringLiteral("info")},
-                                 {QStringLiteral("text"), QStringLiteral("No thread works on %1 yet.").arg(number)}};
-                     publish();
+                     // The dialog resolves it and offers a thread on it, or its checkout.
+                     m_bridge->dispatch(QStringLiteral("pullRequestThread.open"),
+                                        QVariantMap{{QStringLiteral("reference"), url},
+                                                    {QStringLiteral("environmentId"), environmentId},
+                                                    {QStringLiteral("projectId"), projectId}});
                      return;
                    }
                    NativeShell::of(this)->controller<NavigationController>()->open(
