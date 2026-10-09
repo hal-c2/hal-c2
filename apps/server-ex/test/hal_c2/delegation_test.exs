@@ -285,4 +285,17 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert woken?()
     end
   end
+
+  describe "a parent with no runtime or interaction mode" do
+    test "starts its task instead of looping" do
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{"modelSelection" => %{"instanceId" => "codex", "model" => "m"}}),
+          run("pr", 1, "running", %{"providerInstanceId" => "codex"})
+        ])
+
+      assert {:ok, %{"taskId" => _}} =
+               Delegation.delegate(%{"id" => "p"}, "codex", %{"task" => "look"})
+    end
+  end
 end
