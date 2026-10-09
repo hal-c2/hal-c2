@@ -71,6 +71,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   step "the task, its node and its turn item are {string}", %{args: [status]} = context do
+    assert_status(context, status)
+  end
+
+  # The task's own status and its node's and timeline item's agree.
+  defp assert_status(context, status) do
     state = World.state(context, context.task_parent)
     assert task(context)["status"] == status
     assert StreamState.get(state, "node")[context.task_id]["status"] == status
@@ -79,6 +84,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
              status
 
     context
+  end
+
+  step "the task, its node and its turn item end {string}", %{args: [status]} = context do
+    await_task(context, &(&1["status"] == status))
+    assert_status(context, status)
   end
 
   step "the turn of {string} ended", %{args: [thread]} = context do
