@@ -348,15 +348,20 @@ void eachTask(const QString& markdown, const std::function<void(qsizetype, bool)
 }
 
 // One CSV record's cells: commas (or tabs) apart, quotes around a cell that
-// holds one, a doubled quote for a quote.
-QList<QStringList> csvRows(const QString& text, QChar separator, int limit) {
+// holds one, a doubled quote for a quote. A row keeps its first
+// WorkspaceFiles::csvColumnLimit cells; `clipped` says one had more.
+QList<QStringList> csvRows(const QString& text, QChar separator, int limit, bool& clipped) {
   QList<QStringList> rows;
   QStringList row;
   QString cell;
   bool quoted = false;
-  const auto endRow = [&] {
-    row.append(cell);
+  const auto endCell = [&] {
+    if (row.size() < WorkspaceFiles::csvColumnLimit) row.append(cell);
+    else clipped = true;
     cell.clear();
+  };
+  const auto endRow = [&] {
+    endCell();
     if (row.size() > 1 || !row.first().isEmpty()) rows.append(row);
     row.clear();
   };
@@ -374,8 +379,7 @@ QList<QStringList> csvRows(const QString& text, QChar separator, int limit) {
     } else if (c == u'"' && cell.isEmpty()) {
       quoted = true;
     } else if (c == separator) {
-      row.append(cell);
-      cell.clear();
+      endCell();
     } else if (c == u'\n') {
       endRow();
     } else if (c != u'\r') {
@@ -387,7 +391,8 @@ QList<QStringList> csvRows(const QString& text, QChar separator, int limit) {
 }
 
 QString markdownTable(const QString& text, QChar separator) {
-  const QList<QStringList> rows = csvRows(text, separator, WorkspaceFiles::csvRowLimit + 1);
+  bool clipped = false;
+  const QList<QStringList> rows = csvRows(text, separator, WorkspaceFiles::csvRowLimit + 1, clipped);
   if (rows.isEmpty()) return {};
   int columns = 0;
   for (const QStringList& row : rows) columns = std::max(columns, int(row.size()));
@@ -403,6 +408,7 @@ QString markdownTable(const QString& text, QChar separator) {
   QString table = line(rows.first()) + QStringLiteral("|") + QStringLiteral(" --- |").repeated(columns) + u'\n';
   for (qsizetype row = 1; row < rows.size() && row <= WorkspaceFiles::csvRowLimit; ++row) table += line(rows.at(row));
   if (rows.size() > WorkspaceFiles::csvRowLimit) table += QStringLiteral("\nShowing the first %1 rows.\n").arg(WorkspaceFiles::csvRowLimit);
+  if (clipped) table += QStringLiteral("\nShowing the first %1 columns.\n").arg(WorkspaceFiles::csvColumnLimit);
   return table;
 }
 

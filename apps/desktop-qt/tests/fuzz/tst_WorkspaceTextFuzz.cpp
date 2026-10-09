@@ -4,8 +4,9 @@
 // file is read as the user reads it: a fake MC holds the file the input wrote,
 // the tab opens it and the rendered view and toggle are what is checked. The
 // file's text is any bytes, as the MC reads them; a CSV table has at most
-// csvRowLimit rows (plus its header), and a toggle changes at most one
-// character, a task's box, and only in a Markdown file.
+// csvRowLimit rows (plus its header) of at most csvColumnLimit cells, and so
+// at most what the input holds plus that grid of padding, and a toggle changes
+// at most one character, a task's box, and only in a Markdown file.
 
 #include "Fuzz.h"
 #include "FakeFiles.h"
@@ -92,6 +93,10 @@ void RenderedFileHoldsUp(const std::string& text, std::uint8_t kind, int index, 
     }
     // The header and the separator, then at most csvRowLimit rows.
     EXPECT_LE(tableLines, WorkspaceFiles::csvRowLimit + 2) << "rendered " << tableLines << " table lines";
+    // Padding costs a few characters a cell; a cell the input holds is at most
+    // its own length, escaped (twice), and every other character is padding.
+    const qsizetype grid = qsizetype(WorkspaceFiles::csvRowLimit + 2) * WorkspaceFiles::csvColumnLimit * 8;
+    EXPECT_LE(rendered.size(), contents.size() * 2 + grid + 200) << "rendered " << rendered.size() << " characters of " << contents.size();
   }
 
   const QString before = files.text();
@@ -124,6 +129,11 @@ FUZZ_TEST(WorkspaceFiles, RenderedFileHoldsUp)
       std::string wide(1000, ',');
       wide += '\n';
       for (int row = 0; row < 50; ++row) wide += "a\n";
+      // The header alone: every row is padded to its width.
+      std::string header(20000, ',');
+      header += "\n" + std::string(5000, 'a') + "\n";
+      std::string tabs(20000, '\t');
+      tabs += "\n" + std::string(5000, 'a') + "\n";
       return std::vector<std::tuple<std::string, std::uint8_t, int, bool>>{
           {"name,qty\n\"a, b\",1\nc,\"2\"\"x\"\"\"\n", 1, 0, false},
           {"a\tb\n\"x\ny\"\tz\n", 2, 0, true},
@@ -133,6 +143,8 @@ FUZZ_TEST(WorkspaceFiles, RenderedFileHoldsUp)
           {"> - [ ] quoted\n\t* [ ] nested\r\n1) [x] done\n", 5, 0, false},
           {"- [ ] \xe2\x98\x90\n[ ] no list\n", 0, -1, false},
           {wide, 1, 0, false},
+          {header, 1, 0, false},
+          {tabs, 2, 0, false},
       };
     });
 

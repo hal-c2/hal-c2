@@ -4,6 +4,7 @@
 
 #include <QJsonArray>
 
+#include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "WorkspaceFiles.h"
@@ -109,6 +110,31 @@ private slots:
     QVERIFY(held.answer(1, QStringLiteral("top")));
     files.setQuery({});
     QCOMPARE(files.tree()->visiblePaths(), QStringList{QStringLiteral("top")});
+  }
+
+  // A CSV's table is padded to its widest row, so one header of half a
+  // million commas made every row that wide: 1.5 GB of table from a 500 KB
+  // file. The table keeps the web's first 30 columns, and says so.
+  void aWideCsvShowsItsFirstColumns() {
+    FakeMc mc;
+    McClient client;
+    client.setRetryDelays({20});
+    client.open(mc.origin(), QStringLiteral("token"));
+    QVERIFY(QTest::qWaitFor([&client] { return client.isReady(); }));
+    QString wide = QString(100000, u',') + u'\n';
+    for (int row = 0; row < 40; ++row) wide += QStringLiteral("a,b\n");
+    fakeFiles(mc).files.insert(QStringLiteral("wide.csv"), wide);
+
+    WorkspaceFiles files(&client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    files.openFile(QStringLiteral("wide.csv"));
+    QVERIFY(QTest::qWaitFor([&files] { return files.fileStatus() == QLatin1String("ready"); }));
+
+    const QString table = files.renderedText();
+    QCOMPARE(files.renderKind(), QStringLiteral("csv"));
+    QVERIFY2(table.size() < 10000, qPrintable(QStringLiteral("table of %1 characters").arg(table.size())));
+    QCOMPARE(table.section(u'\n', 0, 0).count(u'|'), WorkspaceFiles::csvColumnLimit + 1);
+    QVERIFY(table.endsWith(QStringLiteral("\nShowing the first 30 columns.\n")));
   }
 };
 
