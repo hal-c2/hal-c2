@@ -254,6 +254,7 @@ void ProjectCloneController::askDestination(const Chosen& chosen) {
                                        chosen.directoryName);
   options.pinned = chosen.directoryName;
   options.emptyText = tr("Choose a destination path and press Enter to clone.");
+  options.submit = tr("Clone");
   options.keepOpen = true;
   m_busy = false;
   NativeShell::of(this)->controller<CommandPaletteController>()->browse(

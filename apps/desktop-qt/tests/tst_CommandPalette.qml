@@ -25,6 +25,8 @@ Item {
             PaletteModel.ran = [];
             PaletteModel.open = false;
             PaletteModel.mode = "command";
+            PaletteModel.submitLabel = "";
+            PaletteModel.submitShortcut = "";
             PaletteModel.submenu = "";
             PaletteModel.calls = [];
         }
@@ -77,6 +79,21 @@ Item {
         function test_modEnterAddsTheBrowsedFolder() {
             opened();
             keyClick(Qt.Key_Return, Qt.ControlModifier);
+            compare(PaletteModel.calls, ["addBrowsedFolder"]);
+        }
+
+        function test_theBrowserNamesWhatEnterDoes() {
+            const popup = opened();
+            const submit = findChild(popup.contentItem, "commandPaletteSubmit");
+            verify(!submit.visible, "nothing to add outside the folder browser");
+            PaletteModel.mode = "browse";
+            PaletteModel.submitLabel = "Create & Add";
+            PaletteModel.submitShortcut = "Enter";
+            verify(submit.visible);
+            compare(submit.text, "Create & Add  Enter");
+            PaletteModel.submitShortcut = "Ctrl+Enter";
+            compare(submit.text, "Create & Add  Ctrl+Enter");
+            mouseClick(submit);
             compare(PaletteModel.calls, ["addBrowsedFolder"]);
         }
 

@@ -79,6 +79,7 @@ Popup {
             Layout.fillWidth: true
             implicitHeight: 36
             placeholderText: PaletteModel.placeholder
+            rightPadding: submit.visible ? submit.width + 12 : 8
             onTextEdited: PaletteModel.query = text
 
             // mod+1..9 are the window's thread jumps otherwise.
@@ -105,6 +106,22 @@ Popup {
                 }
                 event.accepted = true;
             }
+        }
+
+        // Names what Enter does with the typed path, and the key for the highlighted folder.
+        // Parented to the field's right end, so the list does not move.
+        ShellButton {
+            id: submit
+
+            objectName: "commandPaletteSubmit"
+            parent: field
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            visible: PaletteModel.mode === "browse" && PaletteModel.submitLabel.length > 0
+            focusPolicy: Qt.NoFocus
+            text: PaletteModel.submitLabel + "  " + PaletteModel.submitShortcut
+            onClicked: PaletteModel.addBrowsedFolder()
         }
 
         // A thread search names the environments it could not reach.

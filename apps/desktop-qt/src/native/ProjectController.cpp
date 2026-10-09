@@ -70,6 +70,7 @@ void ProjectController::activate() {
     folder.run = [this, environmentId] {
       CommandPaletteController::BrowseOptions options;
       options.query = browseStart(environmentId);
+      options.submit = tr("Add");
       NativeShell::of(this)->controller<CommandPaletteController>()->browse(
           environmentId,
           [this, environmentId](const QString& path) { addFolder(environmentId, path, QStringLiteral("Failed to add project")); },

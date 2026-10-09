@@ -103,6 +103,24 @@ Feature: Adding a project from the command palette
       | a WSL folder          | Could not add WSL project  |
 
   @desktop
+  Scenario: The folder browser names what Enter does
+    Given the user is browsing for a project folder
+    When the user types a folder path while adding a project
+    Then the palette offers "Add" with "Enter"
+
+  @desktop
+  Scenario: A folder that does not exist is created and added
+    Given the user is browsing for a project folder
+    When the user types a path that does not exist
+    Then the palette offers "Create & Add" with "Enter"
+
+  @desktop
+  Scenario: A highlighted folder is added with mod+Enter
+    Given the user is browsing for a project folder
+    And a folder is highlighted
+    Then the palette offers "Add" with "Ctrl+Enter"
+
+  @desktop
   Scenario: mod+Enter adds the highlighted folder
     Given the user is browsing for a project folder
     And a folder is highlighted
