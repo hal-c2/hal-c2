@@ -299,6 +299,51 @@ const Steps steps([] {
     }
   });
 
+  // Settings → Appearance's list of themes, as the page draws it.
+  const auto themeList = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nAppearanceSettings { }\n", QSize(720, 900));
+    }
+    return *world.brick;
+  };
+  // The ids of the themes the list marks as in use.
+  const auto marked = [themeList](World& world) {
+    QStringList ids;
+    QQuickItem* standard = themeList(world).item(QStringLiteral("theme:hal-c2"));
+    if (standard->property("checked").toBool()) ids.append(QStringLiteral("hal-c2"));
+    for (const QVariant& theme : themes(world)->available()) {
+      const QString id = theme.toMap().value(QStringLiteral("id")).toString();
+      if (themeList(world).item(QStringLiteral("use:") + id)->property("checked").toBool()) ids.append(id);
+    }
+    return ids;
+  };
+  step(QStringLiteral("the user looks at the themes in Settings → Appearance"), [themeList](World& world, const Captures&, const Table&) { themeList(world); });
+  step(QStringLiteral("only %1 is marked as the theme in use, with its colors beside its name").arg(q),
+       [themeList, marked](World& world, const Captures& c, const Table&) {
+         expect(marked(world) == QStringList{c[0]}, QStringLiteral("marked: %1").arg(marked(world).join(QStringLiteral(", "))));
+         QStringList swatch;
+         for (const QVariant& theme : themes(world)->available()) {
+           if (theme.toMap().value(QStringLiteral("id")) == c[0]) swatch = theme.toMap().value(QStringLiteral("swatch")).toStringList();
+         }
+         QList<QColor> drawn;
+         const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+           if (item->objectName() == QLatin1String("swatch")) drawn.append(item->property("color").value<QColor>());
+           for (QQuickItem* child : item->childItems()) collect(child);
+         };
+         collect(themeList(world).item(QStringLiteral("use:") + c[0]));
+         expect(swatch.size() == 3 && drawn == QList<QColor>{QColor(swatch.at(0)), QColor(swatch.at(1)), QColor(swatch.at(2))},
+                QStringLiteral("the theme's colors are %1 and %2 are drawn").arg(swatch.join(QStringLiteral(", "))).arg(drawn.size()));
+       });
+  step(QStringLiteral("the user picks the standard theme there"), [themeList](World& world, const Captures&, const Table&) {
+    QQuickItem* standard = themeList(world).item(QStringLiteral("theme:hal-c2"));
+    QTest::mouseClick(&themeList(world).window(), Qt::LeftButton, {}, standard->mapToScene(QPointF(standard->width() / 2, standard->height() / 2)).toPoint());
+    world.sync();
+  });
+  step(QStringLiteral("only the standard theme is marked as the theme in use"), [marked](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return marked(world) == QStringList{QStringLiteral("hal-c2")}; },
+                  [&] { return QStringLiteral("the standard theme to be marked; marked: %1").arg(marked(world).join(QStringLiteral(", "))); });
+  });
+
   // The keyboard: the dialogs over a message field holding it, as the composer does.
   const auto keyboard = [](World& world) -> Brick& {
     if (!world.brick) {

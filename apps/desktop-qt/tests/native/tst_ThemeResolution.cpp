@@ -78,6 +78,30 @@ private slots:
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("info")));
   }
 
+  // What a picker previews a theme with: its canvas, accent and text in the
+  // appearance drawn now, and the standard look's beside them.
+  void everyThemeOfferedCarriesItsSwatch() {
+    const auto swatchOf = [this](const QString& id) {
+      for (const QVariant& theme : themes()->available()) {
+        if (theme.toMap().value(QStringLiteral("id")) == id) return theme.toMap().value(QStringLiteral("swatch")).toStringList();
+      }
+      return QStringList();
+    };
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#fcfcfc"));
+    const QStringList light = swatchOf(QStringLiteral("grove"));
+    for (const QVariant& theme : themes()->available()) {
+      const QStringList swatch = theme.toMap().value(QStringLiteral("swatch")).toStringList();
+      QCOMPARE(swatch.size(), 3);
+      for (const QString& color : swatch) QVERIFY2(QColor(color).isValid(), qPrintable(theme.toMap().value(QStringLiteral("id")).toString()));
+    }
+    themes()->setSystemDark(true);
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#0a0a0a"));
+    QVERIFY(swatchOf(QStringLiteral("grove")) != light);
+    // A theme without the appearance drawn shows the one it has.
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("mine"), QStringLiteral("light"), QStringLiteral("#010101"))}}});
+    QCOMPARE(swatchOf(QStringLiteral("mine")).value(0), QStringLiteral("#010101"));
+  }
+
   // A role no theme carries is drawn in its fallback, in light themes too (a
   // "popover" dialog stayed near-black): every role the bricks ask the palette
   // for by name comes with every theme, or is one a theme may add.
