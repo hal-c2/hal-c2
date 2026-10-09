@@ -228,15 +228,23 @@ defmodule HalC2.Cluster do
   defp merge_entry(ours, theirs) do
     # Same-millisecond updates fall back to comparing the entries, so both sides pick one.
     # Ours is given the same fields first: an entry kept from before a field existed would
-    # otherwise compare by its size, and each side would pick the other's.
+    # otherwise compare by its size, and each side would pick the other's. The times
+    # merged below are left out: each merge raises them, so comparing them would make
+    # the pick depend on the order the updates arrive in.
     ours = sanitize(ours) || ours
-    newer = if {theirs["updatedAt"], theirs} > {ours["updatedAt"], ours}, do: theirs, else: ours
+
+    newer =
+      if {theirs["updatedAt"], ties(theirs)} > {ours["updatedAt"], ties(ours)},
+        do: theirs,
+        else: ours
 
     Map.merge(newer, %{
       "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
       "removedAt" => max_time(ours["removedAt"], theirs["removedAt"])
     })
   end
+
+  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt"])
 
   defp max_time(nil, b), do: b
   defp max_time(a, nil), do: a
