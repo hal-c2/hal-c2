@@ -38,7 +38,7 @@ Feature: Connection health
     And reconnects when the environment answers again
 
   # Proved by tst_ShellExamples.cpp (the notice's place) and tst_ThreadView.qml (the thread
-  # stays quiet), not yet by a step (hal-c2/hal-c2#145, #163).
+  # stays quiet), not yet by a step (hal-c2/hal-c2#213).
   @desktop @backlog-desktop
   Scenario: A dropped connection is reported once, with one way to retry
     Given the user is reading a thread

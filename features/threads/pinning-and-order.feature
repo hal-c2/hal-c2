@@ -62,7 +62,7 @@ Feature: Pinning and arranging threads
       | snoozed  |
       | archived |
 
-  # Proved by tst_KeysToastRegression.cpp, not yet by a step (hal-c2/hal-c2#194).
+  # Proved by tst_KeysToastRegression.cpp, not yet by a step (hal-c2/hal-c2#213).
   @desktop @backlog-desktop
   Scenario: The undo offer counts the threads it will restore and names the shortcut
     Given the user just settled "Alpha"

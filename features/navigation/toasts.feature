@@ -73,7 +73,7 @@ Feature: Toasts
     And 1 second passes
     Then the toast "Failed to settle thread" is gone
 
-  # Proved by tst_ShellExamples (noticesCoverNothing), not yet by a step (hal-c2/hal-c2#140).
+  # Proved by tst_ShellExamples (noticesCoverNothing), not yet by a step (hal-c2/hal-c2#213).
   @desktop @backlog-desktop
   Scenario: Toasts appear under the header at the top right
     Given the terminal drawer and the thread details are open
