@@ -15,6 +15,8 @@ defmodule HalC2.ClusterProofTest do
     model: "cluster.maude",
     module: "CLUSTER",
     check: "CLUSTER-PROPS",
+    # Its widest search takes about two minutes alone, and longer on a CI runner.
+    timeout: 900_000,
     code: [
       {:exports, HalC2.Cluster},
       {:messages, HalC2.Cluster},

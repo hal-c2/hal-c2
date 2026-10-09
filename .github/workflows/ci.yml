@@ -92,11 +92,17 @@ jobs:
           MIX_ENV: prop
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
-  # Its own job, as model checking peaks at several GB.
+  # Jobs of their own, as model checking peaks at several GB and a proof's checks run
+  # one after another: the slowest proofs run alone, and `rest` runs every other one,
+  # new ones included.
   mc_proofs:
-    name: MC proofs
+    name: MC proofs (${{ matrix.proof }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        proof: [cluster, stream_relay, streams, thread_move, turns, rest]
     env:
       MIX_ENV: proof
     defaults:
@@ -131,7 +137,13 @@ jobs:
         run: mix deps.get
 
       - name: Proofs
-        run: mix proof
+        run: |
+          if [ "${{ matrix.proof }}" = rest ]; then
+            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
+          else
+            files=proof/hal_c2/${{ matrix.proof }}_proof_test.exs
+          fi
+          mix proof $files
         env:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
