@@ -163,6 +163,20 @@ private slots:
     QVERIFY(items(bridge).isEmpty());
   }
 
+  // An undo notice replaced by a toast with an Undo of its own kept counting
+  // the changes it had stood for, so the next change read one thread too many.
+  void aReplacedToastCountsItsChangesAfresh() {
+    ShellBridge bridge;
+    ToastController toasts(&bridge, nullptr);
+    toasts.activate();
+    const QString id = toasts.showUndo(QStringLiteral("Snoozed"), QStringLiteral("Snoozed"), [] {});
+    toasts.showUndo(QStringLiteral("Snoozed"), QStringLiteral("Snoozed"), [] {});
+    QVERIFY(toasts.replace(id, QStringLiteral("success"), QStringLiteral("Snoozed"), {},
+                           {ToastController::Action{QStringLiteral("Undo"), [] {}, false, QStringLiteral("Snoozed")}}, 0));
+    toasts.showUndo(QStringLiteral("Snoozed"), QStringLiteral("Snoozed"), [] {});
+    QCOMPARE(items(bridge).first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Snoozed 2 threads"));
+  }
+
   // Nothing to expand: an empty stack stays collapsed.
   void anEmptyStackDoesNotExpand() {
     Clocked clock;

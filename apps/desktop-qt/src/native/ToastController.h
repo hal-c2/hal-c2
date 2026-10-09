@@ -101,7 +101,8 @@ private:
     std::optional<QDateTime> deadline;
     qint64 remainingMs = 0;
     int revision = 0;
-    // The changes an undo toast stands for (showUndo).
+    // The changes its Undo takes back (showUndo); one again once replace()
+    // gives it other actions.
     int count = 1;
   };
 

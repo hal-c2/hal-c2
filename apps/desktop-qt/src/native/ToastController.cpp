@@ -89,9 +89,9 @@ QString ToastController::showUndo(const QString& group, const QString& title, st
     Toast& newest = m_toasts.first();
     if (!newest.actions.isEmpty() && newest.actions.first().label == QLatin1String("Undo") && newest.actions.first().group == group) {
       const int count = newest.count + 1;
-      newest.count = count;
       const QString id = newest.id;
       replace(id, newest.type, reading(count), description, {joined(newest.actions.first().run)}, 5000);
+      newest.count = count;
       return id;
     }
   }
@@ -159,6 +159,7 @@ bool ToastController::replace(const QString& id, const QString& type, const QStr
     toast.title = title;
     toast.description = description;
     toast.actions = std::move(actions);
+    toast.count = 1;
     startTime(toast, timeoutMs);
     ++toast.revision;
     publish();
