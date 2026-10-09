@@ -42,6 +42,9 @@ qt_add_qml_module(hal_c2_bricks
     ShellMenu.qml
     ShellMenuItem.qml
     ShellTextField.qml
+    ShellSwitch.qml
+    ShellSpinBox.qml
+    ShellCheckBox.qml
     ShellWindow.qml
     Sidebar.qml
     SidebarThreadRow.qml

@@ -318,7 +318,7 @@ Dialog {
                     }
                 }
 
-                CheckBox {
+                ShellCheckBox {
                     objectName: "startFromOrigin"
                     text: qsTr("Fetch from origin first")
                     checked: dialog.draft.startFromOrigin ?? true
@@ -340,7 +340,7 @@ Dialog {
                 Layout.topMargin: 8
                 spacing: 8
 
-                Switch {
+                ShellSwitch {
                     objectName: "enabled"
                     checked: dialog.draft.enabled ?? true
                     onToggled: dialog.set("enabled", checked)

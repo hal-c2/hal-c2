@@ -106,7 +106,7 @@ SettingsPage {
             spacing: 6
 
             // A collection's variants are picked to remove several at once.
-            CheckBox {
+            ShellCheckBox {
                 objectName: "select:" + themeRow.modelData.id
                 visible: themeRow.custom && themeRow.modelData.collection.length > 0
                 checked: page.selected.indexOf(themeRow.modelData.id) >= 0

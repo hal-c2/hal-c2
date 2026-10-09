@@ -1,5 +1,6 @@
 #include <QFile>
 #include <QFileInfo>
+#include <QPalette>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -105,6 +106,26 @@ private slots:
     QVERIFY(overrideFile.remove());
     theme.reload();
     QCOMPARE(item->property("color").value<QColor>(), QColor(12, 34, 56, 204));
+  }
+
+  // The attached ToolTip is the stock Basic one, which reads the application
+  // palette: a dark theme must not leave it a white box.
+  void toolTipsFollowTheTheme() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    ThemeStore theme(directory.path());
+    ShellBridge bridge;
+    ShellRuntime runtime({directory.path(), directory.path()}, &bridge, &theme);
+    theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"},
+                                     {"appearance", "dark"},
+                                     {"colors", QVariantMap{{"surfaceOverlay", "#18181bcc"}, {"text", "#eeeeee"}}}});
+    QCOMPARE(QGuiApplication::palette().color(QPalette::ToolTipBase), QColor("#18181b"));
+    QCOMPARE(QGuiApplication::palette().color(QPalette::ToolTipText), QColor("#eeeeee"));
+    theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"},
+                                     {"appearance", "light"},
+                                     {"colors", QVariantMap{{"surfaceOverlay", "#ffffff"}, {"text", "#111111"}}}});
+    QCOMPARE(QGuiApplication::palette().color(QPalette::ToolTipBase), QColor("#ffffff"));
+    QCOMPARE(QGuiApplication::palette().color(QPalette::ToolTipText), QColor("#111111"));
   }
 
   void folderDropsResolveOnlyExistingLocalDirectories() {
