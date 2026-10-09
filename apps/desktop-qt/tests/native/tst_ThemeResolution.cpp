@@ -76,6 +76,14 @@ private slots:
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("info")));
   }
 
+  void menusAndDialogsAreNearlyOpaqueByDefault() {
+    // Nothing saved: the overlay (menus, palettes, dialogs) keeps 96% of its alpha, not 80%.
+    const auto overlay = [this] { return published().value(QStringLiteral("colors")).toMap().value(QStringLiteral("surfaceOverlay")).toString(); };
+    QCOMPARE(overlay(), QStringLiteral("#fffffff5"));
+    themes()->setSystemDark(true);
+    QCOMPARE(overlay(), QStringLiteral("#111111f5"));
+  }
+
   void builtInsWinTheirIds() {
     // A saved theme cannot take a built-in's (or a reserved) id.
     save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("grove"), QStringLiteral("light"), QStringLiteral("#010101"))}},
