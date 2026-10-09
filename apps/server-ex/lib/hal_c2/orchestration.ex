@@ -51,7 +51,7 @@ defmodule HalC2.Orchestration do
     driver =
       case HalC2.Shell.row(node(), thread_id) do
         {"thread", _row} ->
-          HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+          HalC2.Streams.state(thread_id)
           |> StreamState.list("provider-thread")
           |> Enum.max_by(&(&1["lastRunOrdinal"] || 0), fn -> nil end)
           |> then(&(&1 && (&1["driver"] || driver_for(&1["providerInstanceId"] || "codex"))))
@@ -104,7 +104,7 @@ defmodule HalC2.Orchestration do
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     HalC2.Checkpoint.turn_diff(state, thread_id, from, to, input["ignoreWhitespace"] != false)
   end
 
@@ -200,7 +200,7 @@ defmodule HalC2.Orchestration do
   # A thread an agent created during a run shows in that run's transcript as a link.
   def dispatch(%{"type" => "thread.created.record", "parentThreadId" => parent_id} = command) do
     target_id = command["targetThreadId"]
-    target_state = HalC2.Streams.Server.state(HalC2.Streams.ensure(target_id))
+    target_state = HalC2.Streams.state(target_id)
     target = StreamState.get(target_state, "thread")[target_id]
     target_run = command["targetRunId"]
 
@@ -518,7 +518,7 @@ defmodule HalC2.Orchestration do
   # A queued message steers the running turn when its provider can take it; otherwise
   # it goes first and the run is interrupted, which starts it next.
   def dispatch(%{"type" => "queued-message.promote-to-steer", "threadId" => thread_id} = command) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.get(state, "run")
     queued = runs[command["queuedRunId"]]
@@ -674,8 +674,7 @@ defmodule HalC2.Orchestration do
 
   defp message_request(thread_id, request_id) do
     request =
-      HalC2.Streams.ensure(thread_id)
-      |> HalC2.Streams.Server.state()
+      HalC2.Streams.state(thread_id)
       |> StreamState.get("runtime-request")
       |> Map.get(request_id)
 
@@ -686,7 +685,7 @@ defmodule HalC2.Orchestration do
   # running turn when there is one to steer, else as the thread's next turn. Sending
   # the same answer again changes nothing.
   defp answer_with_message(thread_id, request, command) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     item = StreamState.get(state, "turn-item")[question_item(request)] || %{}
     answers = command["answers"] || %{}
 
@@ -1203,7 +1202,7 @@ defmodule HalC2.Orchestration do
       })
 
   defp regenerate_title(thread_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     previous = (StreamState.get(state, "thread")[thread_id] || %{})["title"] || ""
 
     messages =
@@ -1256,7 +1255,7 @@ defmodule HalC2.Orchestration do
 
   # An agent that cannot start fails its run before `start_turn` returns.
   defp started(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
 
     case StreamState.get(state, "run")[run_id] do
       %{"status" => "failed"} ->
@@ -1437,7 +1436,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp interrupt_undriven(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     runs = StreamState.list(state, "run")
 
     run =
@@ -1534,7 +1533,7 @@ defmodule HalC2.Orchestration do
     upsert(state, "thread", thread_id, &(&1 |> Map.merge(unsettled) |> Map.merge(unsnoozed)))
   end
 
-  defp sequence(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)).seq
+  defp sequence(thread_id), do: HalC2.Streams.state(thread_id).seq
 
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")
@@ -1690,7 +1689,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp run_active?(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     (StreamState.get(state, "run")[run_id] || %{})["status"] in @active_statuses
   end
 
@@ -2824,7 +2823,7 @@ defmodule HalC2.Orchestration do
   defp implemented_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
        when is_binary(plan_thread) do
     project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
-    project_id = project.(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), thread_id)
+    project_id = project.(HalC2.Streams.state(thread_id), thread_id)
 
     HalC2.Streams.transact(plan_thread, :thread, fn state ->
       case StreamState.get(state, "plan")[plan_id] do
