@@ -182,12 +182,21 @@ Feature: Delegating tasks to subagents
     When the subagent completes, and the user rolls back its turn and asks again before the caller hears it
     Then the task, its node and its turn item are "running"
 
-  # Its turn is interrupted at boot, and may be continued; it reports when it ends.
+  # Its turn is interrupted at boot and continued; it reports when it ends.
   @mc
   Scenario: A task still working when the MC stopped is not settled when it starts
-    Given the agent in "parent" delegates a task
+    Given project "demo" continues threads after a server update
+    And the agent in "parent" delegates a task
     When the MC restarts
     Then the task, its node and its turn item are "running"
+
+  # Its turn is interrupted at boot and not continued, so nothing will ever report it.
+  @mc
+  Scenario: A task whose subagent is not continued after a restart is interrupted
+    Given the project does not continue threads after an update
+    And the agent in "parent" delegates a task
+    When the MC restarts
+    Then the task, its node and its turn item are "interrupted"
 
   @mc
   Scenario: The task result is the subagent's last answer
