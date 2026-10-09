@@ -1,0 +1,411 @@
+sload model-checker
+
+--- The plugin host (HalC2.Plugins): a GenServer that owns each plugin's record and a
+--- supervisor per running plugin, with messages from the supervisors, the workers and
+--- the watchers arriving in any order among the calls clients make and the crashes
+--- that happen meanwhile.
+--- proof/hal_c2/plugins_proof_test.exs maps it to the code and checks it.
+
+mod PLUGINS is
+  protecting NAT .
+
+  sorts Id Wt Sup Fail Life Snap Msg Mail Item Conf Sys .
+  subsort Item < Conf .
+  subsort Msg < Mail .
+
+  ops p1 p2 : -> Id [ctor] .
+  ops w1 w2 : -> Wt [ctor] .
+
+  --- A plugin's supervisor is named by its incarnation: the n-th start of any plugin.
+  op nosup : -> Sup [ctor] .
+  op on : Nat -> Sup [ctor] .
+
+  --- A plugin is failed when its supervisor gave up (the code's `failed` and `gave_up`):
+  --- gave(n) names that supervisor, so that its workers' late crashes still count.
+  op nofail : -> Fail [ctor] .
+  op gave : Nat -> Fail [ctor] .
+  op isf : Fail -> Bool .
+  eq isf(nofail) = false .
+  eq isf(gave(N:Nat)) = true .
+
+  --- A worker is alive and not yet monitored by the host, alive and monitored, or dead.
+  ops un mo xx : -> Life [ctor] .
+
+  --- What the host keeps of a plugin: `pl(id, sup, failed, restarts, last_error)`, with
+  --- last_error only whether there is one; the settings document's `cfg(id, enabled,
+  --- revision)`, revision standing for the plugin's saved settings.
+  op pl : Id Sup Fail Nat Bool -> Item [ctor] .
+  op cfg : Id Bool Nat -> Item [ctor] .
+
+  --- The plugin's supervisor of incarnation n, with the crashes it has counted; its
+  --- worker k, the one after k crashes; the host's monitor of the supervisor.
+  op sv : Id Nat Nat -> Item [ctor] .
+  op wk : Id Nat Nat Life -> Item [ctor] .
+  op smon : Id Nat -> Item [ctor] .
+
+  --- The host's mailbox, in the order messages reach it (they are sent from one node, so
+  --- in the order they are sent): {:worker, id, pid}; the worker's DOWN (always a crash:
+  --- a shutdown is ignored); the supervisor's DOWN; a settings change; a watcher's DOWN
+  --- and an unsubscribe.
+  op nomail : -> Mail [ctor] .
+  op __ : Mail Mail -> Mail [ctor assoc id: nomail] .
+  op mb : Mail -> Item [ctor] .
+  op cast : Id Nat Nat -> Msg [ctor] .
+  op dn : Id Nat Nat -> Msg [ctor] .
+  op sd : Id Nat -> Msg [ctor] .
+  op sm : -> Msg [ctor] .
+  op wd : Wt -> Msg [ctor] .
+  op unsub : Wt -> Msg [ctor] .
+
+  --- A row of the :providers table: id and supervisor.
+  op prov : Id Nat -> Item [ctor] .
+
+  --- A watcher: alive, registered in the table, and the last list pushed to it.
+  op w : Wt Bool -> Item [ctor] .
+  op reg : Wt -> Item [ctor] .
+  op seen : Wt Id Snap -> Item [ctor] .
+  op snap : Bool Nat Bool Bool Nat Bool -> Snap [ctor] .
+
+  --- What is left to happen: crashes per plugin, client commands, watcher events, the
+  --- next incarnation.
+  op cr : Id Nat -> Item [ctor] .
+  op cmds : Nat -> Item [ctor] .
+  op wev : Nat -> Item [ctor] .
+  op nxt : Nat -> Item [ctor] .
+
+  --- Marks of a bad step: a worker's crash charged to a plugin that is stopped, or to
+  --- the next start; a supervisor's DOWN taken for the one now running.
+  ops charged-stopped charged-next stale-down unchecked : -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars P : Id .
+  vars W : Wt .
+  vars I J K N Q V : Nat .
+  vars Y Y2 : Mail .
+  var G : Msg .
+  vars E T En : Bool .
+  var F : Fail .
+  vars R : Nat .
+  var L : Life .
+  var Su : Sup .
+  vars C : Conf .
+  var S : Snap .
+
+  op send : Msg Conf -> Conf .
+  eq send(G, mb(Y) C) = mb(Y G) C .
+
+  op run : Sup -> Bool .
+  eq run(on(I)) = true .
+  eq run(nosup) = false .
+
+  --- stop/2: demonitors and flushes every supervisor monitor of the plugin, ends its
+  --- supervisor and with it the workers. A worker not yet monitored is dead for good
+  --- when the host hears of it.
+  op unmon : Id Conf -> Conf .
+  eq unmon(P, smon(P, I) C) = unmon(P, C) .
+  eq unmon(P, mb(Y) C) = mb(flush(P, Y)) C [owise] .
+  op flush : Id Mail -> Mail .
+  eq flush(P, nomail) = nomail .
+  eq flush(P, sd(P, I) Y) = flush(P, Y) .
+  eq flush(P, G Y) = G flush(P, Y) [owise] .
+  op halt : Id Nat Conf -> Conf .
+  eq halt(P, I, sv(P, I, N) C) = halt(P, I, C) .
+  eq halt(P, I, wk(P, I, K, mo) C) = halt(P, I, C) .
+  eq halt(P, I, wk(P, I, K, un) C) = wk(P, I, K, xx) halt(P, I, C) .
+  eq halt(P, I, C) = C [owise] .
+  op stop : Id Conf -> Conf .
+  eq stop(P, pl(P, on(I), F, R, E) C) = pl(P, nosup, F, R, E) halt(P, I, unmon(P, C)) .
+  eq stop(P, C) = C [owise] .
+
+  --- start/2.
+  op start : Id Conf -> Conf .
+  eq start(P, pl(P, nosup, F, R, E) nxt(N) C)
+   = pl(P, on(N), nofail, R, E) nxt(s N) sv(P, N, 0) wk(P, N, 0, un) smon(P, N)
+     send(cast(P, N, 0), C) .
+
+  --- reconcile/1: starts what is enabled and stopped (unless it failed), stops what is
+  --- not enabled, and rebuilds the providers table (sync/1).
+  op rec : Id Conf -> Conf .
+  eq rec(P, pl(P, on(I), F, R, E) cfg(P, false, V) C)
+   = stop(P, pl(P, on(I), F, R, E) cfg(P, false, V) C) .
+  eq rec(P, pl(P, nosup, nofail, R, E) cfg(P, true, V) C)
+   = start(P, pl(P, nosup, nofail, R, E) cfg(P, true, V) C) .
+  eq rec(P, C) = C [owise] .
+  op sync : Conf -> Conf .
+  op sync1 : Id Conf -> Conf .
+  op strip : Id Conf -> Conf .
+  eq sync(C) = sync1(p1, sync1(p2, C)) .
+  eq sync1(P, pl(P, on(I), F, R, E) C) = pl(P, on(I), F, R, E) prov(P, I) strip(P, C) .
+  eq sync1(P, pl(P, nosup, F, R, E) C) = pl(P, nosup, F, R, E) strip(P, C) .
+  eq strip(P, prov(P, I) C) = strip(P, C) .
+  eq strip(P, C) = C [owise] .
+  op reconcile : Conf -> Conf .
+  eq reconcile(C) = sync(rec(p1, rec(p2, C))) .
+
+  --- push/1: every registered watcher is sent the list.
+  op push : Conf -> Conf .
+  op pushw : Wt Conf -> Conf .
+  op vw : Wt Id Conf -> Conf .
+  op delv : Wt Id Conf -> Conf .
+  op addv : Wt Id Conf -> Conf .
+  eq push(C) = pushw(w1, pushw(w2, C)) .
+  eq pushw(W, reg(W) C) = reg(W) vw(W, p1, vw(W, p2, C)) .
+  eq pushw(W, C) = C [owise] .
+  eq vw(W, P, C) = addv(W, P, delv(W, P, C)) .
+  eq delv(W, P, seen(W, P, S) C) = delv(W, P, C) .
+  eq delv(W, P, C) = C [owise] .
+  eq addv(W, P, pl(P, Su, F, R, E) cfg(P, En, V) C)
+   = pl(P, Su, F, R, E) cfg(P, En, V) seen(W, P, snap(En, V, run(Su), isf(F), R, E)) C .
+
+  --- A watcher's entries go, and its monitor with them.
+  op dropw : Wt Conf -> Conf .
+  eq dropw(W, reg(W) C) = dropw(W, C) .
+  eq dropw(W, seen(W, P, S) C) = dropw(W, C) .
+  eq dropw(W, C) = C [owise] .
+
+  op flushw : Wt Mail -> Mail .
+  eq flushw(W, nomail) = nomail .
+  eq flushw(W, wd(W) Y) = flushw(W, Y) .
+  eq flushw(W, G Y) = G flushw(W, Y) [owise] .
+
+  op registered : Wt Conf -> Bool .
+  eq registered(W, reg(W) C) = true .
+  eq registered(W, C) = false [owise] .
+  op maywd : Wt Conf -> Conf .
+  eq maywd(W, reg(W) C) = reg(W) send(wd(W), C) .
+  eq maywd(W, C) = C [owise] .
+
+  --- A scan that finds new code: the plugin's record starts again.
+  op blank : Id Conf -> Conf .
+  eq blank(P, pl(P, Su, F, R, E) C) = pl(P, nosup, nofail, 0, false) C .
+  op clearf : Id Conf -> Conf .
+  eq clearf(P, pl(P, Su, F, R, E) C) = pl(P, Su, nofail, R, E) C .
+
+  --- The host dies and starts again: its processes and mailbox go, the watcher table
+  --- stays, and every watcher in it gets a monitor again.
+  op wipe : Conf -> Conf .
+  op wipe0 : Conf -> Conf .
+  op rewatch : Wt Conf -> Conf .
+  eq wipe(C) = rewatch(w1, rewatch(w2, wipe0(C))) .
+  eq wipe0(sv(P, I, N) C) = wipe0(C) .
+  eq wipe0(wk(P, I, K, L) C) = wipe0(C) .
+  eq wipe0(smon(P, I) C) = wipe0(C) .
+  eq wipe0(prov(P, I) C) = wipe0(C) .
+  eq wipe0(mb(Y) C) = mb(nomail) wipe0(C) .
+  eq wipe0(pl(P, Su, F, R, E) C) = pl(P, nosup, nofail, 0, false) wipe0(C) .
+  eq wipe0(C) = C [owise] .
+  eq rewatch(W, reg(W) w(W, false) C) = reg(W) w(W, false) send(wd(W), C) .
+  eq rewatch(W, C) = C [owise] .
+
+  --- calls ----------------------------------------------------------------------------
+
+  --- {:set_enabled, id, enabled, accepted}: writes the document, clears `failed`.
+  rl [set_enabled] :
+    { cmds(s K) cfg(P, T, V) pl(P, Su, F, R, E) C }
+    => { cmds(K) push(reconcile(cfg(P, true, V) send(sm, pl(P, Su, nofail, R, E) C))) } .
+  rl [set_enabled] :
+    { cmds(s K) cfg(P, T, V) pl(P, Su, F, R, E) C }
+    => { cmds(K) push(reconcile(cfg(P, false, V) send(sm, pl(P, Su, nofail, R, E) C))) } .
+
+  --- {:restart, id}, of a plugin that may run.
+  rl [restart] :
+    { cmds(s K) cfg(P, true, V) pl(P, Su, F, R, E) C }
+    => { cmds(K) push(reconcile(clearf(P, stop(P, cfg(P, true, V) pl(P, Su, F, R, E) C)))) } .
+
+  --- {:save_settings, id, input}: a running plugin starts again with what was saved.
+  rl [save_settings] :
+    { cmds(s K) cfg(P, T, V) pl(P, nosup, F, R, E) C }
+    => { cmds(K) push(cfg(P, T, s V) send(sm, pl(P, nosup, F, R, E) C)) } .
+  rl [save_settings] :
+    { cmds(s K) cfg(P, T, V) pl(P, on(I), F, R, E) C }
+    => { cmds(K) push(reconcile(stop(P, cfg(P, T, s V) send(sm, pl(P, on(I), F, R, E) C)))) } .
+
+  --- :rescan, with the files as they were, and with one plugin's changed.
+  rl [rescan] :
+    { cmds(s K) C } => { cmds(K) push(reconcile(C)) } .
+  rl [rescan] :
+    { cmds(s K) pl(P, Su, F, R, E) C }
+    => { cmds(K) push(reconcile(blank(P, stop(P, pl(P, Su, F, R, E) C)))) } .
+
+  --- {:subscribe, pid}: registers the watcher and answers with the list.
+  crl [subscribe] :
+    { wev(s K) w(W, true) C } => { wev(K) w(W, true) reg(W) vw(W, p1, vw(W, p2, C)) }
+    if not registered(W, C) .
+
+  --- casts and messages ----------------------------------------------------------------
+
+  --- {:worker, id, supervisor, pid}: monitors the worker, if its supervisor is the one
+  --- the plugin runs or has just failed under; one that is dead already is a DOWN. Under
+  --- `unchecked` the host ignores the supervisor, as it once did.
+  op cur : Sup Fail Nat Conf -> Bool .
+  eq cur(Su, F, I, unchecked C) = true .
+  eq cur(on(I), F, I, C) = true .
+  eq cur(Su, gave(I), I, C) = true .
+  eq cur(Su, F, I, C) = false [owise] .
+  crl [worker] :
+    { mb(cast(P, I, K) Y) wk(P, I, K, un) pl(P, Su, F, R, E) C }
+    => { mb(Y) wk(P, I, K, mo) pl(P, Su, F, R, E) C } if cur(Su, F, I, C) .
+  crl [worker] :
+    { mb(cast(P, I, K) Y) wk(P, I, K, xx) pl(P, Su, F, R, E) C }
+    => { send(dn(P, I, K), mb(Y) pl(P, Su, F, R, E) C) } if cur(Su, F, I, C) .
+  crl [worker] :
+    { mb(cast(P, I, K) Y) pl(P, Su, F, R, E) C }
+    => { mb(Y) pl(P, Su, F, R, E) C } if not cur(Su, F, I, C) .
+
+  --- {:DOWN, ref, :process, pid, reason} of a worker that crashed: counted for the plugin
+  --- if its supervisor is current, and ignored if not.
+  crl [worker-down] :
+    { mb(dn(P, I, K) Y) pl(P, Su, F, R, E) C }
+    => { push(pl(P, Su, F, s R, true) mb(Y) C) charged(Su, F, I) } if cur(Su, F, I, C) .
+  crl [worker-down] :
+    { mb(dn(P, I, K) Y) pl(P, Su, F, R, E) C }
+    => { mb(Y) pl(P, Su, F, R, E) C } if not cur(Su, F, I, C) .
+  op charged : Sup Fail Nat -> Conf .
+  eq charged(on(I), F, I) = empty .
+  eq charged(Su, gave(I), I) = empty .
+  eq charged(nosup, F, I) = charged-stopped [owise] .
+  eq charged(Su, F, I) = charged-next [owise] .
+
+  --- {:DOWN, ref, :process, pid, reason} of a supervisor that gave up.
+  rl [supervisor-down] :
+    { mb(sd(P, I) Y) smon(P, I) pl(P, Su, F, R, E) C }
+    => { push(sync(pl(P, nosup, gave(I), R, E) mb(Y) C)) staled(Su, I) } .
+  op staled : Sup Nat -> Conf .
+  eq staled(on(I), I) = empty .
+  eq staled(Su, I) = stale-down [owise] .
+
+  --- {:DOWN, ref, :process, pid, reason} of a watcher; {:unsubscribe, pid}.
+  rl [watcher-down] : { mb(wd(W) Y) C } => { dropw(W, mb(Y) C) } .
+  rl [unsubscribed] : { mb(unsub(W) Y) C } => { dropw(W, mb(flushw(W, Y)) C) } .
+
+  --- {:hal_c2_settings, mc, settings}.
+  rl [settings] : { mb(sm Y) C } => { push(reconcile(mb(Y) C)) } .
+
+  --- environment --------------------------------------------------------------------
+
+  --- A worker crashes. Its supervisor starts it again, until the fourth crash within
+  --- its window (the window never runs out here) ends the supervisor, which the host
+  --- hears of.
+  op kill : Id Nat Nat Life Conf -> Conf .
+  eq kill(P, I, N, mo, C) = send(dn(P, I, N), C) .
+  eq kill(P, I, N, un, C) = wk(P, I, N, xx) C .
+  crl [crash] :
+    { cr(P, s Q) sv(P, I, N) wk(P, I, N, L) C }
+    => { cr(P, Q) sv(P, I, s N) wk(P, I, s N, un) send(cast(P, I, s N), kill(P, I, N, L, C)) }
+    if N < 3 .
+  crl [crash] :
+    { cr(P, s Q) sv(P, I, N) wk(P, I, N, L) C }
+    => { cr(P, Q) send(sd(P, I), kill(P, I, N, L, C)) } if N >= 3 .
+
+  --- A client edits the settings document itself.
+  rl [ext-write] :
+    { cmds(s K) cfg(P, T, V) C } => { cmds(K) cfg(P, not T, s V) send(sm, C) } .
+
+  --- The host stops and starts again under its supervisor.
+  rl [kill-host] :
+    { cmds(s K) C } => { cmds(K) push(reconcile(wipe(C))) } .
+
+  rl [watcher-dies] :
+    { wev(s K) w(W, true) C } => { wev(K) w(W, false) maywd(W, C) } .
+  rl [unsubscribe] :
+    { wev(s K) w(W, true) reg(W) C } => { wev(K) w(W, true) reg(W) send(unsub(W), C) } .
+
+  --- states -------------------------------------------------------------------------
+
+  --- Both plugins enabled and just started, w1 following; the first plugin's worker
+  --- crashes a times, the second's at most once; b client commands, d watcher events.
+  op one : Nat -> Nat .
+  eq one(0) = 0 .
+  eq one(s N:Nat) = 1 .
+  op two : Nat Nat Nat -> Sys .
+  vars A B D : Nat .
+  eq two(A, B, D)
+   = { pl(p1, on(1), nofail, 0, false) cfg(p1, true, 0) sv(p1, 1, 0) wk(p1, 1, 0, un)
+       smon(p1, 1) prov(p1, 1)
+       pl(p2, on(2), nofail, 0, false) cfg(p2, true, 0) sv(p2, 2, 0) wk(p2, 2, 0, un)
+       smon(p2, 2) prov(p2, 2) mb(cast(p1, 1, 0) cast(p2, 2, 0))
+       nxt(3) cr(p1, A) cr(p2, one(A)) cmds(B) wev(D) w(w1, true) w(w2, true) reg(w1)
+       seen(w1, p1, snap(true, 0, true, false, 0, false))
+       seen(w1, p2, snap(true, 0, true, false, 0, false)) } .
+
+  --- The same, with the host taking a crash for the plugin's whatever its supervisor.
+  op twou : Nat Nat Nat -> Sys .
+  op unchk : Sys -> Sys .
+  eq unchk({ C }) = { unchecked C } .
+  eq twou(A, B, D) = unchk(two(A, B, D)) .
+endm
+
+mod PLUGINS-PROPS is
+  including PLUGINS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  op drift : Sys -> Bool .
+  op provbad : Sys -> Bool .
+  op monbad : Sys -> Bool .
+  op viewbad : Sys -> Bool .
+  op ghost : Sys -> Bool .
+  op idle : Sys -> Bool .
+  op hasprov : Id Nat Conf -> Bool .
+  op hassv : Id Nat Conf -> Bool .
+  op stale? : Wt Id Snap Conf -> Bool .
+
+  ops sunk failed unpushed dying : Id -> Prop [ctor] .
+
+  vars P : Id .
+  var W : Wt .
+  vars I J K : Nat .
+  vars E T En : Bool .
+  var F : Fail .
+  var R V N : Nat .
+  var Su : Sup .
+  var C : Conf .
+  var S : Snap .
+  vars Y Y2 : Mail .
+
+  eq idle({ mb(nomail) C }) = true .
+  eq idle({ C }) = false [owise] .
+
+  --- A plugin is running unless it is off or failed, once the mailbox is empty.
+  ceq drift({ mb(nomail) pl(P, on(I), F, R, E) cfg(P, En, V) C }) = true if not En or isf(F) .
+  eq drift({ mb(nomail) pl(P, nosup, nofail, R, E) cfg(P, true, V) C }) = true .
+  eq drift({ C }) = false [owise] .
+
+  --- The providers table has a row for each running plugin and no other.
+  eq hasprov(P, I, prov(P, I) C) = true .
+  eq hasprov(P, I, C) = false [owise] .
+  ceq provbad({ prov(P, I) pl(P, Su, F, R, E) C }) = true if Su =/= on(I) .
+  ceq provbad({ pl(P, on(I), F, R, E) C }) = true if not hasprov(P, I, C) .
+  eq provbad({ C }) = false [owise] .
+
+  --- More than one monitor of a plugin's supervisor, or one of another than the running.
+  eq monbad({ smon(P, I) smon(P, J) C }) = true .
+  ceq monbad({ smon(P, I) pl(P, Su, F, R, E) C }) = true if Su =/= on(I) .
+  eq monbad({ C }) = false [owise] .
+
+  --- The last list a following watcher was pushed is not the list now.
+  eq stale?(W, P, S, pl(P, Su, F, R, E) cfg(P, En, V) C) = S =/= snap(En, V, run(Su), isf(F), R, E) .
+  eq stale?(W, P, S, C) = false [owise] .
+  ceq viewbad({ mb(nomail) reg(W) seen(W, P, S) C }) = true if stale?(W, P, S, C) .
+  eq viewbad({ C }) = false [owise] .
+
+  eq ghost({ charged-stopped C }) = true .
+  eq ghost({ charged-next C }) = true .
+  eq ghost({ stale-down C }) = true .
+  eq ghost({ C }) = false [owise] .
+
+  --- The plugin's supervisor is gone, though the host does not know yet.
+  eq hassv(P, I, sv(P, I, N) C) = true .
+  eq hassv(P, I, C) = false [owise] .
+  ceq { pl(P, on(I), F, R, E) C } |= sunk(P) = true if not hassv(P, I, C) .
+  eq { C } |= sunk(P) = false [owise] .
+  eq { pl(P, Su, gave(I), R, E) C } |= failed(P) = true .
+  eq { C } |= failed(P) = false [owise] .
+  eq { mb(Y sd(P, I) Y2) smon(P, I) C } |= dying(P) = true .
+  eq { C } |= dying(P) = false [owise] .
+  eq { reg(W) seen(W, P, S) C } |= unpushed(P) = stale?(W, P, S, C) .
+  eq { C } |= unpushed(P) = false [owise] .
+endm
