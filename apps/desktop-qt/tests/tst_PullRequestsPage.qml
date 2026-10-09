@@ -80,6 +80,23 @@ Item {
             compare(Shell.dispatchedActions[0].payload.key, "env-local:github.com:acme/shop#12");
         }
 
+        function test_loadingKeepsTheHeaderAndFiltersInPlace() {
+            Shell.state = { pullRequestList: list({ groups: [{ id: "others", label: "Others", rows: [row(12, "others")] }], count: 1 }) };
+            const loaded = createTemporaryObject(pageComponent, root);
+            const loadedSearch = findChild(loaded, "pullRequestSearch");
+            tryVerify(() => findChild(loaded, "pullRequestRows").count === 2, 1000, "the rows are drawn");
+            const headerY = loadedSearch.mapToItem(loaded, 0, 0).y;
+
+            Shell.state = { pullRequestList: list({ loading: true }) };
+            const loading = createTemporaryObject(pageComponent, root);
+            const search = findChild(loading, "pullRequestSearch");
+            const title = findChild(loading, "pullRequestMessageTitle");
+            verify(title.visible);
+            compare(title.text, "Loading pull requests…");
+            compare(search.mapToItem(loading, 0, 0).y, headerY, "the search row does not move while loading");
+            verify(title.mapToItem(loading, 0, 0).y < 160, "the loading state takes the list's place under the filters");
+        }
+
         function test_anEmptyListSaysWhyAndOffersItsWayOut() {
             Shell.state = { pullRequestList: list({ filtered: true, empty: { title: "Nothing under these filters", body: "Widen the state, involvement or project filter to see more." } }) };
             const page = createTemporaryObject(pageComponent, root);
