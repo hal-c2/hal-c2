@@ -100,7 +100,8 @@ QString text(const QJsonValue& value) {
 // getProviderVersionLabel: bare versions get a `v`; Antigravity's release tag
 // shows as its date and candidate.
 QString versionLabel(const QString& version) {
-  if (version.isEmpty()) return {};
+  // An MC that has not launched the agent says "unknown"; that is no version.
+  if (version.isEmpty() || version == QLatin1String("unknown")) return {};
   static const QRegularExpression antigravity(QStringLiteral("^agy_acp_server_(\\d{4})(\\d{2})(\\d{2})_\\d+(?:_(\\w+))?$"));
   if (const auto match = antigravity.match(version); match.hasMatch()) {
     const QString candidate = match.captured(4);

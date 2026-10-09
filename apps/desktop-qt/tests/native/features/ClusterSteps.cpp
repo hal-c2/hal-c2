@@ -212,6 +212,14 @@ const Steps steps([] {
     expect(page.value(QStringLiteral("error")).toString() == c[0] && page.value(QStringLiteral("status")).isNull(),
            QStringLiteral("the cluster page is %1").arg(show(page)));
   });
+  step(QStringLiteral("the cluster page says the session needs administrative access, with nothing to invite or join"),
+       [cluster](World& world, const Captures&, const Table&) {
+         world.sync();
+         const QVariantMap page = cluster(world);
+         expect(page.value(QStringLiteral("needsAdmin")).toBool() && page.value(QStringLiteral("error")).isNull() &&
+                    page.value(QStringLiteral("status")).isNull(),
+                QStringLiteral("the cluster page is %1").arg(show(page)));
+       });
   // A machine that left.
   step(QStringLiteral("a client lists a machine that has left the cluster"), [cluster](World& world, const Captures&, const Table&) {
     fake(world).members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-laptop")}, {QStringLiteral("label"), QStringLiteral("laptop")},

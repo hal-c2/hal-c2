@@ -208,6 +208,12 @@ Feature: Archiving and deleting threads
     Then "Old spike" is listed under "shop" and "Try vite" under "docs"
 
   @desktop
+  Scenario: The archived threads page does not ask to reconnect a connected environment
+    Given "Old spike" is archived
+    When the user opens the archived threads
+    Then the archived threads page shows no reconnect notice
+
+  @desktop
   Scenario: Deleting an archived thread takes it out of the archive
     Given "Old spike" is archived
     When the user deletes "Old spike" from the archived threads

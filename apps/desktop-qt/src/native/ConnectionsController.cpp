@@ -24,9 +24,12 @@ const QString kNeedsAdmin =
     QStringLiteral("Managing this machine's access needs an administrator session. Pair this desktop with a link "
                    "that grants Manage access.");
 
+bool lacksAdmin(const QString& error) {
+  return error.startsWith(QLatin1String("access:")) && error.endsWith(QLatin1String(" is required"));
+}
+
 QString explain(const QString& error) {
-  if (error.startsWith(QLatin1String("access:")) && error.endsWith(QLatin1String(" is required"))) return kNeedsAdmin;
-  return error;
+  return lacksAdmin(error) ? kNeedsAdmin : error;
 }
 
 QVariant null() {
@@ -56,6 +59,7 @@ ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* clie
       m_state{
           {QStringLiteral("access"), null()},
           {QStringLiteral("accessError"), null()},
+          {QStringLiteral("accessNeedsAdmin"), false},
           {QStringLiteral("busy"), false},
           {QStringLiteral("notice"), null()},
           {QStringLiteral("machines"), QVariantList()},
@@ -179,6 +183,7 @@ bool ConnectionsController::readMachines() {
 void ConnectionsController::watchAccess() {
   if (m_accessSubscription >= 0) m_client->unsubscribe(m_accessSubscription);
   m_state.insert(QStringLiteral("accessError"), null());
+  m_state.insert(QStringLiteral("accessNeedsAdmin"), false);
   publish();
   m_accessSubscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("authAccess")}},
                                              [this](const QJsonObject& frame) { onAccess(frame); });
@@ -189,7 +194,9 @@ void ConnectionsController::onAccess(const QJsonObject& frame) {
   if (type == QLatin1String("error")) {
     m_client->unsubscribe(std::exchange(m_accessSubscription, -1));
     m_state.insert(QStringLiteral("access"), null());
-    set(QStringLiteral("accessError"), explain(frame.value(QLatin1String("reason")).toString()));
+    const QString reason = frame.value(QLatin1String("reason")).toString();
+    m_state.insert(QStringLiteral("accessNeedsAdmin"), lacksAdmin(reason));
+    set(QStringLiteral("accessError"), explain(reason));
     return;
   }
   if (type != QLatin1String("authAccess")) return;
