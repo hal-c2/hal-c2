@@ -12,6 +12,7 @@
 #include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
+#include "TestTime.h"
 #include "WorkspaceFiles.h"
 
 #include <QEventLoop>
@@ -48,7 +49,7 @@ struct Session {
   Session() {
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
-    if (!QTest::qWaitFor([this] { return client.isReady(); })) qFatal("fuzz: the fake MC is not ready");
+    if (!halc2::test::waitFor([this] { return client.isReady(); })) qFatal("fuzz: the fake MC is not ready");
   }
 };
 

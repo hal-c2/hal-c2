@@ -7,6 +7,7 @@
 // with no UTF-16 surrogate pair split across two calls.
 
 #include "Fuzz.h"
+#include "TestTime.h"
 #include "Reach.h"
 
 #include <QDeadlineTimer>
@@ -156,7 +157,7 @@ struct Live {
   // the deadline is only for an MC that never does.
   template <class Done>
   bool spinUntil(Done done) {
-    QDeadlineTimer deadline(30000);
+    QDeadlineTimer deadline(halc2::test::scaled(30000));
     while (!done() && !deadline.hasExpired()) QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 50);
     return done();
   }

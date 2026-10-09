@@ -120,7 +120,7 @@ private slots:
     McClient client;
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
-    QVERIFY(QTest::qWaitFor([&client] { return client.isReady(); }));
+    QVERIFY(halc2::test::waitFor([&client] { return client.isReady(); }));
     QString wide = QString(100000, u',') + u'\n';
     for (int row = 0; row < 40; ++row) wide += QStringLiteral("a,b\n");
     fakeFiles(mc).files.insert(QStringLiteral("wide.csv"), wide);
@@ -128,7 +128,7 @@ private slots:
     WorkspaceFiles files(&client);
     files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
     files.openFile(QStringLiteral("wide.csv"));
-    QVERIFY(QTest::qWaitFor([&files] { return files.fileStatus() == QLatin1String("ready"); }));
+    QVERIFY(halc2::test::waitFor([&files] { return files.fileStatus() == QLatin1String("ready"); }));
 
     const QString table = files.renderedText();
     QCOMPARE(files.renderKind(), QStringLiteral("csv"));
