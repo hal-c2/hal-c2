@@ -10,9 +10,9 @@ defmodule HalC2.StreamsPropTest do
   `HalC2.Prop.StreamsCollector` processes named `p1`..`p3` that fold what they are
   sent as a client does, and resume from what they hold. Commands commit and
   transact, subscribe plainly, as clients (kinds and windows) and as watchers, resume,
-  unsubscribe, page a window back, crash subscribers, stop streams idle, crash them,
-  restart the stream supervisor and the store, and append enough at once to push a
-  subscriber past what a replay carries.
+  unsubscribe (also by a tag no subscription has), page a window back, crash
+  subscribers, stop streams idle, crash them, restart the stream supervisor and the
+  store, and append enough at once to push a subscriber past what a replay carries.
   """
 
   use ExUnit.Case, async: false
@@ -92,6 +92,7 @@ defmodule HalC2.StreamsPropTest do
        {:call, __MODULE__, :subscribe_client,
         [name(), stream(), integer(0, length(@kinds) - 1), oneof([nil, {:items, 1}, {:items, 3}])]}},
       {3, {:call, __MODULE__, :unsubscribe, [name(), stream()]}},
+      {2, {:call, __MODULE__, :unsubscribe_stale, [name(), stream()]}},
       {1, {:call, __MODULE__, :crash_subscriber, [name()]}},
       {1, {:call, __MODULE__, :transact_raise, [stream()]}},
       {2, {:call, __MODULE__, :state, [stream()]}},
@@ -577,6 +578,12 @@ defmodule HalC2.StreamsPropTest do
 
   def unsubscribe(name, id) do
     Streams.unsubscribe(id, collector(name))
+  end
+
+  # The unsubscribe of a follow that gave up, by a tag no subscription has now: it
+  # ends nothing.
+  def unsubscribe_stale(name, id) do
+    Streams.unsubscribe(id, collector(name), {node(), make_ref()})
   end
 
   def crash_subscriber(name) do
