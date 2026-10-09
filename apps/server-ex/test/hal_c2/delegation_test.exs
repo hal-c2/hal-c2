@@ -20,8 +20,15 @@ defmodule HalC2.Orchestration.DelegationTest do
         ],
         do: start_supervised!({Registry, keys: :unique, name: name}, id: name)
 
+    on_exit(fn -> Application.delete_env(:hal_c2, :delegation_hook) end)
     :ok
   end
+
+  # Called by the code under test at its stages (`hook/2` in Delegation).
+  def hook(fun, stage, id), do: fun.(stage, id)
+
+  defp hook_with(fun),
+    do: Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :hook, [fun]})
 
   defp thread(id, extra \\ %{}) do
     {"thread", id,
@@ -155,6 +162,25 @@ defmodule HalC2.Orchestration.DelegationTest do
         |> Enum.find(&(&1["id"] != "task"))
 
       assert %{"status" => "failed", "completionDelivery" => %{"state" => "disposed"}} = failed
+    end
+  end
+
+  describe "a report that raises" do
+    test "is retried and settles the task" do
+      delegate("completed")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      hook_with(fn
+        :reporting, _ ->
+          if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0, do: raise("busy")
+
+        _, _ ->
+          :ok
+      end)
+
+      assert Delegation.report("c", "cr", "completed", 2, 0) == :ok
+      assert Agent.get(counter, & &1) == 2
+      assert task()["status"] == "completed"
     end
   end
 end
