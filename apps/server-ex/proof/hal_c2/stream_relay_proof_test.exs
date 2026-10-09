@@ -12,6 +12,8 @@ defmodule HalC2.StreamRelayProofTest do
     model: "stream_relay.maude",
     module: "STREAM-RELAY",
     check: "STREAM-RELAY-PROPS",
+    # Its widest searches take about a minute alone and over five on a shared CI runner.
+    timeout: 900_000,
     code: [
       {:exports, HalC2.Streams.Relay},
       {:exports, HalC2.Streams.Server},
