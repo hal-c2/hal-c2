@@ -82,4 +82,31 @@ defmodule HalC2.ClusterServerTest do
     entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
     assert {:ok, %{"port" => 4999}} = Cluster.admit(entry)
   end
+
+  test "a cluster process updated in place from before keeps its port and starts gossip once" do
+    on_exit(fn -> :persistent_term.erase({HalC2.Cluster.Epmd, :listen_port}) end)
+
+    # What the version before kept: the port in the table and no gossip.
+    :ets.insert(HalC2.Cluster, {:listen_port, 4998})
+
+    :sys.replace_state(Cluster, fn state ->
+      Process.cancel_timer(state.gossip)
+      Map.delete(state, :gossip)
+    end)
+
+    update_in_place()
+    assert HalC2.Cluster.Epmd.listen_port() == 4998
+    %{gossip: timer} = :sys.get_state(Cluster)
+    assert is_integer(Process.read_timer(timer))
+
+    update_in_place()
+    assert %{gossip: ^timer} = :sys.get_state(Cluster)
+  end
+
+  # What `HalC2.Hot` does for a process whose module changed.
+  defp update_in_place do
+    :ok = :sys.suspend(Cluster)
+    :ok = :sys.change_code(Cluster, Cluster, nil, :hot)
+    :ok = :sys.resume(Cluster)
+  end
 end

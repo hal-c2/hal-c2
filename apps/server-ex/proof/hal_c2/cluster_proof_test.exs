@@ -58,6 +58,8 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster state :id" => @names,
       "HalC2.Cluster state :fingerprint" => @names,
       "HalC2.Cluster state :off" => @off,
+      "HalC2.Cluster state :gossip" =>
+        "the timer of the next gossip, kept so an update in place starts one; the model gossips at any time",
       "HalC2.Cluster state :transport" =>
         "which module carries the casts, a fake in tests; the model's links and channels are the real one",
       "HalC2.Cluster.dist_port/0" => @names,

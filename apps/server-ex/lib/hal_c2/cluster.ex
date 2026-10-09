@@ -354,13 +354,13 @@ defmodule HalC2.Cluster do
       fingerprint: fingerprint,
       members: load(dir),
       off: nil,
+      gossip: nil,
       transport: transport
     }
 
     case transport.start(dir, id) do
       :ok ->
-        schedule_gossip()
-        {:ok, state |> refresh_own() |> commit()}
+        {:ok, %{state | gossip: schedule_gossip()} |> refresh_own() |> commit()}
 
       {:off, reason} ->
         {:ok, %{state | off: reason}}
@@ -522,8 +522,7 @@ defmodule HalC2.Cluster do
         member?(state.members[id_of(mc)]),
         do: state.transport.send(mc, {:merge, state.members})
 
-    schedule_gossip()
-    {:noreply, state}
+    {:noreply, %{state | gossip: schedule_gossip()}}
   end
 
   defp schedule_gossip,
@@ -533,6 +532,19 @@ defmodule HalC2.Cluster do
         :gossip,
         Application.get_env(:hal_c2, :cluster_gossip, @gossip_every)
       )
+
+  # A cluster process updated in place (`HalC2.Hot`) does not run `init/1` again. One
+  # from before the port outlived it keeps it in the table, where `Epmd` no longer
+  # looks (distribution names it only once), and has no gossip going.
+  @impl true
+  def code_change(_old, state, _extra) do
+    with [{_, port}] <- :ets.take(@table, :listen_port), do: Epmd.put_listen_port(port)
+    state = Map.put_new(state, :gossip, nil)
+
+    if state.off == nil and state.gossip == nil,
+      do: {:ok, %{state | gossip: schedule_gossip()}},
+      else: {:ok, state}
+  end
 
   # --- members -----------------------------------------------------------------
 
