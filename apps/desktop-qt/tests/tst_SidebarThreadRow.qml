@@ -115,5 +115,29 @@ Item {
             mouseClick(unpin);
             compare(spy.count, 1);
         }
+
+        // Scenario: A thread row shows its project's icon (features/threads/sidebar-list.feature)
+        function test_rowDrawsTheProjectIcon_data() {
+            return [
+                { tag: "slim", slim: true, mark: "projectMark" },
+                { tag: "card", slim: false, mark: "cardProjectMark" }
+            ];
+        }
+
+        function test_rowDrawsTheProjectIcon(data) {
+            let row = createTemporaryObject(rowComponent, root, {
+                slim: data.slim,
+                projectName: "Hal"
+            });
+            let mark = findChild(row, data.mark);
+            verify(!!mark);
+            verify(!findChild(mark, "projectIconMonogram"), "a folder without an icon");
+            row.projectIcon = { kind: "monogram", text: "HC" };
+            const monogram = findChild(mark, "projectIconMonogram");
+            verify(!!monogram, "the monogram replaces the folder");
+            compare(monogram.visible, true);
+            row.projectIcon = null;
+            tryVerify(() => !findChild(mark, "projectIconMonogram"));
+        }
     }
 }

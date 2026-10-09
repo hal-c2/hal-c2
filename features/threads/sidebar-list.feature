@@ -185,3 +185,10 @@ Feature: The thread list
     When the user looks at the thread list
     Then the threads from "work" are listed as unavailable
     And actions that need "work" are unavailable
+
+  @desktop @backlog-desktop @mobile @backlog-mobile
+  Scenario: A thread row shows its project's icon
+    Given the projects "shop" and "ops" have icons
+    When the user looks at the thread list with every project in scope
+    Then each slim and card row shows the icon of its project
+    And a project without an icon shows its monogram

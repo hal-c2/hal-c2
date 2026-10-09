@@ -35,6 +35,14 @@ Rectangle {
         }
         return names;
     }
+    // Each logical project's icon, drawn on its thread rows.
+    readonly property var projectIcons: {
+        const icons = {};
+        for (const project of projects) {
+            icons[project.key] = Shell.state.projectIcons?.[project.environmentId + ":" + project.projectId] ?? null;
+        }
+        return icons;
+    }
     readonly property string scopeLabel: {
         if (!model || model.scopeProjectKey === null) {
             return qsTr("All projects");
@@ -746,6 +754,7 @@ Rectangle {
                             updatedAt: null
                         } : entry.modelData.item
                         projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
+                        projectIcon: sidebar.projectIcons[entry.modelData.item.projectKey] ?? null
                         active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
                         onActivated: {
                             list.cursorKey = entry.modelData.rowKey;

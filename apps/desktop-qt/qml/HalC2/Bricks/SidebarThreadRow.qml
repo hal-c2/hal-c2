@@ -16,6 +16,8 @@ Item {
     required property bool active
     property bool slim: false
     property string projectName: ""
+    // The project's icon as `projectIcons` publishes it; null draws a folder.
+    property var projectIcon: null
     // Which sidebar group the row sits in: pinned, active, snoozed, settled
     // or draft. Decides the hover actions.
     property string section: "active"
@@ -347,6 +349,35 @@ Item {
         iconTint: row.secondaryColor
     }
 
+    // The project's icon, else a folder in `folderColor`. A Loader, so a row
+    // builds only the one it draws and the layout it is not shown in builds none.
+    component ProjectMark: Loader {
+        property color folderColor: row.secondaryColor
+
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: 16
+        Layout.preferredHeight: 16
+        active: parent.visible
+        sourceComponent: row.projectIcon ? iconMark : folderMark
+
+        Component {
+            id: iconMark
+            ProjectIcon {
+                icon: row.projectIcon
+                size: 16
+            }
+        }
+
+        Component {
+            id: folderMark
+            ShellIcon {
+                name: "folder"
+                size: 16
+                color: folderColor
+            }
+        }
+    }
+
     // The mark of a thread an MC plugin started, while the plugin runs; made
     // only for such threads.
     component PluginMark: Loader {
@@ -463,12 +494,9 @@ Item {
         spacing: 10
         visible: row.slim
 
-        ShellIcon {
-            name: "folder"
-            size: 16
-            color: row.secondaryColor
+        ProjectMark {
+            objectName: "projectMark"
             opacity: hover.hovered || row.focused ? 1 : 0.4
-            Layout.alignment: Qt.AlignVCenter
 
             Behavior on opacity {
                 NumberAnimation {
@@ -508,11 +536,9 @@ Item {
             Layout.preferredHeight: 22
             spacing: 6
 
-            ShellIcon {
-                name: "folder"
-                size: 16
-                color: row.projectColor
-                Layout.alignment: Qt.AlignVCenter
+            ProjectMark {
+                objectName: "cardProjectMark"
+                folderColor: row.projectColor
             }
 
             Text {
