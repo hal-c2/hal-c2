@@ -142,4 +142,4 @@ server.on("upgrade", (request, socket) => {
   });
 });
 
-server.listen(port, host);
+server.listen(port, host, () => console.log("listening"));

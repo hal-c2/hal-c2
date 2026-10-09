@@ -900,6 +900,33 @@ defmodule HalC2.Devices do
 
   # A launcher for the pinned CLI that refuses commands not pinned to a device_open
   # session, so an agent never drives the user's other devices by accident.
+  # The hub never reads its stdin, so when the MC dies without running terminate/2
+  # Exile closing the pipe would leave it serving forever. This launcher ends the
+  # process when stdin ends, then loads the real CLI with the hub's own flags.
+  @doc false
+  def hub_command(node, entry, port) do
+    dir = Path.join([HalC2.Paths.data_dir(), "device", "bin"])
+    File.mkdir_p!(dir)
+    launcher = Path.join(dir, "hub-launcher.mjs")
+
+    File.write!(launcher, """
+    import { pathToFileURL } from "node:url";
+    process.stdin.on("end", () => process.exit(0)).resume();
+    await import(pathToFileURL(#{JSON.encode!(entry)}).href);
+    """)
+
+    [
+      node,
+      launcher,
+      "--port",
+      "#{port}",
+      "--host",
+      "127.0.0.1",
+      "--hide-sidebar",
+      "--hide-boot-device"
+    ]
+  end
+
   defp write_shim(%{"node" => node, "entry" => entry}) do
     dir = Path.join([HalC2.Paths.data_dir(), "device", "bin"])
     File.mkdir_p!(dir)
@@ -1130,18 +1157,9 @@ defmodule HalC2.Devices do
   def handle_call({:spawn_hub, node, entry}, _from, state) do
     port = free_port()
 
-    cmd = [
-      node,
-      entry,
-      "--port",
-      "#{port}",
-      "--host",
-      "127.0.0.1",
-      "--hide-sidebar",
-      "--hide-boot-device"
-    ]
-
-    case HalC2.Subprocess.start(cmd, env: host_env() ++ [{"FORCE_COLOR", "0"}, {"NO_COLOR", "1"}]) do
+    case HalC2.Subprocess.start(hub_command(node, entry, port),
+           env: host_env() ++ [{"FORCE_COLOR", "0"}, {"NO_COLOR", "1"}]
+         ) do
       {:ok, sub} ->
         stop_hub(state.hub_process)
         {:reply, {:ok, "http://127.0.0.1:#{port}"}, %{state | hub_process: sub}}

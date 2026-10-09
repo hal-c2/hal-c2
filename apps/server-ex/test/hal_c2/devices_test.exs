@@ -242,6 +242,44 @@ defmodule HalC2.DevicesTest do
     result
   end
 
+  test "the hub exits when the VM that started it is killed", %{tmp_dir: dir} do
+    {:ok, probe} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    {:ok, port} = :inet.port(probe)
+    :gen_tcp.close(probe)
+
+    entry =
+      Path.join([dir, "tools", "expo-device-hub", "0.10.1", "node_modules"])
+      |> Path.join("expo-device-hub/dist/server/cli.mjs")
+
+    cmd = HalC2.Devices.hub_command(System.find_executable("node"), entry, port)
+
+    # A VM of its own, so that nothing of the MC's shutdown runs when it dies.
+    args = Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
+    {:ok, peer, _} = :peer.start(%{connection: :standard_io, args: args})
+    on_exit(fn -> if Process.alive?(peer), do: :peer.stop(peer) end)
+
+    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:exile])
+
+    start = """
+    caller = self()
+
+    spawn(fn ->
+      {:ok, _} = HalC2.Subprocess.start(cmd)
+      receive do: ({:subprocess_lines, _, lines} -> send(caller, {:hub_lines, lines}))
+      Process.sleep(:infinity)
+    end)
+
+    receive do: ({:hub_lines, lines} -> lines)
+    """
+
+    assert {["listening"], _} = :peer.call(peer, Code, :eval_string, [start, [cmd: cmd]], 30_000)
+    {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: true])
+
+    os_pid = :peer.call(peer, :os, :getpid, [])
+    {_, 0} = System.cmd("kill", ["-9", List.to_string(os_pid)])
+    assert_receive {:tcp_closed, ^socket}, 10_000
+  end
+
   # Receives device states until one matches.
   defp next_state(fun) do
     receive do
