@@ -547,8 +547,16 @@ export interface TuiQueuedMessage {
   readonly held: boolean;
 }
 
+// A thread stored before the MC marked them kept the provider's own wake-up as a message
+// the agent sent itself: from the provider, and from no other thread.
 const isConversation = (message: OrchestrationV2ThreadProjection["messages"][number]) =>
-  message.notification == null && message.delegatedCompletion == null;
+  message.notification == null &&
+  message.delegatedCompletion == null &&
+  !(
+    message.createdBy === "agent" &&
+    message.creationSource === "provider" &&
+    message.senderThreadId == null
+  );
 
 export function presentTuiThread(projection: OrchestrationV2ThreadProjection): OrchestrationThread {
   const thread = projection.thread;
