@@ -327,7 +327,8 @@ defmodule HalC2.Orchestration do
       ) do
     # Attachments, when given, replace the message's (uploads join the thread first);
     # context, when given, replaces its context records.
-    with {:ok, command} <- edit_claims(thread_id, command) do
+    with :ok <- users_run(HalC2.Streams.state(thread_id), run_id),
+         {:ok, command} <- edit_claims(thread_id, command) do
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
         |> Map.merge(Map.take(command, ["attachments"]))
@@ -534,6 +535,9 @@ defmodule HalC2.Orchestration do
 
       queued["status"] != "queued" ->
         {:error, "Queued run #{command["queuedRunId"]} is not queued."}
+
+      agent_message?(message) ->
+        users_run(state, queued["id"])
 
       message && target && target["status"] in @active_statuses && steerable?(target) &&
           runtime(target["providerInstanceId"]).steer(
@@ -2212,6 +2216,24 @@ defmodule HalC2.Orchestration do
 
   defp automatic?(state, run),
     do: StreamState.get(state, "message")[run["userMessageId"]]["delegatedCompletion"] != nil
+
+  # A message the MC sent for the agent (`message_item/6`), also one stored before such
+  # messages carried a `notification`.
+  defp agent_message?(message),
+    do: message["notification"] != nil or message["delegatedCompletion"] != nil
+
+  # A queued message the MC sent for the agent is not the user's to rewrite or steer
+  # with: it is what the agent is told, and when.
+  defp users_run(state, run_id) do
+    with %{"status" => "queued", "userMessageId" => message_id} <-
+           StreamState.get(state, "run")[run_id],
+         %{} = message <- StreamState.get(state, "message")[message_id],
+         true <- agent_message?(message) do
+      {:error, "Queued run #{run_id} is the agent's own message, not one to edit or steer with."}
+    else
+      _ -> :ok
+    end
+  end
 
   # A deleted thread's provider sessions stop in the commit that deletes it; the
   # dispatcher then stops their processes.

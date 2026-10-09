@@ -2,8 +2,10 @@ defmodule HalC2.OrchestrationPropTest do
   @moduledoc """
   A state machine over two threads driven through the orchestration commands a client
   sends: create, rename, archive, unarchive and delete a thread; send a message that
-  starts a turn, waits in the queue, steers the running turn or restarts it; send a
-  message again with its message id, as a client retrying after a reconnect does;
+  starts a turn, waits in the queue, steers the running turn or restarts it; have the
+  MC send the agent a message of its own (a `notification`, as a delegated task's
+  result is); send a message again with its message id, as a client retrying after a
+  reconnect does;
   cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery).
@@ -14,7 +16,9 @@ defmodule HalC2.OrchestrationPropTest do
   threads' streams until nothing is starting and the runs the command ended have
   ended, then compares each thread's projection with the model: thread state, runs
   and their statuses in order, the queue's order and positions, at most one active
-  run, and every user message exactly once, in the run it belongs to.
+  run, and every user message exactly once, in the run it belongs to. A message of the
+  MC's own is in the transcript as a notification, never as a user message, and while
+  it is queued it cannot be edited or made to steer.
   """
 
   use ExUnit.Case, async: false
@@ -77,7 +81,8 @@ defmodule HalC2.OrchestrationPropTest do
   # threads: id -> %{status: :live | :archived | :deleted, title, runs, queue, messages}
   #   runs: [%{msg, status, held}] in the order they were made (their ordinals);
   #   queue: queued messages, first to start first;
-  #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript}
+  #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
+  #     notice: the MC's own message to the agent}
   def initial_state, do: %{threads: %{}, next: 1}
 
   def command(%{threads: threads, next: next}) do
@@ -86,7 +91,8 @@ defmodule HalC2.OrchestrationPropTest do
 
     always = [
       {3, {:call, __MODULE__, :create, [tid]}},
-      {8, {:call, __MODULE__, :send, [tid, msg, oneof([:queue, :queue, :auto, :restart])]}},
+      {8,
+       {:call, __MODULE__, :send, [tid, msg, oneof([:queue, :queue, :auto, :restart, :notice])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {1, {:call, __MODULE__, :archive, [tid]}},
       {1, {:call, __MODULE__, :unarchive, [tid]}},
@@ -283,7 +289,7 @@ defmodule HalC2.OrchestrationPropTest do
     case refusal(state, tid, :queue) do
       nil ->
         update(state, tid, fn thread ->
-          if msg in thread.queue,
+          if msg in thread.queue and not thread.messages[msg].notice,
             do: put_in(thread.messages[msg].text, text),
             else: thread
         end)
@@ -379,9 +385,25 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp promote_refusal(state, tid, msg) do
     case state.threads[tid] do
-      nil -> {:error, "unknown thread #{tid}"}
-      %{status: :live} = thread -> if msg in thread.queue, do: nil, else: {:error, :not_queued}
-      _ -> {:error, "Thread #{tid} is not active."}
+      nil ->
+        {:error, "unknown thread #{tid}"}
+
+      %{status: :live} = thread ->
+        if msg in thread.queue, do: agents_own(state, tid, msg), else: {:error, :not_queued}
+
+      _ ->
+        {:error, "Thread #{tid} is not active."}
+    end
+  end
+
+  # A queued message of the MC's own is refused an edit and a promotion.
+  defp agents_own(state, tid, msg) do
+    case state.threads[tid] do
+      %{queue: queue, messages: %{^msg => %{notice: true}}} ->
+        if msg in queue, do: {:error, :agents_own}
+
+      _ ->
+        nil
     end
   end
 
@@ -395,7 +417,10 @@ defmodule HalC2.OrchestrationPropTest do
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
 
-  defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :edit, :reorder],
+  defp expected_reply(state, :edit, [tid, msg, _]),
+    do: refusal(state, tid, :queue) || agents_own(state, tid, msg) || :ok
+
+  defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
     do: refusal(state, tid, :queue) || :ok
 
   defp expected_reply(state, :promote, [tid, msg]), do: promote_refusal(state, tid, msg) || :ok
@@ -408,6 +433,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
+
+  defp reply_matches?({:error, :agents_own}, {:error, message}),
+    do: message =~ ~r/^Queued run \S+ is the agent's own message/
 
   defp reply_matches?(expected, reply), do: expected == reply
 
@@ -445,7 +473,7 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp sent(thread, msg, mode) do
     active = running(thread)
-    message = %{text: "wait #{msg}", run: msg, shown: false}
+    message = %{text: "wait #{msg}", run: msg, shown: false, notice: mode == :notice}
 
     cond do
       active == nil ->
@@ -504,7 +532,10 @@ defmodule HalC2.OrchestrationPropTest do
       runs: for(run <- thread.runs, do: {run.msg, Atom.to_string(run.status), run.held}),
       queue: thread.queue,
       messages:
-        Map.new(thread.messages, fn {id, m} -> {id, {m.text, m.run, if(m.shown, do: m.run)}} end)
+        Map.new(thread.messages, fn {id, m} ->
+          shown = if m.shown, do: {m.run, if(m.notice, do: "notification", else: "user_message")}
+          {id, {m.text, m.run, shown}}
+        end)
     }
   end
 
@@ -530,7 +561,10 @@ defmodule HalC2.OrchestrationPropTest do
     ending = active_runs(tid)
     result = Orchestration.dispatch(message(tid, msg, mode))
     # Only a run the message steered or restarted ends.
-    reply(result, if(match?({:ok, _}, result) and mode != :queue, do: ending, else: []))
+    reply(
+      result,
+      if(match?({:ok, _}, result) and mode in [:auto, :restart], do: ending, else: [])
+    )
   end
 
   # The same message again, as first sent; a message the thread has ends no run.
@@ -541,6 +575,19 @@ defmodule HalC2.OrchestrationPropTest do
       case mode do
         :queue ->
           %{"dispatchMode" => %{"type" => "queue_after_active"}}
+
+        # As `Delegation` sends a task's result: for the agent, once the thread is free.
+        :notice ->
+          %{
+            "dispatchMode" => %{"type" => "queue_after_active"},
+            "createdBy" => "system",
+            "creationSource" => "server",
+            "notification" => %{
+              "source" => %{"kind" => "delegated_task", "taskIds" => ["task-#{msg}"]},
+              "outcome" => "completed",
+              "summary" => "#{msg} finished"
+            }
+          }
 
         :auto ->
           %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "auto"}
@@ -744,9 +791,24 @@ defmodule HalC2.OrchestrationPropTest do
           for {id, %{"role" => "user"} = m} <- StreamState.get(state, "message"), into: %{} do
             item = items["turn-item:user:#{id}"]
 
-            {id,
-             {m["text"], by_id[m["runId"]]["userMessageId"],
-              item && by_id[item["runId"]]["userMessageId"]}}
+            # Where the transcript has the message, and as what; a notification says
+            # what the message reports and none of its text.
+            shown =
+              cond do
+                item == nil ->
+                  nil
+
+                item["type"] == "notification" and item["summary"] != m["notification"]["summary"] ->
+                  {:bad_item, item}
+
+                item["type"] == "notification" and Map.has_key?(item, "text") ->
+                  {:bad_item, item}
+
+                true ->
+                  {by_id[item["runId"]]["userMessageId"], item["type"]}
+              end
+
+            {id, {m["text"], by_id[m["runId"]]["userMessageId"], shown}}
           end
 
         %{

@@ -119,6 +119,19 @@ Feature: Plans and subagents
       | carry on    | with "12 tests added" | "12 tests added" once it is free       |
       | wait for it | without an answer     | "(no answer)" once its own run is over |
 
+  @mc
+  Scenario Outline: A result waiting to wake the parent is the agent's, not the user's to change
+    Given the agent delegated a task and chose to carry on
+    And the subagent finishes with "12 tests added"
+    When the user tries to <action> the result waiting to wake the parent
+    Then the MC refuses, as the result is the agent's own message
+    And the parent receives "12 tests added" once it is free
+
+    Examples:
+      | action |
+      | edit   |
+      | steer  |
+
   @shared @backlog-mobile
   Scenario: A delegated task's result shows as a notification, not a message of the user's
     Given a task the agent delegated as "Tax tests" finished
