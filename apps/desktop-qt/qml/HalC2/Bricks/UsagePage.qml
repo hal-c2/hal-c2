@@ -404,7 +404,7 @@ Rectangle {
                 // Usage: the total, each provider's part, then the breakdowns.
                 ColumnLayout {
                     Layout.fillWidth: true
-                    visible: !page.limitsShown && page.summary !== null
+                    visible: !page.limitsShown && !!page.summary
                     spacing: 4
 
                     Label {

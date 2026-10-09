@@ -157,6 +157,15 @@ Item {
             verify(!findChild(page, "usageWindowLabel").visible);
         }
 
+        // UsageController publishes an unset summary as undefined, not null,
+        // until the first scan merges something.
+        function test_nothingReadYetShowsNoEmptyBreakdown() {
+            Shell.state = { usage: root.usage({ scanning: true, summary: undefined, message: "Reading session history…" }) };
+            const page = createTemporaryObject(usageComponent, root);
+            compare(findChild(page, "usageMessage").text, "Reading session history…");
+            compare(findChild(page, "usageTotal").parent.visible, false, "no Totals, Models or Daily heading");
+        }
+
         function test_a_refresh_running_cannot_be_started_again() {
             Shell.state = { usage: root.usage({ refreshing: true }) };
             const page = createTemporaryObject(usageComponent, root);

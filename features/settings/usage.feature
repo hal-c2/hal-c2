@@ -155,6 +155,12 @@ Feature: Usage and limits
       Then "server" usage is shown
       And "laptop" is shown as still scanning
 
+    @desktop @backlog-desktop
+    Scenario: Usage shows one loading state until the first answer
+      Given the first scan of session history is still running
+      When the user views usage for the cost metric
+      Then "Reading session history…" is the only thing shown, with no empty breakdown headings
+
     @shared @backlog-mobile @backlog-tui
     Scenario: An environment that cannot report usage is named
       Given "server" is offline
