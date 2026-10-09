@@ -109,11 +109,19 @@ defmodule HalC2.Web.Socket do
       do: handle_info(message, migrate(state))
 
   # One for a subscription followed before this one, still on its way, is not this
-  # one's.
+  # one's. A follow that gave up may yet be taken: that subscription goes live, and is
+  # ended then.
   def handle_info({:hal_c2_stream, {stream_id, tag}, message}, state) do
-    case state.by_stream do
-      %{^stream_id => {id, ^tag}} -> stream_message(state, id, message)
-      _ -> {:ok, state}
+    case {state.by_stream, message, tag} do
+      {%{^stream_id => {id, ^tag}}, _, _} ->
+        stream_message(state, id, message)
+
+      {_, {:live, _, _}, {mc, _ref}} ->
+        :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
+        {:ok, state}
+
+      _ ->
+        {:ok, state}
     end
   end
 
@@ -683,7 +691,8 @@ defmodule HalC2.Web.Socket do
     if Map.has_key?(state.by_stream, stream_id) do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
-      tag = make_ref()
+      # Names the MC too, for ending the subscription if this follow gives up.
+      tag = {mc, make_ref()}
       client = resume |> Map.take([:handle, :window, :kinds]) |> Map.put(:tag, tag)
 
       # The owning MC may be gone or slow; the client retries when it is back.
