@@ -467,7 +467,9 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       do: File.rm!(hosts),
       else: File.write!(hosts, "github.com:\n    user: acme\n")
 
-    :ok = HalC2.Git.use_gh_for_github()
+    # As an MC that runs as one: a test MC leaves its host alone otherwise.
+    World.put_app_env(:start_mc, true)
+    assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
     context
   end
 
