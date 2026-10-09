@@ -193,6 +193,13 @@ const Steps steps([] {
     world.waitFor([&] { return at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("title")) == c[0] || onboardingShows(world, c[0]) || (world.brick && world.brick->shows(c[0])); },
                   [&] { return QStringLiteral("\"%1\"; the archive shows %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
   });
+  // The page only narrows a list, so a connected environment is never asked to reconnect.
+  step(QStringLiteral("the archived threads page shows no reconnect notice"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !groups(world).isEmpty(); }, [&] { return QStringLiteral("the archive to list threads"); });
+    const QVariantMap scope = world.state(QStringLiteral("settingsScope")).toMap();
+    expect(scope.value(QStringLiteral("disabledReason")).toString().isEmpty(),
+           QStringLiteral("no notice; the scope is %1").arg(show(scope)));
+  });
   step(QStringLiteral("%1 is listed under %1 and %1 under %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return groupOf(world, c[0]) == c[1] && groupOf(world, c[2]) == c[3]; },
                   [&] { return QStringLiteral("the groups to be right; they are %1").arg(show(groups(world))); });
