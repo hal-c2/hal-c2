@@ -174,6 +174,10 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> Map.put(:entry, entry)
   end
 
+  step "the host's xdg-mime never answers", context do
+    context |> with_display() |> install_script("xdg-mime", "exec sleep 30") |> install("gio")
+  end
+
   step "the default editor is listed first", context do
     assert hd(context.server_config["availableEditors"]) == "default"
     context

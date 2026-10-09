@@ -110,8 +110,7 @@ defmodule HalC2.Editors do
         with true <- display?(),
              xdg_mime when xdg_mime != nil <- System.find_executable("xdg-mime"),
              gio when gio != nil <- System.find_executable("gio"),
-             {id, 0} <- System.cmd(xdg_mime, ["query", "default", "text/plain"]),
-             entry when entry != nil <- desktop_entry(String.trim(id)) do
+             entry when entry != nil <- desktop_entry(text_plain_handler(xdg_mime)) do
           {gio, ["launch", entry]}
         else
           _ -> nil
@@ -119,17 +118,47 @@ defmodule HalC2.Editors do
     end
   end
 
-  # The file of desktop entry `id`, searched for as the XDG base directory spec says.
+  # The desktop entry id xdg-mime names for text/plain, or "". It runs while a client
+  # waits for the server config, so a hung xdg-mime (a broken D-Bus or desktop session)
+  # counts as no default after 2 s; killing the task takes xdg-mime with it.
+  defp text_plain_handler(xdg_mime) do
+    task =
+      Task.async(fn ->
+        try do
+          Exile.stream!([xdg_mime, "query", "default", "text/plain"], stderr: :disable)
+          |> Enum.join()
+        rescue
+          _ -> ""
+        end
+      end)
+
+    case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, id} -> String.trim(id)
+      nil -> ""
+    end
+  end
+
+  # The file of desktop entry `id`, searched for as the XDG base directory spec says: a
+  # variable that is unset, empty or relative falls back to its default.
   defp desktop_entry(""), do: nil
 
   defp desktop_entry(id) do
-    home = System.get_env("XDG_DATA_HOME") || Path.join(System.user_home!(), ".local/share")
-    dirs = System.get_env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share"
+    home = xdg_dirs("XDG_DATA_HOME", Path.join(System.user_home!(), ".local/share"))
+    dirs = xdg_dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
 
-    [home | String.split(dirs, ":", trim: true)]
+    (home ++ dirs)
     |> Enum.map(&Path.join([&1, "applications", id]))
     |> Enum.find(&File.regular?/1)
   end
+
+  defp xdg_dirs(name, default) do
+    case (System.get_env(name) || "") |> String.split(":") |> Enum.filter(&absolute?/1) do
+      [] -> String.split(default, ":")
+      dirs -> dirs
+    end
+  end
+
+  defp absolute?(path), do: Path.type(path) == :absolute
 
   defp display?, do: (System.get_env("DISPLAY") || System.get_env("WAYLAND_DISPLAY")) != nil
 

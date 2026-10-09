@@ -57,6 +57,12 @@ Feature: The MC working with its host machine
     Then macOS opens "src/app.ts" in its default text editor
 
   @mc
+  Scenario: A hung default editor lookup does not hold up the server config
+    Given the host's xdg-mime never answers
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
   Scenario: A host without a default text editor does not offer one
     Given a Linux host with no display
     When a client reads the available editors
