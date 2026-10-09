@@ -109,6 +109,17 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     context
   end
 
+  # The same input, command id and message id included, as a client retrying sends it.
+  step "the client sends the same launch again after a reconnect", context do
+    {reply, context} = World.call(context, "orchestration.launchThread", context.launch_input)
+    Map.put(context, :launch, reply)
+  end
+
+  step "the thread has one user message", context do
+    assert [%{"text" => "Hello"}] = user_messages(context)
+    context
+  end
+
   # --- titles --------------------------------------------------------------------------
 
   step "the text generation model fails twice and then succeeds", context do
@@ -448,7 +459,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     assert {:ok, %{"threadId" => id}} = reply
     World.await_row(id, & &1)
 
-    context = Map.put(context, :launch, reply)
+    context = Map.merge(context, %{launch: reply, launch_input: input})
 
     if Map.values(context.threads) |> Enum.member?(id),
       do: context,
