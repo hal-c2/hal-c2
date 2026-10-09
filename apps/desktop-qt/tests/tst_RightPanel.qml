@@ -31,6 +31,14 @@ Item {
     }
 
     Component {
+        id: detailsComponent
+        ThreadDetailsPanel {
+            width: 280
+            height: 700
+        }
+    }
+
+    Component {
         id: filesComponent
         FilesPanel {
             width: 400
@@ -424,6 +432,29 @@ Item {
             verify(findChild(panel, "panelScrollLeft").enabled);
             const title = findChild(panel, "panelTab-t4");
             verify(title.width <= 112 + 13 + 20 + 12 + 16, "a long title is capped");
+        }
+
+        function test_finishedSubagentsFoldUnderPreviousAgentsWithAFailedCount() {
+            const relations = [{ threadKey: "e:fork", title: "A fork", relation: "Fork", status: "finished" },
+                               { threadKey: "e:run", title: "Running one", relation: "Subagent", status: "running" }];
+            for (let i = 0; i < 8; ++i)
+                relations.push({ threadKey: "e:done" + i, title: "Done " + i, relation: "Subagent", status: i < 2 ? "failed" : "finished" });
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "", relations: relations } });
+            compare(details.leading.length, 2);
+            compare(details.previous.length, 8);
+            compare(details.failedCount, 2);
+            const previous = findChild(details, "threadDetailsPrevious");
+            verify(previous.visible);
+            verify(previous.text.indexOf("(8)") >= 0);
+            compare(findChild(details, "threadDetailsFailed").text, "2 failed");
+            verify(!findChild(details, "threadDetailsShowMore").visible, "closed, the two rows fit the first page");
+            mouseClick(previous);
+            compare(details.previousOpen, true);
+            verify(findChild(details, "threadDetailsShowMore").visible, "6 rows, the rest behind Show more");
+            compare(details.hiddenCount, 4);
+            mouseClick(findChild(details, "threadDetailsShowMore"));
+            compare(details.hiddenCount, 0);
+            verify(!findChild(details, "threadDetailsShowMore").visible);
         }
 
         function test_openFileGetsMostOfThePanel() {

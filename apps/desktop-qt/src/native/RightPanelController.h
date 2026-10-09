@@ -44,7 +44,8 @@ class ShellStore;
 // (`pullRequests` and `pullRequest`, the review: the thread has linked ones.)
 // `details`, while the thread details column shows, else null:
 //   {environment, online, project, folder, checkout ("Local"|"Worktree"),
-//    branch, relations: [{threadKey, title, relation}]}
+//    branch, relations: [{threadKey, title, relation, status}]}
+// (status of a started thread: "running", "failed" or "finished"; "" absent on the parent)
 // (its parent, and the forks and subagents it started).
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,

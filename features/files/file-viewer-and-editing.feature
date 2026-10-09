@@ -132,7 +132,7 @@ Feature: Viewing and editing files
         | data/orders.csv |
         | public/index.html |
 
-    @backlog-desktop
+    @desktop @backlog-desktop
     Scenario: An open file gets most of the Files tab
       When the user opens "src/app.ts"
       Then the file viewer is taller than the file tree
