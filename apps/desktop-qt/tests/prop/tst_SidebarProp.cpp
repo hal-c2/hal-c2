@@ -468,7 +468,7 @@ void arrange(Model& model, const std::string& section, const std::vector<std::st
 // --- The projection ----------------------------------------------------------
 
 struct RowView {
-  std::string key, environment, projectKey, title, status, snoozedUntil, wakeLabel, movingTo;
+  std::string key, environment, projectKey, title, status, snoozedUntil, wakeLabel, movingTo, timeAt;
   bool pinned = false, selected = false, offline = false, canSettle = false, canSnooze = false;
   bool operator==(const RowView&) const = default;
 };
@@ -492,6 +492,7 @@ std::ostream& operator<<(std::ostream& os, const RowView& row) {
   if (!row.snoozedUntil.empty()) os << " until " << row.snoozedUntil;
   if (!row.wakeLabel.empty()) os << " wake " << row.wakeLabel;
   if (!row.movingTo.empty()) os << " moving " << row.movingTo;
+  os << " at " << row.timeAt;
   if (row.selected) os << " selected";
   if (row.offline) os << " offline";
   os << (row.canSettle ? " +settle" : "") << (row.canSnooze ? " +snooze" : "");
@@ -529,7 +530,9 @@ Projection expected(const Model& model) {
   Projection view;
   const Sections sections = sectionsOf(model, true);
   const std::vector<std::string> listed = orderedKeys(model);
-  const auto rows = [&](const std::vector<Living>& section, bool snoozed) {
+  // A row's age counts from when it settled on the settled shelf (the time that orders
+  // it) and from its last message anywhere else, whatever else changed the row since.
+  const auto rows = [&](const std::vector<Living>& section, bool snoozed, bool settled = false) {
     std::vector<RowView> result;
     for (const Living& thread : section) {
       const Row& row = *thread.row;
@@ -539,6 +542,7 @@ Projection expected(const Model& model) {
       result.push_back(RowView{thread.key(), thread.environment, groupKey(row.project), kTitles[size_t(row.title)], "ready",
                                row.snoozedUntil ? iso(*row.snoozedUntil).toStdString() : "",
                                snoozed ? wakeLabel(*row.snoozedUntil, model.now) : "", row.moving ? "to " + *row.moving : "",
+                               iso(settled ? *row.settled : row.message.value_or(row.updated)).toStdString(),
                                row.pinned.has_value(), model.selected.count(thread.key()) > 0, offline, !offline, !offline && !starting});
     }
     return result;
@@ -546,7 +550,7 @@ Projection expected(const Model& model) {
   view.pinned = rows(sections.pinned, false);
   view.active = rows(sections.active, false);
   view.snoozed = rows(sections.snoozed, true);
-  view.settled = rows(sections.settled, false);
+  view.settled = rows(sections.settled, false, true);
   view.settledTotal = int(sections.settled.size());
   view.scope = model.scope ? groupKey(*model.scope) : "";
   for (const std::string& key : listed) {
@@ -610,6 +614,7 @@ Projection read(const QVariantMap& state) {
                                string(row.value(QStringLiteral("projectKey"))), string(row.value(QStringLiteral("title"))),
                                string(row.value(QStringLiteral("status"))), string(row.value(QStringLiteral("snoozedUntil"))),
                                string(row.value(QStringLiteral("wakeLabel"))), string(row.value(QStringLiteral("movingTo"))),
+                               string(row.value(QStringLiteral("timeAt"))),
                                row.value(QStringLiteral("pinned")).toBool(), row.value(QStringLiteral("selected")).toBool(),
                                row.value(QStringLiteral("offline")).toBool(), row.value(QStringLiteral("canSettle")).toBool(),
                                row.value(QStringLiteral("canSnooze")).toBool()});

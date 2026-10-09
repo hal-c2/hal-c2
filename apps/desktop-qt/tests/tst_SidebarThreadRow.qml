@@ -37,6 +37,19 @@ Item {
         name: "SidebarThreadRowTests"
         when: windowShown
 
+        // Scenario: Pinning a thread does not change its age (features/threads/unread-and-status.feature)
+        function test_ageCountsFromTheRowsTimeNotItsUpdate() {
+            let row = createTemporaryObject(rowComponent, root);
+            verify(!!row, "Component exists");
+            const now = Date.now();
+            row.item = Object.assign({}, row.item, {
+                updatedAt: new Date(now).toISOString(),
+                timeAt: new Date(now - 3 * 3600 * 1000).toISOString()
+            });
+            row.ageNow = now;
+            compare(row.ageLabel, qsTr("%1h").arg(3));
+        }
+
         // Scenario: The age keeps up while nothing changes (features/threads/unread-and-status.feature)
         function test_relativeAgeRefreshesWhileIdle() {
             let row = createTemporaryObject(rowComponent, root);

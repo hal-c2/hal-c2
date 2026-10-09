@@ -152,7 +152,7 @@ Item {
     // Titles keep the prompt's line breaks; the row shows them on one line,
     // as the web app does, so a multi-line title never overflows the card.
     readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()
-    readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.updatedAt, ageNow)
+    readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.timeAt ?? item.updatedAt, ageNow)
 
     function relativeAge(iso, now) {
         if (!iso) {
