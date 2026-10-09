@@ -39,6 +39,50 @@ Feature: The MC working with its host machine
       | IntelliJ |
 
   @mc
+  Scenario: The user's default text editor is offered first
+    Given the host's default text editor is Neovim
+    When a client reads the MC's server config
+    Then the default editor is listed first
+
+  @mc
+  Scenario: Opening a location in the default editor opens the file
+    Given the host's default text editor is Neovim
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then the MC launches Neovim's desktop entry on "src/app.ts"
+
+  @mc
+  Scenario: On a Mac the default editor is the one macOS opens text in
+    Given the MC runs on macOS
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then macOS opens "src/app.ts" in its default text editor
+
+  @mc
+  Scenario: A default editor installed in a vendor folder is found by its id
+    Given the host's default text editor is "acme-editor.desktop", installed as "acme/editor.desktop"
+    When a client reads the MC's server config
+    Then the default editor is listed first
+
+  @mc
+  Scenario: An empty DISPLAY is no display
+    Given the host's default text editor is Neovim
+    And DISPLAY is set but empty and there is no Wayland display
+    When a client reads the available editors
+    Then the default editor is not offered
+    And the file manager is not offered
+
+  @mc
+  Scenario: A hung default editor lookup does not hold up the server config
+    Given the host's xdg-mime never answers
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
+  Scenario: A host without a default text editor does not offer one
+    Given a Linux host with no display
+    When a client reads the available editors
+    Then the default editor is not offered
+
+  @mc
   Scenario: Revealing a folder in the file manager
     When a client opens a project folder in the file manager
     Then the host's file manager shows that folder

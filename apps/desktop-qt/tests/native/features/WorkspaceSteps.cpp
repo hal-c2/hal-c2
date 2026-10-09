@@ -230,11 +230,12 @@ QString editorLabel(const QString& id) {
   if (id == QLatin1String("vscode")) return QStringLiteral("VS Code");
   if (id == QLatin1String("zed")) return QStringLiteral("Zed");
   if (id == QLatin1String("cursor")) return QStringLiteral("Cursor");
+  if (id == QLatin1String("default")) return QStringLiteral("Default Editor");
   return id;
 }
 
 QString editorId(const QString& label) {
-  for (const QString& id : {QStringLiteral("vscode"), QStringLiteral("zed"), QStringLiteral("cursor")}) {
+  for (const QString& id : {QStringLiteral("vscode"), QStringLiteral("zed"), QStringLiteral("cursor"), QStringLiteral("default")}) {
     if (editorLabel(id) == label) return id;
   }
   return label;

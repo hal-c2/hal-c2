@@ -415,6 +415,8 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    // The host's default editor is the MC's; this server never offers it.
+    if (editor.id === "default") continue;
     if (editor.commands === null) {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);

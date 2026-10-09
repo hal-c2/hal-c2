@@ -155,6 +155,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       And "Zed" becomes the preferred editor
 
     @desktop
+    Scenario: The header prefers the host's default editor until the user picks another
+      Given the environment has the editors "Zed" and "Default Editor"
+      Then the header lists the editors "Default Editor" and "Zed"
+      And "Default Editor" is the editor offered first
+      When the user opens the thread's workspace from the header
+      Then "Default Editor" opens the thread's workspace folder
+
+    @desktop
     Scenario: The header offers no editor when the environment has none
       Given the environment has no editors
       Then the header does not offer to open the workspace in an editor

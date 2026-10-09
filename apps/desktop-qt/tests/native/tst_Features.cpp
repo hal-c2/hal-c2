@@ -544,6 +544,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:The header runs any of the project's actions"),
     QStringLiteral("navigation/layout.feature:The header offers no action to run when the project has none"),
     QStringLiteral("navigation/layout.feature:The header opens the thread's workspace in the preferred editor"),
+    QStringLiteral("navigation/layout.feature:The header prefers the host's default editor until the user picks another"),
     QStringLiteral("navigation/layout.feature:The header offers no editor when the environment has none"),
     QStringLiteral("navigation/layout.feature:The thread's git actions are in the header"),
     QStringLiteral("navigation/appearance.feature:Panels open and close immediately by default"),

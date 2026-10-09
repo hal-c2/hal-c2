@@ -65,6 +65,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     {conn, argv}
   end
 
+  # Installs `name` as a program that runs `body` and exits.
+  defp install_script(context, name, body) do
+    context = bin(context)
+    path = Path.join(context.bin, name)
+    File.write!(path, "#!/usr/bin/env bash\n" <> body <> "\n")
+    File.chmod!(path, 0o755)
+    context
+  end
+
   defp with_display(context) do
     World.put_app_env(:os_type, {:unix, :linux})
     World.put_os_env("DISPLAY", ":0")
@@ -117,7 +126,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in (?<editor>.+)$/,
+  step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in (?!the default editor)(?<editor>.+)$/,
        %{args: [file, line, column, editor]} = context do
     {command, id} = Map.fetch!(@editors, editor)
     context = install(context, command)
@@ -148,6 +157,79 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert {:ok, nil} = context.reply
     assert :ok = :gen_tcp.send(context.editor_conn, "exit\n")
     :gen_tcp.close(context.editor_conn)
+    context
+  end
+
+  step "the host's default text editor is Neovim", context do
+    data = Mc.tmp_dir(context.mc, "xdg-data")
+    entry = Path.join([data, "applications", "nvim.desktop"])
+    File.mkdir_p!(Path.dirname(entry))
+    File.write!(entry, "[Desktop Entry]\nName=Neovim\nExec=nvim %F\nTerminal=true\n")
+    World.put_os_env("XDG_DATA_HOME", data)
+
+    context
+    |> with_display()
+    |> install_script("xdg-mime", ~s([ "$*" = "query default text/plain" ] && echo nvim.desktop))
+    |> install("gio")
+    |> Map.put(:entry, entry)
+  end
+
+  step ~r/^the host's default text editor is "(?<id>[^"]+)", installed as "(?<file>[^"]+)"$/,
+       %{args: [id, file]} = context do
+    data = Mc.tmp_dir(context.mc, "xdg-data")
+    entry = Path.join([data, "applications", file])
+    File.mkdir_p!(Path.dirname(entry))
+    File.write!(entry, "[Desktop Entry]\nName=Editor\nExec=editor %F\n")
+    World.put_os_env("XDG_DATA_HOME", data)
+
+    context
+    |> with_display()
+    |> install_script("xdg-mime", ~s([ "$*" = "query default text/plain" ] && echo #{id}))
+    |> install("gio")
+  end
+
+  step "DISPLAY is set but empty and there is no Wayland display", context do
+    World.put_os_env("DISPLAY", "")
+    World.put_os_env("WAYLAND_DISPLAY", nil)
+    context
+  end
+
+  step "the host's xdg-mime never answers", context do
+    context |> with_display() |> install_script("xdg-mime", "exec sleep 30") |> install("gio")
+  end
+
+  step "the default editor is listed first", context do
+    assert hd(context.server_config["availableEditors"]) == "default"
+    context
+  end
+
+  step "the default editor is not offered", context do
+    refute "default" in context.server_config["availableEditors"]
+    context
+  end
+
+  step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in the default editor$/,
+       %{args: [file, line, column]} = context do
+    path = Path.join(Mc.tmp_dir(context.mc, "project"), file)
+
+    context
+    |> Map.put(:target, path)
+    |> open(%{"cwd" => "#{path}:#{line}:#{column}", "editor" => "default"})
+  end
+
+  step ~r/^the MC launches Neovim's desktop entry on "[^"]+"$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["gio", "launch", context.entry, context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^macOS opens "[^"]+" in its default text editor$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["open", "-t", context.target]
+    :gen_tcp.close(conn)
     context
   end
 

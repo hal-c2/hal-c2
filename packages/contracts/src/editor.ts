@@ -20,6 +20,9 @@ type EditorDefinition = {
 };
 
 export const EDITORS = [
+  // The host's own default text editor (the xdg default for text/plain on Linux, `open -t`
+  // on macOS), whatever it is. The MC lists it first so the user's choice wins.
+  { id: "default", label: "Default Editor", commands: null, launchStyle: "direct-path" },
   {
     id: "cursor",
     label: "Cursor",
