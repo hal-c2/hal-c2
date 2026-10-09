@@ -149,8 +149,11 @@ defmodule HalC2.ClaudeProviderTest do
     reports(@reported)
     :ok = Provider.load()
 
-    assert %{model: "opus[1m]", effort: "xhigh", settings: %{"ultracode" => true}} =
+    # Claude Code takes a context suffix on the model's id, not on its alias.
+    assert %{model: "claude-opus-5-5[1m]", effort: "xhigh", settings: %{"ultracode" => true}} =
              Provider.launch("opus", %{"effort" => "ultracode"})
+
+    assert %{model: "opus"} = Provider.launch("opus", %{"contextWindow" => "200k"})
 
     assert %{model: "claude-opus-5-5", effort: nil, prompt_effort: "ultrathink"} =
              Provider.launch("claude-opus-5-5", %{

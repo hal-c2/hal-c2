@@ -34,6 +34,8 @@ Rectangle {
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
     readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
+    // The model's other options, such as Claude's fast mode and context window.
+    readonly property var otherOptions: ready ? model.options.filter(option => option !== effortOption) : []
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -1006,80 +1008,142 @@ Rectangle {
                         }
                     }
 
-                    ModelPicker {
-                        id: modelPicker
-                        objectName: "modelPicker"
+                    // The model and its options wrap onto another line where they
+                    // do not fit beside the attach and send buttons, as on a phone.
+                    Flow {
+                        id: toolbarControls
 
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 72
-                        Layout.maximumWidth: Math.min(implicitWidth, 224)
-                        enabled: composer.ready && instances.length > 0
-                        selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
-                        selectedModel: composer.ready ? composer.model.selectedModel : null
-                    }
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 4
 
-                    Separator {
-                        visible: composer.effortOption !== null
-                    }
+                        ModelPicker {
+                            id: modelPicker
+                            objectName: "modelPicker"
 
-                    ShellComboBox {
-                        id: effortPicker
-                        objectName: "effortPicker"
+                            width: Math.min(implicitWidth, 224, toolbarControls.width)
+                            enabled: composer.ready && instances.length > 0
+                            selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
+                            selectedModel: composer.ready ? composer.model.selectedModel : null
+                        }
 
-                        visible: composer.effortOption !== null
-                        model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
-                        currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
-                        displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
-                        Accessible.name: composer.effortOption ? composer.effortOption.label : ""
-                        onActivated: index => Shell.dispatch("composer.option.set", {
-                                id: composer.effortOption.id,
-                                value: composer.effortOption.choices[index].id
-                            })
-                    }
+                        RowLayout {
+                            visible: composer.effortOption !== null
+                            spacing: 4
 
-                    Separator {}
+                            Separator {}
 
-                    ShellComboBox {
-                        id: runtimeModePicker
-                        objectName: "runtimeModePicker"
+                            ShellComboBox {
+                                id: effortPicker
+                                objectName: "effortPicker"
 
-                        iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
-                        enabled: composer.ready
-                        model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
-                        currentIndex: composer.ready ? composer.model.runtimeModes.findIndex(mode => mode.value === composer.model.runtimeMode) : -1
-                        Accessible.name: qsTr("Permissions")
-                        onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
-                                mode: composer.model.runtimeModes[index].value
-                            })
-                    }
+                                model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
+                                currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
+                                displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
+                                Accessible.name: composer.effortOption ? composer.effortOption.label : ""
+                                onActivated: index => Shell.dispatch("composer.option.set", {
+                                        id: composer.effortOption.id,
+                                        value: composer.effortOption.choices[index].id
+                                    })
+                            }
+                        }
 
-                    Separator {
-                        visible: planToggle.visible
-                    }
+                        // By count, so a value picked here updates its control rather
+                        // than rebuilding them all (and dropping the focus).
+                        Repeater {
+                            model: composer.otherOptions.length
 
-                    ShellButton {
-                        id: planToggle
-                        objectName: "planToggle"
+                            delegate: RowLayout {
+                                id: optionItem
 
-                        subtle: true
-                        visible: composer.ready && composer.model.showInteractionModeToggle
-                        checkable: true
-                        checked: composer.ready && composer.model.interactionMode === "plan"
-                        iconName: checked ? "pencil-ruler" : "bot"
-                        iconSize: 16
-                        iconTint: checked ? composer.foreground : composer.secondary
-                        tint: checked ? composer.foreground : composer.secondary
-                        text: checked ? qsTr("Plan") : qsTr("Build")
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
-                        leftPadding: 10
-                        rightPadding: 10
-                        onClicked: Shell.dispatch("composer.interactionMode.set", {
-                            mode: checked ? "plan" : "default"
-                        })
-                    }
+                                required property int index
+                                readonly property var modelData: composer.otherOptions[index] ?? ({})
+                                readonly property bool select: modelData.type === "select"
 
-                    Item {
-                        Layout.fillWidth: true
+                                spacing: 4
+
+                                Separator {}
+
+                                ShellComboBox {
+                                    objectName: "optionPicker:" + optionItem.modelData.id
+
+                                    visible: optionItem.select
+                                    model: optionItem.select ? optionItem.modelData.choices.map(choice => choice.label) : []
+                                    currentIndex: optionItem.select ? optionItem.modelData.choices.findIndex(choice => choice.id === optionItem.modelData.value) : -1
+                                    displayText: currentIndex < 0 ? optionItem.modelData.label : currentText
+                                    Accessible.name: optionItem.modelData.label
+                                    onActivated: index => Shell.dispatch("composer.option.set", {
+                                            id: optionItem.modelData.id,
+                                            value: optionItem.modelData.choices[index].id
+                                        })
+                                }
+
+                                ShellButton {
+                                    objectName: "optionToggle:" + optionItem.modelData.id
+
+                                    visible: !optionItem.select
+                                    subtle: true
+                                    checkable: true
+                                    checked: optionItem.modelData.value === true
+                                    tint: checked ? composer.foreground : composer.secondary
+                                    text: optionItem.modelData.label
+                                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                                    leftPadding: 10
+                                    rightPadding: 10
+                                    onClicked: Shell.dispatch("composer.option.set", {
+                                        id: optionItem.modelData.id,
+                                        value: checked
+                                    })
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 4
+
+                            Separator {}
+
+                            ShellComboBox {
+                                id: runtimeModePicker
+                                objectName: "runtimeModePicker"
+
+                                iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
+                                enabled: composer.ready
+                                model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
+                                currentIndex: composer.ready ? composer.model.runtimeModes.findIndex(mode => mode.value === composer.model.runtimeMode) : -1
+                                Accessible.name: qsTr("Permissions")
+                                onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                                        mode: composer.model.runtimeModes[index].value
+                                    })
+                            }
+                        }
+
+                        RowLayout {
+                            visible: composer.ready && composer.model.showInteractionModeToggle
+                            spacing: 4
+
+                            Separator {}
+
+                            ShellButton {
+                                id: planToggle
+                                objectName: "planToggle"
+
+                                subtle: true
+                                checkable: true
+                                checked: composer.ready && composer.model.interactionMode === "plan"
+                                iconName: checked ? "pencil-ruler" : "bot"
+                                iconSize: 16
+                                iconTint: checked ? composer.foreground : composer.secondary
+                                tint: checked ? composer.foreground : composer.secondary
+                                text: checked ? qsTr("Plan") : qsTr("Build")
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                leftPadding: 10
+                                rightPadding: 10
+                                onClicked: Shell.dispatch("composer.interactionMode.set", {
+                                    mode: checked ? "plan" : "default"
+                                })
+                            }
+                        }
                     }
 
                     Text {

@@ -314,12 +314,18 @@ defmodule HalC2.Claude.Provider do
   defp option?(options, id), do: Enum.any?(options, &(&1["id"] == id))
 
   # How the CLI runs a listed row: the profile's adapter, less mappings for levels the
-  # CLI now runs itself, and without context suffixes on an id that carries one.
+  # CLI now runs itself, and without context suffixes on an id that carries one. A
+  # context suffix goes on `modelId`, the model the row resolves to, since Claude Code
+  # takes none on an alias (`opus[1m]`).
   defp cli_adapter(row, profile) do
     adapter = get_in(profile, ["adapter", "claudeCode"]) || %{}
     levels = List.wrap(row["supportedEffortLevels"])
 
     adapter
+    |> Map.put(
+      "modelId",
+      String.replace(row["resolvedModel"] || row["value"], ~r/\[[^\]]*\]$/, "")
+    )
     |> Map.update("effortMap", %{}, &Map.drop(&1, levels))
     |> then(&if suffixed?(row["value"]), do: Map.delete(&1, "modelSuffixes"), else: &1)
   end
@@ -385,7 +391,7 @@ defmodule HalC2.Claude.Provider do
         injected = (descriptor(descriptors, "effort") || %{})["promptInjectedValues"] || []
 
         %{
-          model: slug <> suffix,
+          model: if(suffix == "", do: slug, else: (adapter["modelId"] || slug) <> suffix),
           effort: Map.get(adapter["effortMap"] || %{}, effort, effort),
           settings: Map.reject(settings, fn {_, value} -> value == nil end),
           prompt_effort: if(effort in injected, do: effort)

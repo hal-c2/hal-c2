@@ -168,6 +168,11 @@ Feature: Writing to an agent from a phone
     When the user picks the model "Opus" with high reasoning
     Then the next message is sent to "Opus" with high reasoning
 
+  @mobile
+  Scenario: The user picks the model's other options from the composer
+    When the user picks the model "Opus" with the 1M context window and fast mode on
+    Then the next message is sent to "Opus" with the 1M context window and fast mode on
+
   @backlog @mobile
   Scenario: A message written with no connection is sent once the connection returns
     Given "My MacBook" is unreachable
