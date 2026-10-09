@@ -181,6 +181,8 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
+  @checkout Path.expand("../../../../..", __DIR__)
+
   # --- what a package is -----------------------------------------------------------------
 
   step "the plugins directory contains the package {string} with a name, description, author, icon and two screenshots",
@@ -200,6 +202,33 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
            } = Fixtures.entry(id)
 
     Map.put(context, :plugin, id)
+  end
+
+  step "a developer installs {string} from the checkout", %{args: [id]} = context do
+    Map.put(context, :printed, Mc.run_task(Mix.Tasks.HalC2.Plugins.Install, [id]))
+  end
+
+  step "{string} is listed at the version in the checkout", %{args: [id]} = context do
+    version =
+      JSON.decode!(File.read!(Path.join([@checkout, "plugins", id, "plugin.json"])))["version"]
+
+    assert %{"source" => "package", "version" => ^version} = Fixtures.entry(id)
+    assert context.printed == ["#{id} #{version}: disabled"]
+    Map.put(context, :plugin, id)
+  end
+
+  step "the MC's copy holds the checkout's files and no others", context do
+    files = fn dir ->
+      for path <- Path.wildcard(Path.join(dir, "**"), match_dot: true),
+          File.regular?(path),
+          into: %{},
+          do: {Path.relative_to(path, dir), File.read!(path)}
+    end
+
+    assert files.(Packages.dir(context, context.plugin)) ==
+             files.(Path.join([@checkout, "plugins", context.plugin]))
+
+    context
   end
 
   step "its icon and screenshots can be fetched from the MC", context do

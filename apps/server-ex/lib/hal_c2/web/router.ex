@@ -294,6 +294,13 @@ defmodule HalC2.Web.Router do
     end)
   end
 
+  # Packages `mix hal_c2.plugins.install` just copied in are compiled and loaded.
+  post "/api/plugins/rescan" do
+    with_scope(conn, "orchestration:operate", fn _session ->
+      {200, %{"plugins" => HalC2.Plugins.rescan()}}
+    end)
+  end
+
   # Threads of a T3 Code or Node HAL-C2 install on this machine, for
   # `HalC2.Import.Picker` (`HalC2.Import.PreviousInstall`).
   get "/api/previous-installs" do

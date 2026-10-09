@@ -24,6 +24,7 @@ mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publ
 mise run mc:pair --release     # the same for the installed MC, when both run
 mise run mc:reload       # compile this checkout and load it into that MC; sockets and agents stay up
 mise run mc:reload --release   # build a release of this checkout and move the installed MC to it
+mise run plugins:install [ID ...]   # this checkout's plugins/ into that MC, loaded at once (--release for the installed MC)
 mise run desktop           # build the Qt shell, pair it with the running MC, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run desktop:cua       # the Qt shell in a headless sandbox for cua-driver; desktop:cua:call, desktop:cua:stop
