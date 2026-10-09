@@ -1190,12 +1190,9 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
 
-                Label {
+                SettingsBreadcrumb {
                     Layout.fillWidth: true
-                    text: qsTr("Providers")
-                    color: page.foreground
-                    font.pixelSize: Math.round(18 * Theme.fontScale)
-                    font.weight: Font.DemiBold
+                    section: qsTr("Providers")
                 }
 
                 ShellButton {

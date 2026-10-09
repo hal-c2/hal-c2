@@ -61,5 +61,15 @@ Item {
             verify(!findChild(row, "unarchive").enabled);
             verify(!findChild(row, "delete").enabled);
         }
+
+        function test_the_page_is_titled_under_settings_and_delete_reads_destructive() {
+            Shell.state = { archivedThreads: { open: true, status: "ready", title: "", description: "",
+                                               groups: [{ key: "env-a:shop", title: "shop", threads: [root.thread()] }] } };
+            const page = createTemporaryObject(archiveComponent, root);
+            compare(findChild(page, "settingsBreadcrumb").text, "Settings / Archive");
+            const row = findChild(page, "thread_env-a:t1");
+            compare(findChild(row, "delete").tint, Theme.palette.color("error", "#ef4444"));
+            verify(findChild(row, "unarchive").tint !== findChild(row, "delete").tint);
+        }
     }
 }

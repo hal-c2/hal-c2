@@ -45,6 +45,19 @@ Feature: Settings search and navigation
       When the user moves down and confirms
       Then the next section opens
 
+    @desktop @backlog-desktop
+    Scenario: Tab from the settings search reaches the current section
+      Given the user has focus in the settings search
+      When the user presses Tab
+      Then the list of sections has focus, on the current section
+
+    @desktop @backlog-desktop
+    Scenario: Escape leaves settings when nothing else takes it
+      Given the user opened settings from a thread
+      And the search is empty
+      When the user presses escape on the settings page
+      Then the thread is shown again
+
     @desktop
     Scenario: Leaving settings returns to where the user was
       Given the user opened settings from a thread
@@ -74,6 +87,9 @@ Feature: Settings search and navigation
         | page                              | section               |
         | the Keybindings section           | Keybindings           |
         | the Appearance section            | Appearance            |
+        | the Providers section             | Providers             |
+        | the Cluster section               | Cluster               |
+        | the Archive section               | Archive               |
         | diagnostics                       | Diagnostics           |
         | the open source licenses page     | Open source licenses  |
 
