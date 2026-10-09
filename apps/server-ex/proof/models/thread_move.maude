@@ -7,18 +7,23 @@ sload model-checker
 mod THREAD-MOVE is
   protecting NAT .
 
-  sorts Mc Moving Rec Slot Wait Ans Body Item Conf Sys .
+  sorts Mc Moving Moves Rec Slot Wait Phase Ans Body Item Conf Sys .
   subsort Item < Conf .
 
   ops a b c : -> Mc [ctor] .
 
   --- What an MC keeps of the thread: nothing, the thread, or a forwarding record,
   --- `movedTo`. The thread is writable while `still`; a move marks it read-only,
-  --- `mv(move, destination, taking)`.
-  ops nothing fwd : -> Rec [ctor] .
-  op live : Moving -> Rec [ctor] .
+  --- `mv(move, destination, taking)`. Both keep the thread's `moves`: the last move
+  --- from each MC that brought the thread where it went.
+  op nothing : -> Rec [ctor] .
+  op fwd : Moves -> Rec [ctor] .
+  op live : Moving Moves -> Rec [ctor] .
   op still : -> Moving [ctor] .
   op mv : Nat Mc Bool -> Moving [ctor] .
+  op none : -> Moves [ctor] .
+  op from : Mc Nat -> Moves [ctor] .
+  op _;_ : Moves Moves -> Moves [ctor assoc comm id: none] .
 
   --- An MC: whether it runs, its record of the thread, and its settle, which runs one at
   --- a time: idle, or waiting on a destination's `arrived?/2` for the move as it saw it.
@@ -26,10 +31,16 @@ mod THREAD-MOVE is
   op idle : -> Slot [ctor] .
   op asked : Mc Moving -> Slot [ctor] .
 
+  --- let_go/4, which the mover and a settle run: it has `checked` that the thread is
+  --- in its move, and is to stop its session and forward it, or found it is not.
+  ops checked unchecked : -> Phase [ctor] .
+  op letting : Nat Phase -> Slot [ctor] .
+
   --- The process moving the thread (`move/3`) waits on the destination's `accept/3`,
   --- which stages the files and then holds the thread's lock while it asks to take it.
   --- A call that breaks off or times out is `cut`.
   ops waiting staging held cut : -> Wait [ctor] .
+  op freeing : Phase -> Wait [ctor] .
   op mover : Nat Mc Mc Wait -> Item [ctor] .
   op accept : Nat Mc Mc Wait -> Item [ctor] .
 
@@ -43,6 +54,10 @@ mod THREAD-MOVE is
   --- `got(D, N)`: the move N brought the thread to D, as its record there says for good.
   op split : Mc Mc -> Item [ctor] .
   op got : Mc Nat -> Item [ctor] .
+  --- `sent(N, Ms)`: the archive of the move N carries the moves Ms.
+  op sent : Nat Moves -> Item [ctor] .
+  --- A let-go stopped the session of a thread that is not in its move on X.
+  op hurt : Mc -> Item [ctor] .
   op moves : Nat -> Item [ctor] .
   op faults : Nat -> Item [ctor] .
   op next : Nat -> Item [ctor] .
@@ -55,6 +70,8 @@ mod THREAD-MOVE is
   vars N K F : Nat .
   vars T U : Bool .
   vars R R' : Rec .
+  vars Ms Ms' : Moves .
+  var P : Phase .
   vars Q Q' : Slot .
   var M : Moving .
   var W : Wait .
@@ -82,10 +99,32 @@ mod THREAD-MOVE is
   eq locked(D, accept(N, S, D, held) C) = true .
   eq locked(D, C) = false [owise] .
 
-  --- Whether the move N brought the thread to D.
-  op got? : Mc Nat Conf -> Bool .
-  eq got?(D, N, got(D, N) C) = true .
-  eq got?(D, N, C) = false [owise] .
+  --- Whether a let-go holds the thread's let-go lock on X.
+  op freeing? : Mc Conf -> Bool .
+  eq freeing?(X, mover(N, X, D, freeing(P)) C) = true .
+  eq freeing?(X, mc(X, T, R, letting(N, P)) C) = true .
+  eq freeing?(X, C) = false [owise] .
+
+  --- The moves a record keeps; the last move from S is now N.
+  op moves : Rec -> Moves .
+  eq moves(live(M, Ms)) = Ms .
+  eq moves(fwd(Ms)) = Ms .
+  eq moves(nothing) = none .
+  op put : Mc Nat Moves -> Moves .
+  eq put(S, N, from(S, K) ; Ms) = from(S, N) ; Ms .
+  eq put(S, N, Ms) = from(S, N) ; Ms [owise] .
+  op has : Nat Moves -> Bool .
+  eq has(N, from(X, N) ; Ms) = true .
+  eq has(N, Ms) = false [owise] .
+
+  --- let_go/4 checks the thread is in the move N here: it stops the session only then.
+  op check : Nat Rec -> Phase .
+  eq check(N, live(mv(N, D, T), Ms)) = checked .
+  eq check(N, R) = unchecked [owise] .
+  --- Its session is the thread's while it is here and in no other move.
+  op stale : Nat Rec -> Bool .
+  eq stale(N, live(M, Ms)) = check(N, live(M, Ms)) == unchecked .
+  eq stale(N, R) = false [owise] .
 
   --- Whether a call still waits for the answer B from X to Y.
   op awaited : Mc Mc Body Conf -> Bool .
@@ -127,20 +166,39 @@ mod THREAD-MOVE is
 
   --- source: move/3 ------------------------------------------------------------------
 
-  --- begin/4 marks the thread moving; transfer/6 calls the destination's accept/3.
+  --- begin/4 marks the thread moving; transfer/6 calls the destination's accept/3 with
+  --- an archive of the thread.
   crl [begin] :
-    { mc(S, true, live(still), Q) moves(s K) next(N) C }
-    => { mc(S, true, live(mv(N, D, false)), Q) moves(K) next(s N)
+    { mc(S, true, live(still, Ms), Q) moves(s K) next(N) C }
+    => { mc(S, true, live(mv(N, D, false), Ms), Q) moves(K) next(s N) sent(N, Ms)
          mover(N, S, D, waiting) msg(S, D, acceptReq(N)) C }
-    if mc(D, T, R, Q') C' := C /\ linked(S, D, mc(S, true, live(still), Q) C) .
+    if mc(D, T, R, Q') C' := C /\ linked(S, D, mc(S, true, live(still, Ms), Q) C) .
 
-  --- accept/3 returned the thread imported: let_go/4 keeps a forwarding record, if
-  --- the thread is still in this move here.
-  rl [moved] :
-    msg(D, S, acceptOk(N)) mover(N, S, D, waiting) mc(S, true, R, Q)
-    => mc(S, true, gone(N, R), Q) .
+  --- accept/3 returned the thread imported: let_go/4, under the thread's let-go lock
+  --- here, checks whether the thread is still in this move.
+  crl [moved] :
+    { msg(D, S, acceptOk(N)) mover(N, S, D, waiting) mc(S, true, R, Q) C }
+    => { mover(N, S, D, freeing(check(N, R))) mc(S, true, R, Q) C }
+    if not freeing?(S, mc(S, true, R, Q) C) .
+  --- A settle is letting go: it finishes, and the mover is done.
+  crl [moved] :
+    { msg(D, S, acceptOk(N)) mover(N, S, D, waiting) mc(S, true, R, Q) C }
+    => { mc(S, true, R, Q) C }
+    if freeing?(S, mc(S, true, R, Q) C) .
+
+  --- release_session/1 stops the thread's provider processes if it checked, then
+  --- forward/3 keeps a forwarding record if the thread is still in this move here. Under
+  --- the let-go lock nothing else changes the thread here, so the two are one step.
+  rl [forward] :
+    mover(N, S, D, freeing(P)) mc(S, true, R, Q)
+    => mc(S, true, gone(N, R), Q) stop(S, N, P, R) .
+  rl [forward] :
+    mc(S, true, R, letting(N, P)) => mc(S, true, gone(N, R), idle) stop(S, N, P, R) .
+  op stop : Mc Nat Phase Rec -> Conf .
+  eq stop(S, N, checked, R) = if stale(N, R) then hurt(S) else empty fi .
+  eq stop(S, N, unchecked, R) = empty .
   op gone : Nat Rec -> Rec .
-  eq gone(N, live(mv(N, D, T))) = fwd .
+  eq gone(N, live(mv(N, D, T), Ms)) = fwd(Ms) .
   eq gone(N, R) = R [owise] .
 
   --- accept/3 refused: release_own/2 clears this move, not a later one.
@@ -148,7 +206,7 @@ mod THREAD-MOVE is
     msg(D, S, acceptErr(N)) mover(N, S, D, waiting) mc(S, true, R, Q)
     => mc(S, true, own(N, R), Q) .
   op own : Nat Rec -> Rec .
-  eq own(N, live(mv(N, D, T))) = live(still) .
+  eq own(N, live(mv(N, D, T), Ms)) = live(still, Ms) .
   eq own(N, R) = R [owise] .
 
   --- The call broke off: release/2 clears the move as it was begun, not once the
@@ -157,20 +215,20 @@ mod THREAD-MOVE is
     mover(N, S, D, cut) mc(S, true, R, Q)
     => mc(S, true, seen(mv(N, D, false), R), Q) .
   op seen : Moving Rec -> Rec .
-  eq seen(M, live(M)) = live(still) .
+  eq seen(M, live(M, Ms)) = live(still, Ms) .
   eq seen(M, R) = R [owise] .
 
   --- taking/2: the destination may take the thread while it is still in that move.
   rl [taking] :
-    msg(D, S, takingReq(N)) mc(S, true, live(mv(N, D, T)), Q)
-    => mc(S, true, live(mv(N, D, true)), Q) msg(S, D, takingOk(N)) .
+    msg(D, S, takingReq(N)) mc(S, true, live(mv(N, D, T), Ms), Q)
+    => mc(S, true, live(mv(N, D, true), Ms), Q) msg(S, D, takingOk(N)) .
 
   crl [taking-gone] :
     msg(D, S, takingReq(N)) mc(S, true, R, Q)
     => mc(S, true, R, Q) msg(S, D, takingGone(N))
     if not in?(N, D, R) .
   op in? : Nat Mc Rec -> Bool .
-  eq in?(N, D, live(mv(N, D, T))) = true .
+  eq in?(N, D, live(mv(N, D, T), Ms)) = true .
   eq in?(N, D, R) = false [owise] .
 
   --- destination: accept/3 ------------------------------------------------------------
@@ -182,13 +240,14 @@ mod THREAD-MOVE is
     { accept(N, S, D, staging) C } => { accept(N, S, D, held) msg(D, S, takingReq(N)) C }
     if not locked(D, C) .
 
-  --- import_archive/2; not_here/2 refuses a thread that is here already.
+  --- import_archive/2 keeps the archive's moves, with this one as the last from S;
+  --- not_here/2 refuses a thread that is here already.
   rl [import] :
-    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, nothing, Q)
-    => mc(D, true, live(still), Q) got(D, N) msg(D, S, acceptOk(N)) .
+    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, nothing, Q) sent(N, Ms)
+    => mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N)) .
   rl [import] :
-    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, fwd, Q)
-    => mc(D, true, live(still), Q) got(D, N) msg(D, S, acceptOk(N)) .
+    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, fwd(Ms'), Q) sent(N, Ms)
+    => mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N)) .
 
   --- The import failed: the thread is here already, or its project went away.
   rl [import-failed] :
@@ -207,19 +266,26 @@ mod THREAD-MOVE is
   rl [answer] :
     { msg(S, D, arrivedReq(N)) mc(D, true, R, Q) C }
     => { msg(D, S, arrivedAns(if locked(D, C) then arriving
-                              else if got?(D, N, C) then yes else no fi fi))
+                              else if has(N, moves(R)) then yes else no fi fi))
          mc(D, true, R, Q) C } .
 
   --- source: settle/1, for a move cut off -------------------------------------------
 
   crl [settle] :
-    { mc(S, true, live(M), idle) C }
-    => { mc(S, true, live(M), asked(D, M)) msg(S, D, arrivedReq(N)) C }
-    if mv(N, D, T) := M /\ linked(S, D, mc(S, true, live(M), idle) C) .
+    { mc(S, true, live(M, Ms), idle) C }
+    => { mc(S, true, live(M, Ms), asked(D, M)) msg(S, D, arrivedReq(N)) C }
+    if mv(N, D, T) := M /\ linked(S, D, mc(S, true, live(M, Ms), idle) C) .
 
-  rl [let-go] :
-    msg(D, S, arrivedAns(yes)) mc(S, true, R, asked(D, mv(N, D, T)))
-    => mc(S, true, gone(N, R), idle) .
+  --- The move arrived: let_go/4, as the mover's; one that finds another letting go
+  --- settles again.
+  crl [let-go] :
+    { msg(D, S, arrivedAns(yes)) mc(S, true, R, asked(D, mv(N, D, T))) C }
+    => { mc(S, true, R, letting(N, check(N, R))) C }
+    if not freeing?(S, C) .
+  crl [let-go] :
+    { msg(D, S, arrivedAns(yes)) mc(S, true, R, asked(D, mv(N, D, T))) C }
+    => { mc(S, true, R, idle) C }
+    if freeing?(S, C) .
 
   rl [again] :
     msg(D, S, arrivedAns(arriving)) mc(S, true, R, asked(D, M)) => mc(S, true, R, idle) .
@@ -262,19 +328,29 @@ mod THREAD-MOVE is
 
   --- The thread on a, with b (and c) in the cluster; K moves and F faults to come.
   ops two three : Nat Nat -> Sys .
-  eq two(K, F) = { mc(a, true, live(still), idle) mc(b, true, nothing, idle)
+  eq two(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
                    moves(K) faults(F) next(1) } .
-  eq three(K, F) = { mc(a, true, live(still), idle) mc(b, true, nothing, idle)
+  eq three(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
                      mc(c, true, nothing, idle) moves(K) faults(F) next(1) } .
 
-  --- The thread writable on two MCs; on none; and nothing left to do.
-  ops twice lost settled : Sys -> Bool .
-  eq twice({ mc(X, T, live(still), Q) mc(Y, U, live(still), Q') C }) = true .
+  --- The thread writable on two MCs; on none; a session stopped under a thread that
+  --- stays; a source told its move did not arrive when it did; and nothing left to do.
+  ops twice lost hurts wrong broken settled : Sys -> Bool .
+  eq twice({ mc(X, T, live(still, Ms), Q) mc(Y, U, live(still, Ms'), Q') C }) = true .
   eq twice({ C }) = false [owise] .
-  eq lost({ mc(X, T, live(M), Q) C }) = false .
+  eq lost({ mc(X, T, live(M, Ms), Q) C }) = false .
   eq lost({ C }) = true [owise] .
-  eq settled({ mc(X, T, live(mv(N, D, U)), Q) C }) = false .
+  eq hurts({ hurt(X) C }) = true .
+  eq hurts({ C }) = false [owise] .
+  eq wrong({ msg(D, S, arrivedAns(no)) mc(S, T, live(mv(N, D, true), Ms), asked(D, mv(N, D, true)))
+              got(D, N) C }) = true .
+  eq wrong({ C }) = false [owise] .
+  --- Any of them: one search looks for all.
+  var Sy : Sys .
+  eq broken(Sy) = twice(Sy) or lost(Sy) or hurts(Sy) or wrong(Sy) .
+  eq settled({ mc(X, T, live(mv(N, D, U), Ms), Q) C }) = false .
   eq settled({ mc(X, T, R, asked(D, M)) C }) = false .
+  eq settled({ mc(X, T, R, letting(N, P)) C }) = false .
   eq settled({ msg(X, Y, B) C }) = false .
   eq settled({ mover(N, S, D, W) C }) = false .
   eq settled({ accept(N, S, D, W) C }) = false .
@@ -293,6 +369,7 @@ mod THREAD-MOVE-PROPS is
   vars T U : Bool .
   var Q : Slot .
   var C : Conf .
-  eq { mc(X, U, live(mv(N, D, T)), Q) C } |= moving(N) = true .
+  var Ms : Moves .
+  eq { mc(X, U, live(mv(N, D, T), Ms), Q) C } |= moving(N) = true .
   eq { C } |= moving(N) = false [owise] .
 endm
