@@ -129,6 +129,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the whole title is shown
       When the header is narrow
       Then the title is shortened with an ellipsis
+      And the start of the title still shows
+
+    @desktop
+    Scenario: The full thread title is a hover away
+      Given a shortened thread title
+      When the user hovers it
+      Then the whole title is shown
+      And a shortened project name shows whole on hover too
 
     @desktop
     Scenario: A narrow header drops action labels

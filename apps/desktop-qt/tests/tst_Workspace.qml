@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
@@ -63,6 +64,44 @@ Item {
             tryCompare(label, "truncated", true);
             workspace.width = 1100;
             tryCompare(label, "truncated", false);
+        }
+
+        // Scenario: The thread title uses the room it has, and Scenario: The full
+        // thread title is a hover away (features/navigation/layout.feature)
+        function test_tightHeaderKeepsTheTitleReadable() {
+            Shell.state = {
+                workspace: {
+                    projectTitle: qsTr("positron-experiments"),
+                    threadTitle: qsTr("Isolated Maude Critical Behaviour"),
+                    isDraft: false,
+                    renameRequestId: 0,
+                    scripts: [],
+                    editors: []
+                }
+            };
+            let workspace = createTemporaryObject(workspaceComponent, root);
+            verify(!!workspace, "Component exists");
+            let label = findChild(workspace, "threadLabel");
+            let project = findChild(workspace, "projectLabel");
+            let slot = findChild(workspace, "titleSlot");
+            // No room at all: the title still shows more than an ellipsis.
+            workspace.width = 60;
+            tryCompare(label, "truncated", true);
+            verify(label.width >= 40, "title is " + label.width + " wide");
+            verify(project.truncated);
+            // The whole names are a hover away.
+            mouseMove(slot, 10, slot.height / 2);
+            tryCompare(slot.ToolTip, "visible", true);
+            compare(slot.ToolTip.text, "Isolated Maude Critical Behaviour");
+            mouseMove(project, 4, project.height / 2);
+            tryCompare(project.ToolTip, "visible", true);
+            compare(project.ToolTip.text, "positron-experiments");
+            // A title that fits needs no tooltip.
+            workspace.width = 1100;
+            tryCompare(label, "truncated", false);
+            mouseMove(slot, 10, slot.height / 2);
+            wait(600);
+            verify(!slot.ToolTip.visible);
         }
         // Scenario: A narrow header drops action labels (features/navigation/layout.feature)
         function test_narrowHeaderDropsActionLabels() {

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -83,7 +84,6 @@ Rectangle {
         // Breadcrumb: project / title.
         RowLayout {
             Layout.fillWidth: true
-            Layout.minimumWidth: 0
             spacing: 6
 
             ShellIcon {
@@ -110,6 +110,10 @@ Rectangle {
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
+                // The whole name of a project cut short.
+                ToolTip.visible: projectHover.hovered && truncated
+                ToolTip.delay: 500
+                ToolTip.text: text
 
                 Behavior on color {
                     ColorAnimation {
@@ -155,9 +159,15 @@ Rectangle {
                 }
 
                 Layout.fillWidth: true
-                Layout.minimumWidth: 24
+                // Room for a few letters of the title beside the chevron, as
+                // the web's header keeps (ChatHeader.tsx: min-w-10).
+                Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
+                // The whole title, which a narrow header cuts short.
+                ToolTip.visible: titleHover.hovered && threadLabel.truncated
+                ToolTip.delay: 500
+                ToolTip.text: threadLabel.text
 
                 Connections {
                     target: strip
