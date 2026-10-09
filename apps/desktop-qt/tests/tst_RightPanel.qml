@@ -347,6 +347,17 @@ Item {
             compare(lines.flickableDirection, Flickable.VerticalFlick);
         }
 
+        function test_openFileGetsMostOfThePanel() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const lines = findChild(files, "fileLines");
+            verify(viewer);
+            tryVerify(() => viewer.visible);
+            verify(viewer.height >= files.height / 2, "viewer " + viewer.height + " of " + files.height);
+            verify(lines.height > 100, "lines " + lines.height);
+        }
+
         function test_revertAsksFirstAndCanKeepOrRestoreTheFiles() {
             const source = createTemporaryObject(fakeDiff, root);
             const diff = createTemporaryObject(diffComponent, root, { source: source });
