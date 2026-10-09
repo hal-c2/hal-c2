@@ -381,8 +381,12 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   step "{string} reports its own error with the host's reason", %{args: [repository]} = context do
     assert {:ok, %{"errors" => errors}} = context.reply
-    assert [%{"message" => message}] = errors
-    assert message == "#{repository} could not be read: HTTP 502: Bad Gateway"
+    assert [%{"message" => message, "reason" => reason, "detail" => detail}] = errors
+    # Words a user can act on, whatever the host; what it said stays in `detail`.
+    assert reason == "github.com did not answer in time. Try again."
+    assert message == "#{repository} could not be read: #{reason}"
+    assert detail == "HTTP 502: Bad Gateway"
+    refute message =~ "502"
     context
   end
 

@@ -18,6 +18,8 @@ ListModel {
     property string query: ""
     property int highlighted: 0
     property string emptyText: ""
+    property string submitLabel: ""
+    property string submitShortcut: ""
     property var ran: []
 
     function setSettingsSections(sections) {}

@@ -114,5 +114,20 @@ Item {
             mouseClick(action);
             compare(Shell.dispatchedActions[0].action, "pullRequestList.refresh");
         }
+
+        function test_aFailedProjectBesideRowsOffersARetry() {
+            Shell.state = { pullRequestList: list({ groups: [{ id: "others", label: "Others", rows: [row(12, "others")] }], count: 1, problems: ["acme/api could not be read: github.com did not answer in time. Try again."] }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const retry = findChild(page, "pullRequestProblemsRetry");
+            verify(retry.visible);
+            mouseClick(retry);
+            compare(Shell.dispatchedActions[0].action, "pullRequestList.refresh");
+        }
+
+        function test_noRetryBesideTheListWhenNothingFailed() {
+            Shell.state = { pullRequestList: list({ groups: [{ id: "others", label: "Others", rows: [row(12, "others")] }], count: 1 }) };
+            const page = createTemporaryObject(pageComponent, root);
+            verify(!findChild(page, "pullRequestProblemsRetry").visible);
+        }
     }
 }

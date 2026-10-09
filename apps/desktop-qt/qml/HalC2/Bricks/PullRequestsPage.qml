@@ -152,6 +152,14 @@ Rectangle {
             }
         }
 
+        // The rows that did load stay; this reads the failed projects again.
+        ShellButton {
+            objectName: "pullRequestProblemsRetry"
+            visible: page.items.length > 0 && page.model !== null && page.model.problems.length > 0
+            text: qsTr("Retry")
+            onClicked: Shell.dispatch("pullRequestList.refresh")
+        }
+
         Label {
             Layout.fillWidth: true
             visible: page.model !== null && page.model.notice !== null
