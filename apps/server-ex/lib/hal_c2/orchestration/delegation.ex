@@ -237,13 +237,14 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer: a report given up on leaves the task running in its caller for
-  good. Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  too busy to answer, or it fails: a report given up on leaves the task running in its
+  caller until the MC next starts (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
+    hook(:reporting, thread_id)
     finished(thread_id, run_id, status)
   catch
-    :exit, reason when attempts > 0 ->
+    _kind, reason when attempts > 0 ->
       Logger.warning("delegated task report for #{thread_id} retried: #{inspect(reason)}")
       Process.sleep(backoff)
       report(thread_id, run_id, status, attempts - 1, backoff * 2)
@@ -700,4 +701,13 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp number(value, _default) when is_number(value), do: round(value)
   defp number(_value, default), do: default
+
+  # Tests pause or break a task at a stage: `{module, function, args}`, called with the
+  # stage and the thread or task id.
+  defp hook(stage, id) do
+    case Application.get_env(:hal_c2, :delegation_hook) do
+      {m, f, a} -> apply(m, f, a ++ [stage, id])
+      nil -> :ok
+    end
+  end
 end
