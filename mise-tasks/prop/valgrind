@@ -8,6 +8,11 @@
 set -euo pipefail
 "$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
 command -v valgrind >/dev/null || { echo "prop:valgrind: valgrind is not installed (pacman -S valgrind, apt install valgrind, brew install valgrind)" >&2; exit 1; }
+# CMAKE_TEST_LAUNCHER, which puts memcheck.sh in front of every test, is CMake 3.29's;
+# an older CMake ignores it and the tests would pass without Memcheck ever running.
+cmake_version=$(cmake --version | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')
+[[ $(printf '%s\n' 3.29 "$cmake_version" | sort -V | head -n1) == 3.29 ]] ||
+  { echo "prop:valgrind: CMake $cmake_version is older than 3.29, which would run the tests without Memcheck" >&2; exit 1; }
 surface=${usage_surface:-desktop}
 names=(${usage_name:-})
 app=apps/$surface-qt
