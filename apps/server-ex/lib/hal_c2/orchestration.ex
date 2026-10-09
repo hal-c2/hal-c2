@@ -902,14 +902,16 @@ defmodule HalC2.Orchestration do
   end
 
   # A runtime replies to its release before it stops: it is gone once this returns,
-  # as it was when the release was a supervisor's stop.
+  # as it was when the release was a supervisor's stop. One that does not answer in
+  # time is still there, and may be driving a turn: it is kept, like a busy one.
   defp release(pid) do
     ref = Process.monitor(pid)
 
     reply =
       try do
-        GenServer.call(pid, :release, 15_000)
+        GenServer.call(pid, :release, Application.get_env(:hal_c2, :release_timeout_ms, 15_000))
       catch
+        :exit, {:timeout, _} -> :busy
         :exit, _ -> :gone
       end
 

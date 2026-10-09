@@ -58,7 +58,8 @@ defmodule HalC2.TurnLifecycleTest do
     for id <- ~w(opencode pi), do: HalC2.Acp.forget(id)
 
     on_exit(fn ->
-      for key <- ~w(codex_command claude_command acp_commands settings_check_ms)a,
+      for key <-
+            ~w(codex_command claude_command acp_commands settings_check_ms release_timeout_ms)a,
           do: Application.delete_env(:hal_c2, key)
 
       for id <- ~w(opencode pi), do: HalC2.Acp.forget(id)
@@ -184,6 +185,27 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["completed", "running"])
     assert [{fresh, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
     assert fresh != runtime
+  end
+
+  # A runtime that did not answer its release in time was taken for gone: its agent's
+  # credential was revoked while it ran on, perhaps driving a turn.
+  test "a runtime that does not answer its release in time is kept", %{thread_id: thread_id} do
+    start_supervised!(HalC2.Mcp)
+    {:ok, _} = send_message(thread_id, "m1", "say done")
+    await_statuses(thread_id, ["completed"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    credential = HalC2.Mcp.server(thread_id, "codex")
+
+    :ok = :sys.suspend(runtime)
+    Application.put_env(:hal_c2, :release_timeout_ms, 0)
+    assert :busy = Orchestration.release_session(thread_id)
+    assert [{^runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    assert HalC2.Mcp.server(thread_id, "codex") == credential
+
+    # The release it was asked for is the runtime's to answer: idle, it lets go then.
+    ref = Process.monitor(runtime)
+    :ok = :sys.resume(runtime)
+    assert_receive {:DOWN, ^ref, :process, _, {:shutdown, :released}}, 5_000
   end
 
   # The other order: the runtime took a turn after the thread looked idle. Stopping it
