@@ -151,7 +151,7 @@ SettingsPage {
 
             Item { Layout.fillWidth: true }
 
-            Switch {
+            ShellSwitch {
                 visible: !tool.modelData.comingSoon
                 enabled: false
                 checked: tool.modelData.enabled
@@ -213,7 +213,7 @@ SettingsPage {
                 onClicked: tool.sourceControl.send("resetFetchInterval")
             }
 
-            SpinBox {
+            ShellSpinBox {
                 objectName: "seconds"
                 enabled: tool.sourceControl.editable && !tool.sourceControl.projectScope
                 from: 0
@@ -245,7 +245,7 @@ SettingsPage {
         resetKey: "defaultAutoPull"
         resettable: page.settings?.autoPull?.value === true
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             enabled: page.editable
             checked: !(page.settings?.autoPull?.mixed ?? false) && page.settings?.autoPull?.value === true
@@ -437,7 +437,7 @@ SettingsPage {
         resetKey: "followChangeRequestTemplates"
         resettable: (page.settings?.templates?.mixed ?? false) || page.settings?.templates?.value === false
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             enabled: page.editable
             checked: !(page.settings?.templates?.mixed ?? false) && (page.settings?.templates?.value ?? true)
@@ -486,7 +486,7 @@ SettingsPage {
             onActivated: index => page.send("pickWriterModel", { key: writer.model.models[index].key })
         }
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             visible: writer.model?.available ?? false
             enabled: page.editable && ((writer.model?.on ?? false) || (writer.model?.canEnable ?? false))

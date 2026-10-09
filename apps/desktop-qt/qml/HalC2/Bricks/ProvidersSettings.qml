@@ -592,7 +592,7 @@ Rectangle {
                     onClicked: card.configuring = !card.configuring
                 }
 
-                Switch {
+                ShellSwitch {
                     objectName: "enabled"
                     checked: card.provider.enabled
                     Accessible.name: qsTr("Use %1 for new threads").arg(card.provider.name)
@@ -1321,7 +1321,7 @@ Rectangle {
                     }
                 }
 
-                SpinBox {
+                ShellSpinBox {
                     objectName: "seconds"
                     from: 0
                     to: 86400

@@ -224,7 +224,7 @@ SettingsPage {
                 Repeater {
                     model: page.scopeOptions
 
-                    delegate: CheckBox {
+                    delegate: ShellCheckBox {
                         required property var modelData
 
                         text: modelData.title

@@ -229,7 +229,7 @@ RowLayout {
                     height: 30
                     spacing: 8
 
-                    CheckBox {
+                    ShellCheckBox {
                         objectName: "fileCheck-" + fileRow.modelData.path
                         checked: !commitDialog.excluded[fileRow.modelData.path]
                         onToggled: {
