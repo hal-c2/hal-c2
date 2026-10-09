@@ -209,24 +209,11 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
          state = set_parameters(state, turn) do
-      started(state)
-      state = %{state | leaf: leaf(state)}
-      conn = state.conn
-      session_id = state.session_id
-      prompt = acp_prompt(turn, state.capabilities, state.announce)
-      state = %{state | announce: false}
-
-      task =
-        Task.async(fn ->
-          Connection.call(
-            conn,
-            "session/prompt",
-            %{"sessionId" => session_id, "prompt" => prompt},
-            :infinity
-          )
-        end)
-
-      {:reply, :ok, %{state | prompt: task.ref}}
+      # A run that ended while the session opened never reaches the agent.
+      case started(state) do
+        :ok -> {:reply, :ok, prompt(state, turn)}
+        :ended -> {:reply, :ok, %{state | turn: nil}}
+      end
     else
       :logout ->
         {:reply, :ok, sign_out(state)}
@@ -2027,18 +2014,43 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # Sends the turn's prompt; its reply is the turn's end.
+  defp prompt(state, turn) do
+    state = %{state | leaf: leaf(state)}
+    conn = state.conn
+    session_id = state.session_id
+    prompt = acp_prompt(turn, state.capabilities, state.announce)
+    state = %{state | announce: false}
+
+    task =
+      Task.async(fn ->
+        Connection.call(
+          conn,
+          "session/prompt",
+          %{"sessionId" => session_id, "prompt" => prompt},
+          :infinity
+        )
+      end)
+
+    %{state | prompt: task.ref}
+  end
+
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).
   defp released(state) do
     Registry.update_value(@registry, state.thread_id, fn _ -> nil end)
     state
   end
 
-  # `/logout` alone in an Antigravity thread signs its instance out.
+  # `/logout` alone in an Antigravity thread signs its instance out, unless its run
+  # already ended.
   defp sign_out(state) do
+    if started(state) == :ok, do: logout(state), else: %{state | turn: nil}
+  end
+
+  defp logout(state) do
     instance = state.turn.ids.driver
     if state.conn, do: Connection.stop(state.conn)
     state = released(%{state | conn: nil, session_id: nil, prompt: nil})
-    started(state)
 
     case HalC2.ProviderAuth.logout_from(instance, self()) do
       {:ok, _} ->

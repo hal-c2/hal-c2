@@ -149,8 +149,11 @@ defmodule HalC2.Pi.ThreadRuntime do
     with {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- select_model(state, turn.model),
          {:ok, state} <- select_thinking(state, option(turn, "thinking")) do
-      started(state)
-      {:reply, :ok, send_prompt(state, turn)}
+      # A run that ended while the session opened never reaches Pi.
+      case started(state) do
+        :ok -> {:reply, :ok, send_prompt(state, turn)}
+        :ended -> {:reply, :ok, %{state | turn: nil}}
+      end
     else
       {:error, reason, state} ->
         Logger.warning("pi turn failed to start: #{inspect(reason)}")
