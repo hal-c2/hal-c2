@@ -189,6 +189,24 @@ Item {
             compare(sent.payload.intent, "foreground");
         }
 
+        // Scenario: Page Up and Page Down from the composer scroll the conversation
+        function test_pageKeysGoToTheConversation() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let input = findChild(composer, "input");
+            const paged = [];
+            Keybindings.commands.add("timeline.pageUp", "", () => paged.push("up"), composer);
+            Keybindings.commands.add("timeline.pageDown", "", () => paged.push("down"), composer);
+            input.forceActiveFocus();
+            input.text = "A short message";
+            keyClick(Qt.Key_PageUp);
+            keyClick(Qt.Key_PageDown);
+            compare(paged, ["up", "down"]);
+            verify(input.activeFocus, "the composer keeps the keyboard");
+            compare(input.text, "A short message");
+            Keybindings.commands.remove("timeline.pageUp");
+            Keybindings.commands.remove("timeline.pageDown");
+        }
+
         function test_enterFollowsThePagesSendKeys() {
             let composer = createTemporaryObject(composerComponent, root);
             let input = findChild(composer, "input");

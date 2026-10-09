@@ -131,7 +131,8 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the title is shortened with an ellipsis
       And the start of the title still shows
 
-    @desktop
+    # Proved by tst_Workspace.qml (test_tightHeaderKeepsTheTitleReadable), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The full thread title is a hover away
       Given a shortened thread title
       When the user hovers it
@@ -145,7 +146,8 @@ Feature: Layout: sidebar, header, right panel and drawer
 
     # Run and Open are also in the thread details; the panel toggles and the
     # breadcrumb are what the header cannot lose.
-    @desktop
+    # Proved by tst_Workspace.qml (test_tightHeaderNeverOverlaps), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A tight header drops actions before anything overlaps
       Given the thread's project has an action and an editor to open it in
       When the header has under 520 pixels for its items
@@ -286,7 +288,8 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the right panel takes the new width
 
     # The web's inline floor (apps/web/src/hooks/usePreviewPanelInlineSize.ts).
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A docked right panel leaves the thread its room
       Given the window is 1400 pixels wide
       And the right panel and the thread details are open
@@ -295,7 +298,8 @@ Feature: Layout: sidebar, header, right panel and drawer
 
     # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
     # under, or wherever the panel's minimum does not fit beside the thread.
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: In a narrow window the right panel opens over the thread
       Given the window is 960 pixels wide
       When the user opens the right panel
@@ -305,14 +309,16 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses Escape
       Then the right panel is closed
 
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A click beside the right panel's sheet closes it
       Given the window is 960 pixels wide
       And the right panel is open
       When the user clicks the thread beside the right panel
       Then the right panel is closed
 
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: In a narrow window the thread details open over the thread
       Given the thread would be under 360 pixels wide beside the thread details
       When the user opens the thread details

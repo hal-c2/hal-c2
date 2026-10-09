@@ -54,7 +54,8 @@ Feature: Windows, zoom and quitting
 
     # The window's, not one page's header: where the old Electron window's
     # titleBarOverlay had them (apps/desktop/src/window/DesktopWindow.ts).
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellKeepsTheWindowButtonsInTheCorner), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The window controls stay in the window's corner
       Given the user is on Linux
       And the right panel and the thread details are open
@@ -63,7 +64,8 @@ Feature: Windows, zoom and quitting
       Then the window controls have not moved
       And nothing of the right panel is under them
 
-    @desktop
+    # Proved by tst_ShellExamples.cpp (defaultShellHasTheWindowButtonsOnEveryPage), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario Outline: The window controls are on every page
       Given the user is on Linux
       When the user opens <page>
@@ -80,6 +82,8 @@ Feature: Windows, zoom and quitting
         | a maximized right panel     |
         | a plugin's page             |
 
+    @desktop
+    Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols

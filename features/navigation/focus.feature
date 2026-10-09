@@ -170,12 +170,14 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: The conversation and the palette are announced
 
-    @desktop @backlog-mobile @backlog-tui
+    # Proved by tst_CommandPalette.qml (test_rowsAreNamedListItems), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: Command palette entries are announced by their title
       Given the command palette is open
       Then each entry is a list item named by its title, then its description and shortcut
 
-    @desktop @backlog-mobile @backlog-tui
+    # Proved by tst_Timeline.qml (test_workLinesAreNamed), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: Tool calls and subagents in the timeline are announced
       Given the timeline shows tool calls and a subagent
       Then each tool call is announced by its label
