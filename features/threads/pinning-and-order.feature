@@ -55,6 +55,14 @@ Feature: Pinning and arranging threads
       | snoozed  |
       | archived |
 
+  # Proved by tst_KeysToastRegression.cpp, not yet by a step (hal-c2/hal-c2#194).
+  @desktop @backlog-desktop
+  Scenario: The undo offer counts the threads it will restore and names the shortcut
+    Given the user just settled "Alpha"
+    When the user settles "Beta"
+    Then one notice reads "Settled 2 threads" and names the undo shortcut
+    And undoing it brings both threads back
+
   @desktop
   Scenario: Undo reopens an archived thread the user was viewing
     Given the user is viewing "Beta"

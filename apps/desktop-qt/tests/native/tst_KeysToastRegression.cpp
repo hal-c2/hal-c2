@@ -139,6 +139,30 @@ private slots:
     QVERIFY(items(clock.bridge).isEmpty());
   }
 
+  // Settling, snoozing and archiving in a row left a toast reading only the
+  // verb for each; the undo notice counts the threads it will restore, and one
+  // Undo takes them all back.
+  void consecutiveUndoNoticesOfOneKindJoinAndUndoTogether() {
+    ShellBridge bridge;
+    ToastController toasts(&bridge, nullptr);
+    toasts.activate();
+    QStringList undone;
+    const QString first = toasts.showUndo(QStringLiteral("Settled"), QStringLiteral("Settled"), [&undone] { undone.append(QStringLiteral("a")); });
+    QCOMPARE(items(bridge).first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Settled"));
+    QCOMPARE(toasts.showUndo(QStringLiteral("Settled"), QStringLiteral("Settled"), [&undone] { undone.append(QStringLiteral("b")); }), first);
+    toasts.showUndo(QStringLiteral("Settled"), QStringLiteral("Settled"), [&undone] { undone.append(QStringLiteral("c")); });
+    QCOMPARE(items(bridge).size(), 1);
+    QCOMPARE(items(bridge).first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Settled 3 threads"));
+    // Another kind starts its own notice.
+    toasts.showUndo(QStringLiteral("Archived"), QStringLiteral("Archived"), [&undone] { undone.append(QStringLiteral("x")); });
+    QCOMPARE(items(bridge).size(), 2);
+    QVERIFY(toasts.runAction(QStringLiteral("Undo")));
+    QCOMPARE(undone, QStringList{QStringLiteral("x")});
+    QVERIFY(toasts.runAction(QStringLiteral("Undo")));
+    QCOMPARE(undone, (QStringList{QStringLiteral("x"), QStringLiteral("c"), QStringLiteral("b"), QStringLiteral("a")}));
+    QVERIFY(items(bridge).isEmpty());
+  }
+
   // Nothing to expand: an empty stack stays collapsed.
   void anEmptyStackDoesNotExpand() {
     Clocked clock;

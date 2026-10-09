@@ -499,8 +499,7 @@ void ThreadMenuController::archive(const QString& key) {
   QJsonObject archive = target;
   archive.insert(QStringLiteral("type"), QStringLiteral("thread.archive"));
   NativeShell::of(this)->sidebar()->park(key, archive, QStringLiteral("Failed to archive thread"), SidebarController::Leave::ProjectDraft, [this, key, target, viewing] {
-    toasts()->show(QStringLiteral("success"), QStringLiteral("Archived"), QString(),
-                   ToastController::Action{QStringLiteral("Undo"), [this, key, target, viewing] {
+    toasts()->showUndo(QStringLiteral("Archived"), QStringLiteral("Archived"), [this, key, target, viewing] {
                      QJsonObject unarchive = target;
                      unarchive.insert(QStringLiteral("type"), QStringLiteral("thread.unarchive"));
                      const QString environmentId = key.left(key.indexOf(QLatin1Char(':')));
@@ -515,7 +514,7 @@ void ThreadMenuController::archive(const QString& key) {
                                                        NavigationController::Route::thread(key));
                                                  }
                                                });
-                   }, false, QStringLiteral("Archived")});
+                   });
   });
 }
 

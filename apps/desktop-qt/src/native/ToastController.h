@@ -49,6 +49,12 @@ public:
   // "Remove project").
   QString showActions(const QString& type, const QString& title, const QString& description, QList<Action> actions,
                       int timeoutMs);
+  // The notice of a change the user can take back ("Settled", "Snoozed",
+  // "Archived", "Unpinned": `group`, which runAction("Undo") undoes together).
+  // A change straight after another of its group joins that toast, which then
+  // reads "Settled 2 threads" and undoes both; `title` is what one change
+  // reads. The description names the undo shortcut.
+  QString showUndo(const QString& group, const QString& title, std::function<void()> undo);
   // An error toast, with the web app's "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
@@ -95,6 +101,8 @@ private:
     std::optional<QDateTime> deadline;
     qint64 remainingMs = 0;
     int revision = 0;
+    // The changes an undo toast stands for (showUndo).
+    int count = 1;
   };
 
   void startTime(Toast& toast, int timeoutMs);
