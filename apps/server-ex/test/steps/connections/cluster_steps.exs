@@ -560,6 +560,35 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "the third is offline", context do
+    stop(context, :c)
+  end
+
+  step "the second's cluster process is down", context do
+    :ok =
+      :peer.call(context.machines.b.peer, Supervisor, :terminate_child, [
+        HalC2.Supervisor,
+        HalC2.Cluster
+      ])
+
+    context
+  end
+
+  step "the second's cluster process starts again", context do
+    {:ok, _} =
+      :peer.call(context.machines.b.peer, Supervisor, :restart_child, [
+        HalC2.Supervisor,
+        HalC2.Cluster
+      ])
+
+    context
+  end
+
+  step "the second no longer lists the third", context do
+    assert await_removed(context.machines.b, context.machines.c)
+    context
+  end
+
   step "the first two list a project of the third", context do
     %{a: a, b: b, c: c} = context.machines
 
@@ -1015,6 +1044,8 @@ defmodule HalC2.Steps.Connections.Cluster do
       host: machine.address,
       cluster_listen: machine.address,
       cluster_port: context.cluster_port,
+      # Every second, so a scenario waits on gossip no longer than on a connection.
+      cluster_gossip: 1_000,
       tailscale_command: machine.tailscale
     ]
 
@@ -1117,6 +1148,34 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp await_disconnected(machine, other) do
     await_mc(machine, :nodedown, HalC2.Cluster.mc_name(other.id), 15_000)
+  end
+
+  # Waits until `machine`'s table holds `other` no member, rechecking as each table
+  # cast to its cluster process arrives.
+  defp await_removed(machine, other) do
+    code = """
+    test = self()
+    hook = fn nil, {:in, {:"$gen_cast", {:merge, _}}}, _ -> send(test, :merge); nil
+              nil, _event, _ -> nil end
+    :ok = :sys.install(HalC2.Cluster, {hook, nil})
+    removed? = fn -> not Enum.any?(HalC2.Cluster.status()["members"], &(&1["id"] == id)) end
+
+    wait = fn wait ->
+      removed?.() or
+        receive do
+          :merge -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    result = wait.(wait)
+    :sys.remove(HalC2.Cluster, hook)
+    result
+    """
+
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, [id: other.id]], 20_000)
+    result
   end
 
   # Waits until `machine`'s sidebar has rows of `other` (`listed`) or has none.

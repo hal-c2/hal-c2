@@ -187,6 +187,18 @@ Feature: Clustering one person's machines
     Then no member admits the third any more
     And the first two stay connected
 
+  # A member's cluster process can restart while its connections stay up, so no member
+  # connects anew to tell it what changed. Members also send each other the list every
+  # half minute.
+  @mc
+  Scenario: A member whose cluster process restarted learns of a removal it missed
+    Given a cluster of three members
+    And the third is offline
+    And the second's cluster process is down
+    When the user removes the third member on the first
+    And the second's cluster process starts again
+    Then the second no longer lists the third
+
   @mc
   Scenario: A removed member's projects and threads leave the sidebar
     Given a cluster of three members

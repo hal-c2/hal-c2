@@ -6,10 +6,10 @@ defmodule HalC2.ClusterPropTest do
   model of the member table: for each other machine its fingerprint, label, addresses
   and whether it is a member, plus which members are connected. Commands admit and
   remove machines, gossip tables in from members (newer than anything seen, with a
-  clock an hour ahead, or older than what is known), connect members, change version
-  and restart the process. After each one the cluster must say what the model says:
-  in `peers/0` (what discovery tries), `status/0`, the tables it gossips, the
-  certificates it pins and the members it stays connected to.
+  clock an hour ahead, or older than what is known), connect members, fire the gossip
+  timer, change version and restart the process. After each one the cluster must say
+  what the model says: in `peers/0` (what discovery tries), `status/0`, the tables it
+  gossips, the certificates it pins and the members it stays connected to.
 
   `HalC2.Cluster.Discovery` runs against an attempt the test holds open, so the test
   decides when each attempt ends and how: one attempt at a time, polls during one
@@ -79,6 +79,7 @@ defmodule HalC2.ClusterPropTest do
       {3, {:call, __MODULE__, :nodeup, [oneof(["stranger" | @ids])]}},
       {2, {:call, __MODULE__, :peers, []}},
       {2, {:call, __MODULE__, :status, []}},
+      {2, {:call, __MODULE__, :tick, []}},
       {1, {:call, __MODULE__, :version_changed, []}},
       {1, {:call, __MODULE__, :restart, []}}
     ])
@@ -222,6 +223,14 @@ defmodule HalC2.ClusterPropTest do
     told_ok and observed?(state, next, seen)
   end
 
+  # The gossip timer: the table to every connected member, and to no one else.
+  def postcondition(state, {:call, _, :tick, []}, {_result, seen}) do
+    told = for {mc, {:merge, _}} <- seen.sent, do: mc
+
+    Enum.sort(told) == Enum.sort(Enum.map(state.connected, &Cluster.mc_name/1)) and
+      observed?(state, state, seen)
+  end
+
   def postcondition(state, {:call, _, :peers, []}, {result, seen}) do
     expected = for {id, %{member: true} = m} <- state.members, do: {id, m.addresses}
     Enum.sort(result) == Enum.sort(expected) and observed?(state, state, seen)
@@ -333,6 +342,11 @@ defmodule HalC2.ClusterPropTest do
     mc = Cluster.mc_name(id)
     ClusterTransport.connect(mc)
     send(Process.whereis(Cluster), {:nodeup, mc})
+    observe(:ok)
+  end
+
+  def tick do
+    send(Process.whereis(Cluster), :gossip)
     observe(:ok)
   end
 
