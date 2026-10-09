@@ -102,11 +102,48 @@ defmodule HalC2.PluginsTest do
     assert {:ok, %{"content" => "notes 1"}} = main_page("notes")
   end
 
+  test "a crash reported by a supervisor that is gone is not charged to the plugin" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    %{sup: old} = plugin("notes")
+
+    # A start that was cast just before the plugin stopped, whose worker died since.
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "notes"})
+    late_crash("notes", old)
+    assert %{sup: nil, restarts: 0, last_error: nil} = plugin("notes")
+
+    # The next start does not take the old supervisor's worker for its own.
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    assert %{sup: new} = plugin("notes")
+    refute new == old
+    late_crash("notes", old)
+    assert %{restarts: 0, last_error: nil} = plugin("notes")
+
+    late_crash("notes", new)
+    assert %{restarts: 1, last_error: ":boom"} = plugin("notes")
+  end
+
   defp save(id, settings),
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 
   defp stored(id), do: get_in(HalC2.Settings.settings(), ["plugins", id, "settings"]) || %{}
   defp main_page(id), do: Plugins.handle("file", %{"id" => id, "path" => "ui/main.qml"})
+  defp plugin(id), do: :sys.get_state(Plugins).plugins[id]
+
+  # The host hears of a worker of supervisor `sup`, which then dies of `:boom`; the DOWN
+  # has been handled by the time this returns.
+  defp late_crash(id, sup) do
+    worker = spawn(fn -> receive do: (:never -> :ok) end)
+    ref = Process.monitor(worker)
+    GenServer.cast(Plugins, {:worker, id, sup, worker})
+    :sys.get_state(Plugins)
+    Process.exit(worker, :boom)
+    assert_receive {:DOWN, ^ref, _, _, :boom}
+    :sys.get_state(Plugins)
+    :sys.get_state(Plugins)
+  end
+
   defp listed(id), do: Plugins |> GenServer.call(:list) |> Enum.find(&(&1["id"] == id))
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
 
