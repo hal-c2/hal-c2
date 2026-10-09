@@ -55,6 +55,21 @@ defmodule HalC2.ClusterServerTest do
     assert_received {:sent, ^member, {:merge, %{"m1" => %{"fingerprint" => ^fp}}}}
   end
 
+  test "connected members are sent the table now and then, so one that missed a change learns it" do
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    member = Cluster.mc_name("m1")
+    stranger = Cluster.mc_name("stranger")
+    # Connected before this process started, so no nodeup comes for them.
+    Application.put_env(:hal_c2, :fake_connected, [member, stranger])
+    send(Cluster, :gossip)
+    _ = :sys.get_state(Cluster)
+
+    assert_received {:sent, ^member, {:merge, %{"m1" => %{"fingerprint" => ^fp}}}}
+    refute_received {:sent, ^stranger, _}
+  end
+
   test "a cluster process that restarts still reports the port distribution listens on" do
     on_exit(fn -> :persistent_term.erase({HalC2.Cluster.Epmd, :listen_port}) end)
     # What distribution does as it starts, once per VM: the cluster process does not.

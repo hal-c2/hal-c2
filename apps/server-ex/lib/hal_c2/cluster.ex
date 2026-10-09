@@ -28,11 +28,13 @@ defmodule HalC2.Cluster do
   link for an `access:write` session, presents its fingerprint, and the member admits
   it (`admit/1`). The invite names the inviter's fingerprint, so the joining machine
   trusts that certificate alone and nothing else the answer says. Members exchange
-  the list whenever they connect, entry by entry by timestamp (`merge/3`), so the new
-  machine learns the other members from the inviter over the cluster connection, a
-  machine that joins one member is admitted by all of them, and a removal
-  (`remove/1`) reaches members that were away. Timestamps come from `stamp/1`, so
-  they order changes even when the members' clocks disagree.
+  the list whenever they connect, whenever it changes and every half minute, entry by
+  entry by timestamp (`merge/3`), so the new machine learns the other members from the
+  inviter over the cluster connection, a machine that joins one member is admitted by
+  all of them, and a removal (`remove/1`) reaches members that were away. The half
+  minute is for a member whose cluster process restarted: its connections outlived it,
+  so no member connects anew to tell it what it missed. Timestamps come from
+  `stamp/1`, so they order changes even when the members' clocks disagree.
   """
 
   use GenServer
@@ -46,6 +48,7 @@ defmodule HalC2.Cluster do
   @valid_days 36_500
   @backdate_seconds 300
   @join_timeout 15_000
+  @gossip_every 30_000
   @fingerprint ~r/^[0-9a-f]{64}$/
   # Files of the CA-based cluster this replaced.
   @obsolete ~w(ca.pem ca.key vm.args address revoked ssl_dist.conf)
@@ -342,6 +345,7 @@ defmodule HalC2.Cluster do
 
     case transport.start(dir, id) do
       :ok ->
+        schedule_gossip()
         {:ok, state |> refresh_own() |> commit()}
 
       {:off, reason} ->
@@ -498,6 +502,23 @@ defmodule HalC2.Cluster do
   end
 
   def handle_info({:nodedown, _mc}, state), do: {:noreply, state}
+
+  def handle_info(:gossip, state) do
+    for mc <- state.transport.connected(),
+        member?(state.members[id_of(mc)]),
+        do: state.transport.send(mc, {:merge, state.members})
+
+    schedule_gossip()
+    {:noreply, state}
+  end
+
+  defp schedule_gossip,
+    do:
+      Process.send_after(
+        self(),
+        :gossip,
+        Application.get_env(:hal_c2, :cluster_gossip, @gossip_every)
+      )
 
   # --- members -----------------------------------------------------------------
 
