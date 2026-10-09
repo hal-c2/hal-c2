@@ -120,10 +120,8 @@ Rectangle {
 
             Label {
                 objectName: "usageWindowLabel"
-                // Gives way first where the centre is narrow.
-                Layout.fillWidth: true
+                // Keeps its width and gives way only where the centre is narrow.
                 Layout.minimumWidth: 0
-                Layout.maximumWidth: implicitWidth
                 visible: !page.limitsShown
                 text: page.model ? page.model.windowLabel : ""
                 color: page.muted

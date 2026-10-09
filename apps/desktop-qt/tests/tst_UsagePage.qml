@@ -166,6 +166,19 @@ Item {
             compare(findChild(page, "usageTotal").parent.visible, false, "no Totals, Models or Daily heading");
         }
 
+        // The range arrives after the page is laid out; a wide page has room
+        // for all of it.
+        function test_theWindowRangeIsNotElidedWhenThereIsRoom() {
+            Shell.state = { usage: root.usage({ windowLabel: "" }) };
+            const page = createTemporaryObject(usageComponent, root, { width: 1200 });
+            Shell.state = { usage: root.usage({ windowLabel: "Sep 10 to Oct 9" }) };
+            const label = findChild(page, "usageWindowLabel");
+            tryCompare(label, "text", "Sep 10 to Oct 9");
+            wait(0);
+            verify(!label.truncated, "the range is drawn whole");
+            verify(label.width >= label.implicitWidth - 1, "it keeps its implicit width");
+        }
+
         function test_a_refresh_running_cannot_be_started_again() {
             Shell.state = { usage: root.usage({ refreshing: true }) };
             const page = createTemporaryObject(usageComponent, root);
