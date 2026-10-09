@@ -111,6 +111,20 @@ defmodule HalC2.Steps.Settings.Usage do
     Map.put(context, :history, %{provider: "claude", output: 5 + 7 + 11})
   end
 
+  # Claude Code labels the replies it writes itself (an API error) `<synthetic>`.
+  step "Claude Code's history holds a local error reply beside a real model's replies",
+       context do
+    context = usage(context)
+
+    write(
+      claude_dir(context),
+      "a.jsonl",
+      claude_line(1, 0, model: "<synthetic>") <> claude_line(2, 5)
+    )
+
+    Map.put(context, :history, %{provider: "claude", output: 5})
+  end
+
   # The first line sits more than the resume guard (64 bytes) before the end, so a
   # changed first line is only seen by a scan that reads the whole file again.
   step "the MC has scanned the history once", context do
@@ -227,6 +241,13 @@ defmodule HalC2.Steps.Settings.Usage do
     assert World.usage_output(context.summary, "claude") == context.history.output
     [claude] = for b <- context.summary["buckets"], b["provider"] == "claude", do: b
     assert claude["records"] == 3
+    context
+  end
+
+  step "only the real model is listed", context do
+    models = for b <- context.summary["buckets"], b["provider"] == "claude", do: b["model"]
+    assert Enum.uniq(models) == ["claude-fable-5"]
+    assert World.usage_output(context.summary, "claude") == context.history.output
     context
   end
 
