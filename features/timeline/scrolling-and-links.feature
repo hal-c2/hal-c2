@@ -76,6 +76,26 @@ Feature: Moving through a thread and following links
     When what is loaded leaves room in the view
     Then the earlier turns are loaded without the user scrolling
 
+  @desktop @backlog-mobile @backlog-tui
+  Scenario: The keyboard pages through the conversation
+    Given a long thread with the keyboard on it
+    When the user presses Page Up, Home, Page Down and End
+    Then the view scrolls a page up, to the start, a page down and to the end
+    And the view follows new output again once it is at the end
+
+  @desktop @backlog-mobile @backlog-tui
+  Scenario: Page Up and Page Down from the composer scroll the conversation
+    Given the user is typing a short message in the composer
+    When the user presses Page Up
+    Then the conversation scrolls a page up
+    And the composer keeps the keyboard
+
+  @desktop @backlog-mobile @backlog-tui
+  Scenario: The scroll-to-end control is a button
+    Given the user has scrolled away from the end
+    Then "Scroll to end" is a raised button the keyboard reaches
+    And pressing it with the keyboard returns to the end
+
   @desktop @backlog
   Scenario: The user jumps between turns
     Given the thread has ten turns

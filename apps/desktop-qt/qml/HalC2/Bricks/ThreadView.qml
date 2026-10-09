@@ -88,8 +88,12 @@ Item {
     }
 
     Component.onCompleted: {
-        if (Keybindings.commands)
+        if (Keybindings.commands) {
             Keybindings.commands.add("timeline.jumpToLatest", qsTr("Jump to latest"), () => timeline.scrollToEnd(), view);
+            Keybindings.commands.add("timeline.pageUp", qsTr("Page up the conversation"), () => timeline.page(-1), view);
+            Keybindings.commands.add("timeline.pageDown", qsTr("Page down the conversation"), () => timeline.page(1), view);
+            Keybindings.commands.add("timeline.jumpToStart", qsTr("Jump to start"), () => timeline.toEdge(true), view);
+        }
     }
 
     Rectangle {

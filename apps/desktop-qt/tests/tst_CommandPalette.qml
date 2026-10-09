@@ -46,6 +46,18 @@ Item {
             opened();
         }
 
+        // Rows are list items named by their title, for assistive technology.
+        function test_rowsAreNamedListItems() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            verify(!!list);
+            compare(list.Accessible.role, Accessible.List);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            compare(item.Accessible.role, Accessible.ListItem);
+            verify(item.Accessible.name.startsWith("Entry 1"));
+        }
+
         function test_escapeDismisses() {
             const popup = opened();
             keyClick(Qt.Key_Escape);

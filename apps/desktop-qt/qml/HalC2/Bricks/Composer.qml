@@ -928,6 +928,12 @@ Rectangle {
                             event.accepted = false;
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
+                            // A prompt that fits has nothing to page through: the keys
+                            // page the conversation (the web's composer does).
+                            if ((event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) && event.modifiers === Qt.NoModifier && input.contentHeight <= input.height && !composer.suggesting) {
+                                event.accepted = Keybindings.commands.run(event.key === Qt.Key_PageUp ? "timeline.pageUp" : "timeline.pageDown");
+                                if (event.accepted) return;
+                            }
                             if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
                                 event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
                                 if (event.accepted) return;
