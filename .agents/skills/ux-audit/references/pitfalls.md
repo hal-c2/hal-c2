@@ -16,16 +16,17 @@
 - Some controls act on real accounts and the real machine even outside a
   project. Open them, read them, and cancel:
   - Usage › Limits "Use reset" redeems a real reset credit.
-  - "Resume at reset" arms a real automatic resume.
   - The Updates toast's Update button runs a real CLI update.
   - "Open on the host" may open a browser or editor on the developer's
     desktop, outside the sandbox.
 - The composer saves drafts. Clear what you typed into a seeded thread's
   composer before leaving it, and check that it is empty.
-- Seed only the database. A copied `settings.json` can carry
-  `continueThreadsAfterServerUpdate` or `autoResumeLimitedThreads`, and
-  then `ux mc-start` sends real turns in seeded projects when the MC comes
-  back.
+- The sandbox's MC starts no turn nobody sent (`HAL_C2_MC_NO_AUTO_TURNS`):
+  a seeded thread with an armed resume, a queued message or a turn the
+  snapshot cut off stays put. Start it only through `mise run desktop:cua`
+  and `ux mc-start`, which set that; a bare `mix hal_c2.server` on the
+  scratch home sends those turns in the real projects.
+- Seed only the database, never `settings.json`.
 - Pairing links, access tokens and real conversation content show up in
   screenshots. The report stays local. Issues embed screenshots only with
   `--upload-shots`, after you have checked them (each shot's `.json` tree

@@ -20,12 +20,17 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   @interval 30_000
 
-  @doc "Options: `interval`, the sweep period in ms, or nil for no timer."
+  @doc """
+  Options: `interval`, the sweep period in ms, or nil for no timer. An MC that starts
+  no turns by itself (`HalC2.Orchestration.Recovery.auto_turns?/0`) has no timer.
+  """
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
   def init(opts) do
-    interval = Keyword.get(opts, :interval, @interval)
+    interval =
+      HalC2.Orchestration.Recovery.auto_turns?() && Keyword.get(opts, :interval, @interval)
+
     if interval, do: send(self(), :tick)
     {:ok, interval}
   end

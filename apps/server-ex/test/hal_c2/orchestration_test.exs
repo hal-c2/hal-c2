@@ -2210,6 +2210,27 @@ defmodule HalC2.OrchestrationTest do
       assert length(runs(current(thread_id))) == 2
     end
 
+    test "an MC that starts no turns by itself leaves a cut-off turn where it stopped" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => true}, version)
+      Application.put_env(:hal_c2, :auto_turns, false)
+      on_exit(fn -> Application.delete_env(:hal_c2, :auto_turns) end)
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      :ok = HalC2.Shell.subscribe(self())
+      await_shell_row(thread_id, &(&1["activeRunId"] != nil))
+
+      for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+          do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+      assert thread_id in HalC2.Orchestration.Recovery.run()
+      :ok = HalC2.Orchestration.Recovery.continue()
+
+      assert [%{"status" => "interrupted"}] = runs(await_statuses(thread_id, ["interrupted"]))
+    end
+
     test "an idle session is stopped, and the next run starts it again" do
       Application.put_env(:hal_c2, :idle_session_check_ms, nil)
       Application.put_env(:hal_c2, :session_idle_ms, 0)

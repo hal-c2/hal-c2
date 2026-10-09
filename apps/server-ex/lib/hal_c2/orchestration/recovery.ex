@@ -139,9 +139,16 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   @doc """
+  Whether the MC may start turns nobody sent: continuations, requeued runs, limit
+  resumes. Off (`HAL_C2_MC_NO_AUTO_TURNS`) for a scratch MC on a copy of real data,
+  whose threads would otherwise run in the real projects they name.
+  """
+  def auto_turns?, do: Application.get_env(:hal_c2, :auto_turns, true)
+
+  @doc """
   Asks each thread whose turn the restart cut off to continue, when its project's
   `continueThreadsAfterServerUpdate` is on and nothing newer was sent, as the Node
-  server does. Runs once the MC can start turns.
+  server does. Runs once the MC can start turns, unless `auto_turns?/0` is off.
   """
   def continue do
     runs = :persistent_term.get({__MODULE__, :continuable}, [])
@@ -152,7 +159,7 @@ defmodule HalC2.Orchestration.Recovery do
     background = :persistent_term.get({__MODULE__, :background}, [])
     :persistent_term.erase({__MODULE__, :background})
 
-    for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
+    for thread_id <- requeued, auto_turns?(), do: HalC2.Orchestration.start_next(thread_id)
 
     for {thread_id, run} <- runs,
         continue?(thread_id, run),
@@ -175,7 +182,7 @@ defmodule HalC2.Orchestration.Recovery do
   defp continue?(thread_id, run) do
     case HalC2.Shell.row(node(), thread_id) do
       {"thread", thread} ->
-        thread["archivedAt"] == nil and thread["deletedAt"] == nil and
+        auto_turns?() and thread["archivedAt"] == nil and thread["deletedAt"] == nil and
           HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
             true and latest?(thread_id, run)
 

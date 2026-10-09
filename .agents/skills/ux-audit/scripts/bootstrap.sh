@@ -3,7 +3,9 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(git -C "$here" rev-parse --show-toplevel)"
-out="${UX_AUDIT_DIR:-/tmp/hal-c2-ux-audit-$(date +%F)}"
+# Resolved, so a relative path, a `..` or a symlink cannot put the artifacts in the checkout.
+out="$(realpath -m "${UX_AUDIT_DIR:-/tmp/hal-c2-ux-audit-$(date +%F)}")"
+root="$(realpath "$root")"
 
 missing=()
 for bin in sway Xwayland dbus-run-session cua-driver python3 mise; do
