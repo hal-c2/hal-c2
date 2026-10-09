@@ -10,7 +10,7 @@ mod TURNS is
   protecting BOOL .
   protecting NAT .
 
-  sorts Rid Rids St Ghost Ph Slot Tm Item Conf Sys .
+  sorts Rid Rids St Ghost Ph Slot Tm Why Item Conf Sys .
   subsort Rid < Rids .
   subsort St < Ghost .
   subsort Item < Conf .
@@ -35,9 +35,10 @@ mod TURNS is
   op client : Rid -> Item [ctor] .
 
   --- The process that starts a run's turn (dispatch_message/2 or start_next/1, from
-  --- begin_turn/2 on): about to call the runtime, waiting on its start_turn call, or
-  --- having caught a failure to start. It dies only by raising, which it catches.
-  ops begin await gaveup : -> Ph [ctor] .
+  --- begin_turn/2 on): about to call the runtime, waiting on its start_turn call,
+  --- about to call it again because a release stopped it first, waiting on that call,
+  --- or having caught a failure to start. It dies only by raising, which it catches.
+  ops begin await retry again gaveup : -> Ph [ctor] .
   op disp : Rid Ph -> Item [ctor] .
 
   --- The task a run's end starts (finished/4): start_next/1.
@@ -58,11 +59,14 @@ mod TURNS is
   op claim : Rid -> Item [ctor] .
   op down : Rid -> Item [ctor] .
 
-  --- IdleSessions: ready for its next check, stopping a runtime, or (for a check
-  --- with it) never running. A stop_runtimes/1 under way, IdleSessions' or a delete's.
-  ops ready busy off : -> Tm [ctor] .
+  --- IdleSessions: ready for its next check, or releasing a runtime. Its release
+  --- call (true), or a delete's stop_runtimes/1 (false), under way.
+  ops ready busy : -> Tm [ctor] .
   op timer : Tm -> Item [ctor] .
   op stopper : Bool -> Item [ctor] .
+
+  --- How a runtime went: it crashed, was stopped, or released itself.
+  ops crashed stopped released : -> Why [ctor] .
 
   --- A client asking to interrupt the thread's run, and after the runtimes said no
   --- running turn, interrupt_undriven/2; a client deleting the thread.
@@ -84,6 +88,7 @@ mod TURNS is
   var X : Slot .
   var T : Tm .
   var P : Ph .
+  var W : Why .
   var F : Nat .
   var C : Conf .
 
@@ -137,24 +142,27 @@ mod TURNS is
   --- The runtime replied to run R's start_turn call; its caller may have gone.
   op answered : Rid Conf -> Conf .
   eq answered(R, disp(R, await) C) = C .
+  eq answered(R, disp(R, again) C) = C .
   eq answered(R, C) = C [owise] .
 
-  --- The runtime died under run R's start_turn call: its caller gets an exit.
-  op cut : Rid Conf -> Conf .
-  eq cut(R, disp(R, await) C) = disp(R, gaveup) C .
-  eq cut(R, C) = C [owise] .
+  --- The runtime went under run R's start_turn call: its caller gets an exit, and
+  --- calls once more if the runtime released itself first (start_turn/2).
+  op cut : Why Rid Conf -> Conf .
+  eq cut(W, R, disp(R, await) C) = disp(R, if W == released then retry else gaveup fi) C .
+  eq cut(W, R, disp(R, again) C) = disp(R, gaveup) C .
+  eq cut(W, R, C) = C [owise] .
 
-  --- The runtime stops (B false) or crashes (B true): calls in its mailbox and under
-  --- way exit, and TurnWatch hears of each run it claimed; only a crash ends them.
-  op die : Bool Conf -> Conf .
-  eq die(B, rt(none) C) = rt(none) C .
-  eq die(B, rt(begun(R)) C) = rt(none) gone(B, cut(R, C)) .
-  eq die(B, rt(X) C) = rt(none) gone(B, C) [owise] .
-  op gone : Bool Conf -> Conf .
-  eq gone(B, claim(R) C) = (if B then down(R) else empty fi) gone(B, C) .
-  eq gone(B, mbox(R ; L) C) = gone(B, mbox(L) cut(R, C)) .
-  eq gone(B, icall C) = undriven gone(B, C) .
-  eq gone(B, C) = C [owise] .
+  --- The runtime goes: calls in its mailbox and under way exit, and TurnWatch hears
+  --- of each run it claimed; only a crash ends them.
+  op die : Why Conf -> Conf .
+  eq die(W, rt(none) C) = rt(none) C .
+  eq die(W, rt(begun(R)) C) = rt(none) gone(W, cut(W, R, C)) .
+  eq die(W, rt(X) C) = rt(none) gone(W, C) [owise] .
+  op gone : Why Conf -> Conf .
+  eq gone(W, claim(R) C) = (if W == crashed then down(R) else empty fi) gone(W, C) .
+  eq gone(W, mbox(R ; L) C) = gone(W, mbox(L) cut(W, R, C)) .
+  eq gone(W, icall C) = undriven gone(W, C) .
+  eq gone(W, C) = C [owise] .
 
   --- decide_next/2: the first queued run not held.
   op firstFree : Rids Conf -> Rids .
@@ -230,6 +238,11 @@ mod TURNS is
   crl [begin-turn] : disp(R, begin) rt(X) mbox(L) => disp(R, await) rt(X) mbox(L ; R)
     if X =/= none .
 
+  --- start_turn/2 again, once, after the runtime released itself with the call unanswered.
+  rl [retry] : disp(R, retry) rt(none) mbox(L) => disp(R, again) rt(idle) mbox(L ; R) .
+  crl [retry] : disp(R, retry) rt(X) mbox(L) => disp(R, again) rt(X) mbox(L ; R)
+    if X =/= none .
+
   --- begin_turn/2 caught a failure to start: the run fails.
   rl [start-failed] : { disp(R, gaveup) C } => { abandon(R, failed, C) } .
 
@@ -274,12 +287,8 @@ mod TURNS is
   rl [delete] : { del thread(false) queue(L) C } => { thread(true) queue(nil) stopper(false) cancel(C) } .
 
   --- GenServer.stop/2: the runtime stops between messages, ending no turn.
-  crl [stop-runtimes] : { stopper(B) rt(X) C } => { stopped(B, die(false, rt(X) C)) }
+  crl [stop-runtimes] : { stopper(false) rt(X) C } => { die(stopped, rt(X) C) }
     if not begun?(X) .
-  --- IdleSessions is ready for its next check once its stop returns.
-  op stopped : Bool Conf -> Conf .
-  eq stopped(true, timer(busy) C) = timer(ready) C .
-  eq stopped(B, C) = C [owise] .
   op begun? : Slot -> Bool .
   eq begun?(begun(R)) = true .
   eq begun?(X) = false [owise] .
@@ -296,22 +305,30 @@ mod TURNS is
     if not claimed?(R, C) .
 
   --- release_idle/0: release_session/1 of a runtime's thread with no active run, which
-  --- marks its sessions stopped, then stop_session/1.
+  --- marks its sessions stopped, then asks its runtimes to release themselves.
   crl [release-session] :
     { timer(ready) rt(X) C } => { timer(busy) stopper(true) rt(X) C }
     if X =/= none /\ not busy?(C) .
 
+  --- handle_call(:release): an idle runtime stops; one that took a turn since the check
+  --- keeps it. IdleSessions is ready for its next check once the call returns.
+  rl [release-idle] : { stopper(true) timer(busy) rt(idle) C } => { timer(ready) die(released, rt(idle) C) } .
+  rl [release-idle] : stopper(true) timer(busy) rt(none) => timer(ready) rt(none) .
+  rl [keep-turn] : stopper(true) timer(busy) rt(turn(R, I)) => timer(ready) rt(turn(R, I)) .
+
   --- environment --------------------------------------------------------------------
 
   --- The runtime crashes: its turn's caller gets an exit, its claims crash.
-  crl [crash] : { rt(X) faults(s F) C } => { die(true, rt(X) C) faults(F) } if X =/= none .
+  crl [crash] : { rt(X) faults(s F) C } => { die(crashed, rt(X) C) faults(F) } if X =/= none .
 
   --- begin_turn/2 raises before it calls the runtime (restore_worktree/1, the
   --- baseline's match, ensure/1's case), and catches it.
   rl [raise] : disp(R, begin) faults(s F) => disp(R, gaveup) faults(F) .
+  rl [raise] : disp(R, retry) faults(s F) => disp(R, gaveup) faults(F) .
 
   --- start_turn/2's call to the runtime times out (60 s).
   rl [time-out] : disp(R, await) faults(s F) => disp(R, gaveup) faults(F) .
+  rl [time-out] : disp(R, again) faults(s F) => disp(R, gaveup) faults(F) .
 
   --- The provider refuses the turn: the runtime finishes it as failed and replies.
   rl [refused] :
