@@ -1,6 +1,9 @@
 defmodule HalC2.AuthTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
+  alias Exqlite.Sqlite3
   alias HalC2.Test.WsClient
 
   @moduletag :tmp_dir
@@ -74,6 +77,48 @@ defmodule HalC2.AuthTest do
     # A reloaded window exchanges it again.
     assert {200, %{"access_token" => _}} = post_form(base <> "/oauth/token", form)
     assert {400, _} = post_form(base <> "/oauth/token", %{form | "subject_token" => "other"})
+  end
+
+  # An exchange that fails after spending its token leaves the token unspent: the
+  # failing session insert crashes the exchange, and the token is still good after.
+  test "a failed exchange does not spend its pairing token", %{path: path} do
+    token = HalC2.Auth.create_pairing_token(path)
+    assert_exchange_fails(path, token)
+
+    assert {:ok, _, _, _} = HalC2.Auth.exchange(token)
+  end
+
+  test "a failed desktop exchange keeps the desktop's previous session", %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    :ok = HalC2.Desktop.apply_bootstrap(%{"desktopBootstrapToken" => "desk-token"})
+    on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
+    start_supervised!(HalC2.Auth)
+
+    {:ok, previous, _, _} = HalC2.Auth.exchange("desk-token")
+    assert_exchange_fails(path, "desk-token")
+
+    assert {:ok, %{}} = HalC2.Auth.session(previous)
+  end
+
+  defp assert_exchange_fails(path, token) do
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TRIGGER fail_sessions BEFORE INSERT ON auth_sessions
+      BEGIN SELECT RAISE(ABORT, 'busy'); END
+      """)
+
+    capture_log(fn ->
+      assert {_, {GenServer, :call, _}} = catch_exit(HalC2.Auth.exchange(token))
+    end)
+
+    :ok = Sqlite3.execute(db, "DROP TRIGGER fail_sessions")
+    Sqlite3.close(db)
+
+    # The crashed server is restarted by its supervisor; the new one reads the store.
+    :ok = stop_supervised(HalC2.Auth)
+    start_supervised!(HalC2.Auth)
   end
 
   test "an administrator makes pairing links, and sees and revokes paired clients", %{port: port} do

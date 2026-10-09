@@ -357,28 +357,31 @@ defmodule HalC2.Auth do
 
   @impl true
   def handle_call({:exchange, token, client}, _from, state) do
+    # One transaction: the token is spent only if its session is created with it.
     {reply, events, replaced} =
       with_db(state.path, fn db ->
-        case grant(db, token, client, state) do
-          {:ok, granted, subject, events} ->
-            requested = client[:scopes] || granted
+        transaction(db, fn ->
+          case grant(db, token, client, state) do
+            {:ok, granted, subject, events} ->
+              requested = client[:scopes] || granted
 
-            if Enum.all?(requested, &(&1 in granted)) do
-              # Desktop restarts forget the previous token, so its session is replaced.
-              replaced =
-                if subject == "desktop-bootstrap",
-                  do: revoke_rows(db, "subject = ?1", [subject]),
-                  else: []
+              if Enum.all?(requested, &(&1 in granted)) do
+                # Desktop restarts forget the previous token, so its session is replaced.
+                replaced =
+                  if subject == "desktop-bootstrap",
+                    do: revoke_rows(db, "subject = ?1", [subject]),
+                    else: []
 
-              {reply, created} = create_session(db, requested, subject, client, state)
-              {reply, events ++ removed_clients(replaced) ++ created, replaced}
-            else
-              {{:error, :scope_not_granted}, events, []}
-            end
+                {reply, created} = create_session(db, requested, subject, client, state)
+                {reply, events ++ removed_clients(replaced) ++ created, replaced}
+              else
+                {{:error, :scope_not_granted}, events, []}
+              end
 
-          {:error, events} ->
-            {:error, events, []}
-        end
+            {:error, events} ->
+              {:error, events, []}
+          end
+        end)
       end)
 
     close_sockets(state, replaced)
@@ -789,6 +792,21 @@ defmodule HalC2.Auth do
       fun.(db)
     after
       Sqlite3.close(db)
+    end
+  end
+
+  # All or nothing: an exception in `fun` rolls the statements back, then propagates.
+  defp transaction(db, fun) do
+    :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
+
+    try do
+      result = fun.()
+      :ok = Sqlite3.execute(db, "COMMIT")
+      result
+    rescue
+      error ->
+        Sqlite3.execute(db, "ROLLBACK")
+        reraise error, __STACKTRACE__
     end
   end
 
