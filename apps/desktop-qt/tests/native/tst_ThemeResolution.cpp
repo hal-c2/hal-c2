@@ -3,8 +3,10 @@
 // when nothing matches; and the colours every theme is drawn in.
 
 #include <QDir>
+#include <QDirIterator>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -74,6 +76,38 @@ private slots:
     // The roles the bricks paint outside theme files come with every theme.
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("success")));
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("info")));
+  }
+
+  // A role no theme carries is drawn in its fallback, in light themes too (a
+  // "popover" dialog stayed near-black): every role the bricks ask the palette
+  // for by name comes with every theme, or is one a theme may add.
+  void bricksPaintWithRolesEveryThemeHas() {
+    // Drawn in the brick's own fallback unless a theme names them.
+    const QStringList optional{QStringLiteral("merged"), QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
+                               QStringLiteral("sidebarActiveIndicator")};
+    static const QRegularExpression read(QStringLiteral("palette\\.color\\(\"([A-Za-z0-9]+)\""));
+    QStringList unknown;
+    int found = 0;
+    for (const bool dark : {false, true}) {
+      themes()->setSystemDark(dark);
+      const QVariantMap colors = published().value(QStringLiteral("colors")).toMap();
+      for (const char* dir : {"/qml", "/../mobile-qt/qml"}) {
+        QDirIterator files(QString::fromUtf8(HAL_C2_TEST_SOURCE_DIR) + QLatin1String(dir), {QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+          QFile file(files.next());
+          QVERIFY(file.open(QIODevice::ReadOnly));
+          auto matches = read.globalMatch(QString::fromUtf8(file.readAll()));
+          while (matches.hasNext()) {
+            const QString role = matches.next().captured(1);
+            ++found;
+            const QString where = QFileInfo(file).fileName() + QLatin1Char(':') + role;
+            if (!colors.contains(role) && !optional.contains(role) && !unknown.contains(where)) unknown.append(where);
+          }
+        }
+      }
+    }
+    QVERIFY(found > 100);
+    QVERIFY2(unknown.isEmpty(), qPrintable(unknown.join(QStringLiteral(", "))));
   }
 
   void builtInsWinTheirIds() {

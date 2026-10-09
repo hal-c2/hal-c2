@@ -32,7 +32,7 @@ Popup {
 
     background: Rectangle {
         radius: Theme.radius
-        color: Theme.palette.color("popover", "#18181b")
+        color: Theme.palette.color("surfaceOverlay", "#18181b")
         border.color: Theme.palette.color("border", "#27272a")
     }
 

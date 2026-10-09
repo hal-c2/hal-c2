@@ -269,6 +269,26 @@ const Steps steps([] {
     expect(keyRan(world, QStringLiteral("themeEditor.toggle")) && !themes(world)->editorOpen() && themes(world)->editing().isEmpty(),
            describeKeyPress(world));
   });
+  // Both dialogs over a bare window, in the theme the shell resolved.
+  step(QStringLiteral("the user opens the theme editor and the import dialog"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Bricks\n"
+                                          "Item { property alias editor: editor; property alias importer: importer\n"
+                                          "  ThemeEditor { id: editor; visible: true }\n"
+                                          "  ThemeImportDialog { id: importer; visible: true } }\n",
+                                          QSize(720, 760));
+  });
+  step(QStringLiteral("both are drawn on the theme's dialog surface with text that can be read"), [](World& world, const Captures&, const Table&) {
+    const QColor surface = world.theme().color(QStringLiteral("surfaceOverlay"), QColor());
+    expect(surface.isValid() && relativeLuminance(surface) > 0.5, QStringLiteral("the theme's dialog surface is %1").arg(surface.name()));
+    for (const char* name : {"editor", "importer"}) {
+      const QObject* dialog = world.brick->root()->property(name).value<QObject*>();
+      const QColor drawn = dialog->property("background").value<QQuickItem*>()->property("color").value<QColor>();
+      const QColor text = dialog->property("foreground").value<QColor>();
+      expect(drawn == surface && contrast(text, drawn) >= 4.5,
+             QStringLiteral("the %1 is drawn on %2 with %3 text").arg(QLatin1String(name), drawn.name(), text.name()));
+    }
+  });
 
   // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
   const auto inspected = [](World& world) -> Brick& {

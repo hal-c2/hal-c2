@@ -57,6 +57,12 @@ Feature: Custom themes
       Then the theme editor is closed
 
     @desktop
+    Scenario: The theme dialogs are drawn in the current theme
+      Given the appearance is Light
+      When the user opens the theme editor and the import dialog
+      Then both are drawn on the theme's dialog surface with text that can be read
+
+    @desktop
     Scenario: Picking a color from the app
       Given the theme editor is open
       When the user inspects the app and picks the sidebar
