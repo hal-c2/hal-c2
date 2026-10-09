@@ -50,6 +50,8 @@ defmodule HalC2.Cluster do
   @join_timeout 15_000
   @gossip_every 30_000
   @fingerprint ~r/^[0-9a-f]{64}$/
+  # What a machine says of itself in its entry.
+  @says ~w(fingerprint label addresses version)
   # Files of the CA-based cluster this replaced.
   @obsolete ~w(ca.pem ca.key vm.args address revoked ssl_dist.conf)
 
@@ -212,13 +214,25 @@ defmodule HalC2.Cluster do
 
   @doc """
   Merges member tables: for each id, the latest `admittedAt` and `removedAt`, and the
-  fingerprint, label and addresses of the entry updated last. Entries for `own_id` in
-  `incoming` are ignored; only this machine speaks for itself.
+  fingerprint, label and addresses of the entry updated last. Only this machine speaks
+  for itself: an entry for `own_id` in `incoming` changes nothing in its own, but one
+  that says something else and was updated no earlier (an admission stamped by a
+  member whose clock runs ahead) has its own entry stamped after it, or that copy
+  would outrank every change this machine makes until its clock catches up.
   """
   def merge(local, incoming, own_id) do
     Enum.reduce(incoming, local, fn
-      {^own_id, _}, acc ->
-        acc
+      {^own_id, copy}, acc ->
+        case {acc[own_id], sanitize(copy)} do
+          {%{"updatedAt" => ours} = own, %{"updatedAt" => theirs} = copy}
+          when theirs >= ours ->
+            if Map.take(copy, @says) == Map.take(sanitize(own) || own, @says),
+              do: acc,
+              else: put_in(acc[own_id]["updatedAt"], theirs + 1)
+
+          _ ->
+            acc
+        end
 
       {id, entry}, acc ->
         case sanitize(entry) do
