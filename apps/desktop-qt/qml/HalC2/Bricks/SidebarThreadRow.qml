@@ -198,6 +198,9 @@ Item {
     implicitHeight: slim ? 36 : 78
     Accessible.role: Accessible.ListItem
     Accessible.name: item.title
+    // A pooled delegate (the list reuses them) is hidden but stays a child of
+    // the list; without this a screen reader reads it with the live rows.
+    Accessible.ignored: !row.visible
 
     Rectangle {
         id: rowBackground

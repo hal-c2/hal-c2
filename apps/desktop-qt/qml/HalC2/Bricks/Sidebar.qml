@@ -632,6 +632,8 @@ Rectangle {
                 readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
 
                 width: ListView.view.width
+                // Pooled by `reuseItems`: hidden, but still a child of the list.
+                Accessible.ignored: !visible
                 implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "note" ? 28 : kind === "slim" ? 36 : 82
 
                 // Collapsible section header with a hairline (settled) or tint (snoozed).

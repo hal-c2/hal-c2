@@ -192,3 +192,9 @@ Feature: The thread list
     When the user looks at the thread list with every project in scope
     Then each slim and card row shows the icon of its project
     And a project without an icon shows its monogram
+
+  @desktop @backlog-desktop
+  Scenario: The thread list announces only the threads it shows
+    Given the thread list is scoped to the project "shop"
+    When a screen reader reads the thread list
+    Then it reads only the rows the list draws

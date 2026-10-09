@@ -139,5 +139,13 @@ Item {
             row.projectIcon = null;
             tryVerify(() => !findChild(mark, "projectIconMonogram"));
         }
+
+        // Scenario: The thread list announces only the threads it shows (features/threads/sidebar-list.feature)
+        function test_hiddenRowIsNotAnnounced() {
+            let row = createTemporaryObject(rowComponent, root);
+            compare(row.Accessible.ignored, false);
+            row.visible = false;
+            compare(row.Accessible.ignored, true);
+        }
     }
 }
