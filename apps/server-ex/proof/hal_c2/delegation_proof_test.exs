@@ -19,7 +19,7 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.delegate/3" =>
         ~w(record launch launch-failed wait-done time-out),
       "HalC2.Orchestration.Delegation.wait/3" => ~w(wait-done time-out),
-      "HalC2.Orchestration.Delegation.finished/3" => ~w(finished finished-late wake),
+      "HalC2.Orchestration.Delegation.finished/3" => ~w(finished finished-late),
       "HalC2.Orchestration.Delegation.report/5" => "report-fail",
       "HalC2.Orchestration.Delegation.cancel/2" => ~w(cancel cancel-refused),
       "HalC2.Orchestration.Delegation.reconcile/2" => ~w(reconcile-boot reconcile-after),
@@ -46,7 +46,7 @@ defmodule HalC2.DelegationProofTest do
     environment: %{
       "child-end" => "a run of the child thread ends, and its report starts",
       "child-start" => "the user rolls back and asks again, so the child works again",
-      "crash" => "the MC stops: its calls, reports, waits and wakes die; its store stays",
+      "crash" => "the MC stops: its calls, reports and waits die; its store stays",
       "restart" => "the MC starts again and boots",
       "parent-idle" => "the parent's own turn ends"
     },
@@ -72,7 +72,7 @@ defmodule HalC2.DelegationProofTest do
   @besides ~w(crash parent-idle child-start report-fail launch-failed time-out cancel)
 
   # The code's own rules, which a rule that stays enabled takes in the end.
-  @fair ~w(record launch wait-done child-end finished finished-late wake reconcile-boot
+  @fair ~w(record launch wait-done child-end finished finished-late reconcile-boot
            recover-settle continue skip-continue reconcile-after restart)
 
   for init <- ["waiting-start(2)", "async-start(2)"] do
@@ -86,6 +86,10 @@ defmodule HalC2.DelegationProofTest do
 
     test "a cancelled task never wakes the parent, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "cancelled-woken", [])
+    end
+
+    test "a result marked delivered is never lost to a crash, from #{init}", %{proof: proof} do
+      refute_reachable(proof, unquote(init), "lost-wake", [])
     end
 
     test "a result acknowledged to a wait was there to read, from #{init}", %{proof: proof} do

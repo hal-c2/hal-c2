@@ -1437,37 +1437,49 @@ defmodule HalC2.Orchestration do
   end
 
   defp dispatch_message(thread_id, command) do
-    decide = fn state ->
-      case decide_message(state, thread_id, command) do
-        {[], {:ok, :sent}} = sent ->
-          sent
-
-        {changes, {:ok, _} = result} ->
-          {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
-
-        refused ->
-          refused
-      end
-    end
+    decide = fn state -> decide_dispatch(state, thread_id, command) end
 
     case HalC2.Streams.transact(thread_id, :thread, decide) do
-      {:ok, status} when status in [:queued, :sent] ->
+      {:ok, _} = decided -> dispatched(thread_id, command, decided)
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  `message.dispatch` decided inside a transaction of the thread's stream, for a caller
+  that records the message together with its own changes; `dispatched/3` finishes it
+  once the transaction has committed.
+  """
+  def decide_dispatch(state, thread_id, command) do
+    case decide_message(state, thread_id, command) do
+      {[], {:ok, :sent}} = sent ->
+        sent
+
+      {changes, {:ok, _} = result} ->
+        {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
+
+      refused ->
+        refused
+    end
+  end
+
+  @doc "What follows a committed `decide_dispatch/3`: starting the turn, steering or interrupting."
+  def dispatched(thread_id, command, {:ok, decided}) do
+    case decided do
+      status when status in [:queued, :sent] ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:ok, {:steer, run}} ->
+      {:steer, run} ->
         steer(thread_id, run, command)
 
-      {:ok, {:restart, active_run_id}} ->
+      {:restart, active_run_id} ->
         # The queued message goes first; the interrupted run's end starts it.
         _ = interrupt_any(thread_id, active_run_id)
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:ok, turn} ->
+      turn ->
         begin_turn(thread_id, turn)
         {:ok, %{"sequence" => sequence(thread_id)}}
-
-      {:error, _} = error ->
-        error
     end
   end
 
