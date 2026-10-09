@@ -54,6 +54,12 @@ QString str(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
+// McClient's answer to a call the connection dropped under: the MC may or
+// may not have carried it out ("not connected" is one that never left).
+bool unanswered(const std::optional<QString>& error) {
+  return error && *error == QLatin1String("disconnected");
+}
+
 // apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx fallbackLabel.
 QString approvalTitle(const QString& kind) {
   if (kind == QLatin1String("mcp-elicitation")) return QStringLiteral("App access approval");
@@ -879,6 +885,14 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
       m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
                      [this, draftId, environmentId, input, messageId, background, text, attachments, contexts](
                          const QJsonValue& result, const std::optional<QString>& error) {
+                       if (unanswered(error)) {
+                         // The thread may be there: the draft becomes it if so
+                         // (DraftController::reconcile), else gets its prompt back.
+                         keepUnanswered(messageId);
+                         m_launching.remove(draftId);
+                         publish();
+                         return;
+                       }
                        forgetUnsent(messageId);
                        QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
                        if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
@@ -1174,6 +1188,13 @@ void ComposerController::sendNext(const QString& target) {
       // The sends queued behind it would reach the MC out of order, so they
       // stop too and come back with it.
       const QList<Send> unsent = m_queues.take(target);
+      if (unanswered(error)) {
+        // The MC may have the first: the thread's messages tell once it is
+        // back, and the ones behind it come back with it or without it.
+        for (const Send& queued : unsent) keepUnanswered(queued.messageId);
+        publish();
+        return;
+      }
       QStringList prompts;
       QList<Attachment> attachments;
       QList<Excerpt> contexts;
@@ -1286,6 +1307,15 @@ void ComposerController::forgetUnsent(const QString& messageId) {
   if (m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.messageId == messageId; }) > 0) save();
 }
 
+void ComposerController::keepUnanswered(const QString& messageId) {
+  for (Unsent& unsent : m_kept.unsent) {
+    if (unsent.messageId != messageId) continue;
+    unsent.kept = true;
+    unsent.seen = m_store->snapshots();
+    save();
+  }
+}
+
 // The thread's newest user message ahead of the sends still on their way to
 // it, once its messages are known.
 std::optional<QString> ComposerController::newestBefore(const QString& thread) const {
@@ -1337,7 +1367,8 @@ void ComposerController::reconcileUnsent() {
   }
   const QString newest = live ? newestUserMessage(messages, mine) : QString();
   for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
-    if (!unsent.kept) continue;
+    // One whose answer a drop took waits for the shell as it is after the drop.
+    if (!unsent.kept || m_store->snapshots() <= unsent.seen) continue;
     const QString key = m_store->located(unsent.thread);
     QString into;
     if (unsent.target != unsent.thread) {

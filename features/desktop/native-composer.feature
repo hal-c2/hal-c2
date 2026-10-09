@@ -1,6 +1,8 @@
 # Sources:
 #   apps/desktop-qt/src/native/ComposerController.cpp (the composer's text, send and stop against the MC;
-#     unsent sends kept in shell-composer.json and reconciled against the thread's messages after a restart)
+#     unsent sends kept in shell-composer.json and reconciled against the thread's messages after a restart
+#     or a dropped connection)
+#   apps/desktop-qt/src/native/McClient.cpp ("disconnected": a call whose answer the drop took)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   apps/web/src/components/ChatView.tsx (onSend: offline toast, upload, restore on failure,
 #     standalone /plan and /default, a draft's first send: title seed, launchThread, the draft kept
@@ -87,7 +89,7 @@ Feature: The desktop shell sends a thread's turns to its MC
       When the user goes back
       Then the window shows "env-a:t1"
 
-  Rule: A send cut off by a quit is never lost and never sent twice
+  Rule: A send cut off by a quit or a dropped connection is never lost and never sent twice
 
     @desktop
     Scenario: A prompt the MC never got comes back as the draft
@@ -172,6 +174,53 @@ Feature: The desktop shell sends a thread's turns to its MC
       And the MC drops the send
       And the desktop shell is connected to its MC
       Then the composer offers the new thread's text "Set up the linter"
+      And the MC launches 1 thread
+
+    @desktop
+    Scenario: A prompt the MC got before the connection dropped is not restored
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC receives a "message.dispatch" command for "t1"
+      When the MC drops the connection
+      And the MC carries out the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      And the user is reading "env-a:t1"
+      Then the desktop keeps no unsent prompts
+      And the composer's text for "env-a:t1" is ""
+      And the user sees no toast
+      And the MC receives no other commands
+
+    @desktop
+    Scenario: A prompt the dropped connection cut off comes back once the MC is heard from
+      Given the MC holds its answers
+      And the user is reading "env-a:t1"
+      And the user sends "Fix the tests"
+      And the MC receives a "message.dispatch" command for "t1"
+      When the MC drops the connection
+      And the MC drops the send
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      And the user is reading "env-a:t1"
+      Then the composer's text for "env-a:t1" is "Fix the tests"
+      And the user sees no toast
+      And the desktop keeps no unsent prompts
+
+    @desktop
+    Scenario: A new thread the MC made before the connection dropped takes its draft's place
+      Given the MC holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter"
+      And the MC launches 1 thread
+      When the MC drops the connection
+      And the MC answers
+      And the shell reconnects to the MC
+      And the shell subscribed to the MC's "shell" shape again
+      Then the window shows the launched thread in the draft's place
+      And the desktop keeps no unsent prompts
+      And the user sees no toast
       And the MC launches 1 thread
 
   Rule: Slash commands the composer knows act, the rest go to the agent

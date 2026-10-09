@@ -82,8 +82,8 @@ struct Model {
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
-  // The sends a restart cut off that the MC never got, by thread, until the
-  // thread is open again.
+  // The sends a restart or a drop cut off that the MC never got, by thread,
+  // until the thread is open again.
   QMap<QString, QList<Send>> limbo;
   // The MC is slow to send threads: one opened now waits, unknown, until it does.
   bool slow = false;
@@ -173,6 +173,26 @@ void settleLimbo(Model& m, const QString& thread) {
     return;
   }
   m.toasts.prepend({thread, restored, images, true});
+}
+
+// A quit or a dropped connection cuts off the sends the MC holds: it gets
+// the first of each thread's (`received`) or never did, and the rest never
+// left. They wait to be settled when their thread is open.
+void cutOff(Model& m, bool received) {
+  m.holding = false;
+  for (const QString& thread : std::exchange(m.held, {})) {
+    QList<Send> cut = m.queues.take(thread);
+    const Send& first = cut.first();
+    // The held command is the send's message, unless a runtime change goes first.
+    const bool message = commandsOf(first).size() == 1;
+    if (!received) {
+      m.commands[thread].removeLast();
+      if (m.commands.value(thread).isEmpty()) m.commands.remove(thread);
+    }
+    if (received && message && !first.refusedAtMc) cut.removeFirst();
+    m.limbo[thread].append(cut);
+    if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
+  }
 }
 
 void dispatchFirst(Model& m, const QString& thread) {
@@ -391,19 +411,23 @@ struct Sut {
     RC_ASSERT(prop::until([this] { return !mc.connected(); }));
     slow = false;
     waiting.clear();
-    if (!held.isEmpty()) {
-      for (const QString& thread : held) {
-        for (qsizetype i = mc.commands.size() - 1; i >= 0; --i) {
-          if (mc.commands.at(i).value(QLatin1String("threadId")).toString() != thread) continue;
-          if (!received) lost.insert(i);
-          break;
-        }
-      }
-      losing = !received;
-      mc.answerHeld();
-      losing = false;
-    }
+    if (!held.isEmpty()) cutOff(held, received);
     start();
+  }
+
+  // With the client gone, the MC carries out the first sends of `held` it
+  // holds (`received`), or they never reached it; no one hears its answers.
+  void cutOff(const QStringList& held, bool received) {
+    for (const QString& thread : held) {
+      for (qsizetype i = mc.commands.size() - 1; i >= 0; --i) {
+        if (mc.commands.at(i).value(QLatin1String("threadId")).toString() != thread) continue;
+        if (!received) lost.insert(i);
+        break;
+      }
+    }
+    losing = !received;
+    mc.answerHeld();
+    losing = false;
   }
 
   // Connected, the threads in and the controllers started.
@@ -753,27 +777,30 @@ struct AnswerHeld : Command {
   void show(std::ostream& os) const override { os << "AnswerHeld"; }
 };
 
-// The connection drops with sends held: they fail as the client gives up on
-// them, and the client connects again.
+// The connection drops with sends held, which the MC got (`received`) or
+// not: the client cannot tell, so they are cut off as by a quit, and the
+// client connects again. Nothing is sent twice or lost.
 struct Drop : Command {
-  // McClient fails the calls a drop cut off in no set order, so their toasts
-  // would be too.
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.held.size() <= 1); }
+  bool received = *rc::gen::arbitrary<bool>();
   void apply(Model& m) const override {
-    m.holding = false;
-    for (const QString& thread : std::exchange(m.held, {})) fail(m, thread);
+    cutOff(m, received);
     // The threads followed are asked for again, and a slow MC keeps them waiting.
-    if (m.slow) m.waiting.unite(std::exchange(m.loaded, {}));
+    if (m.slow) {
+      m.waiting.unite(std::exchange(m.loaded, {}));
+    } else if (m.loaded.contains(m.open)) {
+      settleLimbo(m, m.open);
+    }
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.mc.drop();
-    // What it held answers no one.
-    sut.mc.answerHeld();
+    sut.cutOff(m0.held, received);
     RC_ASSERT(prop::until([&] { return !sut.native->client()->isReady(); }));
     RC_ASSERT(prop::until([&] { return sut.online(); }));
     verify(nextState(m0), sut);
   }
-  void show(std::ostream& os) const override { os << "Drop"; }
+  void show(std::ostream& os) const override {
+    os << "Drop(" << (received ? "the MC got what it held" : "the MC never got what it held") << ")";
+  }
 };
 
 // Another device's prompt reaches the thread: newer than anything sent here
@@ -807,20 +834,7 @@ struct Restart : Command {
   bool received = *rc::gen::arbitrary<bool>();
   void apply(Model& m) const override {
     m.toasts.clear();
-    for (const QString& thread : std::exchange(m.held, {})) {
-      QList<Send> cut = m.queues.take(thread);
-      const Send& first = cut.first();
-      // The held command is the send's message, unless a runtime change goes first.
-      const bool message = commandsOf(first).size() == 1;
-      if (!received) {
-        m.commands[thread].removeLast();
-        if (m.commands.value(thread).isEmpty()) m.commands.remove(thread);
-      }
-      if (received && message && !first.refusedAtMc) cut.removeFirst();
-      m.limbo[thread].append(cut);
-      if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
-      m.holding = false;
-    }
+    if (!m.held.isEmpty()) cutOff(m, received);
     m.slow = false;
     m.waiting.clear();
     m.loaded.clear();
@@ -889,11 +903,12 @@ private slots:
     }));
   }
 
-  // The same, crowded with sends in flight when the app quits: each reaches
-  // the thread once, or comes back as its draft (or behind a toast when the
-  // draft has newer typing), unless a newer user message is there.
+  // The same, crowded with sends in flight when the app quits or the
+  // connection drops: each reaches the thread once, or comes back as its
+  // draft (or behind a toast when the draft has newer typing), unless a newer
+  // user message is there.
   void sendsCutOffByARestart() {
-    QVERIFY(rc::check("a send cut off by a restart reaches the MC once or comes back, never lost or doubled", [] {
+    QVERIFY(rc::check("a send cut off by a restart or a drop reaches the MC once or comes back, never lost or doubled", [] {
       Sut sut;
       Model model;
       verify(model, sut);
@@ -907,7 +922,8 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Type, Attach, PickRuntime, Prompt, Prompt, Prompt, Submit, Hold, Hold, Refuse,
-                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart, Slow, Load>()));
+                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart, Drop, Drop,
+                                                   Slow, Load>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

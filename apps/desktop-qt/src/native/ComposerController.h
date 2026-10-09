@@ -265,9 +265,9 @@ private:
     QString messageId;
   };
   // A prompt on its way to the MC, kept with the drafts until the MC answers
-  // it: one a quit or crash cut off comes back to its draft after the restart
-  // (reconcileUnsent), unless the MC has it or the user has said something
-  // newer there since.
+  // it: one a quit, crash or dropped connection cut off comes back to its
+  // draft once the MC is heard from again (reconcileUnsent), unless the MC has
+  // it or the user has said something newer there since.
   struct Unsent {
     // The thread, or the new thread's draft.
     QString target;
@@ -280,8 +280,12 @@ private:
     QString prompt;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
-    // Read back from before a restart, waiting to be reconciled.
+    // Read back from before a restart, or its answer lost with the
+    // connection: waiting to be reconciled.
     bool kept = false;
+    // The shell snapshots in when its answer was lost: it is reconciled
+    // against a newer one, not rows from before the drop.
+    quint64 seen = 0;
   };
 
   bool interrupt();
@@ -318,6 +322,9 @@ private:
                     const QList<Attachment>& attachments = {}, const QList<Excerpt>& contexts = {});
   // The MC answered the send: it is no longer kept.
   void forgetUnsent(const QString& messageId);
+  // The connection dropped before the MC answered: the send is kept as one a
+  // restart cut off, as the MC may or may not have it.
+  void keepUnanswered(const QString& messageId);
   // The kept sends from before a restart whose fate can now be told: a
   // thread's once its stream is live, a launch's once the shell knows
   // whether its thread exists. Sends still on their way take the open
