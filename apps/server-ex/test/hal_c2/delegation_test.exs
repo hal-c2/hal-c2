@@ -206,6 +206,34 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a cancel as the interrupted child reports" do
+    test "leaves the task cancelled and wakes nobody" do
+      delegate("running")
+
+      hook_with(fn
+        :cancelling, _ ->
+          end_child("interrupted")
+          Delegation.finished("c", "cr", "interrupted")
+
+        _, _ ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+      assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
+      refute woken?()
+    end
+
+    test "is refused for a task that already ended" do
+      delegate("completed")
+      Delegation.finished("c", "cr", "completed")
+      assert task()["status"] == "completed"
+
+      assert {:error, "task_not_cancellable", _} = Delegation.cancel("p", "task")
+      assert task()["status"] == "completed"
+    end
+  end
+
   describe "a report that raises" do
     test "is retried and settles the task" do
       delegate("completed")

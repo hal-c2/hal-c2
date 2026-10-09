@@ -189,14 +189,19 @@ defmodule HalC2.Orchestration.Delegation do
     with %{} = task <-
            subagent(thread_id, task_id) ||
              {:error, "task_not_found", "The task was not found for this thread."},
-         true <-
-           task["status"] not in @terminal ||
-             {:error, "task_not_cancellable", "The task has already finished."} do
+         # Settled before the child is interrupted, so the report of the interrupted run
+         # finds the task ended and wakes nobody; a task that ended meanwhile is not
+         # cancelled.
+         {:settled, _} <- settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
+      hook(:cancelling, task_id)
+
       _ =
         Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => task["childThreadId"]})
 
-      settle(thread_id, task, "cancelled", task["result"], "disposed")
       {:ok, status(thread_id, task_id)}
+    else
+      :already -> {:error, "task_not_cancellable", "The task has already finished."}
+      error -> error
     end
   end
 
