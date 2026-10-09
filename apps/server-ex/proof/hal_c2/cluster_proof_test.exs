@@ -18,6 +18,7 @@ defmodule HalC2.ClusterProofTest do
     code: [
       {:exports, HalC2.Cluster},
       {:messages, HalC2.Cluster},
+      {:state, HalC2.Cluster},
       {:exports, HalC2.Cluster.Distribution},
       {:exports, HalC2.Cluster.Discovery},
       {:messages, HalC2.Cluster.Discovery},
@@ -49,9 +50,16 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.Distribution.version_changed/1" => "version-changed",
       "HalC2.Cluster.Discovery.poll/0" => "connect",
       "HalC2.Cluster.Discovery.connect/3" => "connect",
-      "HalC2.Cluster.Discovery handle_info :poll" => "connect"
+      "HalC2.Cluster.Discovery handle_info :poll" => "connect",
+      "HalC2.Cluster state :members" => "mc"
     },
     abstracts: %{
+      "HalC2.Cluster state :dir" => @names,
+      "HalC2.Cluster state :id" => @names,
+      "HalC2.Cluster state :fingerprint" => @names,
+      "HalC2.Cluster state :off" => @off,
+      "HalC2.Cluster state :transport" =>
+        "which module carries the casts, a fake in tests; the model's links and channels are the real one",
       "HalC2.Cluster.dist_port/0" => @names,
       "HalC2.Cluster.dir/1" => @names,
       "HalC2.Cluster.host/1" => @names,

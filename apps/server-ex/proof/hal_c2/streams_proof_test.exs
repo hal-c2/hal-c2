@@ -16,6 +16,7 @@ defmodule HalC2.StreamsProofTest do
       {:exports, HalC2.Streams},
       {:exports, HalC2.Streams.Server},
       {:messages, HalC2.Streams.Server},
+      {:state, HalC2.Streams.Server},
       {:calls, HalC2.Streams, :hook}
     ],
     covers: %{
@@ -43,9 +44,19 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server handle_cast {:unsubscribe, _}" => "cast-unsubscribe",
       "HalC2.Streams.Server handle_info {:DOWN, _, :process, _, _}" => "monitor-down",
       "HalC2.Streams.Server handle_info :timeout" => "timeout",
-      "HalC2.Streams.Server handle_info {:EXIT, _, _}" => "linked-exit"
+      "HalC2.Streams.Server handle_info {:EXIT, _, _}" => "linked-exit",
+      "HalC2.Streams.Server state :stream" => "durable",
+      "HalC2.Streams.Server state :subscribers" => "srv"
     },
     abstracts: %{
+      "HalC2.Streams.Server state :v" => "the version of the state, which no step changes",
+      "HalC2.Streams.Server state :id" => "names the stream; the model has one",
+      "HalC2.Streams.Server state :path" => "where the stream is stored; the model has the log",
+      "HalC2.Streams.Server state :snapshot_seq" =>
+        "when the next snapshot is due; a snapshot changes no event or subscriber",
+      "HalC2.Streams.Server state :shell_scheduled" => @sidebar,
+      "HalC2.Streams.Server state :relays" =>
+        "the relays of subscribers on other MCs; stream_relay.maude models them",
       "HalC2.Streams.start_link/1" => "starts the supervisor tree; the model starts with it up",
       "HalC2.Streams.flush_shell/1" => "the same call as a commit that appends nothing",
       "HalC2.Streams.more/3" => @read,
