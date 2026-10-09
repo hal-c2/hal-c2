@@ -91,17 +91,48 @@ jobs:
         env:
           MIX_ENV: prop
 
-      # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
-      - name: Cache Maude
+  # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
+  # Its own job, as model checking peaks at several GB.
+  mc_proofs:
+    name: MC proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MIX_ENV: proof
+    defaults:
+      run:
+        working-directory: apps/server-ex
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.3"
+
+      - name: Cache Mix deps, build and Maude
         uses: actions/cache@v6
         with:
-          path: apps/server-ex/_build/maude
-          key: maude-${{ runner.os }}-${{ hashFiles('apps/server-ex/mix.lock') }}
+          path: |
+            apps/server-ex/deps
+            apps/server-ex/_build
+          key: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}
+          restore-keys: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
+
+      - name: Fetch deps
+        run: mix deps.get
 
       - name: Proofs
         run: mix proof
         env:
-          MIX_ENV: proof
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
