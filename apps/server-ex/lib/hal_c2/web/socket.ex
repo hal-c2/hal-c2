@@ -696,9 +696,9 @@ defmodule HalC2.Web.Socket do
       client = resume |> Map.take([:handle, :window, :kinds]) |> Map.put(:tag, tag)
 
       # The owning MC may be gone or slow; the client retries when it is back.
-      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), resume.offset, client]) do
-        {:ok, {:ok, server}} ->
-          monitors = Map.put(state.monitors, Process.monitor(server), {id, server})
+      case follow(mc, stream_id, resume.offset, client) do
+        {:ok, server, ref} ->
+          monitors = Map.put(state.monitors, ref, {id, server})
 
           # Until `live`, events are the stream's replay from `offset`: bounded by the
           # stream, and resyncing on them would only ask for the same replay again.
@@ -1090,6 +1090,30 @@ defmodule HalC2.Web.Socket do
 
       {:error, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # A stream that took the follow lets it go if the MCs part, and they may meet again
+  # before the answer is read and the stream monitored: a follow they parted during
+  # fails, as one they parted before the answer does.
+  defp follow(mc, stream_id, offset, client) do
+    watch? = mc != node() and Node.alive?()
+    if watch?, do: Node.monitor(mc, true)
+
+    result =
+      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), offset, client]) do
+        {:ok, {:ok, server}} -> {:ok, server, Process.monitor(server)}
+        {:error, reason} -> {:error, reason}
+      end
+
+    if watch?, do: Node.monitor(mc, false)
+
+    receive do
+      {:nodedown, ^mc} ->
+        with {:ok, _server, ref} <- result, do: Process.demonitor(ref, [:flush])
+        {:error, "MC unavailable: noconnection"}
+    after
+      0 -> result
     end
   end
 
