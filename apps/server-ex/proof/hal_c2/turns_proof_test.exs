@@ -25,9 +25,11 @@ defmodule HalC2.TurnsProofTest do
     ],
     covers: %{
       "HalC2.Orchestration.dispatch/1" =>
-        ~w(dispatch begin-turn start-failed delete interrupt-any interrupt-undriven),
-      "HalC2.Orchestration.start_next/1" => ~w(start-next decideNext begin-turn start-failed),
-      "HalC2.Orchestration.release_session/1" => ~w(release-session stop-runtimes),
+        ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
+           interrupt-undriven),
+      "HalC2.Orchestration.start_next/1" =>
+        ~w(start-next decideNext begin-turn retry start-failed),
+      "HalC2.Orchestration.release_session/1" => ~w(release-session release-idle keep-turn),
       "HalC2.Orchestration.runtime/1" => "begin-turn",
       "HalC2.Orchestration.TurnWriter.started/1" => "started",
       "HalC2.Orchestration.TurnWriter.commit_active/3" => "started",
@@ -35,6 +37,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.abandon/4" => "abandon",
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn),
+      "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" => "finish",
       "HalC2.Codex.ThreadRuntime handle_info {:EXIT, _, _}" => "exit",
       "HalC2.Orchestration.TurnWatch.claim/2" => "started",
@@ -125,6 +128,7 @@ defmodule HalC2.TurnsProofTest do
         "A turn whose runtime crashes ends as failed",
         "Stopping a turn whose runtime is gone ends it",
         "A session that is still in use is never released",
+        "A message sent as its idle session is released still runs",
         "A turn cut off by a restart is interrupted at boot"
       ],
       "mc/orchestration/queue-and-steering.feature" => [
@@ -136,7 +140,7 @@ defmodule HalC2.TurnsProofTest do
   @faults ~w(crash raise time-out refused exit restart)
   @fair ~w(dispatch begin-turn start-failed start-next take started finish interrupted
            no-turn interrupt-any interrupt-undriven delete stop-runtimes abandon
-           end-abandoned release-session)
+           end-abandoned release-session release-idle keep-turn retry)
 
   # turns(faults, interrupt, delete, idle timer)
   @inits [
@@ -160,11 +164,12 @@ defmodule HalC2.TurnsProofTest do
     end
   end
 
-  # IdleSessions can stop a runtime just after a message started a run on it, which
-  # then fails (release_session/1 checks for an active run, then stops the runtime).
-  test "with no idle check, no run fails unless something faults", %{proof: proof} do
-    refute_reachable(proof, "turns(0, true, true, off)", "failed?", [])
-    refute_reachable(proof, "turns(0, true, false, off)", "failed?", [])
+  # IdleSessions releases a runtime between its check for an active run and a message
+  # that starts one there: the runtime keeps a turn it took, and a start it stopped
+  # under is tried again.
+  test "no run fails unless something faults", %{proof: proof} do
+    refute_reachable(proof, "turns(0, true, true, ready)", "failed?", [])
+    refute_reachable(proof, "turns(0, true, false, ready)", "failed?", [])
   end
 
   for init <- [
