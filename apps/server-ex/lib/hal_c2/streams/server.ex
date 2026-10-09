@@ -144,10 +144,16 @@ defmodule HalC2.Streams.Server do
     :exit, _ -> :ok
   end
 
-  @spec unsubscribe(String.t(), pid) :: :ok
-  def unsubscribe(stream_id, pid) do
+  @doc """
+  Ends `pid`'s subscription. Given a `tag`, only the subscription it followed with
+  that tag: one that stopped following a stream and followed it again may still be
+  telling it to end the one before.
+  """
+  @spec unsubscribe(String.t(), pid, term) :: :ok
+  def unsubscribe(stream_id, pid, tag \\ nil) do
     case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid})
+      [{server, _}] when tag == nil -> GenServer.cast(server, {:unsubscribe, pid})
+      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid, tag})
       [] -> :ok
     end
   end
@@ -289,6 +295,13 @@ defmodule HalC2.Streams.Server do
   def handle_cast({:unsubscribe, pid}, state) do
     state = drop(state, pid)
     {:noreply, state, timeout(state)}
+  end
+
+  def handle_cast({:unsubscribe, pid, tag}, state) do
+    case state.subscribers do
+      %{^pid => %{name: {_id, ^tag}}} -> handle_cast({:unsubscribe, pid}, state)
+      _ -> {:noreply, state, timeout(state)}
+    end
   end
 
   # `more/3` calls; a cast is what one queued before an upgrade in place still is.
