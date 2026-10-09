@@ -262,6 +262,21 @@ QJsonObject ThemeController::colorsFor(const Definition& definition, const QStri
   return appearance == definition.appearance ? definition.colors : definition.variants.value(appearance).toObject();
 }
 
+namespace {
+
+// The three colours a picker previews a palette with.
+QStringList swatchOf(const QJsonObject& colors) {
+  QStringList swatch;
+  for (const char* role : {"canvas", "accent", "text"}) swatch.append(colors.value(QLatin1String(role)).toString());
+  return swatch;
+}
+
+}  // namespace
+
+QStringList ThemeController::standardSwatch() const {
+  return swatchOf(builtIns().standard.value(m_appearance).toObject());
+}
+
 QVariantList ThemeController::available() const {
   QVariantList result;
   QStringList seen;
@@ -277,7 +292,8 @@ QVariantList ThemeController::available() const {
                               {QStringLiteral("appearance"), definition.appearance},
                               {QStringLiteral("appearances"), appearances},
                               {QStringLiteral("source"), definition.source},
-                              {QStringLiteral("collection"), definition.collection}});
+                              {QStringLiteral("collection"), definition.collection},
+                              {QStringLiteral("swatch"), swatchOf(colorsFor(definition, appearances.contains(m_appearance) ? m_appearance : definition.appearance))}});
   }
   return result;
 }

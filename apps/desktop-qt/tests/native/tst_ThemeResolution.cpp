@@ -3,8 +3,10 @@
 // when nothing matches; and the colours every theme is drawn in.
 
 #include <QDir>
+#include <QDirIterator>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -82,6 +84,62 @@ private slots:
     QCOMPARE(overlay(), QStringLiteral("#fffffff5"));
     themes()->setSystemDark(true);
     QCOMPARE(overlay(), QStringLiteral("#111111f5"));
+  }
+
+  // What a picker previews a theme with: its canvas, accent and text in the
+  // appearance drawn now, and the standard look's beside them.
+  void everyThemeOfferedCarriesItsSwatch() {
+    const auto swatchOf = [this](const QString& id) {
+      for (const QVariant& theme : themes()->available()) {
+        if (theme.toMap().value(QStringLiteral("id")) == id) return theme.toMap().value(QStringLiteral("swatch")).toStringList();
+      }
+      return QStringList();
+    };
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#fcfcfc"));
+    const QStringList light = swatchOf(QStringLiteral("grove"));
+    for (const QVariant& theme : themes()->available()) {
+      const QStringList swatch = theme.toMap().value(QStringLiteral("swatch")).toStringList();
+      QCOMPARE(swatch.size(), 3);
+      for (const QString& color : swatch) QVERIFY2(QColor(color).isValid(), qPrintable(theme.toMap().value(QStringLiteral("id")).toString()));
+    }
+    themes()->setSystemDark(true);
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#0a0a0a"));
+    QVERIFY(swatchOf(QStringLiteral("grove")) != light);
+    // A theme without the appearance drawn shows the one it has.
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("mine"), QStringLiteral("light"), QStringLiteral("#010101"))}}});
+    QCOMPARE(swatchOf(QStringLiteral("mine")).value(0), QStringLiteral("#010101"));
+  }
+
+  // A role no theme carries is drawn in its fallback, in light themes too (a
+  // "popover" dialog stayed near-black): every role the bricks ask the palette
+  // for by name comes with every theme, or is one a theme may add.
+  void bricksPaintWithRolesEveryThemeHas() {
+    // Drawn in the brick's own fallback unless a theme names them.
+    const QStringList optional{QStringLiteral("merged"), QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
+                               QStringLiteral("sidebarActiveIndicator")};
+    static const QRegularExpression read(QStringLiteral("palette\\.color\\(\"([A-Za-z0-9]+)\""));
+    QStringList unknown;
+    int found = 0;
+    for (const bool dark : {false, true}) {
+      themes()->setSystemDark(dark);
+      const QVariantMap colors = published().value(QStringLiteral("colors")).toMap();
+      for (const char* dir : {"/qml", "/../mobile-qt/qml"}) {
+        QDirIterator files(QString::fromUtf8(HAL_C2_TEST_SOURCE_DIR) + QLatin1String(dir), {QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+          QFile file(files.next());
+          QVERIFY(file.open(QIODevice::ReadOnly));
+          auto matches = read.globalMatch(QString::fromUtf8(file.readAll()));
+          while (matches.hasNext()) {
+            const QString role = matches.next().captured(1);
+            ++found;
+            const QString where = QFileInfo(file).fileName() + QLatin1Char(':') + role;
+            if (!colors.contains(role) && !optional.contains(role) && !unknown.contains(where)) unknown.append(where);
+          }
+        }
+      }
+    }
+    QVERIFY(found > 100);
+    QVERIFY2(unknown.isEmpty(), qPrintable(unknown.join(QStringLiteral(", "))));
   }
 
   void builtInsWinTheirIds() {

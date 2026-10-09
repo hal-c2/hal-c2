@@ -229,6 +229,15 @@ const Steps steps([] {
       expect(role.isEmpty() || role.contains(QLatin1String("sidebar"), Qt::CaseInsensitive), show(rows));
     }
   });
+  step(QStringLiteral("the editor ends just under its last control"), [](World& world, const Captures&, const Table&) {
+    const QObject* dialog = popup(world);
+    expect(dialog->property("height") == dialog->property("implicitHeight") && dialog->property("height").toReal() < 320,
+           QStringLiteral("the editor is %1 tall for %2 of content").arg(dialog->property("height").toReal()).arg(dialog->property("implicitHeight").toReal()));
+  });
+  step(QStringLiteral("the editor grows for the list of colors"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return editor(world).item(QStringLiteral("roles"))->height() > 200; },
+                  [&] { return QStringLiteral("the list of colors; the editor is %1 tall").arg(popup(world)->property("height").toReal()); });
+  });
   step(QStringLiteral("the theme editor is open with unsaved changes"), [](World& world, const Captures&, const Table&) {
     QVariantMap draft = themes(world)->draft();
     draft.insert(QStringLiteral("id"), QString());
@@ -268,6 +277,133 @@ const Steps steps([] {
   step(QStringLiteral("the theme editor is closed"), [](World& world, const Captures&, const Table&) {
     expect(keyRan(world, QStringLiteral("themeEditor.toggle")) && !themes(world)->editorOpen() && themes(world)->editing().isEmpty(),
            describeKeyPress(world));
+  });
+  // Both dialogs over a bare window, in the theme the shell resolved.
+  step(QStringLiteral("the user opens the theme editor and the import dialog"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Bricks\n"
+                                          "Item { property alias editor: editor; property alias importer: importer\n"
+                                          "  ThemeEditor { id: editor; visible: true }\n"
+                                          "  ThemeImportDialog { id: importer; visible: true } }\n",
+                                          QSize(720, 760));
+  });
+  step(QStringLiteral("both are drawn on the theme's dialog surface with text that can be read"), [](World& world, const Captures&, const Table&) {
+    const QColor surface = world.theme().color(QStringLiteral("surfaceOverlay"), QColor());
+    expect(surface.isValid() && relativeLuminance(surface) > 0.5, QStringLiteral("the theme's dialog surface is %1").arg(surface.name()));
+    for (const char* name : {"editor", "importer"}) {
+      const QObject* dialog = world.brick->root()->property(name).value<QObject*>();
+      const QColor drawn = dialog->property("background").value<QQuickItem*>()->property("color").value<QColor>();
+      const QColor text = dialog->property("foreground").value<QColor>();
+      expect(drawn == surface && contrast(text, drawn) >= 4.5,
+             QStringLiteral("the %1 is drawn on %2 with %3 text").arg(QLatin1String(name), drawn.name(), text.name()));
+    }
+  });
+
+  // Settings → Appearance's list of themes, as the page draws it.
+  const auto themeList = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nAppearanceSettings { }\n", QSize(720, 900));
+    }
+    return *world.brick;
+  };
+  // The ids of the themes the list marks as in use.
+  const auto marked = [themeList](World& world) {
+    QStringList ids;
+    QQuickItem* standard = themeList(world).item(QStringLiteral("theme:hal-c2"));
+    if (standard->property("checked").toBool()) ids.append(QStringLiteral("hal-c2"));
+    for (const QVariant& theme : themes(world)->available()) {
+      const QString id = theme.toMap().value(QStringLiteral("id")).toString();
+      if (themeList(world).item(QStringLiteral("use:") + id)->property("checked").toBool()) ids.append(id);
+    }
+    return ids;
+  };
+  step(QStringLiteral("the user looks at the themes in Settings → Appearance"), [themeList](World& world, const Captures&, const Table&) { themeList(world); });
+  step(QStringLiteral("only %1 is marked as the theme in use, with its colors beside its name").arg(q),
+       [themeList, marked](World& world, const Captures& c, const Table&) {
+         expect(marked(world) == QStringList{c[0]}, QStringLiteral("marked: %1").arg(marked(world).join(QStringLiteral(", "))));
+         QStringList swatch;
+         for (const QVariant& theme : themes(world)->available()) {
+           if (theme.toMap().value(QStringLiteral("id")) == c[0]) swatch = theme.toMap().value(QStringLiteral("swatch")).toStringList();
+         }
+         QList<QColor> drawn;
+         const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+           if (item->objectName() == QLatin1String("swatch")) drawn.append(item->property("color").value<QColor>());
+           for (QQuickItem* child : item->childItems()) collect(child);
+         };
+         collect(themeList(world).item(QStringLiteral("use:") + c[0]));
+         expect(swatch.size() == 3 && drawn == QList<QColor>{QColor(swatch.at(0)), QColor(swatch.at(1)), QColor(swatch.at(2))},
+                QStringLiteral("the theme's colors are %1 and %2 are drawn").arg(swatch.join(QStringLiteral(", "))).arg(drawn.size()));
+       });
+  step(QStringLiteral("the user picks the standard theme there"), [themeList](World& world, const Captures&, const Table&) {
+    QQuickItem* standard = themeList(world).item(QStringLiteral("theme:hal-c2"));
+    QTest::mouseClick(&themeList(world).window(), Qt::LeftButton, {}, standard->mapToScene(QPointF(standard->width() / 2, standard->height() / 2)).toPoint());
+    world.sync();
+  });
+  step(QStringLiteral("only the standard theme is marked as the theme in use"), [marked](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return marked(world) == QStringList{QStringLiteral("hal-c2")}; },
+                  [&] { return QStringLiteral("the standard theme to be marked; marked: %1").arg(marked(world).join(QStringLiteral(", "))); });
+  });
+
+  // The keyboard: the dialogs over a message field holding it, as the composer does.
+  const auto keyboard = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world,
+                                            "import QtQuick\nimport QtQuick.Controls.Basic\nimport HalC2.Bricks\n"
+                                            "Item { property alias editor: editor; property alias importer: importer\n"
+                                            "  TextArea { objectName: \"message\"; width: 200; height: 60; focus: true }\n"
+                                            "  ThemeEditor { id: editor }\n"
+                                            "  ThemeImportDialog { id: importer } }\n",
+                                            QSize(720, 760));
+      expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the window did not become active"));
+    }
+    return *world.brick;
+  };
+  const auto opened = [keyboard](World& world, const char* dialog) {
+    return keyboard(world).root()->property(dialog).value<QObject*>()->property("opened").toBool();
+  };
+  step(QStringLiteral("the message field has the keyboard"), [keyboard](World& world, const Captures&, const Table&) {
+    Brick& brick = keyboard(world);
+    brick.item(QStringLiteral("message"))->forceActiveFocus(Qt::MouseFocusReason);
+    expect(brick.item(QStringLiteral("message"))->hasActiveFocus(), QStringLiteral("the message field did not take the keyboard"));
+  });
+  step(QStringLiteral("the user opens the theme editor"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    keyboard(world);
+    themes(world)->edit(themes(world)->draft());
+    world.waitFor([&] { return opened(world, "editor"); }, QStringLiteral("the theme editor to open"));
+  });
+  step(QStringLiteral("what the user types goes into the theme's name, not the message"), [keyboard](World& world, const Captures&, const Table&) {
+    Brick& brick = keyboard(world);
+    world.waitFor([&] { return brick.item(QStringLiteral("name"))->hasActiveFocus(); }, QStringLiteral("the theme's name to take the keyboard"));
+    QTest::keyClick(&brick.window(), Qt::Key_Tab);
+    QTest::keyClick(&brick.window(), Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::keyClick(&brick.window(), Qt::Key_End);
+    QTest::keyClick(&brick.window(), 'x');
+    expect(brick.item(QStringLiteral("name"))->property("text").toString().endsWith(QLatin1Char('x')) &&
+               brick.item(QStringLiteral("message"))->property("text").toString().isEmpty(),
+           QStringLiteral("the name is \"%1\" and the message \"%2\"")
+               .arg(brick.item(QStringLiteral("name"))->property("text").toString(), brick.item(QStringLiteral("message"))->property("text").toString()));
+  });
+  step(QStringLiteral("Escape closes the theme editor and gives the keyboard back"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    Brick& brick = keyboard(world);
+    QTest::keyClick(&brick.window(), Qt::Key_Escape);
+    world.waitFor([&] { return !opened(world, "editor") && !themes(world)->editorOpen() && brick.item(QStringLiteral("message"))->hasActiveFocus(); },
+                  QStringLiteral("the theme editor to close and the message field to take the keyboard"));
+  });
+  step(QStringLiteral("the user opens the theme import dialog"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    QMetaObject::invokeMethod(keyboard(world).root()->property("importer").value<QObject*>(), "open");
+    world.waitFor([&] { return opened(world, "importer"); }, QStringLiteral("the import dialog to open"));
+  });
+  step(QStringLiteral("what the user types goes into the pasted JSON, not the message"), [keyboard](World& world, const Captures&, const Table&) {
+    Brick& brick = keyboard(world);
+    world.waitFor([&] { return brick.item(QStringLiteral("json"))->hasActiveFocus(); }, QStringLiteral("the JSON field to take the keyboard"));
+    QTest::keyClick(&brick.window(), 'x');
+    expect(brick.item(QStringLiteral("json"))->property("text") == QLatin1String("x") && brick.item(QStringLiteral("message"))->property("text").toString().isEmpty(),
+           QStringLiteral("the JSON is \"%1\" and the message \"%2\"")
+               .arg(brick.item(QStringLiteral("json"))->property("text").toString(), brick.item(QStringLiteral("message"))->property("text").toString()));
+  });
+  step(QStringLiteral("Escape closes the theme import dialog"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    QTest::keyClick(&keyboard(world).window(), Qt::Key_Escape);
+    world.waitFor([&] { return !opened(world, "importer"); }, QStringLiteral("the import dialog to close"));
   });
 
   // Picking a colour off the app: the editor over a sidebar, with the window's inspector.

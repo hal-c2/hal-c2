@@ -35,7 +35,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.palette.color("background", "#09090b")
+        color: Theme.palette.color("canvas", "#09090b")
 
         // The app underneath is not there yet.
         MouseArea {

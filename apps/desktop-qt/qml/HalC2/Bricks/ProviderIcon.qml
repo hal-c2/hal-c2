@@ -105,7 +105,7 @@ Item {
         height: Math.max(10, Math.round(icon.size * 0.6))
         width: Math.max(height, badgeText.implicitWidth + 4)
         radius: height / 2
-        color: icon.accentColor ? icon.accentColor : Theme.palette.color("card", "#18181b")
+        color: icon.accentColor ? icon.accentColor : Theme.palette.color("surfaceRaised", "#18181b")
         border.color: icon.indicatorBackground
         border.width: 1
 

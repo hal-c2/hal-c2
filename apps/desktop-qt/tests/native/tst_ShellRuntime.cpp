@@ -1,5 +1,6 @@
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QPalette>
 #include <QPointer>
 #include <QQmlComponent>
@@ -79,6 +80,59 @@ private slots:
     QVERIFY(file.remove());
     theme.reload();
     QVERIFY(!theme.windowLiquidGlass());
+  }
+
+  // The interface font is the application's: text that names no family is
+  // written in it without a binding, whether made before or after the change.
+  void textThatNamesNoFamilyIsWrittenInTheInterfaceFont() {
+    const QString system = QGuiApplication::font().family();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData("import QtQuick\nimport QtQuick.Controls.Basic\nWindow {\n"
+                      "Text { objectName: \"plain\" }\n"
+                      "Text { objectName: \"sized\"; property int size: 20; font.pixelSize: size; font.weight: Font.DemiBold }\n"
+                      "Text { objectName: \"code\"; font.family: \"monospace\" }\n"
+                      "Button { objectName: \"button\" }\n"
+                      "TextField { objectName: \"field\" }\n"
+                      "Popup { Label { objectName: \"inPopup\" } }\n"
+                      "Component { id: late; Text {} }\n"
+                      "function make() { return late.createObject(contentItem); }\n}", QUrl());
+    QScopedPointer<QObject> window(component.create());
+    QVERIFY2(window, qPrintable(component.errorString()));
+    const auto family = [&](const char* name) { return window->findChild<QObject*>(name)->property("font").value<QFont>().family(); };
+    const QStringList inherits{"plain", "sized", "button", "field", "inPopup"};
+    {
+      ThemeStore theme(directory.path());
+      theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"fontUi", "Inter"}});
+      QCOMPARE(QGuiApplication::font().family(), QString("Inter"));
+      for (const QString& name : inherits) QCOMPARE(family(qPrintable(name)), QString("Inter"));
+      QCOMPARE(family("code"), QString("monospace"));
+      // What a label set of its own font is kept, and still follows its binding.
+      QObject* sized = window->findChild<QObject*>("sized");
+      QCOMPARE(sized->property("font").value<QFont>().pixelSize(), 20);
+      QCOMPARE(sized->property("font").value<QFont>().weight(), QFont::DemiBold);
+      sized->setProperty("size", 24);
+      QCOMPARE(sized->property("font").value<QFont>().pixelSize(), 24);
+      // A second change reaches the same labels, and one made since.
+      QVariant result;
+      QVERIFY(QMetaObject::invokeMethod(window.data(), "make", Q_RETURN_ARG(QVariant, result)));
+      QObject* made = result.value<QObject*>();
+      QVERIFY(made);
+      QCOMPARE(made->property("font").value<QFont>().family(), QString("Inter"));
+      theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"fontUi", "\"IBM Plex Sans\""}});
+      for (const QString& name : inherits) QCOMPARE(family(qPrintable(name)), QString("IBM Plex Sans"));
+      QCOMPARE(made->property("font").value<QFont>().family(), QString("IBM Plex Sans"));
+      // A list that ends in the system's font, none of it installed, is the system's font.
+      theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"fontUi", "\"No Such Family\", system-ui, sans-serif"}});
+      QCOMPARE(theme.fontUi(), QString());
+      for (const QString& name : inherits) QCOMPARE(family(qPrintable(name)), system);
+      theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"fontUi", "Inter"}});
+      QCOMPARE(family("plain"), QString("Inter"));
+    }
+    // The font was the application's before the store and is again after it.
+    QCOMPARE(QGuiApplication::font().family(), system);
   }
 
   void qmlPaletteFollowsTheBaseTheme() {

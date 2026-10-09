@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include "Brick.h"
 #include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
@@ -328,6 +329,17 @@ const Steps steps([] {
     expect(!QFile::exists(QDir(world.configDir()).filePath(QStringLiteral("preferences.json"))) &&
                settings(world)->deviceSettings().isEmpty() && fakeConfig(world.mc).writes.isEmpty(),
            QStringLiteral("this device holds %1").arg(show(settings(world)->deviceSettings().toVariantMap())));
+  });
+  step(QStringLiteral("Settings → Appearance names the shell theme file and where it is"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nAppearanceSettings { }\n", QSize(720, 900));
+    const Brick& page = *world.brick;
+    expect(page.item(QStringLiteral("shellTheme"))->isVisible() && page.item(QStringLiteral("shellThemeTitle"))->isVisible() &&
+               page.item(QStringLiteral("shellThemePath"))->property("text") == themeFile(world),
+           QStringLiteral("the page shows \"%1\"").arg(page.item(QStringLiteral("shellThemePath"))->property("text").toString()));
+  });
+  step(QStringLiteral("says its colors are drawn over the theme chosen there"), [](World& world, const Captures&, const Table&) {
+    const QString effect = world.brick->item(QStringLiteral("shellThemeEffect"))->property("text").toString();
+    expect(effect.contains(QLatin1String("drawn over the theme chosen below")) && effect.contains(QLatin1String("still saved")), effect);
   });
   // Settings → Appearance and the appearance shortcut.
   step(QStringLiteral("the user chooses the (System|Light|Dark) appearance"), [](World& world, const Captures& c, const Table&) {

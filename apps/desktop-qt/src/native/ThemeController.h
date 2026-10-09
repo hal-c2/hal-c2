@@ -38,10 +38,14 @@ class ThemeController : public QObject, public NativeController {
   // What is drawn: the resolved appearance and theme id.
   Q_PROPERTY(QString appearance READ appearance NOTIFY changed)
   Q_PROPERTY(QString resolvedId READ resolvedId NOTIFY changed)
-  // [{id, label, appearance, appearances, source, collection}], source one of
-  // builtIn, custom, environment: what a picker offers. `collection` is the
-  // label of the family a saved theme was installed with, or empty.
+  // [{id, label, appearance, appearances, source, collection, swatch}], source
+  // one of builtIn, custom, environment: what a picker offers. `collection` is
+  // the label of the family a saved theme was installed with, or empty.
+  // `swatch` is its canvas, accent and text, in the appearance drawn now when
+  // the theme has it: enough to tell themes apart before applying one.
   Q_PROPERTY(QVariantList available READ available NOTIFY changed)
+  // The standard look's swatch: it is not in `available`, and a picker lists it first.
+  Q_PROPERTY(QStringList standardSwatch READ standardSwatch NOTIFY changed)
   // The colour roles a theme sets, in the order an editor lists them.
   Q_PROPERTY(QStringList roles READ roles CONSTANT)
   // Whether the window's theme editor is open (themeEditor.toggle); the
@@ -81,6 +85,7 @@ public:
   QString appearance() const { return m_appearance; }
   QString resolvedId() const { return m_resolvedId; }
   QVariantList available() const;
+  QStringList standardSwatch() const;
   QStringList roles() const;
   bool editorOpen() const { return m_editorOpen; }
   void setEditorOpen(bool open);

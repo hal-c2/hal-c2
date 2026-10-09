@@ -67,6 +67,15 @@ Feature: Appearance
       Then the app uses "Nord"
 
     @desktop
+    Scenario: Settings → Appearance marks the theme in use, the standard theme included
+      Given the theme choice is "grove"
+      When the user looks at the themes in Settings → Appearance
+      Then only "grove" is marked as the theme in use, with its colors beside its name
+      When the user picks the standard theme there
+      Then the app uses the standard theme
+      And only the standard theme is marked as the theme in use
+
+    @desktop
     Scenario: The theme shortcut opens the theme picker without leaving the thread
       When the user presses the theme shortcut
       Then the theme picker opens over the thread
@@ -215,6 +224,12 @@ Feature: Appearance
         | prompt    | Inter          | 15   | the composer                              |
         | code      | JetBrains Mono | 13   | code blocks and diffs                     |
         | terminal  | JetBrains Mono | 12   | the terminal                              |
+
+    @desktop
+    Scenario: A new interface font reaches the text already on screen
+      Given a label that names no font is on screen
+      When the user sets the interface font to "Inter" at 14
+      Then the label is written in "Inter"
 
     @desktop
     Scenario: A font preference can be reset to the system font
