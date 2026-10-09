@@ -234,6 +234,8 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "running", "checkout" => checkout} = review = review()
     assert File.dir?(checkout)
+    # The agent's git in the checkout knows where the pull request came from.
+    assert git!(checkout, ["config", "remote.origin.url"]) == "https://github.com/acme/api.git"
     review
   end
 

@@ -16,7 +16,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
-    with :ok <- alone(clone, fn -> init(clone) end),
+    with :ok <- alone(clone, fn -> init(clone, url) end),
          {:ok, _} <-
            git(
              clone,
@@ -187,10 +187,14 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
   # Run each time, as `git init` leaves a clone alone and finishes one it was cut short making.
-  defp init(clone) do
+  # `origin` is for the agent's git in a checkout; the plugin fetches `url` itself.
+  defp init(clone, url) do
     File.mkdir_p!(Path.dirname(clone))
 
-    with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]), do: :ok
+    with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]),
+         {:ok, _} <- git(clone, ["config", "remote.origin.url", url]),
+         {:ok, _} <- git(clone, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]),
+         do: :ok
   end
 
   # gh as git's only credential helper, as `gh auth setup-git` would make it. Git runs
