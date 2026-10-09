@@ -9,7 +9,9 @@ Requires `gh` authenticated. Findings with `fixed` set are left out.
 them; GitHub has no API for issue attachments. Without it each sub-issue
 names its shots. Resumable: the state file AUDIT_DIR/issues.state.json
 records what exists and is tied to the repo and audit dir, so a re-run never
-duplicates and never reuses another audit's parent or gist.
+duplicates and never reuses another audit's parent or gist. Everything
+published carries the run's marker, so a re-run also finds what an interrupted
+one created and did not get to record.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -61,21 +65,51 @@ def main() -> None:
     oks = [f for f in findings if f["sev"] == "ok"]
     fingerprint = {"repo": a.repo, "dir": str(root)}
     state_path = root / "issues.state.json"
-    state = {"fingerprint": fingerprint, "subs": {}, "linked": []}
-    if state_path.exists():
+    state = {"fingerprint": fingerprint, "run": secrets.token_hex(4), "subs": {}, "linked": []}
+    resumed = state_path.exists()
+    if resumed:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         if state.get("fingerprint") != fingerprint:
             sys.exit(f"{state_path} belongs to a different audit ({state.get('fingerprint')})")
+    # A state file from before runs were marked: what it created is all recorded in it.
+    resumed = resumed and "run" in state
+    state.setdefault("run", secrets.token_hex(4))
 
     def save():
         state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+
+    def marker(key):
+        return f"ux-audit:{state['run']}:{key}"
+
+    def listed(path, fields):
+        out = gh("api", "--paginate", path, "-q", f".[] | {{{fields}}}")
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    def adopt():
+        """Records what an earlier run created and was stopped before saving."""
+        if a.upload_shots and "gist" not in state:
+            for gist in listed("gists?per_page=100", "id, description"):
+                if marker("gist") in (gist["description"] or ""):
+                    state["gist"] = gist["id"]
+        ids = {f["id"] for f in issues}
+        if "parent" in state and ids <= state["subs"].keys():
+            return
+        found = re.compile(f"<!-- {re.escape(marker(''))}(.+?) -->")
+        for issue in listed(f"repos/{a.repo}/issues?labels=ux-audit&state=all&per_page=100", "number, node_id, body"):
+            key = found.search(issue["body"] or "")
+            if key and key[1] == "parent":
+                state.setdefault("parent", issue["number"])
+                state.setdefault("parent_node", issue["node_id"])
+            elif key and key[1] in ids:
+                state["subs"].setdefault(key[1], {"number": issue["number"], "node": issue["node_id"]})
 
     def upload_shots():
         names = sorted({s for f in issues for s in f["shots"] if (root / "shots" / s).exists()})
         if "gist" not in state:
             readme = root / "gist-README.md"
             readme.write_text(f"Screenshots for the {a.title} in {a.repo}.\n", encoding="utf-8")
-            state["gist"] = gh("gist", "create", "-d", f"{a.title} screenshots", str(readme)).strip().rsplit("/", 1)[-1]
+            created = gh("gist", "create", "-d", f"{a.title} screenshots ({marker('gist')})", str(readme))
+            state["gist"] = created.strip().rsplit("/", 1)[-1]
             save()
         clone = root / "gist"
         git = ["git", "-C", str(clone), "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
@@ -117,6 +151,7 @@ def main() -> None:
             b.append("\n## Ledger\n\n" + "\n".join(f"- `{s}`" for s in f["ledger"]))
         if f["solutions"]:
             b.append("\n## Possible solutions\n\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(f["solutions"], 1)))
+        b.append(f"\n<!-- {marker(f['id'])} -->")
         return "\n".join(b)
 
     def parent_body():
@@ -141,6 +176,7 @@ def main() -> None:
         if oks:
             b.append("\n## Reviewed and judged fine as-is\n")
             b += [f"- **{f['id']} {f['title']}**: {f['why_ok']}" for f in oks]
+        b.append(f"\n<!-- {marker('parent')} -->")
         return "\n".join(b)
 
     if a.dry_run:
@@ -154,6 +190,10 @@ def main() -> None:
         print(f"\n(dry run) would create 1 parent + {len(issues)} sub-issues in {a.repo}")
         return
 
+    if resumed:
+        adopt()
+    # Before anything is created, so the marker it carries is one a re-run knows.
+    save()
     if a.upload_shots:
         shot_urls.update(upload_shots())
         print(f"{len(shot_urls)} shots in gist {state['gist']}")
@@ -162,7 +202,7 @@ def main() -> None:
         if name not in have:
             gh("label", "create", name, "--color", color, "--description", desc)
     if "parent" not in state:
-        r = api("POST", f"repos/{a.repo}/issues", {"title": f"{a.title}: {len(issues)} findings", "body": "(populating…)", "labels": ["ux-audit"]})
+        r = api("POST", f"repos/{a.repo}/issues", {"title": f"{a.title}: {len(issues)} findings", "body": f"(populating…)\n\n<!-- {marker('parent')} -->", "labels": ["ux-audit"]})
         state["parent"], state["parent_node"] = r["number"], r["node_id"]
         save()
         print("parent", r["number"])
