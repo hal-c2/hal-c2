@@ -1,6 +1,7 @@
 defmodule HalC2.Web.SocketStreamDownTest do
   # A stream's server that stops takes its subscriptions with it; the sockets
-  # following it must tell their clients rather than go quiet.
+  # following it must tell their clients rather than go quiet. A subscription that
+  # ends must not feed the next one.
   use ExUnit.Case, async: false
 
   alias HalC2.Streams
@@ -85,6 +86,25 @@ defmodule HalC2.Web.SocketStreamDownTest do
     # Once the MC is back the client follows the stream again.
     {%{"t" => "live"}, [], client} = resubscribe(client, shape, live)
     {:ok, next} = Streams.commit("th-down", :thread, [item("c")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a message of the subscription a client left lands after it follows again, and is dropped",
+       %{client: client, shape: shape, live: live} do
+    stream = Streams.ensure("th-down")
+    [{socket, %{name: left}}] = Map.to_list(:sys.get_state(stream).subscribers)
+
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 7})
+    {%{"t" => "live"}, [], client} = resubscribe(client, shape, live)
+    [{^socket, %{name: name}}] = Map.to_list(:sys.get_state(stream).subscribers)
+    assert name != left
+
+    # What a relay on a slow link still held for the old subscription.
+    send(socket, {:hal_c2_stream, left, {:live, 0, live["handle"]}})
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
 
     assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
              WsClient.recv(client, 1_000)

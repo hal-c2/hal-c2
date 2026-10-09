@@ -18,7 +18,10 @@ defmodule HalC2.Streams.Server do
     * `{:events, events, seq}` for every later commit that touches its view, and
     * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/3`.
 
-  Each arrives as `{:hal_c2_stream, stream_id, message}`. A client resumes only with
+  Each arrives as `{:hal_c2_stream, stream_id, message}`, or as
+  `{:hal_c2_stream, {stream_id, tag}, message}` when the client gave a `tag`: a
+  subscriber that follows the stream again tells the messages of the subscription it
+  left, still on their way, from those of the new one. A client resumes only with
   the `handle/0` its offset came from; any other starts fresh.
 
   A plain subscription (`subscribe/3`) is for this MC's own processes: whole
@@ -46,7 +49,7 @@ defmodule HalC2.Streams.Server do
   alias HalC2.{Store, StreamState}
   alias HalC2.Streams.{Relay, View}
 
-  @state_version 3
+  @state_version 4
   @idle_stop :timer.minutes(5)
   @snapshot_every 500
   # A subscriber further behind than this is not replayed the log.
@@ -63,7 +66,8 @@ defmodule HalC2.Streams.Server do
   @type client :: %{
           optional(:handle) => String.t() | nil,
           optional(:kinds) => View.kinds(),
-          optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil
+          optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil,
+          optional(:tag) => reference
         }
 
   @doc "How long a stream without subscribers stays up."
@@ -215,7 +219,7 @@ defmodule HalC2.Streams.Server do
         Map.put(state.relays, pid, Relay.start(pid, initial))
       end
 
-    sub = %{ref: Process.monitor(pid), view: view}
+    sub = %{ref: Process.monitor(pid), view: view, name: name(state.id, client)}
     {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
   end
 
@@ -296,16 +300,16 @@ defmodule HalC2.Streams.Server do
           to = Map.get(state.relays, pid, pid)
 
           send_chunks(View.page(view, state.stream, runs), fn rows, more ->
-            send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, rows, floor, more}})
+            send(to, {:hal_c2_stream, sub.name, {:page, state.stream.seq, rows, floor, more}})
           end)
 
           sub = %{sub | view: %{view | window: %{floor: floor}}}
           %{state | subscribers: Map.put(state.subscribers, pid, sub)}
 
         # Nothing lies before a window that reaches the start, or before no window.
-        %{^pid => %{view: %{}}} ->
+        %{^pid => %{view: %{}, name: name}} ->
           to = Map.get(state.relays, pid, pid)
-          send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, [], nil, :done}})
+          send(to, {:hal_c2_stream, name, {:page, state.stream.seq, [], nil, :done}})
           state
 
         _ ->
@@ -359,11 +363,15 @@ defmodule HalC2.Streams.Server do
   def code_change(_old_vsn, state, _extra) do
     # Before version 3 a subscriber was only its monitor, and sockets trimmed what
     # they were sent themselves. They take a client's messages now, and this MC's
-    # own waiters only ever count them.
+    # own waiters only ever count them. Before version 4 every subscription was sent
+    # its messages under the stream's id.
     subscribers =
       Map.new(state.subscribers, fn
-        {pid, ref} when is_reference(ref) -> {pid, %{ref: ref, view: %{kinds: nil, window: nil}}}
-        sub -> sub
+        {pid, ref} when is_reference(ref) ->
+          {pid, %{ref: ref, view: %{kinds: nil, window: nil}, name: state.id}}
+
+        {pid, sub} ->
+          {pid, Map.put_new(sub, :name, state.id)}
       end)
 
     {:ok,
@@ -408,6 +416,10 @@ defmodule HalC2.Streams.Server do
     %{state | subscribers: subscribers, relays: relays}
   end
 
+  # What a subscription's messages carry for the stream.
+  defp name(id, %{tag: tag}), do: {id, tag}
+  defp name(id, _client), do: id
+
   # What a new subscriber is sent from now on, and what sends it the state it
   # starts from, for the stream or the subscriber's relay to run. Only the log is
   # read here, so that it ends where the stream stands; the rest is put together
@@ -438,7 +450,8 @@ defmodule HalC2.Streams.Server do
      end}
   end
 
-  defp initial(%{id: id, stream: stream} = state, pid, offset, client) do
+  defp initial(%{stream: stream} = state, pid, offset, client) do
+    id = name(state.id, client)
     handle = handle(client[:kinds])
     # An offset from another log, or a window that was never set, resumes nothing.
     resumes? = client[:handle] in [nil, handle] and not match?({:items, _}, client[:window])
@@ -551,16 +564,16 @@ defmodule HalC2.Streams.Server do
   defp broadcast(state, stream, events) do
     seq = List.last(events).seq
 
-    Enum.reduce(state.subscribers, %{}, fn {pid, %{view: view}}, by_view ->
+    Enum.reduce(state.subscribers, %{}, fn {pid, %{view: view, name: name}}, by_view ->
       to = Map.get(state.relays, pid, pid)
 
       case view do
         :plain ->
-          send(to, {:hal_c2_stream, state.id, {:events, events}})
+          send(to, {:hal_c2_stream, name, {:events, events}})
           by_view
 
         :watch ->
-          send(to, {:hal_c2_stream, state.id, {:changed, seq}})
+          send(to, {:hal_c2_stream, name, {:changed, seq}})
           by_view
 
         view ->
@@ -571,7 +584,7 @@ defmodule HalC2.Streams.Server do
 
           # A commit that touches nothing the client holds is not news to it.
           if by_view[view] != [],
-            do: send(to, {:hal_c2_stream, state.id, {:events, by_view[view], seq}})
+            do: send(to, {:hal_c2_stream, name, {:events, by_view[view], seq}})
 
           by_view
       end

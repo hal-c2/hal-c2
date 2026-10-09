@@ -80,9 +80,12 @@ defmodule HalC2.ClusterTest do
     :ok = GenServer.stop(stream)
     assert_receive {:DOWN, ^ref, :process, ^relay, :killed}, 1_000
 
-    # A stream from before relays gives the subscribers it already has one.
-    {:ok, %{relays: %{^subscriber => relay}}} =
-      Streams.Server.code_change(1, Map.delete(state, :relays), nil)
+    # A stream from before relays gives the subscribers it already has one, and sends
+    # them their messages under its id as it did.
+    subscribers = Map.new(state.subscribers, fn {pid, sub} -> {pid, Map.delete(sub, :name)} end)
+
+    {:ok, %{relays: %{^subscriber => relay}, subscribers: %{^subscriber => %{name: "local-th"}}}} =
+      Streams.Server.code_change(1, %{Map.delete(state, :relays) | subscribers: subscribers}, nil)
 
     send(relay, {:hal_c2_stream, "local-th", :passed_on})
     assert_receive {:hal_c2_stream, "local-th", :passed_on}, 1_000
