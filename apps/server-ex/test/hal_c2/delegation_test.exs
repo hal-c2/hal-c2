@@ -75,7 +75,18 @@ defmodule HalC2.Orchestration.DelegationTest do
         thread("p", %{"runtimeMode" => "full-access", "interactionMode" => "default"}),
         run("pr", 1, "running"),
         {"subagent", "task", %{"s" => task}},
-        {"node", "task", %{"s" => %{"id" => "task", "kind" => "subagent", "status" => "running"}}}
+        {"node", "task",
+         %{"s" => %{"id" => "task", "kind" => "subagent", "status" => "running"}}},
+        {"turn-item", "turn-item:subagent:task",
+         %{
+           "s" => %{
+             "id" => "turn-item:subagent:task",
+             "nodeId" => "task",
+             "ordinal" => 1,
+             "type" => "subagent",
+             "status" => "running"
+           }
+         }}
       ])
 
     {:ok, _} =
@@ -113,6 +124,14 @@ defmodule HalC2.Orchestration.DelegationTest do
     |> Map.get("task")
   end
 
+  defp item do
+    "p"
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.get("turn-item")
+    |> Map.get("turn-item:subagent:task")
+  end
+
   defp woken? do
     "p"
     |> HalC2.Streams.ensure()
@@ -122,18 +141,21 @@ defmodule HalC2.Orchestration.DelegationTest do
   end
 
   describe "a task whose child was interrupted at boot" do
-    test "is interrupted when the project does not continue it" do
+    test "is interrupted, with its timeline item, when the project does not continue it" do
       :ok = HalC2.Shell.subscribe(self())
       delegate("running")
       assert_receive {:hal_c2_shell, {:rows, _, [{"c", {"thread", _}}]}}, 1_000
 
       assert "c" in Recovery.run()
       assert task()["status"] == "running"
+      assert item()["status"] == "running"
 
       Recovery.continue()
 
       assert %{"status" => "interrupted", "completionDelivery" => %{"state" => "disposed"}} =
                task()
+
+      assert item()["status"] == "interrupted"
     end
   end
 
