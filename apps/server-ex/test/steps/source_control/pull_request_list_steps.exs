@@ -379,7 +379,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  step "{string} reports its own error with the host's reason", %{args: [repository]} = context do
+  step "{string} reports its own error with the host's reason, phrased for the user", %{args: [repository]} = context do
     assert {:ok, %{"errors" => errors}} = context.reply
     assert [%{"message" => message, "reason" => reason, "detail" => detail}] = errors
     # Words a user can act on, whatever the host; what it said stays in `detail`.

@@ -115,7 +115,7 @@ Feature: Browsing pull requests
     Then the pull requests of "acme/shop" are listed
     And "acme/api" reports its own error with the host's reason, phrased for the user
 
-  @backlog-desktop
+  @desktop @backlog-desktop
   Scenario: A project the host could not read is named once with a retry
     Given "acme/api" cannot be read
     When the user opens the pull requests page
