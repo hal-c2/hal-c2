@@ -23,10 +23,12 @@
   composer before leaving it, and check that it is empty.
 - The sandbox's MC takes no automatic action (`HAL_C2_MC_NO_AUTO_ACTIONS`):
   a seeded thread with an armed resume, a queued message or a turn the
-  snapshot cut off stays put, and no project is pulled at boot, whatever
-  Settings say. Start it only through `mise run desktop:cua` and
-  `ux mc-start`, which set that; a bare `mix hal_c2.server` on the scratch
-  home sends those turns and pulls those checkouts for real.
+  snapshot cut off stays put, no project is pulled at boot, and an open
+  thread's checkout is not fetched in the background, whatever Settings say.
+  Start it only through `mise run desktop:cua` and `ux mc-start`, which set
+  that; a bare `mix hal_c2.server` on the scratch home sends those turns and
+  pulls and fetches those checkouts for real. A refresh you ask for still
+  fetches.
 - Seed only the database, never `settings.json`.
 - Pairing links, access tokens and real conversation content show up in
   screenshots. The report stays local. Issues embed screenshots only with

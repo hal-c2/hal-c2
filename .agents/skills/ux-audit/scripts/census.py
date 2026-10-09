@@ -42,9 +42,9 @@ def main() -> None:
         if is_payload(text):
             markup[stream] += 1
     subagents = Counter(dict(con.execute("select stream, count(*) from events where kind = 'subagent' group by stream")))
-    # A scheduled run's message names its task; the thread keeps the creator of the task.
+    # A scheduled run's message id names its task; the thread keeps the creator of the task.
     scheduled = Counter(dict(con.execute(
-        "select stream, count(*) from events where kind = 'message' and patch like '%\"scheduledTaskId\":\"%' group by stream")))
+        "select stream, count(*) from messages where id like 'scheduled-task-message:%' group by stream")))
 
     def project(t):
         return projects.get(t.get("projectId"), {})

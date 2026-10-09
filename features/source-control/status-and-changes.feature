@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex
 #   apps/server-ex/lib/hal_c2/source_control/change_requests.ex (GitLab, Forgejo, Azure DevOps, Bitbucket)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
+#   apps/server-ex/config/runtime.exs (HAL_C2_MC_NO_AUTO_ACTIONS)
 #   apps/web/src/components/GitActionsControl.tsx (Initialize Git)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
 #   apps/tui/src/gitActions.logic.ts (mergeVcsStatus, resolveGitQuickAction)
@@ -62,6 +63,15 @@ Feature: Repository status and working tree changes
   @mc
   Scenario: Nobody watching means no background fetches
     Given no client is showing a thread in "shop"
+    When the fetch interval elapses
+    Then the MC does not fetch "shop" from the remote
+
+  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  @mc
+  Scenario: An MC without automatic actions does not fetch on its own
+    Given the MC runs without automatic actions
+    And the automatic Git fetch interval is 30 seconds
+    And a client in front is showing a thread in "shop"
     When the fetch interval elapses
     Then the MC does not fetch "shop" from the remote
 
