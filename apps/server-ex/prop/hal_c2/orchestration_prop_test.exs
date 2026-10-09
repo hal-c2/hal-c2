@@ -5,7 +5,8 @@ defmodule HalC2.OrchestrationPropTest do
   starts a turn, waits in the queue, steers the running turn or restarts it; send a
   message again with its message id, as a client retrying after a reconnect does;
   cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
-  crash a provider runtime mid-turn; and restart the MC mid-turn (boot recovery).
+  crash a provider runtime mid-turn; release a thread's provider session as
+  IdleSessions does; and restart the MC mid-turn (boot recovery).
 
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`. Every
   message says "wait", so its turn runs until it is interrupted or steered, and the
@@ -91,7 +92,8 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
-      {1, {:call, __MODULE__, :resume, [tid]}}
+      {1, {:call, __MODULE__, :resume, [tid]}},
+      {1, {:call, __MODULE__, :release, [tid]}}
     ]
 
     sent = for {t, %{messages: m}} <- threads, id <- Map.keys(m), do: {t, id}
@@ -135,6 +137,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
     do: threads[tid] != nil and running(threads[tid]) != nil
+
+  def precondition(%{threads: threads}, {:call, _, :release, [tid]}),
+    do: threads[tid] != nil
 
   def precondition(%{threads: threads}, {:call, _, :restart, []}),
     do: Enum.any?(threads, fn {_, t} -> running(t) != nil end)
@@ -240,6 +245,9 @@ defmodule HalC2.OrchestrationPropTest do
 
     %{state | threads: threads}
   end
+
+  # The session goes and the next message starts it again; no run changes.
+  def next_state(state, _result, {:call, _, :release, [_tid]}), do: state
 
   def next_state(state, _result, {:call, _, :resume, [tid]}) do
     case refusal(state, tid, :queue) do
@@ -392,6 +400,10 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(state, :promote, [tid, msg]), do: promote_refusal(state, tid, msg) || :ok
   defp expected_reply(_state, :resend, _args), do: :ok
+
+  defp expected_reply(state, :release, [tid]),
+    do: if(running(state.threads[tid]), do: {:error, :busy}, else: :ok)
+
   defp expected_reply(_state, _fun, _args), do: :ok
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
@@ -600,6 +612,13 @@ defmodule HalC2.OrchestrationPropTest do
       })
 
     reply(result, if(match?({:ok, _}, result), do: ending, else: []))
+  end
+
+  def release(tid) do
+    case Orchestration.release_session(tid) do
+      :ok -> reply({:ok, %{}}, [])
+      :busy -> reply({:error, :busy}, [])
+    end
   end
 
   # The runtime driving the thread's turn dies, as a crash in its adapter would.

@@ -20,12 +20,13 @@ defmodule HalC2.ThreadMove do
   yes only while the thread is still in that move. A move that breaks off before that
   clears `moving` and leaves the thread where it was: the destination is refused when
   it asks. One that breaks off after it stays `moving` until the destination says
-  whether it holds the thread (`arrived?/1`).
+  whether that move arrived (`arrived?/2`). Not whether it holds the thread: it may
+  have moved it on, or be moving it back here.
 
   This process settles those, and moves a restart cut off: at boot, when a destination
   comes back, and again while a destination is still taking a thread, a thread marked
-  `moving` becomes a forwarding record if the destination holds it, and is released if
-  it does not. At boot it also discards copies this MC was receiving when it stopped.
+  `moving` becomes a forwarding record if its move arrived, and is released if it did
+  not. At boot it also discards copies this MC was receiving when it stopped.
   The settling asks other machines, so it runs in a task, one at a time; what is asked
   meanwhile runs right after, together.
 
@@ -442,7 +443,7 @@ defmodule HalC2.ThreadMove do
     case result do
       {:ok, imported} ->
         hook(:accepted, id)
-        let_go(id, dest, imported)
+        let_go(id, moving["id"], dest, imported)
         carried = imported[:session] == true
 
         {:ok,
@@ -491,10 +492,24 @@ defmodule HalC2.ThreadMove do
       else: "#{title} moved to #{label}."
   end
 
-  # The destination holds the thread: this MC keeps only the forwarding record. Its
-  # provider processes stop, and its terminals close (their scrollback travelled).
-  defp let_go(id, dest, imported) do
-    _ = Orchestration.release_session(id)
+  # The move `move` arrived: this MC keeps only the forwarding record. Its provider
+  # processes stop, and its terminals close (their scrollback travelled). Only while
+  # the thread is still in that move here: the mover and a settle may both get here,
+  # and by the second the thread may have moved back. One lets go at a time, from the
+  # check to the forwarding record, or the other's check could pass before the thread
+  # moved back and stop the session of the thread that came back. Returns false when
+  # another was letting go: that one finishes it.
+  defp let_go(id, move, dest, imported) do
+    :global.trans(letting_go_lock(id), fn -> let_go!(id, move, dest, imported) end, [node()], 0) !=
+      :aborted
+  end
+
+  defp let_go!(id, move, dest, imported) do
+    if thread(id)["moving"]["id"] == move do
+      hook(:letting_go, id)
+      Orchestration.release_session(id)
+    end
+
     at = Orchestration.Entities.now()
 
     moved = %{
@@ -505,37 +520,47 @@ defmodule HalC2.ThreadMove do
       "at" => at
     }
 
-    :ok =
+    forwarded =
       Streams.transact(id, :thread, fn state ->
-        others =
-          for {kind, eid, _} <- StreamState.rows(state),
-              {kind, eid} != {"thread", id},
-              do: {kind, eid, Patch.delete()}
-
-        # The agent sessions the thread ran here stay in the providers' homes; they
-        # are the thread's, so an import of this machine's history skips them.
-        sessions =
-          for pt <- StreamState.list(state, "provider-thread"),
-              %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
-              is_binary(native),
-              do: "#{driver}:#{native}"
-
-        moved = if sessions == [], do: moved, else: Map.put(moved, "sessions", sessions)
-
-        forward =
-          Orchestration.upsert(state, "thread", id, fn thread ->
-            thread
-            |> Map.drop(["moving", "arrived"])
-            |> Map.merge(%{"movedTo" => moved, "worktreePath" => nil, "updatedAt" => at})
-          end)
-
-        {Enum.reject([forward | others], &is_nil/1), :ok}
+        if StreamState.get(state, "thread")[id]["moving"]["id"] == move,
+          do: forward(state, id, moved),
+          else: {[], false}
       end)
 
-    if Process.whereis(HalC2.Terminal.Registry),
+    if forwarded and Process.whereis(HalC2.Terminal.Registry),
       do: HalC2.Terminal.close(%{"threadId" => id, "deleteHistory" => true})
 
     Streams.flush_shell(id)
+  end
+
+  defp letting_go_lock(id), do: {{__MODULE__, :letting_go, id}, self()}
+
+  defp forward(state, id, moved) do
+    at = moved["at"]
+
+    others =
+      for {kind, eid, _} <- StreamState.rows(state),
+          {kind, eid} != {"thread", id},
+          do: {kind, eid, Patch.delete()}
+
+    # The agent sessions the thread ran here stay in the providers' homes; they are
+    # the thread's, so an import of this machine's history skips them.
+    sessions =
+      for pt <- StreamState.list(state, "provider-thread"),
+          %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
+          is_binary(native),
+          do: "#{driver}:#{native}"
+
+    moved = if sessions == [], do: moved, else: Map.put(moved, "sessions", sessions)
+
+    forward =
+      Orchestration.upsert(state, "thread", id, fn thread ->
+        thread
+        |> Map.drop(["moving", "arrived"])
+        |> Map.merge(%{"movedTo" => moved, "worktreePath" => nil, "updatedAt" => at})
+      end)
+
+    {Enum.reject([forward | others], &is_nil/1), true}
   end
 
   # Clears `moving` if it is still the move `move`: a mover that comes back after a
@@ -570,7 +595,7 @@ defmodule HalC2.ThreadMove do
   @doc """
   The destination of the move `move` of the thread `id` asks to take it, having staged
   its files: `:ok` while the thread is still in that move here, which then waits for
-  the destination's word (`arrived?/1`); `:gone` once the move was called off.
+  the destination's word (`arrived?/2`); `:gone` once the move was called off.
   """
   def taking(id, move) do
     Streams.transact(id, :thread, fn state ->
@@ -687,7 +712,7 @@ defmodule HalC2.ThreadMove do
       archive = ThreadArchive.map_files(archive, &pull(&1, from, staged))
       hook(:staged, id)
 
-      # Held from asking until the thread is here or not, so `arrived?/1` never
+      # Held from asking until the thread is here or not, so `arrived?/2` never
       # answers in between.
       :global.trans(taking_lock(id), fn -> take(archive, from, opts, id, title) end, [node()])
     after
@@ -699,7 +724,12 @@ defmodule HalC2.ThreadMove do
     case remote(from, :taking, [id, opts[:move]]) do
       :ok ->
         hook(:taking, id)
-        ThreadArchive.import_archive(archive, project: opts[:project])
+
+        ThreadArchive.import_archive(archive,
+          project: opts[:project],
+          from: Atom.to_string(from),
+          move: opts[:move]
+        )
 
       _ ->
         {:error, "The move of #{title} was called off. #{title} was not moved."}
@@ -729,28 +759,20 @@ defmodule HalC2.ThreadMove do
   def read(path, offset, bytes),
     do: File.open!(path, [:read, :raw, :binary], &:file.pread(&1, offset, bytes))
 
-  @doc "Whether this MC holds the thread `id` (not a forwarding record); `:deleted` if deleted here."
-  def holds?(id) do
-    case ThreadArchive.local_thread(id) do
-      nil -> false
-      %{"movedTo" => %{}} -> false
-      %{"deletedAt" => at} when at != nil -> :deleted
-      _ -> true
-    end
-  end
-
   @doc """
-  As `holds?/1`, for the MC a thread is moving from: `:arriving` while a move is
-  bringing it here, which is neither yet.
+  Whether the move `move` brought the thread `id` here, for the MC it left: true even
+  once the thread moved on or was deleted, `:arriving` while a move is bringing it here.
   """
-  def arrived?(id) do
+  def arrived?(id, move) do
     hook(:arrived, id)
 
-    case :global.trans(taking_lock(id), fn -> holds?(id) end, [node()], 0) do
+    case :global.trans(taking_lock(id), fn -> imported?(id, move) end, [node()], 0) do
       :aborted -> :arriving
-      held -> held
+      imported -> imported
     end
   end
+
+  defp imported?(id, move), do: move in Map.values(ThreadArchive.local_thread(id)["moves"] || %{})
 
   @doc "Whether this MC can run the agent `instance`: `:ok`, `:missing` or `:signed_out`."
   def agent(instance) do
@@ -1008,9 +1030,10 @@ defmodule HalC2.ThreadMove do
 
   @doc """
   Settles moves that were cut off: to `mc`, of the thread `id`, or all (`:all`). A
-  thread marked `moving` becomes a forwarding record if its destination holds it, and
-  is released if the destination is reachable and does not. Returns the threads to
-  settle again: those a destination is still taking, or did not answer for.
+  thread marked `moving` becomes a forwarding record if its move arrived, and is
+  released if the destination is reachable and says it did not. Returns the threads to
+  settle again: those a destination is still taking or did not answer for, and those
+  whose mover was letting go.
   """
   def settle(which \\ :all) do
     for {"thread", %{"id" => id, "moving" => %{"mc" => name}}} <- local_rows(),
@@ -1023,11 +1046,10 @@ defmodule HalC2.ThreadMove do
   end
 
   defp again?(id, mc, moving) do
-    case remote(mc, :arrived?, [id]) do
+    case remote(mc, :arrived?, [id, moving["id"]]) do
       true ->
         dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
-        let_go(id, dest, %{project: nil})
-        false
+        not let_go(id, moving["id"], dest, %{project: nil})
 
       :arriving ->
         true
@@ -1047,7 +1069,7 @@ defmodule HalC2.ThreadMove do
   # --- helpers ---------------------------------------------------------------------
 
   defp thread(id), do: StreamState.get(state(id), "thread")[id]
-  defp state(id), do: Streams.Server.state(Streams.ensure(id))
+  defp state(id), do: HalC2.Streams.state(id)
 
   defp ask(dest, fun, args, thread) do
     case remote(dest.mc, fun, args) do

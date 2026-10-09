@@ -26,3 +26,7 @@ config :hal_c2, power_supply_dir: nil
 # fj's stored credentials are never read from this machine; tests that need them
 # point this at their own keys.json.
 config :hal_c2, fj_keys_paths: []
+
+# The cluster process never gossips on its own clock; tests that need it send it
+# `:gossip`.
+config :hal_c2, cluster_gossip: :timer.hours(24)

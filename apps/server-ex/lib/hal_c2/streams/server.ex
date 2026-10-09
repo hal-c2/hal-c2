@@ -18,8 +18,13 @@ defmodule HalC2.Streams.Server do
     * `{:events, events, seq}` for every later commit that touches its view, and
     * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/3`.
 
-  Each arrives as `{:hal_c2_stream, stream_id, message}`. A client resumes only with
-  the `handle/0` its offset came from; any other starts fresh.
+  Each arrives as `{:hal_c2_stream, stream_id, message}`, or as
+  `{:hal_c2_stream, {stream_id, tag}, message}` when the client gave a `tag`: a
+  subscriber that follows the stream again tells the messages of the subscription it
+  left, still on their way, from those of the new one. A client resumes only with
+  the `handle/0` its offset came from; any other starts fresh. A tagged subscription
+  whose relay fails, or that another subscription of its subscriber replaces, is
+  ended with `:resync`, and the client follows the stream again.
 
   A plain subscription (`subscribe/3`) is for this MC's own processes: whole
   entities, as `{:snapshot, seq, updated_at, rows, :more | :done}` or
@@ -46,7 +51,7 @@ defmodule HalC2.Streams.Server do
   alias HalC2.{Store, StreamState}
   alias HalC2.Streams.{Relay, View}
 
-  @state_version 3
+  @state_version 4
   @idle_stop :timer.minutes(5)
   @snapshot_every 500
   # A subscriber further behind than this is not replayed the log.
@@ -63,7 +68,8 @@ defmodule HalC2.Streams.Server do
   @type client :: %{
           optional(:handle) => String.t() | nil,
           optional(:kinds) => View.kinds(),
-          optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil
+          optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil,
+          optional(:tag) => term
         }
 
   @doc "How long a stream without subscribers stays up."
@@ -97,7 +103,11 @@ defmodule HalC2.Streams.Server do
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil) :: :ok
   def subscribe(stream_id, pid, offset \\ nil),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, :plain})
+    do:
+      HalC2.Streams.with_server(
+        stream_id,
+        &GenServer.call(&1, {:subscribe, pid, offset, :plain})
+      )
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil, client) :: :ok
   def subscribe(stream_id, pid, offset, %{} = client) do
@@ -111,14 +121,19 @@ defmodule HalC2.Streams.Server do
   """
   @spec follow(String.t(), pid, non_neg_integer | nil, client) :: {:ok, pid}
   def follow(stream_id, pid, offset, %{} = client) do
-    server = HalC2.Streams.ensure(stream_id)
-    :ok = GenServer.call(server, {:subscribe, pid, offset, client})
-    {:ok, server}
+    HalC2.Streams.with_server(stream_id, fn server ->
+      :ok = GenServer.call(server, {:subscribe, pid, offset, client})
+      {:ok, server}
+    end)
   end
 
   @spec watch(String.t(), pid) :: :ok
   def watch(stream_id, pid),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, nil, :watch})
+    do:
+      HalC2.Streams.with_server(
+        stream_id,
+        &GenServer.call(&1, {:subscribe, pid, nil, :watch})
+      )
 
   @doc """
   Sends a client the runs before its window's floor that together hold at least
@@ -139,10 +154,16 @@ defmodule HalC2.Streams.Server do
     :exit, _ -> :ok
   end
 
-  @spec unsubscribe(String.t(), pid) :: :ok
-  def unsubscribe(stream_id, pid) do
+  @doc """
+  Ends `pid`'s subscription. Given a `tag`, only the subscription it followed with
+  that tag: one that stopped following a stream and followed it again may still be
+  telling it to end the one before.
+  """
+  @spec unsubscribe(String.t(), pid, term) :: :ok
+  def unsubscribe(stream_id, pid, tag \\ nil) do
     case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid})
+      [{server, _}] when tag == nil -> GenServer.cast(server, {:unsubscribe, pid})
+      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid, tag})
       [] -> :ok
     end
   end
@@ -204,6 +225,9 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def handle_call({:subscribe, pid, offset, client}, _from, state) do
+    # One this replaces may be what its subscriber follows now: a follow that gave up
+    # can be taken after the next one.
+    resync(state, pid)
     state = drop(state, pid)
     {view, initial} = initial(state, pid, offset, client)
 
@@ -215,7 +239,7 @@ defmodule HalC2.Streams.Server do
         Map.put(state.relays, pid, Relay.start(pid, initial))
       end
 
-    sub = %{ref: Process.monitor(pid), view: view}
+    sub = %{ref: Process.monitor(pid), view: view, name: name(state.id, client)}
     {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
   end
 
@@ -286,6 +310,13 @@ defmodule HalC2.Streams.Server do
     {:noreply, state, timeout(state)}
   end
 
+  def handle_cast({:unsubscribe, pid, tag}, state) do
+    case state.subscribers do
+      %{^pid => %{name: {_id, ^tag}}} -> handle_cast({:unsubscribe, pid}, state)
+      _ -> {:noreply, state, timeout(state)}
+    end
+  end
+
   # `more/3` calls; a cast is what one queued before an upgrade in place still is.
   def handle_cast({:more, pid, items}, state) do
     state =
@@ -296,16 +327,16 @@ defmodule HalC2.Streams.Server do
           to = Map.get(state.relays, pid, pid)
 
           send_chunks(View.page(view, state.stream, runs), fn rows, more ->
-            send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, rows, floor, more}})
+            send(to, {:hal_c2_stream, sub.name, {:page, state.stream.seq, rows, floor, more}})
           end)
 
           sub = %{sub | view: %{view | window: %{floor: floor}}}
           %{state | subscribers: Map.put(state.subscribers, pid, sub)}
 
         # Nothing lies before a window that reaches the start, or before no window.
-        %{^pid => %{view: %{}}} ->
+        %{^pid => %{view: %{}, name: name}} ->
           to = Map.get(state.relays, pid, pid)
-          send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, [], nil, :done}})
+          send(to, {:hal_c2_stream, name, {:page, state.stream.seq, [], nil, :done}})
           state
 
         _ ->
@@ -337,10 +368,15 @@ defmodule HalC2.Streams.Server do
   # except a relay: a failed one costs its subscriber alone, as when it was unlinked.
   def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state, timeout(state)}
 
+  # A relay that failed took its subscription with it, and its subscriber is told.
   def handle_info({:EXIT, pid, reason}, state) do
     case Enum.find(state.relays, fn {_sub, relay} -> relay == pid end) do
-      {sub, _relay} -> {:noreply, drop(state, sub), timeout(state)}
-      nil -> {:stop, reason, state}
+      {sub, _relay} ->
+        relay_failed(state, sub)
+        {:noreply, drop(state, sub), timeout(state)}
+
+      nil ->
+        {:stop, reason, state}
     end
   end
 
@@ -359,11 +395,15 @@ defmodule HalC2.Streams.Server do
   def code_change(_old_vsn, state, _extra) do
     # Before version 3 a subscriber was only its monitor, and sockets trimmed what
     # they were sent themselves. They take a client's messages now, and this MC's
-    # own waiters only ever count them.
+    # own waiters only ever count them. Before version 4 every subscription was sent
+    # its messages under the stream's id.
     subscribers =
       Map.new(state.subscribers, fn
-        {pid, ref} when is_reference(ref) -> {pid, %{ref: ref, view: %{kinds: nil, window: nil}}}
-        sub -> sub
+        {pid, ref} when is_reference(ref) ->
+          {pid, %{ref: ref, view: %{kinds: nil, window: nil}, name: state.id}}
+
+        {pid, sub} ->
+          {pid, Map.put_new(sub, :name, state.id)}
       end)
 
     {:ok,
@@ -391,14 +431,48 @@ defmodule HalC2.Streams.Server do
     if sub, do: Process.demonitor(sub.ref, [:flush])
     {relay, relays} = Map.pop(state.relays, pid)
 
-    # Unlinked first: its exit is no failure of the stream's.
+    # Unlinked first: its exit is no failure of the stream's. An exit it sent before
+    # is in the mailbox already, and would stop the stream as a stranger's does.
     if relay do
       Process.unlink(relay)
+
+      receive do
+        {:EXIT, ^relay, _} -> :ok
+      after
+        0 -> :ok
+      end
+
       Process.exit(relay, :kill)
     end
 
     %{state | subscribers: subscribers, relays: relays}
   end
+
+  # Only a tagged subscriber is told a subscription another replaced has ended: an
+  # untagged one would take the `:resync` for the new subscription's.
+  defp resync(state, pid) do
+    case state.subscribers do
+      %{^pid => %{name: {_id, _tag} = name}} -> send(pid, {:hal_c2_stream, name, :resync})
+      _ -> :ok
+    end
+  end
+
+  # A client's subscription whose relay failed is told, tagged or (followed before an
+  # upgrade in place) not: nothing follows it. This MC's own plain and watching
+  # subscribers hear nothing.
+  defp relay_failed(state, pid) do
+    case state.subscribers do
+      %{^pid => %{view: view, name: name}} when view not in [:plain, :watch] ->
+        send(pid, {:hal_c2_stream, name, :resync})
+
+      _ ->
+        :ok
+    end
+  end
+
+  # What a subscription's messages carry for the stream.
+  defp name(id, %{tag: tag}), do: {id, tag}
+  defp name(id, _client), do: id
 
   # What a new subscriber is sent from now on, and what sends it the state it
   # starts from, for the stream or the subscriber's relay to run. Only the log is
@@ -430,7 +504,8 @@ defmodule HalC2.Streams.Server do
      end}
   end
 
-  defp initial(%{id: id, stream: stream} = state, pid, offset, client) do
+  defp initial(%{stream: stream} = state, pid, offset, client) do
+    id = name(state.id, client)
     handle = handle(client[:kinds])
     # An offset from another log, or a window that was never set, resumes nothing.
     resumes? = client[:handle] in [nil, handle] and not match?({:items, _}, client[:window])
@@ -543,16 +618,16 @@ defmodule HalC2.Streams.Server do
   defp broadcast(state, stream, events) do
     seq = List.last(events).seq
 
-    Enum.reduce(state.subscribers, %{}, fn {pid, %{view: view}}, by_view ->
+    Enum.reduce(state.subscribers, %{}, fn {pid, %{view: view, name: name}}, by_view ->
       to = Map.get(state.relays, pid, pid)
 
       case view do
         :plain ->
-          send(to, {:hal_c2_stream, state.id, {:events, events}})
+          send(to, {:hal_c2_stream, name, {:events, events}})
           by_view
 
         :watch ->
-          send(to, {:hal_c2_stream, state.id, {:changed, seq}})
+          send(to, {:hal_c2_stream, name, {:changed, seq}})
           by_view
 
         view ->
@@ -563,7 +638,7 @@ defmodule HalC2.Streams.Server do
 
           # A commit that touches nothing the client holds is not news to it.
           if by_view[view] != [],
-            do: send(to, {:hal_c2_stream, state.id, {:events, by_view[view], seq}})
+            do: send(to, {:hal_c2_stream, name, {:events, by_view[view], seq}})
 
           by_view
       end

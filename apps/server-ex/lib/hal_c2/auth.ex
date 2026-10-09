@@ -220,7 +220,15 @@ defmodule HalC2.Auth do
     # A ticket never outlives the session it opens a socket for.
     expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
     :ets.insert(@tickets, {ticket, expires_at, id})
-    {:ok, ticket, expires_at}
+
+    # The session may have been revoked after this request read it, and the revoke may
+    # have swept the tickets before this one was inserted: so check once it is in.
+    if is_nil(id) or session_exists?(HalC2.Store.path(), id) do
+      {:ok, ticket, expires_at}
+    else
+      :ets.delete(@tickets, ticket)
+      :error
+    end
   end
 
   def issue_ticket(access_token) do
@@ -357,30 +365,34 @@ defmodule HalC2.Auth do
 
   @impl true
   def handle_call({:exchange, token, client}, _from, state) do
+    # One transaction: the token is spent only if its session is created with it.
     {reply, events, replaced} =
       with_db(state.path, fn db ->
-        case grant(db, token, client, state) do
-          {:ok, granted, subject, events} ->
-            requested = client[:scopes] || granted
+        transaction(db, fn ->
+          case grant(db, token, client, state) do
+            {:ok, granted, subject, events} ->
+              requested = client[:scopes] || granted
 
-            if Enum.all?(requested, &(&1 in granted)) do
-              # Desktop restarts forget the previous token, so its session is replaced.
-              replaced =
-                if subject == "desktop-bootstrap",
-                  do: revoke_rows(db, "subject = ?1", [subject]),
-                  else: []
+              if Enum.all?(requested, &(&1 in granted)) do
+                # Desktop restarts forget the previous token, so its session is replaced.
+                replaced =
+                  if subject == "desktop-bootstrap",
+                    do: revoke_rows(db, "subject = ?1", [subject]),
+                    else: []
 
-              {reply, created} = create_session(db, requested, subject, client, state)
-              {reply, events ++ removed_clients(replaced) ++ created, replaced}
-            else
-              {{:error, :scope_not_granted}, events, []}
-            end
+                {reply, created} = create_session(db, requested, subject, client, state)
+                {reply, events ++ removed_clients(replaced) ++ created, replaced}
+              else
+                {:rollback, {{:error, :scope_not_granted}, [], []}}
+              end
 
-          {:error, events} ->
-            {:error, events, []}
-        end
+            {:error, events} ->
+              {:error, events, []}
+          end
+        end)
       end)
 
+    drop_tickets(replaced)
     close_sockets(state, replaced)
     {:reply, reply, broadcast(state, events)}
   end
@@ -441,14 +453,21 @@ defmodule HalC2.Auth do
 
   @impl true
   def handle_cast({:connected, id, socket}, state) do
-    Process.monitor(socket)
-    :ets.insert(@live, {{:socket, socket}, id})
+    # The socket read its session before it connected, so a revoke may have come first:
+    # it is told to close, as the sockets open at a revoke are.
+    if session_exists?(state.path, id) do
+      Process.monitor(socket)
+      :ets.insert(@live, {{:socket, socket}, id})
 
-    with_db(state.path, fn db ->
-      exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
-    end)
+      with_db(state.path, fn db ->
+        exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
+      end)
 
-    {:noreply, broadcast(state, client_events(state, id))}
+      {:noreply, broadcast(state, client_events(state, id))}
+    else
+      send(socket, {:hal_c2_session_revoked, id})
+      {:noreply, state}
+    end
   end
 
   def handle_cast({:unsubscribe, pid}, state) do
@@ -664,14 +683,20 @@ defmodule HalC2.Auth do
   end
 
   # Deletes matching sessions, returning their ids.
-  defp revoke(path, where, args), do: with_db(path, &revoke_rows(&1, where, args))
+  defp revoke(path, where, args),
+    do: path |> with_db(&revoke_rows(&1, where, args)) |> drop_tickets()
+
+  # The ids of the sessions deleted; their tickets go once that commits (`drop_tickets/1`).
+  defp revoke_rows(db, where, args),
+    do:
+      for(
+        [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args),
+        do: id
+      )
 
   # The tickets a revoked session already bought go with it: a ticket opens a socket
   # for its session, so one outliving the session would let a revoked client in.
-  defp revoke_rows(db, where, args) do
-    ids =
-      for [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args), do: id
-
+  defp drop_tickets(ids) do
     for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id})
     ids
   end
@@ -759,6 +784,9 @@ defmodule HalC2.Auth do
     )
   end
 
+  defp session_exists?(path, id),
+    do: with_db(path, &(query(&1, "SELECT 1 FROM auth_sessions WHERE id = ?1", [id]) != []))
+
   defp scopes(nil), do: @standard_scopes
   defp scopes(text), do: String.split(text)
 
@@ -789,6 +817,28 @@ defmodule HalC2.Auth do
       fun.(db)
     after
       Sqlite3.close(db)
+    end
+  end
+
+  # All or nothing: `fun` returning `{:rollback, result}` rolls the statements back and
+  # returns `result`; an exception in it rolls them back, then propagates.
+  defp transaction(db, fun) do
+    :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
+
+    try do
+      case fun.() do
+        {:rollback, result} ->
+          :ok = Sqlite3.execute(db, "ROLLBACK")
+          result
+
+        result ->
+          :ok = Sqlite3.execute(db, "COMMIT")
+          result
+      end
+    rescue
+      error ->
+        Sqlite3.execute(db, "ROLLBACK")
+        reraise error, __STACKTRACE__
     end
   end
 

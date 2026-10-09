@@ -231,11 +231,12 @@ defmodule HalC2.UpgradeTest do
   end
 
   test "a socket opened before an upgrade keeps its subscriptions" do
-    # Its state as the previous version kept it: one id per watched config.
+    # Its state as the previous version kept it: one id per watched config, and one
+    # per followed stream.
     old = %{
       session: nil,
-      subs: %{1 => {:config, node()}},
-      by_stream: %{},
+      subs: %{1 => {:config, node()}, 2 => {:stream, node(), "th-old"}},
+      by_stream: %{"th-old" => 2},
       by_terminal: %{{:settings, node()} => 1},
       buffers: %{},
       item_types: %{},
@@ -246,11 +247,42 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 5
+    assert state.v == 6
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == [1]
     assert state.monitors == %{}
     assert state.shell == %{}
+    # A stream followed before sends no tag.
+    assert state.by_stream == %{"th-old" => {2, nil}}
+  end
+
+  test "a message without a tag is only for a stream followed before an upgrade" do
+    tag = {node(), make_ref()}
+
+    state = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{2 => {:stream, node(), "th"}},
+      by_stream: %{"th" => {2, tag}},
+      by_terminal: %{},
+      monitors: %{},
+      shell: %{},
+      buffers: %{2 => %{events: [], bytes: 0, replay: false}},
+      flush_scheduled: false
+    }
+
+    # One still on its way from the subscription the upgrade carried over.
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+
+    assert {:push, [{:text, frame}], _} =
+             HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)
+
+    assert %{"t" => "resync", "id" => 2} = JSON.decode!(IO.iodata_to_binary(frame))
+
+    # The subscription the upgrade carried over still hears it.
+    old = %{state | by_stream: %{"th" => {2, nil}}}
+    assert {:push, [_], _} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, old)
   end
 end

@@ -1061,6 +1061,28 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.put(context, :access, access)
   end
 
+  step "a pairing link with standard scopes", context do
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.mc.store))
+  end
+
+  step "a client exchanges it asking for access:write", context do
+    Map.put(
+      context,
+      :result,
+      Mc.exchange(context.mc, context.token, %{"scope" => "access:write"})
+    )
+  end
+
+  step "the exchange is refused as an invalid scope", context do
+    assert {400, %{"error" => "invalid_scope"}} = context.result
+    context
+  end
+
+  step "the link still pairs a client that asks for what it grants", context do
+    assert {200, %{"access_token" => _}} = Mc.exchange(context.mc, context.token)
+    context
+  end
+
   step "a client that paired with a DPoP key", context do
     key = dpop_key()
     token = HalC2.Auth.create_pairing_token(context.mc.store)

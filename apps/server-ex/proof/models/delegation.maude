@@ -1,0 +1,233 @@
+sload model-checker
+
+--- A delegated task (HalC2.Orchestration.Delegation): one parent, one child thread with
+--- up to two runs, the child's end reported to the parent, the parent woken, and the
+--- caller cancelling or waiting, through MC crashes at any step and the boot that follows.
+--- proof/hal_c2/delegation_proof_test.exs maps it to the code and checks it.
+
+mod DELEGATION is
+  protecting NAT .
+
+  sorts Busy Status Delivery Wake Wait Phase Item Conf Sys .
+  subsort Item < Conf .
+
+  ops busy idle : -> Busy [ctor] .
+  ops unrecorded running ended cancelled failed : -> Status [ctor] .
+  ops pending delivered acknowledged disposed : -> Delivery [ctor] .
+  ops settled-only always : -> Wake [ctor] .
+  ops nowait waiting got timedout dead : -> Wait [ctor] .
+  ops up down b1 b2 b3 b4 : -> Phase [ctor] .
+
+  --- The parent: whether its own run is active.
+  op parent : Busy -> Item [ctor] .
+  --- The task in the parent: how it stands, how its result is delivered, and whether
+  --- the parent hears it while busy (`always`) or only once idle (`settled-only`).
+  op task : Status Delivery Wake -> Item [ctor] .
+  --- How many times a task was settled, and how many times the parent was woken.
+  ops settles wakes : Nat -> Item [ctor] .
+  --- The child thread: whether it exists, runs started, runs ended. It works while the
+  --- two differ.
+  op child : Bool Nat Nat -> Item [ctor] .
+  --- The delegate call between recording the task and launching the child.
+  op starting : -> Item [ctor] .
+  --- The delegate call to come, with the wake it asks for, and a cancel call to come.
+  op call : Wake -> Item [ctor] .
+  op cancel-call : -> Item [ctor] .
+  --- The caller's wait for the task.
+  op wait : Wait -> Item [ctor] .
+  --- The report of the end of a child's run: its number and the retries left.
+  op rep : Nat Nat -> Item [ctor] .
+  --- The MC's phase: running, down, or at a step of its boot.
+  op mc : Phase -> Item [ctor] .
+  --- A child run the boot interrupted that may continue.
+  op cut : -> Item [ctor] .
+  op faults : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars N K S F A : Nat .
+  vars B B' : Busy .
+  vars T T' : Status .
+  vars D D' : Delivery .
+  vars W W' : Wake .
+  var E : Bool .
+  var X : Wait .
+  var C : Conf .
+
+  op attempts : -> Nat .
+  eq attempts = 2 .
+
+  --- How a finished task reaches the parent: not at all once disposed, as a message when
+  --- the task always wakes it or it is idle, else it is only acknowledged.
+  op deliver : Delivery Wake Busy -> Delivery .
+  eq deliver(disposed, W, B) = disposed .
+  eq deliver(D, always, B) = delivered .
+  eq deliver(D, W, idle) = delivered .
+  eq deliver(D, W, B) = acknowledged [owise] .
+
+  op waiter : Wake -> Wait .
+  eq waiter(settled-only) = waiting .
+  eq waiter(always) = nowait .
+
+  --- delegate/3 -----------------------------------------------------------------------
+
+  --- start/3 records the task, then launches the child with its first run.
+  rl [record] :
+    call(W) mc(up) task(unrecorded, D, W') => task(running, pending, W) starting mc(up) .
+
+  rl [launch] :
+    starting mc(up) child(false, 0, 0) task(running, D, W) wait(nowait)
+    => child(true, 1, 0) mc(up) task(running, D, W) wait(waiter(W)) .
+
+  --- launch_thread answered an error.
+  rl [launch-failed] :
+    { starting mc(up) faults(s F) task(running, D, W) settles(S) C }
+    => { mc(up) faults(F) task(failed, disposed, W) settles(s S) C } .
+
+  --- wait/3: the caller sees the task end, or gives up.
+  crl [wait-done] :
+    wait(waiting) mc(up) task(T, D, W) => wait(got) mc(up) task(T, D, W) if T =/= running .
+  --- The wait gives up: a child that ends from now on wakes the caller.
+  rl [time-out] :
+    wait(waiting) mc(up) task(running, D, W) => wait(timedout) mc(up) task(running, D, always) .
+
+  --- finished/3 and report/5 ----------------------------------------------------------
+
+  --- The end of a run of the child; its report is a task of its own.
+  crl [child-end] :
+    child(true, N, K) mc(up) => child(true, N, s K) mc(up) rep(s K, attempts) if K < N .
+  rl [child-start] : child(true, 1, 1) mc(up) => child(true, 2, 1) mc(up) .
+
+  --- A report that gets through finds the task unsettled and settles it, with the
+  --- message that wakes the parent in the same transaction, or finds it settled and does
+  --- nothing.
+  rl [finished] :
+    rep(N, K) mc(up) task(running, D, W) parent(B) settles(S) wakes(A)
+    => mc(up) task(ended, deliver(D, W, B), W) parent(B) settles(s S)
+       wakes(if deliver(D, W, B) == delivered then s A else A fi) .
+  crl [finished-late] :
+    rep(N, K) mc(up) task(T, D, W) => mc(up) task(T, D, W) if T =/= running .
+
+  --- report/5 gives up after its attempts.
+  rl [report-fail] : rep(N, s K) faults(s F) => rep(N, K) faults(F) .
+  rl [report-fail] : rep(N, 0) faults(s F) => faults(F) .
+
+  --- cancel/2 -------------------------------------------------------------------------
+
+  --- The task is cancelled before run.interrupt; the interrupted run then reports.
+  rl [cancel] :
+    cancel-call mc(up) child(true, N, K) task(running, D, W) settles(S)
+    => mc(up) child(true, N, N) task(cancelled, disposed, W) settles(s S)
+       (if K < N then rep(N, attempts) else empty fi) .
+  crl [cancel-refused] :
+    cancel-call mc(up) child(true, N, K) task(T, D, W) => mc(up) child(true, N, K) task(T, D, W)
+    if T =/= running .
+
+  --- recovery -------------------------------------------------------------------------
+
+  --- Recovery.run/0, thread by thread: reconcile/1 first, then settle/1.
+  rl [reconcile-boot] : { mc(b1) C } => { mc(b2) reconcile(C) } .
+  rl [recover-settle] : { mc(b2) C } => { mc(b3) idle-parent(interrupt(C)) } .
+
+  --- Settles a task whose child stopped without reporting.
+  op reconcile : Conf -> Conf .
+  ceq reconcile(task(running, D, W) child(true, K, K) settles(S) C)
+    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 .
+  eq reconcile(task(running, D, W) child(false, 0, 0) settles(S) C)
+    = task(failed, disposed, W) child(false, 0, 0) settles(s S) C .
+  eq reconcile(C) = C [owise] .
+
+  --- The pass after continue/0: a child never launched may be about to be.
+  op resettle : Conf -> Conf .
+  ceq resettle(task(running, D, W) child(true, K, K) settles(S) C)
+    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 .
+  eq resettle(C) = C [owise] .
+
+  op interrupt : Conf -> Conf .
+  ceq interrupt(child(E, N, K) C) = child(E, N, N) cut C if K < N .
+  eq interrupt(C) = C [owise] .
+  op idle-parent : Conf -> Conf .
+  eq idle-parent(parent(B) C) = parent(idle) C .
+  eq idle-parent(C) = C [owise] .
+  op uncut : Conf -> Conf .
+  eq uncut(cut C) = C .
+  eq uncut(C) = C [owise] .
+
+  --- Recovery.continue/0: a run the restart cut off continues as a new run, or does not.
+  crl [continue] : mc(b3) cut child(true, N, N) => mc(b4) child(true, s N, N) if N < 2 .
+  rl [skip-continue] : { mc(b3) C } => { mc(b4) uncut(C) } .
+  rl [reconcile-after] : { mc(b4) C } => { mc(up) resettle(C) } .
+
+  --- environment ----------------------------------------------------------------------
+
+  --- An MC that stops loses its processes: calls, reports and waits. Its store stays.
+  rl [crash] : { mc(up) faults(s F) C } => { mc(down) faults(F) kill(C) } .
+  rl [restart] : mc(down) => mc(b1) .
+  rl [parent-idle] : parent(busy) mc(up) => parent(idle) mc(up) .
+
+  op kill : Conf -> Conf .
+  eq kill(rep(N, K) C) = kill(C) .
+  eq kill(starting C) = kill(C) .
+  eq kill(call(W) C) = kill(C) .
+  eq kill(cancel-call C) = kill(C) .
+  eq kill(wait(waiting) C) = wait(dead) kill(C) .
+  eq kill(C) = C [owise] .
+
+  --- states ---------------------------------------------------------------------------
+
+  --- The delegate call to come, waiting for the task or not, and F faults to come.
+  ops waiting-start async-start : Nat -> Sys .
+  eq waiting-start(F) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
+                          wakes(0) child(false, 0, 0) wait(nowait) call(settled-only)
+                          cancel-call faults(F) } .
+  eq async-start(F) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
+                        wakes(0) child(false, 0, 0) wait(nowait) call(always)
+                        cancel-call faults(F) } .
+
+  --- No task is left running.
+  op resting : Sys -> Bool .
+  eq resting({ task(running, D, W) C }) = false .
+  eq resting({ C }) = true [owise] .
+
+  --- Settled twice, woken twice, woken though cancelled, or acknowledged to a caller
+  --- that gave up waiting and never read it.
+  ops settled-twice woken-twice cancelled-woken unread lost-wake : Sys -> Bool .
+  ceq settled-twice({ settles(S) C }) = true if S > 1 .
+  eq settled-twice({ C }) = false [owise] .
+  ceq woken-twice({ wakes(K) C }) = true if K > 1 .
+  eq woken-twice({ C }) = false [owise] .
+  eq cancelled-woken({ task(cancelled, D, W) wakes(s K) C }) = true .
+  eq cancelled-woken({ C }) = false [owise] .
+  eq unread({ task(T, acknowledged, W) wait(timedout) C }) = true .
+  eq unread({ C }) = false [owise] .
+
+  --- A result marked delivered that no message carries.
+  eq lost-wake({ task(T, delivered, W) wakes(0) C }) = true .
+  eq lost-wake({ C }) = false [owise] .
+endm
+
+mod DELEGATION-PROPS is
+  including DELEGATION .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- The task is recorded and running, and its child is not going to work for it: it
+  --- stopped after a run, or was never launched.
+  --- The task settled.
+  ops stopped over : -> Prop [ctor] .
+  var D : Delivery .
+  var W : Wake .
+  var T : Status .
+  var K : Nat .
+  var C : Conf .
+  op launching : Conf -> Bool .
+  eq launching(starting C) = true .
+  eq launching(C) = false [owise] .
+  ceq { task(running, D, W) child(true, K, K) C } |= stopped = true if K > 0 .
+  ceq { task(running, D, W) child(false, 0, 0) C } |= stopped = true if not launching(C) .
+  eq { C } |= stopped = false [owise] .
+  ceq { task(T, D, W) C } |= over = true if T =/= running /\ T =/= unrecorded .
+  eq { C } |= over = false [owise] .
+endm

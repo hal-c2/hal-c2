@@ -37,6 +37,9 @@ defmodule HalC2.ScheduledTasks do
 
   @impl true
   def init(nil) do
+    # Runs are linked to this process; trapping exits keeps one that exits from taking
+    # the scheduler down.
+    Process.flag(:trap_exit, true)
     path = Path.join(HalC2.Paths.data_dir(), "scheduled-tasks.json")
 
     tasks =
@@ -80,8 +83,11 @@ defmodule HalC2.ScheduledTasks do
 
   def handle_call({:delete, id}, _from, state) do
     case Map.pop(state.tasks, id) do
-      {nil, _} -> {:reply, error("Schedule task not found.", id), state}
-      {_, tasks} -> {:reply, {:ok, %{"id" => id}}, changed(%{state | tasks: tasks})}
+      {nil, _} ->
+        {:reply, error("Schedule task not found.", id), state}
+
+      {_, tasks} ->
+        {:reply, {:ok, %{"id" => id}}, changed(stop_runs(%{state | tasks: tasks}, id))}
     end
   end
 
@@ -170,17 +176,31 @@ defmodule HalC2.ScheduledTasks do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A scheduler updated in place (`HalC2.Hot`) does not run `init/1` again, and one
+  # from before runs were linked does not trap exits yet, nor is linked to the runs it
+  # started then. A run that ended meanwhile is answered by its DOWN.
+  @impl true
+  def code_change(_old, state, _extra) do
+    Process.flag(:trap_exit, true)
+    for pid <- Map.keys(state.runs), do: Process.link(pid)
+    {:ok, state}
+  end
+
   # --- runs --------------------------------------------------------------------
 
   defp start_run(state, task, trigger, from) do
     at = now()
     fire_key = "#{task["id"]}:#{DateTime.to_unix(at, :millisecond)}:#{trigger}"
     running = Map.merge(task, %{"lastRunStatus" => "running", "updatedAt" => iso(at)})
-    # Not linked: a run that exits must fail its task, not take the scheduler down.
+    # Linked, so a scheduler that dies takes its runs with it, and monitored, so a run
+    # that exits fails its task.
     parent = self()
 
     {pid, ref} =
-      spawn_monitor(fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end)
+      :erlang.spawn_opt(
+        fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end,
+        [:link, :monitor]
+      )
 
     state
     |> put(running)
@@ -189,6 +209,20 @@ defmodule HalC2.ScheduledTasks do
       &Map.put(&1, pid, %{ref: ref, id: task["id"], started: at, from: from, trigger: trigger})
     )
     |> changed()
+  end
+
+  # A deleted task's runs end with it, so a task created later under the same id does
+  # not take the result of a run that was not its own.
+  defp stop_runs(state, id) do
+    {gone, runs} = Enum.split_with(state.runs, fn {_, run} -> run.id == id end)
+
+    for {pid, %{ref: ref, from: from}} <- gone do
+      Process.demonitor(ref, [:flush])
+      Process.exit(pid, :kill)
+      if from, do: GenServer.reply(from, error("Schedule task not found.", id))
+    end
+
+    %{state | runs: Map.new(runs)}
   end
 
   defp complete(state, pid, result) do

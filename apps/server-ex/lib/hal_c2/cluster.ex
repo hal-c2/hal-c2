@@ -28,11 +28,13 @@ defmodule HalC2.Cluster do
   link for an `access:write` session, presents its fingerprint, and the member admits
   it (`admit/1`). The invite names the inviter's fingerprint, so the joining machine
   trusts that certificate alone and nothing else the answer says. Members exchange
-  the list whenever they connect, entry by entry by timestamp (`merge/3`), so the new
-  machine learns the other members from the inviter over the cluster connection, a
-  machine that joins one member is admitted by all of them, and a removal
-  (`remove/1`) reaches members that were away. Timestamps come from `stamp/1`, so
-  they order changes even when the members' clocks disagree.
+  the list whenever they connect, whenever it changes and every half minute, entry by
+  entry by timestamp (`merge/3`), so the new machine learns the other members from the
+  inviter over the cluster connection, a machine that joins one member is admitted by
+  all of them, and a removal (`remove/1`) reaches members that were away. The half
+  minute is for a member whose cluster process restarted: its connections outlived it,
+  so no member connects anew to tell it what it missed. Timestamps come from
+  `stamp/1`, so they order changes even when the members' clocks disagree.
   """
 
   use GenServer
@@ -46,7 +48,10 @@ defmodule HalC2.Cluster do
   @valid_days 36_500
   @backdate_seconds 300
   @join_timeout 15_000
+  @gossip_every 30_000
   @fingerprint ~r/^[0-9a-f]{64}$/
+  # What a machine says of itself in its entry.
+  @says ~w(fingerprint label addresses version)
   # Files of the CA-based cluster this replaced.
   @obsolete ~w(ca.pem ca.key vm.args address revoked ssl_dist.conf)
 
@@ -209,13 +214,26 @@ defmodule HalC2.Cluster do
 
   @doc """
   Merges member tables: for each id, the latest `admittedAt` and `removedAt`, and the
-  fingerprint, label and addresses of the entry updated last. Entries for `own_id` in
-  `incoming` are ignored; only this machine speaks for itself.
+  fingerprint, label and addresses of the entry updated last. Only this machine speaks
+  for itself: an entry for `own_id` in `incoming` changes nothing in its own, but one
+  that says something else and was updated no earlier (an admission stamped by a
+  member whose clock runs ahead) has its own entry stamped after it, or that copy
+  would outrank every change this machine makes until its clock catches up. One that
+  says the same and was updated later lends its own entry that time, so the next
+  change (`stamp/1`) is stamped after the copy too.
   """
   def merge(local, incoming, own_id) do
     Enum.reduce(incoming, local, fn
-      {^own_id, _}, acc ->
-        acc
+      {^own_id, copy}, acc ->
+        case {acc[own_id], sanitize(copy)} do
+          {%{"updatedAt" => ours} = own, %{"updatedAt" => theirs} = copy}
+          when theirs >= ours ->
+            same? = Map.take(copy, @says) == Map.take(sanitize(own) || own, @says)
+            put_in(acc[own_id]["updatedAt"], if(same?, do: theirs, else: theirs + 1))
+
+          _ ->
+            acc
+        end
 
       {id, entry}, acc ->
         case sanitize(entry) do
@@ -228,15 +246,23 @@ defmodule HalC2.Cluster do
   defp merge_entry(ours, theirs) do
     # Same-millisecond updates fall back to comparing the entries, so both sides pick one.
     # Ours is given the same fields first: an entry kept from before a field existed would
-    # otherwise compare by its size, and each side would pick the other's.
+    # otherwise compare by its size, and each side would pick the other's. The times
+    # merged below are left out: each merge raises them, so comparing them would make
+    # the pick depend on the order the updates arrive in.
     ours = sanitize(ours) || ours
-    newer = if {theirs["updatedAt"], theirs} > {ours["updatedAt"], ours}, do: theirs, else: ours
+
+    newer =
+      if {theirs["updatedAt"], ties(theirs)} > {ours["updatedAt"], ties(ours)},
+        do: theirs,
+        else: ours
 
     Map.merge(newer, %{
       "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
       "removedAt" => max_time(ours["removedAt"], theirs["removedAt"])
     })
   end
+
+  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt"])
 
   defp max_time(nil, b), do: b
   defp max_time(a, nil), do: a
@@ -329,12 +355,13 @@ defmodule HalC2.Cluster do
       fingerprint: fingerprint,
       members: load(dir),
       off: nil,
+      gossip: nil,
       transport: transport
     }
 
     case transport.start(dir, id) do
       :ok ->
-        {:ok, state |> refresh_own() |> commit()}
+        {:ok, %{state | gossip: schedule_gossip()} |> refresh_own() |> commit()}
 
       {:off, reason} ->
         {:ok, %{state | off: reason}}
@@ -490,6 +517,35 @@ defmodule HalC2.Cluster do
   end
 
   def handle_info({:nodedown, _mc}, state), do: {:noreply, state}
+
+  def handle_info(:gossip, state) do
+    for mc <- state.transport.connected(),
+        member?(state.members[id_of(mc)]),
+        do: state.transport.send(mc, {:merge, state.members})
+
+    {:noreply, %{state | gossip: schedule_gossip()}}
+  end
+
+  defp schedule_gossip,
+    do:
+      Process.send_after(
+        self(),
+        :gossip,
+        Application.get_env(:hal_c2, :cluster_gossip, @gossip_every)
+      )
+
+  # A cluster process updated in place (`HalC2.Hot`) does not run `init/1` again. One
+  # from before the port outlived it keeps it in the table, where `Epmd` no longer
+  # looks (distribution names it only once), and has no gossip going.
+  @impl true
+  def code_change(_old, state, _extra) do
+    with [{_, port}] <- :ets.take(@table, :listen_port), do: Epmd.put_listen_port(port)
+    state = Map.put_new(state, :gossip, nil)
+
+    if state.off == nil and state.gossip == nil,
+      do: {:ok, %{state | gossip: schedule_gossip()}},
+      else: {:ok, state}
+  end
 
   # --- members -----------------------------------------------------------------
 

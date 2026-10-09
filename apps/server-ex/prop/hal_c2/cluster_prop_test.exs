@@ -6,10 +6,11 @@ defmodule HalC2.ClusterPropTest do
   model of the member table: for each other machine its fingerprint, label, addresses
   and whether it is a member, plus which members are connected. Commands admit and
   remove machines, gossip tables in from members (newer than anything seen, with a
-  clock an hour ahead, or older than what is known), connect members, change version
-  and restart the process. After each one the cluster must say what the model says:
-  in `peers/0` (what discovery tries), `status/0`, the tables it gossips, the
-  certificates it pins and the members it stays connected to.
+  clock an hour ahead, or older than what is known), connect members, fire the gossip
+  timer, change version and restart the process. After each one the cluster must say
+  what the model says: in `peers/0` (what discovery tries), `status/0`, the tables it
+  gossips, the certificates it pins and the members it stays connected to; and a copy
+  of its own entry gossiped an hour ahead leaves its own stamped later still.
 
   `HalC2.Cluster.Discovery` runs against an attempt the test holds open, so the test
   decides when each attempt ends and how: one attempt at a time, polls during one
@@ -20,6 +21,9 @@ defmodule HalC2.ClusterPropTest do
   it tries the documented candidates in order, stops at the first that reaches the
   member, which includes a member that moved to the cluster port at a host it had, and
   leaves the port mapper at the address that worked or the one it held before.
+
+  `HalC2.Cluster.merge/3` is checked on its own: any three updates of one machine's
+  entry merge to one table whatever their order, grouping or repetition.
   """
 
   use ExUnit.Case, async: false
@@ -76,6 +80,7 @@ defmodule HalC2.ClusterPropTest do
       {3, {:call, __MODULE__, :nodeup, [oneof(["stranger" | @ids])]}},
       {2, {:call, __MODULE__, :peers, []}},
       {2, {:call, __MODULE__, :status, []}},
+      {2, {:call, __MODULE__, :tick, []}},
       {1, {:call, __MODULE__, :version_changed, []}},
       {1, {:call, __MODULE__, :restart, []}}
     ])
@@ -95,18 +100,20 @@ defmodule HalC2.ClusterPropTest do
 
   # Entries as a member gossips them: newer than anything this machine has seen, or,
   # for machines it knows, older than what it has; now and then an entry for this
-  # machine itself, or one that is not an entry at all.
+  # machine itself (or a copy of what it says of itself), or one that is not an entry at
+  # all.
   defp gossip_entries(state) do
     resize(
       3,
       list(
         let {id, kind, fp, label, addresses} <-
               {oneof([state.own | @ids]),
-               oneof([:admitted, :removed, :stale_admitted, :stale_removed, :malformed]),
+               oneof([:admitted, :removed, :stale_admitted, :stale_removed, :malformed, :echo]),
                oneof(@fingerprints), label(), addresses()} do
           # An entry older than what this machine knows needs one it knows.
           stale? = kind in [:stale_admitted, :stale_removed]
           kind = if stale? and not Map.has_key?(state.members, id), do: :admitted, else: kind
+          kind = if kind == :echo and id != state.own, do: :admitted, else: kind
 
           {id, kind, %{fp: fp, label: label, addresses: addresses}}
         end
@@ -219,6 +226,14 @@ defmodule HalC2.ClusterPropTest do
     told_ok and observed?(state, next, seen)
   end
 
+  # The gossip timer: the table to every connected member, and to no one else.
+  def postcondition(state, {:call, _, :tick, []}, {_result, seen}) do
+    told = for {mc, {:merge, _}} <- seen.sent, do: mc
+
+    Enum.sort(told) == Enum.sort(Enum.map(state.connected, &Cluster.mc_name/1)) and
+      observed?(state, state, seen)
+  end
+
   def postcondition(state, {:call, _, :peers, []}, {result, seen}) do
     expected = for {id, %{member: true} = m} <- state.members, do: {id, m.addresses}
     Enum.sort(result) == Enum.sort(expected) and observed?(state, state, seen)
@@ -240,6 +255,17 @@ defmodule HalC2.ClusterPropTest do
     result["clustered"] == true and result["id"] == state.own and
       Enum.sort_by(got, & &1["id"]) == Enum.sort_by(expected, & &1["id"]) and
       observed?(state, state, seen)
+  end
+
+  # A member's copy of this machine's entry, newer than its own, has its own entry
+  # stamped after it, so the copy does not hide what this machine says of itself. A copy
+  # that says the same lends its time, so the next change is stamped after it too.
+  def postcondition(state, {:call, _, :gossip, [entries]} = call, {newer, seen}) do
+    kind = Map.new(entries, &{elem(&1, 0), elem(&1, 1)})[state.own]
+
+    (kind not in [:admitted, :removed] or seen.own_updated > newer) and
+      (kind != :echo or seen.own_updated >= newer) and
+      observed?(state, next_state(state, newer, call), seen)
   end
 
   def postcondition(state, call, {result, seen}),
@@ -294,7 +320,7 @@ defmodule HalC2.ClusterPropTest do
   def remove(id), do: observe(Cluster.remove(id))
 
   def gossip(entries) do
-    members = :sys.get_state(Cluster).members
+    %{members: members, id: own} = :sys.get_state(Cluster)
 
     seen =
       for {_, entry} <- members,
@@ -317,19 +343,25 @@ defmodule HalC2.ClusterPropTest do
             :stale_admitted -> %{"admittedAt" => 1, "removedAt" => nil, "updatedAt" => 1}
             :stale_removed -> %{"admittedAt" => 1, "removedAt" => 2, "updatedAt" => 2}
             :malformed -> %{"admittedAt" => "yesterday"}
+            :echo -> %{members[own] | "admittedAt" => newer, "updatedAt" => newer}
           end
 
         {id, Map.merge(fields, entry)}
       end)
 
     GenServer.cast(Cluster, {:merge, incoming})
-    observe(:ok)
+    observe(newer)
   end
 
   def nodeup(id) do
     mc = Cluster.mc_name(id)
     ClusterTransport.connect(mc)
     send(Process.whereis(Cluster), {:nodeup, mc})
+    observe(:ok)
+  end
+
+  def tick do
+    send(Process.whereis(Cluster), :gossip)
     observe(:ok)
   end
 
@@ -351,8 +383,16 @@ defmodule HalC2.ClusterPropTest do
     fp = GenServer.call(Cluster, :fingerprint)
     pins = for {{:pin, fp}, true} <- :ets.match_object(Cluster, {{:pin, :_}, :_}), do: fp
 
+    own = :sys.get_state(Cluster).members[HalC2.Environment.id()]
+
     {result,
-     %{sent: drain(), pins: MapSet.new(pins), connected: ClusterTransport.connected(), fp: fp}}
+     %{
+       sent: drain(),
+       pins: MapSet.new(pins),
+       connected: ClusterTransport.connected(),
+       fp: fp,
+       own_updated: own["updatedAt"]
+     }}
   end
 
   defp drain do
@@ -502,6 +542,49 @@ defmodule HalC2.ClusterPropTest do
       {:attempt, _} -> flush_attempts()
     after
       0 -> :ok
+    end
+  end
+
+  # --- merging entries ---------------------------------------------------------
+
+  property "merged entries do not depend on the order, grouping or repetition of updates",
+    numtests: HalC2.Prop.numtests(500) do
+    forall updates <- vector(3, member_entry()) do
+      table = fn entry -> Cluster.merge(%{}, %{"b" => entry}, "a") end
+      merge = &Cluster.merge(&1, &2, "a")
+
+      results =
+        for [x, y, z] <- permutations(updates) do
+          {merge.(merge.(table.(x), table.(y)), table.(z)),
+           merge.(table.(x), merge.(table.(y), table.(z))),
+           merge.(merge.(table.(x), table.(x)), merge.(table.(y), table.(z)))}
+        end
+
+      tables = Enum.flat_map(results, &Tuple.to_list/1)
+
+      (length(Enum.uniq(tables)) == 1)
+      |> when_fail(IO.inspect(Enum.uniq(tables)))
+    end
+  end
+
+  defp permutations([]), do: [[]]
+  defp permutations(list), do: for(x <- list, rest <- permutations(list -- [x]), do: [x | rest])
+
+  # Entries for one machine, with times close enough that updates tie.
+  defp member_entry do
+    let {fp, label, addresses, admitted, removed, updated, version} <-
+          {oneof(@fingerprints), oneof(["box", "laptop", nil]),
+           oneof([["10.0.0.1:4370"], ["10.0.0.2:5000"]]), range(1, 3), oneof([nil, 2, 3]),
+           range(1, 3), oneof(["1.0.0", "1.0.1"])} do
+      %{
+        "fingerprint" => fp,
+        "label" => label,
+        "addresses" => addresses,
+        "admittedAt" => admitted,
+        "removedAt" => removed,
+        "updatedAt" => updated,
+        "version" => version
+      }
     end
   end
 

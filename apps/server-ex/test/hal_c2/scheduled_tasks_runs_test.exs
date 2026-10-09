@@ -95,4 +95,99 @@ defmodule HalC2.ScheduledTasksRunsTest do
     assert {:ok, %{"task" => %{"nextRunAt" => ^next}}} =
              ScheduledTasks.set_enabled(%{"id" => "t1", "enabled" => true})
   end
+
+  defp blocking_fire do
+    test = self()
+
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, fn _, _ ->
+      send(test, {:started, self()})
+
+      receive do
+        :release -> {:ok, %{}}
+      end
+    end)
+  end
+
+  test "a task deleted and made again during a run does not take the old run's result" do
+    blocking_fire()
+    interval_task()
+    caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    assert {:ok, %{"id" => "t1"}} = ScheduledTasks.delete(%{"id" => "t1"})
+    assert {:error, %{"message" => "Schedule task not found."}} = Task.await(caller)
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+
+    interval_task()
+    assert %{"lastRunStatus" => "never", "runCount" => 0} = task()
+
+    # Nothing of the old run is left to block the new task.
+    Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, _}
+  end
+
+  test "a run does not outlive the scheduler that started it" do
+    blocking_fire()
+    interval_task()
+    advance(60_000)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    Process.exit(Process.whereis(ScheduledTasks), :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+  end
+
+  test "a scheduler updated in place from before runs were linked outlives a run it ends" do
+    scheduler = Process.whereis(ScheduledTasks)
+    down = Process.monitor(scheduler)
+
+    # What the version before was: a scheduler that did not trap exits.
+    :sys.replace_state(scheduler, fn state ->
+      Process.flag(:trap_exit, false)
+      state
+    end)
+
+    # What `HalC2.Hot` does for a process whose module changed.
+    :ok = :sys.suspend(scheduler)
+    :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+    :ok = :sys.resume(scheduler)
+
+    blocking_fire()
+    interval_task()
+    caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+    assert {:ok, _} = ScheduledTasks.delete(%{"id" => "t1"})
+    Task.await(caller)
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+
+    _ = :sys.get_state(scheduler)
+    refute_received {:DOWN, ^down, _, _, _}
+  end
+
+  test "a run started before the scheduler was updated in place does not outlive it" do
+    scheduler = Process.whereis(ScheduledTasks)
+    blocking_fire()
+    interval_task()
+    advance(60_000)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+
+    # What the version before was: a scheduler that did not trap exits, nor link its runs.
+    :sys.replace_state(scheduler, fn state ->
+      Process.flag(:trap_exit, false)
+      Process.unlink(run)
+      state
+    end)
+
+    :ok = :sys.suspend(scheduler)
+    :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+    :ok = :sys.resume(scheduler)
+
+    Process.exit(scheduler, :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+  end
 end

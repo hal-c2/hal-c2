@@ -91,6 +91,63 @@ jobs:
         env:
           MIX_ENV: prop
 
+  # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
+  # Jobs of their own, as model checking peaks at several GB and a proof's checks run
+  # one after another: the slowest proofs run alone, and `rest` runs every other one,
+  # new ones included.
+  mc_proofs:
+    name: MC proofs (${{ matrix.proof }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        proof: [cluster, stream_relay, streams, thread_move, turns, rest]
+    env:
+      MIX_ENV: proof
+    defaults:
+      run:
+        working-directory: apps/server-ex
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.3"
+
+      - name: Cache Mix deps, build and Maude
+        uses: actions/cache@v6
+        with:
+          path: |
+            apps/server-ex/deps
+            apps/server-ex/_build
+          key: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}
+          restore-keys: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
+
+      - name: Fetch deps
+        run: mix deps.get
+
+      - name: Proofs
+        run: |
+          if [ "${{ matrix.proof }}" = rest ]; then
+            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
+          else
+            files=proof/hal_c2/${{ matrix.proof }}_proof_test.exs
+          fi
+          mix proof $files
+        env:
+          # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+
   # The @mc scenarios of features/, one directory per job so a slow or hung
   # directory stays visible; mc/ is split in two to fit the time limit.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);

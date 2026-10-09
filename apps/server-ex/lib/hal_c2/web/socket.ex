@@ -31,7 +31,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 5
+  @state_version 6
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -48,6 +48,7 @@ defmodule HalC2.Web.Socket do
       # What the session may do; the MC's own token may do anything.
       scopes: session_scopes(session),
       subs: %{},
+      # stream id => {the subscription's id, the tag its messages carry}
       by_stream: %{},
       # The monitor of each stream subscription's server => {its id, the server}.
       monitors: %{},
@@ -107,9 +108,28 @@ defmodule HalC2.Web.Socket do
       when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version,
       do: handle_info(message, migrate(state))
 
+  # One for a subscription followed before this one, still on its way, is not this
+  # one's. A follow that gave up may yet be taken: that subscription goes live, and is
+  # ended then.
+  def handle_info({:hal_c2_stream, {stream_id, tag}, message}, state) do
+    case {state.by_stream, message, tag} do
+      {%{^stream_id => {id, ^tag}}, _, _} ->
+        stream_message(state, id, message)
+
+      {_, {:live, _, _}, {mc, _ref}} ->
+        :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
+        {:ok, state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
+  # For a subscription followed before an upgrade in place, which has no tag (members
+  # run one version, so no other MC sends one untagged). A later follow's is not it.
   def handle_info({:hal_c2_stream, stream_id, message}, state) do
     case state.by_stream do
-      %{^stream_id => id} -> stream_message(state, id, message)
+      %{^stream_id => {id, nil}} -> stream_message(state, id, message)
       _ -> {:ok, state}
     end
   end
@@ -672,12 +692,14 @@ defmodule HalC2.Web.Socket do
     if Map.has_key?(state.by_stream, stream_id) do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
-      client = Map.take(resume, [:handle, :window, :kinds])
+      # Names the MC too, for ending the subscription if this follow gives up.
+      tag = {mc, make_ref()}
+      client = resume |> Map.take([:handle, :window, :kinds]) |> Map.put(:tag, tag)
 
       # The owning MC may be gone or slow; the client retries when it is back.
-      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), resume.offset, client]) do
-        {:ok, {:ok, server}} ->
-          monitors = Map.put(state.monitors, Process.monitor(server), {id, server})
+      case follow(mc, stream_id, resume.offset, client) do
+        {:ok, server, ref} ->
+          monitors = Map.put(state.monitors, ref, {id, server})
 
           # Until `live`, events are the stream's replay from `offset`: bounded by the
           # stream, and resyncing on them would only ask for the same replay again.
@@ -685,7 +707,7 @@ defmodule HalC2.Web.Socket do
            %{
              state
              | subs: Map.put(state.subs, id, shape),
-               by_stream: Map.put(state.by_stream, stream_id, id),
+               by_stream: Map.put(state.by_stream, stream_id, {id, tag}),
                monitors: monitors,
                buffers: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true})
            }}
@@ -693,7 +715,7 @@ defmodule HalC2.Web.Socket do
         {:error, reason} ->
           # A call that gave up may still be taken, and would feed a socket that is
           # not following the stream.
-          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
+          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
           {:push, Protocol.encode(error_frame(id, reason)), state}
       end
     end
@@ -1072,6 +1094,30 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # A stream that took the follow lets it go if the MCs part, and they may meet again
+  # before the answer is read and the stream monitored: a follow they parted during
+  # fails, as one they parted before the answer does.
+  defp follow(mc, stream_id, offset, client) do
+    watch? = mc != node() and Node.alive?()
+    if watch?, do: Node.monitor(mc, true)
+
+    result =
+      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), offset, client]) do
+        {:ok, {:ok, server}} -> {:ok, server, Process.monitor(server)}
+        {:error, reason} -> {:error, reason}
+      end
+
+    if watch?, do: Node.monitor(mc, false)
+
+    receive do
+      {:nodedown, ^mc} ->
+        with {:ok, _server, ref} <- result, do: Process.demonitor(ref, [:flush])
+        {:error, "MC unavailable: noconnection"}
+    after
+      0 -> result
+    end
+  end
+
   # Calls an MC without ever taking this socket down: an unreachable MC, or one
   # without the feature (an older version), fails only the one subscription.
   # Connected MCs plus members the shell has seen that are offline now, so a
@@ -1138,7 +1184,14 @@ defmodule HalC2.Web.Socket do
   defp migrate(%{v: 3} = state), do: state |> Map.merge(%{monitors: %{}, v: 4}) |> migrate()
 
   # Version 5: sidebar rows are buffered per MC, like stream events.
-  defp migrate(%{v: 4} = state), do: Map.merge(state, %{shell: %{}, v: 5})
+  defp migrate(%{v: 4} = state), do: state |> Map.merge(%{shell: %{}, v: 5}) |> migrate()
+
+  # Version 6: a stream subscription's messages carry its tag. Those followed before
+  # carry none.
+  defp migrate(%{v: 5} = state) do
+    by_stream = Map.new(state.by_stream, fn {stream_id, id} -> {stream_id, {id, nil}} end)
+    %{state | by_stream: by_stream, v: 6}
+  end
 
   defp migrate(state), do: state
 
@@ -1378,12 +1431,16 @@ defmodule HalC2.Web.Socket do
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:stream, mc, stream_id}, _subs} ->
-        # Straight to the server, so it arrives ahead of a resubscribe that follows; an
-        # `:erpc.cast` runs in a process of its own and could land after it.
+        # By its tag, so it ends no subscription that follows, whenever it arrives.
         case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
           {ref, {_, server}} ->
             Process.demonitor(ref, [:flush])
-            GenServer.cast(server, {:unsubscribe, self()})
+            {_id, tag} = state.by_stream[stream_id]
+
+            message =
+              if tag, do: {:unsubscribe, self(), tag}, else: {:unsubscribe, self()}
+
+            GenServer.cast(server, message)
             forget_stream(%{state | monitors: Map.delete(state.monitors, ref)}, id)
 
           # Followed before stream servers were monitored.
@@ -1410,6 +1467,25 @@ defmodule HalC2.Web.Socket do
         by_stream: Map.delete(state.by_stream, stream_id),
         buffers: Map.delete(state.buffers, id)
     }
+  end
+
+  # The stream ended the subscription: its relay failed. What came first goes out,
+  # then the client follows the stream again from what it holds.
+  defp stream_message(state, id, :resync) do
+    {frames, state} = flush(state)
+
+    state =
+      case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
+        {ref, _} ->
+          Process.demonitor(ref, [:flush])
+          %{state | monitors: Map.delete(state.monitors, ref)}
+
+        nil ->
+          state
+      end
+
+    resync = Protocol.encode(%{"t" => "resync", "id" => id})
+    {:push, frames ++ [resync], forget_stream(state, id)}
   end
 
   defp stream_message(state, id, {:snapshot, seq, updated_at, rows, part_state, meta}) do

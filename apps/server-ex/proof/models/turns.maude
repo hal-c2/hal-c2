@@ -1,0 +1,394 @@
+sload model-checker
+
+--- A thread's turns, from the message that starts one to the run's end: dispatch, the
+--- queue, the provider runtime that drives a turn, TurnWatch, the idle session check,
+--- interrupts, deletion and boot recovery, through every interleaving of their
+--- processes. Each stream transaction is one step. proof/hal_c2/turns_proof_test.exs
+--- maps it to the code and checks it.
+
+mod TURNS is
+  protecting BOOL .
+  protecting NAT .
+
+  sorts Rid Rids St Ghost Ph Slot Tm Why Item Conf Sys .
+  subsort Rid < Rids .
+  subsort St < Ghost .
+  subsort Item < Conf .
+
+  --- Two messages, r1 and r2, and q, queued from the start.
+  ops r1 r2 q : -> Rid [ctor] .
+  op nil : -> Rids [ctor] .
+  op _;_ : Rids Rids -> Rids [ctor assoc id: nil] .
+
+  --- A run's status ("waiting" is "running" here), and the first status it ended
+  --- with, or `open` while it has not ended: what absorbing means.
+  ops starting running queued completed failed interrupted cancelled : -> St [ctor] .
+  op open : -> Ghost [ctor] .
+
+  --- The thread, deleted or not; a run: status, held, how it first ended; the queue,
+  --- in order.
+  op thread : Bool -> Item [ctor] .
+  op run : Rid St Bool Ghost -> Item [ctor] .
+  op queue : Rids -> Item [ctor] .
+
+  --- A client's message still to be dispatched.
+  op client : Rid -> Item [ctor] .
+
+  --- The process that starts a run's turn (dispatch_message/2 or start_next/1, from
+  --- begin_turn/2 on): about to call the runtime, waiting on its start_turn call,
+  --- about to call it again because a release stopped it first, waiting on that call,
+  --- or having caught a failure to start. It dies only by raising, which it catches.
+  ops begin await retry again gaveup : -> Ph [ctor] .
+  op disp : Rid Ph -> Item [ctor] .
+
+  --- The task a run's end starts (finished/4): start_next/1.
+  op next : -> Item [ctor] .
+
+  --- The thread's provider runtime: no process, idle, inside its start_turn call for
+  --- a run (begin_turn/2 of HalC2.Codex.ThreadRuntime), or driving a turn, asked to
+  --- interrupt it or not. Its mailbox: start_turn calls, in the order they came (a
+  --- start that gave up waiting is ahead of any it let start), and an interrupt call.
+  ops none idle : -> Slot [ctor] .
+  op begun : Rid -> Slot [ctor] .
+  op turn : Rid Bool -> Slot [ctor] .
+  op rt : Slot -> Item [ctor] .
+  op mbox : Rids -> Item [ctor] .
+  op icall : -> Item [ctor] .
+
+  --- TurnWatch: the runtime's claim on a run, and a crash it has yet to act on.
+  op claim : Rid -> Item [ctor] .
+  op down : Rid -> Item [ctor] .
+
+  --- IdleSessions: ready for its next check, or releasing a runtime. Its release
+  --- call (true), or a delete's stop_runtimes/1 (false), under way.
+  ops ready busy : -> Tm [ctor] .
+  op timer : Tm -> Item [ctor] .
+  op stopper : Bool -> Item [ctor] .
+
+  --- How a runtime went: it crashed, was stopped, or released itself.
+  ops crashed stopped released : -> Why [ctor] .
+
+  --- A client asking to interrupt the thread's run, and after the runtimes said no
+  --- running turn, interrupt_undriven/2; a client deleting the thread.
+  op intr : -> Item [ctor] .
+  op undriven : -> Item [ctor] .
+  op del : -> Item [ctor] .
+
+  op faults : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars R R' : Rid .
+  vars L L' : Rids .
+  vars S S' : St .
+  vars G G' : Ghost .
+  vars H B I : Bool .
+  var X : Slot .
+  var T : Tm .
+  var P : Ph .
+  var W : Why .
+  var F : Nat .
+  var C : Conf .
+
+  --- @active_runs ("preparing" and "waiting" are left out) and the terminal ones.
+  op on : St -> Bool .
+  eq on(starting) = true .
+  eq on(running) = true .
+  eq on(S) = false [owise] .
+  op ended : St -> Bool .
+  eq ended(queued) = false .
+  eq ended(S) = not on(S) [owise] .
+
+  --- Whether a run is active.
+  op busy? : Conf -> Bool .
+  eq busy?(run(R, S, H, G) C) = if on(S) then true else busy?(C) fi .
+  eq busy?(C) = false [owise] .
+
+  op claimed? : Rid Conf -> Bool .
+  eq claimed?(R, claim(R) C) = true .
+  eq claimed?(R, C) = false [owise] .
+
+  --- A run's status set, and how it first ended kept.
+  op set : Rid St Conf -> Conf .
+  eq set(R, S, run(R, S', H, G) C) = run(R, S, H, first(G, S)) C .
+  op first : Ghost St -> Ghost .
+  eq first(open, S) = if ended(S) then S else open fi .
+  eq first(G, S) = G [owise] .
+
+  --- TurnWatch.release/1.
+  op release : Rid Conf -> Conf .
+  eq release(R, claim(R) C) = release(R, C) .
+  eq release(R, C) = C [owise] .
+
+  --- What follows a run ending (finished/4): its claim goes, and start_next/1 runs.
+  op finished : Rid Conf -> Conf .
+  eq finished(R, C) = release(R, C) next .
+
+  --- TurnWriter.finish/3: the run ends with the turn if it is still active; one that
+  --- ended first (deleted, abandoned) stays as it ended, and only its claim goes.
+  op finish : Rid St Conf -> Conf .
+  ceq finish(R, S, run(R, S', H, G) C) = finished(R, set(R, S, run(R, S', H, G) C))
+    if on(S') .
+  eq finish(R, S, C) = release(R, C) [owise] .
+
+  --- TurnWriter.abandon/4: the run ends if it is still active.
+  op abandon : Rid St Conf -> Conf .
+  ceq abandon(R, S, run(R, S', H, G) C) = finished(R, set(R, S, run(R, S', H, G) C))
+    if on(S') .
+  eq abandon(R, S, C) = C [owise] .
+
+  --- The runtime replied to run R's start_turn call; its caller may have gone.
+  op answered : Rid Conf -> Conf .
+  eq answered(R, disp(R, await) C) = C .
+  eq answered(R, disp(R, again) C) = C .
+  eq answered(R, C) = C [owise] .
+
+  --- The runtime went under run R's start_turn call: its caller gets an exit, and
+  --- calls once more if the runtime released itself first (start_turn/2).
+  op cut : Why Rid Conf -> Conf .
+  eq cut(W, R, disp(R, await) C) = disp(R, if W == released then retry else gaveup fi) C .
+  eq cut(W, R, disp(R, again) C) = disp(R, gaveup) C .
+  eq cut(W, R, C) = C [owise] .
+
+  --- The runtime goes: calls in its mailbox and under way exit, and TurnWatch hears
+  --- of each run it claimed; only a crash ends them.
+  op die : Why Conf -> Conf .
+  eq die(W, rt(none) C) = rt(none) C .
+  eq die(W, rt(begun(R)) C) = rt(none) gone(W, cut(W, R, C)) .
+  eq die(W, rt(X) C) = rt(none) gone(W, C) [owise] .
+  op gone : Why Conf -> Conf .
+  eq gone(W, claim(R) C) = (if W == crashed then down(R) else empty fi) gone(W, C) .
+  eq gone(W, mbox(R ; L) C) = gone(W, mbox(L) cut(W, R, C)) .
+  eq gone(W, icall C) = undriven gone(W, C) .
+  eq gone(W, C) = C [owise] .
+
+  --- decide_next/2: the first queued run not held.
+  op firstFree : Rids Conf -> Rids .
+  eq firstFree(nil, C) = nil .
+  eq firstFree(R ; L, run(R, queued, false, G) C) = R .
+  eq firstFree(R ; L, C) = firstFree(L, C) [owise] .
+  op drop : Rid Rids -> Rids .
+  eq drop(R, L ; R ; L') = L ; L' .
+  eq drop(R, L) = L [owise] .
+
+  op decideNext : Conf -> Conf .
+  ceq decideNext(thread(false) queue(L) C)
+    = startRun(firstFree(L, C), thread(false) queue(L) C) if not busy?(C) .
+  eq decideNext(C) = C [owise] .
+  op startRun : Rids Conf -> Conf .
+  eq startRun(R, queue(L) run(R, queued, H, G) C)
+    = queue(drop(R, L)) run(R, starting, H, G) disp(R, begin) C .
+  eq startRun(L, C) = C [owise] .
+
+  --- archived_queue/2: every queued or active run is cancelled.
+  op cancel : Conf -> Conf .
+  ceq cancel(run(R, S, H, G) C) = run(R, cancelled, H, first(G, cancelled)) cancel(C)
+    if S == queued or on(S) .
+  eq cancel(C) = C [owise] .
+
+  --- interrupt_undriven/2: a running run nothing drives ends as interrupted.
+  op stopRun : Conf -> Conf .
+  ceq stopRun(run(R, running, H, G) C) = abandon(R, interrupted, run(R, running, H, G) C)
+    if not claimed?(R, C) .
+  eq stopRun(C) = C [owise] .
+
+  --- An MC that stops loses its processes; Recovery.run/0 then settles the thread:
+  --- queued runs are held, a run that never reached its provider goes back to the
+  --- front of the queue and continue/0 starts it, a running one is interrupted.
+  op wipe : Conf -> Conf .
+  eq wipe(disp(R, P) C) = wipe(C) .
+  eq wipe(mbox(R ; L) C) = wipe(mbox(nil) C) .
+  eq wipe(icall C) = wipe(C) .
+  eq wipe(claim(R) C) = wipe(C) .
+  eq wipe(down(R) C) = wipe(C) .
+  eq wipe(next C) = wipe(C) .
+  eq wipe(stopper(B) C) = wipe(C) .
+  eq wipe(intr C) = wipe(C) .
+  eq wipe(undriven C) = wipe(C) .
+  eq wipe(del C) = wipe(C) .
+  eq wipe(timer(busy) C) = timer(ready) wipe(C) .
+  ceq wipe(rt(X) C) = rt(none) wipe(C) if X =/= none .
+  eq wipe(C) = C [owise] .
+
+  op settle : Conf -> Conf .
+  eq settle(run(R, starting, H, G) queue(L) C) = run(R, queued, false, G) queue(R ; L) next hold(C) .
+  eq settle(C) = hold(C) [owise] .
+  op hold : Conf -> Conf .
+  eq hold(run(R, queued, false, G) C) = run(R, queued, true, G) hold(C) .
+  eq hold(run(R, running, H, G) C) = run(R, interrupted, H, first(G, interrupted)) hold(C) .
+  eq hold(C) = C [owise] .
+
+  --- dispatch: message.dispatch ----------------------------------------------------
+
+  --- dispatch_message/2, decide_message/3: refused on a deleted thread, queued behind
+  --- an active run, else a new run that starts.
+  rl [dispatch] : client(R) thread(true) => thread(true) .
+  crl [dispatch] :
+    { client(R) thread(false) queue(L) C }
+    => { thread(false) queue(L ; R) run(R, queued, false, open) C } if busy?(C) .
+  crl [dispatch] :
+    { client(R) thread(false) C }
+    => { thread(false) run(R, starting, false, open) disp(R, begin) C } if not busy?(C) .
+
+  --- begin_turn/2: restore_worktree/1, the baseline, then start_turn/2, which starts
+  --- the runtime (ensure/1) and calls it.
+  rl [begin-turn] : disp(R, begin) rt(none) mbox(L) => disp(R, await) rt(idle) mbox(L ; R) .
+  crl [begin-turn] : disp(R, begin) rt(X) mbox(L) => disp(R, await) rt(X) mbox(L ; R)
+    if X =/= none .
+
+  --- start_turn/2 again, once, after the runtime released itself with the call unanswered.
+  rl [retry] : disp(R, retry) rt(none) mbox(L) => disp(R, again) rt(idle) mbox(L ; R) .
+  crl [retry] : disp(R, retry) rt(X) mbox(L) => disp(R, again) rt(X) mbox(L ; R)
+    if X =/= none .
+
+  --- begin_turn/2 caught a failure to start: the run fails.
+  rl [start-failed] : { disp(R, gaveup) C } => { abandon(R, failed, C) } .
+
+  --- start_next/1: the first queued message that is not held starts, if nothing runs.
+  rl [start-next] : { next C } => { decideNext(C) } .
+
+  --- the runtime: HalC2.Codex.ThreadRuntime ------------------------------------------
+
+  --- handle_call({:start_turn, _}): it takes the turn, over any it had.
+  rl [take] : rt(idle) mbox(R ; L) => rt(begun(R)) mbox(L) .
+  rl [take] : rt(turn(R', I)) mbox(R ; L) => rt(begun(R)) mbox(L) .
+
+  --- begin_turn/2 there: the native turn started, it claims the run (TurnWatch.claim/2)
+  --- and marks it running if it is still active, then replies. A run that ended
+  --- meanwhile loses its claim, and the runtime lets go of the native turn, whose end
+  --- it then ignores.
+  rl [started] : { rt(begun(R)) C } => { answered(R, started(R, C)) } .
+  op started : Rid Conf -> Conf .
+  ceq started(R, run(R, S, H, G) C) = rt(turn(R, false)) claim(R) set(R, running, run(R, S, H, G) release(R, C))
+    if on(S) .
+  eq started(R, C) = rt(idle) release(R, C) [owise] .
+
+  --- turn/completed: end_turn/3, TurnWriter.finish/3.
+  rl [finish] :
+    { rt(turn(R, I)) C }
+    => { rt(idle) finish(R, if I then interrupted else completed fi, C) } .
+
+  --- handle_call(:interrupt): turn/interrupt to a turn it drives; no running turn else.
+  rl [interrupted] : rt(turn(R, I)) icall => rt(turn(R, true)) .
+  rl [no-turn] : rt(idle) icall => rt(idle) undriven .
+
+  --- run.interrupt: interrupt_any/2 ----------------------------------------------------
+
+  --- Each runtime's interrupt/2: the call, or no runtime to call.
+  rl [interrupt-any] : intr rt(none) => undriven rt(none) .
+  crl [interrupt-any] : intr rt(X) => icall rt(X) if X =/= none .
+
+  rl [interrupt-undriven] : { undriven C } => { stopRun(C) } .
+
+  --- thread.delete: deleted_thread/2 and archived_queue/2, then stop_runtimes/1 ------
+
+  rl [delete] : { del thread(false) queue(L) C } => { thread(true) queue(nil) stopper(false) cancel(C) } .
+
+  --- GenServer.stop/2: the runtime stops between messages, ending no turn.
+  crl [stop-runtimes] : { stopper(false) rt(X) C } => { die(stopped, rt(X) C) }
+    if not begun?(X) .
+  op begun? : Slot -> Bool .
+  eq begun?(begun(R)) = true .
+  eq begun?(X) = false [owise] .
+
+  --- TurnWatch and IdleSessions -------------------------------------------------------
+
+  --- handle_info({:DOWN, ...}) for a crash: a task abandons the run.
+  rl [abandon] : { down(R) C } => { abandon(R, failed, C) } .
+
+  --- end_abandoned/0: a running run with no runtime process and no live claim fails.
+  crl [end-abandoned] :
+    { timer(ready) rt(none) run(R, running, H, G) C }
+    => { timer(ready) abandon(R, failed, rt(none) run(R, running, H, G) C) }
+    if not claimed?(R, C) .
+
+  --- release_idle/0: release_session/1 of a runtime's thread with no active run, which
+  --- marks its sessions stopped, then asks its runtimes to release themselves.
+  crl [release-session] :
+    { timer(ready) rt(X) C } => { timer(busy) stopper(true) rt(X) C }
+    if X =/= none /\ not busy?(C) .
+
+  --- handle_call(:release): an idle runtime stops; one that took a turn since the check
+  --- keeps it. IdleSessions is ready for its next check once the call returns.
+  rl [release-idle] : { stopper(true) timer(busy) rt(idle) C } => { timer(ready) die(released, rt(idle) C) } .
+  rl [release-idle] : stopper(true) timer(busy) rt(none) => timer(ready) rt(none) .
+  rl [keep-turn] : stopper(true) timer(busy) rt(turn(R, I)) => timer(ready) rt(turn(R, I)) .
+
+  --- environment --------------------------------------------------------------------
+
+  --- The runtime crashes: its turn's caller gets an exit, its claims crash.
+  crl [crash] : { rt(X) faults(s F) C } => { die(crashed, rt(X) C) faults(F) } if X =/= none .
+
+  --- begin_turn/2 raises before it calls the runtime (restore_worktree/1, the
+  --- baseline's match, ensure/1's case), and catches it.
+  rl [raise] : disp(R, begin) faults(s F) => disp(R, gaveup) faults(F) .
+  rl [raise] : disp(R, retry) faults(s F) => disp(R, gaveup) faults(F) .
+
+  --- start_turn/2's call to the runtime times out (60 s).
+  rl [time-out] : disp(R, await) faults(s F) => disp(R, gaveup) faults(F) .
+  rl [time-out] : disp(R, again) faults(s F) => disp(R, gaveup) faults(F) .
+
+  --- The provider refuses the turn: the runtime finishes it as failed and replies.
+  rl [refused] :
+    { rt(begun(R)) faults(s F) C } => { rt(idle) finish(R, failed, answered(R, C)) faults(F) } .
+
+  --- The app-server exits under a turn: the runtime ends it as failed.
+  rl [exit] : { rt(turn(R, I)) faults(s F) C } => { rt(idle) finish(R, failed, C) faults(F) } .
+
+  --- The MC stops and starts again.
+  rl [restart] : { faults(s F) C } => { settle(wipe(C)) faults(F) } .
+
+  --- states -------------------------------------------------------------------------
+
+  --- r1 was just dispatched to start, with q queued behind it; a client sends r2, and
+  --- perhaps asks to interrupt or deletes the thread.
+  op turns : Nat Bool Bool Tm -> Sys .
+  eq turns(F, I, B, T) =
+    { thread(false) run(r1, starting, false, open) run(q, queued, false, open) queue(q)
+      disp(r1, begin) client(r2) rt(none) mbox(nil) timer(T) faults(F)
+      (if I then intr else empty fi) (if B then del else empty fi) } .
+
+  --- Two runs active at once; a run that ended changing status; a run that failed;
+  --- nothing left to do.
+  ops twice flipped failed? settled : Sys -> Bool .
+  ceq twice({ run(R, S, H, G) run(R', S', B, G') C }) = true if on(S) /\ on(S') .
+  eq twice({ C }) = false [owise] .
+  ceq flipped({ run(R, S, H, S') C }) = true if S =/= S' .
+  eq flipped({ C }) = false [owise] .
+  eq failed?({ run(R, failed, H, G) C }) = true .
+  eq failed?({ C }) = false [owise] .
+  eq settled({ client(R) C }) = false .
+  eq settled({ disp(R, P) C }) = false .
+  eq settled({ mbox(R ; L) C }) = false .
+  eq settled({ icall C }) = false .
+  eq settled({ next C }) = false .
+  eq settled({ down(R) C }) = false .
+  eq settled({ stopper(B) C }) = false .
+  eq settled({ intr C }) = false .
+  eq settled({ undriven C }) = false .
+  eq settled({ del C }) = false .
+  eq settled({ run(R, starting, H, G) C }) = false .
+  eq settled({ run(R, running, H, G) C }) = false .
+  eq settled({ run(R, queued, false, G) C }) = false .
+  eq settled({ C }) = true [owise] .
+endm
+
+mod TURNS-PROPS is
+  including TURNS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- Run R is active; R is queued and not held.
+  ops active waiting : Rid -> Prop [ctor] .
+  var R : Rid .
+  var S : St .
+  var H : Bool .
+  vars G G' : Ghost .
+  var C : Conf .
+  eq { run(R, S, H, G) C } |= active(R) = on(S) .
+  eq { C } |= active(R) = false [owise] .
+  eq { run(R, queued, false, G) C } |= waiting(R) = true .
+  eq { C } |= waiting(R) = false [owise] .
+endm

@@ -24,6 +24,7 @@ defmodule HalC2.Test.Machines do
     Mc.World.put_env("HAL_C2_LABEL", local)
     for {key, value} <- sessions(context.mc.home), do: Mc.World.put_env(key, value)
     Mc.World.put_app_env(:agent_sessions_home, user_home(context.mc.home))
+    for {key, value} <- fakes(context.mc.home), do: Mc.World.put_app_env(key, value)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(user_home(context.mc.home)) end)
     distribute()
     context = %{context | mc: Mc.restart(context.mc)}

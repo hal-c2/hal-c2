@@ -1,6 +1,9 @@
 defmodule HalC2.AuthTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
+  alias Exqlite.Sqlite3
   alias HalC2.Test.WsClient
 
   @moduletag :tmp_dir
@@ -74,6 +77,91 @@ defmodule HalC2.AuthTest do
     # A reloaded window exchanges it again.
     assert {200, %{"access_token" => _}} = post_form(base <> "/oauth/token", form)
     assert {400, _} = post_form(base <> "/oauth/token", %{form | "subject_token" => "other"})
+  end
+
+  # An exchange that fails after spending its token leaves the token unspent: the
+  # failing session insert crashes the exchange, and the token is still good after.
+  test "a failed exchange does not spend its pairing token", %{path: path} do
+    token = HalC2.Auth.create_pairing_token(path)
+    assert_exchange_fails(path, token)
+
+    assert {:ok, _, _, _} = HalC2.Auth.exchange(token)
+  end
+
+  test "a failed desktop exchange keeps the desktop's previous session", %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    :ok = HalC2.Desktop.apply_bootstrap(%{"desktopBootstrapToken" => "desk-token"})
+    on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
+    start_supervised!(HalC2.Auth)
+
+    {:ok, previous, _, _} = HalC2.Auth.exchange("desk-token")
+    assert_exchange_fails(path, "desk-token")
+
+    assert {:ok, %{}} = HalC2.Auth.session(previous)
+  end
+
+  test "a failed desktop exchange keeps the tickets of the desktop's previous session",
+       %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    :ok = HalC2.Desktop.apply_bootstrap(%{"desktopBootstrapToken" => "desk-token"})
+    on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
+    start_supervised!(HalC2.Auth)
+
+    {:ok, previous, _, _} = HalC2.Auth.exchange("desk-token")
+    {:ok, %{id: id}} = HalC2.Auth.session(previous)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(previous)
+    # Its tables outlive the crash with their heir, as they do in a running MC.
+    assert_exchange_fails(path, "desk-token", restart: false)
+
+    assert {:ok, ^id} = HalC2.Auth.take_ticket(ticket)
+  end
+
+  # A socket reads its session's scopes, then connects; a revoke between the two must
+  # not leave the socket open with them. This process is the socket: its connected cast
+  # is handled before `clients/0` (a call from the same process) returns.
+  test "a socket connecting after its session was revoked is told to close", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, %{id: id}} = HalC2.Auth.session(access)
+
+    assert {:ok, _} = HalC2.Auth.session_scopes(id)
+    assert HalC2.Auth.revoke_client(id)
+
+    HalC2.Auth.connected(id)
+    HalC2.Auth.clients()
+    assert_received {:hal_c2_session_revoked, ^id}
+  end
+
+  # A ticket request reads its session, then inserts the ticket; a revoke between the
+  # two must not leave a ticket for the revoked session.
+  test "a ticket requested just before its session was revoked is refused", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, session} = HalC2.Auth.session(access)
+
+    assert HalC2.Auth.revoke_client(session.id)
+    assert :error = HalC2.Auth.issue_ticket(session)
+  end
+
+  defp assert_exchange_fails(path, token, opts \\ []) do
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TRIGGER fail_sessions BEFORE INSERT ON auth_sessions
+      BEGIN SELECT RAISE(ABORT, 'busy'); END
+      """)
+
+    capture_log(fn ->
+      assert {_, {GenServer, :call, _}} = catch_exit(HalC2.Auth.exchange(token))
+    end)
+
+    :ok = Sqlite3.execute(db, "DROP TRIGGER fail_sessions")
+    Sqlite3.close(db)
+
+    # The crashed server is restarted by its supervisor; the new one reads the store.
+    if Keyword.get(opts, :restart, true) do
+      :ok = stop_supervised(HalC2.Auth)
+      start_supervised!(HalC2.Auth)
+    end
   end
 
   test "an administrator makes pairing links, and sees and revokes paired clients", %{port: port} do

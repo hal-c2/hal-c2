@@ -43,6 +43,33 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
   end
 
   # An hourly task that has run once, so it has a history.
+  # The run's prompt blocks on the thread's suspended stream, so the "run now" call
+  # stays unanswered on its own socket while the scenario goes on.
+  step "a task is running and the user waits for it with \"run now\"", context do
+    context = World.create_thread(context, "Triage", "api")
+    thread = World.thread_id(context, "Triage")
+    context = save_task(context, %{"threadId" => thread, "schedule" => every(60)})
+    id = context.task["id"]
+    :ok = :sys.suspend(HalC2.Streams.ensure(thread))
+
+    shape = %{"type" => "scheduledTasks", "mc" => Atom.to_string(node())}
+    waiter = context |> World.client("waiter") |> Mc.sub(7, shape)
+    call = System.unique_integer([:positive])
+    waiter = Mc.rpc(waiter, context.mc.environment, call, "scheduledTasks.runNow", %{"id" => id})
+
+    {_frame, waiter} =
+      Mc.await(waiter, fn frame ->
+        frame["t"] == "scheduledTasks" and
+          Enum.any?(frame["tasks"], &(&1["id"] == id and &1["lastRunStatus"] == "running"))
+      end)
+
+    [run] = for {pid, %{id: ^id}} <- :sys.get_state(HalC2.ScheduledTasks).runs, do: pid
+
+    context
+    |> World.put_client("waiter", waiter)
+    |> Map.merge(%{waiting: call, run: Process.monitor(run)})
+  end
+
   step "a task that runs every hour", context do
     context = context |> save_task(%{"schedule" => every(60)}) |> pass(60)
     assert %{"runCount" => 1, "lastRunStatus" => "succeeded"} = task(context)
@@ -279,6 +306,26 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
       )
 
     Map.put(context, :reply, reply)
+  end
+
+  step "the user deletes the task", context do
+    {reply, context} = World.call(context, "scheduledTasks.delete", %{"id" => context.task["id"]})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the run is stopped and the waiting user is told {string}", %{args: [message]} = context do
+    assert_receive {:DOWN, ref, :process, _, :killed} when ref == context.run, 5_000
+    {frame, waiter} = Mc.await(World.client(context, "waiter"), Mc.reply?(context.waiting))
+    assert %{"t" => "rpc.error", "error" => error} = frame
+    assert "#{error} #{inspect(frame["detail"])}" =~ message
+    World.put_client(context, "waiter", waiter)
+  end
+
+  step "a task made later with the same id starts with no run history", context do
+    context = save_task(context, %{"id" => context.task["id"], "threadId" => nil})
+    assert %{"lastRunStatus" => "never", "runCount" => 0} = task(context)
+    context
   end
 
   step "another client deleted the task {string}", %{args: [title]} = context do

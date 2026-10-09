@@ -5,16 +5,20 @@ defmodule HalC2.Cluster.Epmd do
   port `put_listen_port/1` names, and reaches a member at the address `put/3` last
   recorded for its host, which `HalC2.Cluster.Discovery` fills in. Nothing is
   registered or looked up anywhere else.
+
+  Addresses live in `HalC2.Cluster`'s table, the port for as long as the VM runs:
+  distribution outlives a cluster process that restarts, and names its port only once.
   """
 
   @table HalC2.Cluster
+  @port {__MODULE__, :listen_port}
 
   def start_link, do: :ignore
 
   def register_node(name, port), do: register_node(name, port, :inet)
 
   def register_node(_name, port, _family) do
-    :ets.insert(@table, {:listen_port, port})
+    put_listen_port(port)
     {:ok, -1}
   end
 
@@ -33,15 +37,10 @@ defmodule HalC2.Cluster.Epmd do
   end
 
   @doc "The port the MC listens on, once distribution started; the port to try before."
-  def listen_port do
-    case :ets.lookup(@table, :listen_port) do
-      [{_, port}] -> port
-      [] -> 0
-    end
-  end
+  def listen_port, do: :persistent_term.get(@port, 0)
 
   @doc false
-  def put_listen_port(port), do: :ets.insert(@table, {:listen_port, port})
+  def put_listen_port(port), do: :persistent_term.put(@port, port)
 
   @doc "Reaches the MC named after `host` at `ip` and `port` from now on."
   def put(host, ip, port), do: :ets.insert(@table, {{:address, host}, {ip, port}})

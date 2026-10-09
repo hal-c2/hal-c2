@@ -50,8 +50,7 @@ defmodule HalC2.Orchestration.IdleSessions do
     for {{mc, thread_id}, {"thread", %{"activeRunId" => run_id}}} <- HalC2.Shell.rows(),
         mc == node() and is_binary(run_id),
         run =
-          HalC2.Streams.ensure(thread_id)
-          |> HalC2.Streams.Server.state()
+          HalC2.Streams.state(thread_id)
           |> HalC2.StreamState.get("run")
           |> Map.get(run_id),
         run != nil and run["status"] in ~w(running waiting),

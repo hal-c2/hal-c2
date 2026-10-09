@@ -1,6 +1,7 @@
 defmodule HalC2.Web.SocketStreamDownTest do
   # A stream's server that stops takes its subscriptions with it; the sockets
-  # following it must tell their clients rather than go quiet.
+  # following it must tell their clients rather than go quiet. A subscription that
+  # ends must not feed the next one.
   use ExUnit.Case, async: false
 
   alias HalC2.Streams
@@ -85,6 +86,67 @@ defmodule HalC2.Web.SocketStreamDownTest do
     # Once the MC is back the client follows the stream again.
     {%{"t" => "live"}, [], client} = resubscribe(client, shape, live)
     {:ok, next} = Streams.commit("th-down", :thread, [item("c")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a message of the subscription a client left lands after it follows again, and is dropped",
+       %{client: client, shape: shape, live: live} do
+    stream = Streams.ensure("th-down")
+    [{socket, %{name: left}}] = Map.to_list(:sys.get_state(stream).subscribers)
+
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 7})
+    {%{"t" => "live"}, [], client} = resubscribe(client, shape, live)
+    [{^socket, %{name: name}}] = Map.to_list(:sys.get_state(stream).subscribers)
+    assert name != left
+
+    # What a relay on a slow link still held for the old subscription.
+    send(socket, {:hal_c2_stream, left, {:live, 0, live["handle"]}})
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a follow that gave up and is taken after all is ended once it goes live" do
+    [socket] = Map.keys(:sys.get_state(Streams.ensure("th-down")).subscribers)
+    late = Streams.ensure("th-late")
+    :erlang.trace(late, true, [:receive])
+
+    # What the follow/4 of a call that gave up does when it runs at last.
+    tag = {node(), make_ref()}
+    :ok = Streams.subscribe("th-late", socket, nil, %{tag: tag})
+    assert_receive {:trace, ^late, :receive, {:"$gen_cast", {:unsubscribe, ^socket, ^tag}}}, 1_000
+    :erlang.trace(late, false, [:receive])
+    assert :sys.get_state(late).subscribers == %{}
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a follow that gave up and is taken after the next one is told to resync",
+       %{client: client, shape: shape, live: live} do
+    [socket] = Map.keys(:sys.get_state(Streams.ensure("th-down")).subscribers)
+    :ok = Streams.subscribe("th-down", socket, nil, %{tag: {node(), make_ref()}})
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    assert resync == %{"t" => "resync", "id" => 7}
+
+    {%{"t" => "live"}, _, client} = resubscribe(client, shape, live)
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _, _} =
+             WsClient.recv_until(client, &(&1["t"] == "events"))
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "the unsubscribe of a follow that gave up does not end the one after it",
+       %{client: client} do
+    stream = Streams.ensure("th-down")
+    [socket] = Map.keys(:sys.get_state(stream).subscribers)
+    # What the socket casts for a follow that failed, landing after it followed again.
+    :ok = Streams.unsubscribe("th-down", socket, {node(), make_ref()})
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
 
     assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
              WsClient.recv(client, 1_000)

@@ -562,6 +562,98 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the provider's session cannot be opened while {string} starts a turn",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    sessions = HalC2.Plugins.sessions("codex")
+    :sys.replace_state(sessions, &%{&1 | max_children: 0})
+    context = context |> Map.put(:thread, thread) |> World.dispatch_message(thread, "Hi")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_latest_run(context, thread, "failed")
+    # Sessions open again for the next message.
+    :sys.replace_state(sessions, &%{&1 | max_children: :infinity})
+    context
+  end
+
+  # The delete reaches the thread's stream first, the end of the turn right behind it.
+  step "the provider ends the turn while {string} is deleted", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, id)
+    stream = HalC2.Streams.ensure(id)
+    test = self()
+
+    :ok = :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+    deleter = spawn(fn -> send(test, {:deleted, delete(id)}) end)
+    await_call(stream, deleter)
+    :ok = HalC2.Codex.ThreadRuntime.interrupt(id, context.running)
+    await_call(stream, runtime)
+    :erlang.trace(stream, false, [:receive])
+    :ok = :sys.resume(stream)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    context
+  end
+
+  # The delete lands while the runtime waits to claim the run its turn started.
+  step "{string} is deleted while its turn starts", %{args: [thread]} = context do
+    context = World.providers(context)
+    id = World.thread_id(context, thread)
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    await_claim(watch)
+
+    spawn(fn -> send(test, {:deleted, delete(id)}) end)
+    World.await_runs(context, thread, ["cancelled"])
+    :ok = :sys.resume(watch)
+
+    assert_receive {:deleted, {:ok, _}}, 5_000
+    assert_receive {:sent, {:ok, _}}, 5_000
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run of {string} stays cancelled", %{args: [thread]} = context do
+    World.await_runs(context, thread, ["cancelled"])
+    context
+  end
+
+  # The first message's runtime waits to claim its run while the start gives up on it,
+  # as begin_turn/2 does when its call to the runtime times out.
+  step "the start of a turn in {string} gave up while a second message waits",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    id = World.thread_id(context, thread)
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    runtime = await_claim(watch)
+    assert {:ok, _} = HalC2.Orchestration.dispatch(start(id))
+    state = World.await_runs(context, thread, ["starting", "queued"])
+    [first, _] = state |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+    :erlang.trace(runtime, true, [:receive])
+    failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+    HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
+  end
+
+  step "the provider starts the first turn anyway", context do
+    :ok = :sys.resume(context.watch)
+    context
+  end
+
+  step "the first run of {string} stays failed and the second runs alone",
+       %{args: [thread]} = context do
+    World.await_runs(context, thread, ["failed", "running"])
+    # The first turn's end, which Codex sends as the runtime lets go of it, is not the second's.
+    :ok = GenServer.call(context.runtime, :settle)
+    World.await_runs(context, thread, ["failed", "running"])
+    context
+  end
+
   step "{string} has a running turn and a queued message {string}",
        %{args: [thread, text]} = context do
     context
@@ -1078,5 +1170,37 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   defp await_status(context, run_id, status) do
     World.await_state(context, context.thread, &(&1.entities["run"][run_id]["status"] == status))
+  end
+
+  defp start(id),
+    do: %{
+      "type" => "message.dispatch",
+      "threadId" => id,
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => "wait",
+      "attachments" => [],
+      "dispatchMode" => %{"type" => "queue_after_active"}
+    }
+
+  defp delete(id),
+    do: HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+
+  defp await_call(stream, from),
+    do: assert_receive({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}}, 5_000)
+
+  defp suspend_watch do
+    watch = Process.whereis(HalC2.Orchestration.TurnWatch)
+    :ok = :sys.suspend(watch)
+    :erlang.trace(watch, true, [:receive])
+    watch
+  end
+
+  # The runtime claiming a run from the suspended TurnWatch, once the turn started.
+  defp await_claim(watch) do
+    assert_receive {:trace, ^watch, :receive, {:"$gen_call", {runtime, _}, {:claim, _, _, _}}},
+                   5_000
+
+    :erlang.trace(watch, false, [:receive])
+    runtime
   end
 end

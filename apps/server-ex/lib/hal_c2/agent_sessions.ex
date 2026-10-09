@@ -337,8 +337,7 @@ defmodule HalC2.AgentSessions do
     # the project, before its sidebar row exists.
     project =
       project_id
-      |> HalC2.Streams.ensure()
-      |> HalC2.Streams.Server.state()
+      |> HalC2.Streams.state()
       |> StreamState.get("project")
       |> Map.get(project_id)
 

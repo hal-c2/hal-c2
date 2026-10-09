@@ -51,7 +51,7 @@ defmodule HalC2.Orchestration do
     driver =
       case HalC2.Shell.row(node(), thread_id) do
         {"thread", _row} ->
-          HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+          HalC2.Streams.state(thread_id)
           |> StreamState.list("provider-thread")
           |> Enum.max_by(&(&1["lastRunOrdinal"] || 0), fn -> nil end)
           |> then(&(&1 && (&1["driver"] || driver_for(&1["providerInstanceId"] || "codex"))))
@@ -104,7 +104,7 @@ defmodule HalC2.Orchestration do
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     HalC2.Checkpoint.turn_diff(state, thread_id, from, to, input["ignoreWhitespace"] != false)
   end
 
@@ -200,7 +200,7 @@ defmodule HalC2.Orchestration do
   # A thread an agent created during a run shows in that run's transcript as a link.
   def dispatch(%{"type" => "thread.created.record", "parentThreadId" => parent_id} = command) do
     target_id = command["targetThreadId"]
-    target_state = HalC2.Streams.Server.state(HalC2.Streams.ensure(target_id))
+    target_state = HalC2.Streams.state(target_id)
     target = StreamState.get(target_state, "thread")[target_id]
     target_run = command["targetRunId"]
 
@@ -518,7 +518,7 @@ defmodule HalC2.Orchestration do
   # A queued message steers the running turn when its provider can take it; otherwise
   # it goes first and the run is interrupted, which starts it next.
   def dispatch(%{"type" => "queued-message.promote-to-steer", "threadId" => thread_id} = command) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.get(state, "run")
     queued = runs[command["queuedRunId"]]
@@ -674,8 +674,7 @@ defmodule HalC2.Orchestration do
 
   defp message_request(thread_id, request_id) do
     request =
-      HalC2.Streams.ensure(thread_id)
-      |> HalC2.Streams.Server.state()
+      HalC2.Streams.state(thread_id)
       |> StreamState.get("runtime-request")
       |> Map.get(request_id)
 
@@ -686,7 +685,7 @@ defmodule HalC2.Orchestration do
   # running turn when there is one to steer, else as the thread's next turn. Sending
   # the same answer again changes nothing.
   defp answer_with_message(thread_id, request, command) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     item = StreamState.get(state, "turn-item")[question_item(request)] || %{}
     answers = command["answers"] || %{}
 
@@ -836,7 +835,7 @@ defmodule HalC2.Orchestration do
   @doc """
   Stops an idle thread's provider processes and marks its sessions stopped; the
   next run starts them again and resumes the provider's thread. Refused while a
-  run is active.
+  run is active, and by a runtime that took a turn since.
   """
   def release_session(thread_id) do
     released =
@@ -861,8 +860,7 @@ defmodule HalC2.Orchestration do
         end
       end)
 
-    if released == :ok, do: stop_session(thread_id)
-    released
+    if released == :ok, do: stop_session(thread_id), else: released
   end
 
   # A runtime runs under its provider plugin's sessions supervisor (`HalC2.Plugins`).
@@ -885,12 +883,55 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
+  # Each runtime stops if it is idle. The thread was idle when its caller looked, but a
+  # message may have started a turn since; that runtime keeps it (`:busy`).
+  defp release_runtimes(thread_id) do
+    kept =
+      for registry <- [
+            HalC2.Codex.Registry,
+            HalC2.Claude.Registry,
+            HalC2.Acp.Registry,
+            HalC2.Pi.Registry
+          ],
+          Process.whereis(registry) != nil,
+          {pid, _} <- Registry.lookup(registry, thread_id),
+          release(pid) == :busy,
+          do: pid
+
+    if kept == [], do: :ok, else: :busy
+  end
+
+  # A runtime replies to its release before it stops: it is gone once this returns,
+  # as it was when the release was a supervisor's stop. One that does not answer in
+  # time is still there, and may be driving a turn: it is kept, like a busy one.
+  defp release(pid) do
+    ref = Process.monitor(pid)
+
+    reply =
+      try do
+        GenServer.call(pid, :release, Application.get_env(:hal_c2, :release_timeout_ms, 15_000))
+      catch
+        :exit, {:timeout, _} -> :busy
+        :exit, _ -> :gone
+      end
+
+    if reply == :ok do
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      after
+        15_000 -> :ok
+      end
+    end
+
+    Process.demonitor(ref, [:flush])
+    reply
+  end
+
   # The stopped session's agent loses its HAL-C2 tools; the next session gets new ones.
   # A deleted thread only stops its runtimes: its agent's credential still reaches
   # the tools, which answer that the calling thread is gone.
   defp stop_session(thread_id) do
-    stop_runtimes(thread_id)
-    HalC2.Mcp.revoke(thread_id)
+    with :ok <- release_runtimes(thread_id), do: HalC2.Mcp.revoke(thread_id)
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -924,10 +965,35 @@ defmodule HalC2.Orchestration do
   end
 
   # The checkout is ready and its baseline taken before the runtime starts the turn.
+  # A start that fails anywhere (the checkout, the runtime starting, or the runtime
+  # dying while it starts the turn) must not leave the run "starting" forever: the
+  # run fails and the thread can take the next message. Once the turn was claimed,
+  # `HalC2.Orchestration.TurnWatch` may be ending it too; only the first to abandon
+  # it does.
   defp begin_turn(thread_id, turn) do
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-    start_turn(thread_id, turn)
+    :ok = start_turn(thread_id, turn)
+  catch
+    kind, reason ->
+      require Logger
+      Logger.warning("turn failed to start in #{thread_id}: #{inspect({kind, reason})}")
+
+      HalC2.Orchestration.TurnWriter.abandon(
+        thread_id,
+        turn.ids.run,
+        "failed",
+        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+      )
+  end
+
+  # A runtime that released itself as idle just before this run began stops with the
+  # call unanswered (or is gone by the call); a new one takes the turn.
+  defp start_turn(thread_id, turn) do
+    runtime(turn.ids.instance).start_turn(thread_id, turn)
+  catch
+    :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
+      runtime(turn.ids.instance).start_turn(thread_id, turn)
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
@@ -948,25 +1014,6 @@ defmodule HalC2.Orchestration do
     end
 
     :ok
-  end
-
-  # A runtime that dies while starting the turn must not leave the run "starting"
-  # forever: the run fails and the thread can take the next message. Once the turn
-  # was claimed, `HalC2.Orchestration.TurnWatch` may be ending it too; only the
-  # first to abandon it does.
-  defp start_turn(thread_id, turn) do
-    :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
-  catch
-    :exit, reason ->
-      require Logger
-      Logger.warning("turn failed to start in #{thread_id}: #{inspect(reason)}")
-
-      HalC2.Orchestration.TurnWriter.abandon(
-        thread_id,
-        turn.ids.run,
-        "failed",
-        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
-      )
   end
 
   @doc """
@@ -1177,7 +1224,7 @@ defmodule HalC2.Orchestration do
       })
 
   defp regenerate_title(thread_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     previous = (StreamState.get(state, "thread")[thread_id] || %{})["title"] || ""
 
     messages =
@@ -1230,7 +1277,7 @@ defmodule HalC2.Orchestration do
 
   # An agent that cannot start fails its run before `start_turn` returns.
   defp started(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
 
     case StreamState.get(state, "run")[run_id] do
       %{"status" => "failed"} ->
@@ -1411,7 +1458,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp interrupt_undriven(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     runs = StreamState.list(state, "run")
 
     run =
@@ -1437,37 +1484,49 @@ defmodule HalC2.Orchestration do
   end
 
   defp dispatch_message(thread_id, command) do
-    decide = fn state ->
-      case decide_message(state, thread_id, command) do
-        {[], {:ok, :sent}} = sent ->
-          sent
-
-        {changes, {:ok, _} = result} ->
-          {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
-
-        refused ->
-          refused
-      end
-    end
+    decide = fn state -> decide_dispatch(state, thread_id, command) end
 
     case HalC2.Streams.transact(thread_id, :thread, decide) do
-      {:ok, status} when status in [:queued, :sent] ->
+      {:ok, _} = decided -> dispatched(thread_id, command, decided)
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  `message.dispatch` decided inside a transaction of the thread's stream, for a caller
+  that records the message together with its own changes; `dispatched/3` finishes it
+  once the transaction has committed.
+  """
+  def decide_dispatch(state, thread_id, command) do
+    case decide_message(state, thread_id, command) do
+      {[], {:ok, :sent}} = sent ->
+        sent
+
+      {changes, {:ok, _} = result} ->
+        {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
+
+      refused ->
+        refused
+    end
+  end
+
+  @doc "What follows a committed `decide_dispatch/3`: starting the turn, steering or interrupting."
+  def dispatched(thread_id, command, {:ok, decided}) do
+    case decided do
+      status when status in [:queued, :sent] ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:ok, {:steer, run}} ->
+      {:steer, run} ->
         steer(thread_id, run, command)
 
-      {:ok, {:restart, active_run_id}} ->
+      {:restart, active_run_id} ->
         # The queued message goes first; the interrupted run's end starts it.
         _ = interrupt_any(thread_id, active_run_id)
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:ok, turn} ->
+      turn ->
         begin_turn(thread_id, turn)
         {:ok, %{"sequence" => sequence(thread_id)}}
-
-      {:error, _} = error ->
-        error
     end
   end
 
@@ -1496,7 +1555,7 @@ defmodule HalC2.Orchestration do
     upsert(state, "thread", thread_id, &(&1 |> Map.merge(unsettled) |> Map.merge(unsnoozed)))
   end
 
-  defp sequence(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)).seq
+  defp sequence(thread_id), do: HalC2.Streams.state(thread_id).seq
 
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")
@@ -1652,7 +1711,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp run_active?(thread_id, run_id) do
-    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    state = HalC2.Streams.state(thread_id)
     (StreamState.get(state, "run")[run_id] || %{})["status"] in @active_statuses
   end
 
@@ -2786,7 +2845,7 @@ defmodule HalC2.Orchestration do
   defp implemented_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
        when is_binary(plan_thread) do
     project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
-    project_id = project.(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), thread_id)
+    project_id = project.(HalC2.Streams.state(thread_id), thread_id)
 
     HalC2.Streams.transact(plan_thread, :thread, fn state ->
       case StreamState.get(state, "plan")[plan_id] do

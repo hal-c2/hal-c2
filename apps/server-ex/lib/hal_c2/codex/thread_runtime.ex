@@ -173,6 +173,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
+  def handle_call(:release, _from, %{turn: nil} = state),
+    do: {:stop, {:shutdown, :released}, :ok, state}
+
+  def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
   def handle_call(:interrupt, _from, %{turn: %{native_turn_id: turn_id}} = state)
       when is_binary(turn_id) do
     Connection.call(state.conn, "turn/interrupt", %{
@@ -480,7 +486,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       # As `started/1` does, with Codex's native turn and thread.
       TurnWatch.claim(state.thread_id, ids.run)
 
-      commit(state, fn stream ->
+      commit_active(state, ids.run, fn stream ->
         [
           Orchestration.create(
             "provider-turn",
@@ -527,8 +533,19 @@ defmodule HalC2.Codex.ThreadRuntime do
           )
         ]
       end)
+      |> case do
+        :ok ->
+          {:ok, %{state | turn: turn}}
 
-      {:ok, %{state | turn: turn}}
+        # The run ended while Codex started its turn: nothing wants the turn now.
+        :ended ->
+          Connection.call(state.conn, "turn/interrupt", %{
+            "threadId" => state.native_thread_id,
+            "turnId" => native_turn
+          })
+
+          {:ok, %{state | turn: nil}}
+      end
     end
   end
 
@@ -990,6 +1007,15 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # The end of a turn let go of before it started (`begin_turn/2`).
+  defp notification(
+         "turn/completed",
+         %{"turn" => %{"id" => id}},
+         %{turn: %{native_turn_id: own}} = state
+       )
+       when is_binary(own) and id != own,
+       do: state
+
   defp notification("turn/completed", %{"turn" => turn}, state) do
     status =
       if turn["status"] in ["completed", "interrupted", "failed"],
@@ -1220,7 +1246,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # archived or deleted thread is left alone.
   defp wake(thread_id, item) do
     Task.start(fn ->
-      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      stream = HalC2.Streams.state(thread_id)
       thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
 
       latest =

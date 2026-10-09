@@ -80,9 +80,12 @@ defmodule HalC2.ClusterTest do
     :ok = GenServer.stop(stream)
     assert_receive {:DOWN, ^ref, :process, ^relay, :killed}, 1_000
 
-    # A stream from before relays gives the subscribers it already has one.
-    {:ok, %{relays: %{^subscriber => relay}}} =
-      Streams.Server.code_change(1, Map.delete(state, :relays), nil)
+    # A stream from before relays gives the subscribers it already has one, and sends
+    # them their messages under its id as it did.
+    subscribers = Map.new(state.subscribers, fn {pid, sub} -> {pid, Map.delete(sub, :name)} end)
+
+    {:ok, %{relays: %{^subscriber => relay}, subscribers: %{^subscriber => %{name: "local-th"}}}} =
+      Streams.Server.code_change(1, %{Map.delete(state, :relays) | subscribers: subscribers}, nil)
 
     send(relay, {:hal_c2_stream, "local-th", :passed_on})
     assert_receive {:hal_c2_stream, "local-th", :passed_on}, 1_000
@@ -129,6 +132,109 @@ defmodule HalC2.ClusterTest do
     assert {:events, [%{entity: "item-2"}], ^next} = first
     assert_receive {:hal_c2_stream, "windowed-th", {:page, ^next, page, nil, :done}}, 1_000
     assert for({"turn-item", id, _} <- page, do: id) == ["item-1"]
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a relay that failed before its subscriber left does not take the stream down",
+       %{b: b} do
+    alias HalC2.Streams
+
+    {:ok, _} = Streams.commit("left-th", :thread, [{"note", "n1", %{"s" => %{"v" => 1}}}])
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    :ok = Streams.subscribe("left-th", subscriber, nil)
+    assert_receive {:hal_c2_stream, "left-th", {:live, _}}, 1_000
+    stream = Streams.ensure("left-th")
+    %{relays: %{^subscriber => relay}} = :sys.get_state(stream)
+
+    # The subscriber leaves, and its relay fails before the stream gets to it.
+    :ok = :sys.suspend(stream)
+    :ok = Streams.unsubscribe("left-th", subscriber)
+    ref = Process.monitor(relay)
+    Process.exit(relay, :failed)
+    assert_receive {:DOWN, ^ref, :process, ^relay, :failed}
+    # Taken while suspended: the relay's exit is in the stream's mailbox now.
+    %{relays: %{^subscriber => ^relay}} = :sys.get_state(stream)
+    :ok = :sys.resume(stream)
+
+    assert %{relays: relays, subscribers: subscribers} = :sys.get_state(stream)
+    assert relays == %{} and subscribers == %{}
+    assert Streams.ensure("left-th") == stream
+  end
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "a client whose relay fails is told to resync, and follows the thread again",
+       %{port: port, b: b} do
+    {:ok, _} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n1")]])
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "stream", "mc" => Atom.to_string(b), "stream" => "relayed-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+
+    stream = :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"])
+    [relay] = Map.values(:erpc.call(b, :sys, :get_state, [stream]).relays)
+    true = :erpc.call(b, Process, :exit, [relay, :failed])
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    assert resync == %{"t" => "resync", "id" => 1}
+    assert :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"]) == stream
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {:ok, seq} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n2")]])
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    assert [[^seq, "note", "n2", _, _at]] = events["events"]
+  end
+
+  defp note(id), do: {"note", id, %{"s" => %{"v" => 1}}}
+
+  # Found by proof/hal_c2/stream_relay_proof_test.exs. A suspended socket still takes
+  # the messages sent to it.
+  test "a client whose follow is answered as the MCs part and meet again is told it failed",
+       %{tmp_dir: dir, port: port} do
+    {peer, c} = member(dir)
+    true = Node.connect(c)
+    {:ok, _} = :peer.call(peer, HalC2.Streams, :commit, ["split-th", :thread, [note("n1")]])
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+
+    # The socket, found by a stream here it follows.
+    {:ok, _} = HalC2.Streams.commit("here-th", :thread, [note("n1")])
+    here = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "here-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => here})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure("here-th")).subscribers)
+
+    # The stream on c holds the follow until the socket waits for its answer.
+    stream = :erpc.call(c, HalC2.Streams, :ensure, ["split-th"])
+    tracer = Node.spawn(c, HalC2.Test.Forward, :loop, [self()])
+    1 = :erpc.call(c, :erlang, :trace, [stream, true, [:receive, {:tracer, tracer}]])
+    :ok = :erpc.call(c, :sys, :suspend, [stream])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(c), "stream" => "split-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+
+    assert_receive {:trace, ^stream, :receive,
+                    {:"$gen_call", {worker, _}, {:subscribe, ^socket, _, _}}},
+                   5_000
+
+    # The answer lands, and the MCs part and meet again, before the socket reads it.
+    :erlang.trace(socket, true, [:receive])
+    true = :erlang.suspend_process(socket)
+    :ok = :erpc.call(c, :sys, :resume, [stream])
+    assert_receive {:trace, ^socket, :receive, {:DOWN, _, :process, ^worker, _}}, 5_000
+    true = Node.disconnect(c)
+    true = Node.connect(c)
+    assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
+    true = :erlang.resume_process(socket)
+    :erlang.trace(socket, false, [:receive])
+
+    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2))
+    assert %{"t" => "error", "id" => 2} = error
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {:ok, seq} = :erpc.call(c, HalC2.Streams, :commit, ["split-th", :thread, [note("n2")]])
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    assert [[^seq, "note", "n2", _, _at]] = events["events"]
   end
 
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do

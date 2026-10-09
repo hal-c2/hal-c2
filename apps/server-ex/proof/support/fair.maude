@@ -1,0 +1,64 @@
+sload model-checker
+
+--- A model's rules seen from the meta level, which HalC2.Proof includes with the model's
+--- own module as `model` and its rule labels as `labels`. `fair` steps the model and
+--- counts off the labels assumed weakly fair, in order: each is passed once it is
+--- taken, or once it cannot happen. `round` holds when all of them have been, so a path
+--- on which `[] <> round` holds is weakly fair to each (HalC2.Proof.assert_ltl/4).
+
+mod FAIR is
+  protecting META-LEVEL .
+  including MODEL-CHECKER .
+  including LTL-SIMPLIFIER .
+
+  sorts Fair Steps .
+  subsort Fair < State .
+
+  op model : -> Module [memo] .
+  op labels : -> QidSet .
+
+  --- The rule that led to a state, the fair labels left this round and all of them, and
+  --- the state, as a meta term.
+  op fair : Qid QidList QidList Term -> Fair [ctor] .
+
+  op done : -> Steps [ctor] .
+  op step : Term Qid -> Steps [ctor] .
+  op _&_ : Steps Steps -> Steps [ctor assoc comm id: done] .
+
+  vars T T' : Term .
+  vars L L' : Qid .
+  var LS : QidSet .
+  vars QL QL' : QidList .
+  var J : Nat .
+  var SS : Steps .
+  var P : Prop .
+  var R : Result4Tuple .
+
+  op steps : Term QidSet -> Steps .
+  op steps : Term Qid Nat -> Steps .
+  eq steps(T, none) = done .
+  eq steps(T, L ; LS) = steps(T, L, 0) & steps(T, LS) .
+  ceq steps(T, L, J) = step(getTerm(R), L) & steps(T, L, s J)
+    if R := metaXapply(model, T, L, none, 0, unbounded, J) .
+  eq steps(T, L, J) = done [owise] .
+
+  crl [step] : fair(L, QL, QL', T) => fair(L', left(L', T', if QL == nil then QL' else QL fi), QL', T')
+    if step(T', L') & SS := steps(T, labels) .
+
+  op left : Qid Term QidList -> QidList .
+  eq left(L, T, nil) = nil .
+  eq left(L, T, L' QL) = if L == L' or not enabled(T, L') then left(L, T, QL) else L' QL fi .
+
+  op enabled : Term Qid -> Bool .
+  eq enabled(T, L) = metaXapply(model, T, L, none, 0, unbounded, 0) :: Result4Tuple .
+
+  --- No rule but those left out can happen: HalC2.Proof.refute_deadlock/4.
+  op stuck : Term QidSet -> Bool .
+  eq stuck(T, none) = true .
+  eq stuck(T, L ; LS) = not enabled(T, L) and stuck(T, LS) .
+
+  op round : -> Prop [ctor] .
+  eq fair(L, nil, QL, T) |= round = true .
+  --- The model's own propositions.
+  eq fair(L, QL, QL', T) |= P = getTerm(metaReduce(model, '_|=_[T, upTerm(P)])) == 'true.Bool [owise] .
+endm
