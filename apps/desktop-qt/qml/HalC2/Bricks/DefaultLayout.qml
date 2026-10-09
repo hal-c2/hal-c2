@@ -18,6 +18,11 @@ Item {
     // are then the drag handle of a frameless window and carry its buttons. A
     // root whose system frames the window (Android) turns it off.
     property bool framesWindow: true
+    // Whether the layout shows the window's ConnectionNotice, as a strip at the
+    // foot of the window that takes its own room, so it covers neither the
+    // header's controls nor the thread. A root that places the notice itself
+    // (the phone) turns it off.
+    property bool connectionNotice: true
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive
@@ -45,6 +50,8 @@ Item {
         }
 
         RowLayout {
+            id: body
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
@@ -232,6 +239,22 @@ Item {
             }
         }
 
+        // The window's connection, while it is not live: the one place that says so.
+        Item {
+            id: noticeStrip
+
+            objectName: "connectionNoticeStrip"
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? windowNotice.height + 16 : 0
+            visible: layout.connectionNotice && (windowNotice.troubled || windowNotice.warning !== null)
+
+            ConnectionNotice {
+                id: windowNotice
+
+                y: 8
+            }
+        }
+
         // The status bar: empty, and so absent, until a plugin fills it.
         PluginSlot {
             objectName: "statusbarSlot"
@@ -248,12 +271,17 @@ Item {
         anchors.fill: parent
     }
 
+    // Toasts stack from the top right, under the header strip, as the web's
+    // viewport does: clear of the window controls, the composer and the
+    // terminal drawer's toolbar. Over a right-hand panel they cover its
+    // top, which is the price of a stack that never moves with the panels.
     Notifications {
-        anchors.bottom: parent.bottom
+        objectName: "toasts"
+        anchors.top: parent.top
         anchors.right: parent.right
-        anchors.bottomMargin: 180
+        anchors.topMargin: body.y + centre.y + (workspaceView.visible ? workspaceView.y + workspaceView.height : 0) + 16
         anchors.rightMargin: 16
-        fromBottom: true
-        maximumHeight: parent.height - anchors.bottomMargin - 16
+        opaque: true
+        maximumHeight: parent.height - anchors.topMargin - 16
     }
 }

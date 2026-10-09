@@ -259,6 +259,52 @@ Item {
             compare(Threads.reloads, ["env-1:thread-1"]);
         }
 
+        // The window's own notice says the connection dropped, once and with
+        // its one retry; the thread's banner stays quiet then.
+        function test_aDroppedConnectionIsNotSaidAgainByTheThread() {
+            rows.status = "unreachable";
+            rows.problem = "The connection to its environment dropped.";
+            Shell.state = Object.assign({}, Shell.state, {
+                connection: {
+                    phase: "reconnecting",
+                    title: "Reconnecting to ai-beast",
+                    detail: "Connection refused"
+                }
+            });
+            const view = openThread();
+            verify(!visibleIn(findChild(view, "threadProblem")));
+            // A store that could not load is not a dropped connection.
+            Shell.state = Object.assign({}, Shell.state, {
+                connection: {
+                    phase: "problem",
+                    title: "Could not load projects and threads",
+                    detail: "no"
+                }
+            });
+            verify(visibleIn(findChild(view, "threadProblem")));
+            // Connected again, the thread alone is unreachable.
+            Shell.state = Object.assign({}, Shell.state, {
+                connection: {
+                    phase: "connected",
+                    title: "",
+                    detail: ""
+                }
+            });
+            verify(visibleIn(findChild(view, "threadProblem")));
+        }
+
+        // Warning-orange text on the 10% orange fill did not read in a light
+        // theme: the sentence is the theme's text, the hue a stripe.
+        function test_theUnreachableBannerReadsInTheThemesText() {
+            rows.status = "unreachable";
+            rows.problem = "stream closed";
+            const view = openThread();
+            const sentence = findText(findChild(view, "threadProblem"), "This thread's MC cannot be reached: stream closed");
+            verify(sentence !== null);
+            compare(sentence.color, Theme.palette.color("text", "#e4e4e7"));
+            verify(sentence.color !== Theme.palette.color("warning", "#f59e0b"));
+        }
+
         function test_linksInAReplyLeadWhereTheyPoint_data() {
             return [
                 {

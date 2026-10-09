@@ -671,6 +671,57 @@ private slots:
     QVERIFY(!settingsNav->isVisible());
   }
 
+  // Scenarios: Toasts appear under the header at the top right
+  // (features/navigation/toasts.feature) and A dropped connection is reported
+  // once (features/connections/connection-health.feature): neither the
+  // reconnecting notice nor a toast lies over the header, the window controls,
+  // the thread, the composer or the terminal drawer.
+  void noticesCoverNothing() {
+    QFile::remove(directory.filePath("shell.qml"));
+    runtime->reload();
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->resize(1200, 800);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
+                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+                                             {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
+                                             {"versionWarning", QVariant()}});
+    bridge.publish("toasts", QVariantMap{{"expanded", false},
+                                         {"items", QVariantList{QVariantMap{{"id", "t1"}, {"type", "info"}, {"title", "Updates available"},
+                                                                            {"description", "2 providers"}, {"actions", QVariantList{}},
+                                                                            {"updateKey", ""}, {"revision", 0}}}}});
+    auto* notice = findVisualItem(window->contentItem(), "connectionNotice");
+    auto* toasts = findVisualItem(window->contentItem(), "toasts");
+    auto* workspace = findVisualItem(window->contentItem(), "workspace");
+    auto* sidebar = findVisualItem(window->contentItem(), "threadSidebar");
+    QVERIFY(notice);
+    QVERIFY(toasts);
+    QVERIFY(workspace);
+    QVERIFY(sidebar);
+    QTRY_VERIFY(notice->isVisible());
+    QTRY_VERIFY(toasts->height() > 0);
+    const auto rect = [](QQuickItem* item) { return QRectF(item->mapToScene(QPointF()), QSizeF(item->width(), item->height())); };
+    // The one notice takes room of its own, below everything the window lays out.
+    for (const char* name : {"workspace", "centreHost", "threadSidebar"}) {
+      auto* other = findVisualItem(window->contentItem(), name);
+      QVERIFY(other);
+      QVERIFY2(!rect(notice).intersects(rect(other)), name);
+    }
+    // The toasts hang under the header, inside the window.
+    QVERIFY(rect(toasts).top() >= rect(workspace).bottom());
+    QVERIFY(rect(toasts).right() <= window->width());
+    QVERIFY(!rect(toasts).intersects(rect(notice)));
+    bridge.publish("toasts", QVariant());
+    bridge.publish("connection", QVariant());
+    bridge.publish("route", QVariant());
+  }
+
   void shellsShowThePendingQuestion_data() {
     QTest::addColumn<QString>("example");
     for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {

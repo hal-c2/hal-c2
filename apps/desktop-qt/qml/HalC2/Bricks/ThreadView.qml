@@ -25,6 +25,13 @@ Item {
     readonly property var workspace: Shell.state.workspace ?? null
     readonly property string status: model ? model.status : "loading"
     readonly property bool unreachable: !draft && status === "unreachable"
+    // The window's connection has a notice of its own (ConnectionNotice). A
+    // store that could not load is not a dropped connection: the thread's
+    // banner still speaks then.
+    readonly property bool connectionReported: {
+        const connection = Shell.state.connection ?? null;
+        return connection !== null && connection.title.length > 0 && connection.phase !== "problem";
+    }
     readonly property bool loading: !draft && (model === null || (status === "loading" && model.count === 0))
     readonly property bool empty: !draft && status === "live" && model !== null && model.count === 0
     // The composer's message is on its way to the MC.
@@ -124,7 +131,10 @@ Item {
             })
     }
 
-    // Why the thread stopped following its MC, with a way to try again.
+    // Why the thread stopped following its MC, with a way to try again. While
+    // the window's own connection is down the ConnectionNotice says so, once and
+    // with its one retry, so the thread stays quiet; this speaks for a thread
+    // that cannot be reached while the connection is up.
     Rectangle {
         id: problemBar
         objectName: "threadProblem"
@@ -133,8 +143,19 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? problemRow.implicitHeight + 16 : 0
-        visible: view.unreachable
+        visible: view.unreachable && !view.connectionReported
         color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.1)
+
+        // The warning hue is the stripe; the sentence is the theme's text,
+        // which reads on the tint (the warning colour itself does not, in a
+        // light theme).
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 3
+            color: Theme.palette.color("warning", "#f59e0b")
+        }
 
         RowLayout {
             id: problemRow
@@ -145,7 +166,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("text", "#e4e4e7")
                 font.family: view.uiFamily
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap

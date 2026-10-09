@@ -72,3 +72,11 @@ Feature: Toasts
     When the user collapses the toasts
     And 1 second passes
     Then the toast "Failed to settle thread" is gone
+
+  # Proved by tst_Notifications.qml and tst_ShellWindow.qml, not yet by a step (hal-c2/hal-c2#140).
+  @desktop @backlog-desktop
+  Scenario: Toasts appear under the header at the top right
+    Given the terminal drawer and the thread details are open
+    When a toast is shown
+    Then it is below the header, at the right
+    And it covers neither the window controls, the terminal drawer nor the composer
