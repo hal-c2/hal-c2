@@ -12,7 +12,8 @@ Base severities on the **ui-ux-pro-max** skill. Its search tool
 (`ux guide "<outcome>"`)
 gives you a named guideline to argue a severity against and to phrase a fix
 in (contrast, truncation, feedback, error messages, focus, navigation,
-density). Also read the **qt-qml** skill before proposing QML fixes. Fixes go
+density). If the **qt-qml** skill is installed (bootstrap warns when it is
+not), read it before proposing QML fixes. Fixes go
 through the shared bricks (`ShellButton`, `ShellComboBox`,
 `ShellSplitButton`, `ShellTabs`, `ShellCard`, `Theme` roles) in
 `apps/desktop-qt/qml/HalC2/Bricks/`, never through one-off restyles.
