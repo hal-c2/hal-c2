@@ -264,6 +264,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
+  def handle_call(:release, _from, %{turn: nil} = state),
+    do: {:stop, {:shutdown, :released}, :ok, state}
+
+  def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
   def handle_call(:interrupt, _from, %{turn: turn, session: session} = state)
       when turn != nil and session != nil do
     Session.control(session, "interrupt")

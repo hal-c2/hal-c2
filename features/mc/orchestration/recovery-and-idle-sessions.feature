@@ -265,6 +265,14 @@ Feature: Recovering from restarts and releasing idle sessions
     When the user sends "Back" to "t1"
     Then the provider starts again and resumes its conversation
 
+  # The check found the thread idle and the message reached the provider process first;
+  # a provider process that took the turn instead keeps it.
+  @mc
+  Scenario: A message sent as its idle session is released still runs
+    Given thread "t1" has a live provider process and no activity for 30 minutes
+    When the MC releases the session of "t1" as the user sends "Back" to "t1"
+    Then the provider starts again and resumes its conversation
+
   # The user-facing flow, cancelling and dropping a resume are in threads/limited-threads.feature.
   @mc
   Scenario: A thread stopped by a usage limit is resumed at the reset time

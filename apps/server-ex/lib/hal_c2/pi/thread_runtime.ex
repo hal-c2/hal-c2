@@ -159,6 +159,12 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
+  # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
+  def handle_call(:release, _from, %{turn: nil} = state),
+    do: {:stop, {:shutdown, :released}, :ok, state}
+
+  def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
   def handle_call(:interrupt, _from, %{turn: turn} = state) when turn != nil do
     Connection.notify(state.conn, "abort", %{})
     {:reply, :ok, %{cancel_requests(state) | interrupted: true}}
