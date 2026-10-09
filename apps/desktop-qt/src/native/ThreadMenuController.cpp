@@ -86,6 +86,10 @@ bool ThreadMenuController::handle(const QString& action, const QVariant& payload
   if (action == QLatin1String("thread.menu")) {
     return open(map.value(QStringLiteral("key")).toString(), x, y, false);
   }
+  if (action == QLatin1String("thread.unpin")) {
+    unpin(map.value(QStringLiteral("key")).toString());
+    return true;
+  }
   if (action == QLatin1String("workspace.titleMenu")) {
     const auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
     if (!workspace || !workspace->place()) return true;

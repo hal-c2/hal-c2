@@ -797,6 +797,9 @@ Rectangle {
                         onUnsettleRequested: Shell.dispatch("thread.unsettle", {
                             key: entry.modelData.item.key
                         })
+                        onUnpinRequested: Shell.dispatch("thread.unpin", {
+                            key: entry.modelData.item.key
+                        })
                         onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {
                             key: entry.modelData.item.key
                         })

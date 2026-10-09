@@ -42,6 +42,7 @@ Item {
     signal unsettleRequested
     signal snoozeRequested(real windowX, real windowY)
     signal unsnoozeRequested
+    signal unpinRequested
     signal wokeDismissed
 
     readonly property color textColor: Theme.palette.color("sidebarForeground", "#e4e4e7")
@@ -64,6 +65,7 @@ Item {
     readonly property string movingTo: item.movingTo ?? ""
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
+    readonly property bool pinned: !draft && item.pinned === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
     readonly property bool showActions: hasActions && (hover.hovered || focused)
     // The status word the web app's sidebar uses for each state; empty when the
@@ -365,6 +367,22 @@ Item {
     // the woke pill (click acknowledges the wake), else the status or age.
     component StatusSlot: RowLayout {
         spacing: 2
+
+        // A pinned row says so, and the pin unpins it. Made only for pinned
+        // rows, so the hundreds of others pay nothing. The row builds a slot
+        // for both its layouts; only the one in view gets the button.
+        Loader {
+            active: row.pinned && parent.visible
+            visible: active
+            Layout.alignment: Qt.AlignVCenter
+            sourceComponent: RowAction {
+                objectName: "unpinAction"
+                iconName: "pin"
+                iconTint: hovered || row.showActions ? row.textColor : Qt.alpha(row.secondaryColor, 0.7)
+                Accessible.name: qsTr("Unpin thread")
+                onClicked: row.unpinRequested()
+            }
+        }
 
         RowAction {
             id: snoozeButton

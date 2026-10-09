@@ -97,5 +97,23 @@ Item {
             mouseRelease(row, 100, 30, Qt.RightButton);
             compare(spy.count, 1);
         }
+
+        // Scenario: A pinned thread shows a pin that unpins it (features/threads/pinning-and-order.feature)
+        function test_pinnedRowOffersUnpin() {
+            let row = createTemporaryObject(rowComponent, root);
+            verify(!findChild(row, "unpinAction"), "no pin on an unpinned row");
+            row.item = Object.assign({}, row.item, {
+                pinned: true
+            });
+            let unpin = findChild(row, "unpinAction");
+            verify(!!unpin, "a pinned row has the pin button");
+            compare(unpin.Accessible.name, "Unpin thread");
+            let spy = createTemporaryObject(spyComponent, root, {
+                target: row,
+                signalName: "unpinRequested"
+            });
+            mouseClick(unpin);
+            compare(spy.count, 1);
+        }
     }
 }
