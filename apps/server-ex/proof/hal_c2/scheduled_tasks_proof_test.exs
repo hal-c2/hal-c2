@@ -63,6 +63,10 @@ defmodule HalC2.ScheduledTasksProofTest do
         "Pausing a task stops its runs and resuming schedules it again",
         "Editing a task that no longer exists fails",
         "The user deletes a task"
+      ],
+      "mc/orchestration/scheduled-tasks.feature" => [
+        "An MC without automatic actions skips a due run",
+        "An MC without automatic actions still runs a task now"
       ]
     }
 
@@ -98,6 +102,15 @@ defmodule HalC2.ScheduledTasksProofTest do
     test "a run_now caller never gets two replies, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "twiceAnswered", [])
     end
+  end
+
+  test "an MC without automatic actions starts no run nobody asked for", %{proof: proof} do
+    refute_reachable(proof, "hushed(3, 1, 4)", "unasked", [])
+  end
+
+  test "an MC without automatic actions still answers a run_now caller, if prompts are sent",
+       %{proof: proof} do
+    assert_ltl(proof, "hushed(1, 1, 2)", "[] (waiting(1) -> <> answered(1))", fair: @fair)
   end
 
   test "a run_now caller waiting on a run gets its reply, if prompts are sent", %{proof: proof} do

@@ -6,7 +6,9 @@ defmodule HalC2.ScheduledTasks do
   Tasks live in `<home>/scheduled-tasks.json`. One timer wakes for the next due
   run, at least every minute, so a changed clock or a sleeping host is noticed.
   A fixed-time run missed by more than ten minutes (the host was off) moves to
-  its next slot instead of firing late. Watchers (client sockets) get
+  its next slot instead of firing late, and so does every due run on an MC without
+  automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`), where a task only runs when asked
+  (`scheduledTasks.runNow`). Watchers (client sockets) get
   `{:hal_c2_scheduled_tasks, mc, tasks}` whenever a task changes.
   """
 
@@ -146,7 +148,7 @@ defmodule HalC2.ScheduledTasks do
           running?(state, task["id"]) ->
             state
 
-          missed?(task, at) ->
+          missed?(task, at) or not Application.get_env(:hal_c2, :auto_actions, true) ->
             put(state, Map.put(task, "nextRunAt", next_run(task["schedule"], at)))
 
           true ->

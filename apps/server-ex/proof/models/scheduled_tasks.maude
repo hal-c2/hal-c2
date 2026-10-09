@@ -20,8 +20,9 @@ mod SCHEDULED-TASKS is
   op c : Nat -> From [ctor] .
 
   --- The scheduler is up or down; while up its timer is armed. `wrong` marks a run's
-  --- result applied to a task that did not start it.
-  ops up down armed wrong : -> Item [ctor] .
+  --- result applied to a task that did not start it. `quiet` is an MC without automatic
+  --- actions (HAL_C2_MC_NO_AUTO_ACTIONS).
+  ops up down armed wrong quiet : -> Item [ctor] .
   --- The clock, the advances of it left, the commands, crashes and runs left, the next
   --- run's pid and the next task record's incarnation.
   ops now ticks cmds faults starts pids incs : Nat -> Item [ctor] .
@@ -78,6 +79,10 @@ mod SCHEDULED-TASKS is
   op running? : Nat Conf -> Bool .
   eq running?(I, run(P, I, J, T, S, Fm) C) = true .
   eq running?(I, C) = false [owise] .
+
+  op quiet? : Conf -> Bool .
+  eq quiet?(quiet C) = true .
+  eq quiet?(C) = false [owise] .
 
   op entry : Nat Conf -> Bool .
   eq entry(P, run(P, I, J, T, S, Fm) C) = true .
@@ -186,11 +191,16 @@ mod SCHEDULED-TASKS is
 
   --- ticks and runs ------------------------------------------------------------------
 
-  --- :tick starts a task that is due and not running.
+  --- :tick starts a task that is due and not running; an MC without automatic actions
+  --- aims it afresh instead.
   crl [tick] :
     { up armed now(N) pids(P) starts(s K) tsk(I, true, at(M), St, J) C }
     => { up armed now(N) pids(s P) starts(K) tsk(I, true, at(M), running, J)
          run(P, I, J, sched, N, nobody) runner(P, I, N, sched) C }
+    if M <= N and not running?(I, C) and not quiet?(C) .
+  crl [tick] :
+    { up armed quiet now(N) tsk(I, true, at(M), St, J) C }
+    => { up armed quiet now(N) tsk(I, true, at(N + 2), St, J) C }
     if M <= N and not running?(I, C) .
 
   --- A run finished, or its process exited.
@@ -224,8 +234,9 @@ mod SCHEDULED-TASKS is
   --- states -------------------------------------------------------------------------
 
   --- Two tasks, both due soon, and two callers; K commands, F crashes and T advances of the
-  --- clock to come. `watched` is two watchers alone.
-  ops seeded one watched : Nat Nat Nat -> Sys .
+  --- clock to come. `watched` is two watchers alone, and `hushed` is `one` on an MC
+  --- without automatic actions.
+  ops seeded one watched hushed : Nat Nat Nat -> Sys .
   eq seeded(K, F, A) =
     { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(3)
       known(1) known(2) flag(true) flag(false) caller(1) caller(2)
@@ -234,14 +245,19 @@ mod SCHEDULED-TASKS is
     { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(2)
       known(1) flag(true) flag(false) caller(1) caller(2)
       tsk(1, true, at(1), never, 1) } .
+  eq hushed(K, F, A) =
+    { quiet up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(2)
+      known(1) flag(true) flag(false) caller(1) caller(2)
+      tsk(1, true, at(1), never, 1) } .
   eq watched(K, F, A) =
     { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(0) incs(1)
       wl(1) wl(2) } .
 
   --- Bad states: a result applied to a task that did not start it; two runs of a task
   --- at once, in the table or as processes; a task recorded as running with no entry in
-  --- the table; a prompt fired twice for one fire_key; a caller answered twice.
-  ops mixed twoEntries twoRunners stuckRunning refired twiceAnswered : Sys -> Bool .
+  --- the table; a prompt fired twice for one fire_key; a caller answered twice; a run
+  --- nobody asked for on an MC without automatic actions.
+  ops mixed twoEntries twoRunners stuckRunning refired twiceAnswered unasked : Sys -> Bool .
   eq mixed({ wrong C }) = true .
   eq mixed({ C }) = false [owise] .
   eq twoEntries({ run(P, I, J, T, S, Fm) run(Q, I, K, U, M, Gm) C }) = true .
@@ -254,6 +270,9 @@ mod SCHEDULED-TASKS is
   eq refired({ C }) = false [owise] .
   eq twiceAnswered({ got(X) got(X) C }) = true .
   eq twiceAnswered({ C }) = false [owise] .
+  eq unasked({ quiet run(P, I, J, sched, S, Fm) C }) = true .
+  eq unasked({ quiet fired(I, S, sched) C }) = true .
+  eq unasked({ C }) = false [owise] .
 endm
 
 mod SCHEDULED-TASKS-PROPS is

@@ -496,6 +496,13 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     context
   end
 
+  step "task {string} does not run and is next due in an hour", %{args: [name]} = context do
+    task = current(context, name)
+    assert %{"lastRunStatus" => "never", "runCount" => 0} = task
+    assert task["nextRunAt"] == iso(DateTime.add(context.now, @hour, :millisecond))
+    context
+  end
+
   step "the next task is due in 3 hours", context do
     context = context |> pin(now(context)) |> task("later", %{"schedule" => every(3)})
     due = current(context, "later")["nextRunAt"]

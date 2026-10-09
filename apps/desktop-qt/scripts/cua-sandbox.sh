@@ -9,10 +9,10 @@
 #
 # start brings up what is not running and (re)launches the app, so it also picks up a QML
 # change. --seed snapshots an MC database (read-only) into a fresh scratch MC, which takes no
-# automatic action (turns nobody sent, boot pulls, background fetches), since a seeded project is a real checkout;
-# --url attaches to another MC instead. call fills in the app's pid, a shared session label and foreground
-# delivery where the tool takes them. Files go under HAL_C2_CUA_HOME, default
-# <checkout>/.hal-c2/cua.
+# automatic action (turns nobody sent, scheduled runs, boot pulls, background fetches), since a
+# seeded project is a real checkout; --url attaches to another MC instead. call fills in the
+# app's pid, a shared session label and foreground delivery where the tool takes them. Files go
+# under HAL_C2_CUA_HOME, default <checkout>/.hal-c2/cua.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
