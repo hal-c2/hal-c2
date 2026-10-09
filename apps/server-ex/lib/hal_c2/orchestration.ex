@@ -327,7 +327,8 @@ defmodule HalC2.Orchestration do
       ) do
     # Attachments, when given, replace the message's (uploads join the thread first);
     # context, when given, replaces its context records.
-    with {:ok, command} <- edit_claims(thread_id, command) do
+    with :ok <- users_run(HalC2.Streams.state(thread_id), run_id),
+         {:ok, command} <- edit_claims(thread_id, command) do
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
         |> Map.merge(Map.take(command, ["attachments"]))
@@ -542,6 +543,9 @@ defmodule HalC2.Orchestration do
 
       queued["status"] != "queued" ->
         {:error, "Queued run #{command["queuedRunId"]} is not queued."}
+
+      agent_message?(message) ->
+        users_run(state, queued["id"])
 
       message && target && target["status"] in @active_statuses && steerable?(target) &&
           runtime(target["providerInstanceId"]).steer(
@@ -1644,12 +1648,13 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A message's `with_context/2` fields and, for a delegated task's result, which task
-  # it delivers (`HalC2.Orchestration.Delegation`).
+  # A message's `with_context/2` fields and, for one the MC sends for the agent, what it
+  # reports (`notification`, see `message_item/6`) and which delegated task it delivers
+  # (`HalC2.Orchestration.Delegation`).
   defp with_message_fields(message, command) do
     message
     |> with_context(command)
-    |> Map.merge(Map.take(command, ["delegatedCompletion", "providerWake"]))
+    |> Map.merge(Map.take(command, ["delegatedCompletion", "providerWake", "notification"]))
   end
 
   # Uploads claimed into the thread, with the context records that name them.
@@ -1746,8 +1751,6 @@ defmodule HalC2.Orchestration do
 
   # The steered message's place in the transcript, inside the run it joined.
   defp steer_changes(state, run, message_id, message, intent, at) do
-    item_id = "turn-item:user:#{message_id}"
-
     ids = %{
       thread: run["threadId"],
       run: run["id"],
@@ -1755,21 +1758,44 @@ defmodule HalC2.Orchestration do
       provider_thread: run["providerThreadId"]
     }
 
-    [
-      create(
-        "turn-item",
-        item_id,
-        Entities.turn_item(ids, item_id, "user_message", next_ordinal(state), "completed", at, %{
-          "createdBy" => message["createdBy"] || "user",
-          "creationSource" => message["creationSource"] || "web",
-          "messageId" => message_id,
-          "inputIntent" => intent,
-          "text" => message["text"] || "",
-          "attachments" => message["attachments"] || []
-        })
-        |> with_context(message)
-      )
-    ]
+    item = message_item(ids, message_id, next_ordinal(state), at, message, intent)
+    [create("turn-item", item["id"], item)]
+  end
+
+  # A message's place in the transcript. One the MC sends for the agent (a delegated
+  # task's result, a provider's wake) carries a `notification` and is shown as that:
+  # what happened, not something the user said. The message keeps its text for the
+  # provider, as the Node server's `notificationTurnItem` does.
+  defp message_item(ids, message_id, ordinal, at, %{"notification" => %{} = notification}, _) do
+    Entities.turn_item(
+      ids,
+      "turn-item:user:#{message_id}",
+      "notification",
+      ordinal,
+      "completed",
+      at,
+      Map.take(notification, ~w(source outcome summary detail))
+    )
+  end
+
+  defp message_item(ids, message_id, ordinal, at, message, intent) do
+    Entities.turn_item(
+      ids,
+      "turn-item:user:#{message_id}",
+      "user_message",
+      ordinal,
+      "completed",
+      at,
+      %{
+        "createdBy" => message["createdBy"] || "user",
+        "creationSource" => message["creationSource"] || "web",
+        "messageId" => message_id,
+        "inputIntent" => intent,
+        "text" => message["text"] || "",
+        "attachments" => message["attachments"] || []
+      }
+    )
+    |> with_context(message)
   end
 
   # The thread fields a command sets, as the Node server's projector sets them.
@@ -2203,6 +2229,24 @@ defmodule HalC2.Orchestration do
   defp automatic?(state, run),
     do: StreamState.get(state, "message")[run["userMessageId"]]["delegatedCompletion"] != nil
 
+  # A message the MC sent for the agent (`message_item/6`), also one stored before such
+  # messages carried a `notification`.
+  defp agent_message?(message),
+    do: message["notification"] != nil or message["delegatedCompletion"] != nil
+
+  # A queued message the MC sent for the agent is not the user's to rewrite or steer
+  # with: it is what the agent is told, and when.
+  defp users_run(state, run_id) do
+    with %{"status" => "queued", "userMessageId" => message_id} <-
+           StreamState.get(state, "run")[run_id],
+         %{} = message <- StreamState.get(state, "message")[message_id],
+         true <- agent_message?(message) do
+      {:error, "Queued run #{run_id} is the agent's own message, not one to edit or steer with."}
+    else
+      _ -> :ok
+    end
+  end
+
   # A deleted thread's provider sessions stop in the commit that deletes it; the
   # dispatcher then stops their processes.
   defp deleted_thread("thread.delete", state, at) do
@@ -2537,24 +2581,7 @@ defmodule HalC2.Orchestration do
       provider_thread: run["providerThreadId"]
     }
 
-    user_item =
-      Entities.turn_item(
-        ids,
-        "turn-item:user:#{message_id}",
-        "user_message",
-        ordinal,
-        "completed",
-        at,
-        %{
-          "createdBy" => command["createdBy"] || "user",
-          "creationSource" => command["creationSource"] || "web",
-          "messageId" => message_id,
-          "inputIntent" => "turn_start",
-          "text" => command["text"] || "",
-          "attachments" => command["attachments"] || []
-        }
-      )
-      |> with_context(command)
+    user_item = message_item(ids, message_id, ordinal, at, command, "turn_start")
 
     preparation =
       Entities.turn_item(
@@ -2782,30 +2809,17 @@ defmodule HalC2.Orchestration do
           create(
             "turn-item",
             "turn-item:user:#{message_id}",
-            Entities.turn_item(
+            message_item(
               ids,
-              "turn-item:user:#{message_id}",
-              "user_message",
+              message_id,
               # A prepared run's message was shown while its workspace was prepared.
               (StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] || %{})[
                 "ordinal"
               ] || next_ordinal(state),
-              "completed",
               at,
-              %{
-                "createdBy" => command["createdBy"] || "user",
-                "creationSource" => command["creationSource"] || "web",
-                "messageId" => message_id,
-                "inputIntent" =>
-                  if(queued && queued["status"] == "queued",
-                    do: "queued_turn",
-                    else: "turn_start"
-                  ),
-                "text" => text,
-                "attachments" => command["attachments"] || []
-              }
+              command,
+              if(queued && queued["status"] == "queued", do: "queued_turn", else: "turn_start")
             )
-            |> with_context(command)
           )
         ]
         |> Enum.reject(&is_nil/1)

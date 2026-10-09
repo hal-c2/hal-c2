@@ -602,6 +602,33 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "the timeline shows that run began with Claude's background work, not a message someone sent",
+       context do
+    state = World.stream(context, @thread)
+    run = state |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"])
+    run_id = run["id"]
+
+    assert %{
+             "type" => "notification",
+             "runId" => ^run_id,
+             "source" => %{"kind" => "background_task"},
+             "outcome" => "updated",
+             "summary" => "Background activity updated"
+           } =
+             item = StreamState.get(state, "turn-item")["turn-item:user:#{run["userMessageId"]}"]
+
+    refute Map.has_key?(item, "text")
+
+    assert [] ==
+             for(
+               %{"type" => "user_message", "createdBy" => "agent"} = item <-
+                 StreamState.list(state, "turn-item"),
+               do: item
+             )
+
+    context
+  end
+
   step "Claude finishes that work", context do
     claude_says(context, %{"type" => "result", "subtype" => "success"})
     context

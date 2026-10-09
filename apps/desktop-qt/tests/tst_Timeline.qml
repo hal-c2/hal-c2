@@ -662,6 +662,31 @@ Item {
             verify(visibleIn(findText(item, "9:41 AM")), "a call shows its time");
         }
 
+        // Scenario: A delegated task's result shows as a notification row, not a user message
+        function test_notificationRowIsOneLineInTheColumn() {
+            rows.clear();
+            const title = "Audit every settings page of the desktop client against the web one and list what differs ".repeat(3) + "finished";
+            rows.append(root.row({
+                rowId: "turn-item:user:1",
+                kind: "marker",
+                author: "user",
+                icon: "zap",
+                title: title
+            }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            const label = findNamed(item, "markerTitle");
+            verify(visibleIn(label), "the notification names what ended");
+            compare(label.text, title);
+            verify(visibleIn(findIcon(item, "zap")), "with the notification's icon");
+            verify(label.truncated, "a long title is cut short");
+            verify(label.mapToItem(item, 0, 0).x >= 0 && label.mapToItem(item, label.width, 0).x <= item.width, "and stays inside the row");
+            verify(item.height < 60, "on one line");
+            verify(!findNamed(item, "messageAttribution") || !visibleIn(findNamed(item, "messageAttribution")), "and is nobody's message");
+        }
+
         function findWith(item, property) {
             if (!item)
                 return null;

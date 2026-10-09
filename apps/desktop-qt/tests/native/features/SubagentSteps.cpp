@@ -102,6 +102,35 @@ AgentsModel& agents(World& world) {
   return *world.native().controller<RightPanelController>()->agents();
 }
 
+// A run the MC started for the agent itself: in place of a user's message its
+// first item is the notification of what it was sent (orchestration.ex message_item).
+void startNotifiedRun(World& world, const QJsonObject& notification) {
+  FakeStreams& fake = world.mc.part<FakeStreams>();
+  const QString run = QStringLiteral("run-%1").arg(fake.ordinal + 1);
+  fake.run = run;
+  fake.runStarted = now();
+  set(world, QStringLiteral("run"), run,
+      {{QStringLiteral("id"), run}, {QStringLiteral("ordinal"), ++fake.ordinal}, {QStringLiteral("status"), QStringLiteral("running")},
+       {QStringLiteral("requestedAt"), iso(now())}, {QStringLiteral("startedAt"), iso(now())}});
+  QJsonObject item{{QStringLiteral("id"), QStringLiteral("turn-item:user:message:") + run}, {QStringLiteral("type"), QStringLiteral("notification")},
+                   {QStringLiteral("runId"), run}, {QStringLiteral("ordinal"), ++fake.ordinal}, {QStringLiteral("status"), QStringLiteral("completed")},
+                   {QStringLiteral("updatedAt"), iso(now())}};
+  for (auto it = notification.begin(); it != notification.end(); ++it) item.insert(it.key(), it.value());
+  set(world, QStringLiteral("turn-item"), item.value(QLatin1String("id")).toString(), item);
+  addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Noted.")}});
+}
+
+// Whether the thread draws an item of that name.
+bool draws(World& world, const QString& name) {
+  bool found = false;
+  const std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+    found = found || (item->objectName() == name && item->isVisible());
+    for (QQuickItem* child : item->childItems()) find(child);
+  };
+  find(view(world).window().contentItem());
+  return found;
+}
+
 QJsonObject lastCommandOf(World& world, const QString& type) {
   QJsonObject found;
   for (const QJsonObject& command : std::as_const(world.mc.commands)) {
@@ -164,6 +193,55 @@ const Steps steps([] {
     world.waitFor([&] { return shownThread(world) == key(world, kChild); },
                   [&] { return QStringLiteral("the sender's thread to open; the window shows %1").arg(shownThread(world)); });
   });
+
+  // What the MC sent the agent for itself.
+  step(QStringLiteral("a task the agent delegated as %1 finished").arg(q), [](World& world, const Captures& c, const Table&) {
+    listChildThread(world);
+    startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("delegated_task")}, {QStringLiteral("taskIds"), QJsonArray{kTask}}}},
+                             {QStringLiteral("outcome"), QStringLiteral("completed")}, {QStringLiteral("summary"), c[0] + QStringLiteral(" finished")}});
+  });
+  step(QStringLiteral("a thread stored the failed result of the delegated task %1 as a user message").arg(q), [](World& world, const Captures& c, const Table&) {
+    listChildThread(world);
+    const QString run = startRun(world);
+    // What delegation.ex sent before the MC recorded it as a notification.
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,
+        {{QStringLiteral("createdBy"), QStringLiteral("system")}, {QStringLiteral("creationSource"), QStringLiteral("server")}, {QStringLiteral("inputIntent"), QStringLiteral("queued_turn")},
+         {QStringLiteral("text"), QStringLiteral("<delegated_task_result taskId=\"task:1\" title=\"%1\" status=\"failed\" childThreadId=\"%2\">\nThe tests do not build.\n</delegated_task_result>").arg(c[0], kChild)}});
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Noted.")}});
+  });
+  step(QStringLiteral("the agent's background work woke it up"), [](World& world, const Captures&, const Table&) {
+    // claude/thread_runtime.ex wake.
+    startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("background_task")}}},
+                             {QStringLiteral("outcome"), QStringLiteral("updated")}, {QStringLiteral("summary"), QStringLiteral("Background activity updated")}});
+  });
+  step(QStringLiteral("a thread stored the agent's own wake-up as a user message"), [](World& world, const Captures&, const Table&) {
+    const QString run = startRun(world);
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,
+        {{QStringLiteral("createdBy"), QStringLiteral("agent")}, {QStringLiteral("creationSource"), QStringLiteral("provider")}, {QStringLiteral("text"), QStringLiteral("Background task completed.")}});
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Noted.")}});
+  });
+  step(QStringLiteral("the user reads the parent thread"), [](World& world, const Captures&, const Table&) {
+    expect(shownThread(world) == key(world, kThread), QStringLiteral("the window shows %1").arg(shownThread(world)));
+  });
+  step(QStringLiteral("the timeline says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int row = rowOf(world, QStringLiteral("marker"));
+    expect(role(timeline(world), row, TimelineModel::TitleRole) == c[0], describe(timeline(world)));
+    expect(role(timeline(world), row, TimelineModel::TextRole).toString().isEmpty(), describe(timeline(world)));
+    expect(drawn(world, QStringLiteral("markerTitle"))->property("text") == c[0], QStringLiteral("the row is not drawn as \"%1\"").arg(c[0]));
+  });
+  const auto noUserMessage = [](World& world) {
+    TimelineModel& model = timeline(world);
+    for (int row = 0; row < model.rowCount(); ++row) {
+      expect(role(model, row, TimelineModel::KindRole) != QLatin1String("message") || role(model, row, TimelineModel::AuthorRole) != QLatin1String("user"), describe(model));
+      expect(!role(model, row, TimelineModel::TextRole).toString().contains(QLatin1String("delegated_task_result")), describe(model));
+      expect(role(model, row, TimelineModel::AttributionRole).toString().isEmpty(), describe(model));
+    }
+    // The agent's reply to it is there, so the thread is drawn.
+    drawn(world, QStringLiteral("markerTitle"));
+    expect(!draws(world, QStringLiteral("messageAttribution")), QStringLiteral("a message is drawn with a sender"));
+  };
+  step(QStringLiteral("the result is not shown as a message of the user's"), [noUserMessage](World& world, const Captures&, const Table&) { noUserMessage(world); });
+  step(QStringLiteral("nothing says a message was sent by another agent"), [noUserMessage](World& world, const Captures&, const Table&) { noUserMessage(world); });
 
   // The model a subagent runs on.
   step(QStringLiteral("the agent delegated work to a subagent on the model %1").arg(q), [](World& world, const Captures& c, const Table&) {

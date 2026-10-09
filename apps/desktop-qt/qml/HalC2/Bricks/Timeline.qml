@@ -1612,12 +1612,16 @@ Item {
                             color: root.mutedColor
                         }
                         RowText {
+                            objectName: "markerTitle"
                             anchors.verticalCenter: parent.verticalCenter
+                            // A notification's title names a task, as long as its author made it.
+                            width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 80))
                             text: row.title ?? ""
                             color: root.mutedColor
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             font.weight: Font.Medium
                             wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
                         }
                         RowText {
                             anchors.verticalCenter: parent.verticalCenter
