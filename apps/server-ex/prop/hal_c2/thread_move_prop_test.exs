@@ -4,7 +4,8 @@ defmodule HalC2.ThreadMovePropTest do
 
   Threads are created on any machine, renamed, and moved between the machines, back
   included. A move can also be held at a stage (the source about to send it, the
-  destination having copied it or taking it, the source told it arrived) while other
+  destination having copied it or taking it, the source told it arrived or letting go
+  of it) while other
   things happen: the process that started the move dies, `HalC2.ThreadMove` or the store
   restarts on either side, the thread is renamed, its queue resumed or it is moved
   again, other threads move. Once the destination has it, the destination may move it
@@ -42,6 +43,8 @@ defmodule HalC2.ThreadMovePropTest do
   @settle 15_000
   # How `HalC2.Plugins.Host` marks the threads the plugin starts.
   @mark %{"id" => "prop-mover", "kind" => "review", "listed" => false}
+  # Stages at which the destination has the thread: the move completes from there.
+  @taken [:accepted, :letting_go]
 
   setup_all do
     machines = Cluster.start(Enum.map(@mcs, &Atom.to_string/1))
@@ -132,13 +135,21 @@ defmodule HalC2.ThreadMovePropTest do
                   t,
                   state.threads[t].at,
                   oneof(@mcs -- [state.threads[t].at]),
-                  frequency([{1, :sending}, {1, :staged}, {1, :taking}, {3, :accepted}])
+                  frequency([
+                    {1, :sending},
+                    {1, :staged},
+                    {1, :taking},
+                    {3, :accepted},
+                    {2, :letting_go}
+                  ])
                 ]}
              end}
           ],
           else: []
         ) ++
         if(state.held,
+          # Not a mover letting go: its lock goes once `:global` sees it die, which a
+          # settle may ask for first or not.
           do:
             [
               {3, {:call, __MODULE__, :release, [state.held, :go]}},
@@ -151,7 +162,7 @@ defmodule HalC2.ThreadMovePropTest do
                 do: [{4, {:call, __MODULE__, :kill_mover, [state.held]}}],
                 else: []
               ) ++
-              if(state.held.stage == :accepted,
+              if(state.held.stage in @taken,
                 do: [
                   {4,
                    {:call, __MODULE__, :move, [state.held.t, state.held.at, onward(state.held)]}},
@@ -247,7 +258,9 @@ defmodule HalC2.ThreadMovePropTest do
   def next_state(state, _result, {:call, _, :kill_mover, [_]}),
     do: update_in(state.held, &%{&1 | killed: true, let_go: let_go?(&1)})
 
-  def next_state(state, _result, {:call, _, :settle, [_]}), do: put_in(state.held.let_go, true)
+  # Not while the mover lets go: one lets go at a time, and the mover is.
+  def next_state(state, _result, {:call, _, :settle, [_]}),
+    do: update_in(state.held, &%{&1 | let_go: let_go?(&1)})
 
   def next_state(%{held: %{from: mc}} = state, _result, {:call, _, :restart, [mc, :thread_move]}),
     do: update_in(state.held, &%{&1 | source_restarted: true, let_go: let_go?(&1)})
@@ -260,7 +273,7 @@ defmodule HalC2.ThreadMovePropTest do
   # moves it, never while it is moving, never while the plugin that started it runs
   # there, and never to where it is. Once the destination of a held move has it, it
   # moves on from where it is, but not back to the source until the source let go.
-  defp moves?(%{held: %{t: t, stage: :accepted} = held}, t, from, to),
+  defp moves?(%{held: %{t: t, stage: stage} = held}, t, from, to) when stage in @taken,
     do: from == held.at and from != to and (to != held.from or held.let_go)
 
   defp moves?(state, t, from, to),
@@ -269,7 +282,9 @@ defmodule HalC2.ThreadMovePropTest do
         not pinned?(state, t, from)
 
   # Whether `t` takes changes on `at`.
-  defp writable?(%{held: %{t: t, stage: :accepted} = held}, t, at), do: at == held.at
+  defp writable?(%{held: %{t: t, stage: stage} = held}, t, at) when stage in @taken,
+    do: at == held.at
+
   defp writable?(state, t, _at), do: not moving?(state, t)
 
   # Whether `t` is a plugin's thread whose plugin runs on `mc`.
@@ -292,7 +307,7 @@ defmodule HalC2.ThreadMovePropTest do
   # Whether a held move ends with the thread on its destination. A move ends where it
   # was until the destination asks to take it (`:taking`); from then on it completes.
   defp arrives?(held, how),
-    do: not released?(held) and (held.stage == :accepted or how == :go)
+    do: not released?(held) and (held.stage in @taken or how == :go)
 
   def postcondition(state, {:call, _, fun, _} = call, {result, world})
       when fun in [:create, :create_plugin],
@@ -355,9 +370,12 @@ defmodule HalC2.ThreadMovePropTest do
   def postcondition(state, {:call, _, :kill_mover, _} = call, {:ok, world}),
     do: settled?(next_state(state, nil, call), world, held(state))
 
-  # The destination has the move: nothing is left to settle again.
-  def postcondition(state, {:call, _, :settle, _} = call, {result, world}),
-    do: result == [] and settled?(next_state(state, nil, call), world, held(state))
+  # The destination has the move: nothing is left to settle again, unless the mover is
+  # letting go.
+  def postcondition(state, {:call, _, :settle, _} = call, {result, world}) do
+    again = if state.held.stage == :letting_go, do: [id(state.held.t)], else: []
+    result == again and settled?(next_state(state, nil, call), world, held(state))
+  end
 
   def postcondition(state, {:call, _, :restart, _} = call, {:ok, world}),
     do: settled?(next_state(state, nil, call), world, held(state))
@@ -382,7 +400,7 @@ defmodule HalC2.ThreadMovePropTest do
 
   # A move held once its destination has the thread: the thread lives whole where it
   # went from there, and the source keeps it moving until it lets go.
-  defp accepted?(%{held: %{stage: :accepted} = held} = state, world) do
+  defp accepted?(%{held: %{stage: stage} = held} = state, world) when stage in @taken do
     thread = %{state.threads[held.t] | plugin: false}
 
     Enum.all?(@mcs, fn mc ->
@@ -452,7 +470,7 @@ defmodule HalC2.ThreadMovePropTest do
   # `{:held, ids}`, or `{:ended, result}` if the move ended before getting there.
   def hold(t, from, to, stage) do
     id = id(t)
-    where = if stage in [:sending, :accepted], do: from, else: to
+    where = if stage in [:sending, :accepted, :letting_go], do: from, else: to
     Cluster.on(mcs()[where], :hold, [id, stage, self()])
     ref = make_ref()
     mover = Cluster.on(mcs()[from], :start_move, [id, label(to), "proj-#{to}", self(), ref])

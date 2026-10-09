@@ -495,9 +495,21 @@ defmodule HalC2.ThreadMove do
   # The move `move` arrived: this MC keeps only the forwarding record. Its provider
   # processes stop, and its terminals close (their scrollback travelled). Only while
   # the thread is still in that move here: the mover and a settle may both get here,
-  # and by the second the thread may have moved back.
+  # and by the second the thread may have moved back. One lets go at a time, from the
+  # check to the forwarding record, or the other's check could pass before the thread
+  # moved back and stop the session of the thread that came back. Returns false when
+  # another was letting go: that one finishes it.
   defp let_go(id, move, dest, imported) do
-    if thread(id)["moving"]["id"] == move, do: Orchestration.release_session(id)
+    :global.trans(letting_go_lock(id), fn -> let_go!(id, move, dest, imported) end, [node()], 0) !=
+      :aborted
+  end
+
+  defp let_go!(id, move, dest, imported) do
+    if thread(id)["moving"]["id"] == move do
+      hook(:letting_go, id)
+      Orchestration.release_session(id)
+    end
+
     at = Orchestration.Entities.now()
 
     moved = %{
@@ -520,6 +532,8 @@ defmodule HalC2.ThreadMove do
 
     Streams.flush_shell(id)
   end
+
+  defp letting_go_lock(id), do: {{__MODULE__, :letting_go, id}, self()}
 
   defp forward(state, id, moved) do
     at = moved["at"]
@@ -1013,7 +1027,8 @@ defmodule HalC2.ThreadMove do
   Settles moves that were cut off: to `mc`, of the thread `id`, or all (`:all`). A
   thread marked `moving` becomes a forwarding record if its move arrived, and is
   released if the destination is reachable and says it did not. Returns the threads to
-  settle again: those a destination is still taking, or did not answer for.
+  settle again: those a destination is still taking or did not answer for, and those
+  whose mover was letting go.
   """
   def settle(which \\ :all) do
     for {"thread", %{"id" => id, "moving" => %{"mc" => name}}} <- local_rows(),
@@ -1029,8 +1044,7 @@ defmodule HalC2.ThreadMove do
     case remote(mc, :arrived?, [id, moving["id"]]) do
       true ->
         dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
-        let_go(id, moving["id"], dest, %{project: nil})
-        false
+        not let_go(id, moving["id"], dest, %{project: nil})
 
       :arriving ->
         true
