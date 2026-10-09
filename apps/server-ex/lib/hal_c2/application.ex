@@ -9,7 +9,6 @@ defmodule HalC2.Application do
       if Application.fetch_env!(:hal_c2, :start_mc) do
         :ok = HalC2.Desktop.configure()
         :ok = prepare_files()
-        :ok = HalC2.Git.use_gh_for_github()
 
         [
           # Distribution starts here, before anything reads `node()`.
