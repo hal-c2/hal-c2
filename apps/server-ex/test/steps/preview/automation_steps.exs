@@ -171,7 +171,15 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "the MC drops that desktop so it has to register again", context do
     %{client: client} = context.desktops["desktop-1"]
-    {_end, _client} = Mc.await(client, &(&1["t"] == "end" and &1["id"] == @host_sub))
+    ended? = &(&1["t"] == "end" and &1["id"] == @host_sub)
+
+    # The broker answers the agent before it ends the stream, but the end can still
+    # reach the socket first, while the tool's answer was being waited on.
+    unless Enum.any?(context[:passed] || [], fn {name, frame} ->
+             name == "desktop-1" and ended?.(frame)
+           end),
+           do: Mc.await(client, ended?)
+
     refute Map.has_key?(broker().clients, "desktop-1")
     context
   end
@@ -866,7 +874,7 @@ defmodule HalC2.Steps.Preview.Automation do
   defp serve(context, fun), do: loop(Map.put(context, :task, Task.async(fun)), nil)
 
   # Handles the desktops' frames until the call returns (`context.result`), or a
-  # request matches `until` (`context.held`).
+  # request matches `until` (`context.held`). Other frames are kept in `context.passed`.
   defp loop(context, until) do
     case next_frame(context) do
       {name, %{"t" => "previewAutomation", "event" => %{"type" => "request"} = event}, context} ->
@@ -877,8 +885,8 @@ defmodule HalC2.Steps.Preview.Automation do
           do: Map.put(context, :held, {name, request}),
           else: context |> respond(name, request) |> loop(until)
 
-      {_name, _frame, context} ->
-        loop(context, until)
+      {name, frame, context} ->
+        context |> Map.update(:passed, [{name, frame}], &(&1 ++ [{name, frame}])) |> loop(until)
 
       nil ->
         await_socket_or_result(context, until)
