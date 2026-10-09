@@ -517,10 +517,11 @@ defmodule HalC2.Plugins do
   defp text(message), do: inspect(message)
 
   @doc false
-  # The plugin's process, started by its supervisor; the MC watches it for crashes.
+  # The plugin's process, started by its supervisor (`self()`); the MC watches it for
+  # crashes, and charges them only to the supervisor it is running or has just failed.
   def start_worker(id, module, settings) do
     with {:ok, pid} <- module.start_link(settings) do
-      GenServer.cast(__MODULE__, {:worker, id, pid})
+      GenServer.cast(__MODULE__, {:worker, id, self(), pid})
       {:ok, pid}
     end
   end
@@ -593,7 +594,13 @@ defmodule HalC2.Plugins do
             if enabled, do: Map.put(config, "granted", requested), else: config
           end)
 
-          plugin = %{plugin | failed: false, denied: if(enabled, do: [], else: plugin.denied)}
+          plugin = %{
+            plugin
+            | failed: false,
+              gave_up: nil,
+              denied: if(enabled, do: [], else: plugin.denied)
+          }
+
           state = put_in(state.plugins[id], plugin) |> reconcile() |> push()
 
           # A package compiles when it is first enabled, and may not.
@@ -615,7 +622,9 @@ defmodule HalC2.Plugins do
 
       plugin ->
         if runnable?(plugin) do
-          state = state |> stop(id) |> update_in([:plugins, id], &%{&1 | failed: false})
+          state =
+            state |> stop(id) |> update_in([:plugins, id], &%{&1 | failed: false, gave_up: nil})
+
           state = state |> reconcile() |> push()
           {:reply, {:ok, entry(state.plugins[id])}, state}
         else
@@ -717,8 +726,10 @@ defmodule HalC2.Plugins do
   end
 
   @impl true
-  def handle_cast({:worker, id, pid}, state) do
-    {:noreply, put_in(state.refs[Process.monitor(pid)], {:worker, id})}
+  def handle_cast({:worker, id, sup, pid}, state) do
+    if current?(state, id, sup),
+      do: {:noreply, put_in(state.refs[Process.monitor(pid)], {:worker, id, sup})},
+      else: {:noreply, state}
   end
 
   def handle_cast({:unsubscribe, pid}, state) do
@@ -764,8 +775,9 @@ defmodule HalC2.Plugins do
     state = %{state | refs: refs}
 
     case owner do
-      {:worker, id} when is_map_key(state.plugins, id) ->
-        if reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
+      {:worker, id, sup} when is_map_key(state.plugins, id) ->
+        if not current?(state, id, sup) or reason in [:normal, :shutdown] or
+             match?({:shutdown, _}, reason) do
           {:noreply, state}
         else
           state =
@@ -791,7 +803,7 @@ defmodule HalC2.Plugins do
       {:supervisor, id} when is_map_key(state.plugins, id) ->
         plugin = state.plugins[id]
         Logger.warning("plugin #{id} stopped after crashing repeatedly: #{plugin.last_error}")
-        state = put_in(state.plugins[id], %{plugin | sup: nil, failed: true})
+        state = put_in(state.plugins[id], %{plugin | sup: nil, failed: true, gave_up: pid})
         {:noreply, state |> sync() |> push()}
 
       nil ->
@@ -1130,6 +1142,7 @@ defmodule HalC2.Plugins do
       reload_error: nil,
       sup: nil,
       failed: false,
+      gave_up: nil,
       restarts: 0,
       last_error: nil,
       bundled: false,
@@ -1258,10 +1271,21 @@ defmodule HalC2.Plugins do
     case DynamicSupervisor.start_child(state.supervisor, spec) do
       {:ok, sup} ->
         state = put_in(state.refs[Process.monitor(sup)], {:supervisor, id})
-        put_in(state.plugins[id], %{plugin | sup: sup, failed: false})
+        put_in(state.plugins[id], %{plugin | sup: sup, failed: false, gave_up: nil})
 
       {:error, reason} ->
         put_in(state.plugins[id], %{plugin | failed: true, last_error: describe(reason)})
+    end
+  end
+
+  # Whether `sup` is the supervisor the plugin runs, or the one that gave up and left it
+  # failed (`gave_up`, until the plugin is enabled or started again); a crash reported by
+  # an earlier supervisor is not this plugin's now.
+  defp current?(state, id, sup) do
+    case state.plugins[id] do
+      %{sup: ^sup} -> true
+      %{gave_up: ^sup} -> true
+      _ -> false
     end
   end
 
