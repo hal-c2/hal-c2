@@ -361,11 +361,13 @@ defmodule HalC2.Store do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
 
+    # First, so the pragmas and the schema below wait for a lock another connection
+    # still holds (a previous store closing) instead of failing at once.
     for pragma <- [
+          "busy_timeout = 5000",
           "journal_mode = WAL",
           "synchronous = NORMAL",
           "foreign_keys = ON",
-          "busy_timeout = 5000",
           "wal_autocheckpoint = 0"
         ],
         do: :ok = Sqlite3.execute(db, "PRAGMA " <> pragma)
