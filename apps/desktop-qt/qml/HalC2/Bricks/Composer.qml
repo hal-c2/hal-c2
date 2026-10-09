@@ -34,6 +34,8 @@ Rectangle {
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
     readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
+    // The model's other options, such as Claude's fast mode and context window.
+    readonly property var otherOptions: ready ? model.options.filter(option => option !== effortOption) : []
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -1035,6 +1037,53 @@ Rectangle {
                                 id: composer.effortOption.id,
                                 value: composer.effortOption.choices[index].id
                             })
+                    }
+
+                    Repeater {
+                        model: composer.otherOptions
+
+                        delegate: RowLayout {
+                            id: optionItem
+
+                            required property var modelData
+                            readonly property bool select: modelData.type === "select"
+
+                            spacing: 4
+
+                            Separator {}
+
+                            ShellComboBox {
+                                objectName: "optionPicker:" + optionItem.modelData.id
+
+                                visible: optionItem.select
+                                model: optionItem.select ? optionItem.modelData.choices.map(choice => choice.label) : []
+                                currentIndex: optionItem.select ? optionItem.modelData.choices.findIndex(choice => choice.id === optionItem.modelData.value) : -1
+                                displayText: currentIndex < 0 ? optionItem.modelData.label : currentText
+                                Accessible.name: optionItem.modelData.label
+                                onActivated: index => Shell.dispatch("composer.option.set", {
+                                        id: optionItem.modelData.id,
+                                        value: optionItem.modelData.choices[index].id
+                                    })
+                            }
+
+                            ShellButton {
+                                objectName: "optionToggle:" + optionItem.modelData.id
+
+                                visible: !optionItem.select
+                                subtle: true
+                                checkable: true
+                                checked: optionItem.modelData.value === true
+                                tint: checked ? composer.foreground : composer.secondary
+                                text: optionItem.modelData.label
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                leftPadding: 10
+                                rightPadding: 10
+                                onClicked: Shell.dispatch("composer.option.set", {
+                                    id: optionItem.modelData.id,
+                                    value: checked
+                                })
+                            }
+                        }
                     }
 
                     Separator {}
