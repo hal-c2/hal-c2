@@ -1,0 +1,326 @@
+sload model-checker
+
+--- One stream's server (HalC2.Streams.Server) against the callers that reach it through
+--- HalC2.Streams.ensure/1, the one subscriber that monitors it, the Registry that lags
+--- a process's death, and a server that idles out, crashes, or takes time to stop.
+--- proof/hal_c2/streams_proof_test.exs maps it to the code and checks it.
+
+mod STREAMS is
+  protecting NAT .
+
+  sorts Op Script Why Life Ids Step Phase Item Conf Sys .
+  subsort Op < Script .
+  subsort Nat < Ids .
+  subsort Item < Conf .
+
+  --- The subscribers of a server, and what a caller does: commit E, transact an E, or
+  --- subscribe. A script runs in order.
+  op noIds : -> Ids [ctor] .
+  op _~_ : Ids Ids -> Ids [ctor assoc comm id: noIds] .
+  ops commit transact : Nat -> Op [ctor] .
+  op subscribe : -> Op [ctor] .
+  op nil : -> Script [ctor] .
+  op _;_ : Script Script -> Script [ctor assoc id: nil] .
+
+  --- Why a server stopped: its idle timeout, or a fault. A call that was queued when a
+  --- server stopped for the first exits :normal; for the second, with the fault.
+  ops idle fault : -> Why [ctor] .
+
+  --- A server runs, or runs terminate/2 and is yet to exit, its name still taken.
+  op up : -> Life [ctor] .
+  op stopping : Why -> Life [ctor] .
+
+  --- Where a caller is in ensure/1 and the call that follows it, for the op it is on:
+  --- before the lookup, after it found a pid or none, with a server to call, or called.
+  ops start missing : -> Step [ctor] .
+  ops found ready waiting : Nat -> Step [ctor] .
+
+  --- A caller between ops; on one; subscribed to a server it monitors; or ended, by
+  --- unsubscribing, by being told its server went, by dying, or by the exit of a call.
+  ops between unsubbed downed quit : -> Phase [ctor] .
+  op at : Op Step -> Phase [ctor] .
+  op live : Nat -> Phase [ctor] .
+  op exited : Why -> Phase [ctor] .
+
+  --- caller(C, ops left, phase, calls it may still make for this op).
+  op caller : Nat Script Phase Nat -> Item [ctor] .
+  --- srv(P, life, subscribers, whether its idle timeout is running). The registry's
+  --- entry for P, which stays after P is dead until the registry notices; and P gone.
+  op srv : Nat Life Ids Bool -> Item [ctor] .
+  ops reg : Nat -> Item [ctor] .
+  op dead : Nat Why -> Item [ctor] .
+
+  --- Queued at a server: a caller's call, a cast to drop a subscriber, a monitor's DOWN.
+  op call : Nat Nat Op -> Item [ctor] .
+  ops unsub down : Nat Nat -> Item [ctor] .
+  --- A call that exited, for its caller to retry or give up on.
+  op exit : Nat Script Op Nat Why -> Item [ctor] .
+
+  --- What came of it: E is in the log; its subscribers at that time; one was sent it;
+  --- a caller was told it is in; a caller had an exit; a caller's fun raised.
+  op durable : Nat -> Item [ctor] .
+  op aud : Nat Ids -> Item [ctor] .
+  op delivered : Nat Nat -> Item [ctor] .
+  ops acked unanswered raised : Nat -> Item [ctor] .
+
+  --- Tries a caller gets per op; idle timeouts, faults, and crashes inside a commit to
+  --- come; the next pid.
+  ops tries ticks faults midcrash fresh : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars C P Q E S T K F M0 : Nat .
+  var O : Op .
+  var Sc : Script .
+  var St : Step .
+  var W : Why .
+  vars L L' : Life .
+  var M : Item .
+  vars I J : Ids .
+  vars A B : Bool .
+  var CF : Conf .
+
+  op hasReg : Conf -> Bool .
+  eq hasReg(reg(P) CF) = true .
+  eq hasReg(CF) = false [owise] .
+
+  --- Whether a registered server is running.
+  op registered-alive : Conf -> Bool .
+  eq registered-alive(reg(P) srv(P, L, I, A) CF) = true .
+  eq registered-alive(CF) = false [owise] .
+
+  op unreg : Conf -> Conf .
+  eq unreg(reg(P) CF) = CF .
+  eq unreg(CF) = CF [owise] .
+
+  --- Whether a message waits for P.
+  op mail? : Nat Conf -> Bool .
+  eq mail?(P, call(C, P, O) CF) = true .
+  eq mail?(P, unsub(P, S) CF) = true .
+  eq mail?(P, down(P, S) CF) = true .
+  eq mail?(P, CF) = false [owise] .
+
+  --- A message sent to P, thrown away when P is dead.
+  op put : Nat Item Conf -> Conf .
+  eq put(P, M, srv(P, L, I, A) CF) = srv(P, L, I, A) M CF .
+  eq put(P, M, CF) = CF [owise] .
+
+  --- P exits: casts and DOWNs it never read are gone with it.
+  op purge : Nat Conf -> Conf .
+  eq purge(P, unsub(P, S) CF) = purge(P, CF) .
+  eq purge(P, down(P, S) CF) = purge(P, CF) .
+  eq purge(P, CF) = CF [owise] .
+
+  op del : Nat Ids -> Ids .
+  eq del(S, S ~ I) = I .
+  eq del(S, I) = I [owise] .
+
+  op deliver : Ids Nat -> Conf .
+  eq deliver(noIds, E) = empty .
+  eq deliver(S ~ I, E) = delivered(S, E) deliver(I, E) .
+
+  op noreply : Op -> Conf .
+  eq noreply(commit(E)) = unanswered(E) .
+  eq noreply(transact(E)) = unanswered(E) .
+  eq noreply(subscribe) = empty .
+
+  --- Streams.ensure/1 ----------------------------------------------------------------
+
+  --- A caller takes its next op, with the tries it is allowed.
+  rl [ensure] :
+    caller(C, O ; Sc, between, T) tries(K) => caller(C, Sc, at(O, start), K) tries(K) .
+
+  --- Registry.lookup/2, which returns an entry whose process is dead.
+  rl [lookup] :
+    caller(C, Sc, at(O, start), T) reg(P) => caller(C, Sc, at(O, found(P)), T) reg(P) .
+  crl [lookup] :
+    { caller(C, Sc, at(O, start), T) CF } => { caller(C, Sc, at(O, missing), T) CF }
+    if not hasReg(CF) .
+
+  --- Process.alive?/1
+  rl [alive] :
+    caller(C, Sc, at(O, found(P)), T) srv(P, L, I, A)
+    => caller(C, Sc, at(O, ready(P)), T) srv(P, L, I, A) .
+  rl [not-alive] :
+    caller(C, Sc, at(O, found(P)), T) dead(P, W)
+    => caller(C, Sc, at(O, missing), T) dead(P, W) .
+
+  --- DynamicSupervisor.start_child/2 starts a server and registers it, replacing the
+  --- entry of a dead one; it finds one that runs, stopping or not, and returns it.
+  crl [start-child] :
+    { caller(C, Sc, at(O, missing), T) fresh(K) CF }
+    => { caller(C, Sc, at(O, ready(K)), T) fresh(s K) srv(K, up, noIds, true) reg(K) unreg(CF) }
+    if not registered-alive(CF) .
+  rl [already-started] :
+    caller(C, Sc, at(O, missing), T) reg(P) srv(P, L, I, A)
+    => caller(C, Sc, at(O, ready(P)), T) reg(P) srv(P, L, I, A) .
+
+  --- GenServer.call/3 of Streams.commit/3, transact/3, Server.subscribe/3 and the like.
+  --- A server that is gone is :noproc.
+  rl [call] :
+    caller(C, Sc, at(O, ready(P)), T) srv(P, L, I, A)
+    => caller(C, Sc, at(O, waiting(P)), T) srv(P, L, I, A) call(C, P, O) .
+  rl [call-noproc] :
+    caller(C, Sc, at(O, ready(P)), T) dead(P, W) => exit(C, Sc, O, T, idle) dead(P, W) .
+
+  --- The call exited: with_server/2 asks for a fresh server while it has tries left and
+  --- the exit is :noproc or :normal, which means the call was not read.
+  crl [retry] :
+    exit(C, Sc, O, T, idle) => caller(C, Sc, at(O, start), sd(T, 1)) if T > 1 .
+  crl [give-up] :
+    exit(C, Sc, O, T, W) => caller(C, nil, exited(W), T) noreply(O)
+    if W == fault or T <= 1 .
+
+  --- Streams.Server's handlers --------------------------------------------------------
+
+  --- Subscribers are monitored; the timeout is off while there are any.
+  rl [subscribe] :
+    srv(P, up, I, A) call(C, P, subscribe) caller(C, Sc, at(subscribe, waiting(P)), T)
+    => srv(P, up, C ~ del(C, I), false) caller(C, Sc, live(P), T) .
+
+  --- The log gets the event and every subscriber the event, inside one handler.
+  rl [commit] :
+    srv(P, up, I, A) call(C, P, commit(E)) caller(C, Sc, at(commit(E), waiting(P)), T)
+    => srv(P, up, I, I == noIds) caller(C, Sc, between, T)
+       durable(E) aud(E, I) deliver(I, E) acked(E) .
+
+  rl [transact] :
+    srv(P, up, I, A) call(C, P, transact(E)) caller(C, Sc, at(transact(E), waiting(P)), T)
+    => srv(P, up, I, I == noIds) caller(C, Sc, between, T)
+       durable(E) aud(E, I) deliver(I, E) acked(E) .
+  --- The fun changes nothing, or raises: the caller gets the raise, not an exit.
+  rl [transact-nothing] :
+    srv(P, up, I, A) call(C, P, transact(E)) caller(C, Sc, at(transact(E), waiting(P)), T)
+    => srv(P, up, I, I == noIds) caller(C, Sc, between, T) .
+  rl [transact-raises] :
+    srv(P, up, I, A) call(C, P, transact(E)) caller(C, Sc, at(transact(E), waiting(P)), T)
+    => srv(P, up, I, I == noIds) caller(C, nil, quit, T) raised(E) .
+
+  rl [cast-unsubscribe] :
+    srv(P, up, I, A) unsub(P, S) => srv(P, up, del(S, I), del(S, I) == noIds) .
+  rl [monitor-down] :
+    srv(P, up, I, A) down(P, S) => srv(P, up, del(S, I), del(S, I) == noIds) .
+
+  --- The timeout fires when nothing is queued and was left running.
+  crl [timeout] :
+    { srv(P, up, I, true) ticks(s K) CF } => { srv(P, stopping(idle), I, true) ticks(K) CF }
+    if not mail?(P, CF) .
+
+  --- A linked process exits, and the stream stops with its reason.
+  rl [linked-exit] :
+    srv(P, up, I, A) faults(s K) => srv(P, stopping(fault), I, A) faults(K) .
+
+  --- Subscribers -----------------------------------------------------------------------
+
+  --- Server.unsubscribe/2 casts to what the registry holds, if anything.
+  rl [unsubscribe] :
+    { caller(C, Sc, live(P), T) reg(Q) CF } => { caller(C, nil, unsubbed, T) reg(Q) put(Q, unsub(Q, C), CF) } .
+
+  --- The monitor of a subscription tells it the server is gone.
+  rl [server-down] :
+    caller(C, Sc, live(P), T) dead(P, W) => caller(C, nil, downed, T) dead(P, W) .
+
+  --- Environment ---------------------------------------------------------------------
+
+  --- The subscriber dies: its server gets a DOWN, if it still runs.
+  rl [subscriber-dies] :
+    { caller(C, Sc, live(P), T) CF } => { caller(C, nil, quit, T) put(P, down(P, C), CF) } .
+
+  --- terminate/2 returns and the process exits: calls queued for it exit.
+  rl [finish] :
+    { srv(P, stopping(W), I, A) CF } => { dead(P, W) purge(P, CF) } .
+  rl [call-exit] :
+    call(C, P, O) dead(P, W) caller(C, Sc, at(O, waiting(P)), T)
+    => dead(P, W) exit(C, Sc, O, T, W) .
+
+  --- A server is killed in the middle of whatever it does, terminate/2 not run.
+  rl [kill] :
+    { srv(P, L, I, A) faults(s K) CF } => { dead(P, fault) faults(K) purge(P, CF) } .
+
+  --- A commit appends and then fails before it answers or sends anyone anything.
+  rl [crash-in-commit] :
+    srv(P, up, I, A) call(C, P, commit(E)) caller(C, Sc, at(commit(E), waiting(P)), T)
+    midcrash(s K)
+    => srv(P, stopping(fault), I, A) caller(C, nil, exited(fault), T)
+       durable(E) unanswered(E) midcrash(K) .
+
+  --- The registry drops the entry of a process it saw die.
+  rl [deregister] : reg(P) dead(P, W) => dead(P, W) .
+
+  --- states -------------------------------------------------------------------------
+
+  --- Callers 1 and 2 commit E1 and E2, and transact E3; caller 3 subscribes. K tries
+  --- per call, T idle timeouts and F faults to come, and a crash inside a commit if M.
+  --- `cold` starts with no server; `warm` with one.
+  ops cold warm : Nat Nat Nat Nat -> Sys .
+  eq cold(K, T, F, M0) = { caller(1, commit(1) ; commit(2), between, 0)
+                          caller(2, transact(3), between, 0) caller(3, subscribe, between, 0)
+                          tries(K) ticks(T) faults(F) midcrash(M0) fresh(1) } .
+  eq warm(K, T, F, M0) = { caller(1, commit(1) ; commit(2), between, 0)
+                          caller(2, transact(3), between, 0) caller(3, subscribe, between, 0)
+                          tries(K) ticks(T) faults(F) midcrash(M0) fresh(2)
+                          srv(1, up, noIds, true) reg(1) } .
+
+  --- Property A: a commit that was answered is in the log and was sent to every subscriber
+  --- there was; one that exited, or whose fun raised, is not in the log.
+  op badA : Sys -> Bool .
+  ceq badA({ acked(E) CF }) = true if not has-durable(E, CF) .
+  ceq badA({ acked(E) aud(E, S ~ I) CF }) = true if not has-delivered(S, E, CF) .
+  eq badA({ unanswered(E) durable(E) CF }) = true .
+  eq badA({ raised(E) durable(E) CF }) = true .
+  eq badA({ CF }) = false [owise] .
+  op has-durable : Nat Conf -> Bool .
+  eq has-durable(E, durable(E) CF) = true .
+  eq has-durable(E, CF) = false [owise] .
+  op has-delivered : Nat Nat Conf -> Bool .
+  eq has-delivered(S, E, delivered(S, E) CF) = true .
+  eq has-delivered(S, E, CF) = false [owise] .
+
+  --- Property B: a server timed out with subscribers.
+  op badB : Sys -> Bool .
+  eq badB({ srv(P, stopping(idle), S ~ I, A) CF }) = true .
+  eq badB({ CF }) = false [owise] .
+
+  --- Property C: two servers run.
+  op badC : Sys -> Bool .
+  eq badC({ srv(P, L, I, A) srv(Q, L', J, B) CF }) = true .
+  eq badC({ CF }) = false [owise] .
+
+  --- Property D: a caller had an exit for a server that was stopping or gone.
+  op badD : Sys -> Bool .
+  eq badD({ caller(C, Sc, exited(idle), T) CF }) = true .
+  eq badD({ CF }) = false [owise] .
+
+  --- Two callers only, for the liveness checks, which cost more: 1 commits E1.
+  op few : Nat Nat Nat -> Sys .
+  eq few(K, T, F) = { caller(1, commit(1), between, 0) caller(3, subscribe, between, 0)
+                      tries(K) ticks(T) faults(F) midcrash(0) fresh(2)
+                      srv(1, up, noIds, true) reg(1) } .
+
+  --- Nothing left to do: no caller is mid-op or mid-exit, and no server is stopping.
+  op settled : Sys -> Bool .
+  eq settled({ caller(C, Sc, at(O, St), T) CF }) = false .
+  eq settled({ exit(C, Sc, O, T, W) CF }) = false .
+  eq settled({ srv(P, stopping(W), I, A) CF }) = false .
+  eq settled({ CF }) = true [owise] .
+endm
+
+mod STREAMS-PROPS is
+  including STREAMS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- A subscribe is not answered yet; a subscription's server is gone.
+  ops subscribing orphaned : Nat -> Prop [ctor] .
+  vars C P T : Nat .
+  var Sc : Script .
+  var St : Step .
+  var W : Why .
+  var CF : Conf .
+  eq { caller(C, Sc, at(subscribe, St), T) CF } |= subscribing(C) = true .
+  eq { caller(C, Sc, live(P), T) dead(P, W) CF } |= orphaned(C) = true .
+  eq { CF } |= subscribing(C) = false [owise] .
+  eq { CF } |= orphaned(C) = false [owise] .
+endm
