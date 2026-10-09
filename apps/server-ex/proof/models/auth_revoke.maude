@@ -1,0 +1,158 @@
+sload model-checker
+
+--- Revoking a client (HalC2.Auth.revoke_client/1) while its tickets are being bought and
+--- its sockets are opening, through every interleaving of the Auth GenServer's messages
+--- and the steps of callers and sockets. proof/hal_c2/auth_revoke_proof_test.exs maps it
+--- to the code and checks it.
+
+mod AUTH-REVOKE is
+  sorts Sid Tid Kid Scopes Phase Item Conf Sys .
+  subsort Item < Conf .
+
+  ops s1 s2 : -> Sid [ctor] .
+  ops t1 t2 t3 : -> Tid [ctor] .
+  ops k1 k2 : -> Kid [ctor] .
+  ops full none : -> Scopes [ctor] .
+  ops rows tickets sockets : -> Phase [ctor] .
+
+  --- The store and ETS: a session row, or none; a caller's ticket request; a ticket in
+  --- @tickets; a ticket whose caller has not yet checked its session; a ticket that
+  --- opened a socket.
+  op sess : Sid -> Item [ctor] .
+  op gone : Sid -> Item [ctor] .
+  op want : Tid Sid -> Item [ctor] .
+  op tk : Tid Sid -> Item [ctor] .
+  op checking : Tid Sid -> Item [ctor] .
+  op opened : Tid Kid -> Item [ctor] .
+
+  --- A socket: dialled, booted for a ticket's session, reading its scopes, open, closed.
+  op dial : Kid -> Item [ctor] .
+  op booting : Kid Sid -> Item [ctor] .
+  op reading : Kid Sid -> Item [ctor] .
+  op open : Kid Sid Scopes -> Item [ctor] .
+  op dead : Kid -> Item [ctor] .
+
+  --- Messages: the socket's connected cast, and the revoked message the socket gets.
+  op cast : Sid Kid -> Item [ctor] .
+  op revoked : Sid Kid -> Item [ctor] .
+
+  --- @live entries: a socket registered for a session, or one already sent a revoked.
+  op live : Kid Sid -> Item [ctor] .
+  op closing : Kid Sid -> Item [ctor] .
+
+  --- Auth, one message at a time: idle, or inside revoke_client for a session at a phase.
+  --- The admin's call waits in the mailbox as wantRevoke; returned marks its reply.
+  op authIdle : -> Item [ctor] .
+  op wantRevoke : Sid -> Item [ctor] .
+  op revoking : Sid Phase -> Item [ctor] .
+  op returned : Sid -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  op initial : -> Sys .
+  eq initial = { sess(s1) sess(s2) want(t1, s1) want(t2, s1) want(t3, s2)
+                 dial(k1) dial(k2) wantRevoke(s1) authIdle } .
+
+  vars S : Sid .
+  vars K K' : Kid .
+  vars T : Tid .
+  vars Sc : Scopes .
+  var C : Conf .
+  var X : Sys .
+
+  op hasTk : Sid Conf -> Bool .
+  eq hasTk(S, tk(T, S) C) = true .
+  eq hasTk(S, C) = false [owise] .
+
+  op hasTkOf : Tid Conf -> Bool .
+  eq hasTkOf(T, tk(T, S) C) = true .
+  eq hasTkOf(T, C) = false [owise] .
+
+  op hasChecking : Tid Conf -> Bool .
+  eq hasChecking(T, checking(T, S) C) = true .
+  eq hasChecking(T, C) = false [owise] .
+
+  op hasLive : Sid Conf -> Bool .
+  eq hasLive(S, live(K, S) C) = true .
+  eq hasLive(S, C) = false [owise] .
+
+  --- Whether socket K is already told about S, or will be: a revoked message is pending
+  --- or was sent, or the socket's connected cast is still in Auth's mailbox. Auth answers
+  --- every cast, and it answers a cast after a revoke with revoked, so the socket is told.
+  op reached : Kid Sid Conf -> Bool .
+  eq reached(K, S, revoked(S, K) C) = true .
+  eq reached(K, S, closing(K, S) C) = true .
+  eq reached(K, S, cast(S, K) C) = true .
+  eq reached(K, S, C) = false [owise] .
+
+  --- issue_ticket/1 inserts the ticket, then checks the session in the store. A session
+  --- revoked meanwhile leaves the ticket to be withdrawn; a session still there means the
+  --- revoke's own sweep of @tickets comes after the insert and removes it.
+  rl [issueInsert] : want(T, S) => tk(T, S) checking(T, S) .
+  rl [issueOk] : checking(T, S) sess(S) => sess(S) .
+  rl [issueWithdraw] : tk(T, S) checking(T, S) gone(S) => gone(S) .
+  crl [issueWithdrawTaken] : { checking(T, S) gone(S) C } => { gone(S) C } if not hasTkOf(T, C) .
+
+  --- take_ticket/1 consumes a ticket and starts a socket for its session; the socket's
+  --- init casts connected, then reads its scopes from the store.
+  rl [take] : dial(K) tk(T, S) => booting(K, S) opened(T, K) .
+  rl [connect] : booting(K, S) => reading(K, S) cast(S, K) .
+  rl [readFull] : reading(K, S) sess(S) => open(K, S, full) sess(S) .
+  rl [readNone] : reading(K, S) gone(S) => open(K, S, none) gone(S) .
+
+  --- The revoked message closes an open socket of its session, whatever its scopes.
+  rl [socketCloses] : open(K, S, Sc) revoked(S, K) => dead(K) .
+
+  --- The connected cast registers a socket of a live session, and answers a socket of a
+  --- revoked one with revoked. Auth does the store read and the registration in one message.
+  rl [registerLive] : authIdle cast(S, K) sess(S) => authIdle live(K, S) sess(S) .
+  rl [registerGone] : authIdle cast(S, K) gone(S) => authIdle revoked(S, K) gone(S) .
+
+  --- revoke_client/1: delete the session, its tickets, then tell its sockets, then reply.
+  rl [revokeStart] : authIdle wantRevoke(S) => revoking(S, rows) .
+  rl [revokeRows] : revoking(S, rows) sess(S) => revoking(S, tickets) gone(S) .
+  rl [revokeRowsNone] : revoking(S, rows) gone(S) => revoking(S, tickets) gone(S) .
+  rl [revokeTicket] : revoking(S, tickets) tk(T, S) => revoking(S, tickets) .
+  --- The guarded rules below match the whole state, in braces: without them C could be
+  --- empty, and the guard would ignore what is left in the state.
+  crl [revokeTicketsDone] : { revoking(S, tickets) C } => { revoking(S, sockets) C }
+    if not hasTk(S, C) .
+  rl [revokeClose] : revoking(S, sockets) live(K, S)
+    => revoking(S, sockets) closing(K, S) revoked(S, K) .
+  crl [revokeDone] : { revoking(S, sockets) C } => { authIdle returned(S) C }
+    if not hasLive(S, C) .
+
+  --- Bad states. After revoke_client(s) returns: no ticket for s that its caller still
+  --- holds (a ticket being withdrawn is not handed out, and a socket that takes it is
+  --- told to close); no socket of s registered; no socket of s open with full scopes that
+  --- was never told to close. A ticket opens at most one socket.
+  --- Between Auth's messages, @live holds only sockets of sessions that exist.
+  op badTicket : Sys -> Bool .
+  op badLive : Sys -> Bool .
+  op badLiveGone : Sys -> Bool .
+  op badOpen : Sys -> Bool .
+  op badReuse : Sys -> Bool .
+
+  ceq badTicket({returned(S) tk(T, S) C}) = true if not hasChecking(T, C) .
+  eq badTicket(X) = false [owise] .
+
+  eq badLive({returned(S) live(K, S) C}) = true .
+  eq badLive(X) = false [owise] .
+
+  eq badLiveGone({authIdle live(K, S) gone(S) C}) = true .
+  eq badLiveGone(X) = false [owise] .
+
+  ceq badOpen({returned(S) open(K, S, full) C}) = true if not reached(K, S, C) .
+  eq badOpen(X) = false [owise] .
+
+  eq badReuse({opened(T, K) opened(T, K') C}) = true .
+  eq badReuse(X) = false [owise] .
+endm
+
+mod AUTH-REVOKE-PROPS is
+  including AUTH-REVOKE .
+  including MODEL-CHECKER .
+  subsort Sys < State .
+endm
