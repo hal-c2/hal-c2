@@ -39,6 +39,13 @@ Feature: Custom themes
       And the user can filter them by name
 
     @desktop
+    Scenario: The theme editor is as tall as what it shows
+      Given the theme editor is open
+      Then the editor ends just under its last control
+      When the user shows the advanced colors
+      Then the editor grows for the list of colors
+
+    @desktop
     Scenario: Saving an edited theme applies it
       Given the user changed colors in the theme editor
       When the user saves the changes

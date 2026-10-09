@@ -229,6 +229,15 @@ const Steps steps([] {
       expect(role.isEmpty() || role.contains(QLatin1String("sidebar"), Qt::CaseInsensitive), show(rows));
     }
   });
+  step(QStringLiteral("the editor ends just under its last control"), [](World& world, const Captures&, const Table&) {
+    const QObject* dialog = popup(world);
+    expect(dialog->property("height") == dialog->property("implicitHeight") && dialog->property("height").toReal() < 320,
+           QStringLiteral("the editor is %1 tall for %2 of content").arg(dialog->property("height").toReal()).arg(dialog->property("implicitHeight").toReal()));
+  });
+  step(QStringLiteral("the editor grows for the list of colors"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return editor(world).item(QStringLiteral("roles"))->height() > 200; },
+                  [&] { return QStringLiteral("the list of colors; the editor is %1 tall").arg(popup(world)->property("height").toReal()); });
+  });
   step(QStringLiteral("the theme editor is open with unsaved changes"), [](World& world, const Captures&, const Table&) {
     QVariantMap draft = themes(world)->draft();
     draft.insert(QStringLiteral("id"), QString());

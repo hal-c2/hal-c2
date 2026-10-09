@@ -122,6 +122,25 @@ Item {
             verify(!Themes.editorOpen);
         }
 
+        // features/navigation/theme-editor.feature: the editor is as tall
+        // as what it shows.
+        function test_theEditorIsAsTallAsItsContent() {
+            const editor = openEditor();
+            const save = findChild(editor.contentItem, "save");
+            const advanced = findChild(editor.contentItem, "advanced");
+            // Nothing but the row spacing between the last control and the buttons.
+            const gap = () => save.mapToItem(editor.contentItem, 0, 0).y - (advanced.y + advanced.height);
+            tryVerify(() => editor.height === editor.implicitHeight);
+            verify(editor.height < 320, "the simple view is " + editor.height + " tall");
+            compare(gap(), editor.contentItem.spacing);
+            const simple = editor.height;
+            mouseClick(advanced);
+            tryCompare(editor, "height", 640);
+            tryVerify(() => findChild(editor.contentItem, "roles").height > 200);
+            mouseClick(advanced);
+            tryCompare(editor, "height", simple);
+        }
+
         // features/navigation/theme-editor.feature: the import dialog takes
         // the keyboard and Escape closes it.
         function test_theImportDialogTakesTheKeyboardAndClosesOnEscape() {
