@@ -11,11 +11,27 @@ mise prop:desktop SidebarProp                  # one
 mise prop:mobile                               # the phone's
 RC_PARAMS="max_success=1000" mise prop:desktop # a longer soak
 RC_PARAMS="verbose_progress=1" mise prop:desktop
+mise prop:valgrind desktop SidebarProp         # under Memcheck; `mobile` for the phone's
 ```
 
 A failed property prints its shrunk command sequence and a `reproduce` string;
 `RC_PARAMS="reproduce=<string>"` replays exactly that case, so a fix is checked
 against the case that found the bug.
+
+`prop:valgrind` builds apart (`build/prop-valgrind`, `-O1 -g`) and runs the properties
+and regressions under Memcheck, 20 cases each unless `RC_PARAMS` says otherwise, with
+`VALGRIND_JOBS` (4) in parallel. It fails on invalid accesses, uninitialised reads and
+definite or indirect leaks; each test's report is `build/prop-valgrind/valgrind/<exe>.log`.
+`tests/valgrind/memcheck.sh` is the launcher (reusable for other test runners) and
+`tests/valgrind/qt.supp` the suppressions, for library noise only. To add one, run with
+`HAL_C2_VALGRIND_FLAGS=--gen-suppressions=all`, check the stack has no frame of `src/`,
+and paste the narrowest entry (by `obj:`/`fun:`, not `...` alone) with a comment.
+Memcheck is 10-50x slower, so a few tests fail on their own 5 s waits with no
+Memcheck report (`SidebarProp`, `SyncThreadRegression`, `WorkspaceTerminalRegression`
+at the time of writing); only a `memcheck:` line names a memory error.
+On a distro whose `ld.so` is stripped and whose debuginfo is not served (Arch ahead of
+its debuginfod), valgrind refuses to start; `HAL_C2_VALGRIND_LD` in `memcheck.sh` says
+how to run with a glibc you unpacked.
 
 ## What gets a property test
 
