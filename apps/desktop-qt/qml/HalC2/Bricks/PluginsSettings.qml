@@ -17,7 +17,8 @@ SettingsPage {
     readonly property var items: settings?.items ?? []
     readonly property var disabled: settings?.disabled ?? []
     readonly property var failed: settings?.failed ?? []
-    readonly property var mcEnvironments: (Shell.state.mcPlugins?.environments ?? []).filter(environment => environment.plugins.length > 0)
+    // Every MC, with plugins or not: one with none yet can still look in its folder.
+    readonly property var mcEnvironments: Shell.state.mcPlugins?.environments ?? []
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
     // Keeps the plugins loaded while only this page shows.
@@ -215,11 +216,23 @@ SettingsPage {
             Layout.bottomMargin: 8
             spacing: 12
 
-            Label {
-                text: qsTr("On %1").arg(environment.modelData.label)
-                color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.weight: Font.DemiBold
+            RowLayout {
+                Layout.fillWidth: true
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("On %1").arg(environment.modelData.label)
+                    color: page.foreground
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.weight: Font.DemiBold
+                }
+
+                // The MC lists a plugin put in its plugins folder once it looks again.
+                ShellButton {
+                    objectName: "mcPluginsRescan"
+                    text: qsTr("Look for plugins")
+                    onClicked: Shell.dispatch("mcPlugins.rescan", { environment: environment.modelData.id })
+                }
             }
 
             Repeater {

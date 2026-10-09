@@ -302,6 +302,11 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context
   end
 
+  step "a developer hot-updates the MC", context do
+    assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
+    context
+  end
+
   step ~r/^"(?<id>[^"]+)" is listed as disabled$/, %{args: [id]} = context do
     assert %{"status" => "disabled", "enabled" => false} = Fixtures.entry(id)
     assert Process.whereis(Fixtures.module(id)) == nil

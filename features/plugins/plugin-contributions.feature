@@ -217,6 +217,13 @@ Feature: What plugins add to the clients
       And the saved settings are unchanged
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A plugin put in the MC's plugins folder is listed once the user looks for it
+      Given the MC runs no plugins
+      And the MC's plugins folder gains the plugin "gitea"
+      When the user looks for plugins on that environment
+      Then "gitea" is listed as disabled
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A failed plugin can be restarted from its settings
       Given "code-review" is listed as failed with its last error
       When the user restarts "code-review"

@@ -196,8 +196,16 @@ defmodule HalC2.Upgrade do
     {restart, hot} = Enum.split_with(beams, &restart_module?/1)
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
+      rescan_plugins()
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)))}
     end
+  end
+
+  # A hot update is how a developer has the MC take in what changed, so it also
+  # picks up plugins put in or changed in the plugins directory.
+  defp rescan_plugins do
+    if Process.whereis(HalC2.Plugins), do: HalC2.Plugins.rescan()
+    :ok
   end
 
   @doc "The outcome of the last update this MC finished, for `ready` events."
@@ -503,7 +511,7 @@ defmodule HalC2.Upgrade do
     beams = for {mod, _} = beam <- beams(bundle), MapSet.member?(wanted, mod), do: beam
 
     case HalC2.Hot.reload(beams) do
-      {:ok, _report} -> :ok
+      {:ok, _report} -> rescan_plugins()
       {:error, reason} -> {:error, reason}
     end
   end

@@ -314,6 +314,11 @@ bool McPluginController::handle(const QString& action, const QVariant& payload) 
   const QVariantMap map = payload.toMap();
   const QString environment = map.value(QStringLiteral("environment")).toString();
   const QString id = map.value(QStringLiteral("id")).toString();
+  if (action == QLatin1String("mcPlugins.rescan")) {
+    if (!environment.isEmpty())
+      request(environment, QStringLiteral("plugins.rescan"), {}, QStringLiteral("The MC could not look for plugins"));
+    return true;
+  }
   if (environment.isEmpty() || id.isEmpty()) return true;
   const QJsonObject input{{QStringLiteral("id"), id}};
   if (action == QLatin1String("mcPlugins.enable")) {
