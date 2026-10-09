@@ -187,6 +187,56 @@ defmodule HalC2.ClusterTest do
 
   defp note(id), do: {"note", id, %{"s" => %{"v" => 1}}}
 
+  # Found by proof/hal_c2/stream_relay_proof_test.exs. A suspended socket still takes
+  # the messages sent to it.
+  test "a client whose follow is answered as the MCs part and meet again is told it failed",
+       %{tmp_dir: dir, port: port} do
+    {peer, c} = member(dir)
+    true = Node.connect(c)
+    {:ok, _} = :peer.call(peer, HalC2.Streams, :commit, ["split-th", :thread, [note("n1")]])
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+
+    # The socket, found by a stream here it follows.
+    {:ok, _} = HalC2.Streams.commit("here-th", :thread, [note("n1")])
+    here = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "here-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => here})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure("here-th")).subscribers)
+
+    # The stream on c holds the follow until the socket waits for its answer.
+    stream = :erpc.call(c, HalC2.Streams, :ensure, ["split-th"])
+    tracer = Node.spawn(c, HalC2.Test.Forward, :loop, [self()])
+    1 = :erpc.call(c, :erlang, :trace, [stream, true, [:receive, {:tracer, tracer}]])
+    :ok = :erpc.call(c, :sys, :suspend, [stream])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(c), "stream" => "split-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+
+    assert_receive {:trace, ^stream, :receive,
+                    {:"$gen_call", {worker, _}, {:subscribe, ^socket, _, _}}},
+                   5_000
+
+    # The answer lands, and the MCs part and meet again, before the socket reads it.
+    :erlang.trace(socket, true, [:receive])
+    true = :erlang.suspend_process(socket)
+    :ok = :erpc.call(c, :sys, :resume, [stream])
+    assert_receive {:trace, ^socket, :receive, {:DOWN, _, :process, ^worker, _}}, 5_000
+    true = Node.disconnect(c)
+    true = Node.connect(c)
+    assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
+    true = :erlang.resume_process(socket)
+    :erlang.trace(socket, false, [:receive])
+
+    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2))
+    assert %{"t" => "error", "id" => 2} = error
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {:ok, seq} = :erpc.call(c, HalC2.Streams, :commit, ["split-th", :thread, [note("n2")]])
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    assert [[^seq, "note", "n2", _, _at]] = events["events"]
+  end
+
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
