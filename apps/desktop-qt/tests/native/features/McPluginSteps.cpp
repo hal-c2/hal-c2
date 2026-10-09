@@ -886,6 +886,11 @@ const Steps steps([] {
     QQuickItem* failure = waitNamed(world, QStringLiteral("pluginSettingsFailure"));
     world.waitFor([&] { return failure->property("text").toString() == c[0]; }, [&] { return failure->property("text").toString(); });
   });
+  step(QStringLiteral("the MC runs no plugins"), [](World& world, const Captures&, const Table&) {
+    fake(world).plugins[world.mc.environmentId].clear();
+    announce(world);
+    world.waitFor([&] { return listed(world, kCodeReview).isEmpty(); }, [&] { return describe(world); });
+  });
   step(QStringLiteral("the MC's plugins folder gains the plugin %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QJsonObject entry = codeReview();
     entry.insert(QStringLiteral("id"), c[0]);

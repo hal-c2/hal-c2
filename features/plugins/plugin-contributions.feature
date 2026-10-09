@@ -218,7 +218,8 @@ Feature: What plugins add to the clients
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A plugin put in the MC's plugins folder is listed once the user looks for it
-      Given the MC's plugins folder gains the plugin "gitea"
+      Given the MC runs no plugins
+      And the MC's plugins folder gains the plugin "gitea"
       When the user looks for plugins on that environment
       Then "gitea" is listed as disabled
 
