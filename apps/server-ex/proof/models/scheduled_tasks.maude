@@ -1,0 +1,291 @@
+sload model-checker
+
+--- Scheduled tasks (HalC2.ScheduledTasks): commands, ticks and watchers arriving while
+--- runs are in flight, and the scheduler crashing with runners out.
+--- proof/hal_c2/scheduled_tasks_proof_test.exs maps it to the code and checks it.
+
+mod SCHEDULED-TASKS is
+  protecting NAT .
+
+  sorts Next Status Trig From Item Conf Sys .
+  subsort Item < Conf .
+
+  --- Time is a number of ticks. A task is aimed at `at(n)`, or at nothing (`unset`).
+  op unset : -> Next [ctor] .
+  op at : Nat -> Next [ctor] .
+  ops never running ok bad : -> Status [ctor] .
+  ops sched manual : -> Trig [ctor] .
+  --- Who waits for a run: nobody, or the `run_now/1` caller c(n).
+  op nobody : -> From [ctor] .
+  op c : Nat -> From [ctor] .
+
+  --- The scheduler is up or down; while up its timer is armed. `wrong` marks a run's
+  --- result applied to a task that did not start it.
+  ops up down armed wrong : -> Item [ctor] .
+  --- The clock, the advances of it left, the commands, crashes and runs left, the next
+  --- run's pid and the next task record's incarnation.
+  ops now ticks cmds faults starts pids incs : Nat -> Item [ctor] .
+  --- The task ids, the booleans commands carry, the callers of run_now, and two watchers:
+  --- alive or dead (`wl`, `wd`), and which the scheduler monitors (`watching`).
+  ops known caller wl wd watching : Nat -> Item [ctor] .
+  op flag : Bool -> Item [ctor] .
+
+  --- A task: id, enabled, next run, last status, incarnation (a ghost: which record this
+  --- is, as an id reused after a delete is another one).
+  op tsk : Nat Bool Next Status Nat -> Item [ctor] .
+  --- An entry of the runs table: pid, task id, the incarnation that started it, trigger,
+  --- the time it started at and who waits.
+  op run : Nat Nat Nat Trig Nat From -> Item [ctor] .
+  --- The process of a run: pid, task id, start time, trigger.
+  op runner : Nat Nat Nat Trig -> Item [ctor] .
+  --- Messages to the scheduler: a run's result, a run that exited, a watcher's exit and an
+  --- unsubscribe cast; and what happened outside it: a prompt fired for a fire_key, a
+  --- caller answered.
+  ops finished died wdown unsub got : Nat -> Item [ctor] .
+  op fired : Nat Nat Trig -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars I J K P Q N M S W X F A : Nat .
+  vars E En : Bool .
+  var Nx : Next .
+  vars St R : Status .
+  vars T U : Trig .
+  vars Fm Gm : From .
+  vars C : Conf .
+
+  eq armed armed = armed .
+
+  --- The next run of a task a command left enabled or not: a pending run is kept, else
+  --- aimed afresh (two ticks on).
+  op aim : Bool Bool Next Nat -> Next .
+  eq aim(false, En, Nx, N) = unset .
+  eq aim(true, true, at(M), N) = at(M) .
+  eq aim(true, En, Nx, N) = at(N + 2) [owise] .
+
+  --- The same after a run: a manual one leaves a pending run where it was.
+  op after : Bool Trig Next Nat -> Next .
+  eq after(false, T, Nx, N) = unset .
+  eq after(true, manual, at(M), N) = at(M) .
+  eq after(true, T, Nx, N) = at(N + 2) [owise] .
+
+  op has : Nat Conf -> Bool .
+  eq has(I, tsk(I, En, Nx, St, J) C) = true .
+  eq has(I, C) = false [owise] .
+
+  op running? : Nat Conf -> Bool .
+  eq running?(I, run(P, I, J, T, S, Fm) C) = true .
+  eq running?(I, C) = false [owise] .
+
+  op entry : Nat Conf -> Bool .
+  eq entry(P, run(P, I, J, T, S, Fm) C) = true .
+  eq entry(P, C) = false [owise] .
+
+  op watching? : Nat Conf -> Bool .
+  eq watching?(W, watching(W) C) = true .
+  eq watching?(W, C) = false [owise] .
+
+  op unsubbing : Nat Conf -> Bool .
+  eq unsubbing(W, unsub(W) C) = true .
+  eq unsubbing(W, C) = false [owise] .
+
+  op monitored : Nat Conf -> Bool .
+  eq monitored(W, up watching(W) C) = true .
+  eq monitored(W, C) = false [owise] .
+
+  op unwatch : Nat Conf -> Conf .
+  eq unwatch(W, watching(W) C) = C .
+  eq unwatch(W, C) = C [owise] .
+
+  op reply : From -> Conf .
+  eq reply(nobody) = empty .
+  eq reply(c(X)) = got(X) .
+
+  op mark : Nat Nat -> Conf .
+  eq mark(J, J) = empty .
+  eq mark(J, K) = wrong [owise] .
+
+  --- stop_runs/2: a deleted task's runs end, and a caller waiting on one is told the task
+  --- is gone.
+  op stop : Nat Conf -> Conf .
+  eq stop(I, run(P, I, J, T, S, Fm) C) = reply(Fm) stop(I, kill(P, C)) .
+  eq stop(I, C) = C [owise] .
+  op kill : Nat Conf -> Conf .
+  eq kill(P, runner(P, I, S, T) C) = C .
+  eq kill(P, C) = C [owise] .
+
+  --- What a prompt fired leaves: the fire_key it used.
+  op stamp : Nat Nat Trig Nat -> Conf .
+  ceq stamp(I, S, T, N) = fired(I, S, T) if N > S .
+  eq stamp(I, S, T, N) = empty [owise] .
+
+  --- complete/3: the result is recorded on the task of that id, whichever record it is,
+  --- and a waiting caller answered.
+  op complete : Nat Nat Status Trig Nat From Conf -> Conf .
+  eq complete(I, J, R, T, N, Fm, tsk(I, En, Nx, St, K) C)
+    = tsk(I, En, after(En, T, Nx, N), R, K) mark(J, K) reply(Fm) C .
+  eq complete(I, J, R, T, N, Fm, C) = reply(Fm) C [owise] .
+
+  --- An MC that stops: its runs table, timer, messages and monitors are gone, its
+  --- callers get an exit, and the runners linked to it die.
+  op crash : Conf -> Conf .
+  eq crash(run(P, I, J, T, S, Fm) C) = reply(Fm) crash(C) .
+  eq crash(runner(P, I, S, T) C) = crash(C) .
+  eq crash(armed C) = crash(C) .
+  eq crash(finished(P) C) = crash(C) .
+  eq crash(died(P) C) = crash(C) .
+  eq crash(wdown(W) C) = crash(C) .
+  eq crash(unsub(W) C) = crash(C) .
+  eq crash(watching(W) C) = crash(C) .
+  eq crash(C) = C [owise] .
+
+  --- init/1: a run the MC was in the middle of failed.
+  op reinit : Nat Conf -> Conf .
+  eq reinit(N, tsk(I, En, Nx, running, J) C)
+    = tsk(I, En, after(En, sched, Nx, N), bad, J) reinit(N, C) .
+  eq reinit(N, C) = C [owise] .
+
+  --- commands ------------------------------------------------------------------------
+
+  --- upsert/1 and set_enabled/1 of a task that exists, and of an id that does not.
+  rl [upsert] :
+    up cmds(s K) now(N) known(I) flag(E) tsk(I, En, Nx, St, J)
+    => up cmds(K) now(N) known(I) flag(E) tsk(I, E, aim(E, En, Nx, N), St, J) armed .
+  crl [upsert] :
+    { up cmds(s K) now(N) known(I) flag(E) incs(J) C }
+    => { up cmds(K) now(N) known(I) flag(E) incs(s J)
+         tsk(I, E, aim(E, false, unset, N), never, J) armed C }
+    if not has(I, C) .
+  rl [set-enabled] :
+    up cmds(s K) now(N) known(I) flag(E) tsk(I, En, Nx, St, J)
+    => up cmds(K) now(N) known(I) flag(E) tsk(I, E, aim(E, En, Nx, N), St, J) armed .
+
+  rl [delete] :
+    { up cmds(s K) known(I) tsk(I, En, Nx, St, J) C } => { up cmds(K) known(I) armed stop(I, C) } .
+
+  --- run_now/1: an answer at once, or once the run is recorded.
+  crl [run-now-gone] : { up caller(X) known(I) C } => { up known(I) got(X) C }
+    if not has(I, C) .
+  crl [run-now-running] :
+    { up caller(X) known(I) tsk(I, En, Nx, St, J) C } => { up known(I) tsk(I, En, Nx, St, J) got(X) C }
+    if running?(I, C) .
+  crl [run-now] :
+    { up caller(X) known(I) now(N) pids(P) starts(s K) tsk(I, En, Nx, St, J) C }
+    => { up known(I) now(N) pids(s P) starts(K) tsk(I, En, Nx, running, J)
+         run(P, I, J, manual, N, c(X)) runner(P, I, N, manual) armed C }
+    if not running?(I, C) .
+
+  --- subscribe/1 and unsubscribe/1; a watcher that exits is dropped.
+  crl [subscribe] : { up wl(W) C } => { up wl(W) watching(W) C }
+    if not watching?(W, C) /\ not unsubbing(W, C) .
+  crl [unsubscribe] : { up wl(W) C } => { up wl(W) unsub(W) C } if not unsubbing(W, C) .
+  rl [unsubscribe] : { up unsub(W) C } => { up unwatch(W, C) } .
+  rl [watcher-down] : { up wdown(W) C } => { up unwatch(W, C) } .
+
+  --- ticks and runs ------------------------------------------------------------------
+
+  --- :tick starts a task that is due and not running.
+  crl [tick] :
+    { up armed now(N) pids(P) starts(s K) tsk(I, true, at(M), St, J) C }
+    => { up armed now(N) pids(s P) starts(K) tsk(I, true, at(M), running, J)
+         run(P, I, J, sched, N, nobody) runner(P, I, N, sched) C }
+    if M <= N and not running?(I, C) .
+
+  --- A run finished, or its process exited.
+  rl [run-done] :
+    { up now(N) finished(P) run(P, I, J, T, S, Fm) C }
+    => { up now(N) armed complete(I, J, ok, T, N, Fm, C) } .
+  rl [run-down] :
+    { up now(N) died(P) run(P, I, J, T, S, Fm) C }
+    => { up now(N) armed complete(I, J, bad, T, N, Fm, C) } .
+  --- A message about a run the table does not hold is ignored.
+  crl [stale] : { up finished(P) C } => { up C } if not entry(P, C) .
+  crl [stale] : { up died(P) C } => { up C } if not entry(P, C) .
+
+  --- environment --------------------------------------------------------------------
+
+  --- fire/2 returns, or the process exits, perhaps once the prompt was sent.
+  --- A prompt takes longer than the clock's unit: a run that ends in the instant it began
+  --- has no fire_key of its own, so only the others are counted.
+  rl [fire] : runner(P, I, S, T) now(N) => stamp(I, S, T, N) finished(P) now(N) .
+  rl [fire-dies] : runner(P, I, S, T) => died(P) .
+  rl [fire-dies] : runner(P, I, S, T) now(N) => stamp(I, S, T, N) died(P) now(N) .
+
+  rl [advance] : now(N) ticks(s K) => now(s N) ticks(K) .
+
+  rl [crash] : { up faults(s F) C } => { down faults(F) crash(C) } .
+  rl [restart] : { down now(N) C } => { up armed now(N) reinit(N, C) } .
+
+  rl [watcher-dies] : up wl(W) watching(W) => up wd(W) watching(W) wdown(W) .
+  crl [watcher-dies] : { wl(W) C } => { wd(W) C } if not monitored(W, C) .
+
+  --- states -------------------------------------------------------------------------
+
+  --- Two tasks, both due soon, and two callers; K commands, F crashes and T advances of the
+  --- clock to come. `watched` is two watchers alone.
+  ops seeded one watched : Nat Nat Nat -> Sys .
+  eq seeded(K, F, A) =
+    { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(3)
+      known(1) known(2) flag(true) flag(false) caller(1) caller(2)
+      tsk(1, true, at(1), never, 1) tsk(2, true, at(2), never, 2) } .
+  eq one(K, F, A) =
+    { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(2)
+      known(1) flag(true) flag(false) caller(1) caller(2)
+      tsk(1, true, at(1), never, 1) } .
+  eq watched(K, F, A) =
+    { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(0) incs(1)
+      wl(1) wl(2) } .
+
+  --- Bad states: a result applied to a task that did not start it; two runs of a task
+  --- at once, in the table or as processes; a task recorded as running with no entry in
+  --- the table; a prompt fired twice for one fire_key; a caller answered twice.
+  ops mixed twoEntries twoRunners stuckRunning refired twiceAnswered : Sys -> Bool .
+  eq mixed({ wrong C }) = true .
+  eq mixed({ C }) = false [owise] .
+  eq twoEntries({ run(P, I, J, T, S, Fm) run(Q, I, K, U, M, Gm) C }) = true .
+  eq twoEntries({ C }) = false [owise] .
+  eq twoRunners({ runner(P, I, S, T) runner(Q, I, M, U) C }) = true .
+  eq twoRunners({ C }) = false [owise] .
+  ceq stuckRunning({ up tsk(I, En, Nx, running, J) C }) = true if not running?(I, C) .
+  eq stuckRunning({ C }) = false [owise] .
+  eq refired({ fired(I, S, T) fired(I, S, T) C }) = true .
+  eq refired({ C }) = false [owise] .
+  eq twiceAnswered({ got(X) got(X) C }) = true .
+  eq twiceAnswered({ C }) = false [owise] .
+endm
+
+mod SCHEDULED-TASKS-PROPS is
+  including SCHEDULED-TASKS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- A caller waits on a run; a caller was answered; a run is in the table; a task is
+  --- due, enabled and not running, with a run to spare; a watcher died and is still
+  --- monitored.
+  ops waiting answered entered : Nat -> Prop [ctor] .
+  op due : Nat -> Prop [ctor] .
+  op lost : Nat -> Prop [ctor] .
+
+  vars I J K P X W M N : Nat .
+  vars En : Bool .
+  var Nx : Next .
+  vars St : Status .
+  var T : Trig .
+  var S : Nat .
+  var Fm : From .
+  var C : Conf .
+
+  eq { run(P, I, J, T, S, c(X)) C } |= waiting(X) = true .
+  eq { got(X) C } |= answered(X) = true .
+  eq { run(P, I, J, T, S, Fm) C } |= entered(P) = true .
+  ceq { now(N) starts(s K) tsk(I, true, at(M), St, J) C } |= due(I) = true
+    if M <= N and not running?(I, C) .
+  eq { wd(W) watching(W) C } |= lost(W) = true .
+  eq { C } |= waiting(X) = false [owise] .
+  eq { C } |= answered(X) = false [owise] .
+  eq { C } |= entered(P) = false [owise] .
+  eq { C } |= due(I) = false [owise] .
+  eq { C } |= lost(W) = false [owise] .
+endm
