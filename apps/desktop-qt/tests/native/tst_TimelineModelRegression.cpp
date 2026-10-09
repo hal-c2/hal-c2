@@ -6,7 +6,7 @@
 
 namespace {
 
-QJsonObject frame(const char* json) {
+QJsonObject frame(const QByteArray& json) {
   return QJsonDocument::fromJson(json).object();
 }
 
@@ -82,6 +82,25 @@ private slots:
     QCOMPARE(ids.size(), 4);
     QCOMPARE(QSet<QString>(ids.cbegin(), ids.cend()).size(), ids.size());
     QCOMPARE(model.data(model.index(1), TimelineModel::TextRole).toString(), QStringLiteral("first"));
+  }
+
+  // A number the MC sends outside the range of the integer it is read as (an
+  // offset of 1e300) was cast anyway, which is undefined. It reads as a
+  // missing offset: the copy is at no offset, so the first events apply and a
+  // frame sent again is still told from the first.
+  void anOffsetOutOfRangeReadsAsNone() {
+    for (const char* offset : {"1e300", "-1e300", "9.3e18", "1.5"}) {
+      TimelineModel model(QStringLiteral("thread"));
+      model.subscribing();
+      model.receive(frame(QByteArray(R"({"t":"snapshot","part":0,"done":true,"offset":)") + offset + R"(,"handle":"log-1","floor":)" + offset +
+                          R"(,"rows":[
+          ["run","r1",{"id":"r1","ordinal":1e300,"status":"running"}],
+          ["turn-item","i1",{"type":"assistant_message","runId":"r1","ordinal":1,"text":"a"}]]})"));
+      const QByteArray events = QByteArray(R"({"t":"events","offset":2,"events":[[2,"turn-item","i1",{"a":{"text":"b"}},"2026-09-23T10:00:00Z"]]})");
+      model.receive(frame(events));
+      model.receive(frame(events));
+      QCOMPARE(model.data(model.index(0), TimelineModel::TextRole).toString(), QStringLiteral("ab"));
+    }
   }
 };
 

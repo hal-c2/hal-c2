@@ -10,6 +10,7 @@
 #include <optional>
 #include <utility>
 
+#include "JsonNumbers.h"
 #include "SidebarModel.h"
 #include "TimelineSummary.h"
 
@@ -398,8 +399,9 @@ void TimelineModel::receive(const QJsonObject& frame) {
     // The MC dropped events it could not send: the resubscription that
     // follows continues from the offset it names, never from an earlier one.
     const QJsonValue offset = frame.value(QLatin1String("offset"));
-    if (offset.isDouble() && m_cursor.offset >= 0 && qint64(offset.toDouble()) > m_cursor.offset) {
-      m_cursor.offset = qint64(offset.toDouble());
+    const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+    if (reached && m_cursor.offset >= 0 && *reached > m_cursor.offset) {
+      m_cursor.offset = *reached;
       m_cursorDirty = true;
     }
   }
@@ -421,8 +423,8 @@ void TimelineModel::snapshot(const QJsonObject& frame) {
   const QJsonValue offset = frame.value(QLatin1String("offset"));
   const QJsonValue floor = frame.value(QLatin1String("floor"));
   m_cursor.handle = frame.value(QLatin1String("handle")).toString();
-  m_cursor.offset = offset.isDouble() ? qint64(offset.toDouble()) : 0;
-  m_cursor.floor = floor.isDouble() ? std::optional<qint64>(qint64(floor.toDouble())) : std::nullopt;
+  m_cursor.offset = jsonnumbers::integerOf(offset).value_or(0);
+  m_cursor.floor = jsonnumbers::integerOf(floor);
   everythingChanged(changedSince(before));
   if (hasEarlier() != hadEarlier) emit earlierChanged();
   m_dirtyAll = true;
@@ -456,7 +458,7 @@ void TimelineModel::everythingChanged(const QSet<QString>& changed) {
 
 void TimelineModel::eventsFrame(const QJsonObject& frame) {
   const QJsonValue offset = frame.value(QLatin1String("offset"));
-  const qint64 reached = offset.isDouble() ? qint64(offset.toDouble()) : -1;
+  const qint64 reached = jsonnumbers::integerOf(offset).value_or(-1);
   // A catch-up that takes several frames is one set of merged changes: its
   // parts carry the offset the client is at, the last one the offset they
   // bring it to. Applied part-way and cut off, it would be applied again.
@@ -485,8 +487,9 @@ void TimelineModel::live(const QJsonObject& frame) {
   m_catchingUp = false;
   if (!m_catchUp.isEmpty()) events(caughtUp());
   const QJsonValue offset = frame.value(QLatin1String("offset"));
-  if (m_cursor.offset >= 0 && offset.isDouble() && qint64(offset.toDouble()) > m_cursor.offset) {
-    m_cursor.offset = qint64(offset.toDouble());
+  const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+  if (m_cursor.offset >= 0 && reached && *reached > m_cursor.offset) {
+    m_cursor.offset = *reached;
     m_cursorDirty = true;
   }
   // An MC that names its log now did not when the copy was taken: the copy
@@ -515,8 +518,9 @@ void TimelineModel::page(const QJsonObject& frame) {
   }
   const QJsonValue offset = frame.value(QLatin1String("offset"));
   const QJsonValue floor = frame.value(QLatin1String("floor"));
-  if (offset.isDouble() && qint64(offset.toDouble()) > m_cursor.offset) m_cursor.offset = qint64(offset.toDouble());
-  m_cursor.floor = floor.isDouble() ? std::optional<qint64>(qint64(floor.toDouble())) : std::nullopt;
+  const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+  if (reached && *reached > m_cursor.offset) m_cursor.offset = *reached;
+  m_cursor.floor = jsonnumbers::integerOf(floor);
   m_cursorDirty = true;
   m_loadingEarlier = false;
   // The earlier turns' rows go in above; the ones held keep their place.
@@ -541,7 +545,7 @@ cache::Entity TimelineModel::cached(const QString& kind, const QString& id, cons
   cache::Entity entity{kind, id, fields, std::nullopt};
   if (!kWindowed.contains(kind)) return entity;
   const QJsonObject run = this->entity(QStringLiteral("run"), text(fields, QLatin1String("runId")));
-  if (!run.isEmpty()) entity.run = qint64(run.value(QLatin1String("ordinal")).toDouble());
+  if (!run.isEmpty()) entity.run = run.value(QLatin1String("ordinal")).toInteger();
   return entity;
 }
 
@@ -596,7 +600,7 @@ void TimelineModel::park() {
   QList<QPair<qint64, QString>> runs;
   const QHash<QString, QJsonObject> held = m_entities.value(QStringLiteral("run"));
   for (auto it = held.cbegin(); it != held.cend(); ++it) {
-    const qint64 ordinal = qint64(it->value(QLatin1String("ordinal")).toDouble());
+    const qint64 ordinal = it->value(QLatin1String("ordinal")).toInteger();
     if (text(*it, QLatin1String("status")) == QLatin1String("rolled_back")) continue;
     if (m_cursor.floor && ordinal < *m_cursor.floor) continue;
     runs.append({ordinal, it.key()});
@@ -623,7 +627,8 @@ void TimelineModel::events(const QJsonArray& events) {
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     // An event the copy already holds (a frame sent again on a reconnect) would append its text twice.
-    if (m_cursor.offset >= 0 && event.at(0).isDouble() && qint64(event.at(0).toDouble()) <= m_cursor.offset) continue;
+    const std::optional<qint64> at = jsonnumbers::integerOf(event.at(0));
+    if (m_cursor.offset >= 0 && at && *at <= m_cursor.offset) continue;
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();

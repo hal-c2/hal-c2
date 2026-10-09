@@ -158,7 +158,8 @@ inline void write(const QString& key, const QJsonValue& value, JsonSteps& steps)
     steps.push_back({JsonStep::String, name, value.toString().toStdString()});
   } else if (value.isDouble()) {
     const double number = value.toDouble();
-    if (number == double(std::int64_t(number)) && number > -9e18 && number < 9e18) {
+    // The range first: a double outside int64 is undefined to cast.
+    if (number > -9e18 && number < 9e18 && number == double(std::int64_t(number))) {
       steps.push_back({JsonStep::Integer, name, {}, std::int64_t(number)});
     } else {
       steps.push_back({JsonStep::Real, name, {}, 0, number});

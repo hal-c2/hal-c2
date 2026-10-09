@@ -203,8 +203,9 @@ std::vector<fuzz::JsonSteps> Seeded(std::initializer_list<const char*> frames) {
 }
 
 // A frame whose version is a number `qint64(double)` cannot hold: the steps
-// of `shell.rows` with `rev` set to `value`. ShellStore::setVersion casts it
-// unchecked, so these seeds fail (float-cast-overflow) until it clamps.
+// of `shell.rows` with `rev` set to `value`. ShellStore::setVersion once cast
+// it unchecked (float-cast-overflow); it reads a rev out of range as none
+// (tests/native/tst_SyncThreadRegression.cpp).
 fuzz::JsonSteps WithRev(double value) {
   fuzz::JsonSteps steps = fuzz::steps(R"j({"t":"shell.rows","id":1,"mc":"mc-a","epoch":"epoch-1","reset":false,"rows":[
       ["t1","thread",{"id":"t1","projectId":"p1","title":"T"}]]})j");

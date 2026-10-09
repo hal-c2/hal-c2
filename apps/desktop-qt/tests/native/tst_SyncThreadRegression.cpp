@@ -3,6 +3,7 @@
 
 #include <QtTest>
 
+#include "../fuzz/Reach.h"
 #include "FakeMc.h"
 #include "LocalCache.h"
 #include "McClient.h"
@@ -13,6 +14,15 @@
 #include "ShellStore.h"
 #include "ThreadStore.h"
 #include "TestTime.h"
+
+namespace halc2::fuzz {
+// onFrame is private: the subscription's handler is its only caller.
+struct ShellOnFrame {
+  using type = void (ShellStore::*)(const QJsonObject&);
+  friend type reach(ShellOnFrame);
+};
+template struct Reach<ShellOnFrame, &ShellStore::onFrame>;
+}  // namespace halc2::fuzz
 
 class SyncThreadRegression : public QObject {
   Q_OBJECT
@@ -63,6 +73,23 @@ private slots:
 
     HAL_C2_TRY_VERIFY(loaded);
     HAL_C2_TRY_COMPARE(threads->openThreads(), QStringList());
+  }
+
+  // A rev outside qint64 (1e300 from the MC) was cast anyway, which is
+  // undefined. It reads as no rev: the MC is unversioned, so the next
+  // subscription asks for all its rows, not the ones since a rev it never had.
+  void aRevOutOfRangeLeavesTheMcUnversioned() {
+    McClient client;
+    ShellStore store(&client);
+    const auto onFrame = reach(halc2::fuzz::ShellOnFrame{});
+    const auto rows = [&](const char* mc, const QByteArray& rev) {
+      const QByteArray json = "{\"t\":\"shell.rows\",\"mc\":\"" + QByteArray(mc) + "\",\"epoch\":\"e1\",\"rev\":" + rev + ",\"rows\":[]}";
+      (store.*onFrame)(QJsonDocument::fromJson(json).object());
+    };
+    rows("mc-ok", "7");
+    for (const char* rev : {"1e300", "-1e300", "9.3e18", "1.5"}) rows("mc-bad", rev);
+    QCOMPARE(store.have().value(QStringLiteral("mc-ok")).toArray(), (QJsonArray{QStringLiteral("e1"), 7}));
+    QVERIFY(!store.have().contains(QStringLiteral("mc-bad")));
   }
 };
 

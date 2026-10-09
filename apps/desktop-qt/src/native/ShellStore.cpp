@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "JsonNumbers.h"
 #include "McClient.h"
 
 namespace {
@@ -207,9 +208,11 @@ void ShellStore::putRow(const QString& mc, const QString& id, const QString& kin
 
 void ShellStore::setVersion(const QString& mc, const QJsonValue& epoch, const QJsonValue& rev) {
   Mc& entry = m_mcs[mc];
-  const bool versioned = epoch.isString() && !epoch.toString().isEmpty() && rev.isDouble();
+  // A rev that is no whole number in range reads as no rev: the MC is unversioned.
+  const std::optional<qint64> number = jsonnumbers::integerOf(rev);
+  const bool versioned = epoch.isString() && !epoch.toString().isEmpty() && number;
   entry.epoch = versioned ? epoch.toString() : QString();
-  entry.rev = versioned ? qint64(rev.toDouble()) : 0;
+  entry.rev = versioned ? *number : 0;
   unsaved(mc);
 }
 

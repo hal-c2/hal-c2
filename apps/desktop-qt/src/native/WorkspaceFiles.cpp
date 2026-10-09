@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "JsonNumbers.h"
 #include "McClient.h"
 #include "TimelineModel.h"
 
@@ -284,7 +285,7 @@ void WorkspaceFiles::reloadFile() {
                    m_truncated = file.value(QLatin1String("truncated")).toBool();
                    if (m_truncated) {
                      m_truncatedNotice = QStringLiteral("Preview limited to the first 1 MB of a %1 byte file.")
-                                             .arg(QLocale(QLocale::English).toString(qint64(file.value(QLatin1String("byteLength")).toDouble())));
+                                             .arg(QLocale(QLocale::English).toString(jsonnumbers::saturate(file.value(QLatin1String("byteLength")).toDouble())));
                    }
                    emit fileChanged();
                    m_revealLine = m_openLine > 0 ? std::clamp(m_openLine, 1, std::max(1, m_lines.rowCount())) : 0;

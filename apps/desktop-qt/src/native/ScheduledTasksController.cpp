@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "JsonNumbers.h"
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -62,7 +63,7 @@ QString scheduleLabel(const QJsonObject& schedule) {
   if (at(schedule, "type") == QLatin1String("interval")) {
     const double everyMs = schedule.value(QLatin1String("everyMs")).toDouble();
     const double minutes = everyMs / 60000.0;
-    return minutes == std::floor(minutes) ? QStringLiteral("Every %1 min").arg(qint64(minutes))
+    return minutes == std::floor(minutes) ? QStringLiteral("Every %1 min").arg(jsonnumbers::saturate(minutes))
                                           : QStringLiteral("Every %1 sec").arg(qint64(std::lround(everyMs / 1000.0)));
   }
   static const QStringList names{QStringLiteral("Sun"), QStringLiteral("Mon"), QStringLiteral("Tue"), QStringLiteral("Wed"),

@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "DraftController.h"
+#include "JsonNumbers.h"
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -187,7 +188,7 @@ QString citationLink(const QJsonObject& citation) {
                          QLatin1String("suffix"), QLatin1String("comment")}) {
     const QJsonValue value = citation.value(key);
     if (value.isUndefined()) continue;
-    const QString text = value.isString() ? value.toString() : QString::number(qint64(value.toDouble()));
+    const QString text = value.isString() ? value.toString() : QString::number(jsonnumbers::saturate(value.toDouble()));
     query.append(key + u'=' + encoded(text).replace(QLatin1String("%20"), QLatin1String("+")));
   }
   return QStringLiteral("[Assistant quote](hal-c2-citation://v1/%1?%2)").arg(path.join(u'/'), query.join(u'&'));
@@ -1747,8 +1748,8 @@ bool ComposerController::addTerminalContext(const QVariantMap& selection) {
   const QString terminalId = selection.value(QStringLiteral("terminalId")).toString().trimmed();
   const QString terminalLabel = selection.value(QStringLiteral("terminalLabel")).toString().trimmed();
   if (text.isEmpty() || terminalId.isEmpty() || terminalLabel.isEmpty()) return true;
-  const int lineStart = std::max(1, int(std::floor(selection.value(QStringLiteral("lineStart")).toDouble())));
-  const int lineEnd = std::max(lineStart, int(std::floor(selection.value(QStringLiteral("lineEnd")).toDouble())));
+  const int lineStart = std::max(1, jsonnumbers::saturate<int>(std::floor(selection.value(QStringLiteral("lineStart")).toDouble())));
+  const int lineEnd = std::max(lineStart, jsonnumbers::saturate<int>(std::floor(selection.value(QStringLiteral("lineEnd")).toDouble())));
   m_drafts[target].excerpts.append({newId(), terminalId, terminalLabel, lineStart, lineEnd, text});
   publish();
   return true;
@@ -1763,8 +1764,8 @@ bool ComposerController::addCitation(const QVariantMap& selection) {
   if (!thread) return true;
   const QString messageId = selection.value(QStringLiteral("messageId")).toString();
   const QString text = selection.value(QStringLiteral("text")).toString();
-  const qint64 start = qint64(selection.value(QStringLiteral("start")).toDouble());
-  const qint64 end = qint64(selection.value(QStringLiteral("end")).toDouble());
+  const qint64 start = jsonnumbers::saturate(selection.value(QStringLiteral("start")).toDouble());
+  const qint64 end = jsonnumbers::saturate(selection.value(QStringLiteral("end")).toDouble());
   if (messageId.isEmpty() || text.trimmed().isEmpty() || text.size() > kMaxCitationLength || start < 0 || end <= start) {
     return true;
   }
@@ -2843,7 +2844,7 @@ std::optional<ComposerController::Attachment> ComposerController::attachmentOf(c
   const bool file = kept.value(QLatin1String("file")).toBool();
   if (!file && !dataUrl.startsWith(QLatin1String("data:image/"))) return std::nullopt;
   Attachment attachment{kept.value(QLatin1String("id")).toString(), kept.value(QLatin1String("name")).toString(),
-                        kept.value(QLatin1String("mimeType")).toString(), qint64(kept.value(QLatin1String("sizeBytes")).toDouble()),
+                        kept.value(QLatin1String("mimeType")).toString(), jsonnumbers::saturate(kept.value(QLatin1String("sizeBytes")).toDouble()),
                         file ? QString() : dataUrl, kept.value(QLatin1String("source")).toObject()};
   if (!file) return attachment;
   attachment.file = true;

@@ -32,6 +32,7 @@
 #include <QRegularExpression>
 #include <QVariantMap>
 
+#include "JsonNumbers.h"
 #include "MenuController.h"
 #include "NativeController.h"
 #include "NativeShell.h"
@@ -58,15 +59,15 @@ constexpr Window kWindows[] = {
     {"1h", 60 * 60'000, 5 * 60'000},
 };
 
-QString count(double value) { return QLocale(QLocale::English).toString(qint64(value)); }
+QString count(double value) { return QLocale(QLocale::English).toString(jsonnumbers::saturate(value)); }
 
 QString duration(double ms) {
-  if (ms < 1000) return QStringLiteral("%1 ms").arg(qRound64(ms));
+  if (ms < 1000) return QStringLiteral("%1 ms").arg(jsonnumbers::saturate(std::round(ms)));
   return QStringLiteral("%1 s").arg(ms / 1000, 0, 'f', ms >= 10'000 ? 1 : 2);
 }
 
 QString bytes(double value) {
-  if (value < 1024) return QStringLiteral("%1 B").arg(qint64(value));
+  if (value < 1024) return QStringLiteral("%1 B").arg(jsonnumbers::saturate(value));
   static const char* units[] = {"KB", "MB", "GB"};
   int unit = -1;
   do {

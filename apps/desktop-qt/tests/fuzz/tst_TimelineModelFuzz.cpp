@@ -76,6 +76,16 @@ const char* const kNoIds[] = {
     R"({"t":"events","offset":2,"events":[[2,"turn-item","i2",{"s":{"type":"user_message","runId":"r1","ordinal":2,"text":"two"}},"2026-09-23T10:00:00Z"]]})",
 };
 
+// Offsets, floors and ordinals no integer holds (1e300, -1e300, 9.3e18, a
+// fraction, -0), which were cast to one (tests/native/tst_TimelineModelRegression.cpp).
+const char* const kHuge[] = {
+    R"({"t":"snapshot","part":0,"done":true,"offset":1e300,"handle":"log-1","floor":-1e300,"rows":[["run","r1",{"id":"r1","ordinal":9.3e18,"status":"running"}],["run","r2",{"id":"r2","ordinal":-1e300,"status":"completed"}],["turn-item","i1",{"type":"user_message","runId":"r1","ordinal":1e300,"text":"one"}]]})",
+    R"({"t":"events","offset":-1e300,"events":[[9.3e18,"turn-item","i2",{"s":{"type":"user_message","runId":"r1","ordinal":1.5,"text":"two"}},"2026-09-23T10:00:00Z"],[-0.0,"turn-item","i2",{"a":{"text":"!"}},"2026-09-23T10:00:00Z"]]})",
+    R"({"t":"live","offset":9.3e18,"handle":"log-1"})",
+    R"({"t":"resync","offset":1e300})",
+    R"({"t":"page","done":true,"offset":1.5,"floor":9.3e18,"rows":[["run","r0",{"id":"r0","ordinal":-0.0,"status":"completed"}]]})",
+};
+
 void FramesFold(const std::vector<fuzz::JsonSteps>& frames, bool earlier) {
   TimelineModel model(QStringLiteral("env-1:thread-1"));
   const QDateTime now(QDate(2026, 9, 23), QTime(10, 10), QTimeZone::UTC);
@@ -130,8 +140,10 @@ FUZZ_TEST(TimelineModel, FramesFold)
       for (std::string_view frame : all) whole.push_back(fuzz::steps(frame));
       std::vector<fuzz::JsonSteps> noIds;
       for (std::string_view frame : kNoIds) noIds.push_back(fuzz::steps(frame));
+      std::vector<fuzz::JsonSteps> huge;
+      for (std::string_view frame : kHuge) huge.push_back(fuzz::steps(frame));
       return std::vector<std::tuple<std::vector<fuzz::JsonSteps>, bool>>{
-          {opened, false}, {whole, false}, {whole, true}, {noIds, false}};
+          {opened, false}, {whole, false}, {whole, true}, {noIds, false}, {huge, false}, {huge, true}};
     });
 
 }  // namespace
