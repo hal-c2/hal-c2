@@ -68,6 +68,7 @@ Item {
         }
 
         ShellButton {
+            objectName: "menu"
             Layout.fillHeight: true
             Layout.preferredWidth: 24
             subtle: true
@@ -75,7 +76,8 @@ Item {
             chevron: true
             chevronSize: 16
             enabled: split.menuEnabled
-            Accessible.name: qsTr("More options")
+            // Two split buttons in one header must not both be "More options".
+            Accessible.name: split.text.length > 0 ? qsTr("More %1 options").arg(split.text) : qsTr("More options")
             onClicked: split.menuRequested()
         }
     }
