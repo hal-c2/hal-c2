@@ -14,10 +14,11 @@ defmodule HalC2.CodeReviewTest do
   @key "acme/api#1"
   @package Path.expand("../../../../plugins/code-review", __DIR__)
   @support Path.expand("../support", __DIR__)
+  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
 
   setup %{tmp_dir: dir} do
     restore = [
-      env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE)),
+      env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE) ++ @git_config),
       app(~w(home gh_command codex_command settings_check_ms)a)
     ]
 
@@ -51,6 +52,13 @@ defmodule HalC2.CodeReviewTest do
     System.put_env("FAKE_GH_RULES", Path.join(dir, "rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(dir, "gh.log"))
     System.put_env("GIT_SSH_COMMAND", ssh)
+    # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
+      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+    })
+
     System.put_env("FAKE_CODEX_GATE", Path.join(dir, "gate"))
     Application.put_env(:hal_c2, :home, Path.join(dir, "home"))
     Application.put_env(:hal_c2, :gh_command, "gh")

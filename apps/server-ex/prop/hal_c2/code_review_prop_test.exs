@@ -79,7 +79,10 @@ defmodule HalC2.CodeReviewPropTest do
     File.mkdir_p!(bin)
     File.ln_s!(Path.join(@support, "fake_gh.py"), Path.join(bin, "gh"))
 
-    vars = ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE)
+    vars =
+      ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE
+         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
     apps = ~w(gh_command codex_command settings_check_ms home)a
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
@@ -89,6 +92,13 @@ defmodule HalC2.CodeReviewPropTest do
     System.put_env("FAKE_GH_LOG", Path.join(fx, "calls.jsonl"))
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", Path.join(fx, "remotes"))
+    # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
+      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+    })
+
     Application.put_env(:hal_c2, :gh_command, "gh")
 
     Application.put_env(:hal_c2, :codex_command, [
@@ -469,6 +479,11 @@ defmodule HalC2.CodeReviewPropTest do
             m
 
           known && known.status in [:queued, :running] ->
+            put_review(m, key, %{known | seen: pr.head})
+
+          # A run that could not start waits at that head for a retry or a push.
+          known != nil and known.status == :failed and known.reviewed == nil and
+              known.seen == pr.head ->
             put_review(m, key, %{known | seen: pr.head})
 
           known == nil or known.reviewed == nil ->

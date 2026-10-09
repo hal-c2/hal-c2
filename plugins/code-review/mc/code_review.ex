@@ -664,7 +664,7 @@ defmodule HalC2Plugins.CodeReview do
 
         # A run that could not start waits for the user's retry or a new push, rather
         # than starting again at every look.
-        known && known["status"] == "failed" && known["headSha"] == pr["headSha"] ->
+        reviewed == nil && known && known["status"] == "failed" && known["headSha"] == pr["headSha"] ->
           put(state, review)
 
         reviewed == nil ->

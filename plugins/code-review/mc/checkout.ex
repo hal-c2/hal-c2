@@ -16,34 +16,32 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
-    alone(clone, fn ->
-      with :ok <- init(clone),
-           {:ok, _} <-
-             git(
-               clone,
-               credentials() ++
-                 [
-                   "fetch",
-                   "-q",
-                   "--no-tags",
-                   # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
-                   "--no-write-fetch-head",
-                   url,
-                   "+refs/pull/#{number}/head:#{head_ref}",
-                   "+refs/heads/#{base}:#{base_ref}"
-                 ]
-             ),
-           {:ok, head} <- git(clone, ["rev-parse", head_ref]),
-           :ok <- place(clone, path, head) do
-        merge_base =
-          case git(clone, ["merge-base", base_ref, head]) do
-            {:ok, sha} -> sha
-            _ -> base_ref
-          end
+    with :ok <- alone(clone, fn -> init(clone) end),
+         {:ok, _} <-
+           git(
+             clone,
+             credentials() ++
+               [
+                 "fetch",
+                 "-q",
+                 "--no-tags",
+                 # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
+                 "--no-write-fetch-head",
+                 url,
+                 "+refs/pull/#{number}/head:#{head_ref}",
+                 "+refs/heads/#{base}:#{base_ref}"
+               ]
+           ),
+         {:ok, head} <- git(clone, ["rev-parse", head_ref]),
+         :ok <- alone(clone, fn -> place(clone, path, head) end) do
+      merge_base =
+        case git(clone, ["merge-base", base_ref, head]) do
+          {:ok, sha} -> sha
+          _ -> base_ref
+        end
 
-        {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
-      end
-    end)
+      {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
+    end
   end
 
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."
@@ -184,8 +182,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
          do: :ok
   end
 
-  # Reviews of one repository share its clone; one at a time changes it, or one's
-  # prune takes another's worktree while it is being added.
+  # Reviews of one repository share its clone; one at a time makes it or changes its
+  # worktrees, or one's prune takes another's worktree while it is being added.
   defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
   defp init(clone) do
