@@ -256,4 +256,33 @@ defmodule HalC2.UpgradeTest do
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
   end
+
+  test "a message without a tag is only for a stream followed before an upgrade" do
+    tag = {node(), make_ref()}
+
+    state = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{2 => {:stream, node(), "th"}},
+      by_stream: %{"th" => {2, tag}},
+      by_terminal: %{},
+      monitors: %{},
+      shell: %{},
+      buffers: %{2 => %{events: [], bytes: 0, replay: false}},
+      flush_scheduled: false
+    }
+
+    # One still on its way from the subscription the upgrade carried over.
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+
+    assert {:push, [{:text, frame}], _} =
+             HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)
+
+    assert %{"t" => "resync", "id" => 2} = JSON.decode!(IO.iodata_to_binary(frame))
+
+    # The subscription the upgrade carried over still hears it.
+    old = %{state | by_stream: %{"th" => {2, nil}}}
+    assert {:push, [_], _} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, old)
+  end
 end

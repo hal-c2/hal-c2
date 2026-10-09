@@ -125,10 +125,11 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # From an MC that sends no tags.
+  # For a subscription followed before an upgrade in place, which has no tag (members
+  # run one version, so no other MC sends one untagged). A later follow's is not it.
   def handle_info({:hal_c2_stream, stream_id, message}, state) do
     case state.by_stream do
-      %{^stream_id => {id, _tag}} -> stream_message(state, id, message)
+      %{^stream_id => {id, nil}} -> stream_message(state, id, message)
       _ -> {:ok, state}
     end
   end

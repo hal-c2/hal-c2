@@ -68,7 +68,7 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Streams.Server handle_info :timeout" =>
         "the idle stop, of a stream with no subscribers; another model's",
       "HalC2.Web.Socket handle_info {:hal_c2_stream, _, _}" =>
-        "untagged, from a member of an older version, which the cluster does not join",
+        "untagged, for a subscription followed before an upgrade in place; the model's follows are tagged",
       "HalC2.Web.Socket handle_info :flush" =>
         "pushes frames already in order to the client; changes no subscription",
       "HalC2.Web.Socket handle_info {:rpc_reply, _, _}" => @other,
