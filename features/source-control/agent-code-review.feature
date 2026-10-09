@@ -63,6 +63,14 @@ Feature: Agent code review
       And no review starts
 
     @mc
+    Scenario: An ask for a pull request merged since the plugin last looked says so
+      Given "code-review" watches "acme/api" selectively
+      And the pull request #12 is opened on "acme/api"
+      When the user asks for a review of #12, which is merged
+      Then the user is told "acme/api #12 is merged, not open."
+      And no review starts
+
+    @mc
     Scenario Outline: A selective trigger starts a review
       Given "code-review" watches "acme/api" selectively with the trigger "<trigger>"
       When <event>

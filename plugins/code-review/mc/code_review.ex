@@ -128,15 +128,8 @@ defmodule HalC2Plugins.CodeReview do
 
   def call("start", %{"repository" => repository, "number" => number}, context)
       when is_binary(repository) and is_integer(number) do
-    known = server(:reviews)
-
-    pr =
-      case known[key(repository, number)] do
-        nil -> find(context.settings, repository, number)
-        review -> {:ok, review}
-      end
-
-    with {:ok, pr} <- pr, do: server({:start, pr, "user"})
+    # Read afresh even when it is listed, as it may have closed since the last look.
+    with {:ok, pr} <- find(context.settings, repository, number), do: server({:start, pr, "user"})
   end
 
   def call("retry", %{"key" => key}, _context), do: server({:start, key, "retry"})

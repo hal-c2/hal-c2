@@ -294,18 +294,13 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :refresh, []}), do: {look(m), :ok}
   defp step(m, {:call, _, :poll, []}), do: {look(m), nil}
 
+  # An ask reads the pull request first, so one closed since the last look is refused.
   defp step(m, {:call, _, :start, [key]}) do
-    case m.reviews[key] do
-      nil ->
-        if m.prs[key].open,
-          do: {m |> put_review(key, fresh(m, key)) |> queue(key) |> pump(), :ok},
-          else: {m, :error}
-
-      %{status: s} when s in [:queued, :running] ->
-        {m, :ok}
-
-      _ ->
-        {m |> queue(key) |> pump(), :ok}
+    cond do
+      not m.prs[key].open -> {m, :error}
+      m.reviews[key] == nil -> {m |> put_review(key, fresh(m, key)) |> queue(key) |> pump(), :ok}
+      m.reviews[key].status in [:queued, :running] -> {m, :ok}
+      true -> {m |> queue(key) |> pump(), :ok}
     end
   end
 
