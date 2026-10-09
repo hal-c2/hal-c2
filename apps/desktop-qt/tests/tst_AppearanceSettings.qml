@@ -31,6 +31,15 @@ Item {
             ];
         }
 
+        function cleanup() {
+            Theme.loaded = false;
+            Theme.name = "";
+            Theme.followsSystemAppearance = false;
+            Theme.lastError = "";
+            Theme.appearance = "dark";
+            Theme.colors = {};
+        }
+
         function swatches(choice) {
             const found = [];
             const walk = item => {
@@ -83,6 +92,40 @@ Item {
             verify(name !== null);
             verify(name.mapToItem(grove, 0, 0).x < 80, "the name starts at " + name.mapToItem(grove, 0, 0).x);
             compare(name.horizontalAlignment, Text.AlignLeft);
+        }
+
+        // features/navigation/environment-themes.feature: Appearance says
+        // when a shell theme file is in charge.
+        function test_aShellThemeFileIsNamedWithWhatItOverrides() {
+            const page = createTemporaryObject(pageComponent, root);
+            const notice = findChild(page, "shellTheme");
+            const effect = findChild(page, "shellThemeEffect");
+            verify(!notice.visible);
+
+            Theme.colors = { surfaceRaised: "#eff6ff", text: "#18181b" };
+            Theme.name = "Tokyo Night";
+            Theme.loaded = true;
+            tryVerify(() => notice.visible && notice.height > 40);
+            verify(findChild(page, "shellThemeTitle").text.includes("Tokyo Night"));
+            compare(findChild(page, "shellThemePath").text, "/config/theme.json");
+            verify(effect.text.includes("keeps the app dark"), effect.text);
+            // Above the choices it explains, and readable on its surface.
+            verify(notice.mapToItem(page, 0, 0).y < findChild(page, "mode:light").mapToItem(page, 0, 0).y);
+            verify(Qt.colorEqual(notice.color, "#eff6ff") && Qt.colorEqual(effect.color, "#18181b"));
+            // The choices still work: they are saved under the file.
+            mouseClick(findChild(page, "mode:light"));
+            compare(Themes.mode, "light");
+
+            Theme.followsSystemAppearance = true;
+            verify(effect.text.includes("follows the color scheme"), effect.text);
+
+            Theme.loaded = false;
+            tryVerify(() => !notice.visible);
+            // A file that cannot be read says why.
+            Theme.lastError = "theme.json: unterminated object";
+            tryVerify(() => notice.visible);
+            compare(findChild(page, "shellThemeError").text, "theme.json: unterminated object");
+            verify(!findChild(page, "shellThemeTitle").visible);
         }
 
         // New theme and Import theme sit together on the Themes heading, and

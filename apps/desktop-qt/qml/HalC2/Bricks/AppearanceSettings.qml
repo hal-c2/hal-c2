@@ -138,6 +138,74 @@ SettingsPage {
         }
     }
 
+    // The shell's theme file (Theme.path) is drawn over whatever is chosen
+    // below, so the page says so: the choices are still saved, and show again
+    // once the file is gone.
+    Rectangle {
+        id: shellTheme
+
+        readonly property string name: Theme.name.length > 0 ? Theme.name : qsTr("theme.json")
+
+        objectName: "shellTheme"
+        Layout.fillWidth: true
+        visible: Theme.loaded || Theme.lastError.length > 0
+        implicitHeight: shellThemeText.implicitHeight + 20
+        radius: Math.min(Theme.radius, 8)
+        color: Theme.palette.color("surfaceRaised", "#18181b")
+        border.color: Theme.palette.color("info", "#3b82f6")
+
+        ColumnLayout {
+            id: shellThemeText
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: 12
+            spacing: 4
+
+            Label {
+                objectName: "shellThemeTitle"
+                Layout.fillWidth: true
+                visible: Theme.loaded
+                text: qsTr("The shell theme file “%1” is in use").arg(shellTheme.name)
+                color: page.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemeEffect"
+                Layout.fillWidth: true
+                visible: Theme.loaded
+                text: (Theme.followsSystemAppearance ? qsTr("Its colors are drawn over the theme chosen below, and it follows the color scheme chosen here.") : qsTr("Its colors are drawn over the theme chosen below, and it keeps the app %1 whatever the color scheme.").arg(Theme.appearance === "dark" ? qsTr("dark") : qsTr("light"))) + " " + qsTr("Your choices are still saved, and show in full once the file is removed.")
+                color: page.foreground
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemeError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: Theme.lastError
+                color: Theme.palette.color("error", "#f87171")
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemePath"
+                Layout.fillWidth: true
+                text: Theme.path
+                color: page.muted
+                font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                wrapMode: Text.WrapAnywhere
+            }
+        }
+    }
+
     Heading {
         text: qsTr("Color scheme")
     }

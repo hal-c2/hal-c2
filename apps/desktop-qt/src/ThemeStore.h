@@ -21,6 +21,9 @@ class ThemeStore : public QObject {
   Q_PROPERTY(QString id READ id NOTIFY themeChanged)
   Q_PROPERTY(QString name READ name NOTIFY themeChanged)
   Q_PROPERTY(QString appearance READ appearance NOTIFY themeChanged)
+  // Whether the file leaves light or dark to the app's choice
+  // (`window.followSystemAppearance`); it keeps its own `appearance` otherwise.
+  Q_PROPERTY(bool followsSystemAppearance READ followsSystemAppearance NOTIFY themeChanged)
   Q_PROPERTY(QVariantMap colors READ colors NOTIFY themeChanged)
   // Reading this notified receiver makes palette.color(...) reactive in QML.
   // A direct call to a C++ invokable does not record a binding dependency.
