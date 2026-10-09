@@ -221,6 +221,31 @@ defmodule HalC2.ThreadMoveTest do
     assert holders(context, id) == ["desktop"]
   end
 
+  # The thread kept every move that ever brought it anywhere, and carried them all in
+  # each archive. The last move from each machine is all `arrived?/2` needs.
+  test "a thread moved back and forth keeps the last move from each machine", %{
+    context: context
+  } do
+    {context, id, mover} = hold_move(context)
+    Application.delete_env(:hal_c2, :thread_move_hook)
+    send(mover, :release)
+    assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
+
+    assert {:ok, %{"status" => "moved"}} =
+             Machines.on(context, "desktop", HalC2.ThreadMove, :move, [
+               id,
+               "laptop",
+               [confirmed: true]
+             ])
+
+    assert {:ok, %{"status" => "moved"}} =
+             HalC2.ThreadMove.move(id, "desktop", confirmed: true)
+
+    moves = Machines.on(context, "desktop", HalC2.ThreadArchive, :local_thread, [id])["moves"]
+    assert map_size(moves) == 2
+    assert holders(context, id) == ["desktop"]
+  end
+
   # Starts moving a thread "Plan" from "laptop" to "desktop" and holds it at `stage`.
   # Each of `others` joins the cluster with a project "shop".
   defp hold_move(context, stage \\ :sending, others \\ ["desktop"]) do

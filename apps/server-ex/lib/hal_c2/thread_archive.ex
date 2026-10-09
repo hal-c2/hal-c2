@@ -326,7 +326,7 @@ defmodule HalC2.ThreadArchive do
 
   `opts[:replace]` true lets the archive replace this MC's copy of the thread,
   which a move back uses; otherwise a thread that is already here is refused.
-  `opts[:move]` is the move that brought it (`HalC2.ThreadMove`).
+  `opts[:move]` is the move that brought it from the MC `opts[:from]` (`HalC2.ThreadMove`).
   """
   @spec import_archive(binary | map, keyword) :: {:ok, map} | {:error, String.t()}
   def import_archive(data, opts \\ []) do
@@ -539,7 +539,7 @@ defmodule HalC2.ThreadArchive do
       entities
       |> Enum.map(&carried(&1, id, worktree, meta, dest_root))
       |> Enum.map(&with_session(&1, carried_session))
-      |> Enum.map(&with_move(&1, id, opts[:move]))
+      |> Enum.map(&with_move(&1, id, opts[:from], opts[:move]))
 
     for %{"fileName" => name} = file <- archive["attachments"] do
       path = Path.join(Attachments.dir(), Path.basename(name))
@@ -592,12 +592,14 @@ defmodule HalC2.ThreadArchive do
 
   defp carried(row, _id, _worktree, _meta, _root), do: row
 
-  # The thread keeps the moves that brought it here, wherever it goes next, so the
-  # machine a move left can ask whether that move arrived (`ThreadMove.arrived?/2`).
-  defp with_move({"thread", id, entity}, id, move) when is_binary(move),
-    do: {"thread", id, Map.update(entity, "moves", [move], &(&1 ++ [move]))}
+  # The thread keeps, wherever it goes next, the last move from each MC that brought it
+  # here, so the MC a move left can ask whether that move arrived
+  # (`ThreadMove.arrived?/2`). The last is enough: an MC moves the thread again only
+  # once it came back, by which time its earlier move had settled.
+  defp with_move({"thread", id, entity}, id, from, move) when is_binary(move),
+    do: {"thread", id, Map.put(entity, "moves", Map.put(entity["moves"] || %{}, from, move))}
 
-  defp with_move(row, _id, _move), do: row
+  defp with_move(row, _id, _from, _move), do: row
 
   # The provider thread whose session came along continues from the copy.
   defp with_session(
