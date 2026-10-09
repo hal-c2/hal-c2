@@ -110,6 +110,19 @@ defmodule HalC2.Web.SocketStreamDownTest do
              WsClient.recv(client, 1_000)
   end
 
+  # Found by proof/hal_c2/stream_relay_proof_test.exs.
+  test "the unsubscribe of a follow that gave up does not end the one after it",
+       %{client: client} do
+    stream = Streams.ensure("th-down")
+    [socket] = Map.keys(:sys.get_state(stream).subscribers)
+    # What the socket casts for a follow that failed, landing after it followed again.
+    :ok = Streams.unsubscribe("th-down", socket, make_ref())
+    {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
+
+    assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
   test "an unsubscribed stream that stops is no news to the client",
        %{client: client, shape: shape} do
     # The pong comes after the socket has taken the unsub.

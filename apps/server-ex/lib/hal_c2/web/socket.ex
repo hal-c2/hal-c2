@@ -705,7 +705,7 @@ defmodule HalC2.Web.Socket do
         {:error, reason} ->
           # A call that gave up may still be taken, and would feed a socket that is
           # not following the stream.
-          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
+          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
           {:push, Protocol.encode(error_frame(id, reason)), state}
       end
     end
@@ -1397,12 +1397,16 @@ defmodule HalC2.Web.Socket do
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:stream, mc, stream_id}, _subs} ->
-        # Straight to the server, so it arrives ahead of a resubscribe that follows; an
-        # `:erpc.cast` runs in a process of its own and could land after it.
+        # By its tag, so it ends no subscription that follows, whenever it arrives.
         case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
           {ref, {_, server}} ->
             Process.demonitor(ref, [:flush])
-            GenServer.cast(server, {:unsubscribe, self()})
+            {_id, tag} = state.by_stream[stream_id]
+
+            message =
+              if tag, do: {:unsubscribe, self(), tag}, else: {:unsubscribe, self()}
+
+            GenServer.cast(server, message)
             forget_stream(%{state | monitors: Map.delete(state.monitors, ref)}, id)
 
           # Followed before stream servers were monitored.
