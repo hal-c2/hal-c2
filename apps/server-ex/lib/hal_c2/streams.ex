@@ -57,7 +57,9 @@ defmodule HalC2.Streams do
 
   @doc "See `HalC2.Streams.Server.more/3`."
   defdelegate more(stream_id, pid, items), to: Server
-  defdelegate unsubscribe(stream_id, pid), to: Server
+
+  @doc "See `HalC2.Streams.Server.unsubscribe/3`."
+  defdelegate unsubscribe(stream_id, pid, tag \\ nil), to: Server
 
   @doc "See `HalC2.Streams.Server.transact/3`."
   def transact(stream_id, stream_kind, fun),
