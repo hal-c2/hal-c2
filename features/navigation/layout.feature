@@ -143,6 +143,18 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window is narrower than 720 pixels
       Then the header actions show without their labels
 
+    # Run and Open are also in the thread details; the panel toggles and the
+    # breadcrumb are what the header cannot lose.
+    @desktop
+    Scenario: A tight header drops actions before anything overlaps
+      Given the thread's project has an action and an editor to open it in
+      When the header has under 520 pixels for its items
+      Then the run and open actions are not in the header
+      And the breadcrumb, the git action and the panel toggles do not overlap
+      And nothing of the header is drawn over the panel beside it
+      When the header has room again
+      Then the run and open actions are back
+
     @desktop
     Scenario: The header runs the project's action the user ran last
       Given the thread's project has the actions "Dev" and "Test"

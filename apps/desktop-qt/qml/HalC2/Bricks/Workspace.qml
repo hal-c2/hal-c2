@@ -41,8 +41,12 @@ Rectangle {
     // `trailingInset` how much of the strip's right end they cover.
     property bool windowControls: true
     property real trailingInset: 0
-    // Narrow strips (a wide right panel) drop the pill labels.
-    readonly property bool compact: width < 720
+    // What the strip has for its own items. Narrow strips (a wide right
+    // panel) drop the pill labels, and tight ones the run and open pills,
+    // which the thread details also offer, before anything overlaps.
+    readonly property real room: width - Math.max(0, trailingInset - 20)
+    readonly property bool compact: room < 720
+    readonly property bool tight: room < 520
 
     function beginRename() {
         if (strip.ready && !strip.model.isDraft) {
@@ -52,6 +56,8 @@ Rectangle {
 
     implicitHeight: 52
     color: Theme.palette.color("canvas", "#0f0f12")
+    // Never over the panel beside it.
+    clip: true
 
     DragHandler {
         enabled: strip.framelessChrome
@@ -291,7 +297,7 @@ Rectangle {
             id: scriptsPill
             objectName: "runActionButton"
 
-            visible: strip.ready && strip.model.scripts.length > 0
+            visible: strip.ready && strip.model.scripts.length > 0 && !strip.tight
             compact: strip.compact
             iconName: "play"
             text: strip.preferredScript ? qsTr("Run %1").arg(strip.preferredScript.name) : ""
@@ -334,7 +340,7 @@ Rectangle {
 
         ShellSplitButton {
             objectName: "openEditorButton"
-            visible: strip.ready && strip.model.editors.length > 0
+            visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
             compact: strip.compact
             iconName: "external-link"
             text: qsTr("Open")
@@ -367,6 +373,7 @@ Rectangle {
         }
 
         GitActions {
+            objectName: "gitActions"
             compact: strip.compact
         }
 

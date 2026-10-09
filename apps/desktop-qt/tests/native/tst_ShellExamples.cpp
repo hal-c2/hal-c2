@@ -929,6 +929,50 @@ private slots:
     bridge.publish("layout", initialState.value("layout"));
   }
 
+  // Scenario: The window controls stay in the window's corner, at half a
+  // screen (features/navigation/windows.feature) with the thread list and the
+  // right panel open: the buttons are in the window and take their clicks,
+  // and the header's actions are clear of its breadcrumb.
+  void defaultShellFitsHalfAScreen() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    auto workspaceState = initialState.value("workspace").toMap();
+    workspaceState["editors"] = QVariantList{QVariantMap{{"id", "zed"}, {"label", "Zed"}}};
+    workspaceState["preferredEditorId"] = "zed";
+    bridge.publish("workspace", workspaceState);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    bridge.publish("panel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap());
+    auto* window = defaultShell(960, 1000);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* workspace = findVisualItem(root, "workspace");
+    auto* open = findVisualItem(root, "openEditorButton");
+    auto* project = findVisualItem(root, "projectLabel");
+    auto* title = findVisualItem(root, "titleSlot");
+    auto* toggle = findVisualItem(root, "panelToggle");
+    QVERIFY(buttons && workspace && open && project && title && toggle);
+    const auto leftOf = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).x(); };
+    QTRY_COMPARE(leftOf(buttons) + buttons->width(), 956.0);
+    QVERIFY(buttons->y() + buttons->height() <= workspace->height());
+    QTRY_VERIFY(open->isVisible());
+    QTRY_VERIFY(leftOf(project) + project->width() <= leftOf(title));
+    QVERIFY(leftOf(title) + title->width() <= leftOf(open));
+    QVERIFY(leftOf(toggle) + toggle->width() <= leftOf(buttons));
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(leftOf(buttons)) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
   // Scenario Outline: The window controls are on every page
   // (features/navigation/windows.feature): away from a thread there is no
   // header, so a band of the window's own holds the corner and drags it.
