@@ -749,7 +749,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       const qsizetype place = view.orderedKeys.size();
       view.orderedKeys.append(thread.key());
       if (parked) view.parkedKeys.insert(thread.key());
-      if (rows.size() >= limit) continue;
+      // The open thread keeps its row past the cap, so opening one from search shows it.
+      if (rows.size() >= limit && thread.key() != input.activeThreadKey.value_or(QString())) continue;
       const QString physical = thread.environmentId + QLatin1Char(':') + thread.projectId;
       const Capabilities capabilities = capabilitiesFor(thread.environmentId);
       const bool offline = input.offlineEnvironments.contains(thread.environmentId);

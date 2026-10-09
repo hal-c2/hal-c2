@@ -12,6 +12,9 @@ MenuItem {
     property bool current: false
     // A project's icon (`projectIcons`), drawn in place of `iconName`.
     property var badge: null
+    // A muted second part after the text (what tells two same-named entries
+    // apart); it is elided before the text is.
+    property string detail: ""
 
     implicitHeight: 28
     leftPadding: 8
@@ -19,6 +22,7 @@ MenuItem {
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
+    Accessible.description: detail
 
     contentItem: RowLayout {
         spacing: 8
@@ -42,6 +46,19 @@ MenuItem {
             text: control.text
             font: control.font
             color: control.destructive ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
+            opacity: control.enabled ? 1 : 0.5
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            Layout.fillWidth: control.detail.length === 0
+            Layout.minimumWidth: control.detail.length === 0 ? 0 : Math.min(implicitWidth, 80)
+        }
+
+        Text {
+            objectName: "menuItemDetail"
+            visible: control.detail.length > 0
+            text: control.detail
+            font: control.font
+            color: Theme.palette.color("textMuted", "#8b8b93")
             opacity: control.enabled ? 1 : 0.5
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight

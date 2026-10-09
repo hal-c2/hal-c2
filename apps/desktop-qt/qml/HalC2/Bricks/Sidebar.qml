@@ -35,6 +35,41 @@ Rectangle {
         }
         return names;
     }
+    // Each logical project's icon, drawn on its thread rows.
+    readonly property var projectIcons: {
+        const icons = {};
+        for (const project of projects) {
+            icons[project.key] = Shell.state.projectIcons?.[project.environmentId + ":" + project.projectId] ?? null;
+        }
+        return icons;
+    }
+    // What tells same-named projects apart in the scope menu: the nearest
+    // folders above each root that differ (`work` against `tmp`), or the
+    // environment when the roots are the same. Unique names get none.
+    readonly property var projectDetails: {
+        const byName = {};
+        for (const project of projects) {
+            (byName[project.displayName] = byName[project.displayName] ?? []).push(project);
+        }
+        const details = {};
+        for (const name in byName) {
+            const same = byName[name];
+            if (same.length < 2) {
+                continue;
+            }
+            const parents = same.map(project => (project.workspaceRoot ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).slice(0, -1));
+            let depth = 1;
+            const tail = (parts, n) => parts.slice(-n).join("/");
+            while (depth < 12 && new Set(parents.map(parts => tail(parts, depth))).size < same.length && parents.some(parts => parts.length > depth)) {
+                ++depth;
+            }
+            const distinct = new Set(parents.map(parts => tail(parts, depth))).size === same.length;
+            same.forEach((project, index) => {
+                details[project.key] = distinct ? tail(parents[index], depth) : project.environmentId ?? "";
+            });
+        }
+        return details;
+    }
     readonly property string scopeLabel: {
         if (!model || model.scopeProjectKey === null) {
             return qsTr("All projects");
@@ -78,6 +113,11 @@ Rectangle {
             rowModel.remove(rows.length, rowModel.count - rows.length);
         }
     }
+
+    // The open thread, however it was opened (search, palette, a link), is
+    // brought into view once its row is in the list.
+    readonly property string activeKey: model ? (model.activeThreadKey ?? "") : ""
+    onActiveKeyChanged: Qt.callLater(() => list.revealActive())
 
     onRowsChanged: syncRows()
     Component.onCompleted: syncRows()
@@ -140,10 +180,11 @@ Rectangle {
                 count: items.length,
                 open: open
             });
-            if (!open) {
-                return;
-            }
             for (const item of items) {
+                // A folded shelf still shows the open thread, as the web does.
+                if (!open && item.key !== state.activeThreadKey) {
+                    continue;
+                }
                 out.push({
                     kind: "slim",
                     section: key,
@@ -328,6 +369,7 @@ Rectangle {
 
                     ShellMenu {
                         id: scopeMenu
+                        objectName: "scopeMenu"
 
                         y: parent.height + 4
                         width: Math.max(parent.width, 200)
@@ -346,17 +388,19 @@ Rectangle {
                             delegate: ShellMenuItem {
                                 required property var modelData
 
-                                // The most urgent state among the project's threads.
+                                // The most urgent state among the project's threads, as
+                                // the thread's, so "Limited" is not read as the project's.
                                 readonly property string statusWord: ({
-                                        approval: qsTr("Approval"),
-                                        input: qsTr("Input"),
-                                        working: qsTr("Working"),
-                                        waiting: qsTr("Waiting"),
-                                        limited: qsTr("Limited"),
-                                        failed: qsTr("Failed")
+                                        approval: qsTr("a thread needs approval"),
+                                        input: qsTr("a thread needs input"),
+                                        working: qsTr("a thread is working"),
+                                        waiting: qsTr("a thread is waiting"),
+                                        limited: qsTr("a thread hit a usage limit"),
+                                        failed: qsTr("a thread failed")
                                     })[modelData.status] ?? ""
 
-                                text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
+                                text: modelData.displayName
+                                detail: [sidebar.projectDetails[modelData.key] ?? "", statusWord].filter(part => part.length > 0).join(" · ")
                                 iconName: "folder"
                                 badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
@@ -430,6 +474,14 @@ Rectangle {
                         positionViewAtIndex(i, ListView.Contain);
                         return;
                     }
+                }
+            }
+
+            function revealActive() {
+                const i = sidebar.rows.findIndex(r => r.rowKey !== undefined && r.kind !== "draft" && r.rowKey === sidebar.activeKey);
+                if (i >= 0) {
+                    cursorKey = sidebar.rows[i].rowKey;
+                    positionViewAtIndex(i, ListView.Contain);
                 }
             }
 
@@ -624,6 +676,8 @@ Rectangle {
                 readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
 
                 width: ListView.view.width
+                // Pooled by `reuseItems`: hidden, but still a child of the list.
+                Accessible.ignored: !visible
                 implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "note" ? 28 : kind === "slim" ? 36 : 82
 
                 // Collapsible section header with a hairline (settled) or tint (snoozed).
@@ -746,6 +800,7 @@ Rectangle {
                             updatedAt: null
                         } : entry.modelData.item
                         projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
+                        projectIcon: sidebar.projectIcons[entry.modelData.item.projectKey] ?? null
                         active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
                         onActivated: {
                             list.cursorKey = entry.modelData.rowKey;
@@ -795,6 +850,9 @@ Rectangle {
                             key: entry.modelData.item.key
                         })
                         onUnsettleRequested: Shell.dispatch("thread.unsettle", {
+                            key: entry.modelData.item.key
+                        })
+                        onUnpinRequested: Shell.dispatch("thread.unpin", {
                             key: entry.modelData.item.key
                         })
                         onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {

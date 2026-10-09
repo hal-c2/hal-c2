@@ -53,9 +53,7 @@ Item {
             enabled: split.actionEnabled
             text: split.compact ? "" : split.text
             Accessible.name: split.text
-            ToolTip.visible: hovered && (split.toolTip.length > 0 || split.compact)
-            ToolTip.text: split.toolTip.length > 0 ? split.toolTip : split.text
-            ToolTip.delay: 400
+            toolTip: split.toolTip
             onClicked: split.clicked()
         }
 

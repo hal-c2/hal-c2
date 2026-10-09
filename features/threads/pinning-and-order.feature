@@ -34,6 +34,13 @@ Feature: Pinning and arranging threads
     When the user unpins "Beta"
     Then "Beta" returns to its place among the active threads
 
+  @desktop @backlog-desktop @mobile @backlog-mobile
+  Scenario: A pinned thread shows a pin that unpins it
+    Given "Beta" is pinned
+    Then the row of "Beta" shows a pin labelled "Unpin thread"
+    When the user clicks the pin on the row of "Beta"
+    Then "Beta" is unpinned, asking first when the user wants confirmation
+
   @desktop @mobile @backlog-mobile
   Scenario: Unpinning asks first when the user wants confirmation
     Given "Beta" is pinned

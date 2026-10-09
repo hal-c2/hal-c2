@@ -16,6 +16,8 @@ Item {
     required property bool active
     property bool slim: false
     property string projectName: ""
+    // The project's icon as `projectIcons` publishes it; null draws a folder.
+    property var projectIcon: null
     // Which sidebar group the row sits in: pinned, active, snoozed, settled
     // or draft. Decides the hover actions.
     property string section: "active"
@@ -42,6 +44,7 @@ Item {
     signal unsettleRequested
     signal snoozeRequested(real windowX, real windowY)
     signal unsnoozeRequested
+    signal unpinRequested
     signal wokeDismissed
 
     readonly property color textColor: Theme.palette.color("sidebarForeground", "#e4e4e7")
@@ -64,6 +67,7 @@ Item {
     readonly property string movingTo: item.movingTo ?? ""
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
+    readonly property bool pinned: !draft && item.pinned === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
     readonly property bool showActions: hasActions && (hover.hovered || focused)
     // The status word the web app's sidebar uses for each state; empty when the
@@ -194,6 +198,9 @@ Item {
     implicitHeight: slim ? 36 : 78
     Accessible.role: Accessible.ListItem
     Accessible.name: item.title
+    // A pooled delegate (the list reuses them) is hidden but stays a child of
+    // the list; without this a screen reader reads it with the live rows.
+    Accessible.ignored: !row.visible
 
     Rectangle {
         id: rowBackground
@@ -345,6 +352,35 @@ Item {
         iconTint: row.secondaryColor
     }
 
+    // The project's icon, else a folder in `folderColor`. A Loader, so a row
+    // builds only the one it draws and the layout it is not shown in builds none.
+    component ProjectMark: Loader {
+        property color folderColor: row.secondaryColor
+
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: 16
+        Layout.preferredHeight: 16
+        active: parent.visible
+        sourceComponent: row.projectIcon ? iconMark : folderMark
+
+        Component {
+            id: iconMark
+            ProjectIcon {
+                icon: row.projectIcon
+                size: 16
+            }
+        }
+
+        Component {
+            id: folderMark
+            ShellIcon {
+                name: "folder"
+                size: 16
+                color: folderColor
+            }
+        }
+    }
+
     // The mark of a thread an MC plugin started, while the plugin runs; made
     // only for such threads.
     component PluginMark: Loader {
@@ -365,6 +401,22 @@ Item {
     // the woke pill (click acknowledges the wake), else the status or age.
     component StatusSlot: RowLayout {
         spacing: 2
+
+        // A pinned row says so, and the pin unpins it. Made only for pinned
+        // rows, so the hundreds of others pay nothing. The row builds a slot
+        // for both its layouts; only the one in view gets the button.
+        Loader {
+            active: row.pinned && parent.visible
+            visible: active
+            Layout.alignment: Qt.AlignVCenter
+            sourceComponent: RowAction {
+                objectName: "unpinAction"
+                iconName: "pin"
+                iconTint: hovered || row.showActions ? row.textColor : Qt.alpha(row.secondaryColor, 0.7)
+                Accessible.name: qsTr("Unpin thread")
+                onClicked: row.unpinRequested()
+            }
+        }
 
         RowAction {
             id: snoozeButton
@@ -389,8 +441,7 @@ Item {
             iconName: "alarm-clock-off"
             objectName: "wakeAction"
             Accessible.name: qsTr("Wake")
-            ToolTip.visible: hovered && !!row.item.wakeDescription
-            ToolTip.text: qsTr("Wakes %1").arg(row.item.wakeDescription ?? "")
+            toolTip: row.item.wakeDescription ? qsTr("Wakes %1").arg(row.item.wakeDescription) : ""
             onClicked: row.unsnoozeRequested()
         }
 
@@ -446,12 +497,9 @@ Item {
         spacing: 10
         visible: row.slim
 
-        ShellIcon {
-            name: "folder"
-            size: 16
-            color: row.secondaryColor
+        ProjectMark {
+            objectName: "projectMark"
             opacity: hover.hovered || row.focused ? 1 : 0.4
-            Layout.alignment: Qt.AlignVCenter
 
             Behavior on opacity {
                 NumberAnimation {
@@ -491,11 +539,9 @@ Item {
             Layout.preferredHeight: 22
             spacing: 6
 
-            ShellIcon {
-                name: "folder"
-                size: 16
-                color: row.projectColor
-                Layout.alignment: Qt.AlignVCenter
+            ProjectMark {
+                objectName: "cardProjectMark"
+                folderColor: row.projectColor
             }
 
             Text {
