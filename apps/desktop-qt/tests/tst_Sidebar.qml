@@ -423,5 +423,36 @@ Item {
             tryCompare(dialog, "visible", false);
             compare(Shell.dispatchCount, 0);
         }
+
+        // Scenario: Projects with the same name can be told apart in the scope menu (features/threads/sidebar-list.feature)
+        function test_sameNamedProjectsGetDetails() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.projects = [
+                { key: "a", displayName: "e2e-project", workspaceRoot: "/a/work/e2e-project", environmentId: "env", projectId: "a" },
+                { key: "b", displayName: "e2e-project", workspaceRoot: "/b/tmp/e2e-project/", environmentId: "env", projectId: "b" },
+                { key: "c", displayName: "shop", workspaceRoot: "/a/work/shop", environmentId: "env", projectId: "c" },
+                { key: "d", displayName: "docs", workspaceRoot: "/x/docs", environmentId: "env-1", projectId: "d" },
+                { key: "e", displayName: "docs", workspaceRoot: "/x/docs", environmentId: "env-2", projectId: "e" }
+            ];
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(scopedSidebarComponent, root);
+            compare(sidebar.projectDetails, { a: "work", b: "tmp", d: "env-1", e: "env-2" });
+        }
+
+        // Scenario: The scope menu marks a project whose thread needs attention (features/threads/sidebar-list.feature)
+        function test_scopeMenuNamesThreadStateAsTheThreads() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.projects = [
+                { key: "a", displayName: "qml-ghostty", status: "limited", workspaceRoot: "/a/qml-ghostty", environmentId: "env", projectId: "a" }
+            ];
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(scopedSidebarComponent, root);
+            let menu = findChild(sidebar, "scopeMenu");
+            verify(!!menu, "Object exists");
+            tryCompare(menu, "count", 2);
+            const found = menu.itemAt(1);
+            compare(found.text, "qml-ghostty");
+            compare(found.detail, "a thread hit a usage limit");
+        }
     }
 }

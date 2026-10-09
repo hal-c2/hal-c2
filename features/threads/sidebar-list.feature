@@ -198,3 +198,16 @@ Feature: The thread list
     Given the thread list is scoped to the project "shop"
     When a screen reader reads the thread list
     Then it reads only the rows the list draws
+
+  @desktop @backlog-desktop
+  Scenario: Projects with the same name can be told apart in the scope menu
+    Given the projects "e2e-project" at "/a/work/e2e-project" and "/b/tmp/e2e-project"
+    When the user opens the scope menu
+    Then the entries read "e2e-project" with "work" and "e2e-project" with "tmp"
+    And a project with a unique name has nothing after its name
+
+  @desktop @backlog-desktop
+  Scenario: The scope menu marks a project whose thread needs attention
+    Given a thread of "qml-ghostty" stopped on a usage limit
+    When the user opens the scope menu
+    Then the entry for "qml-ghostty" says "a thread hit a usage limit"

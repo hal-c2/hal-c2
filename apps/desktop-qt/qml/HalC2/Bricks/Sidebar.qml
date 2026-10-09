@@ -43,6 +43,33 @@ Rectangle {
         }
         return icons;
     }
+    // What tells same-named projects apart in the scope menu: the nearest
+    // folders above each root that differ (`work` against `tmp`), or the
+    // environment when the roots are the same. Unique names get none.
+    readonly property var projectDetails: {
+        const byName = {};
+        for (const project of projects) {
+            (byName[project.displayName] = byName[project.displayName] ?? []).push(project);
+        }
+        const details = {};
+        for (const name in byName) {
+            const same = byName[name];
+            if (same.length < 2) {
+                continue;
+            }
+            const parents = same.map(project => (project.workspaceRoot ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).slice(0, -1));
+            let depth = 1;
+            const tail = (parts, n) => parts.slice(-n).join("/");
+            while (depth < 12 && new Set(parents.map(parts => tail(parts, depth))).size < same.length && parents.some(parts => parts.length > depth)) {
+                ++depth;
+            }
+            const distinct = new Set(parents.map(parts => tail(parts, depth))).size === same.length;
+            same.forEach((project, index) => {
+                details[project.key] = distinct ? tail(parents[index], depth) : project.environmentId ?? "";
+            });
+        }
+        return details;
+    }
     readonly property string scopeLabel: {
         if (!model || model.scopeProjectKey === null) {
             return qsTr("All projects");
@@ -336,6 +363,7 @@ Rectangle {
 
                     ShellMenu {
                         id: scopeMenu
+                        objectName: "scopeMenu"
 
                         y: parent.height + 4
                         width: Math.max(parent.width, 200)
@@ -354,17 +382,19 @@ Rectangle {
                             delegate: ShellMenuItem {
                                 required property var modelData
 
-                                // The most urgent state among the project's threads.
+                                // The most urgent state among the project's threads, as
+                                // the thread's, so "Limited" is not read as the project's.
                                 readonly property string statusWord: ({
-                                        approval: qsTr("Approval"),
-                                        input: qsTr("Input"),
-                                        working: qsTr("Working"),
-                                        waiting: qsTr("Waiting"),
-                                        limited: qsTr("Limited"),
-                                        failed: qsTr("Failed")
+                                        approval: qsTr("a thread needs approval"),
+                                        input: qsTr("a thread needs input"),
+                                        working: qsTr("a thread is working"),
+                                        waiting: qsTr("a thread is waiting"),
+                                        limited: qsTr("a thread hit a usage limit"),
+                                        failed: qsTr("a thread failed")
                                     })[modelData.status] ?? ""
 
-                                text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
+                                text: modelData.displayName
+                                detail: [sidebar.projectDetails[modelData.key] ?? "", statusWord].filter(part => part.length > 0).join(" · ")
                                 iconName: "folder"
                                 badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
