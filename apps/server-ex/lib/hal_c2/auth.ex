@@ -220,7 +220,15 @@ defmodule HalC2.Auth do
     # A ticket never outlives the session it opens a socket for.
     expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
     :ets.insert(@tickets, {ticket, expires_at, id})
-    {:ok, ticket, expires_at}
+
+    # The session may have been revoked after this request read it, and the revoke may
+    # have swept the tickets before this one was inserted: so check once it is in.
+    if is_nil(id) or session_exists?(HalC2.Store.path(), id) do
+      {:ok, ticket, expires_at}
+    else
+      :ets.delete(@tickets, ticket)
+      :error
+    end
   end
 
   def issue_ticket(access_token) do
