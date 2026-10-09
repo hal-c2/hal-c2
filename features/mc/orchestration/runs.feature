@@ -181,7 +181,8 @@ Feature: Runs and turns
     Then the run is failed
     And "t1" can take its next message
 
-  # A delete ends a run while its provider turn still starts or ends; that end stands.
+  # A delete, or a start that gave up waiting on the provider, ends a run while its
+  # provider turn still starts or ends; that end stands.
   @mc
   Scenario: A turn that ends after its thread was deleted stays cancelled
     Given "t1" has a running turn
@@ -192,6 +193,12 @@ Feature: Runs and turns
   Scenario: A turn that starts after its thread was deleted stays cancelled
     When "t1" is deleted while its turn starts
     Then the run of "t1" stays cancelled
+
+  @mc
+  Scenario: A turn that starts after its start gave up stays failed
+    Given the start of a turn in "t1" gave up while a second message waits
+    When the provider starts the first turn anyway
+    Then the first run of "t1" stays failed and the second runs alone
 
   # Whether and how often to retry is each provider plugin's own behaviour; the core
   # only waits for the plugin to give up.
