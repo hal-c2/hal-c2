@@ -186,21 +186,23 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # worktrees, or one's prune takes another's worktree while it is being added.
   defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
+  # Run each time, as `git init` leaves a clone alone and finishes one it was cut short making.
   defp init(clone) do
-    if File.dir?(clone) do
-      :ok
-    else
-      File.mkdir_p!(Path.dirname(clone))
+    File.mkdir_p!(Path.dirname(clone))
 
-      with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]), do: :ok
-    end
+    with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]), do: :ok
   end
 
-  # gh as git's only credential helper, as `gh auth setup-git` would make it.
+  # gh as git's only credential helper, as `gh auth setup-git` would make it. Git runs
+  # the helper through a shell.
   defp credentials do
     case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
-      nil -> []
-      gh -> ["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"]
+      nil ->
+        []
+
+      gh ->
+        gh = String.replace(gh, "'", "'\\''")
+        ["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"]
     end
   end
 

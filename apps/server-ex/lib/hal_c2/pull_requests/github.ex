@@ -905,6 +905,7 @@ defmodule HalC2.PullRequests.GitHub do
             end,
           "autoMergeEnabled" => pr["autoMergeRequest"] != nil
         })
+        |> put_present("headSha", item["headSha"])
         |> put_present("behindBy", comparison)
         |> put_present("autoMergeMethod", method)
         |> put_present("workflowApprovalsRequired", approvals)

@@ -1338,6 +1338,7 @@ defmodule HalC2.CodeReviewPropTest do
     rules =
       [%{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}}] ++
         lists ++
+        details(world) ++
         [permissions_rule()] ++
         if(world.refusing, do: [refusal], else: []) ++
         [%{"args" => ["--method POST", "pulls/"], "run" => gate, "stdout" => "{}"}]
@@ -1349,26 +1350,58 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp listing(world, repo) do
     for key <- @keys,
-        {^repo, number} <- [@prs[key]],
-        world.prs[key].open do
+        {^repo, _} <- [@prs[key]],
+        world.prs[key].open,
+        do: pr_entry(world, key)
+  end
+
+  defp pr_entry(world, key) do
+    {repo, number} = @prs[key]
+
+    %{
+      "number" => number,
+      "title" => "Pull request #{number}",
+      "url" => "https://github.com/acme/#{repo}/pull/#{number}",
+      "author" => %{"login" => "octocat"},
+      "headRefName" => "feature/#{number}",
+      "baseRefName" => "main",
+      "state" => "OPEN",
+      "isDraft" => false,
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => @updated[key],
+      "reviewRequests" => [],
+      "latestReviews" => [],
+      "labels" => [],
+      "statusCheckRollup" => [],
+      "headRefOid" => sha(key, world.prs[key].head),
+      "additions" => 5,
+      "deletions" => 0
+    }
+  end
+
+  # One pull request as asking for its review reads it, closed ones too.
+  defp details(world) do
+    for key <- @keys do
+      {repo, number} = @prs[key]
+
+      pr =
+        Map.merge(pr_entry(world, key), %{
+          "state" => if(world.prs[key].open, do: "OPEN", else: "CLOSED"),
+          "body" => "",
+          "changedFiles" => 1,
+          "isCrossRepository" => false,
+          "baseRef" => %{"compare" => %{"behindBy" => 0}},
+          "labels" => %{"nodes" => []},
+          "reviewRequests" => %{"nodes" => []},
+          "commits" => %{"nodes" => []}
+        })
+
       %{
-        "number" => number,
-        "title" => "Pull request #{number}",
-        "url" => "https://github.com/acme/#{repo}/pull/#{number}",
-        "author" => %{"login" => "octocat"},
-        "headRefName" => "feature/#{number}",
-        "baseRefName" => "main",
-        "state" => "OPEN",
-        "isDraft" => false,
-        "createdAt" => "2026-09-01T00:00:00Z",
-        "updatedAt" => @updated[key],
-        "reviewRequests" => [],
-        "latestReviews" => [],
-        "labels" => [],
-        "statusCheckRollup" => [],
-        "headRefOid" => sha(key, world.prs[key].head),
-        "additions" => 5,
-        "deletions" => 0
+        "args" => ["api graphql"],
+        "stdin" => ["viewerCanUpdateBranch", ~s("name":"#{repo}"), ~s("number":#{number})],
+        "stdout" => %{
+          "data" => %{"repository" => %{"viewerPermission" => "WRITE", "pullRequest" => pr}}
+        }
       }
     end
   end

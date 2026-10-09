@@ -843,6 +843,8 @@ export const PullRequestDetail = Schema.Struct({
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
   headBranch: TrimmedNonEmptyString,
+  /** The head commit, where the host names it. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   baseBranch: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
