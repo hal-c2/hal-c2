@@ -18,6 +18,8 @@ Rule rule(const QString& key, const QString& command, const QString& when = {}) 
 // DEFAULT_KEYBINDINGS in packages/shared/src/keybindings.ts, in its order.
 QList<Rule> buildDefaults() {
   const QString notTerminal = QStringLiteral("!terminalFocus");
+  // The palette is not modal, so its keys must not reach the thread behind it.
+  const QString notPalette = QStringLiteral("!terminalFocus && !commandPaletteOpen");
   const QString terminal = QStringLiteral("terminalFocus");
   const QString preview = QStringLiteral("previewFocus");
   QList<Rule> rules{
@@ -47,34 +49,34 @@ QList<Rule> buildDefaults() {
       rule(QStringLiteral("mod+alt+a"), QStringLiteral("theme.select"), notTerminal),
       rule(QStringLiteral("mod+alt+shift+a"), QStringLiteral("appearance.cycle"), notTerminal),
       rule(QStringLiteral("mod+alt+shift+t"), QStringLiteral("themeEditor.toggle")),
-      rule(QStringLiteral("mod+s"), QStringLiteral("composer.stash"), notTerminal),
-      rule(QStringLiteral("mod+shift+enter"), QStringLiteral("thread.steerQueuedMessage"), notTerminal),
+      rule(QStringLiteral("mod+s"), QStringLiteral("composer.stash"), notPalette),
+      rule(QStringLiteral("mod+shift+enter"), QStringLiteral("thread.steerQueuedMessage"), notPalette),
       rule(QStringLiteral("alt+arrowup"), QStringLiteral("thread.editQueuedMessage"), QStringLiteral("composerFocus")),
       rule(QStringLiteral("mod+enter"), QStringLiteral("composer.sendAlternate"),
            QStringLiteral("composerFocus && turnRunning")),
       rule(QStringLiteral("mod+alt+enter"), QStringLiteral("composer.sendBackground"),
            QStringLiteral("composerFocus && draftThreadRoute")),
-      rule(QStringLiteral("mod+n"), QStringLiteral("chat.new"), notTerminal),
-      rule(QStringLiteral("mod+shift+o"), QStringLiteral("chat.new"), notTerminal),
-      rule(QStringLiteral("mod+shift+n"), QStringLiteral("chat.newLocal"), notTerminal),
-      rule(QStringLiteral("mod+shift+m"), QStringLiteral("modelPicker.toggle"), notTerminal),
-      rule(QStringLiteral("mod+shift+h"), QStringLiteral("composer.host"), notTerminal),
-      rule(QStringLiteral("mod+shift+e"), QStringLiteral("composer.effort"), notTerminal),
-      rule(QStringLiteral("mod+shift+a"), QStringLiteral("composer.mode"), notTerminal),
-      rule(QStringLiteral("mod+shift+x"), QStringLiteral("composer.workspace"), notTerminal),
-      rule(QStringLiteral("mod+shift+g"), QStringLiteral("composer.branch"), notTerminal),
-      rule(QStringLiteral("mod+shift+l"), QStringLiteral("composer.previousWorktree"), notTerminal),
-      rule(QStringLiteral("mod+shift+k"), QStringLiteral("pullRequest.copyNumber"), notTerminal),
+      rule(QStringLiteral("mod+n"), QStringLiteral("chat.new"), notPalette),
+      rule(QStringLiteral("mod+shift+o"), QStringLiteral("chat.new"), notPalette),
+      rule(QStringLiteral("mod+shift+n"), QStringLiteral("chat.newLocal"), notPalette),
+      rule(QStringLiteral("mod+shift+m"), QStringLiteral("modelPicker.toggle"), notPalette),
+      rule(QStringLiteral("mod+shift+h"), QStringLiteral("composer.host"), notPalette),
+      rule(QStringLiteral("mod+shift+e"), QStringLiteral("composer.effort"), notPalette),
+      rule(QStringLiteral("mod+shift+a"), QStringLiteral("composer.mode"), notPalette),
+      rule(QStringLiteral("mod+shift+x"), QStringLiteral("composer.workspace"), notPalette),
+      rule(QStringLiteral("mod+shift+g"), QStringLiteral("composer.branch"), notPalette),
+      rule(QStringLiteral("mod+shift+l"), QStringLiteral("composer.previousWorktree"), notPalette),
+      rule(QStringLiteral("mod+shift+k"), QStringLiteral("pullRequest.copyNumber"), notPalette),
       rule(QStringLiteral("mod+shift+arrowup"), QStringLiteral("modelPicker.previousProvider"),
            QStringLiteral("modelPickerOpen")),
       rule(QStringLiteral("mod+shift+arrowdown"), QStringLiteral("modelPicker.nextProvider"),
            QStringLiteral("modelPickerOpen")),
       rule(QStringLiteral("mod+o"), QStringLiteral("editor.openFavorite")),
-      rule(QStringLiteral("mod+shift+["), QStringLiteral("thread.previous")),
-      rule(QStringLiteral("mod+shift+]"), QStringLiteral("thread.next")),
-      rule(QStringLiteral("mod+shift+c"), QStringLiteral("thread.copyReference"), notTerminal),
-      rule(QStringLiteral("mod+shift+s"), QStringLiteral("thread.settle"), notTerminal),
-      rule(QStringLiteral("mod+shift+p"), QStringLiteral("thread.pin"), notTerminal),
+      rule(QStringLiteral("mod+shift+["), QStringLiteral("thread.previous"), QStringLiteral("!commandPaletteOpen")),
+      rule(QStringLiteral("mod+shift+]"), QStringLiteral("thread.next"), QStringLiteral("!commandPaletteOpen")),
+      rule(QStringLiteral("mod+shift+c"), QStringLiteral("thread.copyReference"), notPalette),
+      rule(QStringLiteral("mod+shift+s"), QStringLiteral("thread.settle"), notPalette),
+      rule(QStringLiteral("mod+shift+p"), QStringLiteral("thread.pin"), notPalette),
       rule(QStringLiteral("mod+z"), QStringLiteral("thread.undo"), QStringLiteral("!terminalFocus && !editableFocus")),
   };
   for (int n = 1; n <= 9; ++n) {

@@ -25,6 +25,13 @@ Feature: Keyboard focus and keyboard-only use
       Then the command palette search still has keyboard focus
 
     @desktop
+    Scenario: Thread shortcuts do nothing while the command palette is open
+      Given the command palette is open
+      When the user presses mod+shift+m
+      Then "modelPicker.toggle" does not run
+      And the command palette is open
+
+    @desktop
     Scenario: Number shortcuts pick entries in an open picker
       Given the model picker is open
       When the user presses mod+2

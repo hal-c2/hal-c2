@@ -35,7 +35,8 @@ Rectangle {
     readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
-    readonly property var otherOptions: ready ? model.options.filter(option => option !== effortOption) : []
+    // By id: every read of model.options converts to fresh objects, so identity never matches.
+    readonly property var otherOptions: ready ? model.options.filter(option => option.id !== effortOption?.id) : []
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -408,7 +409,7 @@ Rectangle {
             Layout.leftMargin: 22
             Layout.rightMargin: 22
             visible: composer.suggesting
-            implicitHeight: visible ? Math.min(suggestionList.contentHeight, 240) + 8 : 0
+            implicitHeight: !visible ? 0 : suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, 240) + 8 : suggestionsEmpty.implicitHeight + 32
             topLeftRadius: 16
             topRightRadius: 16
             color: Theme.palette.color("surfaceOverlay", "#18181b")
@@ -475,13 +476,24 @@ Rectangle {
                     }
                 }
 
-                Text {
-                    anchors.centerIn: parent
-                    visible: suggestionList.count === 0
-                    text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
-                    color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
+            }
+
+            // Outside the list, which is as tall as its rows: none, here.
+            Text {
+                id: suggestionsEmpty
+                objectName: "suggestionsEmpty"
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: 12
+                visible: suggestionList.count === 0
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
+                color: composer.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             }
         }
 
@@ -964,6 +976,20 @@ Rectangle {
                                 event.accepted = composer.toggleInteractionMode();
                                 return;
                             }
+                            if (event.key === Qt.Key_Tab && event.modifiers === Qt.NoModifier) {
+                                // As the web: Tab indents a list item, anywhere else it
+                                // leaves the editor for the composer's controls.
+                                event.accepted = true;
+                                const lineStart = input.text.lastIndexOf("\n", input.cursorPosition - 1) + 1;
+                                const lineEnd = input.text.indexOf("\n", input.cursorPosition);
+                                const line = input.text.slice(lineStart, lineEnd < 0 ? input.text.length : lineEnd);
+                                if (input.selectionStart === input.selectionEnd && /^\s*([-*+]|\d+[.)])\s/.test(line)) {
+                                    input.insert(lineStart, "  ");
+                                } else {
+                                    input.nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                                }
+                                return;
+                            }
                             if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
                                 composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
                                 return;
@@ -994,6 +1020,7 @@ Rectangle {
                         iconSize: 16
                         iconTint: composer.iconMuted
                         Layout.leftMargin: -10
+                        Layout.alignment: Qt.AlignBottom
                         enabled: composer.ready && !composer.model.editorDisabled
                         Accessible.name: qsTr("Attach files")
                         onClicked: imagePicker.open()
@@ -1012,6 +1039,7 @@ Rectangle {
                     // do not fit beside the attach and send buttons, as on a phone.
                     Flow {
                         id: toolbarControls
+                        objectName: "toolbarControls"
 
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
@@ -1086,7 +1114,15 @@ Rectangle {
                                     checkable: true
                                     checked: optionItem.modelData.value === true
                                     tint: checked ? composer.foreground : composer.secondary
-                                    text: optionItem.modelData.label
+                                    // On and off are said, not only tinted: a bolt for fast
+                                    // mode, the word for any other toggle.
+                                    readonly property bool fast: optionItem.modelData.id === "fastMode"
+                                    iconName: fast && checked ? "zap" : ""
+                                    iconSize: 14
+                                    text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
+                                    Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
+                                    Accessible.checkable: true
+                                    Accessible.checked: checked
                                     font.pixelSize: Math.round(14 * Theme.fontScale)
                                     leftPadding: 10
                                     rightPadding: 10
@@ -1184,6 +1220,7 @@ Rectangle {
 
                         implicitWidth: 32
                         implicitHeight: 32
+                        Layout.alignment: Qt.AlignBottom
                         enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
@@ -1454,7 +1491,9 @@ Rectangle {
                         x: parent.width - width
                         y: -height - 4
                         width: 320
-                        height: 360
+                        // The rows' height up to the web's 23rem; a repo with one branch
+                        // gets a short popup.
+                        height: Math.min(368, branchColumn.implicitHeight + padding * 2)
                         padding: 4
                         // Opening loads the refs afresh, unfiltered.
                         onOpened: {
@@ -1491,6 +1530,8 @@ Rectangle {
                         }
 
                         ColumnLayout {
+                            id: branchColumn
+
                             anchors.fill: parent
                             spacing: 4
 
@@ -1532,6 +1573,7 @@ Rectangle {
 
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
+                                Layout.preferredHeight: Math.max(contentHeight, 40)
                                 clip: true
                                 // Where the list was when it asked for more, so
                                 // the longer list opens at the same place.
@@ -1629,11 +1671,15 @@ Rectangle {
     }
 
     component Separator: Rectangle {
+        objectName: "toolbarSeparator"
         implicitWidth: 1
         implicitHeight: 16
         Layout.alignment: Qt.AlignVCenter
         Layout.leftMargin: 2
         Layout.rightMargin: 2
+        // Keeps its width, so the wrap point holds, but a chunk that opens a
+        // line of the toolbar's Flow does not start it with a bar.
+        opacity: parent && parent.parent === toolbarControls && parent.x === 0 ? 0 : 1
         color: Theme.palette.color("border", "#27272a")
     }
 }
