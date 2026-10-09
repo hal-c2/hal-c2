@@ -68,4 +68,27 @@ defmodule HalC2.StreamsServerTest do
     assert Process.alive?(keep)
     assert Streams.ensure("th-keep") == keep
   end
+
+  # A socket's subscription from before an upgrade in place has no tag. Its relay failing
+  # dropped it without a word, and the socket followed a stream that sent it nothing.
+  test "an untagged client subscription whose relay fails is told to resync" do
+    {:ok, _} = Streams.commit("th-1", :thread, [{"note", "n1", %{"s" => %{"v" => 1}}}])
+    stream = Streams.ensure("th-1")
+    :ok = Streams.subscribe("th-1", self(), nil, %{kinds: nil})
+    assert_receive {:hal_c2_stream, "th-1", {:live, _, _}}
+
+    # What a subscriber on another MC has: a relay, linked to the stream.
+    test = self()
+
+    :sys.replace_state(stream, fn state ->
+      relay = spawn_link(fn -> receive do: (:never -> :ok) end)
+      put_in(state.relays[test], relay)
+    end)
+
+    relay = :sys.get_state(stream).relays[test]
+    Process.exit(relay, :failed)
+
+    assert_receive {:hal_c2_stream, "th-1", :resync}
+    assert Streams.ensure("th-1") == stream
+  end
 end

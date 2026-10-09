@@ -372,7 +372,7 @@ defmodule HalC2.Streams.Server do
   def handle_info({:EXIT, pid, reason}, state) do
     case Enum.find(state.relays, fn {_sub, relay} -> relay == pid end) do
       {sub, _relay} ->
-        resync(state, sub)
+        relay_failed(state, sub)
         {:noreply, drop(state, sub), timeout(state)}
 
       nil ->
@@ -448,11 +448,25 @@ defmodule HalC2.Streams.Server do
     %{state | subscribers: subscribers, relays: relays}
   end
 
-  # Only a tagged subscriber knows `:resync`; one that sends no tag hears nothing.
+  # Only a tagged subscriber is told a subscription another replaced has ended: an
+  # untagged one would take the `:resync` for the new subscription's.
   defp resync(state, pid) do
     case state.subscribers do
       %{^pid => %{name: {_id, _tag} = name}} -> send(pid, {:hal_c2_stream, name, :resync})
       _ -> :ok
+    end
+  end
+
+  # A client's subscription whose relay failed is told, tagged or (followed before an
+  # upgrade in place) not: nothing follows it. This MC's own plain and watching
+  # subscribers hear nothing.
+  defp relay_failed(state, pid) do
+    case state.subscribers do
+      %{^pid => %{view: view, name: name}} when view not in [:plain, :watch] ->
+        send(pid, {:hal_c2_stream, name, :resync})
+
+      _ ->
+        :ok
     end
   end
 
