@@ -64,6 +64,25 @@ defmodule HalC2.ClusterMembersTest do
     assert Cluster.merge(ours, theirs, "a") == Cluster.merge(theirs, ours, "a")
   end
 
+  test "updates made in the same millisecond settle on one entry in whatever order they arrive" do
+    # Each merge raises admittedAt, which must not change which update wins the next one.
+    updates = [
+      entry(addresses: ["10.0.0.2:4370"], admittedAt: 1, label: "x", updatedAt: 5),
+      entry(addresses: ["10.0.0.1:4370"], admittedAt: 3, label: "y", updatedAt: 5),
+      entry(addresses: ["10.0.0.2:4370"], admittedAt: 2, label: "z", updatedAt: 5)
+    ]
+
+    results =
+      for [first, second, third] <- permutations(updates) do
+        Enum.reduce([first, second, third], %{}, &Cluster.merge(&2, %{"b" => &1}, "a"))
+      end
+
+    assert length(Enum.uniq(results)) == 1
+  end
+
+  defp permutations([]), do: [[]]
+  defp permutations(list), do: for(x <- list, rest <- permutations(list -- [x]), do: [x | rest])
+
   test "only a machine speaks for itself, and malformed entries are dropped" do
     own = %{"a" => entry(label: "me")}
     incoming = %{"a" => entry(removedAt: 9, updatedAt: 9), "c" => %{"fingerprint" => 1}}

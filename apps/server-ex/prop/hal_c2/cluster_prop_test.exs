@@ -20,6 +20,9 @@ defmodule HalC2.ClusterPropTest do
   it tries the documented candidates in order, stops at the first that reaches the
   member, which includes a member that moved to the cluster port at a host it had, and
   leaves the port mapper at the address that worked or the one it held before.
+
+  `HalC2.Cluster.merge/3` is checked on its own: any three updates of one machine's
+  entry merge to one table whatever their order, grouping or repetition.
   """
 
   use ExUnit.Case, async: false
@@ -502,6 +505,49 @@ defmodule HalC2.ClusterPropTest do
       {:attempt, _} -> flush_attempts()
     after
       0 -> :ok
+    end
+  end
+
+  # --- merging entries ---------------------------------------------------------
+
+  property "merged entries do not depend on the order, grouping or repetition of updates",
+    numtests: HalC2.Prop.numtests(500) do
+    forall updates <- vector(3, member_entry()) do
+      table = fn entry -> Cluster.merge(%{}, %{"b" => entry}, "a") end
+      merge = &Cluster.merge(&1, &2, "a")
+
+      results =
+        for [x, y, z] <- permutations(updates) do
+          {merge.(merge.(table.(x), table.(y)), table.(z)),
+           merge.(table.(x), merge.(table.(y), table.(z))),
+           merge.(merge.(table.(x), table.(x)), merge.(table.(y), table.(z)))}
+        end
+
+      tables = Enum.flat_map(results, &Tuple.to_list/1)
+
+      (length(Enum.uniq(tables)) == 1)
+      |> when_fail(IO.inspect(Enum.uniq(tables)))
+    end
+  end
+
+  defp permutations([]), do: [[]]
+  defp permutations(list), do: for(x <- list, rest <- permutations(list -- [x]), do: [x | rest])
+
+  # Entries for one machine, with times close enough that updates tie.
+  defp member_entry do
+    let {fp, label, addresses, admitted, removed, updated, version} <-
+          {oneof(@fingerprints), oneof(["box", "laptop", nil]),
+           oneof([["10.0.0.1:4370"], ["10.0.0.2:5000"]]), range(1, 3), oneof([nil, 2, 3]),
+           range(1, 3), oneof(["1.0.0", "1.0.1"])} do
+      %{
+        "fingerprint" => fp,
+        "label" => label,
+        "addresses" => addresses,
+        "admittedAt" => admitted,
+        "removedAt" => removed,
+        "updatedAt" => updated,
+        "version" => version
+      }
     end
   end
 
