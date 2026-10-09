@@ -57,6 +57,20 @@ Feature: Custom themes
       Then the theme editor is closed
 
     @desktop
+    Scenario: Opening the theme editor moves the keyboard into it
+      Given the message field has the keyboard
+      When the user opens the theme editor
+      Then what the user types goes into the theme's name, not the message
+      And Escape closes the theme editor and gives the keyboard back
+
+    @desktop
+    Scenario: The theme import dialog takes the keyboard
+      Given the message field has the keyboard
+      When the user opens the theme import dialog
+      Then what the user types goes into the pasted JSON, not the message
+      And Escape closes the theme import dialog
+
+    @desktop
     Scenario: The theme dialogs are drawn in the current theme
       Given the appearance is Light
       When the user opens the theme editor and the import dialog

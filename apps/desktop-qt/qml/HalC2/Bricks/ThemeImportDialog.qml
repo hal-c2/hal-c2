@@ -27,8 +27,12 @@ Popup {
     transformOrigin: Item.TopLeft
     width: Math.min(520, parent ? parent.width / scale - 48 : 520)
     modal: true
+    focus: true
     padding: 16
-    onOpened: json.clear()
+    onOpened: {
+        json.clear();
+        json.forceActiveFocus();
+    }
 
     background: Rectangle {
         radius: Theme.radius
@@ -63,6 +67,8 @@ Popup {
             color: dialog.foreground
             wrapMode: TextEdit.Wrap
             Accessible.name: qsTr("Theme JSON")
+            // Tab leaves the field for the buttons rather than indenting the JSON.
+            Keys.onTabPressed: nextItemInFocusChain().forceActiveFocus(Qt.TabFocusReason)
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
             font.pixelSize: Math.round(12 * Theme.fontScale)
             background: Rectangle {

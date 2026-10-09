@@ -59,10 +59,15 @@ Popup {
     transformOrigin: Item.TopLeft
     width: Math.min(560, parent ? parent.width / scale - 48 : 560)
     height: Math.min(640, parent ? parent.height / scale - 48 : 640)
-    // Not modal, so the window stays usable under it and its toggle still closes it.
+    // Not modal, so the window stays usable under it, but the keyboard is the
+    // editor's while it is open. Escape is handled by the content rather than
+    // the close policy: a popup that closes on Escape turns the window's
+    // shortcuts off while it is open, the editor's own toggle among them.
     modal: false
-    closePolicy: Popup.CloseOnEscape
+    focus: true
+    closePolicy: Popup.NoAutoClose
     padding: 16
+    onOpened: name.forceActiveFocus()
     onClosed: Themes.editorOpen = false
     Component.onCompleted: if (Themes.editorOpen) open()
 
@@ -122,6 +127,7 @@ Popup {
 
     contentItem: ColumnLayout {
         spacing: 10
+        Keys.onEscapePressed: editor.close()
 
         Label {
             text: editor.draft.id ? qsTr("Edit theme") : qsTr("New theme")
@@ -135,6 +141,8 @@ Popup {
             spacing: 8
 
             ShellTextField {
+                id: name
+
                 objectName: "name"
                 Layout.fillWidth: true
                 placeholderText: qsTr("Theme name")

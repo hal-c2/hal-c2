@@ -20,6 +20,21 @@ Item {
             input: "#f4f4f5"
         })
 
+    // What the window has under the dialogs: a field holding the keyboard,
+    // as the composer does, and the editor's shortcut.
+    TextArea {
+        id: composer
+
+        width: 200
+        height: 60
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Alt+Shift+T"
+        context: Qt.WindowShortcut
+        onActivated: Themes.editorOpen = !Themes.editorOpen
+    }
+
     Component {
         id: editorComponent
         ThemeEditor {}
@@ -37,6 +52,8 @@ Item {
             Shell.reset();
             Themes.clear();
             Theme.colors = {};
+            composer.clear();
+            composer.forceActiveFocus();
         }
 
         function cleanup() {
@@ -77,6 +94,49 @@ Item {
                 verify(contrast(popup.foreground, popup.background.color) >= 4.5, popup.objectName + "'s text can be read");
                 popup.close();
             }
+        }
+
+        // features/navigation/theme-editor.feature: opening the theme editor
+        // moves the keyboard into it.
+        function test_theEditorTakesTheKeyboardAndGivesItBack() {
+            verify(composer.activeFocus);
+            const editor = openEditor();
+            const name = findChild(editor.contentItem, "name");
+            tryVerify(() => name.activeFocus);
+            for (let index = 0; index < 6; index += 1) keyClick(Qt.Key_Tab);
+            keyClick(Qt.Key_X);
+            compare(composer.text, "");
+            verify(!composer.activeFocus);
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+            tryVerify(() => composer.activeFocus);
+        }
+
+        // The window's shortcuts stay live under the open editor.
+        function test_theEditorsShortcutClosesIt() {
+            const editor = openEditor();
+            tryVerify(() => findChild(editor.contentItem, "name").activeFocus);
+            keySequence("Ctrl+Alt+Shift+T");
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+        }
+
+        // features/navigation/theme-editor.feature: the import dialog takes
+        // the keyboard and Escape closes it.
+        function test_theImportDialogTakesTheKeyboardAndClosesOnEscape() {
+            const dialog = openImport();
+            const json = findChild(dialog.contentItem, "json");
+            tryVerify(() => json.activeFocus);
+            keyClick(Qt.Key_X);
+            compare(json.text, "x");
+            compare(composer.text, "");
+            keyClick(Qt.Key_Tab);
+            compare(json.text, "x");
+            verify(!json.activeFocus && !composer.activeFocus);
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !dialog.visible);
+            tryVerify(() => composer.activeFocus);
         }
     }
 }
