@@ -10,7 +10,7 @@ import { withThreadDismissal } from "./thread-dismissal";
 import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
-import { pinOrderKeyBetween } from "@hal-c2/client-runtime/state/thread-sort";
+import { planPinToTop } from "@hal-c2/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -246,6 +246,9 @@ export function useThreadListActions(): {
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
+  const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
+    reportFailure: false,
+  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -375,21 +378,40 @@ export function useThreadListActions(): {
       }
       selectionHaptic();
       // Same placement as web: a fresh pin takes the top of the arranged
-      // run. Servers that predate reordering get the bare pin (keyless).
-      let orderKey: string | undefined;
+      // run, rewriting the run once no key fits above its first pin. Servers
+      // that predate reordering get the bare pin (keyless).
+      let writes: ReadonlyArray<{ readonly id: string; readonly orderKey: string }> = [];
+      const shellsByKey = new Map<string, EnvironmentThreadShell>();
+      const targetKey = scopedThreadKey(thread.environmentId, thread.id);
       if (environmentSupportsPinReorder(thread.environmentId)) {
-        const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-        let firstKey: string | null = null;
-        for (const shell of shells) {
+        const keysById = new Map<string, string>();
+        for (const shell of appAtomRegistry.get(environmentThreadShells.threadShellsAtom)) {
           if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
-          if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
+          if (!environmentSupportsPinReorder(shell.environmentId)) continue;
+          const key = scopedThreadKey(shell.environmentId, shell.id);
+          shellsByKey.set(key, shell);
+          keysById.set(key, shell.pinOrderKey);
         }
-        orderKey = pinOrderKeyBetween(null, firstKey) ?? undefined;
+        writes = planPinToTop(targetKey, keysById);
       }
+      const orderKey = writes.find((write) => write.id === targetKey)?.orderKey;
       const result = await pinMutation({
         environmentId: thread.environmentId,
         input: { threadId: thread.id, ...(orderKey !== undefined ? { orderKey } : {}) },
       });
+      if (result._tag === "Success") {
+        // The rest of a rewritten run. Stop on failure: the pin stands, and a
+        // partly rewritten run still sorts, just not in the planned order.
+        for (const write of writes) {
+          const shell = write.id === targetKey ? undefined : shellsByKey.get(write.id);
+          if (shell === undefined) continue;
+          const written = await reorderPinnedMutation({
+            environmentId: shell.environmentId,
+            input: { threadId: shell.id, orderKey: write.orderKey },
+          });
+          if (written._tag !== "Success") break;
+        }
+      }
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
         Alert.alert(
@@ -402,7 +424,7 @@ export function useThreadListActions(): {
       }
       return true;
     },
-    [pinMutation],
+    [pinMutation, reorderPinnedMutation],
   );
   const unpinThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
@@ -519,9 +541,6 @@ export function useThreadListActions(): {
   );
 
   // Plan against the complete section so filtering does not change a move.
-  const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
-    reportFailure: false,
-  });
   const reorderActiveMutation = useAtomCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });

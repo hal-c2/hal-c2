@@ -285,6 +285,26 @@ export function planPinnedReorder(input: {
 }
 
 /**
+ * Writes that pin `pinnedId` at the top of the arranged run: its own key when
+ * one fits above the first arranged pin, or, once that space is used up (or a
+ * key is corrupt), the run rewritten with `pinnedId` first. `keysById` holds
+ * the arranged pins' keys under the caller's ids (scoped keys when the run
+ * spans environments); keyless pins keep their place below the run.
+ */
+export function planPinToTop(
+  pinnedId: string,
+  keysById: ReadonlyMap<string, string>,
+): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
+  const arranged = [...keysById]
+    .filter(([id]) => id !== pinnedId)
+    .sort(([leftId, left], [rightId, right]) =>
+      left !== right ? (left < right ? -1 : 1) : leftId < rightId ? -1 : leftId > rightId ? 1 : 0,
+    )
+    .map(([id]) => id);
+  return planPinnedReorder({ orderedIds: [pinnedId, ...arranged], keysById, movedId: pinnedId });
+}
+
+/**
  * Pinned block order: user-arranged keys first (string comparison, id
  * tiebreak), then keyless threads newest-created first — so threads on
  * servers that predate reordering keep the static creation order at the

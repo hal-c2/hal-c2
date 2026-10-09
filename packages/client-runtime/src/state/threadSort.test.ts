@@ -8,6 +8,7 @@ import {
   pinOrderKeyBetween,
   planPinnedMove,
   planPinnedReorder,
+  planPinToTop,
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -319,6 +320,39 @@ describe("pinOrderKeyBetween key length", () => {
     });
     expect(assignments.length).toBeGreaterThan(1);
     for (const { orderKey } of assignments) expect(orderKey.length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("planPinToTop", () => {
+  it("writes one key above the first arranged pin while one fits", () => {
+    const assignments = planPinToTop(
+      "new",
+      new Map([
+        ["a", "m"],
+        ["b", "t"],
+      ]),
+    );
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.id).toBe("new");
+    expect(assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("rewrites the run with the new pin first once the top is used up", () => {
+    // Pin to the top until no key fits above the first one.
+    const keysById = new Map([["b", "m"]]);
+    for (let pin = 0; ; pin += 1) {
+      const assignments = planPinToTop(`p${pin}`, keysById);
+      for (const { id, orderKey } of assignments) keysById.set(id, orderKey);
+      if (assignments.length > 1) {
+        const order = [...keysById].sort(([, left], [, right]) => (left < right ? -1 : 1));
+        expect(order[0]![0]).toBe(`p${pin}`);
+        expect(order.at(-1)![0]).toBe("b");
+        expect(new Set(keysById.values()).size).toBe(keysById.size);
+        break;
+      }
+      expect(pin).toBeLessThan(1000);
+    }
+    for (const key of keysById.values()) expect(key.length).toBeLessThanOrEqual(64);
   });
 });
 

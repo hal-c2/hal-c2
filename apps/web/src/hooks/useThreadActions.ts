@@ -6,7 +6,10 @@ import {
 } from "@hal-c2/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@hal-c2/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@hal-c2/client-runtime/state/thread-settled";
-import { threadRuntimeCanArchive } from "@hal-c2/client-runtime/state/models";
+import {
+  type EnvironmentThreadShell,
+  threadRuntimeCanArchive,
+} from "@hal-c2/client-runtime/state/models";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@hal-c2/contracts";
 import { resolveWorktreeCleanup } from "@hal-c2/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -15,7 +18,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { getFallbackThreadIdAfterDelete, planPinToTop } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -96,16 +99,30 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlo
   }
 }
 
-/** Key that sorts before every arranged pinned thread, so a fresh pin lands
-    at the top of the run. Undefined (keyless, sorts with the legacy block)
-    when key math can't produce one — pinning must never fail on placement. */
-function topOfPinnedRunOrderKey(): string | undefined {
-  let firstKey: string | null = null;
+/** Key writes that put `target` at the top of the arranged pinned run: one
+    key above the first arranged pin, or the whole run rewritten once that
+    space is used up. The run spans every environment that can reorder pins. */
+function pinToTopOfRunWrites(target: ScopedThreadRef) {
+  const shellsByKey = new Map<string, EnvironmentThreadShell>();
+  const keysById = new Map<string, string>();
   for (const shell of readThreadShells()) {
     if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
-    if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
+    if (!readEnvironmentSupportsPinReorder(shell.environmentId)) continue;
+    const key = scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id));
+    shellsByKey.set(key, shell);
+    keysById.set(key, shell.pinOrderKey);
   }
-  return pinOrderKeyBetween(null, firstKey) ?? undefined;
+  const targetKey = scopedThreadKey(target);
+  const writes = planPinToTop(targetKey, keysById);
+  return {
+    orderKey: writes.find((write) => write.id === targetKey)?.orderKey,
+    rewrites: writes.flatMap((write) => {
+      const shell = write.id === targetKey ? undefined : shellsByKey.get(write.id);
+      return shell
+        ? [{ target: scopeThreadRef(shell.environmentId, shell.id), orderKey: write.orderKey }]
+        : [];
+    }),
+  };
 }
 
 export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinningUnsupportedError>()(
@@ -604,19 +621,33 @@ export function useThreadActions() {
       // gets the default so the same action never places differently.
       // orderKey rides only to servers that decode it; pre-reorder servers
       // get the bare pin they understand and the thread stays keyless.
-      const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
-        ? (opts.orderKey ?? topOfPinnedRunOrderKey())
-        : undefined;
+      const supportsReorder = readEnvironmentSupportsPinReorder(target.environmentId);
+      const placement =
+        supportsReorder && opts.orderKey === undefined
+          ? pinToTopOfRunWrites(target)
+          : { orderKey: supportsReorder ? opts.orderKey : undefined, rewrites: [] };
       ThreadUndo.invalidate("pin", scopedThreadKey(target));
-      return pinThreadMutation({
+      const result = await pinThreadMutation({
         environmentId: target.environmentId,
         input: {
           threadId: target.threadId,
-          ...(orderKey !== undefined ? { orderKey } : {}),
+          ...(placement.orderKey !== undefined ? { orderKey: placement.orderKey } : {}),
         },
       });
+      if (result._tag !== "Success") return result;
+      // The rest of a rewritten run. Stop on failure: the pin itself stands,
+      // and a partly rewritten run still sorts, just not in the planned order.
+      for (const rewrite of placement.rewrites) {
+        ThreadUndo.invalidate("pin", scopedThreadKey(rewrite.target));
+        const written = await reorderPinnedThreadMutation({
+          environmentId: rewrite.target.environmentId,
+          input: { threadId: rewrite.target.threadId, orderKey: rewrite.orderKey },
+        });
+        if (written._tag !== "Success") break;
+      }
+      return result;
     },
-    [pinThreadMutation],
+    [pinThreadMutation, reorderPinnedThreadMutation],
   );
 
   const unpinThread = useCallback(
