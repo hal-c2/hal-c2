@@ -103,7 +103,11 @@ defmodule HalC2.Streams.Server do
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil) :: :ok
   def subscribe(stream_id, pid, offset \\ nil),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, :plain})
+    do:
+      HalC2.Streams.with_server(
+        stream_id,
+        &GenServer.call(&1, {:subscribe, pid, offset, :plain})
+      )
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil, client) :: :ok
   def subscribe(stream_id, pid, offset, %{} = client) do
@@ -117,14 +121,19 @@ defmodule HalC2.Streams.Server do
   """
   @spec follow(String.t(), pid, non_neg_integer | nil, client) :: {:ok, pid}
   def follow(stream_id, pid, offset, %{} = client) do
-    server = HalC2.Streams.ensure(stream_id)
-    :ok = GenServer.call(server, {:subscribe, pid, offset, client})
-    {:ok, server}
+    HalC2.Streams.with_server(stream_id, fn server ->
+      :ok = GenServer.call(server, {:subscribe, pid, offset, client})
+      {:ok, server}
+    end)
   end
 
   @spec watch(String.t(), pid) :: :ok
   def watch(stream_id, pid),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, nil, :watch})
+    do:
+      HalC2.Streams.with_server(
+        stream_id,
+        &GenServer.call(&1, {:subscribe, pid, nil, :watch})
+      )
 
   @doc """
   Sends a client the runs before its window's floor that together hold at least
