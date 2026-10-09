@@ -445,6 +445,13 @@ Feature: Clustering one person's machines
     Then the cluster page shows the error "The MC is shutting down." instead of the machines
 
   @desktop
+  Scenario: A session without administrative access sees the cluster read-only
+    Given the desktop shell is connected to its MC
+    And the MC can no longer read its cluster, saying "access:read is required"
+    When the user opens Cluster in the desktop's settings
+    Then the cluster page says the session needs administrative access, with nothing to invite or join
+
+  @desktop
   Scenario: Back leaves the desktop's cluster page
     Given the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
