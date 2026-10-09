@@ -235,6 +235,13 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
 // state/threadSort.ts (pinOrderKeyBetween, generateSpreadPinOrderKeys,
 // planPinnedReorder).
 //
+// The longest key a thread can hold (the MC refuses longer ones). A key grows
+// about a letter per four drags into one gap, and a drag that would pass it
+// gives the section fresh keys instead.
+inline constexpr qsizetype kMaxOrderKeyLength = 64;
+// A key a thread can hold: 1 to kMaxOrderKeyLength letters a-z, not ending
+// in "a" (nothing sorts just before it).
+bool validOrderKey(const QString& key);
 // A key strictly between two neighbours; no bound is the section's edge.
 // Nothing when the bounds are corrupt or out of order.
 Nullable orderKeyBetween(const Nullable& before, const Nullable& after);

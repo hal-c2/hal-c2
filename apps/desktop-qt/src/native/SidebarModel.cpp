@@ -857,30 +857,40 @@ namespace {
 
 const QString kOrderDigits = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
 
+// The midpoint of two digit strings read as fractions, `a` < `b`; "" is the
+// open bound. One pass: past the common prefix, and once the upper bound is
+// open, past each of `a`'s highest digits.
+QString orderMidpoint(const QString& a, const QString& b) {
+  const qsizetype base = kOrderDigits.size();
+  const auto digit = [](const QString& key, qsizetype at, qsizetype pad) {
+    return at < key.size() ? kOrderDigits.indexOf(key.at(at)) : pad;
+  };
+  QString key;
+  qsizetype at = 0;
+  bool open = b.isEmpty();
+  for (;;) {
+    // "a" pads the shorter lower bound.
+    while (!open && at < b.size() && digit(a, at, 0) == digit(b, at, base)) key += b.at(at++);
+    const qsizetype digitA = digit(a, at, 0);
+    const qsizetype digitB = open ? base : digit(b, at, base);
+    if (digitB - digitA > 1) return key + kOrderDigits.at((digitA + digitB + 1) / 2);
+    if (!open && b.size() - at > 1) return key + b.at(at);
+    key += kOrderDigits.at(digitA);
+    ++at;
+    open = true;
+  }
+}
+
+}  // namespace
+
 bool validOrderKey(const QString& key) {
-  if (key.isEmpty()) return false;
+  if (key.isEmpty() || key.size() > kMaxOrderKeyLength) return false;
   for (const QChar c : key) {
-    if (!kOrderDigits.contains(c)) return false;
+    if (c < QLatin1Char('a') || c > QLatin1Char('z')) return false;
   }
   // A trailing lowest digit leaves no room for a key just before this one.
   return key.back() != kOrderDigits.front();
 }
-
-// The midpoint of two digit strings read as fractions; "" is the open bound.
-QString orderMidpoint(const QString& a, const QString& b) {
-  if (!b.isEmpty()) {
-    qsizetype n = 0;
-    while (n < b.size() && (n < a.size() ? a.at(n) : kOrderDigits.front()) == b.at(n)) ++n;
-    if (n > 0) return b.left(n) + orderMidpoint(a.mid(n), b.mid(n));
-  }
-  const qsizetype digitA = a.isEmpty() ? 0 : kOrderDigits.indexOf(a.front());
-  const qsizetype digitB = b.isEmpty() ? kOrderDigits.size() : kOrderDigits.indexOf(b.front());
-  if (digitB - digitA > 1) return QString(kOrderDigits.at((digitA + digitB + 1) / 2));
-  if (b.size() > 1) return QString(b.front());
-  return QString(kOrderDigits.at(digitA)) + orderMidpoint(a.mid(1), QString());
-}
-
-}  // namespace
 
 Nullable orderKeyBetween(const Nullable& before, const Nullable& after) {
   const QString a = before.value_or(QString());
@@ -888,7 +898,10 @@ Nullable orderKeyBetween(const Nullable& before, const Nullable& after) {
   if (!a.isEmpty() && !validOrderKey(a)) return std::nullopt;
   if (!b.isEmpty() && !validOrderKey(b)) return std::nullopt;
   if (!b.isEmpty() && a >= b) return std::nullopt;
-  return orderMidpoint(a, b);
+  QString key = orderMidpoint(a, b);
+  // Past the longest key: no room left here.
+  if (key.size() > kMaxOrderKeyLength) return std::nullopt;
+  return key;
 }
 
 QStringList spreadOrderKeys(int count) {
@@ -922,16 +935,21 @@ QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<Q
   for (auto it = orderKeys.cbegin(); it != orderKeys.cend(); ++it) {
     if (!orderedKeys.contains(it.key()) && it.value()) reserved.insert(*it.value());
   }
-  const bool hasBefore = moved > 0;
-  const bool hasAfter = moved < orderedKeys.size() - 1;
-  const Nullable beforeKey = hasBefore ? orderKeys.value(orderedKeys.at(moved - 1)) : std::nullopt;
-  const Nullable afterKey = hasAfter ? orderKeys.value(orderedKeys.at(moved + 1)) : std::nullopt;
-  if ((!hasBefore || beforeKey) && (!hasAfter || afterKey)) {
+  // A neighbour's key that no client writes (one the MC kept unchecked, an
+  // empty one included) sorts where orderKeyBetween cannot reason about it.
+  const auto usable = [&](qsizetype index) {
+    if (index < 0 || index >= orderedKeys.size()) return true;
+    const Nullable key = orderKeys.value(orderedKeys.at(index));
+    return key && validOrderKey(*key);
+  };
+  const Nullable beforeKey = moved > 0 ? orderKeys.value(orderedKeys.at(moved - 1)) : std::nullopt;
+  const Nullable afterKey = moved < orderedKeys.size() - 1 ? orderKeys.value(orderedKeys.at(moved + 1)) : std::nullopt;
+  if (usable(moved - 1) && usable(moved + 1)) {
     Nullable key = orderKeyBetween(beforeKey, afterKey);
     while (key && reserved.contains(*key)) key = orderKeyBetween(key, afterKey);
     if (key) return {{movedKey, *key}};
   }
-  // A neighbour without a key (or corrupt ones): the section gets fresh keys in the new order.
+  // A neighbour without a key, a corrupt one, or no room: the section gets fresh keys in the new order.
   QStringList fresh = spreadOrderKeys(int(orderedKeys.size() + reserved.size()));
   fresh.removeIf([&reserved](const QString& key) { return reserved.contains(key); });
   QList<OrderAssignment> assignments;

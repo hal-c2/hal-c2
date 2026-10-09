@@ -95,6 +95,39 @@ private slots:
     QCOMPARE(order({peer, own}), expected);
   }
 
+  // A drag writes keys that sort the section as dropped, whatever the
+  // neighbours hold: the MC kept a client's key unchecked, and an empty one
+  // read as the section's edge while it sorts first (tst_SidebarOrderFuzz).
+  void aDragPastACorruptKeyKeepsTheOrder() {
+    const QString longKey(100000, QLatin1Char('z'));
+    const QList<std::pair<QString, QString>> corrupt{
+        {QString(), QStringLiteral("n")},
+        {QStringLiteral("\u00df"), QStringLiteral("F")},
+        {longKey, QStringLiteral("n")},
+    };
+    for (const auto& [first, second] : corrupt) {
+      const QHash<QString, sidebar::Nullable> keys{{QStringLiteral("t0"), first}, {QStringLiteral("t1"), second}};
+      const QStringList ordered{QStringLiteral("t1"), QStringLiteral("t0")};
+      QHash<QString, sidebar::Nullable> after = keys;
+      for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(ordered, keys, QStringLiteral("t1"))) {
+        after.insert(assignment.key, assignment.orderKey);
+      }
+      QVERIFY2(*after.value(QStringLiteral("t1")) < *after.value(QStringLiteral("t0")), qPrintable(first.left(8) + QLatin1Char('/') + second));
+    }
+  }
+
+  // A key next to a very long one is found without a walk per letter, and a
+  // key no client can store is no bound.
+  void aKeyBesideALongOneIsQuick() {
+    const QString longKey(100000, QLatin1Char('z'));
+    QCOMPARE(sidebar::orderKeyBetween(longKey, std::nullopt), sidebar::Nullable());
+    QCOMPARE(sidebar::orderKeyBetween(std::nullopt, longKey), sidebar::Nullable());
+    const QString longest(sidebar::kMaxOrderKeyLength, QLatin1Char('z'));
+    QCOMPARE(sidebar::orderKeyBetween(longest, std::nullopt), sidebar::Nullable());
+    const sidebar::Nullable before = sidebar::orderKeyBetween(std::nullopt, longest);
+    QVERIFY(before && *before < longest && before->size() <= sidebar::kMaxOrderKeyLength);
+  }
+
   // A thread selected while archived, or archived while selected, is not
   // selected once it is back in the list.
   void anArchivedThreadComesBackUnselected() {

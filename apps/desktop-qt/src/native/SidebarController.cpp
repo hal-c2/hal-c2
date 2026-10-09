@@ -346,7 +346,9 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
                                       if (pinned) {
                                         QJsonObject pin = target;
                                         pin.insert(QStringLiteral("type"), QStringLiteral("thread.pin"));
-                                        if (pinOrderKey) pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
+                                        if (pinOrderKey && sidebar::validOrderKey(*pinOrderKey)) {
+                                          pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
+                                        }
                                         command(environmentId, pin, QStringLiteral("Failed to pin thread"));
                                       } else if (sidebar::parseIso(snoozedUntil).value_or(0) > m_now().toMSecsSinceEpoch()) {
                                         // Pinning spends a snooze, so only an unpinned thread is snoozed again.

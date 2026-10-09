@@ -3,8 +3,8 @@
 // writes a drag makes, and the thread and project rows the MC sends. Keys are
 // base-26 strings that sort as text. Besides not crashing, a key between two
 // valid neighbours sorts strictly between them, a spread reads strictly in
-// order, and a drag writes keys that keep its section in order without taking
-// a key a hidden thread holds.
+// order, and a drag writes keys that keep its section in order, whatever keys
+// the threads held, without taking a key a hidden thread holds.
 
 #include "Fuzz.h"
 #include "SidebarModel.h"
@@ -25,10 +25,10 @@ namespace {
 // lowercase letters, never ending in "a".
 const std::vector<std::string> kOrderWords{"a", "b", "m", "n", "y", "z", "za", "zb", "zz", "zy", "mz", "nb", "ny", "zyz", "nn"};
 
-// Whether a key is one the MC's order keys can be: letters only, and a last
-// letter that leaves room before it.
+// Whether a key is one the MC's order keys can be: at most the longest key's
+// letters, and a last letter that leaves room before it.
 bool validKey(const QString& key) {
-  if (key.isEmpty()) return false;
+  if (key.isEmpty() || key.size() > sidebar::kMaxOrderKeyLength) return false;
   for (const QChar c : key) {
     if (c < QLatin1Char('a') || c > QLatin1Char('z')) return false;
   }
@@ -47,8 +47,12 @@ void OrderKeyBetweenIsBetween(const std::string& before, const std::string& afte
     EXPECT_FALSE(key.has_value()) << "a key between corrupt or unordered bounds";
     return;
   }
-  ASSERT_TRUE(key.has_value()) << "no key between " << (lower ? lower->toStdString() : "") << " and "
-                               << (upper ? upper->toStdString() : "");
+  // A key is at most a letter longer than its lower bound, so only a longest one leaves no room.
+  if (!key) {
+    EXPECT_TRUE(lower && lower->size() == sidebar::kMaxOrderKeyLength)
+        << "no key between " << (lower ? lower->toStdString() : "") << " and " << (upper ? upper->toStdString() : "");
+    return;
+  }
   fuzz::print(QJsonArray{lower.value_or(QString()), upper.value_or(QString()), *key});
   EXPECT_TRUE(validKey(*key)) << "key " << key->toStdString();
   if (lower && !lower->isEmpty()) EXPECT_LT(*lower, *key) << "not after its lower bound";
@@ -57,8 +61,10 @@ void OrderKeyBetweenIsBetween(const std::string& before, const std::string& afte
 FUZZ_TEST(Sidebar, OrderKeyBetweenIsBetween)
     .WithDomains(fuzz::Text(kOrderWords), fuzz::Text(kOrderWords), fuzztest::Arbitrary<bool>(), fuzztest::Arbitrary<bool>())
     .WithSeeds([] {
-      // The keys a long section grows: the common prefix and the open edges, and 10k-letter keys, for the recursion.
+      // The keys a long section grows: the common prefix and the open edges, the longest keys, and
+      // 10k- and 100k-letter ones no client writes (the midpoint once walked them a letter per frame).
       const std::string longZ(10000, 'z');
+      const std::string longest(std::size_t(sidebar::kMaxOrderKeyLength), 'z');
       return std::vector<std::tuple<std::string, std::string, bool, bool>>{
           {"a", "b", true, true},
           {"y", "z", true, true},
@@ -72,6 +78,10 @@ FUZZ_TEST(Sidebar, OrderKeyBetweenIsBetween)
           {longZ, "", false, false},
           {longZ, longZ + "z", true, true},
           {"", std::string(10000, 'a') + "b", false, true},
+          {std::string(100000, 'z'), "", true, false},
+          {longest, "", true, false},
+          {"", longest, false, true},
+          {longest.substr(1) + "y", longest, true, true},
       };
     });
 
@@ -132,17 +142,19 @@ void PlanReorderHoldsUp(const std::vector<PlanRow>& rows, int moved) {
       EXPECT_NE(fuzz::utf8(rows[i].orderKey), assignment.orderKey) << "took the key of hidden " << keyOf(i).toStdString();
     }
   }
-  // The moved thread sorts between the keys its neighbours read with after the drag.
-  // A neighbour whose stored key is not a valid one is left out: the MC stores a
-  // client's orderKey unchecked, and an empty one reads as the open edge to
-  // orderKeyBetween while it sorts first as text, so no order is promised there.
+  // The moved thread and its neighbours hold keys after the drag, and the moved
+  // one's sorts as text between theirs, whatever they held before it.
   const qsizetype at = ordered.indexOf(movedKey);
-  const auto keyAt = [&](qsizetype index) -> sidebar::Nullable {
-    const sidebar::Nullable key = after.value(ordered.at(index));
-    return key && validKey(*key) ? key : std::nullopt;
-  };
-  if (at > 0 && keyAt(at - 1) && keyAt(at)) EXPECT_LT(*keyAt(at - 1), *keyAt(at)) << "moved before its neighbour";
-  if (at + 1 < ordered.size() && keyAt(at + 1) && keyAt(at)) EXPECT_LT(*keyAt(at), *keyAt(at + 1)) << "moved after its neighbour";
+  const auto keyAt = [&](qsizetype index) { return after.value(ordered.at(index)); };
+  ASSERT_TRUE(keyAt(at).has_value()) << "the moved thread has no key";
+  if (at > 0) {
+    ASSERT_TRUE(keyAt(at - 1).has_value()) << "the thread before has no key";
+    EXPECT_LT(*keyAt(at - 1), *keyAt(at)) << "moved before its neighbour";
+  }
+  if (at + 1 < ordered.size()) {
+    ASSERT_TRUE(keyAt(at + 1).has_value()) << "the thread after has no key";
+    EXPECT_LT(*keyAt(at), *keyAt(at + 1)) << "moved after its neighbour";
+  }
 }
 FUZZ_TEST(Sidebar, PlanReorderHoldsUp)
     .WithDomains(fuzztest::VectorOf(fuzztest::StructOf<PlanRow>(fuzztest::Arbitrary<bool>(), fuzztest::Arbitrary<bool>(),
@@ -157,6 +169,13 @@ FUZZ_TEST(Sidebar, PlanReorderHoldsUp)
           {{{true, true, "b", 0}, {true, false, "", 1}, {true, true, "n", 2}}, 0},
           // Corrupt keys (out of order) take the fresh path too.
           {{{true, true, "z", 0}, {true, true, "b", 1}, {false, true, "m", 2}}, 1},
+          // A drag to just before a thread whose stored key is empty: it sorts first as text.
+          {{{true, true, "", 1}, {true, true, "n", 0}}, 0},
+          // Stored keys that are not base-26 letters.
+          {{{true, true, "\337", 1}, {true, true, "F", 0}}, 0},
+          // A neighbour with a 100k-letter key, and one with the longest key at the open edge.
+          {{{true, true, std::string(100000, 'z'), 0}, {true, true, "n", 1}}, 1},
+          {{{true, true, std::string(std::size_t(sidebar::kMaxOrderKeyLength), 'z'), 0}, {true, true, "n", 1}}, 1},
       };
     });
 
