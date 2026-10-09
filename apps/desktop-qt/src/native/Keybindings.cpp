@@ -10,6 +10,11 @@ namespace {
 // packages/contracts MAX_KEYBINDINGS_COUNT and MAX_WHEN_EXPRESSION_DEPTH.
 constexpr int kMaxBindings = 256;
 constexpr int kMaxWhenDepth = 64;
+// Not in the contracts: the depth cap bounds only brackets and `!`, and a chain
+// `a && b && c ...` is as deep as it is long, which evaluate() and whenText()
+// recurse down. A condition of more nodes (terms, `!`, `&&`, `||`) than this
+// does not parse, like one nested too deep.
+constexpr int kMaxWhenNodes = 256;
 
 Rule rule(const QString& key, const QString& command, const QString& when = {}) {
   return {key, command, when.isEmpty() ? std::nullopt : std::optional<QString>(when)};
@@ -149,7 +154,7 @@ private:
   WhenPtr parsePrimary(int depth) {
     if (depth > kMaxWhenDepth || m_index >= m_tokens.size()) return nullptr;
     if (at(Token::Identifier)) {
-      return std::make_shared<When>(When{When::Kind::Identifier, m_tokens.at(m_index++).second, {}, {}});
+      return node(When::Kind::Identifier, m_tokens.at(m_index++).second, {}, {});
     }
     if (!at(Token::Open)) return nullptr;
     ++m_index;
@@ -165,9 +170,9 @@ private:
       ++m_index;
       if (++nots > kMaxWhenDepth) return nullptr;
     }
-    WhenPtr node = parsePrimary(depth);
-    for (; node && nots > 0; --nots) node = std::make_shared<When>(When{When::Kind::Not, {}, node, {}});
-    return node;
+    WhenPtr result = parsePrimary(depth);
+    for (; result && nots > 0; --nots) result = node(When::Kind::Not, {}, result, {});
+    return result;
   }
 
   WhenPtr parseBinary(int depth, Token op, When::Kind kind) {
@@ -176,21 +181,33 @@ private:
       ++m_index;
       WhenPtr right = kind == When::Kind::Or ? parseBinary(depth, Token::And, When::Kind::And) : parseUnary(depth);
       if (!right) return nullptr;
-      left = std::make_shared<When>(When{kind, {}, left, right});
+      left = node(kind, {}, left, right);
     }
     return left;
   }
 
   WhenPtr parseOr(int depth) { return parseBinary(depth, Token::Or, When::Kind::Or); }
 
+  // A new node, or null once the condition has more than kMaxWhenNodes.
+  WhenPtr node(When::Kind kind, const QString& name, const WhenPtr& left, const WhenPtr& right) {
+    if (++m_nodes > kMaxWhenNodes) return nullptr;
+    return std::make_shared<When>(When{kind, name, left, right});
+  }
+
   bool m_ok = false;
+  int m_nodes = 0;
   QList<std::pair<Token, QString>> m_tokens;
   qsizetype m_index = 0;
 };
 
-QString wrapped(const WhenPtr& when) {
-  if (when->kind == When::Kind::Identifier || when->kind == When::Kind::Not) return whenText(when);
-  return QLatin1Char('(') + whenText(when) + QLatin1Char(')');
+// `when` as an operand of `parent`, in brackets only where reading it back would
+// group it differently: `&&` binds tighter than `||`, and a chain of one operator
+// groups to the left, so the same operator on the right needs them.
+QString operand(const WhenPtr& when, When::Kind parent, bool right) {
+  const bool plain = when->kind == When::Kind::Identifier || when->kind == When::Kind::Not;
+  const bool bare = plain || (parent == When::Kind::Or && when->kind == When::Kind::And) ||
+                    (!right && when->kind == parent);
+  return bare ? whenText(when) : QLatin1Char('(') + whenText(when) + QLatin1Char(')');
 }
 
 // Web `event.key` names → portable QKeySequence names (shellKeybindings.ts).
@@ -442,11 +459,11 @@ QString whenText(const WhenPtr& when) {
     case When::Kind::Identifier:
       return when->name;
     case When::Kind::Not:
-      return QLatin1Char('!') + wrapped(when->left);
+      return QLatin1Char('!') + operand(when->left, When::Kind::Not, false);
     case When::Kind::And:
-      return wrapped(when->left) + QStringLiteral(" && ") + wrapped(when->right);
+      return operand(when->left, When::Kind::And, false) + QStringLiteral(" && ") + operand(when->right, When::Kind::And, true);
     case When::Kind::Or:
-      return wrapped(when->left) + QStringLiteral(" || ") + wrapped(when->right);
+      return operand(when->left, When::Kind::Or, false) + QStringLiteral(" || ") + operand(when->right, When::Kind::Or, true);
   }
   return {};
 }

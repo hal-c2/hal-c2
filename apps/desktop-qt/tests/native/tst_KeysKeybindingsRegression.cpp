@@ -150,6 +150,57 @@ private slots:
     QTRY_COMPARE(shell.keys()->customCount(), 2);
     QCOMPARE(bindings.count(), 1);
   }
+
+  // `a0 && a1 && ... && a66` parsed but printed as 66 nested brackets, deeper
+  // than a condition may nest, so the settings page saved text that no longer
+  // loaded.
+  void aLongChainReadsBackAsWritten_data() {
+    QTest::addColumn<QString>("op");
+    QTest::addColumn<int>("terms");
+    for (const int terms : {2, 66, 67, 100, 120}) {
+      QTest::addRow("and %d", terms) << QStringLiteral("&&") << terms;
+      QTest::addRow("or %d", terms) << QStringLiteral("||") << terms;
+    }
+  }
+  void aLongChainReadsBackAsWritten() {
+    QFETCH(QString, op);
+    QFETCH(int, terms);
+    QStringList names;
+    for (int index = 0; index < terms; ++index) names.append(QStringLiteral("a%1").arg(index));
+    const QString text = names.join(QLatin1Char(' ') + op + QLatin1Char(' '));
+    const keybindings::WhenPtr when = keybindings::parseWhen(text);
+    QVERIFY(when);
+    QCOMPARE(keybindings::whenText(when), text);
+    QVERIFY(keybindings::parseWhen(keybindings::whenText(when)));
+  }
+
+  // Brackets only where they change the grouping.
+  void bracketsOnlyWhereTheyGroup() {
+    for (const QString& text : {QStringLiteral("a && b || c && !d"), QStringLiteral("a && (b || c)"),
+                                QStringLiteral("a && (b && c)"), QStringLiteral("a || (b || c)"),
+                                QStringLiteral("!(a && b) || !!c"), QStringLiteral("(a || b) && (c || d) && e")}) {
+      const keybindings::WhenPtr when = keybindings::parseWhen(text);
+      QVERIFY2(when, qPrintable(text));
+      QCOMPARE(keybindings::whenText(when), text);
+    }
+    QCOMPARE(keybindings::whenText(keybindings::parseWhen(QStringLiteral("((a && b)) && c"))), QStringLiteral("a && b && c"));
+  }
+
+  // A chain is as deep as it is long, and evaluating or printing it recurses
+  // that deep, so a condition has a size cap as it has a depth cap; the
+  // settings page says so as it does of one nested too deep.
+  void aHugeChainIsRefused() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QStringList names;
+    for (int index = 0; index < 300; ++index) names.append(QStringLiteral("a%1").arg(index));
+    const QString text = names.join(QStringLiteral(" && "));
+    QVERIFY(!keybindings::parseWhen(text));
+    QVERIFY(!keybindings::parseWhen(QStringLiteral("!").repeated(60) + names.join(QStringLiteral(" || !!!!"))));
+    QVERIFY(!shell.keys()->whenError(text).isEmpty());
+    QVERIFY(!keybindings::compile({QStringLiteral("mod+k"), QStringLiteral("chat.new"), text}));
+    QVERIFY(keybindings::parseWhen(names.mid(0, 120).join(QStringLiteral(" && "))));
+  }
 };
 
 int main(int argc, char** argv) {

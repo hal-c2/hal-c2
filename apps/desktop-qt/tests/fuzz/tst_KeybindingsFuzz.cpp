@@ -49,6 +49,13 @@ keybindings::Context contextOf(const keybindings::WhenPtr& when, std::uint64_t t
   return contextOf(when->right, truths, contextOf(when->left, truths, std::move(context)));
 }
 
+// `a0 op a1 op ... `, the shape whenText once printed as nested brackets.
+std::string longChain(int terms, const std::string& op) {
+  std::string chain;
+  for (int index = 0; index < terms; ++index) chain += (index ? op : "") + ("a" + std::to_string(index % 8));
+  return chain;
+}
+
 void ConditionReadsBackAsWritten(const std::string& text, std::uint64_t truths) {
   const keybindings::WhenPtr when = keybindings::parseWhen(fuzz::utf8(text));
   if (!when) return;
@@ -61,7 +68,8 @@ void ConditionReadsBackAsWritten(const std::string& text, std::uint64_t truths) 
 }
 FUZZ_TEST(Keybindings, ConditionReadsBackAsWritten)
     .WithDomains(fuzz::Text(kWhenWords), fuzztest::Arbitrary<std::uint64_t>())
-    .WithSeeds({{"!terminalFocus", 0}, {"a && (b || !c)", 5}, {"!(a || b) && c || d", 9}, {"((x))", 1}});
+    .WithSeeds({{"!terminalFocus", 0}, {"a && (b || !c)", 5}, {"!(a || b) && c || d", 9}, {"((x))", 1}, {longChain(67, " && "), 3}, {longChain(100, " || "), 7},
+                    {longChain(129, " && "), 1}, {"!" + longChain(90, " || !"), 1}});
 
 // A keybindings.json's rules (an array of {key, command, when}) merged over the
 // defaults, then every merged shortcut resolved as the window would.
