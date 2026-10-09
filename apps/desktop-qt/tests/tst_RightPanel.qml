@@ -386,6 +386,20 @@ Item {
             verify(list.iconName !== review.iconName, "the two kinds have their own icons");
         }
 
+        function test_panelHasALeadingBorderUnlessMaximized() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root);
+            const border = findChild(panel, "panelBorder");
+            verify(border && border.visible);
+            compare(border.x, 0);
+            compare(border.width, 1);
+            compare(border.color, Theme.palette.color("border", "#27272a"));
+            const maximized = panelState("diff");
+            maximized.maximized = true;
+            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
+            tryVerify(() => !border.visible);
+        }
+
         function test_openFileGetsMostOfThePanel() {
             const source = createTemporaryObject(fakeFiles, root);
             const files = createTemporaryObject(filesComponent, root, { source: source });

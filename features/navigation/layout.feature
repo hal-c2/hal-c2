@@ -216,6 +216,13 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then pull request cannot be added
       And the Add menu says "This thread's branch has no pull request yet." for pull request
 
+    @backlog-desktop
+    Scenario: The right panel is set apart from the thread by a border
+      Given the right panel is open
+      Then a 1 px border in the theme's border colour marks its leading edge
+      When the user maximizes the right panel
+      Then the border is not drawn
+
     @desktop
     Scenario: Right panel contents survive closing the panel
       Given a terminal tab in the right panel has output

@@ -342,6 +342,19 @@ Rectangle {
         }
     }
 
+    // The panel's leading edge, so it reads apart from the thread in themes
+    // where `chrome` and `canvas` match.
+    Rectangle {
+        objectName: "panelBorder"
+
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+        visible: panel.open && !panel.maximized
+        color: Theme.palette.color("border", "#27272a")
+    }
+
     // The left edge: drag to resize, double click for the default width.
     MouseArea {
         id: edge
