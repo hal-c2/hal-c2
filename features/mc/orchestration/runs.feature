@@ -6,7 +6,7 @@
 #     provider-session.detached, provider-thread.updated, provider-turn.updated,
 #     checkpoint-scope.created, run.interrupt)
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand, provider.uploadFeedback)
-#   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, start_turn, release_session)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, begin_turn, release_session)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/provider/Errors.ts (ProviderInstanceNotFoundError),
@@ -171,6 +171,12 @@ Feature: Runs and turns
   Scenario: A provider that dies while starting the turn fails the run
     Given the provider process exits while "t1" starts a turn
     Then the run is failed with "The provider stopped while starting the turn."
+    And "t1" can take its next message
+
+  @mc
+  Scenario: A provider session that cannot be opened fails the run
+    Given the provider's session cannot be opened while "t1" starts a turn
+    Then the run is failed
     And "t1" can take its next message
 
   # Whether and how often to retry is each provider plugin's own behaviour; the core

@@ -924,10 +924,26 @@ defmodule HalC2.Orchestration do
   end
 
   # The checkout is ready and its baseline taken before the runtime starts the turn.
+  # A start that fails anywhere (the checkout, the runtime starting, or the runtime
+  # dying while it starts the turn) must not leave the run "starting" forever: the
+  # run fails and the thread can take the next message. Once the turn was claimed,
+  # `HalC2.Orchestration.TurnWatch` may be ending it too; only the first to abandon
+  # it does.
   defp begin_turn(thread_id, turn) do
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-    start_turn(thread_id, turn)
+    :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
+  catch
+    kind, reason ->
+      require Logger
+      Logger.warning("turn failed to start in #{thread_id}: #{inspect({kind, reason})}")
+
+      HalC2.Orchestration.TurnWriter.abandon(
+        thread_id,
+        turn.ids.run,
+        "failed",
+        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+      )
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
@@ -948,25 +964,6 @@ defmodule HalC2.Orchestration do
     end
 
     :ok
-  end
-
-  # A runtime that dies while starting the turn must not leave the run "starting"
-  # forever: the run fails and the thread can take the next message. Once the turn
-  # was claimed, `HalC2.Orchestration.TurnWatch` may be ending it too; only the
-  # first to abandon it does.
-  defp start_turn(thread_id, turn) do
-    :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
-  catch
-    :exit, reason ->
-      require Logger
-      Logger.warning("turn failed to start in #{thread_id}: #{inspect(reason)}")
-
-      HalC2.Orchestration.TurnWriter.abandon(
-        thread_id,
-        turn.ids.run,
-        "failed",
-        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
-      )
   end
 
   @doc """
