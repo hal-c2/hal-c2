@@ -13,13 +13,16 @@ class ShellBridge;
 // every window follows the zoom, as Electron's zoom follows the app's origin.
 //
 // Publishes `layout` for ShellWindow: {sidebarCollapsed, sidebarWidth (what
-// it draws: the width chosen, less when the window leaves it no room), zoom
-// (a factor)}. Action and keybinding command: `sidebar.toggle` (the sidebar's
-// hide button, the header's show button, mod+b). `sidebar.resize {width}`
-// sets the width chosen (no width: back to the default), and
-// `layout.window {width}` says how wide the window is. Commands `view.zoomIn`,
-// `view.zoomOut` and `view.resetZoom` (the application menu's mod+= and
-// mod++, mod+-, mod+0).
+// it draws: the width chosen, less when the window leaves it no room, never
+// under the minimum), sidebarOverlay (the window is too narrow for the list
+// beside the thread, so a layout draws it over the thread), zoom (a factor)}.
+// While `sidebarOverlay`, the list starts hidden and showing it is not
+// remembered: the device keeps what a window with room last chose. Action and
+// keybinding command: `sidebar.toggle` (the sidebar's hide button, the
+// header's show button, mod+b). `sidebar.resize {width}` sets the width
+// chosen (no width: back to the default), and `layout.window {width}` says
+// how wide the window is. Commands `view.zoomIn`, `view.zoomOut` and
+// `view.resetZoom` (the application menu's mod+= and mod++, mod+-, mod+0).
 class LayoutController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -29,9 +32,13 @@ public:
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
-  bool sidebarCollapsed() const { return m_sidebarCollapsed; }
+  // Whether the list is hidden now: in a window too narrow for it beside
+  // the thread, until the user shows it over the thread.
+  bool sidebarCollapsed() const { return sidebarOverlay() ? !m_overlayOpen : m_sidebarCollapsed; }
   void setSidebarCollapsed(bool collapsed);
-  void toggleSidebar() { setSidebarCollapsed(!m_sidebarCollapsed); }
+  void toggleSidebar() { setSidebarCollapsed(!sidebarCollapsed()); }
+  // The window cannot fit the list at its minimum beside the thread.
+  bool sidebarOverlay() const { return m_windowWidth > 0 && m_windowWidth < kSidebarMinWidth + kContentMinWidth; }
   // Chromium's zoom level: each step of 0.5 is a factor of 1.2^0.5.
   double zoomLevel() const { return m_zoomLevel; }
   double zoom() const;
@@ -47,7 +54,8 @@ public:
   // and no more than the window allows.
   void setSidebarWidth(int width);
   void resetSidebarWidth();
-  // The window's width, so the list shrinks to fit a narrow one.
+  // The window's width, so the list shrinks to fit a narrow one and goes
+  // over the thread in one with no room for both.
   void setWindowWidth(int width);
   // How long a panel takes to open or close, in ms: the Panel animations
   // setting, or none when motion is reduced (the Reduce motion setting, or
@@ -64,6 +72,8 @@ private:
   bool m_loaded = false;
   bool m_active = false;
   bool m_sidebarCollapsed = false;
+  // Shown over the thread (sidebarOverlay); forgotten when the window widens.
+  bool m_overlayOpen = false;
   double m_zoomLevel = 0;
   int m_sidebarWidth = kSidebarWidth;
   int m_windowWidth = 0;

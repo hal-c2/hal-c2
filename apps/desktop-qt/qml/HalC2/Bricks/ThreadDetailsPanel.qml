@@ -15,6 +15,8 @@ Rectangle {
     id: root
 
     property var details: null
+    // How much of the header's right end the layout's window buttons cover.
+    property real trailingInset: 0
     // The thread's project's actions (ProjectActionsController).
     readonly property var actions: details !== null ? Shell.state.projectActions ?? null : null
     readonly property string environmentId: details !== null ? Shell.state.workspace?.activeEnvironmentId ?? "" : ""
@@ -131,7 +133,7 @@ Rectangle {
 
         x: 12
         y: 8
-        width: parent.width - 20
+        width: parent.width - 20 - root.trailingInset
 
         Text {
             Layout.fillWidth: true

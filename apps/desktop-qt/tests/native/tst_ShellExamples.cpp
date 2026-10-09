@@ -722,6 +722,349 @@ private slots:
     bridge.publish("route", QVariant());
   }
 
+  // The built-in layout in a window this size, with no shell of the user's.
+  QQuickWindow* defaultShell(int width, int height) {
+    QFile::remove(directory.filePath("shell.qml"));
+    runtime->reload();
+    if (runtime->usingUserShell() || !runtime->lastError().isEmpty()) return nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    auto* window = engine ? qobject_cast<QQuickWindow*>(engine->rootObjects().last()) : nullptr;
+    if (!window) return nullptr;
+    window->resize(width, height);
+    return QTest::qWaitForWindowExposed(window) ? window : nullptr;
+  }
+
+  // Scenario: A window too narrow for the sidebar and the thread shows the
+  // sidebar over the thread (features/navigation/layout.feature): at the
+  // smallest window the list is its minimum wide with its content inside it,
+  // the thread keeps the window under it, and a click beside the list, an
+  // Escape, or going somewhere puts it away.
+  void defaultShellShowsTheThreadListOverTheThread() {
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", true}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto* window = defaultShell(640, 400);
+    QVERIFY(window);
+    auto* sidebar = findVisualItem(window->contentItem(), "threadSidebar");
+    auto* workspace = findVisualItem(window->contentItem(), "workspace");
+    auto* scrim = findVisualItem(window->contentItem(), "sidebarScrim");
+    QVERIFY(sidebar && workspace && scrim);
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(sidebar->width(), 208.0);
+    QTRY_COMPARE(workspace->width(), 640.0);
+    QCOMPARE(workspace->mapToScene(QPointF(0, 0)).x(), 0.0);
+    for (auto* child : sidebar->childItems()) {
+      if (child->isVisible() && child->width() > 0) QVERIFY2(child->x() >= 0, qPrintable(QString::number(child->x())));
+    }
+    QVERIFY(scrim->isVisible());
+    QCOMPARE(scrim->mapToScene(QPointF(0, 0)).x(), 208.0);
+
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    const auto toggles = [&] {
+      int count = 0;
+      for (const auto& call : actions) count += call.first().toString() == "sidebar.toggle";
+      return count;
+    };
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(420, 200));
+    QTRY_COMPARE(toggles(), 1);
+    sidebar->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_COMPARE(toggles(), 2);
+    // A new title is the same place; another thread is not.
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Renamed"}});
+    QCOMPARE(toggles(), 2);
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-2"}, {"title", "Other"}});
+    QTRY_COMPARE(toggles(), 3);
+
+    // With room again the list is beside the thread, and nothing covers it.
+    window->resize(1000, 600);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", false}});
+    QTRY_COMPARE(workspace->width(), 792.0);
+    QCOMPARE(workspace->mapToScene(QPointF(0, 0)).x(), 208.0);
+    QVERIFY(!scrim->isVisible());
+    // Dragged to its minimum, its content is laid out that wide.
+    for (auto* child : sidebar->childItems()) {
+      if (child->isVisible() && child->width() > 0) QVERIFY2(child->x() >= 0, qPrintable(QString::number(child->x())));
+    }
+    bridge.publish("route", QVariant());
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
+  // Scenario: The window controls stay in the window's corner
+  // (features/navigation/windows.feature): one set of buttons, the layout's,
+  // which the right panel, the thread details and the tabs leave where it is,
+  // and which whatever lies under the corner keeps clear of.
+  void defaultShellKeepsTheWindowButtonsInTheCorner() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    QVERIFY(theme->frameless());
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* workspace = findVisualItem(root, "workspace");
+    QVERIFY(buttons && workspace);
+    QTRY_VERIFY(buttons->isVisible());
+    // The header no longer carries a set of its own.
+    QVERIFY(!findVisualItem(workspace, "windowControls")->isVisible());
+    const auto left = [&] { return buttons->mapToScene(QPointF(0, 0)).x(); };
+    const auto rightOf = [&](const char* name) {
+      auto* item = findVisualItem(root, name);
+      return item && item->isVisible() ? item->mapToScene(QPointF(item->width(), 0)).x() : -1.0;
+    };
+    QTRY_COMPARE(left() + buttons->width(), 1396.0);
+    const qreal corner = left();
+    auto panel = QJsonDocument::fromJson(R"({
+      "isOpen": false, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap();
+    const auto show = [&](bool open, bool details, bool maximized) {
+      panel["isOpen"] = open;
+      panel["maximized"] = maximized;
+      panel["detailsOpen"] = details;
+      panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
+      bridge.publish("panel", panel);
+    };
+    // Under the corner: the thread's header, whose buttons end before it.
+    show(false, false, false);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") > 0);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") <= corner);
+    QCOMPARE(left(), corner);
+    // The thread details' header.
+    show(false, true, false);
+    QTRY_VERIFY(rightOf("threadDetailsClose") > 0);
+    QTRY_VERIFY(rightOf("threadDetailsClose") <= corner);
+    QCOMPARE(left(), corner);
+    // The right panel's tab strip, with the details beside it or closed.
+    show(true, true, false);
+    QTRY_VERIFY(rightOf("panelAdd") > 0);
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    QVERIFY(buttons->y() + buttons->height() <= 36);
+    show(true, false, false);
+    QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    // A panel filling the window still has them.
+    show(true, false, true);
+    QTRY_VERIFY(!workspace->isVisible());
+    QVERIFY(buttons->isVisible());
+    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QCOMPARE(left(), corner);
+    // The tabs of a plugin's page.
+    show(false, false, false);
+    bridge.publish("mcPlugins", QVariantMap{{"pages", QVariantList{QVariantMap{{"key", "board"}, {"title", "Board"}}}}});
+    auto* tabs = findVisualItem(root, "shellTabs");
+    QVERIFY(tabs);
+    QTRY_VERIFY(tabs->isVisible());
+    QCOMPARE(left(), corner);
+    QTRY_VERIFY(buttons->y() + buttons->height() <= tabs->height());
+    // The header under the tabs has its whole width again.
+    QTRY_VERIFY(rightOf("threadDetailsToggle") > corner);
+    // And they are the window's: nothing over the corner takes their clicks.
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(corner) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("mcPlugins", QVariant());
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+  }
+
+  // Scenario: In a narrow window the right panel opens over the thread, and
+  // Scenario: A docked right panel leaves the thread its room
+  // (features/navigation/layout.feature).
+  void defaultShellGivesWayToTheThread() {
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    auto panel = QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap();
+    const auto show = [&](bool open, bool details) {
+      panel["isOpen"] = open;
+      panel["detailsOpen"] = details;
+      panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
+      bridge.publish("panel", panel);
+    };
+    show(true, false);
+    auto* window = defaultShell(960, 1000);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* workspace = findVisualItem(root, "workspace");
+    auto* side = findVisualItem(root, "rightPanel");
+    auto* scrim = findVisualItem(root, "panelScrim");
+    auto* details = findVisualItem(root, "threadDetailsPanel");
+    QVERIFY(workspace && side && scrim && details);
+    const auto leftOf = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).x(); };
+    const auto top = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).y(); };
+
+    // At 960 the panel is a sheet: the thread keeps all that the list leaves,
+    // and the panel lies over its right end, under the header.
+    QTRY_VERIFY(side->isVisible());
+    QTRY_COMPARE(workspace->width(), 960.0 - 256);
+    QTRY_COMPARE(side->width(), 403.0);
+    QCOMPARE(leftOf(side) + side->width(), 960.0);
+    QCOMPARE(top(side), workspace->height());
+    QVERIFY(scrim->isVisible());
+    QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
+    QCOMPARE(top(scrim), workspace->height());
+    // Its width is the sheet's, not one to drag or to fill the window from.
+    QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
+    QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
+    // The header's toggle is clear of it, a click beside it closes it, and so
+    // does Escape.
+    auto* toggle = findVisualItem(workspace, "panelToggle");
+    QVERIFY(toggle && toggle->isVisible());
+    QVERIFY(top(toggle) + toggle->height() <= top(side));
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    const auto toggles = [&] {
+      int count = 0;
+      for (const auto& call : actions) count += call.first().toString() == "rightPanel.toggle";
+      return count;
+    };
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(400, 500));
+    QTRY_COMPARE(toggles(), 1);
+    side->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_COMPARE(toggles(), 2);
+    // Closed, nothing is left over the thread.
+    show(false, false);
+    QTRY_VERIFY(!scrim->isVisible());
+    QTRY_COMPARE(side->width(), 0.0);
+    QCOMPARE(workspace->width(), 960.0 - 256);
+
+    // The thread details go over the thread once it would have under 360.
+    show(false, true);
+    QTRY_VERIFY(details->isVisible());
+    QTRY_COMPARE(workspace->width(), 960.0 - 256 - 280);
+    window->resize(880, 1000);
+    QTRY_COMPARE(workspace->width(), 880.0 - 256);
+    QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
+    QCOMPARE(top(details), workspace->height());
+    QVERIFY(findVisualItem(details, "threadDetailsClose")->isVisible());
+
+    // The smallest window: the list is over the thread too, and the sheet is
+    // 384 wide.
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 208}, {"sidebarOverlay", true}});
+    show(true, false);
+    window->resize(640, 400);
+    QTRY_COMPARE(workspace->width(), 640.0);
+    QTRY_COMPARE(side->width(), 384.0);
+    QCOMPARE(leftOf(side) + side->width(), 640.0);
+
+    // A wide window docks the panel at the width it was given, beside the
+    // thread.
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    window->resize(1400, 800);
+    QTRY_COMPARE(side->width(), 540.0);
+    QTRY_COMPARE(workspace->width(), 1400.0 - 256 - 540);
+    QCOMPARE(top(side), 0.0);
+    QVERIFY(!scrim->isVisible());
+    QVERIFY(findVisualItem(side, "panelEdge")->isVisible());
+    QVERIFY(findVisualItem(side, "panelMaximize")->isVisible());
+    // With the details beside it the panel gives up width, not the thread.
+    show(true, true);
+    QTRY_COMPARE(workspace->width(), 360.0);
+    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 360);
+    QCOMPARE(leftOf(details), 256.0 + 360);
+    // And with no room left for its minimum beside them, it is a sheet.
+    window->resize(1200, 800);
+    QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);
+    QTRY_VERIFY(scrim->isVisible());
+    QCOMPARE(leftOf(side) + side->width(), 1200.0);
+
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
+  // Scenario: The window controls stay in the window's corner, at half a
+  // screen (features/navigation/windows.feature) with the thread list and the
+  // right panel open: the buttons are in the window and take their clicks,
+  // and the header's actions are clear of its breadcrumb.
+  void defaultShellFitsHalfAScreen() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    auto workspaceState = initialState.value("workspace").toMap();
+    workspaceState["editors"] = QVariantList{QVariantMap{{"id", "zed"}, {"label", "Zed"}}};
+    workspaceState["preferredEditorId"] = "zed";
+    bridge.publish("workspace", workspaceState);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}, {"sidebarWidth", 256}});
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    bridge.publish("panel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
+    })").toVariant().toMap());
+    auto* window = defaultShell(960, 1000);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* workspace = findVisualItem(root, "workspace");
+    auto* open = findVisualItem(root, "openEditorButton");
+    auto* project = findVisualItem(root, "projectLabel");
+    auto* title = findVisualItem(root, "titleSlot");
+    auto* toggle = findVisualItem(root, "panelToggle");
+    QVERIFY(buttons && workspace && open && project && title && toggle);
+    const auto leftOf = [&](QQuickItem* item) { return item->mapToScene(QPointF(0, 0)).x(); };
+    QTRY_COMPARE(leftOf(buttons) + buttons->width(), 956.0);
+    QVERIFY(buttons->y() + buttons->height() <= workspace->height());
+    QTRY_VERIFY(open->isVisible());
+    QTRY_VERIFY(leftOf(project) + project->width() <= leftOf(title));
+    QVERIFY(leftOf(title) + title->width() <= leftOf(open));
+    QVERIFY(leftOf(toggle) + toggle->width() <= leftOf(buttons));
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(leftOf(buttons)) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("panel", QVariant());
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+    bridge.publish("layout", initialState.value("layout"));
+  }
+
+  // Scenario Outline: The window controls are on every page
+  // (features/navigation/windows.feature): away from a thread there is no
+  // header, so a band of the window's own holds the corner and drags it.
+  void defaultShellHasTheWindowButtonsOnEveryPage_data() {
+    QTest::addColumn<QVariantMap>("route");
+    QTest::newRow("home") << QVariantMap{{"kind", "home"}};
+    QTest::newRow("pull requests") << QVariantMap{{"kind", "pullRequests"}};
+    QTest::newRow("usage") << QVariantMap{{"kind", "usage"}};
+    QTest::newRow("settings") << QVariantMap{{"kind", "settings"}, {"section", "general"}};
+  }
+  void defaultShellHasTheWindowButtonsOnEveryPage() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    QFETCH(QVariantMap, route);
+    bridge.publish("workspace", QVariant());
+    bridge.publish("route", route);
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* band = findVisualItem(root, "chromeBand");
+    auto* workspace = findVisualItem(root, "workspace");
+    QVERIFY(buttons && band && workspace);
+    QTRY_VERIFY(!workspace->isVisible());
+    QTRY_VERIFY(buttons->isVisible());
+    QTRY_COMPARE(buttons->mapToScene(QPointF(buttons->width(), 0)).x(), 1396.0);
+    // The band is the page's top, reaches the corner, and holds the buttons
+    // clear of the page under it.
+    QTRY_VERIFY(band->isVisible());
+    QCOMPARE(band->mapToScene(QPointF(0, 0)).y(), 0.0);
+    QTRY_COMPARE(band->mapToScene(QPointF(band->width(), 0)).x(), 1400.0);
+    QVERIFY(buttons->y() >= 0 && buttons->y() + buttons->height() <= band->height());
+    // And they work from here.
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+  }
+
   void shellsShowThePendingQuestion_data() {
     QTest::addColumn<QString>("example");
     for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {

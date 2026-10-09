@@ -26,6 +26,48 @@ Item {
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive
+    // A frameless window's buttons (WindowControls), drawn once in the
+    // window's corner so they stay there whatever is open; macOS draws its own.
+    readonly property bool windowButtons: framesWindow && Theme.frameless && Qt.platform.os !== "osx"
+    // What the corner lies over, which keeps `windowButtonsInset` of its
+    // right end clear: the tabs, the right panel's tab strip, the thread
+    // details' header, or the thread's header.
+    readonly property string corner: tabsView.visible ? "tabs" : panelView.visible && panelView.open && !panelSheet ? "panel" : detailsView.visible && !detailsSheet ? "details" : "centre"
+    readonly property real windowButtonsInset: windowButtons ? windowButtonsView.width + 2 * windowButtonsView.anchors.rightMargin : 0
+
+    // The window has no room for the thread list beside the thread
+    // (LayoutController): shown, the list lies over the thread instead.
+    readonly property bool sidebarOverlay: Shell.state.layout?.sidebarOverlay === true
+    // How the columns give way as the window narrows, the thread keeping
+    // `threadMinimumWidth` beside whatever is docked: first the right panel
+    // goes over the thread as a sheet (at the web's 980, apps/web/src/
+    // rightPanelLayout.ts, or sooner when what else is open leaves it no
+    // room), then the thread details do, then the thread list (above).
+    readonly property int threadMinimumWidth: 360
+    readonly property real besideList: width - (navigation.visible && !sidebarOverlay ? navigation.width : 0) - (folderExplorer.visible ? folderExplorer.width : 0)
+    readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
+    readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth
+    readonly property bool panelNarrow: width <= 980 || besidePanel < panelView.minimumWidth
+    readonly property bool panelSheet: panelNarrow && !panelView.maximized
+    // The web's sheet: 42% of the window up to 448, 88% up to 384 under 760.
+    readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
+    // A sheet starts under the header, whose toggle puts it away again.
+    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
+    // Where the window is, less what changes while it stays there (the title).
+    readonly property string place: [window.route?.kind, window.route?.threadKey, window.route?.draftId, window.route?.section].join("|")
+
+    // Going somewhere from a list over the thread puts the list away, and so
+    // does an Escape nothing inside wanted.
+    onPlaceChanged: if (sidebarOverlay && !window.sidebarCollapsed)
+        Shell.dispatch("sidebar.toggle")
+    Keys.onEscapePressed: event => {
+        if (sidebarOverlay && navigation.visible)
+            Shell.dispatch("sidebar.toggle");
+        else if (panelScrim.visible)
+            Shell.dispatch("rightPanel.toggle");
+        else
+            event.accepted = false;
+    }
 
     // Local QML extensions can customize one brick without copying the layout.
     property alias sidebar: sidebarView
@@ -43,10 +85,13 @@ Item {
         spacing: 0
 
         ShellTabs {
+            id: tabsView
             objectName: "shellTabs"
             Layout.fillWidth: true
             visible: pages.length > 0 && !layout.window.settingsActive
             window: layout.framesWindow ? layout.window : null
+            windowControls: false
+            trailingInset: layout.windowButtonsInset
         }
 
         RowLayout {
@@ -63,6 +108,9 @@ Item {
                 Layout.preferredWidth: columns === 2 ? sidebarView.shownWidth + sidebarExtension.implicitWidth : sidebarExtension.active ? Math.max(300, sidebarView.shownWidth) : sidebarView.shownWidth
                 Layout.maximumWidth: Layout.preferredWidth
                 Layout.minimumWidth: 0
+                // Over the thread, it takes no room from it.
+                Layout.rightMargin: layout.sidebarOverlay ? -Layout.preferredWidth : 0
+                z: layout.sidebarOverlay ? 2 : 0
                 columns: sidebarExtension.active && layout.window.width >= 1100 ? 2 : 1
                 rowSpacing: 0
                 columnSpacing: 0
@@ -126,6 +174,7 @@ Item {
 
             // The folder explorer (folders.toggle), beside the thread list.
             Loader {
+                id: folderExplorer
                 objectName: "folderExplorerHost"
                 Layout.fillHeight: true
                 Layout.preferredWidth: active ? 340 : 0
@@ -150,6 +199,29 @@ Item {
                 visible: !panelView.maximized && !layout.pluginTab
                 spacing: 0
 
+                // Away from a thread (home, pull requests, usage, settings)
+                // there is no header: a band in its place, for a frameless
+                // window to be dragged by and for its buttons to lie over.
+                Rectangle {
+                    id: chromeBand
+                    objectName: "chromeBand"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 36
+                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
+                    color: Theme.palette.color("canvas", "#0f0f12")
+
+                    DragHandler {
+                        target: null
+                        grabPermissions: PointerHandler.CanTakeOverFromAnything
+                        onActiveChanged: if (active)
+                            layout.window.startSystemMove()
+                    }
+
+                    TapHandler {
+                        onDoubleTapped: layout.window.visibility === Window.Maximized ? layout.window.showNormal() : layout.window.showMaximized()
+                    }
+                }
+
                 Workspace {
                     id: workspaceView
                     objectName: "workspace"
@@ -160,6 +232,8 @@ Item {
                     panelToggle: panelView.available ? panelView.open : null
                     detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
                     window: layout.framesWindow ? layout.window : null
+                    windowControls: false
+                    trailingInset: layout.corner === "centre" ? layout.windowButtonsInset : 0
                 }
 
                 Loader {
@@ -219,22 +293,35 @@ Item {
 
             // The thread details column (threadPanel.toggle), beside the thread.
             ThreadDetailsPanel {
+                id: detailsView
                 Layout.fillHeight: true
+                trailingInset: layout.corner === "details" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
+                // Over the thread, it takes no room from it.
+                Layout.leftMargin: layout.detailsSheet ? -implicitWidth : 0
+                Layout.topMargin: layout.detailsSheet ? layout.headerHeight : 0
+                z: layout.detailsSheet ? 2 : 0
                 details: Shell.state.panel?.details ?? null
                 visible: details !== null && !panelView.maximized && !layout.pluginTab
             }
 
             RightPanel {
                 id: panelView
+                objectName: "rightPanel"
 
                 Layout.fillHeight: true
                 Layout.fillWidth: maximized
+                // A sheet takes no room from the thread either.
+                Layout.leftMargin: layout.panelSheet ? -implicitWidth : 0
+                Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
+                z: layout.panelSheet ? 2 : 0
                 ownToggle: false
-                canMaximize: true
+                canMaximize: !layout.panelNarrow || maximized
+                resizable: !layout.panelSheet
+                trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
-                maximumWidth: layout.window.width - (navigation.visible ? navigation.width : 0) - minimumWidth
+                maximumWidth: layout.panelSheet ? layout.panelSheetWidth : layout.besidePanel
                 visible: available && !layout.pluginTab
             }
         }
@@ -265,6 +352,58 @@ Item {
             Layout.topMargin: 4
             Layout.bottomMargin: 4
         }
+    }
+
+    // Beside a thread list shown over the thread: a click there puts the list
+    // away, as the web's off-canvas sidebar does.
+    Rectangle {
+        id: sidebarScrim
+        objectName: "sidebarScrim"
+        visible: layout.sidebarOverlay && navigation.visible
+        x: navigation.width
+        y: navigation.parent.y
+        width: parent.width - x
+        height: navigation.height
+        color: Theme.palette.color("scrim", "#52000000")
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onClicked: Shell.dispatch("sidebar.toggle")
+            onWheel: wheel => wheel.accepted = true
+        }
+    }
+
+    // Beside the right panel shown as a sheet: a click there puts it away.
+    Rectangle {
+        id: panelScrim
+        objectName: "panelScrim"
+        visible: layout.panelSheet && panelView.visible && panelView.open
+        x: sidebarScrim.visible ? sidebarScrim.x : 0
+        y: panelView.parent.y + layout.headerHeight
+        width: parent.width - panelView.width - x
+        height: panelView.height
+        color: Theme.palette.color("scrim", "#52000000")
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onClicked: Shell.dispatch("rightPanel.toggle")
+            onWheel: wheel => wheel.accepted = true
+        }
+    }
+
+    // In the window's corner, level with the buttons of the band under it.
+    WindowControls {
+        id: windowButtonsView
+        objectName: "windowButtons"
+        visible: layout.windowButtons
+        window: layout.window
+        buttonWidth: 32
+        buttonHeight: 28
+        anchors.right: parent.right
+        anchors.rightMargin: 4
+        y: layout.corner === "centre" && workspaceView.visible ? 12 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {
