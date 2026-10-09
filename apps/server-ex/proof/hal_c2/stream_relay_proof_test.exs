@@ -16,6 +16,7 @@ defmodule HalC2.StreamRelayProofTest do
       {:exports, HalC2.Streams.Relay},
       {:exports, HalC2.Streams.Server},
       {:messages, HalC2.Streams.Server},
+      {:state, HalC2.Streams.Server},
       {:messages, HalC2.Web.Socket}
     ],
     covers: %{
@@ -38,9 +39,18 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" =>
         ~w(stream-message stream-resync stale),
       "HalC2.Web.Socket handle_info {:DOWN, _, :process, _, _}" => "stream-down",
-      "HalC2.Web.Socket handle_info _" => "stale-reply"
+      "HalC2.Web.Socket handle_info _" => "stale-reply",
+      "HalC2.Streams.Server state :stream" => "st",
+      "HalC2.Streams.Server state :subscribers" => "of",
+      "HalC2.Streams.Server state :relays" => "rly"
     },
     abstracts: %{
+      "HalC2.Streams.Server state :v" => "the version of the state, which no step changes",
+      "HalC2.Streams.Server state :id" => "names the stream; the model has one",
+      "HalC2.Streams.Server state :path" => "where the stream is stored; the model has its seq",
+      "HalC2.Streams.Server state :snapshot_seq" =>
+        "when the next snapshot is due; a snapshot changes no subscription",
+      "HalC2.Streams.Server state :shell_scheduled" => @shell,
       "HalC2.Streams.Server.start_link/1" => "starts the stream, which the model has running",
       "HalC2.Streams.Server.subscribe/3" => @plain,
       "HalC2.Streams.Server.watch/2" => @plain,

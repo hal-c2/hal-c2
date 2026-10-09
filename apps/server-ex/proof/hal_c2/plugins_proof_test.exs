@@ -18,7 +18,8 @@ defmodule HalC2.PluginsProofTest do
     check: "PLUGINS-PROPS",
     code: [
       {:exports, HalC2.Plugins},
-      {:messages, HalC2.Plugins}
+      {:messages, HalC2.Plugins},
+      {:state, HalC2.Plugins}
     ],
     covers: %{
       "HalC2.Plugins.start_worker/3" => "worker",
@@ -33,7 +34,9 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_cast {:unsubscribe, _}" => "unsubscribed",
       "HalC2.Plugins handle_info {:hal_c2_settings, _, _}" => "settings",
       "HalC2.Plugins handle_info {:DOWN, _, :process, _, _}" =>
-        ~w(worker-down supervisor-down watcher-down)
+        ~w(worker-down supervisor-down watcher-down),
+      "HalC2.Plugins state :plugins" => "pl",
+      "HalC2.Plugins state :refs" => ~w(smon mo)
     },
     abstracts: %{
       "HalC2.Plugins.start_link/1" => "starts the host; kill-host stands for its starting again",
@@ -66,7 +69,11 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_cast {:unsubscribe_topic, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:publish, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:denied, _, _}" => @consent,
-      "HalC2.Plugins handle_info _" => "ignores what it does not know"
+      "HalC2.Plugins handle_info _" => "ignores what it does not know",
+      "HalC2.Plugins state :dir" =>
+        "where plugins are scanned from; the model has two fixed plugins",
+      "HalC2.Plugins state :supervisor" =>
+        "the dynamic supervisor that starts each plugin's supervisor; the model starts sv itself"
     },
     environment: %{
       "crash" => "a plugin's worker is killed; its supervisor starts it again, or gives up",

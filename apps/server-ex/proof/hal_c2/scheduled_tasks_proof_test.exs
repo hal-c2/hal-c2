@@ -10,7 +10,8 @@ defmodule HalC2.ScheduledTasksProofTest do
     check: "SCHEDULED-TASKS-PROPS",
     code: [
       {:exports, HalC2.ScheduledTasks},
-      {:messages, HalC2.ScheduledTasks}
+      {:messages, HalC2.ScheduledTasks},
+      {:state, HalC2.ScheduledTasks}
     ],
     covers: %{
       "HalC2.ScheduledTasks.upsert/1" => "upsert",
@@ -29,14 +30,20 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks handle_info :tick" => "tick",
       "HalC2.ScheduledTasks handle_info {:run_done, _, _}" => ~w(run-done stale),
       "HalC2.ScheduledTasks handle_info {:DOWN, _, :process, _, _}" =>
-        ~w(run-down watcher-down stale)
+        ~w(run-down watcher-down stale),
+      "HalC2.ScheduledTasks state :tasks" => "tsk",
+      "HalC2.ScheduledTasks state :runs" => "run",
+      "HalC2.ScheduledTasks state :watchers" => "watching",
+      "HalC2.ScheduledTasks state :timer" => "armed"
     },
     abstracts: %{
       "HalC2.ScheduledTasks.start_link/1" => "starts the process crash and restart stand for",
       "HalC2.ScheduledTasks.list/1" => @plain,
       "HalC2.ScheduledTasks handle_call :list" => @plain,
       "HalC2.ScheduledTasks.next_run/2" => "aims a run; the model counts ticks",
-      "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does"
+      "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
+      "HalC2.ScheduledTasks state :path" =>
+        "where the tasks are saved; the model keeps them across a crash without a file"
     },
     environment: %{
       "fire" => "fire/2 returns: the prompt is sent",
