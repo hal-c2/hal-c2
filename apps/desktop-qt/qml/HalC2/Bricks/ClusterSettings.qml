@@ -135,7 +135,14 @@ Rectangle {
                 delegate: MemberRow {
                     required property var modelData
                     label: modelData.label
-                    detail: modelData.connected ? qsTr("connected") : qsTr("offline")
+                    detail: {
+                        const connection = modelData.connected ? qsTr("connected") : qsTr("offline");
+                        if (modelData.compatible === false)
+                            return qsTr("Update your machines to connect (%1)").arg(modelData.version ?? qsTr("unknown version"));
+                        if (modelData.updateRecommended)
+                            return qsTr("%1 (%2). Please update your machines.").arg(connection).arg(modelData.version);
+                        return connection;
+                    }
                     memberId: modelData.id
                 }
             }

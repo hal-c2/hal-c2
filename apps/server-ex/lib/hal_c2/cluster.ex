@@ -10,10 +10,10 @@ defmodule HalC2.Cluster do
   taken from `members.json`), so no CA is needed and a change of membership applies
   from the next handshake.
 
-  Members run one HAL-C2 version: what they send each other is not kept compatible
-  between versions. The cookie is no secret but names the version, so the handshake
-  with a member on another version fails and it lists as not connected, with the
-  version it last reported, until both run the same one.
+  Members connect when they speak the same cluster protocol, independently of the
+  HAL-C2 release. TLS pins authorize machines; the public distribution cookie names
+  the protocol and rejects incompatible peers before distributed calls run.
+  Release differences are advisory and never disconnect compatible members.
 
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
   (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
@@ -51,7 +51,7 @@ defmodule HalC2.Cluster do
   @gossip_every 30_000
   @fingerprint ~r/^[0-9a-f]{64}$/
   # What a machine says of itself in its entry.
-  @says ~w(fingerprint label addresses version)
+  @says ~w(fingerprint label addresses version protocol)
   # Files of the CA-based cluster this replaced.
   @obsolete ~w(ca.pem ca.key vm.args address revoked ssl_dist.conf)
 
@@ -77,10 +77,11 @@ defmodule HalC2.Cluster do
   """
   def status, do: GenServer.call(__MODULE__, :status)
 
-  @doc """
-  Takes up the version this MC moved to in place (`HalC2.Upgrade`): members are
-  dropped and found again, which only those on the same version are.
-  """
+  # Bump only for incompatible distributed messages, RPCs, or transferred state.
+  # Shell, thread moves, plugins and updates share this protocol epoch.
+  def protocol, do: 1
+
+  @doc "Announces a release update without interrupting compatible peers."
   def version_changed, do: GenServer.cast(__MODULE__, :version_changed)
 
   @doc "The other members, `{id, addresses}`, for `HalC2.Cluster.Discovery`."
@@ -164,6 +165,13 @@ defmodule HalC2.Cluster do
   def describe(:not_a_member), do: "That machine is not a member of this cluster."
   def describe(:invalid_member), do: "The joining machine sent an invalid description."
 
+  def describe(:incompatible_protocol),
+    do: "The machines use incompatible cluster protocols. Update the older machine to connect."
+
+  def describe({:incompatible_protocol, joining, inviting}),
+    do:
+      "The machines use incompatible cluster protocols (joining: #{inspect(joining)}, inviting: #{inviting}). Update the older machine to connect."
+
   def describe(:other_version),
     do: "The two machines run different HAL-C2 versions; update both to the same one."
 
@@ -191,7 +199,7 @@ defmodule HalC2.Cluster do
   # Reasons that crossed the wire as strings.
   @reasons ~w(not_booted_for_clustering link_lacks_access link_invalid invalid_link
     cannot_remove_self not_a_member invalid_member wrong_machine not_an_invite
-    other_version)a
+    other_version incompatible_protocol)a
   defp describe_string(reason) do
     case Enum.find(@reasons, &(Atom.to_string(&1) == reason)) do
       nil -> reason
@@ -201,12 +209,16 @@ defmodule HalC2.Cluster do
 
   @doc "A cluster error's reason as the `ClusterError` contract carries it."
   def reason({:refused, reason}), do: reason(reason)
+  def reason({:incompatible_protocol, _, _}), do: "incompatible_protocol"
   def reason({:other_version, _joining, _inviting}), do: "other_version"
   def reason({:unreachable, _}), do: "unreachable"
   def reason({:tailscale, _}), do: "tailscale"
   def reason(reason), do: to_string(reason)
 
   @doc "What a refusal says beyond its reason, for the machine that asked."
+  def detail({:incompatible_protocol, joining, inviting}),
+    do: %{"protocols" => %{"joining" => joining, "inviting" => inviting}}
+
   def detail({:other_version, joining, inviting}),
     do: %{"versions" => %{"joining" => joining, "inviting" => inviting}}
 
@@ -283,6 +295,7 @@ defmodule HalC2.Cluster do
             else: []
           ),
         "version" => if(is_binary(entry["version"]), do: entry["version"]),
+        "protocol" => if(is_integer(entry["protocol"]), do: entry["protocol"]),
         "admittedAt" => admitted,
         "removedAt" => removed,
         "updatedAt" => updated
@@ -382,6 +395,10 @@ defmodule HalC2.Cluster do
           "label" => entry["label"] || id,
           "addresses" => entry["addresses"] || [],
           "version" => entry["version"],
+          "protocol" => entry["protocol"],
+          "updateRecommended" =>
+            is_binary(entry["version"]) and entry["version"] != HalC2.Upgrade.version(),
+          "compatible" => entry["protocol"] == protocol(),
           "connected" => mc_name(id) in connected
         }
       end
@@ -394,6 +411,7 @@ defmodule HalC2.Cluster do
        "mc" => Atom.to_string(mc_name(state.id)),
        "addresses" => state.members[state.id]["addresses"],
        "version" => HalC2.Upgrade.version(),
+       "protocol" => protocol(),
        "members" => Enum.sort_by(members, &{&1["label"], &1["id"]})
      }, state}
   end
@@ -426,7 +444,8 @@ defmodule HalC2.Cluster do
         "fingerprint" => own["fingerprint"],
         "label" => own["label"],
         "addresses" => own["addresses"],
-        "version" => own["version"]
+        "version" => own["version"],
+        "protocol" => protocol()
       }}, state}
   end
 
@@ -434,7 +453,7 @@ defmodule HalC2.Cluster do
     with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
          true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
          true <- Regex.match?(@fingerprint, fp),
-         {:version, true} <- {:version, entry["version"] == HalC2.Upgrade.version()} do
+         {:protocol, true} <- {:protocol, entry["protocol"] == protocol()} do
       now = stamp(state.members)
 
       admitted = %{
@@ -442,6 +461,7 @@ defmodule HalC2.Cluster do
         "label" => entry["label"],
         "addresses" => entry["addresses"],
         "version" => entry["version"],
+        "protocol" => entry["protocol"],
         "admittedAt" => now,
         "removedAt" => nil,
         "updatedAt" => now
@@ -453,8 +473,8 @@ defmodule HalC2.Cluster do
        {:ok, %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}},
        state}
     else
-      {:version, false} ->
-        {:reply, {:error, {:other_version, entry["version"], HalC2.Upgrade.version()}}, state}
+      {:protocol, false} ->
+        {:reply, {:error, {:incompatible_protocol, entry["protocol"], protocol()}}, state}
 
       _ ->
         {:reply, {:error, :invalid_member}, state}
@@ -499,6 +519,7 @@ defmodule HalC2.Cluster do
   def handle_cast(:version_changed, %{off: nil} = state) do
     :ok = state.transport.version_changed(state.dir)
     state = state |> refresh_own() |> commit()
+    for mc <- state.transport.connected(), do: state.transport.send(mc, {:merge, state.members})
     HalC2.Cluster.Discovery.poll()
     {:noreply, state}
   end
@@ -541,6 +562,11 @@ defmodule HalC2.Cluster do
   def code_change(_old, state, _extra) do
     with [{_, port}] <- :ets.take(@table, :listen_port), do: Epmd.put_listen_port(port)
     state = Map.put_new(state, :gossip, nil)
+    # Rekey before resuming so queued messages cannot run over an incompatible link.
+    if state.off == nil do
+      :ok = state.transport.version_changed(state.dir)
+      GenServer.cast(self(), :version_changed)
+    end
 
     if state.off == nil and state.gossip == nil,
       do: {:ok, %{state | gossip: schedule_gossip()}},
@@ -599,7 +625,8 @@ defmodule HalC2.Cluster do
       "fingerprint" => state.fingerprint,
       "label" => HalC2.Environment.label(),
       "addresses" => own_addresses(),
-      "version" => HalC2.Upgrade.version()
+      "version" => HalC2.Upgrade.version(),
+      "protocol" => protocol()
     }
 
     own =
@@ -761,6 +788,10 @@ defmodule HalC2.Cluster do
     case request(base <> "/api/cluster/members", access, "application/json", JSON.encode!(entry)) do
       {:ok, 200, answer} ->
         {:ok, answer}
+
+      {:ok, 409, %{"reason" => "incompatible_protocol", "protocols" => protocols}} ->
+        {:error,
+         {:refused, {:incompatible_protocol, protocols["joining"], protocols["inviting"]}}}
 
       {:ok, 409,
        %{"reason" => "other_version", "versions" => %{"inviting" => inviting} = versions}} ->

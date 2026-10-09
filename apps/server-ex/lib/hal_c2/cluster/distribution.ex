@@ -31,15 +31,16 @@ defmodule HalC2.Cluster.Distribution do
   @doc "Sends `message` to the `HalC2.Cluster` of the connected member `mc`."
   def send(mc, message), do: GenServer.cast({Cluster, mc}, message)
 
-  @doc """
-  Takes up the version this MC moved to in place: keeps the port and changes the
-  cookie, which names the version, and drops every member to find them again.
-  """
+  @doc "Keeps the listening port and refreshes the protocol cookie after an update."
   def version_changed(dir) do
-    # An MC updated in place from a version that kept no port has not kept its own yet.
     keep_port(dir)
-    Node.set_cookie(cookie())
-    for mc <- Node.list(), do: Node.disconnect(mc)
+    next = cookie()
+
+    if Node.get_cookie() != next do
+      Node.set_cookie(next)
+      for mc <- Node.list(), do: Node.disconnect(mc)
+    end
+
     :ok
   end
 
@@ -94,7 +95,7 @@ defmodule HalC2.Cluster.Distribution do
   defp keep_port(dir),
     do: File.write!(Path.join(dir, "port"), Integer.to_string(Epmd.listen_port()))
 
-  defp cookie, do: :"hal_c2_#{HalC2.Upgrade.version()}"
+  defp cookie, do: :"hal_c2_cluster_#{Cluster.protocol()}"
 
   # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the MC starts (an
   # agent's `mix test`) would inherit and boot with.

@@ -18,10 +18,11 @@ The macOS app is signed ad hoc, not with a Developer ID: it runs on the Mac that
 Gatekeeper refuses it on a Mac that downloaded it.
 
 A local build is versioned `<package version>-local.<commit time>.g<commit>` unless
-`HAL_C2_MC_VERSION` names one, so machines that build the same commit run the same version and
-can join one cluster. A checkout with uncommitted changes gets `-local.<UTC timestamp>` instead:
-a single-file MC only unpacks a version it has not installed before, and that build clusters with
-no other.
+`HAL_C2_MC_VERSION` names one, so machines that build the same commit report the same build.
+Cluster membership depends on the wire protocol epoch, not this build identifier.
+A checkout with uncommitted changes gets `-local.<UTC timestamp>` instead:
+a single-file MC only unpacks a version it has not installed before. Builds with the same
+cluster protocol epoch can connect even when their versions differ.
 
 `mise run release:install` builds and installs it for your user. The MC becomes the systemd user
 unit `hal-c2.service`, or on macOS the launch agent `io.github.halc2.service`

@@ -1,4 +1,5 @@
 # Sources:
+#   docs/internals/cluster-compatibility.md
 #   apps/server-ex/lib/hal_c2/cluster.ex (identity, members, joining, runtime TLS distribution)
 #   apps/server-ex/lib/hal_c2/cluster/epmd.ex (member names to addresses, no port mapper)
 #   apps/server-ex/lib/hal_c2/cluster/discovery.ex (reconnecting, strategies)
@@ -161,25 +162,43 @@ Feature: Clustering one person's machines
       | HAL_C2_PEERS |
 
   @mc
-  Scenario: Members on different HAL-C2 versions do not connect
+  Scenario: Members on different compatible HAL-C2 releases connect
     Given a cluster of two members
     When the second restarts on another HAL-C2 version
-    Then the second cannot connect to the first
-    And the second lists the first as not connected, with the version the first runs
+    Then the second connects to the first and recommends updating
 
   @mc
-  Scenario: Members connect again once they run the same version
+  Scenario: Members remain connected through a compatible release update
     Given a cluster of two members
     And the second restarts on another HAL-C2 version
     When the first moves to that version in place
     Then the two are connected again
 
   @mc
-  Scenario: A machine on another HAL-C2 version cannot join
+  Scenario: A machine on another compatible HAL-C2 release can join
     Given two MCs that are not clustered, the second on another HAL-C2 version
     When the user joins the second to the first with a pairing link from the first
-    Then the join is refused because the machines run different versions
+    Then both list the other as connected
+
+  @mc
+  Scenario: A machine with an incompatible cluster protocol cannot join
+    Given two MCs that are not clustered, the second on an incompatible cluster protocol
+    When the user joins the second to the first with a pairing link from the first
+    Then the join asks the user to update for protocol compatibility
     And neither lists the other
+
+  @mc
+  Scenario: An existing member on an incompatible cluster protocol cannot reconnect
+    Given a cluster of two members
+    When the second restarts on an incompatible cluster protocol
+    Then the second cannot connect to the first
+
+  @mc
+  Scenario: A hot protocol upgrade disconnects incompatible peers
+    Given a cluster of two members
+    When the first reloads an incompatible cluster protocol in place
+    Then the second cannot connect to the first
+    And the first asks for an update to restore protocol compatibility
 
   @mc
   Scenario: A member removed from the cluster can no longer connect
@@ -482,10 +501,7 @@ Feature: Clustering one person's machines
     Then the app asks the first for a pairing link that grants access and gives it to the second
     And the two machines join without the command line
 
-  # Not built. Members on different versions do not connect at all, so updating one member
-  # cuts it off from the rest until each of them is updated on the machine itself or by a
-  # client paired with it; a client that reaches a member only through the cluster cannot
-  # update it. That is acceptable while HAL-C2 has one user; it is not after that.
+  # Updating other machines automatically remains opt-in future behaviour.
   @backlog @mc
   Scenario: Updating one member of a cluster updates the others
     Given a cluster of two members
@@ -505,8 +521,8 @@ Feature: Clustering one person's machines
   Scenario: A member on another version says so where the cluster is listed
     Given the cluster lists a member that last reported another HAL-C2 version
     When the user looks at the cluster in settings
-    Then the member shows as not connected with the version it runs
-    And the user is told both machines must run the same version to connect
+    Then the member shows its connection state and the version it runs
+    And the user is prompted to update without blocking a compatible connection
 
   # The hardened join, not built. Today the invite's token and the joining machine's
   # description cross the network the way the link's origin carries them. Over HTTPS or a

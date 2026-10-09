@@ -28,14 +28,21 @@ mod CLUSTER is
   --- A member table: the entries for a, b and c.
   op t : Entry Entry Entry -> Table [ctor] .
 
-  --- An MC: whether its cluster process runs, its table, and the version it runs.
-  op mc : Id Bool Table Nat -> Item [ctor] .
+  --- An MC: whether its process runs, its table, release and wire protocol epoch.
+  --- Keep the epoch with its MC to avoid matching separate items modulo AC.
+  op mc : Id Bool Table Nat Nat -> Item [ctor] .
+  --- A join request may report either release, independently of the inviter.
+  op report : Nat -> Item [ctor] .
   --- A distribution connection, the lower id first. It outlives a cluster process.
   op link : Id Id -> Item [ctor] .
   --- The `{:merge, members}` casts from one MC to another, oldest first.
   op ch : Id Id Queue -> Item [ctor] .
   op nothing : -> Queue [ctor] .
   op _;_ : Queue Queue -> Queue [ctor assoc id: nothing] .
+  --- A repeated snapshot adds no information after its first delivery: merge is
+  --- idempotent, and local updates never undo information already merged. Collapse
+  --- repeated deliveries, preserving every ordering of distinct snapshots.
+  eq Tb ; Q ; Tb = Tb ; Q .
   --- A `{:nodeup, mc}` waiting in an MC's mailbox.
   op up : Id Id -> Item [ctor] .
   --- Whose `:gossip` timer fires next.
@@ -45,7 +52,7 @@ mod CLUSTER is
   op time : Nat -> Item [ctor] .
   op skew : Id Nat -> Item [ctor] .
   op at : Id Nat -> Item [ctor] .
-  ops admits removes faults upgrades later moves : Nat -> Item [ctor] .
+  ops admits removes faults upgrades later moves protocolChanges : Nat -> Item [ctor] .
 
   --- Ghosts, which the code has no part of: per MC, the latest admission and removal of
   --- each id it has heard of, as entries e(0, admitted, removed, 0, 0) (0 for none); per
@@ -66,12 +73,12 @@ mod CLUSTER is
   op {_} : Conf -> Sys [ctor] .
 
   vars N M X Y : Id .
-  vars D D' A A' U U' V V' K F T J J' S : Nat .
+  vars D D' A A' U U' V V' W W' K F T J J' S : Nat .
   vars R R' : Stamp .
   vars E E' E1 E2 E3 F1 F2 F3 : Entry .
   vars Tb Tb' I H : Table .
   vars Q Q' : Queue .
-  var B : Bool .
+  vars B B' : Bool .
   var C : Conf .
   var P : Pool .
 
@@ -93,8 +100,10 @@ mod CLUSTER is
   op only : Id Entry -> Table .
   eq only(X, E) = t(none, none, none)[X := E] .
 
+  --- Pure entry/table computations recur across global states. Cache their normal
+  --- forms without changing the transitions or the search bounds.
   --- member?/1
-  op member : Entry -> Bool .
+  op member : Entry -> Bool [memo] .
   eq member(e(D, A, never, U, V)) = true .
   eq member(e(D, A, J, U, V)) = A > J .
   eq member(none) = false .
@@ -115,12 +124,12 @@ mod CLUSTER is
 
   --- Whether merge_entry/2 takes the first entry over the second: `{updatedAt, entry}`
   --- in Erlang's term order, the maps field by field, without the times it merges.
-  op newer : Entry Entry -> Bool .
+  op newer : Entry Entry -> Bool [memo] .
   eq newer(e(D, A, R, U, V), e(D', A', R', U', V')) =
        U > U' or (U == U' and (D > D' or (D == D' and V > V'))) .
 
   --- merge_entry(ours, theirs)
-  op mergeE : Entry Entry -> Entry .
+  op mergeE : Entry Entry -> Entry [memo] .
   eq mergeE(E, none) = E .
   eq mergeE(none, E) = E .
   eq mergeE(e(D, A, R, U, V), e(D', A', R', U', V')) =
@@ -134,20 +143,20 @@ mod CLUSTER is
   --- the own entry, but one that says something else and was updated no earlier gets
   --- the own entry stamped after it, and one that says the same and was updated later
   --- gives the own entry its time.
-  op merge : Table Table Id -> Table .
+  op merge : Table Table Id -> Table [memo] .
   eq merge(t(E1, E2, E3), t(F1, F2, F3), N) =
        t(mg(a, N, E1, F1), mg(b, N, E2, F2), mg(c, N, E3, F3)) .
   op mg : Id Id Entry Entry -> Entry .
   eq mg(N, N, E, E') = own(E, E') .
   eq mg(X, N, E, E') = mergeE(E, E') [owise] .
-  op own : Entry Entry -> Entry .
+  op own : Entry Entry -> Entry [memo] .
   ceq own(e(D, A, R, U, V), e(D', A', R', U', V')) = e(D, A, R, s U', V)
     if U' >= U /\ (D =/= D' or V =/= V') .
   ceq own(e(D, A, R, U, V), e(D, A', R', U', V)) = e(D, A, R, U', V) if U' > U .
   eq own(E, E') = E [owise] .
 
   --- stamp/1, at `now` on the MC's own clock.
-  op stamp : Nat Table -> Nat .
+  op stamp : Nat Table -> Nat [memo] .
   eq stamp(T, t(E1, E2, E3)) = max(T, max(tm(E1), max(tm(E2), tm(E3))) + 1) .
   op tm : Entry -> Nat .
   eq tm(none) = 0 .
@@ -155,7 +164,7 @@ mod CLUSTER is
 
   --- refresh_own/1: the MC's own entry takes the addresses it listens at and the
   --- version it runs, stamped, if they changed.
-  op refresh : Id Nat Nat Nat Table -> Table .
+  op refresh : Id Nat Nat Nat Table -> Table [memo] .
   ceq refresh(N, D, V, S, Tb) = Tb[N := e(D, A, R, S, V)]
     if e(D', A, R, U, V') := Tb[N] /\ (D =/= D' or V =/= V') .
   eq refresh(N, D, V, S, Tb) = Tb [owise] .
@@ -178,7 +187,7 @@ mod CLUSTER is
 
   --- commit/1: cuts off every connected machine the table holds no member.
   op commit : Id Conf -> Conf .
-  eq commit(N, mc(N, B, Tb, V) C) = cut(N, Tb, mc(N, B, Tb, V) C) .
+  eq commit(N, mc(N, B, Tb, V, W) C) = cut(N, Tb, mc(N, B, Tb, V, W) C) .
   op cut : Id Table Conf -> Conf .
   ceq cut(N, Tb, link(N, M) C) = cut(N, Tb, sever(N, M, C)) if not member(Tb[M]) .
   ceq cut(N, Tb, link(M, N) C) = cut(N, Tb, sever(N, M, C)) if not member(Tb[M]) .
@@ -186,9 +195,9 @@ mod CLUSTER is
 
   --- merge_in/2: a table that changed is committed, then cast to every connected MC.
   op mergeIn : Id Table Conf -> Conf .
-  ceq mergeIn(N, I, mc(N, true, Tb, V) C) =
-       if Tb' == Tb then mc(N, true, Tb, V) C
-       else broadcast(N, Tb', commit(N, mc(N, true, Tb', V) C)) fi
+  ceq mergeIn(N, I, mc(N, true, Tb, V, W) C) =
+       if Tb' == Tb then mc(N, true, Tb, V, W) C
+       else broadcast(N, Tb', commit(N, mc(N, true, Tb', V, W) C)) fi
     if Tb' := merge(Tb, I, N) .
 
   --- To every connected MC.
@@ -203,8 +212,8 @@ mod CLUSTER is
   --- Distribution.send/2 over a connection: a cast, lost if the receiver's cluster
   --- process is down. Without a connection it is lost too; see `connect`.
   op send : Id Id Table Conf -> Conf .
-  ceq send(N, M, Tb, ch(N, M, Q) mc(M, true, Tb', V) C)
-    = ch(N, M, Q ; Tb) mc(M, true, Tb', V) told(N, M, Tb) C
+  ceq send(N, M, Tb, ch(N, M, Q) mc(M, true, Tb', V, W') C)
+    = ch(N, M, Q ; Tb) mc(M, true, Tb', V, W') told(N, M, Tb) C
     if linked(N, M, C) .
   eq send(N, M, Tb, C) = C [owise] .
   op told : Id Id Table -> Conf .
@@ -248,42 +257,49 @@ mod CLUSTER is
 
   --- code -----------------------------------------------------------------------------
 
-  --- admit/1, for a machine that is no member (any more): a fresh entry.
+  --- admit/1 with a compatible advertised epoch: a fresh entry. Release versions
+  --- may differ, and an in-flight description may predate the joining MC's update.
+  --- It cannot describe a release the joining MC has not run yet. A machine absent
+  --- from the model may run either release. Incompatible admissions change no state.
+  op lastRelease : Id Conf -> Nat .
+  eq lastRelease(X, mc(X, B, Tb, V, W) C) = V .
+  eq lastRelease(X, C) = 1 [owise] .
   crl [admit] :
-    { mc(N, true, Tb, V) time(T) skew(N, K) admits(s F) made(X, A, J) heard(N, H) C }
+    { mc(N, true, Tb, V, W) report(V') time(T) skew(N, K) admits(s F) made(X, A, J) heard(N, H) C }
     => { hear(N, only(X, E), mergeIn(N, only(X, E),
-           mc(N, true, Tb, V) time(T) skew(N, K) admits(F) made(X, max(A, S), J)
+           mc(N, true, Tb, V, W) report(V') time(T) skew(N, K) admits(F) made(X, max(A, S), J)
            heard(N, H) lateIf(S <= max(ha(H[X]), hr(H[X])), N, X) C)) }
-    if X =/= N /\ not member(Tb[X]) /\ S := stamp(T + K, Tb) /\ E := e(0, S, never, S, V) .
+    if X =/= N /\ not member(Tb[X]) /\ V' <= lastRelease(X, C)
+       /\ S := stamp(T + K, Tb) /\ E := e(0, S, never, S, V') .
 
   --- remove/1
   crl [remove] :
-    { mc(N, true, Tb, V) time(T) skew(N, K) removes(s F) made(X, A, J) heard(N, H) C }
+    { mc(N, true, Tb, V, W) time(T) skew(N, K) removes(s F) made(X, A, J) heard(N, H) C }
     => { hear(N, only(X, E'), mergeIn(N, only(X, E'),
-           mc(N, true, Tb, V) time(T) skew(N, K) removes(F) made(X, A, max(J, S))
+           mc(N, true, Tb, V, W) time(T) skew(N, K) removes(F) made(X, A, max(J, S))
            heard(N, H) lateIf(S <= max(ha(H[X]), hr(H[X])), N, X) C)) }
     if X =/= N /\ member(Tb[X]) /\ S := stamp(T + K, Tb)
        /\ e(D, A', R, U, V') := Tb[X] /\ E' := e(D, A', S, S, V') .
 
   --- handle_cast {:merge, members}, oldest first, while the cluster process runs.
   rl [merge] :
-    { ch(M, N, I ; Q) mc(N, true, Tb, V) C }
-    => { hear(N, I, mergeIn(N, I, ch(M, N, Q) mc(N, true, Tb, V) C)) } .
+    { ch(M, N, I ; Q) mc(N, true, Tb, V, W) C }
+    => { hear(N, I, mergeIn(N, I, ch(M, N, Q) mc(N, true, Tb, V, W) C)) } .
 
   --- handle_info {:nodeup, mc}: refresh_own, commit, and the table to a member.
   rl [nodeup] :
-    { up(N, M) mc(N, true, Tb, V) time(T) skew(N, K) at(N, D) C }
-    => { greet(N, M, commit(N, mc(N, true, refresh(N, D, V, stamp(T + K, Tb), Tb), V)
+    { up(N, M) mc(N, true, Tb, V, W) time(T) skew(N, K) at(N, D) C }
+    => { greet(N, M, commit(N, mc(N, true, refresh(N, D, V, stamp(T + K, Tb), Tb), V, W)
                              time(T) skew(N, K) at(N, D) C)) } .
   op greet : Id Id Conf -> Conf .
-  eq greet(N, M, mc(N, true, Tb, V) C) = cast(N, M, Tb, mc(N, true, Tb, V) C) .
+  eq greet(N, M, mc(N, true, Tb, V, W) C) = cast(N, M, Tb, mc(N, true, Tb, V, W) C) .
 
   --- handle_info :gossip: the table to every connected member. The timers fire in
   --- turn, and only with nothing in flight: a table cast sooner is one the receiver
   --- could merge later, and merge is a join, so earlier or extra copies add nothing.
   --- A timer of a cluster process that is down does not fire.
   crl [gossip] :
-    { turn(N) mc(N, true, Tb, V) C } => { turn(next(N)) tell(N, Tb, mc(N, true, Tb, V) C) }
+    { turn(N) mc(N, true, Tb, V, W) C } => { turn(next(N)) tell(N, Tb, mc(N, true, Tb, V, W) C) }
     if quiet(C) .
   crl [gossip] : { turn(N) C } => { turn(next(N)) C } if quiet(C) /\ not running(N, C) .
   op next : Id -> Id .
@@ -291,42 +307,50 @@ mod CLUSTER is
   eq next(b) = c .
   eq next(c) = a .
   op running : Id Conf -> Bool .
-  eq running(N, mc(N, true, Tb, V) C) = true .
+  eq running(N, mc(N, true, Tb, V, W) C) = true .
   eq running(N, C) = false [owise] .
 
-  --- handle_cast :version_changed: a new cookie drops every connection, then
-  --- refresh_own and commit.
+  --- Release changes preserve protocol-compatible links and announce new metadata.
+  --- Incompatible epochs are excluded before admission by the protocol cookie.
   rl [version-changed] :
-    { mc(N, true, Tb, V) upgrades(s F) time(T) skew(N, K) at(N, D) C }
-    => { commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V)
-                   upgrades(F) time(T) skew(N, K) at(N, D) severAll(N, C)) } .
+    { mc(N, true, Tb, V, W) upgrades(s F) time(T) skew(N, K) at(N, D) C }
+    => { announce(N, commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V, W)
+                   upgrades(F) time(T) skew(N, K) at(N, D) C)) } .
+  op announce : Id Conf -> Conf .
+  eq announce(N, mc(N, true, Tb, V, W) C) = tell(N, Tb, mc(N, true, Tb, V, W) C) .
+
+  --- A hot reload that changes the wire epoch replaces its cookie and severs links.
+  rl [protocol-changed] :
+    { mc(N, true, Tb, V, W) protocolChanges(s F) time(T) skew(N, K) at(N, D) C }
+    => { commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V, s W)
+                   protocolChanges(F) time(T) skew(N, K) at(N, D) severAll(N, C)) } .
 
   --- init/1 after a crash: the table as saved, refresh_own and commit. Connections
   --- outlived the process, so no nodeup comes for them.
   rl [restart] :
-    { mc(N, false, Tb, V) time(T) skew(N, K) at(N, D) C }
-    => { commit(N, mc(N, true, refresh(N, D, V, stamp(T + K, Tb), Tb), V)
+    { mc(N, false, Tb, V, W) time(T) skew(N, K) at(N, D) C }
+    => { commit(N, mc(N, true, refresh(N, D, V, stamp(T + K, Tb), Tb), V, W)
                    time(T) skew(N, K) at(N, D) C) } .
 
   --- Discovery connects members it does not reach; the handshake (verify_peer/3) passes
   --- only if each side's running cluster process has the other pinned, and the cookie
-  --- only between MCs on one version. Both sides get a nodeup.
+  --- only between MCs on one protocol epoch. Releases may differ. Both sides get a nodeup.
   crl [connect] :
-    { mc(N, true, Tb, V) mc(M, true, Tb', V) C }
-    => { link(N, M) up(N, M) up(M, N) mc(N, true, Tb, V) mc(M, true, Tb', V) C }
+    { mc(N, true, Tb, V, W) mc(M, true, Tb', V', W) C }
+    => { link(N, M) up(N, M) up(M, N) mc(N, true, Tb, V, W) mc(M, true, Tb', V', W) C }
     if N << M /\ not linked(N, M, C) /\ member(Tb[M]) /\ member(Tb'[N]) .
 
   --- environment ----------------------------------------------------------------------
 
   rl [crash] :
-    { mc(N, true, Tb, V) faults(s F) C } => { mc(N, false, Tb, V) faults(F) lose(N, C) } .
+    { mc(N, true, Tb, V, W) faults(s F) C } => { mc(N, false, Tb, V, W) faults(F) lose(N, C) } .
 
   rl [disconnect] : { link(N, M) faults(s F) C } => { sever(N, M, C) faults(F) } .
 
   rl [clock] : time(T) later(s F) => time(s T) later(F) .
 
   --- An MC that is down comes back at other addresses: another port, say.
-  rl [move] : mc(N, false, Tb, V) at(N, D) moves(s F) => mc(N, false, Tb, V) at(N, flip(D)) moves(F) .
+  rl [move] : mc(N, false, Tb, V, W) at(N, D) moves(s F) => mc(N, false, Tb, V, W) at(N, flip(D)) moves(F) .
   op flip : Nat -> Nat .
   eq flip(0) = 1 .
   eq flip(s D) = 0 .
@@ -346,18 +370,29 @@ mod CLUSTER is
   op ids : -> Conf .
   eq ids = made(a, 1, 0) made(b, 1, 0) made(c, 1, 0) .
   eq two(A, F, K, U, T, J) =
-       { mc(a, true, fresh, 0) mc(b, true, fresh, 0) heard(a, ghost) heard(b, ghost)
+       { mc(a, true, fresh, 0, 1) mc(b, true, fresh, 0, 1) heard(a, ghost) heard(b, ghost)
          at(a, 0) at(b, 0) moves(J)
          link(a, b) ch(a, b, nothing) ch(b, a, nothing) skew(a, 0) skew(b, 1)
-         ids turn(a) time(1) admits(A) removes(F) faults(K) upgrades(U) later(T) } .
+         ids report(0) report(1) turn(a) time(1) protocolChanges(0) admits(A) removes(F) faults(K) upgrades(U) later(T) } .
   eq three(A, F, K, U, T, J) =
-       { mc(a, true, fresh, 0) mc(b, true, fresh, 0) mc(c, true, fresh, 0)
+       { mc(a, true, fresh, 0, 1) mc(b, true, fresh, 0, 1) mc(c, true, fresh, 0, 1)
          at(a, 0) at(b, 0) at(c, 0) moves(J)
          heard(a, ghost) heard(b, ghost) heard(c, ghost)
          link(a, b) link(a, c) link(b, c)
          ch(a, b, nothing) ch(b, a, nothing) ch(a, c, nothing) ch(c, a, nothing)
          ch(b, c, nothing) ch(c, b, nothing) skew(a, 0) skew(b, 1) skew(c, 2)
-         ids turn(a) time(1) admits(A) removes(F) faults(K) upgrades(U) later(T) } .
+         ids report(0) report(1) turn(a) time(1) protocolChanges(0) admits(A) removes(F) faults(K) upgrades(U) later(T) } .
+
+  --- An admitted peer returns with an incompatible wire protocol; no link exists.
+  op incompatible : -> Sys .
+  op splitEpoch : Sys -> Sys .
+  eq incompatible = splitEpoch(two(0, 0, 1, 1, 0, 0)) .
+  eq splitEpoch({ mc(b, B, Tb, V, 1) link(a, b) C }) = { mc(b, B, Tb, V, 2) C } .
+
+  op protocolUpgrade : -> Sys .
+  op allowProtocolChange : Sys -> Sys .
+  eq protocolUpgrade = allowProtocolChange(two(0, 0, 1, 0, 0, 0)) .
+  eq allowProtocolChange({ protocolChanges(0) C }) = { protocolChanges(1) C } .
 
   --- Three entries to draw for the laws, from every entry with addresses 0 or 1,
   --- admitted at 1 to 3, removed never or at 2, updated at 1 or 2, on version 0 or 1.
@@ -374,8 +409,8 @@ mod CLUSTER is
 
   --- A running MC keeps a machine connected that its table holds no member.
   op kept : Sys -> Bool .
-  ceq kept({ mc(N, true, Tb, V) link(N, M) C }) = true if not member(Tb[M]) .
-  ceq kept({ mc(N, true, Tb, V) link(M, N) C }) = true if not member(Tb[M]) .
+  ceq kept({ mc(N, true, Tb, V, W) link(N, M) C }) = true if not member(Tb[M]) .
+  ceq kept({ mc(N, true, Tb, V, W) link(M, N) C }) = true if not member(Tb[M]) .
   eq kept({ C }) = false [owise] .
 
   --- A table went to a machine the sender held no member.
@@ -385,13 +420,13 @@ mod CLUSTER is
 
   --- An MC holds X a member though it heard of a removal no admission came after.
   op resurrected : Sys -> Bool .
-  ceq resurrected({ mc(N, B, Tb, V) heard(N, H) made(X, A, J) C }) = true
+  ceq resurrected({ mc(N, B, Tb, V, W) heard(N, H) made(X, A, J) C }) = true
     if X =/= N /\ member(Tb[X]) /\ A <= hr(H[X]) .
   eq resurrected({ C }) = false [owise] .
 
   --- An MC holds X removed though it heard of an admission after every removal.
   op undone : Sys -> Bool .
-  ceq undone({ mc(N, B, Tb, V) heard(N, H) made(X, A, J) C }) = true
+  ceq undone({ mc(N, B, Tb, V, W) heard(N, H) made(X, A, J) C }) = true
     if X =/= N /\ Tb[X] =/= none /\ not member(Tb[X]) /\ ha(H[X]) > J .
   eq undone({ C }) = false [owise] .
 
@@ -401,8 +436,12 @@ mod CLUSTER is
   eq unordered({ C }) = false [owise] .
 
   --- Any of the five above, so one search refutes them all.
+  op crossedEpoch : Sys -> Bool .
+  ceq crossedEpoch({ link(N, M) mc(N, B, Tb, V, W) mc(M, B', Tb', V', W') C }) = true if W =/= W' .
+  eq crossedEpoch({ C }) = false [owise] .
+
   op unsafe : Sys -> Bool .
-  eq unsafe(Y:Sys) = kept(Y:Sys) or leaked(Y:Sys) or resurrected(Y:Sys) or undone(Y:Sys)
+  eq unsafe(Y:Sys) = crossedEpoch(Y:Sys) or kept(Y:Sys) or leaked(Y:Sys) or resurrected(Y:Sys) or undone(Y:Sys)
                      or unordered(Y:Sys) .
 
   --- Merging the drawn entries depends on their order, grouping or repetition.
@@ -421,9 +460,9 @@ mod CLUSTER-PROPS is
 
   vars N M X : Id .
   vars Tb Tb' : Table .
-  vars V V' D A U : Nat .
+  vars V V' W W' D A U : Nat .
   var R : Stamp .
-  var B : Bool .
+  vars B B' : Bool .
   var C : Conf .
 
   --- What an MC says of itself: its addresses and version.
@@ -441,23 +480,23 @@ mod CLUSTER-PROPS is
 
   --- Every two connected running MCs agree.
   op agreed : -> Prop [ctor] .
-  ceq { mc(N, true, Tb, V) mc(M, true, Tb', V') link(N, M) C } |= agreed = false
+  ceq { mc(N, true, Tb, V, W) mc(M, true, Tb', V', W') link(N, M) C } |= agreed = false
     if not agree(N, Tb, M, Tb') .
   eq { C } |= agreed = true [owise] .
 
-  --- Every two running MCs on one version that hold each other members are connected.
+  --- Every two running MCs on one protocol epoch that hold each other members are connected.
   op meshed : -> Prop [ctor] .
-  ceq { mc(N, true, Tb, V) mc(M, true, Tb', V) C } |= meshed = false
+  ceq { mc(N, true, Tb, V, W) mc(M, true, Tb', V', W) C } |= meshed = false
     if N << M /\ member(Tb[M]) /\ member(Tb'[N]) /\ not linked(N, M, C) .
   eq { C } |= meshed = true [owise] .
 
   --- N holds X removed.
   op gone : Id Id -> Prop [ctor] .
-  ceq { mc(N, B, Tb, V) C } |= gone(N, X) = true if Tb[X] =/= none /\ not member(Tb[X]) .
+  ceq { mc(N, B, Tb, V, W) C } |= gone(N, X) = true if Tb[X] =/= none /\ not member(Tb[X]) .
   eq { C } |= gone(N, X) = false [owise] .
 
   --- N and M run and are connected.
   op near : Id Id -> Prop [ctor] .
-  eq { mc(N, true, Tb, V) mc(M, true, Tb', V') C } |= near(N, M) = linked(N, M, C) .
+  eq { mc(N, true, Tb, V, W) mc(M, true, Tb', V', W') C } |= near(N, M) = linked(N, M, C) .
   eq { C } |= near(N, M) = false [owise] .
 endm
