@@ -79,7 +79,10 @@ defmodule HalC2.CodeReviewPropTest do
     File.mkdir_p!(bin)
     File.ln_s!(Path.join(@support, "fake_gh.py"), Path.join(bin, "gh"))
 
-    vars = ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE)
+    vars =
+      ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE
+         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
     apps = ~w(gh_command codex_command settings_check_ms home)a
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
@@ -89,6 +92,13 @@ defmodule HalC2.CodeReviewPropTest do
     System.put_env("FAKE_GH_LOG", Path.join(fx, "calls.jsonl"))
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", Path.join(fx, "remotes"))
+    # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
+      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+    })
+
     Application.put_env(:hal_c2, :gh_command, "gh")
 
     Application.put_env(:hal_c2, :codex_command, [
@@ -284,18 +294,13 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :refresh, []}), do: {look(m), :ok}
   defp step(m, {:call, _, :poll, []}), do: {look(m), nil}
 
+  # An ask reads the pull request first, so one closed since the last look is refused.
   defp step(m, {:call, _, :start, [key]}) do
-    case m.reviews[key] do
-      nil ->
-        if m.prs[key].open,
-          do: {m |> put_review(key, fresh(m, key)) |> queue(key) |> pump(), :ok},
-          else: {m, :error}
-
-      %{status: s} when s in [:queued, :running] ->
-        {m, :ok}
-
-      _ ->
-        {m |> queue(key) |> pump(), :ok}
+    cond do
+      not m.prs[key].open -> {m, :error}
+      m.reviews[key] == nil -> {m |> put_review(key, fresh(m, key)) |> queue(key) |> pump(), :ok}
+      m.reviews[key].status in [:queued, :running] -> {m, :ok}
+      true -> {m |> queue(key) |> pump(), :ok}
     end
   end
 
@@ -469,6 +474,11 @@ defmodule HalC2.CodeReviewPropTest do
             m
 
           known && known.status in [:queued, :running] ->
+            put_review(m, key, %{known | seen: pr.head})
+
+          # A run that could not start waits at that head for a retry or a push.
+          known != nil and known.status == :failed and known.reviewed == nil and
+              known.seen == pr.head ->
             put_review(m, key, %{known | seen: pr.head})
 
           known == nil or known.reviewed == nil ->
@@ -1323,6 +1333,7 @@ defmodule HalC2.CodeReviewPropTest do
     rules =
       [%{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}}] ++
         lists ++
+        details(world) ++
         [permissions_rule()] ++
         if(world.refusing, do: [refusal], else: []) ++
         [%{"args" => ["--method POST", "pulls/"], "run" => gate, "stdout" => "{}"}]
@@ -1334,26 +1345,58 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp listing(world, repo) do
     for key <- @keys,
-        {^repo, number} <- [@prs[key]],
-        world.prs[key].open do
+        {^repo, _} <- [@prs[key]],
+        world.prs[key].open,
+        do: pr_entry(world, key)
+  end
+
+  defp pr_entry(world, key) do
+    {repo, number} = @prs[key]
+
+    %{
+      "number" => number,
+      "title" => "Pull request #{number}",
+      "url" => "https://github.com/acme/#{repo}/pull/#{number}",
+      "author" => %{"login" => "octocat"},
+      "headRefName" => "feature/#{number}",
+      "baseRefName" => "main",
+      "state" => "OPEN",
+      "isDraft" => false,
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => @updated[key],
+      "reviewRequests" => [],
+      "latestReviews" => [],
+      "labels" => [],
+      "statusCheckRollup" => [],
+      "headRefOid" => sha(key, world.prs[key].head),
+      "additions" => 5,
+      "deletions" => 0
+    }
+  end
+
+  # One pull request as asking for its review reads it, closed ones too.
+  defp details(world) do
+    for key <- @keys do
+      {repo, number} = @prs[key]
+
+      pr =
+        Map.merge(pr_entry(world, key), %{
+          "state" => if(world.prs[key].open, do: "OPEN", else: "CLOSED"),
+          "body" => "",
+          "changedFiles" => 1,
+          "isCrossRepository" => false,
+          "baseRef" => %{"compare" => %{"behindBy" => 0}},
+          "labels" => %{"nodes" => []},
+          "reviewRequests" => %{"nodes" => []},
+          "commits" => %{"nodes" => []}
+        })
+
       %{
-        "number" => number,
-        "title" => "Pull request #{number}",
-        "url" => "https://github.com/acme/#{repo}/pull/#{number}",
-        "author" => %{"login" => "octocat"},
-        "headRefName" => "feature/#{number}",
-        "baseRefName" => "main",
-        "state" => "OPEN",
-        "isDraft" => false,
-        "createdAt" => "2026-09-01T00:00:00Z",
-        "updatedAt" => @updated[key],
-        "reviewRequests" => [],
-        "latestReviews" => [],
-        "labels" => [],
-        "statusCheckRollup" => [],
-        "headRefOid" => sha(key, world.prs[key].head),
-        "additions" => 5,
-        "deletions" => 0
+        "args" => ["api graphql"],
+        "stdin" => ["viewerCanUpdateBranch", ~s("name":"#{repo}"), ~s("number":#{number})],
+        "stdout" => %{
+          "data" => %{"repository" => %{"viewerPermission" => "WRITE", "pullRequest" => pr}}
+        }
       }
     end
   end

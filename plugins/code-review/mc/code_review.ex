@@ -128,15 +128,8 @@ defmodule HalC2Plugins.CodeReview do
 
   def call("start", %{"repository" => repository, "number" => number}, context)
       when is_binary(repository) and is_integer(number) do
-    known = server(:reviews)
-
-    pr =
-      case known[key(repository, number)] do
-        nil -> find(context.settings, repository, number)
-        review -> {:ok, review}
-      end
-
-    with {:ok, pr} <- pr, do: server({:start, pr, "user"})
+    # Read afresh even when it is listed, as it may have closed since the last look.
+    with {:ok, pr} <- find(context.settings, repository, number), do: server({:start, pr, "user"})
   end
 
   def call("retry", %{"key" => key}, _context), do: server({:start, key, "retry"})
@@ -598,17 +591,23 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # The user's own ask for pull request `number`, which need not be watched.
+  # The user's own ask for pull request `number`, which need not be watched. It is read
+  # on its own, as the app's pull request card reads it, not looked for in a listing.
   defp find(settings, repository, number) do
     with {:ok, projects} <- Host.projects(@id),
          %{} = project <-
            Enum.find(projects, &(&1["kind"] == settings["host"] and same?(&1["repository"], repository))) ||
              {:error, "No project on this MC has the repository #{repository}."},
-         {:ok, list} <- Host.pull_requests(@id, "list", %{"projectIds" => [project["id"]], "state" => "open"}),
-         %{} = entry <-
-           Enum.find(list["entries"] || [], &(&1["number"] == number)) ||
-             {:error, "#{repository} has no open pull request ##{number}."} do
-      {:ok, pr(entry)}
+         {:ok, detail} <-
+           Host.pull_requests(@id, "detail", %{
+             "projectId" => project["id"],
+             "host" => project["host"],
+             "repository" => project["repository"],
+             "number" => number
+           }),
+         true <- detail["state"] == "open" || {:error, "#{repository} ##{number} is #{detail["state"]}, not open."} do
+      reviewers = Enum.map(detail["reviewers"] || [], & &1["login"])
+      {:ok, pr(Map.put(detail, "viewerReviewRequested", Enum.any?(reviewers, &same?(&1, detail["viewer"]))))}
     else
       {:error, error} -> {:error, message(error)}
     end
@@ -655,6 +654,11 @@ defmodule HalC2Plugins.CodeReview do
 
         asked? ->
           queue(state, review, "command")
+
+        # A run that could not start waits for the user's retry or a new push, rather
+        # than starting again at every look.
+        reviewed == nil && known && known["status"] == "failed" && known["headSha"] == pr["headSha"] ->
+          put(state, review)
 
         reviewed == nil ->
           if trigger, do: queue(state, review, trigger), else: put(state, review)
@@ -767,8 +771,15 @@ defmodule HalC2Plugins.CodeReview do
            {:ok, model} <- model(settings),
            path =
              Path.join([Host.data_dir(@id), "checkouts", review["projectId"], "pr-#{review["number"]}", thread_id]),
+           clone = Path.join([Host.data_dir(@id), "repos", project["host"], review["repository"] <> ".git"]),
            {:ok, checkout} <-
-             Checkout.prepare(project["root"], path, review["repository"], review["number"], review["baseBranch"]) do
+             Checkout.prepare(
+               clone,
+               path,
+               "https://#{project["host"]}/#{review["repository"]}.git",
+               review["number"],
+               review["baseBranch"]
+             ) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
 
         GenServer.cast(
@@ -776,7 +787,7 @@ defmodule HalC2Plugins.CodeReview do
           {:started, key, thread_id,
            %{
              "checkout" => checkout["path"],
-             "root" => project["root"],
+             "root" => clone,
              "mergeBase" => checkout["mergeBase"],
              "reviewedSha" => checkout["headSha"],
              "headSha" => checkout["headSha"]

@@ -168,7 +168,7 @@ defmodule HalC2.PullRequests do
              (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
              |> Enum.sort_by(& &1["updatedAt"], :desc),
            "errors" =>
-             Enum.map(unreadable, &unreadable/1) ++
+             Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
                Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
            "truncated" => Enum.any?(batches, & &1.truncated),
            "nextCursors" => for(b <- batches, b.next, into: %{}, do: {b.key, b.next})
@@ -209,7 +209,7 @@ defmodule HalC2.PullRequests do
             "observedAt" => at
           })
         end,
-      errors: for({project, _, {:error, _}} <- reads, do: unreadable(project))
+      errors: for({project, _, {:error, _} = error} <- reads, do: unreadable(project, error))
     }
   end
 
@@ -268,23 +268,31 @@ defmodule HalC2.PullRequests do
             if(page.sorted and page.truncated, do: next_cursor(cursor, page.items, length(items)))
         }
 
-      {:error, _} ->
+      {:error, _} = error ->
         %{
           key: key(project),
           entries: [],
-          errors: [unreadable(project)],
+          errors: [unreadable(project, error)],
           truncated: false,
           next: nil
         }
     end
   end
 
-  defp unreadable(project),
+  # Says why, so a caller that only sees the message (a plugin, the list's banner) can
+  # tell a host that is down from a pull request that is not there.
+  defp unreadable(project, error),
     do: %{
       "projectId" => project.id,
       "projectTitle" => project.title,
-      "message" => "#{project.repository} could not be read."
+      "message" => "#{project.repository} could not be read: #{reason(error)}"
     }
+
+  defp reason({:error, {reason, detail}}) when is_atom(reason),
+    do: @requirements[reason] || detail
+
+  defp reason({:error, detail}) when is_binary(detail), do: detail
+  defp reason(_), do: "the host did not answer."
 
   defp entry(project, item, viewer, at) do
     me = String.downcase(viewer)

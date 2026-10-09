@@ -113,7 +113,7 @@ Feature: Browsing pull requests
     Given "acme/api" cannot be read
     When the user lists pull requests
     Then the pull requests of "acme/shop" are listed
-    And "acme/api" reports its own error
+    And "acme/api" reports its own error with the host's reason
 
   @mc
   Scenario: Clients hear when the list changed

@@ -69,6 +69,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context = World.create_project(context, title)
     root = World.project(context, title).root
     bare = World.github_remote(context, root, repository)
+    # The plugin's clone fetches over HTTPS; here that goes to the fake GitHub's SSH.
+    World.put_env("GIT_CONFIG_COUNT", "1")
+    World.put_env("GIT_CONFIG_KEY_0", "url.git@github.com:.insteadOf")
+    World.put_env("GIT_CONFIG_VALUE_0", "https://github.com/")
     source = Path.join(Mc.tmp_dir(context.mc, "pr-source"), "repo")
     World.git!(Path.dirname(source), ["clone", "-q", bare, source])
 
@@ -210,6 +214,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the user asks for a review of \#{int}", %{args: [number]} = context do
     context |> open(number) |> start(number)
+  end
+
+  step "the open pull requests of {string} cannot be listed", context do
+    Map.put(context, :unlisted, true)
+  end
+
+  step "the user asks for a review of \#{int}, which is merged", %{args: [number]} = context do
+    context = open(context, number, %{"state" => "MERGED", "mergedAt" => "2026-09-02T00:00:00Z"})
+
+    {reply, context} =
+      plugin(context, "start", %{"repository" => context.repository, "number" => number})
+
+    context |> Map.put(:reply, reply) |> refresh()
   end
 
   step "{string} looks at {string} again", %{args: [@id, _repo]} = context do
@@ -526,6 +543,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "failed"))
   end
 
+  step "the plugin looks at the pull requests again", context do
+    refresh(context)
+  end
+
+  step "the review of \#{int} is still the failed one", %{args: [number]} = context do
+    review = Enum.find(context.snapshot["reviews"], &(&1["number"] == number))
+    assert %{"status" => "failed"} = review
+    assert review["threadId"] == context.review["threadId"]
+    context
+  end
+
   step "the user retries the review of \#{int}", %{args: [number]} = context do
     {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
     assert {:ok, snapshot} = reply
@@ -567,7 +595,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert review["error"] =~ "code-review restarted"
-    assert review["threadId"] == context.thread
+    assert review["threadId"] == context.review["threadId"]
     context
   end
 
@@ -1075,11 +1103,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     prs = Map.put(context.prs, number, pr)
 
+    listed =
+      if context[:unlisted],
+        do: %{"args" => ["pr list"], "stderr" => "HTTP 502: Bad Gateway\n", "exit" => 1},
+        else: %{
+          "args" => ["pr list"],
+          "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
+        }
+
     context
-    |> World.cli_rules([
-      %{"args" => ["pr list"], "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])},
-      detail_rule(pr)
-    ])
+    |> World.cli_rules([listed, detail_rule(pr)])
     |> Map.put(:prs, prs)
   end
 
@@ -1224,7 +1257,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   defp checkout_state(root) do
     {World.git!(root, ~w(rev-parse HEAD)), World.git!(root, ~w(branch --list)),
-     World.git!(root, ~w(status --porcelain))}
+     World.git!(root, ~w(status --porcelain)), World.git!(root, ~w(worktree list --porcelain)),
+     World.git!(root, ~w(for-each-ref))}
   end
 
   defp thread(thread_id) do

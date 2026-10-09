@@ -379,10 +379,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  step "{string} reports its own error", %{args: [repository]} = context do
+  step "{string} reports its own error with the host's reason", %{args: [repository]} = context do
     assert {:ok, %{"errors" => errors}} = context.reply
     assert [%{"message" => message}] = errors
-    assert message == "#{repository} could not be read."
+    assert message == "#{repository} could not be read: HTTP 502: Bad Gateway"
     context
   end
 

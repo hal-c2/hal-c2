@@ -3,7 +3,7 @@
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   plugins/code-review/mc/checkout.ex (a pull request's worktree)
+#   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 
 @plugin-code-review
@@ -49,6 +49,26 @@ Feature: Agent code review
       Given the project "acme api" whose remote is "acme/api" on GitLab
       When the user asks for a review of #12
       Then a review of #12 starts
+
+    @mc
+    Scenario: The user's ask reads that pull request as the app does, not the open list
+      Given the open pull requests of "acme/api" cannot be listed
+      When the user asks for a review of #12
+      Then a review of #12 starts
+
+    @mc
+    Scenario: An ask for a pull request that is not open says so
+      When the user asks for a review of #12, which is merged
+      Then the user is told "acme/api #12 is merged, not open."
+      And no review starts
+
+    @mc
+    Scenario: An ask for a pull request merged since the plugin last looked says so
+      Given "code-review" watches "acme/api" selectively
+      And the pull request #12 is opened on "acme/api"
+      When the user asks for a review of #12, which is merged
+      Then the user is told "acme/api #12 is merged, not open."
+      And no review starts
 
     @mc
     Scenario Outline: A selective trigger starts a review
@@ -194,6 +214,15 @@ Feature: Agent code review
       Given the review of #12 failed
       When the user retries the review of #12
       Then a new review of #12 starts
+
+    @mc
+    Scenario: A review that could not start is not tried again on its own
+      Given "code-review" watches "acme/api" automatically
+      And "code-review" reviews with an agent the MC does not have
+      When the pull request #12 is opened on "acme/api"
+      Then the review of #12 is failed saying there is no such agent
+      When the plugin looks at the pull requests again
+      Then the review of #12 is still the failed one
 
     @mc
     Scenario: Retrying a review that is running leaves the run it has

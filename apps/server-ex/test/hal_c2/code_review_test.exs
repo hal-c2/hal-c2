@@ -14,10 +14,11 @@ defmodule HalC2.CodeReviewTest do
   @key "acme/api#1"
   @package Path.expand("../../../../plugins/code-review", __DIR__)
   @support Path.expand("../support", __DIR__)
+  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL)
 
   setup %{tmp_dir: dir} do
     restore = [
-      env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE)),
+      env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE) ++ @git_config),
       app(~w(home gh_command codex_command settings_check_ms)a)
     ]
 
@@ -51,6 +52,18 @@ defmodule HalC2.CodeReviewTest do
     System.put_env("FAKE_GH_RULES", Path.join(dir, "rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(dir, "gh.log"))
     System.put_env("GIT_SSH_COMMAND", ssh)
+    # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
+      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+    })
+
+    # A user's own rewrite of the address, which the plugin's clone does not read.
+    global = Path.join(dir, "gitconfig")
+    File.write!(global, "[url \"#{dir}/nowhere/\"]\n\tinsteadOf = https://github.com/acme/\n")
+    System.put_env("GIT_CONFIG_GLOBAL", global)
+
     System.put_env("FAKE_CODEX_GATE", Path.join(dir, "gate"))
     Application.put_env(:hal_c2, :home, Path.join(dir, "home"))
     Application.put_env(:hal_c2, :gh_command, "gh")
@@ -197,6 +210,23 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running", "reviewedSha" => ^second, "headSha" => ^second} = review()
   end
 
+  test "a review asked for before its pull request is listed starts at the head of the pull request",
+       context do
+    rules!(context, head: 1, listed: false)
+    refresh()
+    assert review() == nil
+    hold = Path.join(context.dir, "fetch.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    first = context.shas[1]
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+
+    assert %{"status" => "running", "headSha" => ^first} = review()
+    File.rm!(hold)
+    settle()
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   defp start_review do
@@ -204,6 +234,8 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "running", "checkout" => checkout} = review = review()
     assert File.dir?(checkout)
+    # The agent's git in the checkout knows where the pull request came from.
+    assert git!(checkout, ["config", "remote.origin.url"]) == "https://github.com/acme/api.git"
     review
   end
 
@@ -263,8 +295,8 @@ defmodule HalC2.CodeReviewTest do
       System.cmd("timeout", ["5", "sh", "-c", "until [ -e '#{path}' ]; do sleep 0.05; done"])
   end
 
-  # The fake GitHub: pull request #1 of acme/api open at head commit `head`; `list`
-  # runs while it is listed.
+  # The fake GitHub: pull request #1 of acme/api open at head commit `head`, listed
+  # unless `listed: false`; `list` runs while it is listed.
   defp rules!(context, opts) do
     pr = %{
       "number" => 1,
@@ -286,12 +318,35 @@ defmodule HalC2.CodeReviewTest do
       "deletions" => 0
     }
 
-    list = %{"args" => ["pr list", "--repo github.com/acme/api"], "stdout" => [pr]}
+    listing = if opts[:listed] == false, do: [], else: [pr]
+    list = %{"args" => ["pr list", "--repo github.com/acme/api"], "stdout" => listing}
     list = if opts[:list], do: Map.put(list, "run", opts[:list]), else: list
 
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       list,
+      # Pull request #1 read on its own, as asking for its review reads it.
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["viewerCanUpdateBranch"],
+        "stdout" => %{
+          "data" => %{
+            "repository" => %{
+              "viewerPermission" => "WRITE",
+              "pullRequest" =>
+                Map.merge(pr, %{
+                  "body" => "",
+                  "changedFiles" => 1,
+                  "isCrossRepository" => false,
+                  "baseRef" => %{"compare" => %{"behindBy" => 0}},
+                  "labels" => %{"nodes" => []},
+                  "reviewRequests" => %{"nodes" => []},
+                  "commits" => %{"nodes" => []}
+                })
+            }
+          }
+        }
+      },
       %{
         "args" => ["api graphql"],
         "stdin" => ["viewerCanUpdate viewerDidAuthor }"],
