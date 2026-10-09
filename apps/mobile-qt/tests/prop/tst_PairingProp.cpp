@@ -457,7 +457,7 @@ struct Release : Command {
     } else {
       at.answer(waiting.socket, waiting.token);
     }
-    RC_ASSERT(finished.wait(5000));
+    RC_ASSERT(finished.wait(halc2::test::wait()));
     halc2::prop::settle();
     s.check(next);
   }

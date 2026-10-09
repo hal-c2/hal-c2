@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Run a Qt client's property tests under Valgrind Memcheck (invalid accesses, uninitialised reads, leaks)"
+#MISE dir="{{config_root}}"
+#USAGE arg "[surface]" help="desktop or mobile" default="desktop" {
+#USAGE   choices "desktop" "mobile"
+#USAGE }
+#USAGE arg "[name]" var=#true help="Test names to run, e.g. SidebarProp; every property and regression when none. RC_PARAMS defaults to max_success=20, VALGRIND_JOBS to 4"
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
+command -v valgrind >/dev/null || { echo "prop:valgrind: valgrind is not installed (pacman -S valgrind, apt install valgrind, brew install valgrind)" >&2; exit 1; }
+# CMAKE_TEST_LAUNCHER, which puts memcheck.sh in front of every test, is CMake 3.29's;
+# an older CMake ignores it and the tests would pass without Memcheck ever running.
+cmake_version=$(cmake --version | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')
+[[ $(printf '%s\n' 3.29 "$cmake_version" | sort -V | head -n1) == 3.29 ]] ||
+  { echo "prop:valgrind: CMake $cmake_version is older than 3.29, which would run the tests without Memcheck" >&2; exit 1; }
+surface=${usage_surface:-desktop}
+names=(${usage_name:-})
+app=apps/$surface-qt
+build=$app/build/prop-valgrind
+tools=$PWD/apps/desktop-qt/tests/valgrind
+if [[ ! -f $build/CMakeCache.txt ]]; then
+  # QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's (or qmake's) on PATH, then Homebrew's.
+  qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || qmake -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+  # -O1 keeps Memcheck's reports exact; the launcher wraps every ctest command, so the
+  # valgrind flags (memcheck.sh) change without a reconfigure.
+  cmake -S "$app/tests/prop" -B "$build" -DCMAKE_BUILD_TYPE=None \
+    "-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer" "-DCMAKE_TEST_LAUNCHER=$tools/memcheck.sh" \
+    ${qt:+"-DCMAKE_PREFIX_PATH=$qt"}
+fi
+cmake --build "$build" --parallel
+filter=()
+((${#names[@]} == 0)) || filter=(-R "^($(IFS='|'; echo "${names[*]}"))\$")
+export RC_PARAMS=${RC_PARAMS:-max_success=20}
+export HAL_C2_VALGRIND_LOGS=$PWD/$build/valgrind
+rm -rf "$HAL_C2_VALGRIND_LOGS"
+echo "prop:valgrind: $surface, RC_PARAMS=$RC_PARAMS, logs in $HAL_C2_VALGRIND_LOGS"
+exec ctest --test-dir "$build" --output-on-failure --timeout "${VALGRIND_TIMEOUT:-1800}" -j "${VALGRIND_JOBS:-4}" "${filter[@]}"

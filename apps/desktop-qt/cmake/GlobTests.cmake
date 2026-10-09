@@ -1,12 +1,13 @@
 # Adds one test per file matching PATTERN in DIRECTORY (default: the calling
 # directory), picked up on the next build, named after the file without its
 # `tst_` and labelled LABEL. Sources one needs beyond what LIBRARIES bring go in
-# <file name>.sources beside it, one per line, relative to that directory.
+# <file name>.sources beside it, one per line, relative to that directory;
+# SOURCES go into every one.
 #
-#   hal_c2_add_glob_tests(PATTERN tst_*Prop.cpp LABEL prop
-#                         [DIRECTORY <dir>] INCLUDES <dirs>... LIBRARIES <targets>...)
+#   hal_c2_add_glob_tests(PATTERN tst_*Prop.cpp LABEL prop [DIRECTORY <dir>]
+#                         [SOURCES <files>...] INCLUDES <dirs>... LIBRARIES <targets>...)
 function(hal_c2_add_glob_tests)
-  cmake_parse_arguments(PARSE_ARGV 0 arg "" "DIRECTORY;PATTERN;LABEL" "INCLUDES;LIBRARIES")
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "DIRECTORY;PATTERN;LABEL" "SOURCES;INCLUDES;LIBRARIES")
   set(_dir "${CMAKE_CURRENT_SOURCE_DIR}")
   if(arg_DIRECTORY)
     get_filename_component(_dir "${arg_DIRECTORY}" ABSOLUTE)
@@ -24,7 +25,7 @@ function(hal_c2_add_glob_tests)
         list(APPEND _extra "${_dir}/${_line}")
       endforeach()
     endif()
-    add_executable(${_name} "${_file}" ${_extra})
+    add_executable(${_name} "${_file}" ${_extra} ${arg_SOURCES})
     target_include_directories(${_name} PRIVATE "${_dir}" ${arg_INCLUDES})
     target_link_libraries(${_name} PRIVATE ${arg_LIBRARIES} Qt6::Test)
     add_test(NAME ${_test} COMMAND ${_name})

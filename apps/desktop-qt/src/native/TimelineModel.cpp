@@ -10,6 +10,7 @@
 #include <optional>
 #include <utility>
 
+#include "JsonNumbers.h"
 #include "SidebarModel.h"
 #include "TimelineSummary.h"
 
@@ -128,6 +129,18 @@ std::optional<QJsonObject> patched(const QJsonObject& entity, const QJsonObject&
     next.insert(it.key(), next.value(it.key()).toString() + it.value().toString());
   }
   return next;
+}
+
+// The row id of the turn item keyed `key`: the key itself (the MC's all
+// start "turn-item:"), or "item:" and the key when it reads like the ids made
+// up for a turn's fold or a group of calls (or this escape), so no two rows
+// share one.
+QString itemRowId(const QString& key) {
+  static const QLatin1String reserved[]{QLatin1String("fold:"), QLatin1String("work:"), QLatin1String("item:")};
+  for (const QLatin1String prefix : reserved) {
+    if (key.startsWith(prefix)) return QStringLiteral("item:") + key;
+  }
+  return key;
 }
 
 // apps/tui/src/timeline.ts formatDuration.
@@ -386,8 +399,9 @@ void TimelineModel::receive(const QJsonObject& frame) {
     // The MC dropped events it could not send: the resubscription that
     // follows continues from the offset it names, never from an earlier one.
     const QJsonValue offset = frame.value(QLatin1String("offset"));
-    if (offset.isDouble() && m_cursor.offset >= 0 && qint64(offset.toDouble()) > m_cursor.offset) {
-      m_cursor.offset = qint64(offset.toDouble());
+    const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+    if (reached && m_cursor.offset >= 0 && *reached > m_cursor.offset) {
+      m_cursor.offset = *reached;
       m_cursorDirty = true;
     }
   }
@@ -409,8 +423,8 @@ void TimelineModel::snapshot(const QJsonObject& frame) {
   const QJsonValue offset = frame.value(QLatin1String("offset"));
   const QJsonValue floor = frame.value(QLatin1String("floor"));
   m_cursor.handle = frame.value(QLatin1String("handle")).toString();
-  m_cursor.offset = offset.isDouble() ? qint64(offset.toDouble()) : 0;
-  m_cursor.floor = floor.isDouble() ? std::optional<qint64>(qint64(floor.toDouble())) : std::nullopt;
+  m_cursor.offset = jsonnumbers::integerOf(offset).value_or(0);
+  m_cursor.floor = jsonnumbers::integerOf(floor);
   everythingChanged(changedSince(before));
   if (hasEarlier() != hadEarlier) emit earlierChanged();
   m_dirtyAll = true;
@@ -444,7 +458,7 @@ void TimelineModel::everythingChanged(const QSet<QString>& changed) {
 
 void TimelineModel::eventsFrame(const QJsonObject& frame) {
   const QJsonValue offset = frame.value(QLatin1String("offset"));
-  const qint64 reached = offset.isDouble() ? qint64(offset.toDouble()) : -1;
+  const qint64 reached = jsonnumbers::integerOf(offset).value_or(-1);
   // A catch-up that takes several frames is one set of merged changes: its
   // parts carry the offset the client is at, the last one the offset they
   // bring it to. Applied part-way and cut off, it would be applied again.
@@ -473,8 +487,9 @@ void TimelineModel::live(const QJsonObject& frame) {
   m_catchingUp = false;
   if (!m_catchUp.isEmpty()) events(caughtUp());
   const QJsonValue offset = frame.value(QLatin1String("offset"));
-  if (m_cursor.offset >= 0 && offset.isDouble() && qint64(offset.toDouble()) > m_cursor.offset) {
-    m_cursor.offset = qint64(offset.toDouble());
+  const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+  if (m_cursor.offset >= 0 && reached && *reached > m_cursor.offset) {
+    m_cursor.offset = *reached;
     m_cursorDirty = true;
   }
   // An MC that names its log now did not when the copy was taken: the copy
@@ -503,8 +518,9 @@ void TimelineModel::page(const QJsonObject& frame) {
   }
   const QJsonValue offset = frame.value(QLatin1String("offset"));
   const QJsonValue floor = frame.value(QLatin1String("floor"));
-  if (offset.isDouble() && qint64(offset.toDouble()) > m_cursor.offset) m_cursor.offset = qint64(offset.toDouble());
-  m_cursor.floor = floor.isDouble() ? std::optional<qint64>(qint64(floor.toDouble())) : std::nullopt;
+  const std::optional<qint64> reached = jsonnumbers::integerOf(offset);
+  if (reached && *reached > m_cursor.offset) m_cursor.offset = *reached;
+  m_cursor.floor = jsonnumbers::integerOf(floor);
   m_cursorDirty = true;
   m_loadingEarlier = false;
   // The earlier turns' rows go in above; the ones held keep their place.
@@ -529,7 +545,7 @@ cache::Entity TimelineModel::cached(const QString& kind, const QString& id, cons
   cache::Entity entity{kind, id, fields, std::nullopt};
   if (!kWindowed.contains(kind)) return entity;
   const QJsonObject run = this->entity(QStringLiteral("run"), text(fields, QLatin1String("runId")));
-  if (!run.isEmpty()) entity.run = qint64(run.value(QLatin1String("ordinal")).toDouble());
+  if (!run.isEmpty()) entity.run = run.value(QLatin1String("ordinal")).toInteger();
   return entity;
 }
 
@@ -584,7 +600,7 @@ void TimelineModel::park() {
   QList<QPair<qint64, QString>> runs;
   const QHash<QString, QJsonObject> held = m_entities.value(QStringLiteral("run"));
   for (auto it = held.cbegin(); it != held.cend(); ++it) {
-    const qint64 ordinal = qint64(it->value(QLatin1String("ordinal")).toDouble());
+    const qint64 ordinal = it->value(QLatin1String("ordinal")).toInteger();
     if (text(*it, QLatin1String("status")) == QLatin1String("rolled_back")) continue;
     if (m_cursor.floor && ordinal < *m_cursor.floor) continue;
     runs.append({ordinal, it.key()});
@@ -611,7 +627,8 @@ void TimelineModel::events(const QJsonArray& events) {
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     // An event the copy already holds (a frame sent again on a reconnect) would append its text twice.
-    if (m_cursor.offset >= 0 && event.at(0).isDouble() && qint64(event.at(0).toDouble()) <= m_cursor.offset) continue;
+    const std::optional<qint64> at = jsonnumbers::integerOf(event.at(0));
+    if (m_cursor.offset >= 0 && at && *at <= m_cursor.offset) continue;
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
@@ -828,7 +845,10 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     bool streaming = false;
     QDateTime boundary;
   };
+  // The items shown and their keys in the stream, which name them; their own
+  // `id` fields need not be there, nor differ.
   QList<QJsonObject> shown;
+  QStringList shownIds;
   QHash<QString, Turn> turns;
   QList<QString> turnOrder;
   QDateTime boundary;
@@ -836,6 +856,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     const QJsonObject item = items.value(id);
     if (!visible(item)) continue;
     shown.append(item);
+    shownIds.append(id);
     const QString type = text(item, QLatin1String("type"));
     if (type == QLatin1String("user_message")) {
       boundary = timeOf(item.value(QLatin1String("startedAt")));
@@ -917,7 +938,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   QList<Row> rows;
   for (qsizetype i = 0; i < shown.size();) {
     const QJsonObject& item = shown.at(i);
-    const QString id = text(item, QLatin1String("id"));
+    const QString& id = shownIds.at(i);
     if (const auto fold = foldAt.constFind(id); fold != foldAt.cend()) {
       rows.append({QStringLiteral("fold:") + fold->runId, QStringLiteral("fold"), {}, {}, fold->label, fold->hidden,
                    fold->open, fold->at});
@@ -934,7 +955,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       qsizetype next = i;
       for (; next < shown.size(); ++next) {
         const QJsonObject& call = shown.at(next);
-        const QString callId = text(call, QLatin1String("id"));
+        const QString& callId = shownIds.at(next);
         if (next > i && foldAt.contains(callId)) break;
         const Kind callKind = classify(text(call, QLatin1String("type")));
         if (callKind == Kind::Checkpoint) continue;
@@ -947,7 +968,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       i = next;
       continue;
     }
-    Row row{id, kindName(kind), {id}};
+    Row row{itemRowId(id), kindName(kind), {id}};
     if (kind == Kind::Message && !runId.isEmpty() && turns.value(runId).terminal == id) {
       const Turn& turn = turns[runId];
       row.checkpoint = turn.checkpoint;
@@ -993,9 +1014,18 @@ void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& chang
       i = last + 1;
       continue;
     }
-    if (m_rows.at(i).id != want.id) {
+    if (i >= m_rows.size() || m_rows.at(i).id != want.id) {
+      // Row ids are unique (project), so it is further down; were they not,
+      // it is drawn again in place rather than looked for past the end.
       qsizetype from = i + 1;
-      while (m_rows.at(from).id != want.id) ++from;
+      while (from < m_rows.size() && m_rows.at(from).id != want.id) ++from;
+      if (from >= m_rows.size()) {
+        beginInsertRows(QModelIndex(), int(i), int(i));
+        m_rows.insert(i, want);
+        endInsertRows();
+        ++i;
+        continue;
+      }
       beginMoveRows(QModelIndex(), int(from), int(from), QModelIndex(), int(i));
       m_rows.move(from, i);
       endMoveRows();
@@ -1005,6 +1035,12 @@ void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& chang
       emit dataChanged(index(int(i)), index(int(i)));
     }
     ++i;
+  }
+  // Only rows drawn twice, were ids not unique, are left past the end.
+  if (m_rows.size() > rows.size()) {
+    beginRemoveRows(QModelIndex(), int(rows.size()), int(m_rows.size() - 1));
+    m_rows.resize(rows.size());
+    endRemoveRows();
   }
   if (m_rows.size() != before) emit countChanged();
 }
@@ -1178,12 +1214,12 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
 }
 
 // One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts itemSummary).
-QVariantMap TimelineModel::entry(const QJsonObject& item) const {
+QVariantMap TimelineModel::entry(const QString& id, const QJsonObject& item) const {
   const QString type = text(item, QLatin1String("type"));
   const QString status = text(item, QLatin1String("status"));
   const QString title = text(item, QLatin1String("title")).trimmed();
   QVariantMap entry{
-      {QStringLiteral("id"), text(item, QLatin1String("id"))},
+      {QStringLiteral("id"), id},
       {QStringLiteral("type"), type},
       {QStringLiteral("status"), status},
       {QStringLiteral("statusLabel"), callStatusLabel(status)},
@@ -1287,7 +1323,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == EntriesRole) {
       QVariantList entries;
       const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - shown);
-      for (qsizetype i = first; i < row.items.size(); ++i) entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i))));
+      for (qsizetype i = first; i < row.items.size(); ++i) entries.append(entry(row.items.at(i), entity(QStringLiteral("turn-item"), row.items.at(i))));
       return entries;
     }
     if (role == SummaryRole || role == SummaryFailedRole) {

@@ -16,6 +16,17 @@ QString nameOf(const QString& path) {
   return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
 }
 
+// Whether `path` is an entry directly in `folder` ("" the top) as the MC lists
+// it: the folder's path, a slash and a name. Keeping only these makes every
+// child's path longer than its folder's, so walking down the tree ends; the
+// folder itself, one above it or elsewhere, "." or ".." would make it a cycle.
+bool isChildOf(const QString& folder, const QString& path) {
+  const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+  const QStringView name = QStringView(path).mid(slash + 1);
+  if (name.isEmpty() || name == u"." || name == u"..") return false;
+  return folder.isEmpty() ? slash < 0 : slash == folder.size() && path.startsWith(folder);
+}
+
 // Folders first, then by name as people read it.
 void sortEntries(QList<FileTreeModel::Entry>& entries) {
   std::sort(entries.begin(), entries.end(), [](const FileTreeModel::Entry& a, const FileTreeModel::Entry& b) {
@@ -131,6 +142,7 @@ void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entrie
   entry.state = State::Loaded;
   entry.problem.clear();
   entry.children = entries;
+  entry.children.removeIf([&folder](const Entry& child) { return !isChildOf(folder, child.path); });
   sortEntries(entry.children);
   settle(folder);
   if (m_expandAll) expandUnder(folder);
@@ -158,9 +170,10 @@ void FileTreeModel::setSearch(const std::optional<QList<Entry>>& matches) {
     root.expanded = true;
     QSet<QString> listed;
     const auto add = [&](const Entry& entry) {
-      if (listed.contains(entry.path)) return;
+      const QString folder = parentOf(entry.path);
+      if (listed.contains(entry.path) || !isChildOf(folder, entry.path)) return;
       listed.insert(entry.path);
-      m_search[parentOf(entry.path)].children.append(entry);
+      m_search[folder].children.append(entry);
     };
     for (const Entry& match : *matches) {
       // Its folders, so the match shows where it lives.

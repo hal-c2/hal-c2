@@ -165,9 +165,13 @@ export function getLatestThreadForProject<
 // never touched, and every client connected to the same servers converges
 // on the same order.
 const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
+// The longest key the MC stores (apps/server-ex/lib/hal_c2/orchestration.ex).
+// A move that would need a longer one rewrites the section instead.
+const PIN_ORDER_KEY_MAX_LENGTH = 64;
 
-function isValidPinOrderKey(key: string): boolean {
-  if (key.length === 0) return false;
+/** Whether the MC stores `key`: 1–64 letters a–z, not ending in "a". */
+export function isValidPinOrderKey(key: string): boolean {
+  if (key.length === 0 || key.length > PIN_ORDER_KEY_MAX_LENGTH) return false;
   for (const char of key) {
     if (!PIN_ORDER_DIGITS.includes(char)) return false;
   }
@@ -200,15 +204,17 @@ function pinOrderMidpoint(a: string, b: string): string {
 
 /** Key that sorts strictly between two neighbors; null bounds mean "top of
     the pinned block" / "bottom of the keyed run". Returns null instead of
-    throwing when existing keys are corrupt or out of order — callers fall
-    back to rewriting the section. */
+    throwing when existing keys are corrupt or out of order, or when the key
+    would outgrow PIN_ORDER_KEY_MAX_LENGTH — callers fall back to rewriting
+    the section. */
 export function pinOrderKeyBetween(before: string | null, after: string | null): string | null {
   const a = before ?? "";
   const b = after ?? "";
   if (a !== "" && !isValidPinOrderKey(a)) return null;
   if (b !== "" && !isValidPinOrderKey(b)) return null;
   if (b !== "" && a >= b) return null;
-  return pinOrderMidpoint(a, b);
+  const key = pinOrderMidpoint(a, b);
+  return key.length > PIN_ORDER_KEY_MAX_LENGTH ? null : key;
 }
 
 /** Evenly spaced keys for materializing an order. Wider keys keep a large
@@ -262,8 +268,9 @@ export function planPinnedReorder(input: {
   const afterId = movedIndex < orderedIds.length - 1 ? orderedIds[movedIndex + 1] : null;
   const beforeKey = beforeId != null ? (keysById.get(beforeId) ?? null) : null;
   const afterKey = afterId != null ? (keysById.get(afterId) ?? null) : null;
-  const beforeUsable = beforeId === null || beforeKey != null;
-  const afterUsable = afterId === null || afterKey != null;
+  // A corrupt key (such as a historical "") bounds nothing: rewrite instead.
+  const beforeUsable = beforeId === null || (beforeKey != null && isValidPinOrderKey(beforeKey));
+  const afterUsable = afterId === null || (afterKey != null && isValidPinOrderKey(afterKey));
   if (beforeUsable && afterUsable) {
     let key = pinOrderKeyBetween(beforeKey, afterKey);
     while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
@@ -273,10 +280,44 @@ export function planPinnedReorder(input: {
   const keys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
     .filter((key) => !reservedKeys.has(key))
     .slice(0, orderedIds.length);
-  return orderedIds.flatMap((id, index) => {
+  const writes = orderedIds.flatMap((id, index) => {
     const key = keys[index]!;
     return keysById.get(id) === key ? [] : [{ id, orderKey: key }];
   });
+  // The writes are separate commands, any of which can fail. Sent in this
+  // order, every prefix keeps the other rows in their current order: rows
+  // whose key grows go first, from the last; then rows whose key shrinks (or
+  // that gain one), from the first; the moved row goes last.
+  const grows = (write: { id: string; orderKey: string }) => {
+    const key = keysById.get(write.id);
+    return key != null && write.orderKey > key;
+  };
+  const others = writes.filter((write) => write.id !== movedId);
+  return [
+    ...others.filter(grows).reverse(),
+    ...others.filter((write) => !grows(write)),
+    ...writes.filter((write) => write.id === movedId),
+  ];
+}
+
+/**
+ * Writes that pin `pinnedId` at the top of the arranged run: its own key when
+ * one fits above the first arranged pin, or, once that space is used up (or a
+ * key is corrupt), the run rewritten with `pinnedId` first. `keysById` holds
+ * the arranged pins' keys under the caller's ids (scoped keys when the run
+ * spans environments); keyless pins keep their place below the run.
+ */
+export function planPinToTop(
+  pinnedId: string,
+  keysById: ReadonlyMap<string, string>,
+): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
+  const arranged = [...keysById]
+    .filter(([id]) => id !== pinnedId)
+    .sort(([leftId, left], [rightId, right]) =>
+      left !== right ? (left < right ? -1 : 1) : leftId < rightId ? -1 : leftId > rightId ? 1 : 0,
+    )
+    .map(([id]) => id);
+  return planPinnedReorder({ orderedIds: [pinnedId, ...arranged], keysById, movedId: pinnedId });
 }
 
 /**

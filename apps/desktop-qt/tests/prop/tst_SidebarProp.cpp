@@ -645,6 +645,8 @@ struct Sut {
   Environments away;
   int now = 0;
   int sidebarChanges = 0;
+  // Names given to members announced again (Rename).
+  int renames = 0;
   std::unique_ptr<ShellBridge> bridge;
   std::unique_ptr<NativeShell> native;
 
@@ -772,7 +774,19 @@ struct Sut {
     if (!(truth == model.environments)) {
       RC_FAIL("the MC holds" + rc::toString(truth) + "\nthe model" + rc::toString(model.environments));
     }
+    // A thread's key names one row: the store lists each once, and so does the sidebar.
+    std::set<QString> keys;
+    for (const sidebar::Thread& thread : native->store()->threads()) {
+      if (!keys.insert(thread.key()).second) RC_FAIL("the store lists " + thread.key().toStdString() + " twice");
+    }
     if (!model.connected) return;
+    std::set<QString> shown;
+    for (const char* section : {"pinned", "active", "snoozed", "settled"}) {
+      for (const QVariant& row : state().value(QLatin1String(section)).toList()) {
+        const QString key = row.toMap().value(QStringLiteral("key")).toString();
+        if (!shown.insert(key).second) RC_FAIL("the sidebar shows " + key.toStdString() + " twice");
+      }
+    }
     const Projection actual = read(state());
     const Projection want = expected(model);
     if (!(actual == want)) RC_FAIL("the sidebar shows" + rc::toString(actual) + "\nthe model" + rc::toString(want));
@@ -1079,6 +1093,49 @@ struct Membership : Command {
     sut.expect(next);
   }
   void show(std::ostream& os) const override { os << "Membership(" << environment << ")"; }
+};
+
+// A member is announced under another name, as an MC is once it becomes
+// distributed: the same machine, and the client lets the former name go.
+struct Rename : Command {
+  std::string environment = *rc::gen::elementOf(kPeers);
+
+  explicit Rename(const Model&) {}
+
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.environments.count(environment) > 0); }
+  void apply(Model&) const override {}
+  void run(const Model& model, Sut& sut) const override {
+    sut.mc.join(QStringLiteral("mc-%1-%2").arg(q(environment)).arg(++sut.renames), q(environment));
+    sut.expect(model);
+  }
+  void show(std::ostream& os) const override { os << "Rename(" << environment << ")"; }
+};
+
+// The MC sends frames that name no MC: a listed thread's row retitled, its
+// environment's descriptor, and that it went offline. They are no member's,
+// and change nothing.
+struct Nameless : Command {
+  std::string key;
+
+  explicit Nameless(const Model& model) : key(genLivingKey(model)) {}
+
+  void checkPreconditions(const Model& model) const override {
+    RC_PRE(model.connected);
+    RC_PRE(livingKey(model.environments, key));
+  }
+  void apply(Model&) const override {}
+  void run(const Model& model, Sut& sut) const override {
+    const auto [environment, id] = split(key);
+    Row row = *rowAt(sut.truth, environment, id);
+    row.title = (row.title + 1) % int(kTitles.size());
+    sut.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.rows")},
+                      {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{q(id), QStringLiteral("thread"), threadJson(id, row, sut.now)})}}});
+    sut.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                      {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), q(environment)}}}});
+    sut.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("online"), false}});
+    sut.expect(model);
+  }
+  void show(std::ostream& os) const override { os << "Nameless(" << key << ")"; }
 };
 
 // The clock moves on: snoozes run out and wake labels count down. Standing
@@ -1621,7 +1678,7 @@ Model modelOf(const History& history) {
 
 // --- planReorder's law -------------------------------------------------------
 
-// A section of `count` rows as the list shows it, the first `keyed` with order
+// A section of `count` rows as the list shows it, `keyed` of them with order
 // keys; rows the scope hides hold `hidden` keys of their own.
 struct Section {
   QStringList shown;
@@ -1633,6 +1690,27 @@ std::string genOrderKey() {
   std::string key;
   for (int i = 0; i < length; ++i) key += char('a' + *rc::gen::inRange(i + 1 == length ? 1 : 0, 26));
   return key;
+}
+
+// A key the MC kept before it checked them, which no client writes: empty,
+// not base-26 letters, ending in "a", or longer than the longest.
+QString genCorruptKey() {
+  return *rc::gen::element(QString(), QStringLiteral("F"), QStringLiteral("\u00df"), QStringLiteral("ma"),
+                           QString(sidebar::kMaxOrderKeyLength + 1, QLatin1Char('m')));
+}
+
+// The rows in the order their section sorts them: pinned rows keyed first,
+// active ones unkeyed first; keyed ones by key as text, the others as `rows` has them.
+QStringList sortSection(QStringList rows, const QHash<QString, sidebar::Nullable>& keys, bool pinned) {
+  const QStringList given = rows;
+  std::stable_sort(rows.begin(), rows.end(), [&](const QString& left, const QString& right) {
+    const sidebar::Nullable& l = keys.value(left);
+    const sidebar::Nullable& r = keys.value(right);
+    if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
+    if (l) return *l < *r;
+    return given.indexOf(left) < given.indexOf(right);
+  });
+  return rows;
 }
 
 }  // namespace
@@ -1649,7 +1727,7 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.5, rc::state::gen::commands(initial, rc::state::gen::execOneOfWithArgs<
                                                      CreateThread, CreateThread, CreateThread, ChangeThread, ChangeProject, MoveThread,
-                                                     MoveThread, SetOnline, Membership, Tick, Resend, Disconnect, Reconnect, RowAction,
+                                                     MoveThread, SetOnline, Membership, Rename, Nameless, Tick, Resend, Disconnect, Reconnect, RowAction,
                                                      RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, Hold>()));
       rc::state::runAll(commands, initial, sut);
     }));
@@ -1672,20 +1750,24 @@ private slots:
       const int count = *rc::gen::inRange(1, 7);
       const int keyed = *rc::gen::inRange(0, count + 1);
       // As the section sorts: pinned rows keyed first, active ones unkeyed first.
+      // Some keys are ones no client writes: the section sorts them as text all the same.
       const QStringList spread = sidebar::spreadOrderKeys(keyed);
+      const auto storedKey = [](const QString& key) { return *rc::gen::inRange(0, 4) == 0 ? genCorruptKey() : key; };
       Section section;
-      for (int i = 0; i < count; ++i) section.shown.append(QStringLiteral("e:r%1").arg(i));
+      QStringList rows;
+      for (int i = 0; i < count; ++i) rows.append(QStringLiteral("e:r%1").arg(i));
       for (int i = 0; i < count; ++i) {
         const int slot = pinned ? i : i - (count - keyed);
-        section.orderKeys.insert(section.shown.at(i), slot >= 0 && slot < keyed ? sidebar::Nullable(spread.at(slot)) : std::nullopt);
+        section.orderKeys.insert(rows.at(i), slot >= 0 && slot < keyed ? sidebar::Nullable(storedKey(spread.at(slot))) : std::nullopt);
       }
+      section.shown = sortSection(rows, section.orderKeys, pinned);
       QSet<QString> used;
       for (const auto& key : std::as_const(section.orderKeys)) {
         if (key) used.insert(*key);
       }
       const int hidden = *rc::gen::inRange(0, 4);
       for (int i = 0; i < hidden; ++i) {
-        const QString key = q(genOrderKey());
+        const QString key = storedKey(q(genOrderKey()));
         RC_PRE(!used.contains(key));
         used.insert(key);
         section.orderKeys.insert(QStringLiteral("e:h%1").arg(i), key);
@@ -1704,22 +1786,15 @@ private slots:
         assigned.insert(assignment.key);
         after.insert(assignment.key, assignment.orderKey);
       }
-      // No two rows share a key.
-      QSet<QString> keys;
-      for (auto it = after.cbegin(); it != after.cend(); ++it) {
-        if (!it.value()) continue;
-        RC_ASSERT(!keys.contains(*it.value()));
-        keys.insert(*it.value());
+      // A written key is one a client can store, and no other row holds it.
+      for (const QString& written : std::as_const(assigned)) {
+        RC_ASSERT(sidebar::validOrderKey(*after.value(written)));
+        for (auto it = after.cbegin(); it != after.cend(); ++it) {
+          RC_ASSERT(it.key() == written || it.value() != after.value(written));
+        }
       }
       // Unkeyed rows keep their relative order (they sort by age), keyed ones by key.
-      QStringList sorted = section.shown;
-      std::stable_sort(sorted.begin(), sorted.end(), [&](const QString& left, const QString& right) {
-        const sidebar::Nullable& l = after.value(left);
-        const sidebar::Nullable& r = after.value(right);
-        if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
-        if (l) return *l < *r;
-        return section.shown.indexOf(left) < section.shown.indexOf(right);
-      });
+      const QStringList sorted = sortSection(section.shown, after, pinned);
       if (sorted != ordered) {
         RC_FAIL("ordered " + ordered.join(QLatin1Char(',')).toStdString() + ", sorts as " + sorted.join(QLatin1Char(',')).toStdString());
       }

@@ -109,7 +109,12 @@ signals:
 
 private:
   void onFrame(const QJsonObject& frame);
+  // The MC's descriptor; another name the environment was served by goes.
   void setEnvironment(const QString& mc, const QJsonObject& environment);
+  // The rows of `former`, the machine's former name, for `mc` while it holds
+  // none: they are the machine's until the new name sends its own (whole, as
+  // a name the MC never held is sent), so nothing listed blinks out between.
+  void takeRows(const QString& mc, const QString& former);
   void putRows(const QString& mc, const QJsonArray& rows);
   void putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields);
   // The MC's rows as of `epoch` and `rev` (a frame's); none when it gave no version.

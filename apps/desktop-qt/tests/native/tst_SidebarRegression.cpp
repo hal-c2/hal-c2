@@ -12,6 +12,7 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -55,13 +56,19 @@ struct Shell {
   void send(const QString& id, const QJsonObject& row) {
     mc.threads.insert(id, row);
     mc.sendRow(id, row);
-    QTRY_VERIFY(native->store()->threadRow(key(id)) == row);
+    HAL_C2_TRY_VERIFY(native->store()->threadRow(key(id)) == row);
   }
 
   FakeMc mc;
   ShellBridge bridge;
   std::unique_ptr<NativeShell> native;
 };
+
+// How many times the store lists the thread at `key`.
+int listed(const ShellStore& store, const QString& key) {
+  const QList<sidebar::Thread> threads = store.threads();
+  return int(std::count_if(threads.begin(), threads.end(), [&key](const sidebar::Thread& thread) { return thread.key() == key; }));
+}
 
 }  // namespace
 
@@ -94,13 +101,46 @@ private slots:
     QCOMPARE(order({peer, own}), expected);
   }
 
+  // A drag writes keys that sort the section as dropped, whatever the
+  // neighbours hold: the MC kept a client's key unchecked, and an empty one
+  // read as the section's edge while it sorts first (tst_SidebarOrderFuzz).
+  void aDragPastACorruptKeyKeepsTheOrder() {
+    const QString longKey(100000, QLatin1Char('z'));
+    const QList<std::pair<QString, QString>> corrupt{
+        {QString(), QStringLiteral("n")},
+        {QStringLiteral("\u00df"), QStringLiteral("F")},
+        {longKey, QStringLiteral("n")},
+    };
+    for (const auto& [first, second] : corrupt) {
+      const QHash<QString, sidebar::Nullable> keys{{QStringLiteral("t0"), first}, {QStringLiteral("t1"), second}};
+      const QStringList ordered{QStringLiteral("t1"), QStringLiteral("t0")};
+      QHash<QString, sidebar::Nullable> after = keys;
+      for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(ordered, keys, QStringLiteral("t1"))) {
+        after.insert(assignment.key, assignment.orderKey);
+      }
+      QVERIFY2(*after.value(QStringLiteral("t1")) < *after.value(QStringLiteral("t0")), qPrintable(first.left(8) + QLatin1Char('/') + second));
+    }
+  }
+
+  // A key next to a very long one is found without a walk per letter, and a
+  // key no client can store is no bound.
+  void aKeyBesideALongOneIsQuick() {
+    const QString longKey(100000, QLatin1Char('z'));
+    QCOMPARE(sidebar::orderKeyBetween(longKey, std::nullopt), sidebar::Nullable());
+    QCOMPARE(sidebar::orderKeyBetween(std::nullopt, longKey), sidebar::Nullable());
+    const QString longest(sidebar::kMaxOrderKeyLength, QLatin1Char('z'));
+    QCOMPARE(sidebar::orderKeyBetween(longest, std::nullopt), sidebar::Nullable());
+    const sidebar::Nullable before = sidebar::orderKeyBetween(std::nullopt, longest);
+    QVERIFY(before && *before < longest && before->size() <= sidebar::kMaxOrderKeyLength);
+  }
+
   // A thread selected while archived, or archived while selected, is not
   // selected once it is back in the list.
   void anArchivedThreadComesBackUnselected() {
     QTemporaryDir home;
     Shell shell(home.path(), {QStringLiteral("t1")});
     const QString key = shell.key(QStringLiteral("t1"));
-    QTRY_VERIFY(shell.native->store()->thread(key).has_value());
+    HAL_C2_TRY_VERIFY(shell.native->store()->thread(key).has_value());
     QJsonObject archived = threadRow(QStringLiteral("t1"));
     archived.insert(QStringLiteral("archivedAt"), kAt);
     shell.send(QStringLiteral("t1"), archived);
@@ -112,12 +152,54 @@ private slots:
     QVERIFY(shell.native->sidebar()->selection().isEmpty());
   }
 
+  // A frame that names no MC is no member's: it once made a member of its own
+  // that took the environment's rows too, so the thread was listed twice
+  // (tst_ShellStoreFuzz).
+  void aFrameNamingNoMcChangesNothing() {
+    QTemporaryDir home;
+    Shell shell(home.path(), {});
+    shell.mc.join(QStringLiteral("b"));
+    shell.mc.sendPeerRow(QStringLiteral("b"), QStringLiteral("t3"), threadRow(QStringLiteral("t3")));
+    ShellStore* store = shell.native->store();
+    HAL_C2_TRY_VERIFY(store->thread(QStringLiteral("b:t3")).has_value());
+
+    shell.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.rows")},
+                        {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("t3"), QStringLiteral("thread"), threadRow(QStringLiteral("t3"))})}}});
+    shell.mc.sendShell({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                        {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("b")}}}});
+    // The frames come in order: once this row is in, so are they.
+    shell.send(QStringLiteral("t1"), threadRow(QStringLiteral("t1")));
+
+    QCOMPARE(listed(*store, QStringLiteral("b:t3")), 1);
+    QCOMPARE(store->mcServing(QStringLiteral("b")), QStringLiteral("mc-b"));
+  }
+
+  // A member announced under another name (an MC's node name changes when it
+  // becomes distributed) is the same machine: its former name goes, and its
+  // threads are listed once.
+  void aMemberUnderANewNameIsListedOnce() {
+    QTemporaryDir home;
+    Shell shell(home.path(), {});
+    shell.mc.join(QStringLiteral("b"));
+    shell.mc.sendPeerRow(QStringLiteral("b"), QStringLiteral("t3"), threadRow(QStringLiteral("t3")));
+    ShellStore* store = shell.native->store();
+    HAL_C2_TRY_VERIFY(store->thread(QStringLiteral("b:t3")).has_value());
+
+    shell.mc.join(QStringLiteral("mc-b2"), QStringLiteral("b"));
+    shell.send(QStringLiteral("t1"), threadRow(QStringLiteral("t1")));
+
+    QCOMPARE(listed(*store, QStringLiteral("b:t3")), 1);
+    QCOMPARE(store->mcServing(QStringLiteral("b")), QStringLiteral("mc-b2"));
+    QCOMPARE(store->environmentOf(QStringLiteral("mc-b")), QString());
+    QVERIFY(store->threadOnline(QStringLiteral("b:t3")));
+  }
+
   // Back does not open a thread deleted since the window left it.
   void backSkipsADeletedThread() {
     QTemporaryDir home;
     Shell shell(home.path(), {QStringLiteral("t1")});
     const QString key = shell.key(QStringLiteral("t1"));
-    QTRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
+    HAL_C2_TRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
     shell.bridge.dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     QCOMPARE(shell.route().threadKey, key);
     shell.bridge.dispatch(QStringLiteral("settings.open"), QVariantMap());
@@ -125,7 +207,7 @@ private slots:
 
     shell.mc.threads.remove(QStringLiteral("t1"));
     shell.mc.sendRow(QStringLiteral("t1"), {{QStringLiteral("id"), QStringLiteral("t1")}, {QStringLiteral("deletedAt"), kAt}});
-    QTRY_VERIFY(!shell.native->store()->thread(key));
+    HAL_C2_TRY_VERIFY(!shell.native->store()->thread(key));
     shell.navigation()->back();
 
     QCOMPARE(shell.route().kind, QStringLiteral("draft"));
@@ -136,7 +218,7 @@ private slots:
   void forwardSurvivesBackPastTheOldestPlace() {
     QTemporaryDir home;
     Shell shell(home.path(), {});
-    QTRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
+    HAL_C2_TRY_COMPARE(shell.route().kind, QStringLiteral("draft"));
     shell.bridge.dispatch(QStringLiteral("settings.open"), QVariantMap());
     shell.navigation()->back();
     QCOMPARE(shell.route().kind, QStringLiteral("draft"));

@@ -10,6 +10,7 @@
 #include "McClient.h"
 #include "ThreadDiff.h"
 #include "TimelineModel.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -39,7 +40,7 @@ struct Held {
     client.open(mc.origin(), QStringLiteral("token"));
   }
 
-  bool ready() { return QTest::qWaitFor([this] { return client.isReady(); }); }
+  bool ready() { return halc2::test::waitFor([this] { return client.isReady(); }); }
   bool asked(qsizetype count) { return sync() && calls.size() == count; }
   // Once this comes back, every call sent before it reached the MC and every
   // answer sent before it was read.
@@ -47,7 +48,7 @@ struct Held {
     bool done = false;
     QObject context;
     client.call(&context, {}, QStringLiteral("test.barrier"), {}, [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-    return QTest::qWaitFor([&done] { return done; });
+    return halc2::test::waitFor([&done] { return done; });
   }
   bool answer(qsizetype call, const QJsonObject& result) {
     mc.reply(calls.at(call), result);
@@ -99,6 +100,19 @@ private slots:
     QVERIFY(model.allExpanded());
     model.expandAll();
     QCOMPARE(expansion.count(), 1);
+  }
+
+  // excerpt returned early on first <= 0 before swapping a reversed range, so
+  // lines 1 to 0 read as line 1 while 0 to 1 read as nothing.
+  void anExcerptReadsTheSameEitherWayRound() {
+    DiffModel model;
+    model.setPatch(QStringLiteral("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n same\n-old\n+new\n"));
+    QCOMPARE(model.excerpt(0, QStringLiteral("new"), 3, 1), model.excerpt(0, QStringLiteral("new"), 1, 3));
+    QVERIFY(!model.excerpt(0, QStringLiteral("new"), 1, 3).isEmpty());
+    QCOMPARE(model.excerpt(0, QStringLiteral("new"), 1, 0), model.excerpt(0, QStringLiteral("new"), 0, 1));
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), 1, 0).isEmpty());
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), -2, 2).isEmpty());
+    QVERIFY(model.excerpt(0, QStringLiteral("new"), 2, -2).isEmpty());
   }
 
   // The latest turn's file summary came after its checkpoint was ready, and

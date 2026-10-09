@@ -2,7 +2,9 @@
 
 #include <QPainter>
 
+#include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 #include <qrcodegen.hpp>
 
@@ -11,7 +13,13 @@ namespace qr {
 Code encode(const QString& text) {
   if (text.isEmpty()) return {};
   try {
-    const qrcodegen::QrCode generated = qrcodegen::QrCode::encodeText(text.toUtf8().constData(), qrcodegen::QrCode::Ecc::MEDIUM);
+    const QByteArray utf8 = text.toUtf8();
+    const auto ecc = qrcodegen::QrCode::Ecc::MEDIUM;
+    // encodeText reads a C string, which ends at a NUL, so a text with one goes in as bytes.
+    const qrcodegen::QrCode generated =
+        utf8.contains('\0')
+            ? qrcodegen::QrCode::encodeSegments({qrcodegen::QrSegment::makeBytes(std::vector<std::uint8_t>(utf8.begin(), utf8.end()))}, ecc)
+            : qrcodegen::QrCode::encodeText(utf8.constData(), ecc);
     Code code;
     code.size = generated.getSize();
     code.modules.resize(code.size * code.size);

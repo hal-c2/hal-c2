@@ -12,6 +12,7 @@
 
 #include "CommandRegistry.h"
 #include "EnvironmentSettings.h"
+#include "JsonNumbers.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "MenuController.h"
@@ -67,7 +68,7 @@ int healthSeconds(const QJsonObject& settings) {
   const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
   const QJsonObject overrides = activity.value(QLatin1String("overrides")).toObject();
   if (activity.value(QLatin1String("profile")) == QLatin1String("custom") && overrides.value(kHealthKey).isDouble()) {
-    return int(overrides.value(kHealthKey).toDouble() / 1000);
+    return jsonnumbers::saturate<int>(overrides.value(kHealthKey).toDouble() / 1000);
   }
   return presetHealthSeconds(baseProfile(activity));
 }

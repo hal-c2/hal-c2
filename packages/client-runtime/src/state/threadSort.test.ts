@@ -8,6 +8,8 @@ import {
   pinOrderKeyBetween,
   planPinnedMove,
   planPinnedReorder,
+  planPinToTop,
+  isValidPinOrderKey,
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -199,8 +201,9 @@ describe("planPinnedReorder with hidden rows", () => {
       ...reserved.map((key, i) => [`hidden-${i}`, key] as const),
     ]);
     const assignments = planPinnedReorder({ orderedIds: ["c", "a", "b"], keysById, movedId: "c" });
-    expect(assignments.map(({ id }) => id)).toEqual(["c", "a", "b"]);
-    const keys = assignments.map(({ orderKey }) => orderKey);
+    const keyOf = new Map(assignments.map(({ id, orderKey }) => [id, orderKey]));
+    const keys = ["c", "a", "b"].map((id) => keyOf.get(id)!);
+    expect(assignments).toHaveLength(3);
     expect(keys).toEqual([...keys].sort());
     expect(new Set(keys).size).toBe(3);
     expect(keys.every((key) => !reserved.includes(key))).toBe(true);
@@ -248,7 +251,8 @@ describe("planPinnedMove", () => {
       direction: "up",
     });
     expect(assignments).not.toBeNull();
-    const keys = assignments!.map((entry) => entry.orderKey);
+    const keyOf = new Map(assignments!.map((entry) => [entry.id, entry.orderKey]));
+    const keys = ["b", "a", "c"].map((id) => keyOf.get(id)!);
     expect([...keys].sort()).toEqual(keys);
   });
 });
@@ -292,6 +296,136 @@ describe("generateSpreadPinOrderKeys", () => {
       }
     },
   );
+});
+
+describe("pinOrderKeyBetween key length", () => {
+  it("stops at the MC's 64 letters, and the planner rewrites the section", () => {
+    // Dropping a thread into the same gap again and again grows its key.
+    let after = "n";
+    let drops = 0;
+    for (;;) {
+      const key = pinOrderKeyBetween("m", after);
+      if (key === null) break;
+      expect(key.length).toBeLessThanOrEqual(64);
+      after = key;
+      drops += 1;
+    }
+    expect(drops).toBeGreaterThan(10);
+    expect(pinOrderKeyBetween("m", "b".repeat(65))).toBeNull();
+
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "moved", "b"],
+      keysById: new Map([
+        ["a", "m"],
+        ["b", after],
+      ]),
+      movedId: "moved",
+    });
+    expect(assignments.length).toBeGreaterThan(1);
+    for (const { orderKey } of assignments) expect(orderKey.length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("planPinnedReorder write order", () => {
+  // Effective order of `ids` once `writes` have landed: by key, keyless last.
+  const orderAfter = (
+    ids: readonly string[],
+    keys: ReadonlyMap<string, string | null>,
+    writes: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>,
+  ) => {
+    const effective = new Map(keys);
+    for (const { id, orderKey } of writes) effective.set(id, orderKey);
+    return [...ids].sort((left, right) => {
+      const a = effective.get(left) ?? null;
+      const b = effective.get(right) ?? null;
+      if (a === b) return left < right ? -1 : left > right ? 1 : 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a < b ? -1 : 1;
+    });
+  };
+
+  it("keeps the other rows in order after any failed write", () => {
+    const cases: Array<ReadonlyMap<string, string | null>> = [
+      new Map([
+        ["x", ""],
+        ["y", "n"],
+      ]),
+      new Map([
+        ["x", "a0"],
+        ["y", "b"],
+        ["z", "zz"],
+      ]),
+      new Map([
+        ["x", "aab"],
+        ["y", "aac"],
+        ["z", null],
+        ["w", "zzzb"],
+      ]),
+      new Map([
+        ["x", "c"],
+        ["y", null],
+        ["z", null],
+      ]),
+    ];
+    for (const keys of cases) {
+      const others = orderAfter([...keys.keys()], keys, []);
+      const writes = planPinnedReorder({
+        orderedIds: ["new", ...others],
+        keysById: keys,
+        movedId: "new",
+      });
+      expect(writes.at(-1)!.id).toBe("new");
+      for (let sent = 0; sent < writes.length; sent += 1) {
+        expect(orderAfter(others, keys, writes.slice(0, sent))).toEqual(others);
+      }
+      expect(orderAfter(["new", ...others], keys, writes)).toEqual(["new", ...others]);
+    }
+  });
+});
+
+describe("isValidPinOrderKey", () => {
+  it("refuses the historical and overlong keys the MC refuses", () => {
+    expect(isValidPinOrderKey("m")).toBe(true);
+    expect(isValidPinOrderKey("a0")).toBe(false);
+    expect(isValidPinOrderKey("ma")).toBe(false);
+    expect(isValidPinOrderKey("")).toBe(false);
+    expect(isValidPinOrderKey("b".repeat(64))).toBe(true);
+    expect(isValidPinOrderKey("b".repeat(65))).toBe(false);
+  });
+});
+
+describe("planPinToTop", () => {
+  it("writes one key above the first arranged pin while one fits", () => {
+    const assignments = planPinToTop(
+      "new",
+      new Map([
+        ["a", "m"],
+        ["b", "t"],
+      ]),
+    );
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.id).toBe("new");
+    expect(assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("rewrites the run with the new pin first once the top is used up", () => {
+    // Pin to the top until no key fits above the first one.
+    const keysById = new Map([["b", "m"]]);
+    for (let pin = 0; ; pin += 1) {
+      const assignments = planPinToTop(`p${pin}`, keysById);
+      for (const { id, orderKey } of assignments) keysById.set(id, orderKey);
+      if (assignments.length > 1) {
+        const order = [...keysById].sort(([, left], [, right]) => (left < right ? -1 : 1));
+        expect(order[0]![0]).toBe(`p${pin}`);
+        expect(order.at(-1)![0]).toBe("b");
+        expect(new Set(keysById.values()).size).toBe(keysById.size);
+        break;
+      }
+      expect(pin).toBeLessThan(1000);
+    }
+    for (const key of keysById.values()) expect(key.length).toBeLessThanOrEqual(64);
+  });
 });
 
 describe("sortActiveThreadsByOrderKey", () => {

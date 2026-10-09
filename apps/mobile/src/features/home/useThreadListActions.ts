@@ -10,7 +10,7 @@ import { withThreadDismissal } from "./thread-dismissal";
 import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
-import { pinOrderKeyBetween } from "@hal-c2/client-runtime/state/thread-sort";
+import { planPinToTop } from "@hal-c2/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -246,6 +246,9 @@ export function useThreadListActions(): {
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
+  const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
+    reportFailure: false,
+  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -375,17 +378,36 @@ export function useThreadListActions(): {
       }
       selectionHaptic();
       // Same placement as web: a fresh pin takes the top of the arranged
-      // run. Servers that predate reordering get the bare pin (keyless).
-      let orderKey: string | undefined;
+      // run, rewriting the run once no key fits above its first pin. Servers
+      // that predate reordering get the bare pin (keyless).
+      let writes: ReadonlyArray<{ readonly id: string; readonly orderKey: string }> = [];
+      const shellsByKey = new Map<string, EnvironmentThreadShell>();
+      const targetKey = scopedThreadKey(thread.environmentId, thread.id);
       if (environmentSupportsPinReorder(thread.environmentId)) {
-        const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-        let firstKey: string | null = null;
-        for (const shell of shells) {
+        const keysById = new Map<string, string>();
+        for (const shell of appAtomRegistry.get(environmentThreadShells.threadShellsAtom)) {
           if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
-          if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
+          if (!environmentSupportsPinReorder(shell.environmentId)) continue;
+          const key = scopedThreadKey(shell.environmentId, shell.id);
+          shellsByKey.set(key, shell);
+          keysById.set(key, shell.pinOrderKey);
         }
-        orderKey = pinOrderKeyBetween(null, firstKey) ?? undefined;
+        writes = planPinToTop(targetKey, keysById);
       }
+      // A rewritten run goes first: it keeps the run's own order and leaves
+      // the top slot free, so the run never moves if the pin then lands
+      // elsewhere (the MC ignores a raced re-pin's key). Stop on failure;
+      // the pin still goes through, placement never blocks pinning.
+      for (const write of writes) {
+        const shell = write.id === targetKey ? undefined : shellsByKey.get(write.id);
+        if (shell === undefined) continue;
+        const written = await reorderPinnedMutation({
+          environmentId: shell.environmentId,
+          input: { threadId: shell.id, orderKey: write.orderKey },
+        });
+        if (written._tag !== "Success") break;
+      }
+      const orderKey = writes.find((write) => write.id === targetKey)?.orderKey;
       const result = await pinMutation({
         environmentId: thread.environmentId,
         input: { threadId: thread.id, ...(orderKey !== undefined ? { orderKey } : {}) },
@@ -402,7 +424,7 @@ export function useThreadListActions(): {
       }
       return true;
     },
-    [pinMutation],
+    [pinMutation, reorderPinnedMutation],
   );
   const unpinThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
@@ -519,9 +541,6 @@ export function useThreadListActions(): {
   );
 
   // Plan against the complete section so filtering does not change a move.
-  const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
-    reportFailure: false,
-  });
   const reorderActiveMutation = useAtomCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });
@@ -618,34 +637,28 @@ export function useThreadListActions(): {
           );
       let succeeded = false;
       const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
+      const movedKey = scopedThreadKey(thread.environmentId, thread.id);
+      const pins = crossSection && section === "pinned";
+      const moveFailed = (result: { readonly cause: Cause.Cause<unknown> }) => {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not move thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be moved.",
+        );
+      };
       try {
-        if (crossSection) {
-          if (section === "pinned") {
-            const orderKey = assignments.find(
-              ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
-            )?.orderKey;
-            const result = await pinMutation({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
-            });
-            if (result._tag === "Failure") {
-              Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
-              return false;
-            }
-          } else {
-            if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-            if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
-            if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
-          }
+        if (crossSection && !pins) {
+          if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+          if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
+        // The planner sends the moved row last, so a pin goes after the rest
+        // of the section and a failure before it leaves that section in its
+        // current order.
         for (const assignment of assignments) {
-          if (
-            crossSection &&
-            section === "pinned" &&
-            thread.pinnedAt == null &&
-            assignment.id === scopedThreadKey(thread.environmentId, thread.id)
-          )
-            continue;
+          if (pins && assignment.id === movedKey) continue;
           if (pending !== null && !pending.isPending()) return false;
           const target = shellByKey.get(assignment.id);
           if (target === undefined) continue;
@@ -654,15 +667,31 @@ export function useThreadListActions(): {
             input: { threadId: target.id, orderKey: assignment.orderKey },
           });
           if (result._tag === "Failure") {
-            const error = Cause.squash(result.cause);
-            Alert.alert(
-              "Could not move thread",
-              error instanceof Error && error.message.trim().length > 0
-                ? error.message
-                : "The thread could not be moved.",
-            );
+            moveFailed(result);
             // Keep confirmed keys when a later environment rejects its write.
             return false;
+          }
+        }
+        if (pins) {
+          const orderKey = assignments.find(({ id }) => id === movedKey)?.orderKey;
+          const result = await pinMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
+          });
+          if (result._tag === "Failure") {
+            Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
+            return false;
+          }
+          // An already pinned thread keeps its key on a re-pin: write it.
+          if (thread.pinnedAt != null && orderKey !== undefined) {
+            const written = await reorder({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, orderKey },
+            });
+            if (written._tag === "Failure") {
+              moveFailed(written);
+              return false;
+            }
           }
         }
         succeeded = true;

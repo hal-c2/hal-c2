@@ -2086,8 +2086,9 @@ describe("planPinnedReorder", () => {
       ]),
       movedId: "b",
     });
-    expect(assignments.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
-    const keys = assignments.map((entry) => entry.orderKey);
+    const keyOf = new Map(assignments.map((entry) => [entry.id, entry.orderKey]));
+    const keys = ["b", "a", "c"].map((id) => keyOf.get(id)!);
+    expect(assignments).toHaveLength(3);
     expect([...keys].sort()).toEqual(keys);
     expect(new Set(keys).size).toBe(keys.length);
   });

@@ -2,7 +2,10 @@
 // expanded, collapsed and listed in any order, listings land late (for a
 // folder already collapsed, or under one that is), fail and are retried, the
 // workspace changes on disk and is listed again, a search swaps its own tree
-// in and out, and every folder is expanded or collapsed at once.
+// in and out, and every folder is expanded or collapsed at once. The MC may
+// also list what is not a folder's own entry (the folder itself, one above it
+// or elsewhere, ".", "..", an empty name, a rooted path), and the tree drops
+// it rather than walking into a cycle.
 //
 // The model is the disk, the user's tree and the search's (each folder:
 // whether it is listed, its children as last listed, whether it is open), and
@@ -22,6 +25,9 @@ const QStringList kFiles{QStringLiteral("R"), QStringLiteral("a/x"), QStringLite
 // Files the agent creates and deletes.
 const QStringList kOptional{QStringLiteral("a/new"), QStringLiteral("Z"), QStringLiteral("c/Big")};
 
+// Matches a search may carry that are no entry at all, as folders.
+const QStringList kStrayMatches{QString(), QStringLiteral("a/"), QStringLiteral("/a"), QStringLiteral("."), QStringLiteral("..")};
+
 // rc::gen::elementOf finds no begin() for a QList.
 rc::Gen<QString> oneOf(const QStringList& paths) { return rc::gen::elementOf(std::vector<QString>(paths.begin(), paths.end())); }
 
@@ -37,6 +43,38 @@ bool isDirectory(const QString& path) { return kDirectories.contains(path); }
 bool isIgnored(const QString& path) { return path == QLatin1String("n") || path.startsWith(QLatin1String("n/")); }
 
 Entry entryOf(const QString& path) { return {path, isDirectory(path), isIgnored(path)}; }
+
+// A path the tree can show: names joined by slashes, none of them empty, "."
+// or "..".
+bool wellFormed(const QString& path) {
+  if (path.isEmpty()) return false;
+  for (const QString& name : path.split(QLatin1Char('/'))) {
+    if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) return false;
+  }
+  return true;
+}
+
+QString joined(const QString& folder, const QString& name) { return folder.isEmpty() ? name : folder + QLatin1Char('/') + name; }
+
+// What a listing of `folder` may carry that is not its own entry, all as folders.
+QList<Entry> straysOf(const QString& folder, const std::vector<int>& kinds) {
+  QList<Entry> strays;
+  for (const int kind : kinds) {
+    QString path;
+    switch (kind) {
+      case 0: path = folder; break;
+      case 1: path = parentOf(folder); break;
+      case 2: path = joined(folder, QStringLiteral(".")); break;
+      case 3: path = joined(folder, QStringLiteral("..")); break;
+      case 4: path = folder + QLatin1Char('/'); break;
+      case 5: path = joined(folder, QStringLiteral("q/r")); break;
+      case 6: path = folder == QLatin1String("c") ? QStringLiteral("a/b") : QStringLiteral("c/z"); break;
+      default: path = QLatin1Char('/') + joined(folder, QStringLiteral("s")); break;
+    }
+    strays.append({path, true, false});
+  }
+  return strays;
+}
 
 QList<Entry> sorted(QList<Entry> entries) {
   std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
@@ -276,6 +314,9 @@ struct Collapse : Command {
 struct Answer : Command {
   QString path;
   bool ok = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
+  // What the listing carries that is not the folder's own (straysOf); dropped.
+  std::vector<int> strays = *rc::gen::weightedOneOf<std::vector<int>>(
+      {{3, rc::gen::just(std::vector<int>())}, {1, rc::gen::container<std::vector<int>>(rc::gen::inRange(0, 8))}});
   explicit Answer(const Model& model) {
     RC_PRE(!model.pending.isEmpty());
     path = *oneOf(model.pending);
@@ -287,13 +328,19 @@ struct Answer : Command {
     apply(expected);
     sut.fetched.removeOne(path);
     if (ok) {
-      sut.tree.setListing(path, before.listing(path));
+      sut.tree.setListing(path, before.listing(path) + straysOf(path, strays));
     } else {
       sut.tree.setFailed(path, QStringLiteral("no such folder"));
     }
     check(expected, sut);
   }
-  void show(std::ostream& os) const override { os << (ok ? "list " : "fail ") << "'" << path.toStdString() << "'"; }
+  void show(std::ostream& os) const override {
+    os << (ok ? "list " : "fail ") << "'" << path.toStdString() << "'";
+    if (ok && !strays.empty()) {
+      os << " with strays";
+      for (const Entry& stray : straysOf(path, strays)) os << " '" << stray.path.toStdString() << "'";
+    }
+  }
 };
 
 struct Retry : Command {
@@ -371,7 +418,9 @@ struct CollapseAll : Command {
 };
 
 struct Search : Command {
-  QStringList matches = *rc::gen::container<QStringList>(*rc::gen::inRange(0, 4), oneOf(kDirectories + kFiles + kOptional));
+  QStringList matches = *rc::gen::container<QStringList>(
+      *rc::gen::inRange(0, 4), rc::gen::weightedOneOf<QString>({{6, oneOf(kDirectories + kFiles + kOptional)}, {1, oneOf(kStrayMatches)}}));
+  static Entry matchOf(const QString& path) { return kStrayMatches.contains(path) ? Entry{path, true, false} : entryOf(path); }
   void apply(Model& model) const override {
     model.searching = true;
     model.search = {};
@@ -385,7 +434,8 @@ struct Search : Command {
     for (const QString& match : matches) {
       // A match's folders are listed as plain folders.
       for (QString folder = parentOf(match); !folder.isEmpty(); folder = parentOf(folder)) add({folder, true, false});
-      add(entryOf(match));
+      // One that is no entry is dropped (its folders still show).
+      if (wellFormed(match)) add(matchOf(match));
     }
     for (auto it = model.search.begin(); it != model.search.end(); ++it) {
       it->state = State::Loaded;
@@ -397,7 +447,7 @@ struct Search : Command {
     Model expected = before;
     apply(expected);
     QList<Entry> entries;
-    for (const QString& match : matches) entries.append(entryOf(match));
+    for (const QString& match : matches) entries.append(matchOf(match));
     sut.tree.setSearch(entries);
     check(expected, sut);
   }

@@ -303,7 +303,8 @@ private:
   QList<Row> project() const;
   void applyRows(const QList<Row>& rows, const QSet<QString>& changed);
   void updateWorking();
-  QVariantMap entry(const QJsonObject& item) const;
+  // `id`: the call's key in the stream.
+  QVariantMap entry(const QString& id, const QJsonObject& item) const;
   // When a row or turn item happened, or invalid.
   QDateTime rowTime(const Row& row) const;
   void redrawTimes();

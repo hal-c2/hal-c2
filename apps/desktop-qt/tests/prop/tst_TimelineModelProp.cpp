@@ -201,7 +201,11 @@ struct Run {
 };
 
 struct Item {
+  // Its key in the stream, which names it.
   QString id;
+  // What its entity's own `id` field says: its key, another item's, or
+  // (empty) nothing. The rows go by the key alone.
+  QString named;
   // user_message, assistant_message, command_execution, reasoning,
   // proposed_plan, subagent or error
   QString type;
@@ -272,8 +276,7 @@ QJsonObject json(const Run& run) {
 }
 
 QJsonObject json(const Item& item) {
-  QJsonObject entity{{QStringLiteral("id"), item.id},
-                     {QStringLiteral("type"), item.type},
+  QJsonObject entity{{QStringLiteral("type"), item.type},
                      {QStringLiteral("runId"), item.run},
                      {QStringLiteral("ordinal"), item.ordinal},
                      {QStringLiteral("status"), item.status},
@@ -284,6 +287,7 @@ QJsonObject json(const Item& item) {
     entity.insert(field(item.type), item.text);
   }
   if (!item.agent.isEmpty()) entity.insert(QStringLiteral("subagentId"), item.agent);
+  if (!item.named.isEmpty()) entity.insert(QStringLiteral("id"), item.named);
   return entity;
 }
 
@@ -363,6 +367,15 @@ QString kindOf(const QString& type) {
   if (type == QLatin1String("proposed_plan")) return QStringLiteral("plan");
   if (type == QLatin1String("subagent") || type == QLatin1String("error")) return type;
   return QStringLiteral("work");
+}
+
+// The row of the item keyed `key`: the key, or "item:" and the key when it
+// reads like a fold's or a group's (or such a row's) id, so no two rows share one.
+QString rowIdOf(const QString& key) {
+  for (const char* prefix : {"fold:", "work:", "item:"}) {
+    if (key.startsWith(QLatin1String(prefix))) return QStringLiteral("item:") + key;
+  }
+  return key;
 }
 
 // A settled turn folds its calls and commentary behind "Worked" ("You stopped
@@ -459,7 +472,7 @@ QList<Row> project(const Model& model) {
       rows.append(row);
       continue;
     }
-    Row row{item.id, kind};
+    Row row{rowIdOf(item.id), kind};
     row.text = item.text;
     row.streaming = item.streaming;
     if (kind == QLatin1String("plan")) row.title = QStringLiteral("Proposed plan");
@@ -694,8 +707,8 @@ struct StartRun : Change {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
   void apply(Model& model) const override {
     const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("running")};
-    const Item message{QStringLiteral("ask-") + run.id, QStringLiteral("user_message"), run.id, ++model.ordinal,
-                       QStringLiteral("ask"), false, QStringLiteral("completed")};
+    const QString id = QStringLiteral("ask-") + run.id;
+    const Item message{id, id, QStringLiteral("user_message"), run.id, ++model.ordinal, QStringLiteral("ask"), false, QStringLiteral("completed")};
     model.mc.runs.insert(run.id, run);
     model.mc.items.insert(message.id, message);
     commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}}),
@@ -717,10 +730,19 @@ struct AddItem : Change {
   QString run;
   QString type;
   QString agent;
+  // Its key, unless one like a fold's or a group's row id, and its `id` field.
+  QString key;
+  QString named;
   explicit AddItem(const Model& model) {
     const QStringList runs = running(model);
     RC_PRE(!runs.isEmpty());
     run = pick(runs);
+    QStringList keys{QStringLiteral("fold:") + pick(model.mc.runs.keys()), QStringLiteral("item:x")};
+    for (const QString& id : model.mc.items.keys()) keys.append(QStringLiteral("work:") + id);
+    key = *rc::gen::weightedElement<QString>({{6, QString()}, {1, pick(keys)}});
+    QStringList others{QStringLiteral("same")};
+    others.append(model.mc.items.keys());
+    named = *rc::gen::weightedElement<QString>({{4, QStringLiteral("key")}, {1, QString()}, {2, pick(others)}});
     type = *rc::gen::weightedElement<QString>({{4, QStringLiteral("assistant_message")},
                                                {4, QStringLiteral("command_execution")},
                                                {2, QStringLiteral("reasoning")},
@@ -732,9 +754,11 @@ struct AddItem : Change {
   void checkPreconditions(const Model& model) const override {
     RC_PRE(model.mc.items.size() < kMaxItems);
     RC_PRE(model.mc.runs.value(run).status == QLatin1String("running"));
+    RC_PRE(key.isEmpty() || !model.mc.items.contains(key));
   }
   void apply(Model& model) const override {
-    Item item{QStringLiteral("%1-%2").arg(type.left(4)).arg(model.ordinal + 1), type, run, ++model.ordinal};
+    const QString id = key.isEmpty() ? QStringLiteral("%1-%2").arg(type.left(4)).arg(model.ordinal + 1) : key;
+    Item item{id, named == QLatin1String("key") ? id : named, type, run, ++model.ordinal};
     item.text = type == QLatin1String("command_execution") ? QString() : QStringLiteral("t");
     item.streaming = type == QLatin1String("assistant_message");
     item.status = type == QLatin1String("command_execution") ? QStringLiteral("running") : QStringLiteral("completed");
@@ -742,7 +766,12 @@ struct AddItem : Change {
     model.mc.items.insert(item.id, item);
     commit(model, {event(model, QStringLiteral("turn-item"), item.id, {{QStringLiteral("s"), json(item)}}, run)});
   }
-  void show(std::ostream& os) const override { os << "AddItem(" << type.toStdString() << " in " << run.toStdString() << ")"; }
+  void show(std::ostream& os) const override {
+    os << "AddItem(" << type.toStdString() << " in " << run.toStdString();
+    if (!key.isEmpty()) os << " as " << key.toStdString();
+    if (named != QLatin1String("key")) os << " named " << (named.isEmpty() ? std::string("nothing") : named.toStdString());
+    os << ")";
+  }
 };
 
 QStringList itemsWhere(const Model& model, const std::function<bool(const Item&)>& keep) {

@@ -693,6 +693,40 @@ private slots:
     }));
   }
 
+  // Past the 64 a bracket may nest: a chain, the shape the parser makes of
+  // `a && b || c ...`, over both operators and `!`, within the size cap.
+  void aLongChainTextRoundTrips() {
+    QVERIFY(rc::check("a long chain of terms reads back as it is written", [] {
+      using keybindings::When;
+      const int terms = *rc::gen::inRange(2, 100);
+      keybindings::WhenPtr when = someWhen(0);
+      for (int index = 1; index < terms; ++index) {
+        const When::Kind kind = *rc::gen::element(When::Kind::And, When::Kind::Or);
+        keybindings::WhenPtr term = someWhen(0);
+        if (*rc::gen::inRange(0, 4) == 0) term = std::make_shared<When>(When{When::Kind::Not, {}, term, {}});
+        when = std::make_shared<When>(When{kind, {}, when, term});
+      }
+      const QString text = keybindings::whenText(when);
+      const keybindings::WhenPtr parsed = keybindings::parseWhen(text);
+      RC_ASSERT(parsed != nullptr);
+      RC_ASSERT(sameMeaning(parsed, when));
+      RC_ASSERT(keybindings::whenText(parsed) == text);
+    }));
+  }
+
+  void aConditionIsBoundedOrRefused() {
+    QVERIFY(rc::check("a condition of any length parses within its cap or not at all", [] {
+      const int terms = *rc::gen::inRange(1, 400);
+      const QString op = *rc::gen::element(QStringLiteral(" && "), QStringLiteral(" || "));
+      QStringList names;
+      for (int index = 0; index < terms; ++index) names.append(QStringLiteral("a%1").arg(index));
+      const keybindings::WhenPtr parsed = keybindings::parseWhen(names.join(op));
+      // 2n - 1 nodes against the cap of 256.
+      RC_ASSERT((parsed != nullptr) == (terms <= 128));
+      if (parsed) RC_ASSERT(keybindings::whenText(parsed) == names.join(op));
+    }));
+  }
+
   void sequencesAreQtsAndDistinct() {
     QVERIFY(rc::check("a shortcut registers one Qt key, which no other shortcut shares", [] {
       const bool mac = *rc::gen::arbitrary<bool>();

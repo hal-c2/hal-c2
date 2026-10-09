@@ -1,0 +1,99 @@
+# Memcheck suppressions for the Qt test runs (memcheck.sh): noise from Qt and the
+# system libraries under it, never frames of src/. Each entry is narrow, by the
+# library's object or a named function; add one only for an error whose stack has
+# no frame in our code, found with HAL_C2_VALGRIND_FLAGS=--gen-suppressions=all.
+
+# Qt reads a whole 16-byte vector at the end of a short buffer when the read stays
+# on the buffer's page: QObject::connect's signature normalisation, and the
+# AES-NI string hash behind qHash(QString).
+{
+   qt-connect-signature-overread
+   Memcheck:Addr16
+   obj:*/libQt6Core.so.*
+   obj:*/libQt6Core.so.*
+   obj:*/libQt6Core.so.*
+   fun:_ZN7QObject7connectEPKS_PKcS1_S3_N2Qt14ConnectionTypeE
+}
+{
+   qt-qhash-string-overread
+   Memcheck:Addr16
+   obj:*/libQt6Core.so.*
+   fun:qHash
+}
+
+# QNetworkInformation::loadDefaultBackend() loads the NetworkManager backend, which
+# leaks the QDBusMetaObject of the interface it introspects (Qt's own).
+{
+   qt-networkmanager-dbus-metaobject-definite
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:_Znwm
+   obj:*/libQt6DBus.so.*
+   obj:*/libQt6DBus.so.*
+   obj:*/libQt6DBus.so.*
+   fun:_ZN15QDBusMetaObject16createMetaObjectERK7QStringS2_R5QHashIS0_PS_ER10QDBusError
+   fun:_ZN14QDBusInterfaceC1ERK7QStringS2_S2_RK15QDBusConnectionP7QObject
+   obj:*/networkinformation/libqnetworkmanager.so
+}
+{
+   qt-networkmanager-dbus-metaobject-indirect
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:malloc
+   fun:_ZN10QByteArrayC1ExN2Qt14InitializationE
+   obj:*/libQt6DBus.so.*
+   obj:*/libQt6DBus.so.*
+   fun:_ZN15QDBusMetaObject16createMetaObjectERK7QStringS2_R5QHashIS0_PS_ER10QDBusError
+   fun:_ZN14QDBusInterfaceC1ERK7QStringS2_S2_RK15QDBusConnectionP7QObject
+   obj:*/networkinformation/libqnetworkmanager.so
+}
+
+# QVideoSink (the phone's scanner tests) makes Qt Multimedia's FFmpeg plugin create a
+# hardware device: the Vulkan loader and driver read uninitialised driver memory
+# there, and the NVIDIA GL driver misuses realloc/posix_memalign while it loads.
+{
+   vulkan-driver-cond
+   Memcheck:Cond
+   obj:*/libvulkan_*.so*
+}
+{
+   vulkan-driver-value8
+   Memcheck:Value8
+   obj:*/libvulkan_*.so*
+}
+{
+   vulkan-loader-cond
+   Memcheck:Cond
+   obj:*/libvulkan.so.*
+}
+{
+   vulkan-loader-value8
+   Memcheck:Value8
+   obj:*/libvulkan.so.*
+}
+{
+   ffmpeg-hwdevice-cond
+   Memcheck:Cond
+   obj:*/libavutil.so.*
+   ...
+   fun:av_hwdevice_ctx_create
+}
+{
+   ffmpeg-hwdevice-value8
+   Memcheck:Value8
+   obj:*/libavutil.so.*
+   ...
+   fun:av_hwdevice_ctx_create
+}
+{
+   nvidia-gl-realloc-zero
+   Memcheck:ReallocZero
+   fun:realloc
+   obj:*/libnvidia-glcore.so*
+}
+{
+   nvidia-gl-memalign-size
+   Memcheck:BadSize
+   fun:posix_memalign
+   obj:*/libnvidia-glcore.so*
+}

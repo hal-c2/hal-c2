@@ -7,6 +7,7 @@
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "TestTime.h"
 
 class OnboardingRegression : public QObject {
   Q_OBJECT
@@ -34,8 +35,8 @@ private slots:
     native.restoreWindows();
     native.open(mc.origin(), QStringLiteral("mc-token"));
 
-    QTRY_COMPARE(bridge.state()->value(QStringLiteral("onboarding")).toMap().value(QStringLiteral("gate")).toString(),
-                 QStringLiteral("app"));
+    HAL_C2_TRY_COMPARE(bridge.state()->value(QStringLiteral("onboarding")).toMap().value(QStringLiteral("gate")).toString(),
+                      QStringLiteral("app"));
     QVERIFY(!native.controller<SettingsController>()->deviceError().isEmpty());
   }
 };

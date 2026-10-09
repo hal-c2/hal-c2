@@ -58,6 +58,8 @@ public:
   void reload();
   // Forgets every folder without loading anything.
   void clear();
+  // `entries` are the folder's own ("<folder>/<name>", or "<name>" at the top);
+  // anything else the MC sends is dropped.
   void setListing(const QString& folder, const QList<Entry>& entries);
   void setFailed(const QString& folder, const QString& problem);
   // The matches of a search as the tree, or the user's tree again (nullopt).

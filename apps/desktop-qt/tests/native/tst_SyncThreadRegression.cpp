@@ -3,6 +3,7 @@
 
 #include <QtTest>
 
+#include "../fuzz/Reach.h"
 #include "FakeMc.h"
 #include "LocalCache.h"
 #include "McClient.h"
@@ -12,6 +13,16 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
+#include "TestTime.h"
+
+namespace halc2::fuzz {
+// onFrame is private: the subscription's handler is its only caller.
+struct ShellOnFrame {
+  using type = void (ShellStore::*)(const QJsonObject&);
+  friend type reach(ShellOnFrame);
+};
+template struct Reach<ShellOnFrame, &ShellStore::onFrame>;
+}  // namespace halc2::fuzz
 
 class SyncThreadRegression : public QObject {
   Q_OBJECT
@@ -34,11 +45,11 @@ private slots:
     native.controller<PluginController>()->setConfigDir(home.filePath(QStringLiteral("config")));
     native.open(mc.origin(), QStringLiteral("token"));
     ShellStore* store = native.store();
-    QTRY_VERIFY(native.client()->isReady() && store->synchronized() && store->thread(QStringLiteral("env-a:t1")));
+    HAL_C2_TRY_VERIFY(native.client()->isReady() && store->synchronized() && store->thread(QStringLiteral("env-a:t1")));
 
     mc.stopAccepting();
     mc.drop();
-    QTRY_VERIFY(!native.client()->isReady());
+    HAL_C2_TRY_VERIFY(!native.client()->isReady());
 
     // Work queued ahead of the copy keeps it loading until the reconnect lands.
     LocalCache* cache = native.cache();
@@ -56,12 +67,29 @@ private slots:
     const quint64 snapshots = store->snapshots();
     mc.threads.remove(QStringLiteral("t1"));
     mc.startAccepting();
-    QTRY_VERIFY(store->snapshots() > snapshots && store->synchronized());
+    HAL_C2_TRY_VERIFY(store->snapshots() > snapshots && store->synchronized());
     QVERIFY2(!loaded, "the copy was in before the reconnect: the case did not happen");
     QVERIFY(!store->thread(QStringLiteral("env-a:t1")));
 
-    QTRY_VERIFY(loaded);
-    QTRY_COMPARE(threads->openThreads(), QStringList());
+    HAL_C2_TRY_VERIFY(loaded);
+    HAL_C2_TRY_COMPARE(threads->openThreads(), QStringList());
+  }
+
+  // A rev outside qint64 (1e300 from the MC) was cast anyway, which is
+  // undefined. It reads as no rev: the MC is unversioned, so the next
+  // subscription asks for all its rows, not the ones since a rev it never had.
+  void aRevOutOfRangeLeavesTheMcUnversioned() {
+    McClient client;
+    ShellStore store(&client);
+    const auto onFrame = reach(halc2::fuzz::ShellOnFrame{});
+    const auto rows = [&](const char* mc, const QByteArray& rev) {
+      const QByteArray json = "{\"t\":\"shell.rows\",\"mc\":\"" + QByteArray(mc) + "\",\"epoch\":\"e1\",\"rev\":" + rev + ",\"rows\":[]}";
+      (store.*onFrame)(QJsonDocument::fromJson(json).object());
+    };
+    rows("mc-ok", "7");
+    for (const char* rev : {"1e300", "-1e300", "9.3e18", "1.5"}) rows("mc-bad", rev);
+    QCOMPARE(store.have().value(QStringLiteral("mc-ok")).toArray(), (QJsonArray{QStringLiteral("e1"), 7}));
+    QVERIFY(!store.have().contains(QStringLiteral("mc-bad")));
   }
 };
 

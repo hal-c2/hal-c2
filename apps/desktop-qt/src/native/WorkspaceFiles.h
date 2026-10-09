@@ -110,8 +110,11 @@ public:
   static constexpr int searchLimit = 200;
   // How long after the last edit it is written, as the web's.
   static constexpr int saveDelayMs = 500;
-  // The rows of a CSV file its table shows.
+  // The rows and columns of a CSV file its table shows. The columns are the
+  // web's (parseDelimitedPreview): a table is padded to its widest row, so
+  // without them one long row would make every row that wide.
   static constexpr int csvRowLimit = 500;
+  static constexpr int csvColumnLimit = 30;
 
   explicit WorkspaceFiles(McClient* client, QObject* parent = nullptr);
 

@@ -9,6 +9,7 @@
 
 #include "FakeMc.h"
 #include "McClient.h"
+#include "TestTime.h"
 
 class tst_SyncClientRegression : public QObject {
   Q_OBJECT
@@ -23,23 +24,23 @@ private slots:
     McClient client;
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
-    QTRY_VERIFY(client.isReady());
+    HAL_C2_TRY_VERIFY(client.isReady());
 
     QObject caller;
     QStringList replies;
     client.call(&caller, {}, QStringLiteral("prop.held"), {}, [&replies](const QJsonValue&, const std::optional<QString>& error) {
       replies.append(error.value_or(QStringLiteral("result")));
     });
-    QTRY_COMPARE(mc.calls.size(), 1);
+    HAL_C2_TRY_COMPARE(mc.calls.size(), 1);
 
     client.reconnect();
     QCOMPARE(replies, QStringList{QStringLiteral("disconnected")});
-    QTRY_VERIFY(client.isReady());
+    HAL_C2_TRY_VERIFY(client.isReady());
     // The held answer goes nowhere: the connection it was for is gone.
     mc.answerHeld();
     bool barrier = false;
     client.call(&caller, {}, QStringLiteral("test.barrier"), {}, [&barrier](const QJsonValue&, const std::optional<QString>&) { barrier = true; });
-    QTRY_VERIFY(barrier);
+    HAL_C2_TRY_VERIFY(barrier);
     QCOMPARE(replies, QStringList{QStringLiteral("disconnected")});
   }
 
@@ -54,16 +55,16 @@ private slots:
     {
       McClient client;
       client.open(mc.origin(), QStringLiteral("token"));
-      QTRY_VERIFY(client.isReady());
+      HAL_C2_TRY_VERIFY(client.isReady());
       client.call(&caller, {}, QStringLiteral("prop.held"), {}, record);
-      QTRY_COMPARE(mc.calls.size(), 1);
+      HAL_C2_TRY_COMPARE(mc.calls.size(), 1);
       client.close();
       QCOMPARE(replies, QStringList{QStringLiteral("disconnected")});
 
       client.open(mc.origin(), QStringLiteral("token"));
-      QTRY_VERIFY(client.isReady());
+      HAL_C2_TRY_VERIFY(client.isReady());
       client.call(&caller, {}, QStringLiteral("prop.held"), {}, record);
-      QTRY_COMPARE(mc.calls.size(), 2);
+      HAL_C2_TRY_COMPARE(mc.calls.size(), 2);
     }
     QCOMPARE(replies, QStringList{QStringLiteral("disconnected")});
   }
@@ -75,7 +76,7 @@ private slots:
     mc.onRpc(QStringLiteral("prop.held"), [&mc](const FakeMc::Rpc& rpc) { mc.defer([&mc, rpc] { mc.reply(rpc, true); }); });
     McClient client;
     client.open(mc.origin(), QStringLiteral("token"));
-    QTRY_VERIFY(client.isReady());
+    HAL_C2_TRY_VERIFY(client.isReady());
     QObject caller;
     QList<int> order;
     QList<int> made;
@@ -83,7 +84,7 @@ private slots:
       made.append(n);
       client.call(&caller, {}, QStringLiteral("prop.held"), {}, [&order, n](const QJsonValue&, const std::optional<QString>&) { order.append(n); });
     }
-    QTRY_COMPARE(mc.calls.size(), 40);
+    HAL_C2_TRY_COMPARE(mc.calls.size(), 40);
     client.close();
     QCOMPARE(order, made);
   }

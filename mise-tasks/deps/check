@@ -58,6 +58,8 @@ echo "Qt desktop (system packages)"
 row cmake "$(version cmake --version)" native
 row qmltestrunner "${qmltestrunner:+${qt_version:+Qt $qt_version, }$qmltestrunner}" "qml native"
 row qtpaths6/qmake6 "${qt_version:+Qt $qt_version}"
+row valgrind "$(version valgrind --version)" # only prop:valgrind needs it
+row clang++ "$(version clang++ --version)" # only fuzz:desktop and fuzz:mobile need it
 [[ $(uname) == Linux ]] && row dbus-run-session "$(command -v dbus-run-session || true)" native
 
 if ((${#missing[@]})); then

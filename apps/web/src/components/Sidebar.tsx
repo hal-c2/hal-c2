@@ -3727,22 +3727,16 @@ export default function Sidebar() {
               return;
             break;
           case "pin":
-            if (
-              !(await run(
-                pinThread(
-                  threadRef,
-                  plan.orderKey === undefined ? {} : { orderKey: plan.orderKey },
-                ),
-                "Failed to pin thread",
-              ))
-            )
-              return;
-            break;
           case "reorder-pinned":
             break;
         }
-        // Stop on failure; each successful key write remains a valid placement.
-        const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
+        // Stop on failure. The planner sends the moved row last, so a pin
+        // goes after the rest of the section and a failure before it leaves
+        // that section in its current order.
+        const keyWrites =
+          plan.kind === "pin"
+            ? plan.extraAssignments.filter((assignment) => assignment.id !== activeKey)
+            : plan.assignments;
         for (const assignment of keyWrites) {
           const thread = threadByKey.get(assignment.id);
           if (thread === undefined) continue;
@@ -3758,6 +3752,22 @@ export default function Sidebar() {
             ))
           )
             return;
+        }
+        if (plan.kind !== "pin") return;
+        if (
+          !(await run(
+            pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
+            "Failed to pin thread",
+          ))
+        )
+          return;
+        // An already pinned thread keeps its key on a re-pin: write it.
+        const moved = plan.extraAssignments.find((assignment) => assignment.id === activeKey);
+        if (moved !== undefined) {
+          await run(
+            reorderPinnedThread(threadRef, moved.orderKey),
+            "Failed to reorder pinned threads",
+          );
         }
       })();
     },

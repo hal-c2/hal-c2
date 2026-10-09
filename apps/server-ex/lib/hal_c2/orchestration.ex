@@ -30,6 +30,8 @@ defmodule HalC2.Orchestration do
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
                      provider.switch thread.pull-request.link thread.pull-request.unlink
                      thread.title.regeneration.complete)
+  # The longest order key a thread can hold; see `valid_order_key?/1`.
+  @max_order_key 64
   # Commands that arrange a thread in the lists; an archived thread takes none of them.
   @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
                  thread.unpin thread.pin.reorder thread.active.reorder)
@@ -2014,13 +2016,19 @@ defmodule HalC2.Orchestration do
   # cannot pin the thread again; only an active thread has a place in the active list.
   defp refusal("thread.pin.reorder", command, thread, _state) do
     if thread["pinnedAt"] == nil,
-      do: {:error, "Thread #{command["threadId"]} is not pinned and cannot be reordered."}
+      do: {:error, "Thread #{command["threadId"]} is not pinned and cannot be reordered."},
+      else: order_key_refusal(command)
   end
 
   defp refusal("thread.active.reorder", command, thread, _state) do
     if thread["pinnedAt"] != nil or thread["settledOverride"] == "settled",
-      do: {:error, "Thread #{command["threadId"]} is not active and cannot be reordered."}
+      do: {:error, "Thread #{command["threadId"]} is not active and cannot be reordered."},
+      else: order_key_refusal(command)
   end
+
+  # A pin's order key is optional; one it does carry is checked like a reorder's.
+  defp refusal("thread.pin", %{"orderKey" => key} = command, _thread, _state) when key != nil,
+    do: order_key_refusal(command)
 
   # A thread settles once its work is done: nothing running or queued, and nothing
   # waiting on the user. A queued delegated-task result only wakes the agent, so it does
@@ -2061,6 +2069,22 @@ defmodule HalC2.Orchestration do
   end
 
   defp refusal(_type, _command, _thread, _state), do: nil
+
+  defp order_key_refusal(command) do
+    unless valid_order_key?(command["orderKey"]),
+      do:
+        {:error,
+         "Thread #{command["threadId"]} order key is not 1 to #{@max_order_key} letters a-z ending in b-z."}
+  end
+
+  # An order key a client writes (`pinOrderKey`, `activeOrderKey`): base-26 letters that
+  # sort as text, as `planPinnedReorder` in client-runtime's threadSort.ts and the
+  # desktop's `sidebar::planReorder` make them; a last "a" leaves no key just before it.
+  # The bound keeps every row small; a drag that would pass it re-keys its section.
+  defp valid_order_key?(key) when is_binary(key) and byte_size(key) in 1..@max_order_key//1,
+    do: key =~ ~r/\A[a-z]*[b-z]\z/
+
+  defp valid_order_key?(_key), do: false
 
   defp future?(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do

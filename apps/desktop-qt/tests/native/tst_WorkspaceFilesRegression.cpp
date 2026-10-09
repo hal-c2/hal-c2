@@ -4,9 +4,11 @@
 
 #include <QJsonArray>
 
+#include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "WorkspaceFiles.h"
+#include "TestTime.h"
 
 namespace {
 
@@ -24,8 +26,8 @@ struct Held {
     client.open(mc.origin(), QStringLiteral("token"));
   }
 
-  bool ready() { return QTest::qWaitFor([this] { return client.isReady(); }); }
-  bool asked(qsizetype count) { return QTest::qWaitFor([this, count] { return calls.size() == count; }); }
+  bool ready() { return halc2::test::waitFor([this] { return client.isReady(); }); }
+  bool asked(qsizetype count) { return halc2::test::waitFor([this, count] { return calls.size() == count; }); }
   // Answers the call with one file, and waits for the client to read it.
   bool answer(qsizetype call, const QString& file) {
     const FakeMc::Rpc rpc = calls.at(call);
@@ -34,7 +36,7 @@ struct Held {
     bool done = false;
     QObject context;
     client.call(&context, {}, QStringLiteral("test.barrier"), {}, [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-    return QTest::qWaitFor([&done] { return done; });
+    return halc2::test::waitFor([&done] { return done; });
   }
 };
 
@@ -108,6 +110,31 @@ private slots:
     QVERIFY(held.answer(1, QStringLiteral("top")));
     files.setQuery({});
     QCOMPARE(files.tree()->visiblePaths(), QStringList{QStringLiteral("top")});
+  }
+
+  // A CSV's table is padded to its widest row, so one header of half a
+  // million commas made every row that wide: 1.5 GB of table from a 500 KB
+  // file. The table keeps the web's first 30 columns, and says so.
+  void aWideCsvShowsItsFirstColumns() {
+    FakeMc mc;
+    McClient client;
+    client.setRetryDelays({20});
+    client.open(mc.origin(), QStringLiteral("token"));
+    QVERIFY(halc2::test::waitFor([&client] { return client.isReady(); }));
+    QString wide = QString(100000, u',') + u'\n';
+    for (int row = 0; row < 40; ++row) wide += QStringLiteral("a,b\n");
+    fakeFiles(mc).files.insert(QStringLiteral("wide.csv"), wide);
+
+    WorkspaceFiles files(&client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    files.openFile(QStringLiteral("wide.csv"));
+    QVERIFY(halc2::test::waitFor([&files] { return files.fileStatus() == QLatin1String("ready"); }));
+
+    const QString table = files.renderedText();
+    QCOMPARE(files.renderKind(), QStringLiteral("csv"));
+    QVERIFY2(table.size() < 10000, qPrintable(QStringLiteral("table of %1 characters").arg(table.size())));
+    QCOMPARE(table.section(u'\n', 0, 0).count(u'|'), WorkspaceFiles::csvColumnLimit + 1);
+    QVERIFY(table.endsWith(QStringLiteral("\nShowing the first 30 columns.\n")));
   }
 };
 

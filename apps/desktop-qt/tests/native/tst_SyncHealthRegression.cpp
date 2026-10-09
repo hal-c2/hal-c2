@@ -9,6 +9,7 @@
 #include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "TestTime.h"
 
 class tst_SyncHealthRegression : public QObject {
   Q_OBJECT
@@ -31,12 +32,12 @@ private slots:
     });
     store.open(mc.origin());
     client.open(mc.origin(), QStringLiteral("token"));
-    QTRY_VERIFY(!said.isEmpty() && said.last().first == QLatin1String("connected"));
+    HAL_C2_TRY_VERIFY(!said.isEmpty() && said.last().first == QLatin1String("connected"));
 
     const quint64 before = store.snapshots();
     said.clear();
     mc.drop();
-    QTRY_VERIFY(store.snapshots() > before && !said.isEmpty() && said.last().first == QLatin1String("connected"));
+    HAL_C2_TRY_VERIFY(store.snapshots() > before && !said.isEmpty() && said.last().first == QLatin1String("connected"));
     for (const auto& [phase, snapshots] : said) {
       if (phase == QLatin1String("connected")) QVERIFY2(snapshots > before, "connected before the new snapshot");
     }

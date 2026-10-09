@@ -30,7 +30,11 @@ defmodule HalC2.ThreadOrganizationPropTest do
   @moduletag timeout: :infinity
 
   @threads ~w(t1 t2 t3)
-  @keys ~w(a0 b0 c0)
+  # Order keys a client writes, and ones it never would (empty, not a-z, ending in "a",
+  # past the longest), which the engine refuses.
+  @keys ~w(b n zz)
+  @bad_keys ["", "na", "B0", String.duplicate("z", 65)]
+  @bad_key "order key is not 1 to 64 letters a-z ending in b-z."
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
@@ -92,7 +96,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
   def command(%{threads: threads, next: next}) do
     tid = oneof(@threads)
-    key = oneof(@keys)
+    key = frequency([{3, oneof(@keys)}, {1, oneof(@bad_keys)}])
 
     always = [
       {3, {:call, __MODULE__, :create, [tid]}},
@@ -233,7 +237,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
       else: {:error, "Thread #{tid} changed before automatic settlement."}
   end
 
-  defp expected_reply(state, {:call, _, fun, [tid | _]}) do
+  defp expected_reply(state, {:call, _, fun, [tid | rest]}) do
     thread = state.threads[tid]
 
     cond do
@@ -241,7 +245,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
       thread == nil -> {:error, "unknown thread #{tid}"}
       thread.status == :deleted and fun == :delete -> :ok
       thread.status == :deleted -> {:error, "Thread #{tid} is deleted."}
-      true -> refusal(thread, fun, tid)
+      true -> with :ok <- refusal(thread, fun, tid), do: key_refusal(fun, [tid | rest])
     end
   end
 
@@ -274,6 +278,14 @@ defmodule HalC2.ThreadOrganizationPropTest do
     do: {:error, "Thread #{tid} is not active and cannot be reordered."}
 
   defp refusal(_thread, _fun, _tid), do: :ok
+
+  # A command the thread's state allows is still refused for a key no client writes; a
+  # pin need not carry one.
+  defp key_refusal(fun, [tid, key])
+       when fun in [:pin, :pin_reorder, :active_reorder] and key not in [nil | @keys],
+       do: {:error, "Thread #{tid} #{@bad_key}"}
+
+  defp key_refusal(_fun, _args), do: :ok
 
   # The stamps an accepted command sets anew; every other stamp keeps its value or is
   # cleared as the model says.

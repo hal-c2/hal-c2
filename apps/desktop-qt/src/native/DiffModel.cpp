@@ -286,8 +286,9 @@ QVariantList DiffModel::tree() const {
 }
 
 QVariantMap DiffModel::excerpt(int file, const QString& side, int first, int last) {
-  if (file < 0 || file >= fileCount() || first <= 0) return {};
+  // Lines are numbered from 1; a range reads the same either way round.
   if (last < first) std::swap(first, last);
+  if (file < 0 || file >= fileCount() || first <= 0) return {};
   File& entry = m_files[size_t(file)];
   ensureLines(entry);
   const bool old = side == QLatin1String("old");

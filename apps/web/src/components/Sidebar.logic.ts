@@ -992,7 +992,12 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@hal-c2/cl
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
-export { pinOrderKeyBetween, planPinnedReorder } from "@hal-c2/client-runtime/state/thread-sort";
+export {
+  isValidPinOrderKey,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+  planPinToTop,
+} from "@hal-c2/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@hal-c2/client-runtime/state/thread-sort";
 
 const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();

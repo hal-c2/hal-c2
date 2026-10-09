@@ -76,7 +76,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "a thread entity is written with the same value it already has", context do
     id = World.thread_id(context, "main")
-    command = %{"type" => "thread.active.reorder", "threadId" => id, "orderKey" => "a0"}
+    command = %{"type" => "thread.active.reorder", "threadId" => id, "orderKey" => "n"}
     {:ok, %{"sequence" => before}} = dispatch(command)
     {:ok, %{"sequence" => after_seq}} = dispatch(command)
     Map.merge(context, %{before: before, after: after_seq, count: length(log(context, id))})
