@@ -80,15 +80,17 @@ Item {
             compare(Shell.dispatchedActions[0].payload.revealed, true);
         }
 
-        // The summary is the second line of the name's column: it starts above the switch's bottom edge.
+        // The summary is the second line of the name's column, so the switch's height spans it.
         function test_the_summary_sits_beside_the_switch_not_under_it() {
             Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({}) };
             const page = createTemporaryObject(pageComponent, root);
             const tool = findChild(page, "sourceControlTool:github");
             const summary = findChild(tool, "summary");
             const availability = findChild(tool, "availability");
-            verify(summary.mapToItem(tool, 0, 0).y < availability.mapToItem(tool, 0, 0).y + availability.height,
-                   "the summary starts beside the switch, not below it");
+            const top = summary.mapToItem(tool, 0, 0).y;
+            const switchTop = availability.mapToItem(tool, 0, 0).y;
+            verify(top < switchTop + availability.height && top + summary.height > switchTop,
+                   "the summary overlaps the switch vertically, not below it");
         }
 
         // Rescan is a named icon, not a bare word that reads as a column label.
@@ -100,6 +102,31 @@ Item {
             const scan = findChild(page, "scan");
             verify(scan.iconOnly, "Rescan has no text beside its icon");
             compare(scan.iconName, "refresh-cw");
+        }
+
+        // Git's fetch interval is behind a details toggle, collapsed until it is used.
+        function test_the_git_fetch_interval_is_behind_a_details_toggle() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "",
+                             versionControl: [root.github({ kind: "git", label: "Git", git: true })], providers: [] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const tool = findChild(page, "sourceControlTool:git");
+            const fetchInterval = findChild(tool, "fetchInterval");
+            verify(!fetchInterval.visible, "collapsed to start with");
+            mouseClick(findChild(tool, "details"));
+            verify(fetchInterval.visible, "opened by the toggle");
+            mouseClick(findChild(tool, "details"));
+            verify(!fetchInterval.visible, "closed again by the same toggle");
+        }
+
+        // A search result that targets the fetch interval opens it without a click.
+        function test_a_search_for_the_fetch_interval_opens_the_details() {
+            Shell.state = { settingsScope: { editable: true }, route: { target: "fetchInterval", targetSeq: 1 },
+                            sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "",
+                             versionControl: [root.github({ kind: "git", label: "Git", git: true })], providers: [] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            verify(findChild(findChild(page, "sourceControlTool:git"), "fetchInterval").visible);
         }
 
         // A tool that is missing says how to get it, at any length.

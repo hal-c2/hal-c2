@@ -112,6 +112,10 @@ SettingsPage {
         Layout.fillWidth: true
         spacing: 6
 
+        // Git's fetch interval is behind a details toggle, opened by a search that targets it.
+        property bool detailsOpen: false
+        readonly property bool detailsShown: detailsOpen || tool.sourceControl.route?.target === "fetchInterval"
+
         // The name and summary share a left column; the switch centres on both lines.
         RowLayout {
             Layout.fillWidth: true
@@ -197,6 +201,18 @@ SettingsPage {
                 }
             }
 
+            ShellButton {
+                objectName: "details"
+                Layout.alignment: Qt.AlignVCenter
+                visible: tool.modelData.git
+                subtle: true
+                iconName: tool.detailsShown ? "chevron-up" : "chevron-down"
+                Accessible.name: qsTr("Toggle Git details")
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Toggle Git details")
+                onClicked: tool.detailsOpen = !tool.detailsShown
+            }
+
             Switch {
                 objectName: "availability"
                 Layout.alignment: Qt.AlignVCenter
@@ -211,7 +227,7 @@ SettingsPage {
         ScopedRow {
             sourceControl: tool.sourceControl
             objectName: "fetchInterval"
-            visible: tool.modelData.git
+            visible: tool.modelData.git && tool.detailsShown
             title: qsTr("Automatic Git fetch interval")
             description: tool.sourceControl.projectScope
                 ? qsTr("Applies to the whole environment. Choose all projects to change it.")
@@ -318,7 +334,7 @@ SettingsPage {
                 subtle: true
                 enabled: !(page.discovery?.scanning ?? false)
                 iconName: "refresh-cw"
-                Accessible.name: qsTr("Rescan server environment")
+                Accessible.name: page.discovery?.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
                 ToolTip.visible: hovered
                 ToolTip.text: page.discovery?.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
                 onClicked: page.send("scan")
