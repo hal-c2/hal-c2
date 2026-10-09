@@ -102,6 +102,9 @@ Item {
             const list = findChild(sidebar, "list");
             verify(!!list, "Object exists");
             tryVerify(() => list.count > 0);
+            // The list brings the active thread into view a turn later, which
+            // moves the cursor: let it, before any key is pressed.
+            wait(0);
             return sidebar;
         }
 
