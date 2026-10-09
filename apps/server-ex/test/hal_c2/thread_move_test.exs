@@ -123,24 +123,110 @@ defmodule HalC2.ThreadMoveTest do
     World.await_stream(id, &(HalC2.StreamState.get(&1, "thread")[id]["moving"] == nil))
   end
 
-  # Starts moving a thread "Plan" from "laptop" to "desktop" and holds it as it sends.
-  defp hold_move(context) do
-    context = Machines.cluster(context, "laptop", ["desktop"])
+  # A settle asked the destination whether it held the thread, not whether the move
+  # had arrived. "desktop" took "Plan" and began moving it back before "laptop" had let
+  # go; desktop's settle heard "laptop" holds it and let go, and so did "laptop".
+  # Found by proof/hal_c2/thread_move_proof_test.exs.
+  test "a move back settled before the first move let go keeps the thread", %{context: context} do
+    {context, id, mover} = hold_move(context, :accepted)
+    test = self()
+
+    Machines.on(context, "desktop", Application, :put_env, [
+      :hal_c2,
+      :thread_move_hook,
+      {Machines, :hold_move, [test, :sending]}
+    ])
+
+    spawn(fn ->
+      back =
+        Machines.on(context, "desktop", HalC2.ThreadMove, :move, [id, "laptop", [confirmed: true]])
+
+      send(test, {:moved_back, back})
+    end)
+
+    assert_receive {:move_held, back, :sending, ^id}, 30_000
+    Machines.on(context, "desktop", HalC2.ThreadMove, :settle, [id])
+
+    send(mover, :release)
+    assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
+    send(back, :release)
+    assert_receive {:moved_back, _}, 30_000
+
+    assert holders(context, id) == ["desktop"]
+  end
+
+  # The same question let a thread live on two machines. "desktop" took "Plan" and moved
+  # it on to "server" before "laptop" let go; laptop's settle heard "desktop" does not
+  # hold it and released it, and its mover died before it could let go.
+  # Found by proof/hal_c2/thread_move_proof_test.exs.
+  test "a move settled after the thread moved on is let go", %{context: context} do
+    {context, id, mover} = hold_move(context, :accepted, ["desktop", "server"])
+
+    assert {:ok, %{"status" => "moved"}} =
+             Machines.on(context, "desktop", HalC2.ThreadMove, :move, [
+               id,
+               "server",
+               [confirmed: true]
+             ])
+
+    HalC2.ThreadMove.settle(id)
+    Process.exit(mover, :kill)
+
+    assert holders(context, id) == ["server"]
+  end
+
+  # The mover let go of a thread without asking whether it was still in its move. A
+  # settle on "laptop" had let go already, and "desktop" moved the thread back, so the
+  # mover's let-go turned the thread that came back into a forwarding record.
+  # Found by proof/hal_c2/thread_move_proof_test.exs.
+  test "a thread that came back before its mover let go stays", %{context: context} do
+    {context, id, mover} = hold_move(context, :accepted)
+    HalC2.ThreadMove.settle(id)
+
+    assert {:ok, %{"status" => "moved"}} =
+             Machines.on(context, "desktop", HalC2.ThreadMove, :move, [
+               id,
+               "laptop",
+               [confirmed: true]
+             ])
+
+    send(mover, :release)
+    assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
+
+    assert holders(context, id) == ["laptop"]
+  end
+
+  # Starts moving a thread "Plan" from "laptop" to "desktop" and holds it at `stage`.
+  # Each of `others` joins the cluster with a project "shop".
+  defp hold_move(context, stage \\ :sending, others \\ ["desktop"]) do
+    context = Machines.cluster(context, "laptop", others)
     Mc.ensure(HalC2.ThreadMove)
     root = Path.join(context.mc.home, "shop")
     File.mkdir_p!(root)
     context = World.create_project(context, "shop", %{"workspaceRoot" => root})
-    peer_root = Path.join(Machines.home(context, "desktop"), "shop")
-    Machines.on(context, "desktop", File, :mkdir_p!, [peer_root])
-    Machines.on(context, "desktop", Machines, :create_project, ["shop", "shop", peer_root])
+
+    for label <- others do
+      peer_root = Path.join(Machines.home(context, label), "shop")
+      Machines.on(context, label, File, :mkdir_p!, [peer_root])
+      Machines.on(context, label, Machines, :create_project, ["shop", "shop", peer_root])
+    end
+
     context = World.create_thread(context, "Plan", "shop")
     id = World.thread_id(context, "Plan")
 
-    Application.put_env(:hal_c2, :thread_move_hook, {Machines, :hold_move, [self(), :sending]})
+    Application.put_env(:hal_c2, :thread_move_hook, {Machines, :hold_move, [self(), stage]})
     on_exit(fn -> Application.delete_env(:hal_c2, :thread_move_hook) end)
     test = self()
     spawn(fn -> send(test, {:moved, HalC2.ThreadMove.move(id, "desktop", confirmed: true)}) end)
-    assert_receive {:move_held, mover, :sending, ^id}, 30_000
+    assert_receive {:move_held, mover, ^stage, ^id}, 30_000
     {context, id, mover}
+  end
+
+  # The machines that hold the thread, not a forwarding record.
+  defp holders(context, id) do
+    for {label, _} <- context.machines,
+        thread = Machines.on(context, label, HalC2.ThreadArchive, :local_thread, [id]),
+        thread["movedTo"] == nil,
+        do: label
   end
 end
