@@ -27,6 +27,12 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree
     Then both files are in the diff with their line counts
 
+  @mc @desktop
+  Scenario: A thread in its own worktree reviews that worktree
+    Given the thread works in a new worktree under the HAL-C2 home
+    When the user reviews the working tree
+    Then the worktree's changes are in the diff
+
   @mc
   Scenario: Reviewing leaves the user's staging area alone
     Given the user staged "src/cart.ts" and left "src/tax.ts" untracked
@@ -80,7 +86,7 @@ Feature: Reviewing working tree and branch changes
   @mc
   Scenario: Only folders inside the MC's projects can be reviewed
     When a client asks to review "/etc"
-    Then the request is refused with "Review cwd must be inside one of this MC's projects."
+    Then the request is refused with "This folder is not part of a project on this machine, so its changes cannot be shown."
 
   @tui
   Scenario: Each file is shown with its own highlighting

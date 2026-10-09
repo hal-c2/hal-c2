@@ -353,18 +353,17 @@ defmodule HalC2.Review do
       "message" => "Git command failed (#{input["cwd"]}): #{detail}"
     }
 
+  # A thread's worktree counts as its project, wherever it is; so does anything under
+  # the MC's worktrees directory, as on the Node server.
   defp within_projects(cwd, operation) do
     cwd = Path.expand(cwd)
+    worktrees = Path.expand(Path.join(HalC2.Paths.data_dir(), "worktrees"))
 
-    roots =
-      for {{mc, _}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
-          mc == node() and is_binary(root) and project["deletedAt"] == nil,
-          do: Path.expand(root)
-
-    if Enum.any?(roots, &inside?(cwd, &1)) do
+    if HalC2.Projects.at(cwd) != nil or inside?(cwd, worktrees) do
       :ok
     else
-      detail = "Review cwd must be inside one of this MC's projects."
+      detail =
+        "This folder is not part of a project on this machine, so its changes cannot be shown."
 
       {:error,
        %{

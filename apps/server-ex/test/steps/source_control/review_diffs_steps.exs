@@ -43,6 +43,30 @@ defmodule HalC2.Steps.SourceControl.ReviewDiffs do
     })
   end
 
+  step "the thread works in a new worktree under the HAL-C2 home", context do
+    path = HalC2.Vcs.worktree_path(context.cwd, "tax-rates")
+    assert String.starts_with?(path, HalC2.Paths.data_dir())
+    refute String.starts_with?(path, context.cwd <> "/")
+    git(context, ["worktree", "add", "-q", "-b", "tax-rates", path])
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "threadId" => World.thread_id(context, context.thread_title),
+        "worktreePath" => path,
+        "branch" => "tax-rates"
+      })
+
+    context = %{context | cwd: path}
+    write(context, "src/tax.ts", "a\nb\n")
+    context
+  end
+
+  step "the worktree's changes are in the diff", context do
+    assert %{"src/tax.ts" => %{"additions" => 2}} = stats(context, "working-tree")
+    context
+  end
+
   step "the user reviews the working tree", context do
     review(context)
   end
