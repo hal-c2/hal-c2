@@ -26,11 +26,30 @@ Feature: Keyboard focus and keyboard-only use
       Then the command palette search still has keyboard focus
 
     @desktop
-    Scenario: Thread shortcuts do nothing while the command palette is open
+    Scenario Outline: Thread shortcuts do nothing while the command palette is open
       Given the command palette is open
-      When the user presses mod+shift+m
-      Then "modelPicker.toggle" does not run
+      When the user presses <key>
+      Then "<command>" does not run
       And the command palette is open
+
+      Examples:
+        | key         | command             |
+        | mod+shift+m | modelPicker.toggle  |
+        | mod+d       | diff.toggle         |
+        | mod+o       | editor.openFavorite |
+        | mod+alt+b   | rightPanel.toggle   |
+
+    # The palette's own modes and what belongs to the window, not the thread.
+    @desktop
+    Scenario Outline: The window's shortcuts still run while the command palette is open
+      Given the command palette is open
+      When the user presses <key>
+      Then "<command>" runs
+
+      Examples:
+        | key   | command           |
+        | mod+b | sidebar.toggle    |
+        | mod+p | filePicker.toggle |
 
     @desktop
     Scenario: Number shortcuts pick entries in an open picker

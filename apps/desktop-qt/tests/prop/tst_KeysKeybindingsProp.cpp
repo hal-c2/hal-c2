@@ -11,6 +11,7 @@
 #include "Prop.h"
 
 #include "FakeMc.h"
+#include "CommandPaletteController.h"
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
@@ -222,6 +223,7 @@ struct Model {
   bool holding = false;
   bool mac = false;
   bool picker = false;
+  bool palette = false;
 
   QList<Bound> bound() const { return effective(rules); }
   void call(const Op& op) {
@@ -320,6 +322,8 @@ struct Shell {
     }
   }
 
+  CommandPaletteController* palette() { return native.controller<CommandPaletteController>(); }
+
   // A round trip: every call made so far has reached the MC, and whatever it
   // answered has been read.
   void sync() {
@@ -337,6 +341,7 @@ struct Shell {
     push();
     keys->setMac(false);
     keys->setModelPickerOpen(false);
+    if (palette()->isOpen()) palette()->toggle();
     sync();
     idleSignals.clear();
   }
@@ -397,8 +402,13 @@ struct Keymap {
     return list;
   }
 
-  // The newest binding on `sequence` whose condition holds, then the menu's.
+  // The newest binding on `sequence` whose condition holds, then the menu's; an
+  // open palette keeps every key but its own and the window's.
   QString resolved(const QString& sequence, const QVariantMap& focus) const {
+    const QString command = pressed(sequence, focus);
+    return model.palette && !KeybindingController::kOverPalette.contains(command) ? QString() : command;
+  }
+  QString pressed(const QString& sequence, const QVariantMap& focus) const {
     const keybindings::Context now = context(model, focus);
     for (qsizetype index = bound.size() - 1; index >= 0; --index) {
       if (sequences.at(index) == sequence && keybindings::evaluate(bound.at(index).binding.when, now)) {
@@ -656,6 +666,18 @@ struct SetPicker : Command {
   void show(std::ostream& os) const override { os << "SetPicker(" << open << ")"; }
 };
 
+struct SetPalette : Command {
+  bool open = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.palette = open; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    if (shell.palette()->isOpen() != open) shell.palette()->toggle();
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "SetPalette(" << open << ")"; }
+};
+
 }  // namespace
 
 class KeysKeybindingsProp : public QObject {
@@ -754,7 +776,7 @@ private slots:
       shell.reset();
       rc::state::check(Model{}, shell,
                        rc::state::gen::execOneOfWithArgs<Push, Save, Save, RowAction, RowAction, Hold, Answer, SetMac,
-                                                         SetPicker>());
+                                                         SetPicker, SetPalette>());
       // Nothing is left waiting for the next case.
       shell.mc.answerHeld();
     }));

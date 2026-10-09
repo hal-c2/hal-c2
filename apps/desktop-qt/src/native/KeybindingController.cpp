@@ -338,13 +338,8 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
       previewOpen = panel->isOpen() && panel->activeTab() == QLatin1String("previews");
     }
   }
-  bool paletteOpen = false;
-  if (auto* shell = NativeShell::of(this)) {
-    if (auto* palette = shell->controller<CommandPaletteController>()) paletteOpen = palette->isOpen();
-  }
   return {
       {QStringLiteral("previewOpen"), previewOpen},
-      {QStringLiteral("commandPaletteOpen"), paletteOpen},
       {QStringLiteral("modelPickerOpen"), m_modelPickerOpen},
       // The composer holds text the user has not sent.
       {QStringLiteral("composerDraft"),
@@ -361,6 +356,18 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
 }
 
 QString KeybindingController::resolve(const QString& sequence, const QVariantMap& focus) const {
+  const QString command = bound(sequence, focus);
+  // The palette is not modal: while it is open every other key stays with it, as
+  // the web's handlers stand down for an open palette (isCommandPaletteOpen).
+  if (!command.isEmpty() && !kOverPalette.contains(command)) {
+    auto* shell = NativeShell::of(this);
+    auto* palette = shell ? shell->controller<CommandPaletteController>() : nullptr;
+    if (palette && palette->isOpen()) return {};
+  }
+  return command;
+}
+
+QString KeybindingController::bound(const QString& sequence, const QVariantMap& focus) const {
   const keybindings::Context now = context(focus);
   for (qsizetype index = m_bindings.size() - 1; index >= 0; --index) {
     if (m_sequences.at(index) == sequence && keybindings::evaluate(m_bindings.at(index).when, now)) {
