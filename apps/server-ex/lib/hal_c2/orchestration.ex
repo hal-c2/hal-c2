@@ -2089,6 +2089,9 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  defp titled(%{"title" => title}, _command) when is_binary(title) and title != "", do: title
+  defp titled(_thread, command), do: "Thread #{command["threadId"]}"
+
   # Commands the thread's state refuses, as the Node server guards them; nil to go ahead.
   # These two reach the user as they are, so they name the thread by its title.
   defp refusal("thread.archive", command, %{"archivedAt" => archived} = thread, _state)
@@ -2098,9 +2101,6 @@ defmodule HalC2.Orchestration do
   defp refusal("thread.unarchive", command, thread, _state) do
     if thread["archivedAt"] == nil, do: {:error, "#{titled(thread, command)} is not archived."}
   end
-
-  defp titled(%{"title" => title}, _command) when is_binary(title) and title != "", do: title
-  defp titled(_thread, command), do: "Thread #{command["threadId"]}"
 
   # An archived thread is out of the lists these arrange; unarchiving brings it back.
   defp refusal(type, command, %{"archivedAt" => archived}, _state)

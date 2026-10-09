@@ -530,6 +530,7 @@ defmodule HalC2.Diagnostics do
               row = row(line),
               not String.ends_with?(row.command, " -axo " <> format),
               do: row
+
         children = Enum.group_by(rows, & &1.ppid)
 
         case Enum.find(rows, &(&1.pid == root)) do

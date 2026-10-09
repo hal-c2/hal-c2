@@ -100,7 +100,8 @@ defmodule HalC2.ReviewTest do
       {:ok, _} = HalC2.Orchestration.dispatch(Map.put(command, "threadId", "t1"))
     end
 
-    assert_receive {:hal_c2_shell, {:rows, _, [{"t1", {"thread", %{"worktreePath" => ^worktree}}}]}},
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t1", {"thread", %{"worktreePath" => ^worktree}}}]}},
                    1_000
 
     assert {:ok, %{"sources" => [dirty, _branch]}} = Review.diff_preview(%{"cwd" => worktree})

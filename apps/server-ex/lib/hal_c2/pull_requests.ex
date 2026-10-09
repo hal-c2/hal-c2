@@ -309,7 +309,8 @@ defmodule HalC2.PullRequests do
       detail =~ ~r/HTTP 429|rate limit/i ->
         "#{host}'s rate limit was reached. Try again in a few minutes."
 
-      detail =~ ~r/HTTP 5\d\d|timed? ?out|deadline exceeded|connection (reset|refused)|temporarily unavailable|could not resolve|no such host/i ->
+      detail =~
+          ~r/HTTP 5\d\d|timed? ?out|deadline exceeded|connection (reset|refused)|temporarily unavailable|could not resolve|no such host/i ->
         "#{host} did not answer in time. Try again."
 
       detail =~ ~r/HTTP 401|bad credentials/i ->
