@@ -148,7 +148,8 @@ def main() -> None:
         for f in issues:
             state["subs"].setdefault(f["id"], {"number": 0})
         print("=== PARENT ===\n" + parent_body())
-        for f in issues[:2]:
+        # Every body, since each one is published and has to be read for private text first.
+        for f in issues:
             print(f"\n=== SUB {f['id']} ===\n" + sub_body(f))
         print(f"\n(dry run) would create 1 parent + {len(issues)} sub-issues in {a.repo}")
         return

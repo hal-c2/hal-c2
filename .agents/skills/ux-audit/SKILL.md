@@ -36,8 +36,8 @@ the report, `--report-only` to rebuild from an existing findings file.
    (`$UX_AUDIT_DIR`, default `/tmp/hal-c2-ux-audit-<date>`, outside the
    worktree) with `shots/`, `scratch/`, `findings.jsonl`, `coverage.jsonl`
    and the helpers, including `ux`. It checks the prerequisites and
-   ui-ux-pro-max. It refuses to run on a non-empty `findings.jsonl`: point
-   `UX_AUDIT_DIR` somewhere fresh, or set `UX_AUDIT_RESUME=1` to continue.
+   ui-ux-pro-max. It refuses to run on a non-empty `findings.jsonl` or
+   `coverage.jsonl`: point `UX_AUDIT_DIR` somewhere fresh, or set `UX_AUDIT_RESUME=1` to continue.
 3. Start the sandbox seeded with real data. The seed is snapshotted
    read-only with `VACUUM INTO`, so the live database is never opened
    read-write:
@@ -221,8 +221,12 @@ links each one with the sub-issue API. `--upload-shots` pushes the shots the
 issues use to one secret gist and embeds them. The gist and the issues are
 readable by anyone with the link, and `hal-c2/hal-c2` is public: check the
 shots for tokens, pairing links and private content first, and leave the
-flag off when in doubt. The state file in the audit dir makes a re-run
-resume instead of duplicating.
+flag off when in doubt. The issue text is just as public: titles,
+descriptions, evidence, paths and the `--env` text come from real
+conversations and checkouts. Read every field the dry run prints for private
+text, usernames, home paths, hostnames, pairing links and credentials, and
+redact them in `findings.jsonl` before the real run. The state file in the
+audit dir makes a re-run resume instead of duplicating.
 
 ## 6. Hand-off
 

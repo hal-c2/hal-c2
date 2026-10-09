@@ -38,11 +38,14 @@ case "$out/" in "$root"/*)
   ;;
 esac
 mkdir -p "$out/shots" "$out/scratch"
-if [[ -s $out/findings.jsonl && ${UX_AUDIT_RESUME:-} != 1 ]]; then
-  echo "bootstrap: $out/findings.jsonl already has $(wc -l < "$out/findings.jsonl") rows from an earlier audit." >&2
-  echo "           Set UX_AUDIT_DIR to a fresh directory, or UX_AUDIT_RESUME=1 to continue it." >&2
-  exit 1
-fi
+# Rows from an earlier audit would pass as this one's findings or as areas it visited.
+for log in findings coverage; do
+  if [[ -s $out/$log.jsonl && ${UX_AUDIT_RESUME:-} != 1 ]]; then
+    echo "bootstrap: $out/$log.jsonl already has $(wc -l < "$out/$log.jsonl") rows from an earlier audit." >&2
+    echo "           Set UX_AUDIT_DIR to a fresh directory, or UX_AUDIT_RESUME=1 to continue it." >&2
+    exit 1
+  fi
+done
 touch "$out/findings.jsonl" "$out/coverage.jsonl"
 cp "$here/build_report.py" "$here/github_issues.py" "$here/census.py" "$here/ledger.py" "$out/"
 # Shell-quoted and substituted without sed, so any legal path survives.
