@@ -653,22 +653,25 @@ defmodule HalC2.CodeReviewPropTest do
     me = self()
     ref = make_ref()
     tid = tid(key, k)
+    # A post already in flight (the user's, or an earlier report's) is not this
+    # report's: the review takes no report then, and the answer comes at once.
+    posting = posting?(key, tid)
 
     spawn(fn ->
       send(me, {ref, HalC2.Plugins.call_tool("code_review_report", arguments, tid)})
     end)
 
-    observe(await_report(ref, key, tid, System.monotonic_time(:millisecond) + 15_000))
+    observe(await_report(ref, key, tid, posting, System.monotonic_time(:millisecond) + 15_000))
   end
 
   # The report's answer, or `:held` once its post is the plugin's and GitHub holds it.
-  defp await_report(ref, key, tid, deadline) do
+  defp await_report(ref, key, tid, posting, deadline) do
     receive do
       {^ref, answer} -> told(answer)
     after
       0 ->
         cond do
-          posting?(key, tid) ->
+          not posting and posting?(key, tid) ->
             drain()
 
             if posting?(key, tid) do
@@ -686,7 +689,7 @@ defmodule HalC2.CodeReviewPropTest do
 
           true ->
             Process.sleep(5)
-            await_report(ref, key, tid, deadline)
+            await_report(ref, key, tid, posting, deadline)
         end
     end
   end
