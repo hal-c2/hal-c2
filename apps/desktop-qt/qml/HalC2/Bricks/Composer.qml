@@ -965,6 +965,20 @@ Rectangle {
                                 event.accepted = composer.toggleInteractionMode();
                                 return;
                             }
+                            if (event.key === Qt.Key_Tab && event.modifiers === Qt.NoModifier) {
+                                // As the web: Tab indents a list item, anywhere else it
+                                // leaves the editor for the composer's controls.
+                                event.accepted = true;
+                                const lineStart = input.text.lastIndexOf("\n", input.cursorPosition - 1) + 1;
+                                const lineEnd = input.text.indexOf("\n", input.cursorPosition);
+                                const line = input.text.slice(lineStart, lineEnd < 0 ? input.text.length : lineEnd);
+                                if (input.selectionStart === input.selectionEnd && /^\s*([-*+]|\d+[.)])\s/.test(line)) {
+                                    input.insert(lineStart, "  ");
+                                } else {
+                                    input.nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                                }
+                                return;
+                            }
                             if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
                                 composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
                                 return;
