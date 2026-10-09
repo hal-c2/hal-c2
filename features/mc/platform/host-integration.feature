@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/projects.ex (filesystem.browse)
 #   apps/server-ex/lib/hal_c2/paths.ex (symlink resolution)
 #   apps/server-ex/lib/hal_c2/subprocess.ex (line framing, pipe backpressure)
+#   apps/server-ex/lib/hal_c2/git.ex (use_gh_for_github: GitHub over the GitHub CLI's sign-in)
 #   packages/contracts/src/editor.ts (EDITORS, launch styles, ExternalLauncher errors)
 #   packages/contracts/src/shell.ts
 #   packages/contracts/src/rpc.ts (shell.openInEditor, filesystem.browse, subscribeDiscoveredLocalServers)
@@ -11,8 +12,8 @@
 #   Shared domain: files/ owns opening files from the explorer; preview/ owns server suggestions.
 
 Feature: The MC working with its host machine
-  An MC opens editors on its own machine, lists folders for adding projects, and finds
-  web servers running on the host for previews.
+  An MC opens editors on its own machine, lists folders for adding projects, finds
+  web servers running on the host for previews, and reaches GitHub as its user does.
 
   Background:
     Given a running MC
@@ -123,3 +124,17 @@ Feature: The MC working with its host machine
     Given a provider process writing output faster than the MC reads it
     Then the MC applies backpressure through the process's pipe
     And its memory stays bounded
+
+  @mc
+  Scenario: Git the MC starts reaches GitHub with the GitHub CLI's sign-in
+    Given the GitHub CLI on the host is signed in to github.com
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over HTTPS
+    And the GitHub CLI answers git's request for a GitHub credential
+    And setting up git again, as a hot update does, changes nothing
+
+  @mc
+  Scenario: Without the GitHub CLI's sign-in git reaches GitHub as configured
+    Given the GitHub CLI on the host is not signed in
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over SSH

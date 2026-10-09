@@ -165,6 +165,55 @@ defmodule HalC2.Git do
     end)
   end
 
+  @doc """
+  Has every git the MC starts (its own, its agents' and its terminals') reach GitHub
+  with the GitHub CLI's sign-in: GitHub's SSH addresses go over HTTPS, and
+  `gh auth git-credential` answers for them. An MC running as a service has no SSH
+  agent, so a key behind a passphrase never answers there. Does nothing when gh is
+  not installed or not signed in to github.com.
+  """
+  def use_gh_for_github do
+    # GIT_CONFIG_COUNT entries come after every config file, as `-c` does.
+    count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
+
+    with gh when is_binary(gh) <- System.find_executable("gh"),
+         helper = "!#{gh} auth git-credential",
+         # Set up once: a hot update asks again.
+         false <-
+           Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == helper)),
+         true <- gh_signed_in?() do
+      entries = [
+        {"url.https://github.com/.insteadOf", "git@github.com:"},
+        {"url.https://github.com/.insteadOf", "ssh://git@github.com/"},
+        # An empty helper drops the ones configured before, as `gh auth setup-git` does.
+        {"credential.https://github.com.helper", ""},
+        {"credential.https://github.com.helper", helper}
+      ]
+
+      for {{key, value}, i} <- Enum.with_index(entries, count) do
+        System.put_env("GIT_CONFIG_KEY_#{i}", key)
+        System.put_env("GIT_CONFIG_VALUE_#{i}", value)
+      end
+
+      System.put_env("GIT_CONFIG_COUNT", Integer.to_string(count + length(entries)))
+    end
+
+    :ok
+  end
+
+  # Read from gh's hosts file rather than asked of gh, which would open the keyring
+  # holding the token at boot.
+  defp gh_signed_in? do
+    dir =
+      System.get_env("GH_CONFIG_DIR") ||
+        Path.join(System.get_env("XDG_CONFIG_HOME") || Path.expand("~/.config"), "gh")
+
+    case File.read(Path.join(dir, "hosts.yml")) do
+      {:ok, hosts} -> Regex.match?(~r/^github\.com:/m, hosts)
+      {:error, _} -> false
+    end
+  end
+
   defp ref?(root, ref),
     do: match?({:ok, _}, ok(root, ["show-ref", "--verify", "--quiet", ref]))
 

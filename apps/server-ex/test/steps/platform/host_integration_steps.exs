@@ -417,4 +417,71 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     HalC2.Subprocess.stop(context.sub, 1_000)
     context
   end
+
+  # --- GitHub over the GitHub CLI ----------------------------------------------------
+
+  step ~r/^the GitHub CLI on the host is (?<state>signed in to github.com|not signed in)$/,
+       %{args: [state]} = context do
+    context = bin(context)
+    gh = Path.join(context.bin, "gh")
+
+    File.write!(gh, """
+    #!/usr/bin/env bash
+    [ "$*" = "auth git-credential get" ] && printf 'username=x-access-token\\npassword=from-gh\\n'
+    """)
+
+    File.chmod!(gh, 0o755)
+    config = Mc.tmp_dir(context.mc, "gh")
+
+    if state == "signed in to github.com",
+      do: File.write!(Path.join(config, "hosts.yml"), "github.com:\n    user: acme\n")
+
+    World.put_os_env("GH_CONFIG_DIR", config)
+    context
+  end
+
+  step "the MC sets up the git it starts", context do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step ~r/^git fetches "(?<url>[^"]+)" over (?<transport>HTTPS|SSH)$/,
+       %{args: [url, transport]} = context do
+    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+
+    expected =
+      if transport == "HTTPS",
+        do: String.replace(url, "git@github.com:", "https://github.com/"),
+        else: url
+
+    assert String.trim(fetched) == expected
+    context
+  end
+
+  step "the GitHub CLI answers git's request for a GitHub credential", context do
+    {answer, 0} =
+      System.cmd(
+        "sh",
+        ["-c", "printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill"],
+        cd: context.mc.home,
+        env: [{"GIT_TERMINAL_PROMPT", "0"}]
+      )
+
+    assert answer =~ "password=from-gh"
+    context
+  end
+
+  step "setting up git again, as a hot update does, changes nothing", context do
+    before = System.get_env("GIT_CONFIG_COUNT")
+    :ok = HalC2.Git.use_gh_for_github()
+    assert System.get_env("GIT_CONFIG_COUNT") == before
+    context
+  end
 end
