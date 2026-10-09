@@ -86,6 +86,68 @@ private slots:
     tree.setSearch(std::nullopt);
     QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/x file")}));
   }
+
+  // tests/fuzz/tst_FileTreeModelFuzz.cpp: a folder whose listing named the
+  // folder itself recursed until the stack ran out, on expandAll and on
+  // expanding it by hand.
+  void aFolderListingItselfIsDropped() {
+    for (const bool all : {true, false}) {
+      FileTreeModel tree;
+      tree.setFetch([](const QString&) {});
+      tree.reload();
+      tree.setListing(QString(), {{QStringLiteral("a"), true, false}});
+      tree.setListing(QStringLiteral("a"), {{QStringLiteral("a"), true, false}, {QStringLiteral("a/x"), false, false}});
+      if (all) {
+        tree.expandAll();
+      } else {
+        tree.expand(QStringLiteral("a"));
+      }
+      QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/x file")}));
+      QCOMPARE(tree.entriesIn(QStringLiteral("a")).size(), 1);
+    }
+  }
+
+  // The same through two folders: a lists a/b, and a/b lists a.
+  void aListingThatClosesACycleIsDropped() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), true, false}});
+    tree.setListing(QStringLiteral("a"), {{QStringLiteral("a/b"), true, false}});
+    tree.setListing(QStringLiteral("a/b"), {{QStringLiteral("a"), true, false}, {QString(), true, false}});
+    tree.expandAll();
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/b directory")}));
+  }
+
+  // Only a folder's own entries show under it: not ".", "..", an empty name,
+  // one further down or elsewhere, or a path from the filesystem's root.
+  void aListingKeepsOnlyTheFoldersOwnEntries() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), true, false},
+                                {QStringLiteral("."), true, false},
+                                {QStringLiteral(".."), true, false},
+                                {QStringLiteral("/"), true, false},
+                                {QStringLiteral("/etc"), true, false},
+                                {QStringLiteral("c/z"), false, false}});
+    tree.setListing(QStringLiteral("a"), {{QStringLiteral("a/"), true, false},
+                                          {QStringLiteral("a/."), true, false},
+                                          {QStringLiteral("a/b/y"), false, false},
+                                          {QStringLiteral("ab/x"), false, false},
+                                          {QStringLiteral("a/.hidden"), false, false}});
+    tree.expand(QStringLiteral("a"));
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/.hidden file")}));
+  }
+
+  // A search matching the top folder itself ("") listed it under itself.
+  void aSearchMatchingTheTopIsDropped() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setSearch(QList<Entry>{{QString(), true, false}, {QStringLiteral("a/x"), false, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/x file")}));
+  }
 };
 
 QTEST_GUILESS_MAIN(WorkspaceTreeRegression)
