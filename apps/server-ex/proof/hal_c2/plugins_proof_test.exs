@@ -23,6 +23,7 @@ defmodule HalC2.PluginsProofTest do
     ],
     covers: %{
       "HalC2.Plugins.start_worker/3" => "worker",
+      "HalC2.Plugins.rescan/0" => "rescan",
       "HalC2.Plugins.subscribe/1" => "subscribe",
       "HalC2.Plugins.unsubscribe/1" => "unsubscribe",
       "HalC2.Plugins handle_call {:set_enabled, _, _, _}" => "set_enabled",
