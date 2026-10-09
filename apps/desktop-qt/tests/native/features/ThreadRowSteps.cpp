@@ -82,6 +82,31 @@ const Steps steps([] {
     expect(told().isEmpty(), QStringLiteral("the notice is shown again"));
   });
 
+  // The age.
+  step(QStringLiteral("the last message in %1 was 3 hours ago").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString at = world.now().addSecs(-3 * 3600).toUTC().toString(Qt::ISODate);
+    updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [&at](QJsonObject& row) {
+      row.insert(QStringLiteral("latestUserMessageAt"), at);
+      row.insert(QStringLiteral("updatedAt"), at);
+    });
+  });
+  step(QStringLiteral("the environment records that %1 was pinned just now").arg(q), [](World& world, const Captures& c, const Table&) {
+    // As the MC's row after a pin: the update time moves with it.
+    const QString at = world.now().toUTC().toString(Qt::ISODate);
+    updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [&at](QJsonObject& row) {
+      row.insert(QStringLiteral("pinnedAt"), at);
+      row.insert(QStringLiteral("updatedAt"), at);
+    });
+  });
+  step(QStringLiteral("the row for %1 counts its age from that message").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QString key = threadKeyOf(world, c[0]);
+    const QVariantMap row = rowOf(world, key);
+    expect(row.value(QStringLiteral("pinned")).toBool() &&
+               row.value(QStringLiteral("timeAt")) == world.mc.threads.value(idOf(key)).value(QLatin1String("latestUserMessageAt")).toString(),
+           QStringLiteral("the row is %1").arg(show(row)));
+  });
+
   // The preview.
   step(QStringLiteral("the user rests the pointer on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = threadKeyOf(world, c[0]);

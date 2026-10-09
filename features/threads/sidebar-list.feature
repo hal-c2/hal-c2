@@ -38,6 +38,13 @@ Feature: The thread list
     When the user looks at the settled section
     Then "Alpha" is listed above "Beta"
 
+  @desktop @mobile @backlog-mobile
+  Scenario: A settled thread's age counts from when it settled
+    Given "Alpha" settled after "Beta"
+    And "Beta" was renamed since
+    When the user looks at the settled section
+    Then the rows for "Alpha" and "Beta" count their ages from when they settled
+
   @desktop @tui
   Scenario: Collapsing and expanding a shelf
     Given the settled section is expanded

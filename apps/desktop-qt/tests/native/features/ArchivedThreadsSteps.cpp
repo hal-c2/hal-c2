@@ -182,6 +182,12 @@ const Steps steps([] {
     open(world);
     act(world, c[0] == QLatin1String("restores") ? QStringLiteral("unarchive") : QStringLiteral("delete"), c[1]);
   });
+  step(QStringLiteral("the user restores %1 before the environment lists the archived threads again").arg(q), [](World& world, const Captures& c, const Table&) {
+    open(world);
+    waitListed(world, c[0]);
+    world.mc.hold(kHold);
+    act(world, QStringLiteral("unarchive"), c[0]);
+  });
   step(QStringLiteral("the user tries to (unarchive|delete) %1 and the environment refuses").arg(q), [](World& world, const Captures& c, const Table&) {
     world.mc.refusals.insert(QStringLiteral("thread.") + c[0], QStringLiteral("The environment is read-only"));
     open(world);
@@ -208,6 +214,12 @@ const Steps steps([] {
     world.waitFor([&] { return !listed(world, c[0]) && at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("status")) == QLatin1String("empty"); },
                   [&] { return QStringLiteral("%1 gone; the archive shows %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
     expect(!world.mc.threads.contains(QStringLiteral("t1")), QStringLiteral("the MC still has the thread"));
+  });
+  step(QStringLiteral("%1 is not listed in the archived threads").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !world.mc.threads.value(threadNamed(world, c[0])).contains(QLatin1String("archivedAt")); },
+                  [&] { return QStringLiteral("the MC to unarchive %1").arg(c[0]); });
+    world.sync();
+    expect(!listed(world, c[0]), QStringLiteral("the archive shows %1").arg(show(world.state(QStringLiteral("archivedThreads")))));
   });
   step(QStringLiteral("%1 is back in the thread list").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return inThreadList(world, c[0]); },
