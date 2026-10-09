@@ -656,6 +656,9 @@ Item {
             const host = createTemporaryObject(notificationsComponent, root);
             verify(!!host, "Component exists");
             tryVerify(() => findChild(host, "notificationDismiss-native:2") !== null);
+            // The card slides in, and the stack takes its height once the card is measured.
+            const card = findChild(host, "notification-native:2");
+            tryVerify(() => card.opacity === 1 && host.height > 0, 5000, "the toast is shown");
             mouseClick(findChild(host, "notificationDismiss-native:2"));
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "notification.dismiss");
