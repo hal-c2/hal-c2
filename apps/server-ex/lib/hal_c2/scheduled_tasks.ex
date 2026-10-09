@@ -176,6 +176,14 @@ defmodule HalC2.ScheduledTasks do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A scheduler updated in place (`HalC2.Hot`) does not run `init/1` again, and one
+  # from before runs were linked does not trap exits yet.
+  @impl true
+  def code_change(_old, state, _extra) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
   # --- runs --------------------------------------------------------------------
 
   defp start_run(state, task, trigger, from) do

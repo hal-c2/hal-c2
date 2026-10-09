@@ -138,4 +138,32 @@ defmodule HalC2.ScheduledTasksRunsTest do
 
     assert_receive {:DOWN, ^ref, :process, ^run, :killed}
   end
+
+  test "a scheduler updated in place from before runs were linked outlives a run it ends" do
+    scheduler = Process.whereis(ScheduledTasks)
+    down = Process.monitor(scheduler)
+
+    # What the version before was: a scheduler that did not trap exits.
+    :sys.replace_state(scheduler, fn state ->
+      Process.flag(:trap_exit, false)
+      state
+    end)
+
+    # What `HalC2.Hot` does for a process whose module changed.
+    :ok = :sys.suspend(scheduler)
+    :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+    :ok = :sys.resume(scheduler)
+
+    blocking_fire()
+    interval_task()
+    caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, run}
+    ref = Process.monitor(run)
+    assert {:ok, _} = ScheduledTasks.delete(%{"id" => "t1"})
+    Task.await(caller)
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+
+    _ = :sys.get_state(scheduler)
+    refute_received {:DOWN, ^down, _, _, _}
+  end
 end
