@@ -25,7 +25,7 @@ defmodule HalC2.Proof do
     * `{:messages, M}`: "M handle_cast {:done, _, _}" for each message a GenServer
       matches, variables as `_`;
     * `{:state, M}`: "M state :key" for each field of M's struct, or each key of the
-      map its `init/1` starts with;
+      maps its `init/1` writes out;
     * `{:calls, M, fun}`: "M fun(:arg)" for each literal first argument M passes `fun`;
     * `{:type, M, type}`: "M t:type :atom" for each atom of the type.
 
@@ -452,11 +452,16 @@ defmodule HalC2.Proof do
   end
 
   # The keys of the map an `init/1` body returns in `{:ok, %{...}}`.
+  # The keys of every map init/1 writes out, however it then returns its state: bound
+  # first, piped through a helper, or with a timeout. Updates add no keys.
   defp started(body) do
     {_, keys} =
       Macro.prewalk(body, [], fn
-        {:ok, {:%{}, _, pairs}} = node, acc -> {node, acc ++ Keyword.keys(pairs)}
-        node, acc -> {node, acc}
+        {:%{}, _, pairs} = node, acc ->
+          if Keyword.keyword?(pairs), do: {node, acc ++ Keyword.keys(pairs)}, else: {node, acc}
+
+        node, acc ->
+          {node, acc}
       end)
 
     keys
