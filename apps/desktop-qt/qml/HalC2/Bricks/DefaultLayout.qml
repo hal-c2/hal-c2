@@ -20,9 +20,10 @@ Item {
     property bool framesWindow: true
     // Whether the layout shows the window's ConnectionNotice, as a strip at the
     // foot of the window that takes its own room, so it covers neither the
-    // header's controls nor the thread. A root that places the notice itself
-    // (the phone) turns it off.
-    property bool connectionNotice: true
+    // header's controls nor the thread. It does once the window's own notice
+    // is turned off (`ShellWindow.connectionNotice`), so the two never both
+    // show; a root that places the notice itself (the phone) turns this off too.
+    property bool connectionNotice: !window.connectionNotice
     // A page an MC plugin added is showing: it takes the place of everything
     // right of the sidebar.
     readonly property bool pluginTab: (window.route?.tab ?? "threads") !== "threads" && !window.settingsActive

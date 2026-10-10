@@ -722,6 +722,38 @@ private slots:
     bridge.publish("route", QVariant());
   }
 
+  // A shell of the user's that fills its window with the built-in layout, as
+  // DefaultLayout says to, reports a dropped connection once: the window's own
+  // notice stands and the layout's strip stays away.
+  void aLayoutInAWindowOfTheUsersShowsOneConnectionNotice() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport HalC2.Bricks\n"
+                 "ShellWindow { id: root; width: 1200; height: 800; DefaultLayout { anchors.fill: parent; window: root } }");
+    source.close();
+    runtime->reload();
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
+                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+                                             {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
+                                             {"versionWarning", QVariant()}});
+    const std::function<int(QQuickItem*)> shown = [&shown](QQuickItem* item) {
+      int count = item->objectName() == QLatin1String("connectionNotice") && item->isVisible() ? 1 : 0;
+      for (QQuickItem* child : item->childItems()) count += shown(child);
+      return count;
+    };
+    QTRY_VERIFY(shown(window->contentItem()) > 0);
+    QCOMPARE(shown(window->contentItem()), 1);
+    bridge.publish("connection", QVariant());
+    QFile::remove(directory.filePath("shell.qml"));
+  }
+
   // The built-in layout in a window this size, with no shell of the user's.
   QQuickWindow* defaultShell(int width, int height) {
     QFile::remove(directory.filePath("shell.qml"));

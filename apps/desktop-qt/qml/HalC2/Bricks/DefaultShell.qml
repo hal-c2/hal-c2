@@ -11,7 +11,7 @@ import HalC2.Bricks
 ShellWindow {
     id: root
 
-    // DefaultLayout shows the connection notice in its own strip.
+    // DefaultLayout then shows the connection notice in its own strip.
     connectionNotice: false
 
     // Local QML extensions can customize one brick without copying the layout.
