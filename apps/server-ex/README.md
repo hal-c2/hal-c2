@@ -64,7 +64,7 @@ A file of a version not yet installed moves the MC to it.
 
 ## Upgrades
 
-An MC carries the HAL-C2 version (`apps/server/package.json`, or `HAL_C2_MC_VERSION` for a
+An MC carries the HAL-C2 version (`apps/server-ex/VERSION`, or `HAL_C2_MC_VERSION` for a
 build of its own), and clients offer to update it like any server. It moves to the
 new version in place when it can: the running code is replaced module by module and
 nothing reconnects. A version that changes only HAL-C2's own code takes nothing else

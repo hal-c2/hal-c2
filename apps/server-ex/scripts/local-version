@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Prints the version of a local MC build: `<package version>-local.<stamp>.g<commit>`,
+# Prints the version of a local MC build: `<release version>-local.<stamp>.g<commit>`,
 # stamped with the commit's time, so machines that build the same commit get the same
 # version and can cluster. A checkout with uncommitted changes is no commit's code and
-# gets `<package version>-local.<now>`, a version of its own each time.
+# gets `<release version>-local.<now>`, a version of its own each time.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-package_version="$(node -p 'require("../server/package.json").version')"
+release_version="$(tr -d '[:space:]' <VERSION)"
 # Untracked files count whatever status.showUntrackedFiles says: Mix compiles them.
 if [[ -z "$(git status --porcelain --untracked-files=normal)" ]]; then
   stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"
   # Cut here, not by git: --short grows with the checkout's other objects.
   commit="$(git rev-parse HEAD)"
-  echo "$package_version-local.$stamp.g${commit:0:12}"
+  echo "$release_version-local.$stamp.g${commit:0:12}"
 else
-  echo "$package_version-local.$(date -u +%Y%m%d%H%M%S)"
+  echo "$release_version-local.$(date -u +%Y%m%d%H%M%S)"
 fi

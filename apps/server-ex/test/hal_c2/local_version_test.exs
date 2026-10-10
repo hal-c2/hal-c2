@@ -7,8 +7,7 @@ defmodule HalC2.LocalVersionTest do
   setup %{tmp_dir: root} do
     scripts = Path.join(root, "apps/server-ex/scripts")
     File.mkdir_p!(scripts)
-    File.mkdir_p!(Path.join(root, "apps/server"))
-    File.write!(Path.join(root, "apps/server/package.json"), ~s({"version":"1.2.3"}))
+    File.write!(Path.join(root, "apps/server-ex/VERSION"), "1.2.3\n")
     File.cp!("scripts/local-version", Path.join(scripts, "local-version"))
 
     git(root, ~w(init --quiet))
@@ -37,7 +36,7 @@ defmodule HalC2.LocalVersionTest do
   end
 
   test "a checkout with changes gets a version no commit has", %{root: root, script: script} do
-    File.write!(Path.join(root, "apps/server/package.json"), ~s({"version": "1.2.3"}))
+    File.write!(Path.join(root, "apps/server-ex/VERSION"), "1.2.3\n\n")
     assert version(script) =~ ~r/^1\.2\.3-local\.\d{14}$/
   end
 
