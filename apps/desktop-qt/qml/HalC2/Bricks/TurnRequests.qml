@@ -627,33 +627,26 @@ Item {
                         Repeater {
                             model: requests.waiting
 
-                            delegate: RowLayout {
+                            // Indented, without an icon: a Shape is not clipped
+                            // by the list's scroll.
+                            delegate: Text {
                                 id: notice
 
                                 required property var modelData
 
+                                objectName: "queueWaiting-" + modelData.runId
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 28
-                                Layout.leftMargin: 12
+                                Layout.leftMargin: 24
                                 Layout.rightMargin: 12
-                                spacing: 6
-
-                                ShellIcon {
-                                    name: "corner-down-right"
-                                    size: 12
-                                    color: notice.modelData.outcome === "failed" ? requests.warning : requests.muted
-                                }
-                                Text {
-                                    objectName: "queueWaiting-" + notice.modelData.runId
-                                    Layout.fillWidth: true
-                                    text: notice.modelData.summary
-                                    textFormat: Text.PlainText
-                                    color: requests.muted
-                                    font.family: requests.uiFont
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
-                                }
+                                verticalAlignment: Text.AlignVCenter
+                                text: modelData.summary
+                                textFormat: Text.PlainText
+                                color: modelData.outcome === "failed" ? requests.warning : requests.muted
+                                font.family: requests.uiFont
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
                             }
                         }
                     }
