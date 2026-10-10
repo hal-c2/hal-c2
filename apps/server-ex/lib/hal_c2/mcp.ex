@@ -14,8 +14,8 @@ defmodule HalC2.Mcp do
   A project can turn the server off for its threads (`enableAgentBrowserAccess`
   in its settings overrides).
 
-  Tool definitions and the instructions agents get come from the Node server
-  (`scripts/export-mcp-tools.ts`), so both servers advertise the same tools.
+  Tool definitions (`priv/mcp_tools.json`, `priv/mcp_mc_tools.json`) and the instructions
+  agents get (`priv/mcp_instructions.md`) are edited in place.
   """
 
   use GenServer
