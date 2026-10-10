@@ -2,63 +2,16 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
-/** Import restrictions every file keeps, including the one module exempt from the glyph rule. */
+/** Import restrictions every file keeps. */
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "@hal-c2/client-runtime",
     message:
       "Import from an explicit @hal-c2/client-runtime/* subpath. The package has no root export.",
   },
-  {
-    name: "@pierre/diffs/react",
-    importNames: ["CodeView"],
-    message: "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
-  },
 ];
-
-/**
- * The cva functions behind components/ui exports. They style a foreign element to look
- * like a Button or Toggle, which bypasses the component's variants; render the component
- * instead (`render={<Button …/>}`, or `SelectButton` for a picker trigger).
- */
-const RESTRICTED_UI_VARIANT_PATTERNS = [
-  {
-    group: ["**/components/ui/*", "**/ui/*", "./ui/*"],
-    importNames: ["buttonVariants", "toggleVariants", "badgeVariants", "selectTriggerVariants"],
-    message:
-      "Render the components/ui export instead of borrowing its class recipe (render={<Button …/>}, SelectButton, ToggleGroup).",
-  },
-];
-
-/** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
-const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
-  name: "lucide-react",
-  importNames: [
-    "GitMerge",
-    "GitMergeIcon",
-    "GitPullRequest",
-    "GitPullRequestIcon",
-    "GitPullRequestArrow",
-    "GitPullRequestArrowIcon",
-    "GitPullRequestClosed",
-    "GitPullRequestClosedIcon",
-    "GitPullRequestDraft",
-    "GitPullRequestDraftIcon",
-    "GitPullRequestCreate",
-    "GitPullRequestCreateIcon",
-    "GitPullRequestCreateArrow",
-    "GitPullRequestCreateArrowIcon",
-  ],
-  message:
-    "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
-};
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      "~": NodeURL.fileURLToPath(new URL("./apps/web/src", import.meta.url)),
-    },
-  },
   test: {
     environment: "node",
     exclude: [
@@ -66,7 +19,6 @@ export default defineConfig({
       "**/.hal-c2/**",
       "**/node_modules/**",
       "**/dist/**",
-      "**/dist-electron/**",
       "**/.{idea,git,cache,output,temp}/**",
     ],
     hookTimeout: 60_000,
@@ -89,13 +41,9 @@ export default defineConfig({
       ".macroscope/ignore.md",
       ".alchemy",
       "dist",
-      "dist-electron",
       "node_modules",
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
-      "**/routeTree.gen.ts",
-      "apps/mobile/android/**",
-      "apps/mobile/ios/**",
       // Generated QML-dialect JS (`.pragma library`), see scripts/gen-icons.mjs.
       "apps/desktop-qt/qml/HalC2/Bricks/js/lucide.js",
       // QML-dialect JS (`.pragma library`) the formatter cannot parse.
@@ -112,7 +60,6 @@ export default defineConfig({
       "apps/desktop-qt/qml/HalC2/Bricks/js/usageChart.js",
       // Exported Lottie animation, kept as the tool wrote it.
       "apps/desktop-qt/examples/dashboard/cat-playing.json",
-      "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
     ],
     sortPackageJson: {},
@@ -130,22 +77,14 @@ export default defineConfig({
       ".repos",
       ".repos/**",
       "dist",
-      "dist-electron",
       "node_modules",
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
-      "**/routeTree.gen.ts",
-      "apps/mobile/android/**",
-      "apps/mobile/ios/**",
-      "apps/mobile/uniwind-types.d.ts",
       // QML-dialect JS (`.pragma library`) the parser cannot read.
       "apps/desktop-qt/qml/HalC2/Bricks/js/**",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-hal-c2/index.ts", "@shadcn/lint"],
-    settings: {
-      shadcn: { ui: "~/components/ui" },
-    },
+    jsPlugins: ["./oxlint-plugin-hal-c2/index.ts"],
     categories: {
       correctness: "warn",
       suspicious: "warn",
@@ -177,14 +116,10 @@ export default defineConfig({
       "typescript/require-array-sort-compare": "off",
       "typescript/restrict-template-expressions": "off",
       "typescript/unbound-method": "off",
-      "eslint/no-restricted-imports": [
-        "error",
-        { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
-      ],
+      "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }],
       "hal-c2/no-global-process-runtime": "error",
       "hal-c2/no-inline-schema-compile": "warn",
       "hal-c2/no-manual-effect-runtime-in-tests": "error",
-      "hal-c2/no-native-title-tooltip": "error",
       "hal-c2/namespace-node-imports": "error",
     },
     overrides: [
@@ -193,125 +128,6 @@ export default defineConfig({
         files: ["packages/shared/src/hostProcess.ts"],
         rules: { "hal-c2/no-global-process-runtime": "off" },
       },
-      {
-        files: ["apps/web/src/**"],
-        excludeFiles: ["apps/web/src/components/ui/**"],
-        rules: {
-          "eslint/no-restricted-imports": [
-            "error",
-            {
-              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
-              patterns: RESTRICTED_UI_VARIANT_PATTERNS,
-            },
-          ],
-        },
-      },
-      {
-        // The one module allowed to name lucide's pull-request glyphs; everything else picks
-        // from its vocabulary. The other import restrictions still apply here.
-        files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
-        rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
-      },
-      {
-        files: ["apps/mobile/src/**"],
-        rules: { "hal-c2/no-mobile-uniwind-theme-escape-hatches": "error" },
-      },
-      {
-        // components/ui exports own their look. App code picks a variant or size instead
-        // of restyling with className; layout classes (width, flex, margin, position) stay
-        // allowed because placement belongs to the parent. components/ui is for generic
-        // primitives: a look that belongs to one feature stays in that feature's component.
-        files: ["apps/web/src/**"],
-        excludeFiles: ["apps/web/src/components/ui/**"],
-        rules: {
-          "shadcn/no-restyle": [
-            "error",
-            {
-              allow: ["layout"],
-              contracts: [
-                {
-                  // CollapsibleTrigger is a bare button with no styled counterpart
-                  // (a disclosure row is not a Button), so its className is the API.
-                  // Every other trigger has one: style them with render={<Button …/>}.
-                  pattern: "^CollapsibleTrigger$",
-                  allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        // Shared client code must not call APIs missing from Hermes. Our ESNext
-        // TypeScript target accepts them even when they would crash mobile at launch.
-        // Tests run on Node and are exempt.
-        files: [
-          "apps/mobile/src/**",
-          "packages/client-runtime/src/**",
-          "packages/contracts/src/**",
-          "packages/shared/src/**",
-        ],
-        excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
-        rules: { "hal-c2/no-hermes-unsupported-apis": "error" },
-      },
-      {
-        // Reviewed native and third-party interop boundaries that cannot consume a className.
-        files: [
-          "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",
-          "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
-          "apps/mobile/src/features/files/FileMarkdownPreview.tsx",
-          "apps/mobile/src/features/files/SourceFileSurface.tsx",
-          "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
-          "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
-          "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
-          "apps/mobile/src/features/home/HomeHeader.tsx",
-          "apps/mobile/src/features/review/ReviewSheet.tsx",
-          "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
-          "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
-          "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
-          "apps/mobile/src/features/threads/ThreadComposer.tsx",
-          "apps/mobile/src/features/threads/ThreadFeed.tsx",
-          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
-          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
-          "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
-          "apps/mobile/src/features/threads/ThreadAgentsSheet.tsx",
-          "apps/mobile/src/features/review/ReviewCommentCard.tsx",
-          "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
-          "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
-          "apps/mobile/src/features/threads/thread-list-items.tsx",
-          "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
-          "apps/mobile/src/lib/useMobileNavigationTheme.ts",
-          "apps/mobile/src/native/HalC2ComposerEditor.ios.tsx",
-          "apps/mobile/src/native/HalC2ComposerEditor.native.tsx",
-          "apps/mobile/src/native/SelectableMarkdownText.android.tsx",
-        ],
-        rules: {
-          "hal-c2/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
-        },
-      },
-      // Legacy manual Effect runners tracked as debt: no net-new occurrences.
-      // Lower a ceiling when you migrate a file, and delete its entry at zero.
-      ...Object.entries({
-        "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts": 42,
-        "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
-        "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
-        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
-        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
-        "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
-        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
-        "apps/server/src/orchestration/projector.test.ts": 20,
-        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CodexSessionRuntime.test.ts": 5,
-        "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
-        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
-        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
-        "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
-      }).map(([file, maxOccurrences]) => {
-        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
-        return { files: [file], rules: { "hal-c2/no-manual-effect-runtime-in-tests": rule } };
-      }),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

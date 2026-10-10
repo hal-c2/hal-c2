@@ -150,7 +150,6 @@ jobs:
               ":(glob,exclude)**/__tests__/**",
               ":(glob,exclude)**/test/**",
               ":(glob,exclude)**/tests/**",
-              ":(glob,exclude)apps/server/integration/**",
               ":(glob,exclude)**/*.test.*",
               ":(glob,exclude)**/*.spec.*",
               ":(glob,exclude)**/*.browser.*",

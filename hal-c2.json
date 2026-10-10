@@ -1,16 +1,16 @@
 {
   "$schema": "https://hal-c2.example/schema/hal-c2.json",
-  "iconPath": "assets/dev/blueprint-web-apple-touch-180.png",
+  "iconPath": "assets/dev/blueprint-universal-1024.png",
   "scripts": [
     {
       "name": "Setup Worktree",
-      "command": "vp i && ln -sf $HAL_C2_PROJECT_ROOT/.env .env && ln -sf $HAL_C2_PROJECT_ROOT/infra/relay/.env infra/relay/.env && node apps/web/scripts/warm-dep-cache.ts",
+      "command": "vp i && ln -sf $HAL_C2_PROJECT_ROOT/.env .env && ln -sf $HAL_C2_PROJECT_ROOT/infra/relay/.env infra/relay/.env",
       "icon": "configure",
       "runOnWorktreeCreate": true
     },
     {
       "name": "Setup Worktree (Windows)",
-      "command": "vp i && New-Item -ItemType SymbolicLink -Path .env -Target \"$env:HAL_C2_PROJECT_ROOT\\.env\" -Force && New-Item -ItemType SymbolicLink -Path \"infra\\relay\\.env\" -Target \"$env:HAL_C2_PROJECT_ROOT\\infra\\relay\\.env\" -Force && node apps\\web\\scripts\\warm-dep-cache.ts",
+      "command": "vp i && New-Item -ItemType SymbolicLink -Path .env -Target \"$env:HAL_C2_PROJECT_ROOT\\.env\" -Force && New-Item -ItemType SymbolicLink -Path \"infra\\relay\\.env\" -Target \"$env:HAL_C2_PROJECT_ROOT\\infra\\relay\\.env\" -Force",
       "icon": "configure",
       "runOnWorktreeCreate": true
     }
