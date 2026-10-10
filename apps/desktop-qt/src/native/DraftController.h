@@ -33,7 +33,7 @@ class ShellStore;
 // thread in <project>", listed while the window shows a project) and the
 // thread.newIn menu ("New thread in...", the window's project first).
 //
-// A window with no thread lands on a draft, as the web's index route does:
+// A window with no thread lands on a draft:
 // on `home`, once the MC's snapshot is in, it opens the draft of the most
 // recently active project (sidebar::mostRecentProject), the same draft every
 // other window landing there opens. With no project it stays home, which

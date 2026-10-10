@@ -1,5 +1,4 @@
-// How the open thread's new worktree is being prepared (the web's
-// WorktreeSetupCard): the MC's `worktreeSetup` shape for the thread
+// How the open thread's new worktree is being prepared: the MC's `worktreeSetup` shape for the thread
 // (HalC2.WorktreeSetup; a WorktreeSetupSnapshot of packages/contracts, or
 // null when none is tracked), followed while the window shows the thread.
 //
@@ -108,7 +107,7 @@ private:
                                 {QStringLiteral("detail"), stage.value(QLatin1String("detail")).toString()},
                                 {QStringLiteral("tail"), stage.value(QLatin1String("tail")).toVariant().toStringList()}});
     }
-    // The web's headerLabel.
+    // The headline of the setup.
     const QString label = phase == QLatin1String("running")     ? QStringLiteral("Setting up worktree…")
                           : phase == QLatin1String("failed")    ? QStringLiteral("Worktree setup failed")
                           : phase == QLatin1String("cancelled") ? QStringLiteral("Worktree setup cancelled")

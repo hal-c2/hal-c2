@@ -8,7 +8,7 @@ namespace {
 
 const NativeControllerRegistrar<AttachmentViewerController> registrar(QStringLiteral("attachmentViewer"), {QStringLiteral("attachmentViewer")});
 
-// packages/shared filePreview.ts filePreviewKind, for what this viewer draws.
+// What this viewer draws a preview as.
 QString kindOf(const QVariantMap& preview) {
   const QString mime = preview.value(QStringLiteral("mimeType")).toString().section(QLatin1Char(';'), 0, 0).trimmed().toLower();
   const QString name = preview.value(QStringLiteral("name")).toString().toLower();

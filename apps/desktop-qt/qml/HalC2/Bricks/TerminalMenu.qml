@@ -2,14 +2,14 @@ import QtQuick
 import Ghostty
 import HalC2.Shell
 
-// A terminal's right-click menu, as the web's terminalContextMenuItems: the
+// A terminal's right-click menu: the
 // selection's actions, off until something is selected, and Paste. Adding to
 // chat is only offered where there is a draft to add to (`addToChat` set).
 //
 //   TapHandler { acceptedButtons: Qt.RightButton; onTapped: point => menu.popup(point.position.x, point.position.y) }
 //   TerminalMenu { id: menu; terminal: screen }
 //
-// The same from the keyboard, as the web's terminal: Ctrl+V pastes, and Ctrl+C
+// The same from the keyboard: Ctrl+V pastes, and Ctrl+C
 // (or Ctrl+Insert) copies a selection and stays the shell's without one.
 //
 //   Terminal { Keys.onPressed: event => menu.keyPressed(event) }

@@ -2,7 +2,7 @@ import QtQuick
 import Ghostty
 import HalC2.Shell
 
-// An agent's login terminal (the web's ProviderAuthTerminal): draws the
+// An agent's login terminal: draws the
 // output the environment sends, `{output, offset}` where `offset` counts every
 // character the terminal has printed and `output` is the latest of them, and
 // sends keystrokes and sizes back through `providerSettings.signInTerminal`.

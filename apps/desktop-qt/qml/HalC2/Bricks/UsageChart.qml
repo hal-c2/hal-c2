@@ -5,7 +5,7 @@ import QtQuick.Shapes
 import HalC2.Shell
 import "js/usageChart.js" as UsageChartMath
 
-// The usage page's chart, as the web's UsageProviderChart draws it: one smooth
+// The usage page's chart: one smooth
 // line per provider over the window's periods, each measured from zero with a
 // faint fill beneath it, and the period under the pointer read out.
 Item {

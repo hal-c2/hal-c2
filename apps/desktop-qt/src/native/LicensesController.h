@@ -10,7 +10,7 @@
 class McClient;
 class ShellBridge;
 
-// Settings → Open source licenses (the web's OpenSourceLicenses): the
+// Settings → Open source licenses: the
 // third-party notices this app ships, read from the manifest staged beside it
 // (scripts/third-party-licenses.ts writes it; setManifestPath says where). No
 // MC is asked, so it reads with none connected. The manifest is read when

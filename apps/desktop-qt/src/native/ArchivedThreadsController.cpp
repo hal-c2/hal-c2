@@ -24,7 +24,7 @@ const NativeControllerRegistrar<ArchivedThreadsController> registrar(QStringLite
 
 const QString kKey = QStringLiteral("archivedThreads");
 
-// The web's formatRelativeTime: "just now", then minutes, hours and days ago.
+// "just now", then minutes, hours and days ago.
 QString ago(const QString& iso) {
   const QDateTime at = QDateTime::fromString(iso, Qt::ISODateWithMs);
   if (!at.isValid()) return {};
@@ -177,8 +177,7 @@ void ArchivedThreadsController::act(const QString& environmentId, const QString&
 void ArchivedThreadsController::publish() {
   if (!m_active) return;
   QVariantList groups;
-  // As the web's ArchivedThreadsPanel: a picked environment or project lists
-  // only its threads.
+  // A picked environment or project lists only its threads.
   const auto* scope = NativeShell::of(this)->controller<SettingsScopeController>();
   const bool scoped = scope && (scope->projectScope() || !scope->environmentFilter().isEmpty());
   if (m_open) {

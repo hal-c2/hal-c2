@@ -41,13 +41,13 @@ const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("co
                                                                {QStringLiteral("turn"), QStringLiteral("composer"),
                                                                 QStringLiteral("modelPicker"), QStringLiteral("composerStash")});
 
-// apps/web/src/proposedPlan.ts PLAN_IMPLEMENTATION_PROMPT_PREFIX.
+// The prompt that has the provider implement a proposed plan.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
 // How long a new thread waits to be placed before it starts where the user
 // picked: the MC itself waits a second for the picked machine and a second for
 // the others.
 constexpr int kPlacementWaitMs = 3000;
-// apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx.
+// Why a request cannot be answered when its provider process has ended.
 const QString kProviderGone = QStringLiteral("Provider process is gone — interrupt or restart the run to respond.");
 
 QString str(const QJsonObject& object, QLatin1StringView field) {
@@ -60,7 +60,7 @@ bool unanswered(const std::optional<QString>& error) {
   return error && *error == QLatin1String("disconnected");
 }
 
-// apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx fallbackLabel.
+// The title of an approval whose request names none.
 QString approvalTitle(const QString& kind) {
   if (kind == QLatin1String("mcp-elicitation")) return QStringLiteral("App access approval");
   if (kind == QLatin1String("command")) return QStringLiteral("Command approval");
@@ -69,8 +69,7 @@ QString approvalTitle(const QString& kind) {
   return QStringLiteral("File change approval");
 }
 
-// What the web offers when the provider names no options
-// (ComposerPendingApprovalActions.tsx), the primary one first.
+// What is offered when the provider names no options, the primary one first.
 QVariantList defaultApprovalOptions() {
   const auto option = [](const QString& decision, const QString& label) {
     return QVariantMap{{QStringLiteral("decision"), decision},
@@ -111,7 +110,7 @@ QList<QJsonObject> itemsOf(const QHash<QString, QJsonObject>& items, const QStri
   return found;
 }
 
-// apps/web's new-thread title: the prompt, else the first image, cut to 50.
+// A new thread's title: the prompt, else the first image, cut to 50.
 QString launchTitle(const QString& text, const QString& firstImage) {
   QString seed = text.trimmed();
   if (seed.isEmpty()) seed = firstImage.isEmpty() ? QStringLiteral("New thread") : QStringLiteral("Image: ") + firstImage;
@@ -156,14 +155,14 @@ QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSe
   return newest;
 }
 
-// apps/web/src/promptStashStore.ts MAX_STASH_ENTRIES.
+// How many prompts the stash keeps.
 constexpr qsizetype kMaxStashEntries = 20;
 // packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
 constexpr qsizetype kMaxPromptChars = 120000;
-// apps/web/src/components/chat/composerPromptHistory.ts CLAUDE_ULTRATHINK_PREFIX.
+// What Claude's ultrathink choice puts at the start of a prompt.
 const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
 
-// What the user typed of a sent message (the web's recallableComposerPrompt):
+// What the user typed of a sent message:
 // without the Ultrathink prefix and the context links a send appends; a plan
 // the app asked to implement is not a prompt.
 QString recallable(QString prompt) {
@@ -180,8 +179,7 @@ QString recallable(QString prompt) {
 constexpr qsizetype kMaxCitationLength = 8000;
 constexpr qsizetype kCitationContextLength = 32;
 
-// `[Assistant quote](hal-c2-citation://v1/<environment>/<thread>/<message>?text=...)`:
-// serializeAssistantCitation in packages/shared/src/assistantCitations.ts.
+// `[Assistant quote](hal-c2-citation://v1/<environment>/<thread>/<message>?text=...)`.
 QString citationLink(const QJsonObject& citation) {
   const auto encoded = [](const QString& value) { return QString::fromLatin1(QUrl::toPercentEncoding(value)); };
   QStringList path;
@@ -482,8 +480,7 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   setText(target, entries.at(next).second, int(entries.at(next).second.size()));
 }
 
-// apps/web/src/components/chat/composerSubmission.ts
-// getComposerPromptLengthValidationMessage.
+// Why a prompt cannot be sent for its length, else empty.
 QString ComposerController::promptProblem(const QString& text) {
   const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
   if (excess <= 0) return {};
@@ -492,7 +489,7 @@ QString ComposerController::promptProblem(const QString& text) {
       .arg(english.toString(excess), excess == 1 ? QStringLiteral("character") : QStringLiteral("characters"), english.toString(kMaxPromptChars));
 }
 
-// The web's stashCurrentPrompt: the draft goes to the stash and the composer
+// The draft goes to the stash and the composer
 // empties; an empty draft brings back the only entry, or opens the list.
 // Nothing while an approval waits; a question waiting opens the list instead.
 bool ComposerController::stash(const QString& target) {
@@ -533,7 +530,7 @@ bool ComposerController::stash(const QString& target) {
 }
 
 // The entry joins what the draft already holds, after a blank line, and
-// leaves the stash (the web's restoreStashEntry).
+// leaves the stash.
 void ComposerController::restoreStash(const QString& target, const QString& id) {
   const auto found = std::find_if(m_kept.stash.cbegin(), m_kept.stash.cend(),
                                   [&](const StashEntry& entry) { return entry.id == id; });
@@ -556,7 +553,7 @@ void ComposerController::setStashOpen(bool open) {
   publish();
 }
 
-// apps/web/src/components/chat/ComposerStashMenu.tsx stashEntrySnippet.
+// What the stash menu shows: each entry with a snippet of its text.
 QVariantMap ComposerController::stashState() const {
   static const QRegularExpression space(QStringLiteral("\\s+"));
   QVariantList entries;
@@ -589,7 +586,7 @@ QVariantMap ComposerController::stashState() const {
 }
 
 // Stops the thread's active run, or the latest one while it still waits on
-// the provider or background work, as client-runtime's interruptThreadTurn.
+// the provider or background work.
 bool ComposerController::interrupt() {
   const auto thread = m_store->thread(openThread());
   if (!thread) return false;
@@ -619,7 +616,7 @@ bool ComposerController::interrupt() {
 // switches the mode. During a turn it follows the follow-up setting
 // (`followUpBehavior`, steer by default), the alternate intent the other way;
 // with the thread idle on a proposed plan it refines the plan (or implements
-// it, with no text), as the web's resolvePlanFollowUpSubmission.
+// it, with no text).
 bool ComposerController::submit(const QVariantMap& payload) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
@@ -720,7 +717,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     message.insert(QStringLiteral("sourcePlanRef"),
                    QJsonObject{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("planId"), str(plan, QLatin1String("id"))}});
   }
-  // client-runtime startThreadTurn with an MC that resolves the context.
+  // The MC resolves the context.
   if (mode == QLatin1String("queue")) {
     message.insert(QStringLiteral("dispatchMode"), QJsonObject{{QStringLiteral("type"), QStringLiteral("queue_after_active")}});
   } else {
@@ -789,7 +786,7 @@ void ComposerController::place(const QString& environmentId, const QString& proj
   QTimer::singleShot(kPlacementWaitMs, this, [answer] { answer(QJsonValue(), QStringLiteral("no answer")); });
 }
 
-// A new thread's first send, as the web's: the thread is placed, its images
+// A new thread's first send: the thread is placed, its images
 // are stored, then it is launched with the message in the draft's checkout
 // (or the one it was placed in). The draft empties as it is sent, as a
 // follow-up's composer does, and gets its text and images back if the launch
@@ -1001,7 +998,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
   return true;
 }
 
-// As the web's send to multiple models: each gets a thread of its own, in a
+// Send to multiple models: each gets a thread of its own, in a
 // new worktree off the draft's branch, and the draft is ready for the next
 // prompt. A thread that fails to start says so; if none starts the prompt
 // comes back, then or, for launches a quit or drop left unanswered, once the
@@ -1164,7 +1161,7 @@ bool ComposerController::restoreLaunch(const QString& draftId, const QString& te
   return true;
 }
 
-// A background launch's answer, as the web's: a toast that opens the new
+// A background launch's answer: a toast that opens the new
 // thread, or the prompt back in the draft (or, when the draft has a newer
 // prompt, a toast that gives it back once the draft is empty).
 void ComposerController::launchedInBackground(const QString& draftId, const QString& text,
@@ -1630,7 +1627,7 @@ bool ComposerController::attachToAnswer(const QString& requestId, QString questi
   return true;
 }
 
-// apps/web ChatComposer addDroppedFolders: a folder is named by its path,
+// A folder is named by its path,
 // which only means something where the MC shares this machine's disk.
 bool ComposerController::attachFolders(const QString& target, const QVariantList& folders) {
   if (!m_bridge->localFolders() || environmentOf(target) != m_client->environment()) {
@@ -1724,7 +1721,7 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
                  });
 }
 
-// The web's send guards (ChatView): nothing leaves while a file is still on
+// Send guards: nothing leaves while a file is still on
 // its way, or after one failed.
 bool ComposerController::filesBlock(const QList<Attachment>& attachments, const QString& what) {
   bool uploading = false, failed = false;
@@ -1759,14 +1756,13 @@ QJsonArray ComposerController::fileRecords(const QList<Attachment>& attachments)
 
 // What the composer shows of each: {id, name, kind, status, error, source};
 // `source` is a Snap Shot's {appName, windowTitle, accessibility}, the
-// last being what its window said of itself, in the web's words
-// (SnapShotAttachmentDetails.tsx).
+// last being what its window said of itself.
 QVariantList ComposerController::shownAttachments(const QList<Attachment>& attachments, bool previews) const {
   QVariantList shown;
   for (const Attachment& attachment : attachments) {
     QVariant source = QVariant::fromValue(nullptr);
     if (str(attachment.source, QLatin1String("kind")) == QLatin1String("snap-shot")) {
-      // SnapShotAttachmentDetails.tsx: the text the window said of itself,
+      // The text the window said of itself,
       // else its element tree when any element has a name or value.
       const QJsonObject accessibility = attachment.source.value(QLatin1String("accessibility")).toObject();
       QString said = str(accessibility, QLatin1String("format")) == QLatin1String("flat-text") ? str(accessibility, QLatin1String("text")).trimmed()
@@ -1836,8 +1832,7 @@ QVariantList ComposerController::attachments(const QString& target) const {
   return list;
 }
 
-// apps/web/src/lib/terminalContext.ts normalizeTerminalContextSelection: the
-// text without CRs or blank edges, and a valid line range; a selection with
+// The selection's text without CRs or blank edges, and a valid line range; a selection with
 // no text, terminal or label adds nothing.
 bool ComposerController::addTerminalContext(const QVariantMap& selection) {
   const QString target = this->target();
@@ -1947,9 +1942,8 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
   return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
 }
 
-// As the web's composer: each excerpt is an inline link in the text
-// (formatTerminalContextReference) and a record in `context`
-// (terminalContextRecord); the MC swaps the links for the excerpts when it
+// Each excerpt is an inline link in the text
+// and a record in `context`; the MC swaps the links for the excerpts when it
 // hands the message to the provider. A quoted reply is only a link, which
 // holds all of it.
 void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts) {
@@ -1979,7 +1973,7 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
       records.append(record);
       continue;
     }
-    // An excerpt whose text is gone (the web's expired context) has nothing to send.
+    // An excerpt whose text is gone has nothing to send.
     if (context.text.trimmed().isEmpty()) continue;
     const QString range = context.lineStart == context.lineEnd
                               ? QStringLiteral("line %1").arg(context.lineStart)
@@ -2142,8 +2136,7 @@ QString ComposerController::openDraft() const {
   return route.kind == QLatin1String("draft") ? route.draftId : QString();
 }
 
-// A thread's own model; for a draft the project's default, as the web's
-// deriveComposerModelSelection: this device's project override, the
+// A thread's own model; for a draft the project's default: this device's project override, the
 // project's, then the default for new threads. Empty lets the MC choose.
 QJsonObject ComposerController::baseSelection(const QString& key) const {
   if (const auto thread = m_store->thread(key)) return thread->modelSelection;
@@ -2516,7 +2509,7 @@ void ComposerController::rememberModel(const QJsonObject& selection) {
   m_kept.lastModels.insert(instanceId, selection);
 }
 
-// As the web's handleModelSelect: a started thread keeps its provider, and a
+// A started thread keeps its provider, and a
 // model its session cannot switch to says why instead.
 bool ComposerController::selectModel(const QString& target, const QString& instanceId, const QString& model) {
   if (instanceId.isEmpty() || model.isEmpty()) return false;
@@ -2556,7 +2549,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
   // A choice the provider takes from the prompt (Claude's ultrathink) is put
-  // there instead (the web's TraitsPicker); any other choice takes it out.
+  // there instead; any other choice takes it out.
   static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
   static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
   for (const QJsonValue& entry : descriptors) {
@@ -2585,8 +2578,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   return true;
 }
 
-// Puts the suggestion in the trigger's place, as the web's
-// applyPromptReplacement; the composer's own commands act instead.
+// Puts the suggestion in the trigger's place; the composer's own commands act instead.
 bool ComposerController::selectSuggestion(const QString& target, const QString& id) {
   const QString text = draft(target);
   const std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
@@ -2702,7 +2694,7 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
   return QStringLiteral("full-access");
 }
 
-// The mode a send uses: plan only while plan mode is on, as the web's.
+// The mode a send uses: plan only while plan mode is on.
 QString ComposerController::interactionModeOf(const QString& target) const {
   if (!planModeOn(instanceOf(selection(target)))) return QStringLiteral("default");
   if (const QString mode = m_drafts.value(target).interactionMode; !mode.isEmpty()) return mode;
@@ -2712,7 +2704,7 @@ QString ComposerController::interactionModeOf(const QString& target) const {
   return QStringLiteral("default");
 }
 
-// ShellComposerState, as the web's buildShellComposerState worked it out.
+// ShellComposerState.
 QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const QString target = this->target();
   if (target.isEmpty()) return QVariant::fromValue(nullptr);

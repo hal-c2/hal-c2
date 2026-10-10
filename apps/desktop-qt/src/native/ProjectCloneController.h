@@ -16,8 +16,7 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// Cloning a repository into a new project, as the web's Add project and its
-// ProjectCloneToastCoordinator do.
+// Cloning a repository into a new project.
 //
 // Add project's sources (ProjectController) list "Git URL" and each hosting
 // provider's repository, ready ones first; whether a provider is ready comes
@@ -80,7 +79,7 @@ private:
   void submitRepository(const QString& environmentId, const Source& source, const QString& input);
   void askDestination(const Chosen& chosen);
   void start(const Chosen& chosen, const QString& destination);
-  // False, with the web's "Environment unavailable", when it is not connected.
+  // False, with "Environment unavailable", when it is not connected.
   bool connected(const QString& environmentId);
   void openProject(const QString& environmentId, const QString& projectId);
   void follow();

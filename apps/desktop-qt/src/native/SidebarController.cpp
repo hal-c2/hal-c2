@@ -26,7 +26,7 @@ SidebarController::SidebarController(ShellBridge* bridge, McClient* client, Shel
                                      QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_minute.setSingleShot(true);
-  // Snoozes wake and "2h" labels tick over on the minute, as the web app's nowMinute.
+  // Snoozes wake and "2h" labels tick over on the minute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
   m_visitLater.setSingleShot(true);
@@ -365,7 +365,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
             QStringLiteral("Failed to un-settle thread"));
   } else if (action == QLatin1String("thread.unsnooze")) {
     // A snooze the limit recovery made is ended there, so the MC does not
-    // snooze the thread again for the same reset (the web's handleUnsnooze).
+    // snooze the thread again for the same reset.
     const QJsonObject recovery = m_store->threadRow(key).value(QLatin1String("limitRecovery")).toObject();
     const auto until = sidebar::parseIso(thread->snoozedUntil);
     const auto reset = sidebar::parseIso(sidebar::Nullable(recovery.value(QLatin1String("resetAt")).toString()));
@@ -415,7 +415,7 @@ void SidebarController::command(const QString& environmentId, QJsonObject comman
 }
 
 // Settling or snoozing the open thread moves to the next card that stays in
-// the list (or a new thread in the same project), as the web app's threadParking.
+// the list (or a new thread in the same project).
 void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle, Leave leave,
                              std::function<void()> onSuccess) {
   if (m_pending.contains(key)) return;
@@ -519,7 +519,7 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
        });
 }
 
-// Starts an hour from now, as the web app's dialog.
+// Starts an hour from now.
 void SidebarController::askCustomSnooze(const QStringList& keys) {
   if (keys.isEmpty()) return;
   m_customSnoozeKeys = keys;

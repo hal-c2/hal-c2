@@ -7,8 +7,7 @@ import "js/terminalLinks.js" as TerminalLinks
 
 // One place's terminals (the drawer's, or the right panel's), drawn by
 // qml-ghostty's Terminal from the `Terminals` controller's sessions: the
-// shown split group's terminals side by side or stacked, as the web's
-// terminal grid. Every other terminal of the place stays made, hidden, so
+// shown split group's terminals side by side or stacked. Every other terminal of the place stays made, hidden, so
 // switching groups keeps each screen and its scrollback.
 //
 //   TerminalSplits { anchors.fill: parent; panel: false; group: Terminals.activeGroup }

@@ -13,8 +13,7 @@ class ShellBridge;
 class ShellStore;
 
 // What the user does with the plan the route's thread offers (`turn.plan`,
-// ComposerController) besides implementing it there (the web's
-// ProposedPlanCard and ChatView's implement-in-new-thread):
+// ComposerController) besides implementing it there:
 //
 //   plan.implementInNewThread   a thread beside this one, in the same project
 //                               and checkout, whose first message carries out
@@ -37,8 +36,7 @@ public:
 
   // Where plan.download writes; the system's Downloads folder unless tests say.
   void setDownloadDirectory(const QString& path) { m_downloads = path; }
-  // "tax-line.md" for a plan headed "Tax line" (the web's
-  // buildProposedPlanMarkdownFilename).
+  // "tax-line.md" for a plan headed "Tax line".
   static QString fileName(const QString& markdown);
 
 private:

@@ -105,10 +105,10 @@ class WorkspaceFiles : public QObject {
   Q_PROPERTY(QString saveProblem READ saveProblem NOTIFY saveChanged)
 
 public:
-  // How long typing pauses before the search goes out, as the web's.
+  // How long typing pauses before the search goes out.
   static constexpr int searchDelayMs = 120;
   static constexpr int searchLimit = 200;
-  // How long after the last edit it is written, as the web's.
+  // How long after the last edit it is written.
   static constexpr int saveDelayMs = 500;
   // The rows of a CSV file its table shows.
   static constexpr int csvRowLimit = 500;
@@ -133,7 +133,7 @@ public:
 
   // The thread whose agent changes the workspace: the tree lists its loaded
   // folders again once a command or file change settles or a checkpoint
-  // lands (the web's workspaceMutationId), at once while the tab shows, else
+  // lands, at once while the tab shows, else
   // when it next does.
   void setTimeline(TimelineModel* timeline);
   QString environment() const { return m_environment; }

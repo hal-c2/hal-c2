@@ -20,7 +20,7 @@ QJsonObject of(const QJsonObject& settings, const QString& id, const QString& dr
 QJsonObject with(QJsonObject settings, const QString& id, const QJsonObject& instance);
 // `instance` with `config.<key>` set; an empty string or null removes it.
 QJsonObject withConfig(QJsonObject instance, const QString& key, const QJsonValue& value);
-// Ids a new instance may not take (the web's existingIds): Codex's and
+// Ids a new instance may not take (existing ids): Codex's and
 // Claude's own slots, configured instances and providers, and the instances
 // the environment lists.
 QSet<QString> taken(const QJsonObject& settings, const QJsonArray& providers);

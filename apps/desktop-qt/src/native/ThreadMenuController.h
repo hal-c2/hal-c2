@@ -20,15 +20,14 @@ class ToastController;
 
 // A thread's action menu, from its sidebar row (`thread.menu {key, x, y}`)
 // and from the header's title (`workspace.titleMenu {x, y}`, the route's
-// thread, or its draft's menu). Items follow the web app's
-// buildThreadActionMenuItems order, plus Fork and Move to another machine;
+// thread, or its draft's menu). Items are the thread's actions, plus Fork and Move to another machine;
 // the environment's capabilities leave items out and an offline environment
 // turns the ones that need it off. Each action toasts its failure, and the
 // ones that hide a thread (archive, unpin, settle, snooze) offer Undo.
 //
 // With several threads selected (SidebarController::selection), the menu of
 // one of them is the selection's: each action names how many threads it
-// touches, as the web app's sidebar ("Unpin (1)", "Settle (3)", "Delete (3)"),
+// touches ("Unpin (1)", "Settle (3)", "Delete (3)"),
 // and applies to all of them. Deleting keeps the threads that could not be
 // deleted selected.
 //

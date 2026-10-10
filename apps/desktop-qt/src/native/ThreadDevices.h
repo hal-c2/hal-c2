@@ -11,7 +11,7 @@
 
 class McClient;
 
-// The Device tabs of a thread's right panel (the web's DevicePanel): the
+// The Device tabs of a thread's right panel: the
 // picker (`device`) lists the thread's environment's simulators and
 // emulators, and a device tab (`device:<host>:<device>`, both percent-encoded)
 // streams one the thread has open. The environment's DeviceServiceState is

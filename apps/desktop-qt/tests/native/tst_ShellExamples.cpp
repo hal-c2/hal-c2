@@ -219,7 +219,7 @@ private slots:
     if (width == 1000) threadRoutesDrawTheCentre(window);
 
     if (example == "glass-macos") {
-      // The web app's breakpoints: the sidebar goes off-canvas under 768, the
+      // The breakpoints: the sidebar goes off-canvas under 768, the
       // right panel becomes a sheet under 980. Panels slide, so every
       // geometry check waits.
       const bool sidebarOverlay = width < 768;

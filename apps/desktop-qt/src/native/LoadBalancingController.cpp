@@ -1,6 +1,5 @@
-// Settings → Connections' "Load balancing" group, natively (the web's
-// LoadBalancingSettings): whether new threads start on the machine with the
-// most room, and how often each machine of the cluster gets them. Both are in
+// Settings → Connections' "Load balancing" group: whether new threads start on the machine
+// with the most room, and how often each machine of the cluster gets them. Both are in
 // the settings document of the MC this shell is connected to
 // (`loadBalancingEnabled`, and `loadBalancingWeights` by environment id),
 // because that MC is the one that chooses (HalC2.LoadBalancing, which

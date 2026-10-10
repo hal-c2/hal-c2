@@ -15,7 +15,7 @@ namespace {
 
 const NativeControllerRegistrar<LicensesController> registrar(QStringLiteral("licenses"), {QStringLiteral("licenses")});
 
-// packages/shared thirdPartyLicenses.ts's BUNDLE_LABELS.
+// What a bundle id of the manifest is shown as; an id without a label shows as it is.
 QString bundleLabel(const QString& bundle) {
   static const QHash<QString, QString> labels{
       {QStringLiteral("android"), QStringLiteral("Android")},

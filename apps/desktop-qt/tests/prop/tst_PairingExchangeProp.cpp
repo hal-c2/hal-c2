@@ -593,7 +593,7 @@ private slots:
           // A user name before the host, to make it read as another.
           link.scheme + QStringLiteral("://") + link.origin().host() + QStringLiteral("@evil.example/#token=") + link.token,
           link.scheme + QStringLiteral("://user:pw@") + link.address() + link.path + QStringLiteral("#token=x"),
-          // Schemes other than the web's.
+          // Schemes other than http and https.
           QStringLiteral("ftp://") + link.address() + QStringLiteral("/#token=x"), QStringLiteral("javascript:alert(1)//#token=x"),
           QStringLiteral("file:///etc/passwd#token=x"),
           // A guessed scheme.

@@ -1,52 +1,39 @@
 # Open source license notices
 
-License notices are generated independently for the client that ships them:
+License notices are generated independently for each Qt client that ships them:
 
-- The web build emits `third-party-licenses.json` beside `index.html`. The Settings page loads that
-  static file, so the same artifact works in hosted web, the client bundled with `npx hal-c2`, and
-  desktop.
-- The mobile Metro config generates an ignored virtual module before each development, native, or
-  over-the-air JavaScript bundle. Mobile loads and decodes that module only when a license screen
-  opens, so the notice text does not occupy memory during ordinary app startup. It does not need a
-  network request.
 - The Qt desktop stages `licenses/third-party-licenses.json` beside its runtime
   (`apps/desktop-qt/scripts/stage-runtime.mjs`, or `vp run --filter @hal-c2/desktop-qt licenses` for
-  a dev build). It holds the web app's packages, whose icons the bricks draw, plus the `desktop-qt`
-  custom notices: Qt, the Erlang/OTP and Elixir runtime of the MC, and the Node.js it ships.
-  `LicensesController` reads it when the Open source licenses section opens.
+  a dev build). It holds the packages of the Cursor sidecar the MC release ships
+  (`packages/cursor-acp`) plus the `desktop-qt` custom notices: Qt, the Erlang/OTP and Elixir runtime
+  of the MC, the Node.js it ships, and the icons the bricks draw. `LicensesController` reads it when
+  the Open source licenses section opens.
 - The Qt mobile client compiles its manifest into the binary when an APK is built
   (`apps/mobile-qt/cmake/Licenses.cmake`), since an APK has no directory beside the binary. It holds
   the `mobile-qt` custom notices and no packages: what an APK ships is native code (Qt, OpenSSL, the
-  NDK's C++ library, the libraries Qt's Android activity is built with) and the icons, which have a
-  notice of their own there because the phone's build installs no npm packages to take it from.
+  NDK's C++ library, the libraries Qt's Android activity is built with) and the icons, so writing it
+  needs no installed npm packages.
 
 No path depends on the connected environment or an RPC.
 
 ## What the build collects
 
 The generator follows installed production and optional dependencies, including dependencies of
-workspace packages, and omits first-party `@hal-c2/*` packages. The web manifest starts from the
-web, server, and desktop package manifests. The mobile manifest starts from the mobile package
-manifest. During the web bundle, the generator also checks emitted module ids to catch a bundled
-npm import missing from a package manifest.
-
-The mobile manifest deliberately follows the complete production dependency closure declared by
-Expo and React Native. That is conservative and can include build tooling that is not present in
-the final JavaScript bundle, but it avoids dropping a notice when platform bundling changes.
+workspace packages, and omits first-party `@hal-c2/*` packages. The desktop manifest starts from the
+`packages/cursor-acp` package manifest; the mobile manifest starts from none.
 
 The build fails when a collected package has no distributable license identifier or contains no
 license or notice text. Generated notices use license templates from the pinned SPDX License List.
-Strict web and EAS builds download a missing template into the gitignored `.generated/` cache;
-`pnpm licenses:sync` can warm that cache explicitly. Local web and Metro development do not make a
-network request and omit generated rows until the cache exists. This keeps dev startup optional
-while preventing incomplete release artifacts.
+Strict builds download a missing template into the gitignored `.generated/` cache; `pnpm
+licenses:sync` can warm that cache explicitly. The dev build (`licenses --offline`) makes no network
+request and omits generated rows until the cache exists. This keeps dev startup optional while
+preventing incomplete release artifacts.
 
 ## Custom notices and package overrides
 
 The repository-level `third-party-licenses.config.json` holds manually maintained exceptions for
 all clients. Add an entry to `customNotices` for adapted icons, fonts, media, native modules, or
-another asset that did not come from an npm package. `android`, `ios` and `mobile` are the React
-Native app; the Qt clients are `desktop-qt` and `mobile-qt`:
+another asset that did not come from an npm package. The clients are `desktop-qt` and `mobile-qt`:
 
 ```json
 {
@@ -59,7 +46,7 @@ Native app; the Qt clients are `desktop-qt` and `mobile-qt`:
     }
   ],
   "sourceUrl": "https://example.com/source",
-  "bundles": ["assets", "web"]
+  "bundles": ["assets", "desktop-qt"]
 }
 ```
 
@@ -69,7 +56,7 @@ that vendors separately licensed code. Keep `noticeFile` or `noticeFiles` only w
 source tree already carries an intrinsic license file that should remain beside it. Paths are
 relative to the config file. `bundles` controls which generated manifests include the entry and
 supplies the label shown to users. Use `includeInBundles` when those differ, such as an optional
-server tool that should appear in both client manifests but is not bundled into either client.
+device tool the MC installs on demand: it appears in the desktop manifest but is not bundled into it.
 
 Use `packageOverrides` only when an installed npm archive omits its notice or has incorrect
 metadata:
@@ -106,10 +93,5 @@ The generator also reuses an installed sibling package's notice when both packag
 same normalized repository and license. A name-and-version override always wins over these
 repository fallbacks.
 
-The `@react-grab/cli` override uses the root React Grab repository's MIT license because the CLI's
-npm archive omits both its license field and license file. Keep the override until the published
-CLI package carries that metadata itself.
-
-Generated mobile files live under `apps/mobile/.generated/`, while fetched SPDX templates live
-under the repository `.generated/` directory. Both are ignored. Do not commit or edit them;
+Fetched SPDX templates live under the repository `.generated/` directory, which is ignored. Do not commit or edit it;
 updating dependencies or configuration is enough for the next strict build to refresh the output.

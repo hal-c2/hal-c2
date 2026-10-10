@@ -24,7 +24,7 @@ SnapShotBackend::PortalFactory& portalFactory() {
   return factory;
 }
 
-// X keysym names for the keys a chord may name (linuxCaptureSession.ts).
+// X keysym names for the keys a chord may name.
 const QHash<QString, QString>& keyNames() {
   static const QHash<QString, QString> names{
       {QStringLiteral(" "), QStringLiteral("space")},        {QStringLiteral("space"), QStringLiteral("space")},

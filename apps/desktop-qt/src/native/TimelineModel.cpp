@@ -45,8 +45,7 @@ QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
 }
 
-// When a turn item happened: its start, else its last update (the web's
-// projectedItemCreatedAt).
+// When a turn item happened: its start, else its last update.
 QDateTime itemTime(const QJsonObject& item) {
   const QDateTime started = timeOf(item.value(QLatin1String("startedAt")));
   return started.isValid() ? started : timeOf(item.value(QLatin1String("updatedAt")));
@@ -68,8 +67,7 @@ QString numericDate(const QDate& date, bool withYear, const QLocale& locale) {
   return locale.toString(date, format);
 }
 
-// apps/web/src/components/chat/MessagesTimeline.tsx workEntryIconName, for
-// the turn items the native timeline shows as calls and rows.
+// The icon of a turn item the native timeline shows as a call or a row.
 QString iconOf(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("command_execution")) return QStringLiteral("terminal");
@@ -188,7 +186,7 @@ QString callStatusLabel(const QString& status) {
   return QStringLiteral("Running");
 }
 
-// apps/web/src/components/chat/V2LifecycleRow.tsx STATUS_VISUALS.
+// How a subagent's status reads.
 QString subagentStatusLabel(const QString& status) {
   if (status == QLatin1String("idle")) return QStringLiteral("Idle · resumable");
   if (status == QLatin1String("completed")) return QStringLiteral("Completed");
@@ -214,8 +212,7 @@ QString planTitle(const QString& markdown) {
   return title.isEmpty() ? QStringLiteral("Proposed plan") : title;
 }
 
-// apps/web/src/proposedPlan.ts stripDisplayedPlanMarkdown: the plan's
-// markdown without the heading it opens with (the card's title) or a
+// The plan's markdown without the heading it opens with (the card's title) or a
 // "Summary" heading after it.
 QString planBody(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^\\s{0,3}#{1,6}\\s+(.+)$"));
@@ -299,7 +296,7 @@ QDateTime TimelineModel::rowTime(const Row& row) const {
   if (row.kind == QLatin1String("fold")) return row.at;
   if (row.kind == QLatin1String("work") || row.items.isEmpty()) return {};
   const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
-  // A reply is stamped when it finished (the web's updatedAt), so not while it streams.
+  // A reply is stamped when it finished, so not while it streams.
   if (text(item, QLatin1String("type")) == QLatin1String("assistant_message")) {
     if (item.value(QLatin1String("streaming")).toBool()) return {};
     return timeOf(item.value(QLatin1String("updatedAt")));
@@ -307,7 +304,7 @@ QDateTime TimelineModel::rowTime(const Row& row) const {
   return itemTime(item);
 }
 
-// apps/web/src/timestampFormat.ts formatDayAwareTimestamp: local calendar days.
+// A time as the day-aware stamp reads it, on local calendar days.
 QString TimelineModel::stamp(const QDateTime& at) const {
   if (!at.isValid()) return {};
   const QDateTime local = at.toLocalTime();
@@ -319,7 +316,7 @@ QString TimelineModel::stamp(const QDateTime& at) const {
   return numericDate(local.date(), local.date().year() != today.year(), m_locale) + QLatin1Char(' ') + time;
 }
 
-// apps/web/src/timestampFormat.ts formatChatTimestampTooltip, English as the web's is.
+// The tooltip of a row's time, in English.
 QString TimelineModel::timeTitle(const QString& rowId, const QString& entryId) const {
   const int at = indexOf(rowId);
   if (at < 0) return {};
@@ -782,7 +779,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   const QHash<QString, QJsonObject> items = m_entities.value(QStringLiteral("turn-item"));
   const QHash<QString, QJsonObject> runs = m_entities.value(QStringLiteral("run"));
 
-  // packages/shared orchestrationV2Timeline: items of a rolled-back run, queued
+  // Items of a rolled-back run, queued
   // messages of a cancelled run, and the interrupt result a plain steer leaves
   // behind are hidden.
   QSet<QString> superseded;
@@ -906,7 +903,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       label = elapsed ? QStringLiteral("Worked for %1").arg(formatDuration(*elapsed)) : QStringLiteral("Worked");
     }
     const bool open = m_expandedFolds.contains(runId) != m_keptOpen.contains(runId);
-    // The web's turn fold reads the user's message's time, else its first item's.
+    // A turn fold reads the user's message's time, else its first item's.
     const QDateTime at = turn.boundary.isValid() ? turn.boundary : itemTime(items.value(turn.items.first()));
     foldAt.insert(turn.items.first(), {runId, label, int(hidden.size()), open, at});
     if (!open) {
@@ -1315,7 +1312,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     case IntentRole:
       return text(item, QLatin1String("inputIntent"));
     case AttributionRole:
-      // apps/web/src/components/chat/MessagesTimeline.tsx UserMessageTimelineRow.
+      // Only a user message mentions a pull request.
       if (type != QLatin1String("user_message")) return QString();
       if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
       if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
@@ -1332,7 +1329,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       return QString();
     case PullRequestUrlRole: {
       if (row.kind != QLatin1String("message")) return QString();
-      // packages/shared changeRequestUrl: GitHub and Forgejo pulls, GitLab
+      // GitHub and Forgejo pulls, GitLab
       // merge requests, Bitbucket and Azure pull requests.
       static const QRegularExpression address(
           QStringLiteral("https?://[^\\s<>()\\[\\]\"']+/(?:pull|pulls|merge_requests|pull-requests|pullrequest)/\\d+"));

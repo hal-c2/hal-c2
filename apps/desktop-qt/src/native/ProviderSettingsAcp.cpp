@@ -1,7 +1,6 @@
 // An ACP Registry agent's own sessions, model providers and sign-out on its
-// Providers card (ProviderSettingsController), as the web's
-// AcpSessionManagementSection: the agent is asked from one of the shown
-// environment's projects (HalC2.Acp.Sessions), one request at a time.
+// Providers card (ProviderSettingsController): the agent is asked from one of
+// the shown environment's projects (HalC2.Acp.Sessions), one request at a time.
 //
 // Actions: `providerSettings.acpProject {instanceId, projectId}`,
 // `.acpSessions {instanceId, more}` (lists them again, or the next page),

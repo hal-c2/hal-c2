@@ -1,5 +1,4 @@
-// Settings → Integrations → Devices, natively (the web's
-// DeviceIntegrationSettings): the device hub and agent device access on the
+// Settings → Integrations → Devices: the device hub and agent device access on the
 // settings scope's environments (`device.configure` on each), and the device
 // status of the scope's first connected environment, which says so when
 // several are selected. That environment's DeviceServiceState is followed
@@ -199,7 +198,7 @@ private:
     publish();
   }
 
-  // `device.configure` on every selected environment, as the web's does;
+  // `device.configure` on every selected environment;
   // those that cannot be updated are named.
   void configure(const QString& pending, const QJsonObject& change) {
     const QStringList environments = scope()->environments();

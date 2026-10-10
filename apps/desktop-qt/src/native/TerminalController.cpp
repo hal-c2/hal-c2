@@ -43,7 +43,7 @@ int terminalNumber(const QString& terminalId) {
   return match.hasMatch() ? match.captured(1).toInt() : -1;
 }
 
-// packages/shared terminalLabels: the MC's label, else "Terminal N".
+// The MC's label, else "Terminal N".
 QString terminalLabel(const QString& terminalId, const QString& label) {
   if (!label.trimmed().isEmpty()) return label.trimmed();
   const int number = terminalNumber(terminalId);
@@ -556,7 +556,7 @@ std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
   place.threadId = at.threadId;
   place.worktreePath = at.worktreePath;
   place.cwd = at.cwd();
-  // packages/shared projectScriptRuntimeEnv; T3CODE_ is what older scripts read.
+  // The environment a project script runs with; T3CODE_ is what older scripts read.
   place.env = {
       {QStringLiteral("HAL_C2_PROJECT_ROOT"), at.root},
       {QStringLiteral("T3CODE_PROJECT_ROOT"), at.root},
@@ -676,8 +676,7 @@ void TerminalController::syncTabs() {
         notify();
       }
     });
-    // A shell that ended on its own takes its terminal with it, unasked
-    // (the web's auto-exit cleanup).
+    // A shell that ended on its own takes its terminal with it, unasked.
     connect(session, &TerminalSession::exited, this, [this, threadKey, id] {
       if (threadKey == m_threadKey && terminalIds().contains(id)) closeTerminal(id);
     });
@@ -791,8 +790,8 @@ void TerminalController::focusTerminal(const QString& terminalId) {
   notify();
 }
 
-// A terminal beside (or under) `terminalId` in its group, as the web's
-// splitTerminal: the group takes the new direction.
+// A terminal beside (or under) `terminalId` in its group: the group takes the new
+// direction.
 void TerminalController::split(const QString& terminalId, bool vertical) {
   if (!m_place) return;
   ThreadUi& ui = m_ui[m_threadKey];
@@ -920,7 +919,7 @@ void TerminalController::closeTerminal(const QString& terminalId) {
                    m_known[threadKey].remove(terminalId);
                    if (error) {
                      // The MC no longer has the session to close: ask the
-                     // shell itself to leave, as the web's closeTerminal does.
+                     // shell itself to leave.
                      m_client->call(this, place.environmentId, QStringLiteral("terminal.write"),
                                     QJsonObject{
                                         {QStringLiteral("threadId"), place.threadId},
@@ -943,7 +942,7 @@ void TerminalController::closeTerminal(const QString& terminalId) {
   }
 }
 
-// A link the user followed in a terminal, as the web's handleLinkActivate: a
+// A link the user followed in a terminal: a
 // web address goes to the browser (the desktop draws no pages itself), a file
 // path to the editor, resolved against the folder the shell reported (OSC 7)
 // or the one the terminal started in.
@@ -961,7 +960,7 @@ void TerminalController::followLink(const QString& kind, const QString& text, co
   if (cwd.isEmpty()) cwd = m_place->cwd;
   static const QRegularExpression home(QStringLiteral("^(/Users/[^/]+|/home/[^/]+)"));
   if (path.startsWith(QLatin1String("~/"))) {
-    // The home the folder sits in, as the web's inferHomeFromCwd.
+    // The home the folder sits in.
     const QRegularExpressionMatch found = home.match(cwd);
     if (found.hasMatch()) path = found.captured(1) + path.mid(1);
   } else if (!path.startsWith(QLatin1Char('/'))) {
@@ -1037,7 +1036,7 @@ bool TerminalController::runScript(const QString& scriptId) {
   return true;
 }
 
-// The lowest free `term-N`, as packages/shared nextTerminalId; ids still
+// The lowest free `term-N`; ids still
 // closing stay taken until the MC lets go of them.
 QString TerminalController::nextTerminalId() const {
   QSet<int> used;

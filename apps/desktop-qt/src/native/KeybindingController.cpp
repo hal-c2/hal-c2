@@ -31,7 +31,7 @@ bool isScriptRun(const QString& command) {
   return command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"));
 }
 
-// The desktop application menu's accelerators (DesktopApplicationMenu.ts).
+// The desktop application menu's accelerators.
 // They are not keymap bindings: Settings → Keybindings neither lists nor
 // rebinds them, and a keymap binding on the same key wins (the preview's
 // zoom while it has focus).
@@ -50,7 +50,7 @@ bool flag(const QVariantMap& focus, const char* key) {
   return focus.value(QLatin1String(key)).toBool();
 }
 
-// The identifiers the settings page knows (KeybindingsSettings.logic.ts): the
+// The identifiers the settings page knows: the
 // core ones and every one a default condition uses.
 QSet<QString> knownVariables() {
   QSet<QString> known{QStringLiteral("terminalFocus"), QStringLiteral("terminalOpen"), QStringLiteral("previewOpen"),
@@ -75,7 +75,7 @@ KeybindingController::KeybindingController(ShellBridge* bridge, McClient* client
   setRules({});
 }
 
-// As the web app's THREAD_JUMP_HINT_SHOW_DELAY_MS: a quick shortcut shows no hints.
+// A quick shortcut shows no hints.
 void KeybindingController::setJumpModifierHeld(bool held) {
   auto* sidebar = NativeShell::of(this)->sidebar();
   if (held) {
@@ -116,7 +116,7 @@ void KeybindingController::activate() {
     followFile(settings->config());
   };
   connect(settings, &SettingsController::configChanged, this, followRules);
-  // The web's EventRouter: a reload of keybindings.json is confirmed, at most
+  // A reload of keybindings.json is confirmed, at most
   // once every two seconds.
   connect(settings, &SettingsController::keybindingsPushed, this, [this] {
     auto* toasts = NativeShell::of(this)->controller<ToastController>();
@@ -162,7 +162,7 @@ bool KeybindingController::handle(const QString& action, const QVariant&) {
   return true;
 }
 
-// The web's root route: an unreadable keybindings.json is a warning naming
+// An unreadable keybindings.json is a warning naming
 // the file, with the file one click away.
 void KeybindingController::followFile(const QJsonObject& config) {
   const QString path = config.value(QLatin1String("keybindingsConfigPath")).toString();
@@ -422,7 +422,7 @@ QString KeybindingController::shortcutLabel(const QString& command) const {
   return {};
 }
 
-// buildKeybindingRows in KeybindingsSettings.logic.ts. Whether they changed.
+// Rebuilds the rows Settings → Keybindings lists. Whether they changed.
 bool KeybindingController::refreshRows() {
   const QList<keybindings::Binding>& defaults = keybindings::defaultBindings();
   QVariantList rows;
@@ -596,8 +596,7 @@ void KeybindingController::resetAll() {
 
 void KeybindingController::call(const QString& method, const QJsonObject& input, const QString& failureTitle,
                                 const QString& failure) {
-  // The keymap is the user's on every environment they reach, as the web
-  // saves it: the shell's own, and each other one that is online and theirs
+  // The keymap is the user's on every environment they reach: the shell's own, and each other one that is online and theirs
   // to change. The shell's own answers as `config.keybindings`.
   ShellStore* store = m_store;
   QStringList environments{m_client->environment()};

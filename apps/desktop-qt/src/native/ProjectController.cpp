@@ -24,8 +24,7 @@ namespace {
 const NativeControllerRegistrar<ProjectController> registrar(QStringLiteral("projects"),
                                                              {QStringLiteral("projectRemoval")});
 
-// The web's ensureBrowseDirectoryPath: a folder ends in its separator, a
-// backslash for a Windows path.
+// A folder ends in its separator, a backslash for a Windows path.
 QString asFolder(const QString& path) {
   const QString trimmed = path.trimmed();
   if (trimmed.isEmpty() || trimmed.endsWith(QLatin1Char('/'))) return trimmed;
@@ -59,7 +58,7 @@ void ProjectController::activate() {
   if (m_active) return;
   m_active = true;
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
-  // The web's Add project: an environment first when there is a choice, then
+  // Add project: an environment first when there is a choice, then
   // how to add: a local folder, or a clone (ProjectCloneController).
   const auto sources = [this](const QString& environmentId) {
     // Its settings say where browsing starts, by the time a source is chosen.

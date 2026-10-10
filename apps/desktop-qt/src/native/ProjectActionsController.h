@@ -20,8 +20,7 @@ class ShellStore;
 // The actions of the project the window shows (its route's thread or draft),
 // beyond running them (WorkspaceController, TerminalController): adding,
 // editing and deleting them, their shortcuts, and what the checkout's
-// hal-c2.json offers (the web's ProjectScriptsControl, projectScriptEditor and
-// useProjectScriptSettings). Actions are the project's `scripts`, saved with
+// hal-c2.json offers. Actions are the project's `scripts`, saved with
 // `projects.mutate` (project.update); a shortcut is the `script.<id>.run`
 // rule of the environment's keybindings.json.
 //
@@ -41,8 +40,8 @@ class ShellStore;
 // (every offered one without a name).
 // Palette command `projectActions.add` ("Add project action").
 //
-// In Settings → Project the same list is the settings scope's instead (the
-// web's ProjectActionsSettings): with no project picked the selected
+// In Settings → Project the same list is the settings scope's instead:
+// with no project picked the selected
 // environments' `defaultProjectScripts`, which every project without a list of
 // its own offers (ProjectScripts.h), else the picked project's own list, kept
 // as its `defaultProjectScripts` override on each environment with a checkout

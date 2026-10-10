@@ -164,7 +164,7 @@ void RightPanelController::activate() {
       keys->commands()->add(command, keybindings::commandLabel(command), std::move(run));
     };
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
-    // The web's mod+w closes the innermost thing: the active tab, else the window.
+    // mod+w closes the innermost thing: the active tab, else the window.
     add(QStringLiteral("rightPanel.close"), [this] {
       if (m_onThread && panel().open && !panel().active.isEmpty()) {
         closeTab();
@@ -483,7 +483,7 @@ void RightPanelController::closeTab(const QString& id) {
     if (removeTab(state, closing)) update();
     return;
   }
-  // Its terminals go too, as the web's closeTerminalSurface: asked once for all of them.
+  // Its terminals go too: asked once for all of them.
   const QString group = closing.mid(kTerminalTab.size());
   const QString thread = m_thread;
   terminals->confirmClose(terminals->groupTerminals(group), [this, terminals, thread, closing, group] {

@@ -29,7 +29,7 @@ const QStringList kMetrics{QStringLiteral("cost"), QStringLiteral("tokens"), QSt
 const QList<int> kWindows{1, 7, 30, 90};
 // Limits are asked for afresh at most this often, unless the user asks.
 constexpr qint64 kLimitsThrottleSecs = 5 * 60;
-// The contract versions whose summaries merge (usageMerge.ts).
+// The contract versions whose summaries merge.
 constexpr int kContractSince = 4;
 constexpr int kContract = 5;
 
@@ -88,7 +88,7 @@ int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
 }
 
 // `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
-// zone too, as the web's formatHourShort.
+// zone too.
 QString hourName(const QDateTime& instant, const QTimeZone& zone) {
   const QDateTime local = instant.toTimeZone(zone);
   const QString name = english().toString(local.time(), QStringLiteral("h AP"));
@@ -248,7 +248,7 @@ QString UsageController::label(const QString& environmentId) const {
   return label.isEmpty() ? environmentId : label;
 }
 
-// The window as the web's makeWindow draws it: whole local days ending today,
+// The window drawn: whole local days ending today,
 // or the past 24 hours to the minute, bucketed by hour.
 QJsonObject UsageController::window() const {
   const QDateTime now = m_now().toUTC();
@@ -388,7 +388,7 @@ void UsageController::unfollow() {
   m_sources.clear();
 }
 
-// The chosen environments' summaries merged (usageMerge.ts), or an empty map
+// The chosen environments' summaries merged, or an empty map
 // while none has answered. What was left out is said in `notices`.
 QVariantMap UsageController::summary(QStringList& notices) const {
   struct Contribution {
@@ -600,7 +600,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
 }
 
 // The followed environments' accounts, one per driver and email with the
-// freshest read winning, pooled per driver and window (usageLimits.ts).
+// freshest read winning, pooled per driver and window.
 // Remembers where each account's banked reset credit is redeemed.
 QVariantMap UsageController::limits() {
   struct Account {

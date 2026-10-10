@@ -20,8 +20,7 @@ class ShellBridge;
 class ShellStore;
 class SnapShotBackend;
 
-// Snap Shot (the web's SnapShotSettings, SnapShotSetupDialog and
-// SnapShotCoordinator over Electron's DesktopSnapShot): the capture
+// Snap Shot: the capture
 // shortcut takes the window the user is working in and attaches it to the
 // current draft. The platform half is a SnapShotBackend (the desktop portal
 // on Linux Wayland; unavailable elsewhere for now).
@@ -31,7 +30,7 @@ class SnapShotBackend;
 // The desktop is asked what it offers once Snap Shot is on or a window opens
 // Settings, SnapShots.
 //
-// A capture goes where the web's does: the thread or draft the window last
+// A capture goes to the thread or draft the window last
 // acted in shows (else the last one it showed, while it still exists, else a
 // new draft in the default project), shrunk to the attachment limit, with
 // its snap-shot `source`; then the window comes to the front. Sound follows
@@ -39,7 +38,7 @@ class SnapShotBackend;
 // desktop's help, which the portal does not give.
 //
 // Publishes `snapShot`: the panel's rows and the setup walk-through, every
-// string as the web words it. Actions:
+// string as it reads. Actions:
 //   snapShot.enable {on}, snapShot.setup.open {step?}, snapShot.setup.continue,
 //   snapShot.setup.back, snapShot.setup.close {completed?}, snapShot.setup.done,
 //   snapShot.record.start, snapShot.record.key {key, modifiers},

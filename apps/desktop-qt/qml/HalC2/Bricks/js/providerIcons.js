@@ -1,8 +1,7 @@
 .pragma library
 
-// Filled glyphs of the web's provider icons (apps/web/src/components/Icons.tsx,
-// picked per driver in ProviderInstanceIcon.tsx), with the light and dark
-// fills the web's Tailwind classes give them. Antigravity is a bitmap
+// Filled glyphs of the provider icons, picked per driver, with their light and
+// dark fills. Antigravity is a bitmap
 // (icons/antigravity.png); any other driver falls back to initials.
 var glyphs = {
     "codex": {

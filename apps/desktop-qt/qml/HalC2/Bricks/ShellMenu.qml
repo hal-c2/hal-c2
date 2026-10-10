@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A popup menu in the web app's clothes; use ShellMenuItem for entries.
+// A popup menu; use ShellMenuItem for entries.
 Menu {
     id: control
 

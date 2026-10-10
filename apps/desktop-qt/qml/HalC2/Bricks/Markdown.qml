@@ -4,8 +4,7 @@ import QtQuick.Controls.Basic
 import HalC2.Shell
 import "js/markdown.js" as Md
 
-// Chat markdown in the web app's `.chat-markdown` look (ChatMarkdown.tsx and
-// index.css). The text is untrusted and js/markdown.js escapes all of it; this
+// Chat markdown. The text is untrusted and js/markdown.js escapes all of it; this
 // brick draws its segments: prose as rich text (one selection runs across a
 // segment), code blocks with a header, copy and wrap toggle, tables with
 // expand and copy, and quotes with their rule. `streaming` keeps each block
@@ -16,7 +15,7 @@ Item {
 
     property string text: ""
     property bool streaming: false
-    // User messages keep their line breaks (the web's `lineBreaks`).
+    // User messages keep their line breaks.
     property bool lineBreaks: false
     property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
 
@@ -46,7 +45,7 @@ Item {
         link: css(Theme.link),
         heading: css(headingColor),
         muted: css(mutedColor),
-        // The web's inline code is a muted pill with a border; rich text
+        // Inline code is a muted pill with a border; rich text
         // has neither border nor radius, so the fill carries the border.
         codeFill: css(Qt.tint(Theme.palette.color("muted", "#111111"), Qt.alpha(borderColor, 0.7))),
         mono: monoFamily,
@@ -221,7 +220,7 @@ Item {
         textFormat: TextEdit.PlainText
     }
 
-    // A 24px icon button in the web's `icon-xs` size: ghost-muted, or
+    // A 24px icon button: ghost-muted, or
     // secondary while `checked`.
     component IconButton: ShellButton {
         id: iconButton

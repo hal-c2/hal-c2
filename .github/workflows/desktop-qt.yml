@@ -7,7 +7,6 @@ on:
     paths: &paths
       - "apps/desktop-qt/**"
       - "apps/server-ex/**"
-      - "apps/web/**"
       - "features/**"
       - "packages/**"
       - "patches/**"
@@ -48,13 +47,12 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          # The web app's packages feed the licence manifest
-          # (third-party-licenses.ts); the MC release bundles the Cursor
-          # sidecar with that package's esbuild (apps/server-ex/mix.exs); the
-          # host's tests and typecheck need its own.
+          # The MC release bundles the Cursor sidecar with that package's
+          # esbuild (apps/server-ex/mix.exs), and the licence manifest lists
+          # the packages it installs (third-party-licenses.ts); the host's
+          # tests and typecheck need their own.
           run-install: |
             args:
-              - --filter=@hal-c2/web...
               - --filter=@hal-c2/cursor-acp...
               - --filter=@hal-c2/desktop-qt...
 

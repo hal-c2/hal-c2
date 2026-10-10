@@ -29,16 +29,16 @@ const NativeControllerRegistrar<ThemeController> registrar(QStringLiteral("theme
 
 const QString kLight = QStringLiteral("light");
 const QString kDark = QStringLiteral("dark");
-// The standard look's id (packages/shared MOBILE_DEFAULT_THEME_ID).
+// The standard look's id.
 const QString kStandardId = QStringLiteral("hal-c2");
 
 const QString kSystem = QStringLiteral("system");
 const QString kCustomThemes = QStringLiteral("customThemes");
-// The web app's wording (apps/web CommandPalette, ThemeSettings).
+// The wording of the theme failures.
 const QString kSaveFailed = QStringLiteral("Couldn't save theme selection");
 const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
 
-// apps/web themeIdFromName.
+// A theme's id from its name.
 QString idFromName(const QString& name) {
   static const QRegularExpression other(QStringLiteral("[^a-z0-9]+"));
   static const QRegularExpression edges(QStringLiteral("^-+|-+$"));
@@ -97,7 +97,7 @@ QString oklchToHex(const QString& body) {
 }
 
 // The palette a theme file gives, over `base`: roles this build knows, in
-// colours it can draw (apps/web lenientThemeColorOverrides).
+// colours it can draw.
 QJsonObject overlay(QJsonObject base, const QJsonObject& colors, const QJsonArray& roles) {
   for (auto it = colors.begin(); it != colors.end(); ++it) {
     if (!roles.contains(it.key())) continue;
@@ -208,15 +208,13 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
                    QStringLiteral("builtIn")});
   }
   // Saved and published themes fill the roles they leave out from the
-  // defaults (apps/web getDefaultThemeColors).
+  // defaults.
   const auto fromFile = [&](const QJsonObject& theme, const QString& source) -> std::optional<Definition> {
     const QString id = theme.value(QLatin1String("id")).toString();
     if (id.isEmpty() || data.reserved.contains(id)) return std::nullopt;
     const QString appearance = appearanceOf(theme.value(QLatin1String("appearance")));
     QJsonObject base = data.defaults.value(appearance).toObject();
-    // The seeded short form: a canvas and an accent. The other clients grow a
-    // whole palette from them (themePalette.ts createVividThemeColors); this
-    // paints the two over the defaults.
+    // The seeded short form: a canvas and an accent, painted over the defaults.
     const QString canvas = canonicalColor(theme.value(QLatin1String("canvas")).toString());
     const QString accent = canonicalColor(theme.value(QLatin1String("accent")).toString());
     const bool seeded = !canvas.isEmpty() && !accent.isEmpty();
@@ -507,7 +505,7 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
   if (at < 0) saved.append(entry);
   else saved.replace(at, entry);
   device.insert(kCustomThemes, saved);
-  // Saved and applied at once, as the web app's editor does.
+  // Saved and applied at once.
   device.insert(QStringLiteral("theme"), id);
   device.remove(QStringLiteral("themeHalves"));
   return save(device) ? id : QString();
@@ -588,7 +586,7 @@ void ThemeController::resolve() {
   const QString target = chosen == QLatin1String("system") ? (m_systemDark ? kDark : kLight) : chosen;
   const QJsonObject halves = m_settings->deviceSettings().value(QLatin1String("themeHalves")).toObject();
   // A theme without the appearance asked for keeps its own, unless a half
-  // gives one (apps/web resolveThemeAppearance).
+  // gives one.
   QString appearance = target;
   if (halves.value(target).toString().isEmpty()) {
     const auto base = find(themeId());
@@ -848,7 +846,7 @@ QStringList ThemeController::importConflicts() const {
   return labels;
 }
 
-// --- VS Code themes (apps/web vscodeThemeImport.ts) ----------------------------------
+// --- VS Code themes ------------------------------------------------------------------
 
 namespace {
 
@@ -905,7 +903,7 @@ bool isVsCodeTheme(const QJsonObject& file) {
 // is grown from its editor background and a muted accent (derive), then the
 // workbench colours it does set go on top, foregrounds only where they stay
 // readable. The result is one of our theme files. Batches are not paired into
-// light and dark here, as the web's pairVsCodeThemes does.
+// light and dark here.
 std::optional<QJsonObject> ThemeController::fromVsCodeTheme(const QJsonObject& file, QString* error) const {
   const QJsonObject colors = file.value(QLatin1String("colors")).toObject();
   const auto pick = [&colors](std::initializer_list<const char*> keys) {
@@ -1004,7 +1002,7 @@ std::optional<QJsonObject> ThemeController::fromVsCodeTheme(const QJsonObject& f
   return QJsonObject{{QStringLiteral("version"), 1}, {QStringLiteral("name"), name}, {QStringLiteral("appearance"), appearance}, {QStringLiteral("colors"), palette}};
 }
 
-// apps/web parseThemeFile, with its messages.
+// A theme file's JSON, or why it cannot be read.
 std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QString* error) const {
   const auto refuse = [error](const QString& why) {
     *error = why;
@@ -1230,7 +1228,7 @@ bool ThemeController::exportTheme(const QString& id, const QString& path) {
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   const auto definition = find(id);
   if (!definition) return false;
-  // apps/web serializeThemeFile.
+  // The theme file, version 1.
   QJsonObject file{{QStringLiteral("version"), 1},
                    {QStringLiteral("id"), definition->id},
                    {QStringLiteral("name"), definition->label},

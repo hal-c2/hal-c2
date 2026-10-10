@@ -1,11 +1,7 @@
 .pragma library
 
-// The web model picker's list logic, copied so the native picker lists,
-// ranks and cycles exactly as the web app does:
-//   search ranking   apps/web/src/components/chat/modelPickerSearch.ts,
-//                    packages/shared/src/searchRanking.ts
-//   rows and views   apps/web/src/components/chat/ModelPickerContent.tsx
-//   display names    apps/web/src/components/chat/providerIconUtils.ts
+// The model picker's list logic: search ranking, rows and views, and display
+// names.
 // The catalogue arrives already filtered and ordered (Shell.state.modelPicker).
 
 var FAVORITES = "favorites";

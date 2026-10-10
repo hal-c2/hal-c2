@@ -1,4 +1,4 @@
-// Settings → Scheduled Tasks, natively (the web's ScheduledTasksSettings):
+// Settings → Scheduled Tasks:
 // each environment's tasks (HalC2.ScheduledTasks), in the settings scope
 // (SettingsScopeController), and the editor that creates and edits them.
 // Each environment's list is followed live (`scheduledTasks` shape).

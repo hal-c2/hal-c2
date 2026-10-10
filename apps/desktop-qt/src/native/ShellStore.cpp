@@ -152,7 +152,7 @@ QList<sidebar::Project> ShellStore::projects() const {
     if (mc.environmentId.isEmpty()) continue;
     for (const QJsonObject& row : mc.projects) result.append(sidebar::projectFromRow(mc.environmentId, row));
   }
-  // Row hashes have no order; the web app lists projects by creation.
+  // Row hashes have no order; projects are listed by creation.
   std::stable_sort(result.begin(), result.end(), [](const sidebar::Project& left, const sidebar::Project& right) {
     if (left.createdAt != right.createdAt) return left.createdAt < right.createdAt;
     return left.key() < right.key();

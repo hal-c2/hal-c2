@@ -20,7 +20,7 @@ namespace {
 
 const NativeControllerRegistrar<PlanController> registrar(QStringLiteral("plan"));
 
-// apps/web/src/proposedPlan.ts.
+// The plan's title and filename, from its markdown.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
 
 QString titleOf(const QString& markdown) {

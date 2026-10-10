@@ -73,8 +73,7 @@ int healthSeconds(const QJsonObject& settings) {
 }
 
 // `settings` with the health interval overridden (`seconds`) or back to its
-// preset (none), as the web's backgroundActivityOverrideSettings: a custom
-// profile on the current base, keeping the overrides a custom profile had.
+// preset (none): a custom profile on the current base, keeping the overrides a custom profile had.
 QJsonObject withHealthSeconds(QJsonObject settings, std::optional<int> seconds) {
   const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
   QJsonObject overrides = activity.value(QLatin1String("profile")) == QLatin1String("custom")
@@ -210,7 +209,7 @@ QString installable(const QJsonObject& provider) {
   return advisory(provider).toMap().value(QStringLiteral("targetVersion")).toString() == target ? target : QString();
 }
 
-// Whether the web offers the provider's Account section.
+// Whether the provider has an Account section.
 bool signsIn(const QJsonObject& provider) {
   return provider.value(QLatin1String("setup")).toObject().value(QLatin1String("canAuthenticate")).toBool() ||
          (provider.value(QLatin1String("driver")).toString() == kRegistry && provider.value(QLatin1String("installed")).toBool());
@@ -737,7 +736,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const QString driver = provider.value(QLatin1String("driver")).toString();
   const QJsonObject auth = provider.value(QLatin1String("auth")).toObject();
   const auto [headline, detail] = summary(provider);
-  // The models list (the web's ProviderModelsSection): what each can do, this
+  // The models list: what each can do, this
   // device's favourites and hidden ones, and the filter typed over it.
   const auto* device = NativeShell::of(this)->controller<SettingsController>();
   const QJsonObject preferences = device ? device->deviceSettings() : QJsonObject();

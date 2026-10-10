@@ -1,7 +1,6 @@
 // The Providers section's instances (ProviderSettingsController): adding one
 // with the wizard, and editing, resetting and deleting one where the MC
-// reads it, its `providerInstances` entry (ProviderInstances.h). As the web's
-// AddProviderInstanceDialog, ProviderInstanceCard and ProviderSettingsPanel.
+// reads it, its `providerInstances` entry (ProviderInstances.h).
 //
 // Actions (each on the shown environment):
 //   `providerSettings.wizardOpen`, `.wizardClose`, `.wizardDriver {driver}`,
@@ -157,8 +156,7 @@ void ProviderSettingsController::editInstance(const QString& instanceId, const s
   }, done, QStringLiteral("Could not update provider instance"));
 }
 
-// The rows as edited; they are saved once each is complete, the web's
-// ProviderEnvironmentSection publishRows.
+// The rows as edited; they are saved once each is complete.
 void ProviderSettingsController::setVariables(const QString& instanceId, const QJsonArray& rows) {
   m_variables.insert(instanceId, rows);
   publish();
@@ -539,7 +537,7 @@ void ProviderSettingsController::configuration(QVariantMap& result, const QStrin
     });
   }
   result.insert(QStringLiteral("variables"), variables);
-  // Antigravity takes no custom models (the web's ProviderInstanceCard).
+  // Antigravity takes no custom models.
   const bool models = driver != QLatin1String("antigravity");
   result.insert(QStringLiteral("takesModels"), models);
   result.insert(QStringLiteral("customModels"),

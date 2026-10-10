@@ -25,7 +25,7 @@ Item {
 
     // What had the keyboard before the drawer took it (usually the composer),
     // and whether the drawer still held it when it last was open: closing
-    // hands focus back, as the web app returns it to its composer.
+    // hands focus back.
     property Item focusBefore: null
     property bool hadFocus: false
     readonly property bool bodyFocused: stack.activeFocus
@@ -83,7 +83,7 @@ Item {
     }
     onBodyFocusedChanged: if (drawer.open) drawer.hadFocus = drawer.bodyFocused
 
-    // The web app clamps the same way: never shorter than a few rows, never
+    // Never shorter than a few rows, never
     // more than three quarters of the window.
     function clampHeight(height) {
         const ceiling = Math.max(minimumHeight, Math.floor(drawer.Window.height * 0.75));
@@ -242,8 +242,7 @@ Item {
         onActivated: Shell.dispatch("terminal.close")
     }
 
-    // The drag edge sits over the top of the drawer, like the web app's own
-    // handle does.
+    // The drag edge sits over the top of the drawer.
     Item {
         id: edge
         anchors.top: parent.top

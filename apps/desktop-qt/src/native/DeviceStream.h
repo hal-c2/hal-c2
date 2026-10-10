@@ -15,8 +15,7 @@ class QNetworkReply;
 class QWebSocket;
 
 // One device's live screen and input, through the MC's device hub proxy
-// (`<hubBase>/vendor/...`, never the device directly), the native twin of
-// client-runtime's device/stream.ts:
+// (`<hubBase>/vendor/...`, never the device directly):
 //
 // - iOS (serve-sim): video is the `helper/<udid>/stream.avcc` body, envelopes
 //   of `u32be length (tag included), u8 tag, payload` (1 avcC record,

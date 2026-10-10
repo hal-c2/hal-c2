@@ -131,7 +131,7 @@ Rectangle {
                 composer.focusInput();
             } else if (action === "composer.queue.editLast" && composer.ready && input.activeFocus) {
                 // From the start of the draft the key reaches the queue;
-                // anywhere else it moves there first, as the web's does.
+                // anywhere else it moves there first.
                 if (input.cursorPosition > 0) {
                     input.cursorPosition = 0;
                     return;
@@ -1426,7 +1426,7 @@ Rectangle {
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
 
-                    // The web's "Copy branch name", on the secondary button
+                    // "Copy branch name", on the secondary button
                     // (a finger has no buttons, and would count as it).
                     TapHandler {
                         acceptedButtons: Qt.RightButton

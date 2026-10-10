@@ -1,7 +1,7 @@
 .pragma library
 
-// The rows of the native General and Appearance pages, with the web's titles
-// and descriptions (apps/web SettingsPanels.tsx, settingsSearch.ts). A row's
+// The rows of the native General and Appearance pages, with their titles
+// and descriptions. A row's
 // `key` is a Settings row key (SettingsController rows()): Settings knows its
 // store and default. `descriptions` words a row by its value. Kinds: switch, select (`options`), number (`min`, `max`,
 // `step`, `unit`), text (`placeholder`).

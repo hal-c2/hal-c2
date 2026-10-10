@@ -13,7 +13,7 @@ class QObject;
 
 // Pairing with an MC from a link its operator made (`mix hal_c2.pair`, the
 // Connections page), for a client that pairs by itself: what the desktop's
-// host does before it starts the shell (host/pairingUrl.ts, host/elixirMc.ts).
+// host does before it starts the shell (host/elixirMc.ts).
 // The shell's "pair again" (ConnectionHealthController) and the phone's first
 // pairing both go through here.
 namespace pairing {
@@ -27,7 +27,7 @@ struct Link {
 // Reads what the user entered: an http(s) address whose `token` is in the
 // fragment or the query. An address typed without a scheme is tried over
 // HTTPS, then over plain HTTP, which is what an MC on the LAN serves
-// (packages/shared remote.ts). Nothing when it names no host or no token.
+// Nothing when it names no host or no token.
 std::optional<Link> readLink(const QString& entered);
 
 // A pairing link the user did not write: what a camera read off a QR code,

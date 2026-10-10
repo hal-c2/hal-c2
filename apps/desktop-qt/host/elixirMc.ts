@@ -1,10 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off globalDate:off - process launcher, deliberately Effect-free.
 /**
- * Starts the desktop app's own Elixir MC the way the Electron app does
- * (apps/desktop/src/backend/DesktopBackendConfiguration.ts): a release
- * `bin/hal_c2 start`, or `mix hal_c2.server` in a checkout, with
- * `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON bootstrap line on stdin (port, host,
- * `halC2Home`; read by apps/server-ex/lib/hal_c2/desktop.ex).
+ * Starts the desktop app's own Elixir MC: a release `bin/hal_c2 start`, or
+ * `mix hal_c2.server` in a checkout, with `HAL_C2_BOOTSTRAP_STDIN=1` and one
+ * JSON bootstrap line on stdin (port, host, `halC2Home`; read by
+ * apps/server-ex/lib/hal_c2/desktop.ex).
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

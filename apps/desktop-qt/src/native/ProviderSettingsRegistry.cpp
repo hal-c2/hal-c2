@@ -1,6 +1,5 @@
-// The add-provider wizard's ACP Registry (ProviderSettingsController), as the
-// web's AcpRegistrySearchStep: the registry's compatible agents, searched on the
-// shown environment, and choosing one, which the environment installs before
+// The add-provider wizard's ACP Registry (ProviderSettingsController): the
+// registry's compatible agents, searched on the shown environment, and choosing one, which the environment installs before
 // the wizard names the instance after it. An agent can also be entered by hand.
 //
 // Actions (while the wizard shows):

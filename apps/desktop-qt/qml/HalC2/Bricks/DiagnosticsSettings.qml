@@ -4,7 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Diagnostics, natively (the web's DiagnosticsSettings): the
+// Settings → Diagnostics: the
 // processes this MC started, its resource history and recent trace
 // failures, as DiagnosticsController publishes them
 // (features/settings/diagnostics.feature).

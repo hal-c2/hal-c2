@@ -896,7 +896,7 @@ const Steps fileSteps([] {
 
   step(QStringLiteral("the user adds the condition %1, negates it, and groups it with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureShell(world);
-    // The desktop's condition is one field: what the web's builder assembles, typed.
+    // The desktop's condition is one field: what a condition builder assembles, typed.
     const QString condition = QStringLiteral("!%1 && %2").arg(c[0], c[1]);
     expect(keymap(world)->whenError(condition).isEmpty() && keymap(world)->unknownVariables(condition).isEmpty(),
            QStringLiteral("%1: %2 %3").arg(condition, keymap(world)->whenError(condition), show(keymap(world)->unknownVariables(condition))));

@@ -15,11 +15,10 @@ class ShellBridge;
 
 // The shell's toasts. Controllers call show() directly; the Notifications
 // brick renders `toasts`. Publishes `toasts`: {items, expanded}, items newest
-// first, each {id, type, title, description, updateKey, actions} as the web
-// app's ShellNotification. Dismiss and action clicks come back by id. No toast
+// first, each {id, type, title, description, updateKey, actions}. Dismiss and action clicks come back by id. No toast
 // is dropped for lack of room: the brick stacks them, and `expanded` (the
 // pointer over the stack, or a tap on a phone) spreads them out and holds
-// every toast's time, as the web app's Base UI toasts do.
+// every toast's time.
 class ToastController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -31,7 +30,7 @@ public:
     std::function<void()> run;
     bool keepsToast = false;
     // What kind of change it takes back ("Settled", "Snoozed"): consecutive
-    // toasts of one group are undone together, as the web's undo notice.
+    // toasts of one group are undone together.
     QString group;
   };
 
@@ -49,7 +48,7 @@ public:
   // "Remove project").
   QString showActions(const QString& type, const QString& title, const QString& description, QList<Action> actions,
                       int timeoutMs);
-  // An error toast, with the web app's "An error occurred." for an empty reason.
+  // An error toast, with "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
   // Changes a shown toast's text in place (a running action's stage); false

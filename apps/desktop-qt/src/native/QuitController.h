@@ -11,16 +11,15 @@
 class McClient;
 class ShellBridge;
 
-// The quit shortcut (mod+Q), guarded as this device's `confirmQuit` says
-// (apps/desktop/src/window/QuitHold.ts):
+// The quit shortcut (mod+Q), guarded as this device's `confirmQuit` says:
 //   - "hold" (the default): holding it 1.2 seconds quits, as do two presses
 //     within half a second; a single quick press only says how.
 //   - "double-click": two presses within half a second quit; one says to
 //     press again.
 //   - "direct": one press quits.
 // It watches the application's key events, so a text field, a terminal or the
-// system menu never sees the shortcut. "Still held" is proven by auto-repeat,
-// as in Electron: without it only two presses quit. Quit (the palette's
+// system menu never sees the shortcut. "Still held" is proven by auto-repeat:
+// without it only two presses quit. Quit (the palette's
 // `app.quit`, the system menu) is immediate.
 //
 // Publishes `quitHint`: null, or {message} while the hint shows (every window).

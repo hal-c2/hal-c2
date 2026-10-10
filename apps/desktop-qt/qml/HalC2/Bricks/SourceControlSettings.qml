@@ -409,7 +409,7 @@ SettingsPage {
             color: Theme.palette.color("input", "#18181b")
             border.color: Theme.palette.color("border", "#27272a")
         }
-        // Instructions save when the field is left, as the web's do.
+        // Instructions save when the field is left.
         onActiveFocusChanged: {
             if (activeFocus || forAll) return;
             if (text.trim() !== (page.settings?.writingStyle?.instructions ?? "")) page.send("instructions", { text: text });

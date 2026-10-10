@@ -24,7 +24,7 @@ Rectangle {
         return "$" + Number(value).toLocaleString(Qt.locale("en_US"), "f", 2);
     }
 
-    // K, M, B and T with three significant figures, as the web shows tokens.
+    // K, M, B and T with three significant figures.
     function tokens(value) {
         const units = ["", "K", "M", "B", "T"];
         let scaled = Number(value);
@@ -40,7 +40,7 @@ Rectangle {
         return page.metric === "tokens" ? page.tokens(row.totalTokens) : page.usd(row.costUsd);
     }
 
-    // The colour a provider's line is drawn in, as the web's usageProviders.ts:
+    // The colour a provider's line is drawn in:
     // Codex in the text colour, Grok between it and the chart's muted chrome.
     function providerColor(id) {
         if (id === "claude")

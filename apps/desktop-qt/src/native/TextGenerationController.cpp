@@ -1,4 +1,4 @@
-// Settings → General, Text generation (the web's GeneralSettingsPanel row):
+// Settings → General, Text generation:
 // the model that writes thread titles and other generated text on the selected
 // environments (`textGenerationModelSelection`, a project's override at
 // project scope). A choice is written to every selected environment, so each

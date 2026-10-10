@@ -22,7 +22,7 @@ Rectangle {
     readonly property color warning: Theme.palette.color("warning", "#f59e0b")
     readonly property color danger: Theme.palette.color("error", "#f87171")
 
-    // The web's RedactedSensitiveText placeholder: the same length and
+    // A redacted placeholder: the same length and
     // separators, other characters drawn from a hash of the value, so an
     // account can be told apart without being read.
     function redacted(value) {

@@ -66,8 +66,8 @@ public:
   // the client is online (McClient::setOnline), and wakes it when it is.
   void networkChanged();
 
-  // Whether a server on `server` is behind a client on `client` (apps/web
-  // versionSkew.ts): two nightlies compare whole, anything else by its core
+  // Whether a server on `server` is behind a client on `client`:
+  // two nightlies compare whole, anything else by its core
   // major.minor.patch, so a release and a nightly of one core do not differ.
   static bool serverBehind(const QString& client, const QString& server);
 

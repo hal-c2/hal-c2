@@ -216,7 +216,7 @@ Item {
             tryVerify(() => row(nav, 0) !== null && !row(nav, 0).isResult && row(nav, 0).Accessible.name === "General");
         }
     
-        // Restoring defaults (the web's useSettingsRestore).
+        // Restoring defaults.
         function changeThemeAndTimeFormat() {
             Settings.defaults = { timestampFormat: "locale" };
             Settings.device = { timestampFormat: "24-hour" };

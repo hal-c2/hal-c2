@@ -1,5 +1,4 @@
-// Starting a thread on a pull request (the web's pull request thread dialog,
-// the TUI's "Check out a pull request…"): the user names one (a URL, 42 or
+// Starting a thread on a pull request: the user names one (a URL, 42 or
 // #42), sees what it is, and chooses where it is checked out.
 //
 // Publishes `pullRequestThread`: null while closed, else {step ("ask",

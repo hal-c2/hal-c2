@@ -5,7 +5,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 import "js/modelPicker.js" as Picker
 
-// The composer's model picker, copied from the web's ProviderModelPicker:
+// The composer's model picker:
 // the trigger shows the chosen model with its provider's icon, and the popup
 // has the provider rail (ModelPickerSidebar) beside a searchable model list
 // (ModelPickerContent, ModelListRow). The catalogue is Shell.state.modelPicker;
@@ -93,8 +93,7 @@ AbstractButton {
         }
     }
 
-    // The same guard as the web's handleModelSelect: a model that says why it
-    // cannot be used is never sent.
+    // A model that says why it cannot be used is never sent.
     function choose(instanceId, model) {
         const entry = Picker.findModel(Picker.findInstance(instances, instanceId), model);
         if (!entry || entry.disabledReason !== null)
@@ -258,7 +257,7 @@ AbstractButton {
     Popup {
         id: popup
 
-        // Above the trigger, as the composer's picker opens on the web, and
+        // Above the trigger, and
         // flipped below it when the window has no room above.
         property bool below: false
 
@@ -424,7 +423,7 @@ AbstractButton {
                         }
                     }
 
-                    // The web's selected-provider marker on the rail's edge.
+                    // The selected-provider marker on the rail's edge.
                     Rectangle {
                         readonly property var target: control.showRail ? rail.buttonForAny(control.view) : null
 
@@ -733,7 +732,7 @@ AbstractButton {
                     }
                 }
 
-                // The web's Kbd: the numbered jump for the first nine models.
+                // The numbered jump for the first nine models.
                 Rectangle {
                     visible: row.jumpText.length > 0
                     implicitWidth: Math.max(20, kbdText.implicitWidth + 8)
@@ -893,9 +892,8 @@ AbstractButton {
     }
 
     // A rail entry: square, greyed and unclickable when the instance cannot
-    // be chosen, with the web's tooltip (why it is unavailable) either way.
-    // It stays enabled so the tooltip still shows on hover, as the web's
-    // wrapper span does for a disabled button.
+    // be chosen, with a tooltip (why it is unavailable) either way.
+    // It stays enabled so the tooltip still shows on hover.
     component RailButton: Item {
         id: railButton
 
@@ -970,7 +968,7 @@ AbstractButton {
         }
     }
 
-    // The web's outline "Unavailable" badge.
+    // The outline "Unavailable" badge.
     component Badge: Rectangle {
         property alias text: badgeLabel.text
 

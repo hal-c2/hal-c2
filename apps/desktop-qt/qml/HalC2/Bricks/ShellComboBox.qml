@@ -4,7 +4,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A select in the web app's clothes: the composer's ghost pickers by default
+// A select: the composer's ghost pickers by default
 // (icon, muted label, chevron), `outline: true` for a bordered field.
 // `disabledRows` greys out the rows at those indexes in the popup; keys can still
 // reach them, so `onActivated` should refuse them too.

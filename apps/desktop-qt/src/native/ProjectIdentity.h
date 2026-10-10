@@ -5,8 +5,7 @@
 #include <QStringList>
 #include <QVariantMap>
 
-// How a project is told apart at a glance (the web's projectIdentity.ts and
-// ProjectFavicon): the icon the user picked, else a two-character monogram in
+// How a project is told apart at a glance: the icon the user picked, else a two-character monogram in
 // a colour, both derived from its name.
 namespace projectidentity {
 

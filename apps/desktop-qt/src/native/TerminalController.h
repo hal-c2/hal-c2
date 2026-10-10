@@ -174,7 +174,7 @@ private:
 // thread is on screen, so hiding the drawer keeps their output, and for the
 // last few threads the user left (maxParkedThreads), so does coming back.
 //
-// Terminals split into groups as the web's drawer does: `terminal.split` and
+// Terminals split into groups: `terminal.split` and
 // `terminal.splitVertical {terminalId?}` add a terminal beside or under one
 // (the payload's, else the focused one, else the drawer's active one), at
 // most four to a group. A group made for the right panel (addPanelGroup) is
@@ -201,8 +201,7 @@ public:
   static constexpr int maxTerminals = 6;
   static constexpr int maxPerGroup = 4;
   static constexpr int minimumHeight = 180;
-  // Threads the user left whose terminals stay attached (the web's
-  // MAX_HIDDEN_MOUNTED_TERMINAL_THREADS): coming back shows what they printed
+  // Threads the user left whose terminals stay attached: coming back shows what they printed
   // meanwhile, with no new attach.
   static constexpr int maxParkedThreads = 10;
 
@@ -245,13 +244,12 @@ public:
   QStringList panelGroups(const QString& threadKey) const;
   // Closes every terminal of the group (deleting their history).
   void closeGroup(const QString& group);
-  // Asks before the user's own close of `ids`, as the web's
-  // confirmTerminalClose: one question naming every terminal. `accepted` runs
+  // Asks before the user's own close of `ids`: one question naming every terminal. `accepted` runs
   // on yes; with nothing to close it runs at once.
   void confirmClose(const QStringList& ids, std::function<void()> accepted);
   // The terminals of a split or panel group.
   QStringList groupTerminals(const QString& group) const;
-  // As the web app's runProjectScript: in the active terminal, or a new one when
+  // Runs a project script in the active terminal, or a new one when
   // that one is busy. False without a place or such a script.
   bool runScript(const QString& scriptId);
 

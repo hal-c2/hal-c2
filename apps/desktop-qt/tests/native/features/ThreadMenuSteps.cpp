@@ -53,10 +53,10 @@ void projectCommand(FakeMc& mc, const QJsonObject& command) {
     row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
     row.insert(QStringLiteral("settledAt"), now);
     // Settling clears the thread's pinned and active places (orchestration.ex),
-    // and its snooze, as the Node server's projector does.
+    // and its snooze.
     for (const char* key : {"pinnedAt", "pinOrderKey", "activeOrderKey", "snoozedUntil", "snoozedAt"}) row.remove(QLatin1String(key));
   } else if (type == QLatin1String("thread.mark-unread")) {
-    // Just before the latest run completed, as the Node server's projector.
+    // Just before the latest run completed.
     const QDateTime completed = QDateTime::fromString(row.value(QLatin1String("latestRunCompletedAt")).toString(), Qt::ISODateWithMs);
     row.insert(QStringLiteral("lastVisitedAt"), completed.addMSecs(-1).toUTC().toString(Qt::ISODateWithMs));
   } else if (type == QLatin1String("thread.active.reorder")) {

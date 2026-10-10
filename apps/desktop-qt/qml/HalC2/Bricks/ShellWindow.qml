@@ -41,9 +41,9 @@ Window {
     // otherwise.
     readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route.section)
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
-    // A text field has the keyboard (the web's editableFocus).
+    // A text field has the keyboard.
     readonly property bool editableFocused: root.activeFocusItem !== null && "cursorPosition" in root.activeFocusItem
-    // The composer's own field has it (the web's composerFocus).
+    // The composer's own field has it.
     readonly property bool composerFocused: editableFocused && "composerInput" in root.activeFocusItem
 
     function hasAncestor(item, objectName) {

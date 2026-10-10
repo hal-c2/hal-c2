@@ -5,8 +5,7 @@
 #include <QString>
 
 // What a group of tool calls did, in a sentence: "Ran 2 commands and sent
-// messages to 3 threads" (packages/client-runtime/src/work-log/presentation.ts
-// summarizeToolGroup and halC2ToolSummary.ts). At most two kinds of work are
+// messages to 3 threads". At most two kinds of work are
 // named, changes before reads; the rest is counted ("performed 2 other
 // actions"). Failed calls are not counted as work done.
 namespace timeline {

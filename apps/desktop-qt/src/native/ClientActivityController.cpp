@@ -4,7 +4,7 @@
 // nobody does. A report is a lease: it names the scopes watched (provider
 // status always; the shown thread and its checkout's git status), lasts
 // kLeaseMs, and is renewed every kReportMs and whenever what the window shows
-// or the app's focus changes (the web's backgroundActivityReporter).
+// or the app's focus changes.
 
 #include <QDateTime>
 #include <QGuiApplication>

@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A text input in the web app's clothes.
+// A text input.
 TextField {
     id: control
 

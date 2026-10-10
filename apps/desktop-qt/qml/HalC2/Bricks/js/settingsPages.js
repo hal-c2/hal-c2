@@ -1,7 +1,7 @@
 .pragma library
 .import "settingsRows.js" as Rows
 
-// The settings sections, in the web's order (apps/web SettingsSidebarNav).
+// The settings sections, in order.
 // Each section's page is <brick>.qml in this module.
 //
 //   action     dispatched instead of settings.navigate
@@ -57,7 +57,7 @@ var sections = [
       settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
                    keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
       keywords: "connections pairing link code clients revoke access remote" },
-    // Not the web's: only a client that paired itself (apps/mobile-qt) publishes `pairing`.
+    // Only a client that paired itself (apps/mobile-qt) publishes `pairing`.
     { to: "/settings/pairing", label: "Pairing", brick: "PairingSettings", requires: "pairing",
       detail: "The environment this device is paired with",
       keywords: "pairing paired environment machine address connection forget unpair sign out disconnect this device" },
@@ -128,7 +128,7 @@ function paletteEntries(os) {
     return entries;
 }
 
-// How well a title matches `query`, as the web ranks settings: the whole
+// How well a title matches `query`: the whole
 // title, its start, anywhere in it, every word in it, the phrase in its other
 // words, or only the words scattered. Titles that hold the query alike go
 // shortest first.
@@ -165,7 +165,7 @@ function searchRows(query, state, bindings) {
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
     });
-    // One result per command, found by its id and keys too, as the web's.
+    // One result per command, found by its id and keys too.
     var commands = {};
     (bindings || []).forEach(function (binding) {
         var command = commands[binding.command];

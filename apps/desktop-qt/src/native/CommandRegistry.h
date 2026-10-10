@@ -72,7 +72,7 @@ public:
   void setDescription(const QString& command, const QString& description);
   void setEnabled(const QString& command, bool enabled);
   void setListed(const QString& command, bool listed);
-  // Search words beside the title (the web's searchTerms).
+  // Search words beside the title.
   void setTerms(const QString& command, const QStringList& terms);
   QStringList terms(const QString& command) const;
   bool isMenu(const QString& command) const;

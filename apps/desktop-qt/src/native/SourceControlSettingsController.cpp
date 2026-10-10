@@ -1,4 +1,4 @@
-// Settings → Source Control, natively (the web's SourceControlSettingsPanel):
+// Settings → Source Control:
 // the repository defaults, the version control and hosting tools the MC
 // finds (`server.discoverSourceControl`), Git's background fetch interval, and
 // how source control text is written. The settings rows follow the settings
@@ -90,7 +90,7 @@ int fetchSeconds(const QJsonObject& settings) {
   return presetFetchSeconds(baseProfile(activity));
 }
 
-// The web's backgroundActivityOverrideSettings: a custom profile on the
+// A custom profile on the
 // current base, keeping a custom profile's other overrides.
 QJsonObject withFetchSeconds(QJsonObject settings, std::optional<int> seconds) {
   const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();

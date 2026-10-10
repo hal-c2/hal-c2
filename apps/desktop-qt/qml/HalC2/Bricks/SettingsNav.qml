@@ -53,8 +53,7 @@ Rectangle {
     color: Theme.palette.color("sidebar", "#0a0a0a")
 
     // What restoring this device's defaults resets, by name: the theme choice,
-    // then each General and Appearance row off its default (the web's
-    // useSettingsRestore).
+    // then each General and Appearance row off its default.
     readonly property bool themeChanged: Themes.themeId !== "" || Themes.mode !== "system" || Object.keys(Themes.halves ?? {}).length > 0
     readonly property var changedRows: {
         // isDefault reads these; the binding follows them.

@@ -1,5 +1,4 @@
-// Which build the window is talking to, said at a glance (the web's
-// SidebarStageBackdrop and environment identification): a Nightly MC marks
+// Which build the window is talking to, said at a glance: a Nightly MC marks
 // the sidebar's brand band with its artwork or a version pill, as Settings →
 // Appearance's Environment identification chooses.
 //
@@ -36,7 +35,7 @@ public:
   bool handle(const QString&, const QVariant&) override { return false; }
 
 private:
-  // apps/web branding.logic.ts: a nightly or preview build of the MC.
+  // "Nightly" for a nightly or preview build of the MC.
   QString label() const {
     static const QRegularExpression nightly(QStringLiteral("^[^-+]+-(?:nightly|preview)\\.\\d{8}\\.\\d+$"));
     const QString version =

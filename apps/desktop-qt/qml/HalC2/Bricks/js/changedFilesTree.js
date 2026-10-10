@@ -1,6 +1,6 @@
 .pragma library
 
-// The files a turn changed as a folder tree, as the web's turnDiffTree.ts:
+// The files a turn changed as a folder tree:
 // folders before files, a folder holding only one folder joined with it into
 // one row ("src/cart"), and every folder carrying the lines its files added
 // and removed.

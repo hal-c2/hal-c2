@@ -76,7 +76,7 @@ QString ensureTheme(World& world, const QString& name, const QString& canvas = Q
   return id;
 }
 
-// A theme file as the web exports it.
+// A theme file as the Theme Editor exports it.
 QByteArray themeFile(const QString& name, const QString& canvas, const QString& id = {}) {
   QJsonObject file{{QStringLiteral("version"), 1},
                    {QStringLiteral("name"), name},

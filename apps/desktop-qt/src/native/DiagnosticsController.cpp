@@ -1,4 +1,4 @@
-// Settings → Diagnostics, natively (the web's DiagnosticsSettings): what this
+// Settings → Diagnostics: what this
 // MC started and how much it uses, its resource history, and its recent
 // trace failures, from the MC's `server.getProcessDiagnostics`,
 // `server.getProcessResourceHistory`, `server.getTraceDiagnostics` and
@@ -16,7 +16,7 @@
 //     latestFailures: [{name, cause, duration}], commonFailures: [{name, cause, count}],
 //     slowestSpans: [{name, duration}]},
 //   logs: {available, error}}
-// with numbers formatted as the web formats them.
+// with numbers formatted for reading (sizes, durations, percentages).
 //
 // Actions: `diagnostics.refresh`, `diagnostics.window {windowMs}`,
 // `diagnostics.group {id}` (folds a group of processes, or opens it again),
@@ -85,7 +85,7 @@ QString cpuTime(double seconds) {
 
 QString percent(double value) { return QStringLiteral("%1%").arg(value, 0, 'f', 1); }
 
-// The executable's name, as the web's formatProcessName.
+// The executable's name.
 QString processName(const QString& command) {
   static const QRegularExpression space(QStringLiteral("\\s+"));
   QString first = command.trimmed().split(space).value(0);
@@ -220,7 +220,7 @@ private:
     publish();
   }
 
-  // The web's signalProcess: SIGKILL asks first, and a process that is no
+  // SIGKILL asks first, and a process that is no
   // longer the one listed is left alone.
   void signal(int pid, const QString& signal) {
     if (signal != QLatin1String("SIGINT") && signal != QLatin1String("SIGKILL")) return;
@@ -277,7 +277,7 @@ private:
     return settings()->config().value(QLatin1String("observability")).toObject().value(QLatin1String("logsDirectoryPath")).toString();
   }
 
-  // The web's openLogsDirectory: the editor last used when the MC has it,
+  // The editor last used when the MC has it,
   // else the first it has.
   void openLogs() {
     const QString path = logsPath();

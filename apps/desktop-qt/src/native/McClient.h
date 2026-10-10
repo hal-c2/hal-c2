@@ -17,7 +17,7 @@ class QNetworkAccessManager;
 class QWebSocket;
 
 // The shell's own protocol-3 connection to its MC (apps/server-ex
-// lib/hal_c2/web/protocol.ex), the C++ twin of client-runtime's ClusterSocket.
+// lib/hal_c2/web/protocol.ex).
 // Subscriptions are multiplexed by id, sent once the MC says hello, and
 // sent again after every reconnect or `resync`: from where their owner says
 // they had got to (Resume), or whole.
@@ -61,7 +61,7 @@ public:
   // `origin` is the MC's http(s) origin; the token is its access token.
   void open(const QUrl& origin, const QString& token);
   void close();
-  // Drops the socket and connects again, as reloading the web app does.
+  // Drops the socket and connects again.
   void reconnect() {
     const QUrl origin = m_origin;
     const QString token = m_token;
