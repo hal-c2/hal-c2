@@ -67,7 +67,7 @@ A file of a version not yet installed moves the MC to it.
 An MC carries the HAL-C2 version (`apps/server/package.json`, or `HAL_C2_MC_VERSION` for a
 build of its own), and clients offer to update it like any server. It moves to the
 new version in place when it can: the running code is replaced module by module and
-nothing reconnects. A version that changes only HAL-C2's own code takes nothing else
+client connections stay up. Cluster peers stay connected when the wire protocol is compatible. A version that changes only HAL-C2's own code takes nothing else
 from its bundle, so it keeps the Erlang runtime and dependencies the MC already runs
 and installs from a bundle built for any platform. A new OTP release, dependency,
 configuration or supervision tree needs a restart instead, which
@@ -107,6 +107,13 @@ each other's and talk Erlang distribution over mutual TLS on port 4370
 ([cluster.feature](../../features/connections/cluster.feature)). The joining machine has to
 reach the inviting MC's HTTP address, so start that one with `HAL_C2_MC_HOST` set to
 its LAN or tailnet address, or invite with `--tailscale`.
+
+Members may run different HAL-C2 releases as long as their cluster protocol epoch
+matches. A release update preserves compatible connections; Settings → Cluster
+shows release differences and asks you to update. Incompatible or pre-epoch releases
+need an update before joining. The epoch covers every distributed API, including
+thread moves, shell replication and plugins, and changes only when those contracts
+break. TLS certificate pins still decide who may connect.
 
 Members find each other at the addresses they report, then at those a discovery strategy
 lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...`

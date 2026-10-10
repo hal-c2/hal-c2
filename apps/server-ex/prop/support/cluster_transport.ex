@@ -29,7 +29,6 @@ defmodule HalC2.Prop.ClusterTransport do
   def send(mc, message), do: Kernel.send(owner(), {:cluster_sent, mc, message})
 
   def version_changed(_dir) do
-    :ets.insert(@table, {:connected, []})
     :ok
   end
 

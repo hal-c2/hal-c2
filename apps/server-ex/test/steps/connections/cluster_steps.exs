@@ -214,6 +214,15 @@ defmodule HalC2.Steps.Connections.Cluster do
     Map.put(context, :joined, command(b, ["join", link]))
   end
 
+  step "both list the other as connected", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+    assert [%{"connected" => true}] = status(a)["members"]
+    assert [%{"connected" => true}] = status(b)["members"]
+    context
+  end
+
   step "the second connects to the first", context do
     %{a: a, b: b} = context.machines
     assert {:ok, _} = context.joined
@@ -340,7 +349,51 @@ defmodule HalC2.Steps.Connections.Cluster do
   # --- versions -----------------------------------------------------------------------
 
   step "the second restarts on another HAL-C2 version", context do
-    context |> stop(:b) |> boot(:b, version: @other_version)
+    context = context |> stop(:b) |> boot(:b, version: @other_version)
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+    context
+  end
+
+  step "the second connects to the first and recommends updating", context do
+    %{a: a, b: b} = context.machines
+    assert connect(context, b, a)
+    assert [%{"connected" => true, "updateRecommended" => true}] = status(b)["members"]
+    context
+  end
+
+  step "two MCs that are not clustered, the second on an incompatible cluster protocol",
+       context do
+    context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b, protocol: 2)
+  end
+
+  step "the second restarts on an incompatible cluster protocol", context do
+    context |> stop(:b) |> boot(:b, protocol: 2)
+  end
+
+  step "the join asks the user to update for protocol compatibility", context do
+    assert {:error, message} = context.joined
+    assert message =~ "incompatible cluster protocols"
+    assert message =~ "Update"
+    context
+  end
+
+  step "the first reloads an incompatible cluster protocol in place", context do
+    a = context.machines.a
+    load_protocol(a.peer, HalC2.Cluster.protocol() + 1)
+    :ok = :peer.call(a.peer, :sys, :suspend, [HalC2.Cluster])
+    :ok = :peer.call(a.peer, :sys, :change_code, [HalC2.Cluster, HalC2.Cluster, nil, :hot])
+    :ok = :peer.call(a.peer, :sys, :resume, [HalC2.Cluster])
+    status(a)
+    context
+  end
+
+  step "the first asks for an update to restore protocol compatibility", context do
+    assert [%{"connected" => false, "compatible" => false}] =
+             status(context.machines.a)["members"]
+
+    context
   end
 
   step "the second cannot connect to the first", context do
@@ -350,20 +403,16 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the second lists the first as not connected, with the version the first runs", context do
-    %{a: a, b: b} = context.machines
-    version = :peer.call(a.peer, HalC2.Upgrade, :version, [])
-    assert status(b)["version"] == @other_version
-    assert [%{"id" => id, "connected" => false, "version" => ^version}] = status(b)["members"]
-    assert id == a.id
-    context
-  end
-
   # As `HalC2.Upgrade` does once it has loaded a version in place.
   step "the first moves to that version in place", context do
-    a = context.machines.a
+    %{a: a, b: b} = context.machines
+    cookie = :peer.call(a.peer, Node, :get_cookie, [])
     :peer.call(a.peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, @other_version])
     :ok = :peer.call(a.peer, HalC2.Cluster, :version_changed, [])
+    # Barrier behind the announcement.
+    status(a)
+    assert :peer.call(a.peer, Node, :get_cookie, []) == cookie
+    assert HalC2.Cluster.mc_name(b.id) in :peer.call(a.peer, Node, :list, [])
     context
   end
 
@@ -372,8 +421,8 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert await_connected(a, b)
     assert await_connected(b, a)
 
-    # The second learns the first's version from the table the first sends as it sees
-    # the second come up. A call the first has answered is behind that send, and a call
+    # The first immediately announces its version over the existing connection.
+    # A call the first has answered is behind that send, and a call
     # to the second made from the first travels behind it on the same connection.
     status(a)
 
@@ -389,15 +438,6 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "two MCs that are not clustered, the second on another HAL-C2 version", context do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b, version: @other_version)
-  end
-
-  step "the join is refused because the machines run different versions", context do
-    assert {:error, message} = context.joined
-    assert message =~ "different HAL-C2 versions"
-    # It names both, so the user sees which machine to update.
-    assert message =~ "the joining machine runs #{@other_version}"
-    assert message =~ "the inviting one runs #{HalC2.Upgrade.version()}"
-    context
   end
 
   # --- strangers ----------------------------------------------------------------------
@@ -1031,6 +1071,20 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   # Boots a machine's VM as a release does (`flags: false` leaves out the cluster boot
   # flags) and starts the whole MC in it, as `version:` when given.
+  defp load_protocol(peer, protocol) do
+    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:elixir])
+    source = File.read!(Path.expand("lib/hal_c2/cluster.ex"))
+
+    source =
+      String.replace(
+        source,
+        "def protocol, do: #{HalC2.Cluster.protocol()}",
+        "def protocol, do: #{protocol}"
+      )
+
+    :peer.call(peer, Code, :compile_string, [source])
+  end
+
   defp boot(context, name, opts \\ []) do
     machine = context.machines[name]
     optfile = Path.join(Mc.tmp_dir(context.mc, "dist"), "ssl_dist.conf")
@@ -1067,6 +1121,11 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     with version when version != nil <- opts[:version],
          do: :peer.call(peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, version])
+
+    # Build a genuinely incompatible peer without making the production epoch configurable.
+    if protocol = opts[:protocol] do
+      load_protocol(peer, protocol)
+    end
 
     {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], 30_000)
     id = :peer.call(peer, HalC2.Environment, :id, [])

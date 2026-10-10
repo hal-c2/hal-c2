@@ -82,13 +82,16 @@ defmodule HalC2.ClusterPropTest do
       {2, {:call, __MODULE__, :status, []}},
       {2, {:call, __MODULE__, :tick, []}},
       {1, {:call, __MODULE__, :version_changed, []}},
+      {1, {:call, __MODULE__, :code_changed, []}},
       {1, {:call, __MODULE__, :restart, []}}
     ])
   end
 
   defp fingerprint, do: frequency([{6, oneof(@fingerprints)}, {1, "not-a-fingerprint"}])
   defp label, do: frequency([{4, oneof(["box", "laptop"])}, {1, nil}, {1, 7}])
-  defp version, do: frequency([{6, :current}, {1, "0.0.0-other"}])
+
+  defp version,
+    do: frequency([{6, :current}, {2, "0.0.0-other"}, {1, :incompatible}, {1, :unknown}])
 
   # A machine announces strings, each once, but the wire may carry anything.
   defp addresses do
@@ -157,12 +160,13 @@ defmodule HalC2.ClusterPropTest do
   end
 
   def next_state(state, _result, {:call, _, :version_changed, []}),
-    do: %{state | connected: MapSet.new()}
+    do: state
 
   def next_state(state, _result, _call), do: state
 
   defp admissible?(state, id, fp, version) do
-    id != state.own and id != "Bad_id" and fp in @fingerprints and version == :current
+    id != state.own and id != "Bad_id" and fp in @fingerprints and
+      version not in [:incompatible, :unknown]
   end
 
   defp put_member(state, id, fp, label, addresses, member) do
@@ -191,8 +195,8 @@ defmodule HalC2.ClusterPropTest do
         not admissible?(state, id, fp, :current) ->
           result == {:error, :invalid_member}
 
-        version != :current ->
-          match?({:error, {:other_version, "0.0.0-other", _}}, result)
+        version in [:incompatible, :unknown] ->
+          match?({:error, {:incompatible_protocol, _, _}}, result)
 
         true ->
           match?({:ok, %{"id" => own, "members" => _}} when own == state.own, result) and
@@ -250,7 +254,9 @@ defmodule HalC2.ClusterPropTest do
         }
       end
 
-    got = for m <- result["members"], do: Map.delete(m, "version")
+    got =
+      for m <- result["members"],
+          do: Map.drop(m, ~w(version protocol compatible updateRecommended))
 
     result["clustered"] == true and result["id"] == state.own and
       Enum.sort_by(got, & &1["id"]) == Enum.sort_by(expected, & &1["id"]) and
@@ -304,14 +310,22 @@ defmodule HalC2.ClusterPropTest do
   # --- commands ---------------------------------------------------------------
 
   def admit(id, fp, label, addresses, version) do
-    version = if version == :current, do: HalC2.Upgrade.version(), else: version
+    protocol =
+      case version do
+        :incompatible -> 2
+        :unknown -> nil
+        _ -> Cluster.protocol()
+      end
+
+    version = if is_binary(version), do: version, else: HalC2.Upgrade.version()
 
     entry = %{
       "id" => id,
       "fingerprint" => fp,
       "label" => label,
       "addresses" => addresses,
-      "version" => version
+      "version" => version,
+      "protocol" => protocol
     }
 
     observe(Cluster.admit(entry))
@@ -367,6 +381,13 @@ defmodule HalC2.ClusterPropTest do
 
   def peers, do: observe(Cluster.peers())
   def status, do: observe(Cluster.status())
+
+  def code_changed do
+    :ok = :sys.suspend(Cluster)
+    :ok = :sys.change_code(Cluster, Cluster, nil, :hot)
+    :ok = :sys.resume(Cluster)
+    observe(:ok)
+  end
 
   def version_changed do
     Cluster.version_changed()
@@ -572,10 +593,10 @@ defmodule HalC2.ClusterPropTest do
 
   # Entries for one machine, with times close enough that updates tie.
   defp member_entry do
-    let {fp, label, addresses, admitted, removed, updated, version} <-
+    let {fp, label, addresses, admitted, removed, updated, version, protocol} <-
           {oneof(@fingerprints), oneof(["box", "laptop", nil]),
            oneof([["10.0.0.1:4370"], ["10.0.0.2:5000"]]), range(1, 3), oneof([nil, 2, 3]),
-           range(1, 3), oneof(["1.0.0", "1.0.1"])} do
+           range(1, 3), oneof(["1.0.0", "1.0.1"]), oneof([nil, 1, 2])} do
       %{
         "fingerprint" => fp,
         "label" => label,
@@ -583,7 +604,8 @@ defmodule HalC2.ClusterPropTest do
         "admittedAt" => admitted,
         "removedAt" => removed,
         "updatedAt" => updated,
-        "version" => version
+        "version" => version,
+        "protocol" => protocol
       }
     end
   end

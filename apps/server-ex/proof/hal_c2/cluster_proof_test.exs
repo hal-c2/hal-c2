@@ -15,7 +15,7 @@ defmodule HalC2.ClusterProofTest do
     model: "cluster.maude",
     module: "CLUSTER",
     check: "CLUSTER-PROPS",
-    # Its widest search takes about two minutes alone, and longer on a CI runner.
+    # Mixed releases add distinct metadata states; exhaustive searches take minutes.
     timeout: 900_000,
     code: [
       {:exports, HalC2.Cluster},
@@ -42,14 +42,14 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster handle_call {:joined, _, _, _}" => "merge",
       "HalC2.Cluster handle_call {:remove, _}" => "remove",
       "HalC2.Cluster handle_cast {:merge, _}" => "merge",
-      "HalC2.Cluster handle_cast :version_changed" => "version-changed",
+      "HalC2.Cluster handle_cast :version_changed" => ~w(version-changed protocol-changed),
       "HalC2.Cluster handle_info {:nodeup, _}" => "nodeup",
       "HalC2.Cluster handle_info :gossip" => "gossip",
       "HalC2.Cluster.Distribution.start/2" => "restart",
       "HalC2.Cluster.Distribution.connected/0" => ~w(broadcast gossip cut),
       "HalC2.Cluster.Distribution.disconnect/1" => "cut",
       "HalC2.Cluster.Distribution.send/2" => "send",
-      "HalC2.Cluster.Distribution.version_changed/1" => "version-changed",
+      "HalC2.Cluster.Distribution.version_changed/1" => ~w(version-changed protocol-changed),
       "HalC2.Cluster.Discovery.poll/0" => "connect",
       "HalC2.Cluster.Discovery.connect/3" => "connect",
       "HalC2.Cluster.Discovery handle_info :poll" => "connect",
@@ -65,6 +65,8 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster state :transport" =>
         "which module carries the casts, a fake in tests; the model's links and channels are the real one",
       "HalC2.Cluster.dist_port/0" => @names,
+      "HalC2.Cluster.protocol/0" =>
+        "epoch models the wire compatibility independently of release versions",
       "HalC2.Cluster.dir/1" => @names,
       "HalC2.Cluster.host/1" => @names,
       "HalC2.Cluster.mc_name/1" => @names,
@@ -118,8 +120,10 @@ defmodule HalC2.ClusterProofTest do
         "An MC that is not a member is turned away",
         "Members find each other again after restarting",
         "A member whose cluster process restarted learns of a removal it missed",
-        "Members connect again once they run the same version",
-        "Members on different HAL-C2 versions do not connect"
+        "Members remain connected through a compatible release update",
+        "Members on different compatible HAL-C2 releases connect",
+        "An existing member on an incompatible cluster protocol cannot reconnect",
+        "A hot protocol upgrade disconnects incompatible peers"
       ]
     }
 
@@ -140,9 +144,17 @@ defmodule HalC2.ClusterProofTest do
     end
   end
 
-  test "connected members' tables come to agree, and members on one version connect",
+  test "connected members' tables come to agree, and members on compatible releases connect",
        %{proof: proof} do
     assert_ltl(proof, "two(1, 1, 1, 1, 1, 1)", "<> [] (agreed /\\ meshed)", fair: @fair)
+  end
+
+  test "an incompatible protocol never connects", %{proof: proof} do
+    refute_reachable(proof, "incompatible", "crossedEpoch", [])
+  end
+
+  test "a protocol upgrade drops incompatible connections", %{proof: proof} do
+    refute_reachable(proof, "protocolUpgrade", "unsafe", [])
   end
 
   test "a removal reaches every member that ends up connected", %{proof: proof} do

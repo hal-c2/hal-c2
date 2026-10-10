@@ -83,7 +83,14 @@ function clusterRows(cluster: TuiClusterState, width: number): TuiSettingsRow[] 
   else {
     rows.push(row("this machine", status.label, width));
     for (const member of status.members) {
-      rows.push(row(member.label, member.connected ? "connected" : "offline", width));
+      const connection = member.connected ? "connected" : "offline";
+      const detail =
+        member.compatible === false
+          ? `Update to connect (${member.version ?? "unknown version"})`
+          : member.updateRecommended
+            ? `${connection} (${member.version}). Please update your machines.`
+            : connection;
+      rows.push(row(member.label, detail, width));
     }
     if (status.members.length === 0) {
       rows.push(row("members", "none yet: invite a machine from the palette (^K)", width));

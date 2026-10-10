@@ -79,8 +79,8 @@ defmodule HalC2.Upgrade do
   @doc """
   Updates to `version` from its bundle archive at `path` on this machine
   (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
-  clustered with this one update first, taking the bundle from it: members only
-  connect to members on their own version, so afterwards they could not. How each
+  clustered with this one update first, taking the bundle from it. This explicit
+  cluster deployment is independent of protocol compatibility. How each
   went is the result's `members`.
   """
   def update_from(path, version) do
@@ -95,8 +95,8 @@ defmodule HalC2.Upgrade do
     end
   end
 
-  # A member that moved to the new version drops its connections, this one among
-  # them, so its going down counts as the end of its update too.
+  # A member that requires a restart drops its connections, so its going down
+  # counts as the end of its update too.
   #
   # They all get `@members_timeout` between them, which leaves this MC's own update
   # its time within what `mix hal_c2.upgrade --release` waits for an answer.
