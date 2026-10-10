@@ -97,3 +97,4 @@ Feature: The thread's header on the desktop
       | sidebar usage        | "Usage"                 |
       | row snooze           | "Snooze"                |
       | row settle           | "Settle"                |
+      | Open menu            | "More Open options"     |

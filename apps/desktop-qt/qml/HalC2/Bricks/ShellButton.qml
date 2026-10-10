@@ -6,8 +6,8 @@ import HalC2.Shell
 // A button in the web app's clothes. Outline by default (the header pills),
 // `subtle` for the ghost buttons, `primary` for the accent one; `iconName` is a
 // lucide id drawn before the text, `chevron` appends the menu chevron. A
-// button with only an icon names itself on hover from its accessible name;
-// `toolTip` says something else, or names a button that has text.
+// button with only an icon or only the chevron names itself on hover from its
+// accessible name; `toolTip` says something else, or names a button that has text.
 Button {
     id: control
 
@@ -44,7 +44,7 @@ Button {
     scale: down ? 0.97 : 1
     opacity: enabled ? 1 : 0.64
     ToolTip.visible: hovered && ToolTip.text.length > 0
-    ToolTip.text: toolTip.length > 0 ? toolTip : iconOnly ? Accessible.name : ""
+    ToolTip.text: toolTip.length > 0 ? toolTip : iconOnly || chevronOnly ? Accessible.name : ""
     ToolTip.delay: 400
 
     Behavior on scale {
