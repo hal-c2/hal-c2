@@ -427,4 +427,38 @@ QString commandDisplayText(const QString& command) {
   return shown.section(QLatin1Char('\n'), 0, 0).replace(space, QStringLiteral(" ")).trimmed();
 }
 
+std::optional<Notice> noticeOf(const QJsonObject& item) {
+  const QString type = text(item, QLatin1String("type"));
+  if (type == QLatin1String("notification")) {
+    return Notice{text(item, QLatin1String("summary")).trimmed(), text(item, QLatin1String("outcome"))};
+  }
+  const QJsonObject notification = item.value(QLatin1String("notification")).toObject();
+  if (type.isEmpty() && !notification.isEmpty()) {
+    return Notice{text(notification, QLatin1String("summary")).trimmed(), text(notification, QLatin1String("outcome"))};
+  }
+  if (!type.isEmpty() && type != QLatin1String("user_message")) return std::nullopt;
+  const QString createdBy = text(item, QLatin1String("createdBy"));
+  if (createdBy == QLatin1String("agent")) {
+    // A message another agent sent names its thread, or came in over MCP.
+    if (text(item, QLatin1String("creationSource")) != QLatin1String("provider") ||
+        !text(item, QLatin1String("senderThreadId")).isEmpty()) {
+      return std::nullopt;
+    }
+    return Notice{QStringLiteral("Background activity updated"), QStringLiteral("updated")};
+  }
+  if (createdBy != QLatin1String("system")) return std::nullopt;
+  // <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
+  static const QRegularExpression envelope(
+      QStringLiteral("\\A<delegated_task_result taskId=\"[^\"]*\" title=\"([^\n]*)\" status=\"(\\w+)\" childThreadId=\"[^\"\n]*\">"));
+  const QRegularExpressionMatch match = envelope.match(text(item, QLatin1String("text")));
+  if (!match.hasMatch()) return std::nullopt;
+  const QString status = match.captured(2);
+  const QString title = match.captured(1).trimmed();
+  const QString outcome = status == QLatin1String("completed") || status == QLatin1String("failed") ? status : QStringLiteral("cancelled");
+  const QString ended = outcome == QLatin1String("completed") ? QStringLiteral("finished")
+                        : outcome == QLatin1String("failed")  ? QStringLiteral("failed")
+                                                               : QStringLiteral("stopped");
+  return Notice{QStringLiteral("%1 %2").arg(title.isEmpty() ? QStringLiteral("Delegated task") : title, ended), outcome};
+}
+
 }  // namespace timeline

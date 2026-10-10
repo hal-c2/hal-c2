@@ -161,6 +161,15 @@ Feature: What the engine projects for clients
     And it can page older history on request
     And then it receives live events after the snapshot's sequence
 
+  # A queued run keeps the ordinal it was sent with, so one held long enough (a delegated
+  # task's result behind a held queue) sits below the floor; a client listing the queue
+  # still needs the message it stands for.
+  @mc
+  Scenario: A message queued before a window's floor is in the snapshot
+    Given "t1" has a message queued before a very long history
+    When a client subscribes to "t1" with a window
+    Then the snapshot holds the queued message
+
   @mc
   Scenario: A bounded page of history holds only visible turns
     Given "t1" has hidden and visible earlier turns

@@ -115,46 +115,6 @@ QString thoughtLine(const QString& thought) {
   return line;
 }
 
-// What the MC sent the agent for itself: that a delegated task ended, or that
-// the provider woke up for its background work. The MC records it as a
-// `notification` item (`summary`, `outcome`). Threads written before it did hold
-// the message as the user's instead, a delegated task's result as the envelope
-// the agent reads, and are read here as what they stand for.
-struct Notice {
-  QString summary;
-  QString outcome;
-};
-
-std::optional<Notice> noticeOf(const QJsonObject& item) {
-  const QString type = text(item, QLatin1String("type"));
-  if (type == QLatin1String("notification")) {
-    return Notice{text(item, QLatin1String("summary")).trimmed(), text(item, QLatin1String("outcome"))};
-  }
-  if (type != QLatin1String("user_message")) return std::nullopt;
-  const QString createdBy = text(item, QLatin1String("createdBy"));
-  if (createdBy == QLatin1String("agent")) {
-    // A message another agent sent names its thread, or came in over MCP.
-    if (text(item, QLatin1String("creationSource")) != QLatin1String("provider") ||
-        !text(item, QLatin1String("senderThreadId")).isEmpty()) {
-      return std::nullopt;
-    }
-    return Notice{QStringLiteral("Background activity updated"), QStringLiteral("updated")};
-  }
-  if (createdBy != QLatin1String("system")) return std::nullopt;
-  // <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
-  static const QRegularExpression envelope(
-      QStringLiteral("\\A<delegated_task_result taskId=\"[^\"]*\" title=\"([^\n]*)\" status=\"(\\w+)\" childThreadId=\"[^\"\n]*\">"));
-  const QRegularExpressionMatch match = envelope.match(text(item, QLatin1String("text")));
-  if (!match.hasMatch()) return std::nullopt;
-  const QString status = match.captured(2);
-  const QString title = match.captured(1).trimmed();
-  const QString outcome = status == QLatin1String("completed") || status == QLatin1String("failed") ? status : QStringLiteral("cancelled");
-  const QString ended = outcome == QLatin1String("completed") ? QStringLiteral("finished")
-                        : outcome == QLatin1String("failed")  ? QStringLiteral("failed")
-                                                               : QStringLiteral("stopped");
-  return Notice{QStringLiteral("%1 %2").arg(title.isEmpty() ? QStringLiteral("Delegated task") : title, ended), outcome};
-}
-
 // apps/web/src/components/chat/MessagesTimeline.tsx workEntryIconName, for
 // the turn items the native timeline shows as calls and rows.
 QString iconOf(const QJsonObject& item) {
@@ -171,7 +131,7 @@ QString iconOf(const QJsonObject& item) {
   }
   if (type == QLatin1String("subagent")) return QStringLiteral("bot");
   if (type == QLatin1String("error")) return QStringLiteral("circle-alert");
-  if (const auto notice = noticeOf(item)) {
+  if (const auto notice = timeline::noticeOf(item)) {
     return notice->outcome == QLatin1String("failed") ? QStringLiteral("circle-alert") : QStringLiteral("zap");
   }
   // V2LifecycleRow's dividers and interrupt request.
@@ -236,7 +196,7 @@ enum class Kind { Message, Work, Plan, Subagent, Error, Marker, Checkpoint };
 
 Kind classify(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
-  if (noticeOf(item)) return Kind::Marker;
+  if (timeline::noticeOf(item)) return Kind::Marker;
   if (type == QLatin1String("user_message") || type == QLatin1String("assistant_message")) return Kind::Message;
   if (type == QLatin1String("proposed_plan")) return Kind::Plan;
   if (type == QLatin1String("subagent")) return Kind::Subagent;
@@ -330,7 +290,7 @@ QString markerTitle(const QJsonObject& item) {
   if (type == QLatin1String("compaction")) return QStringLiteral("Context compacted");
   if (type == QLatin1String("thread_created")) return QStringLiteral("Created thread");
   // The web's work row for a notification is its summary alone (session-logic.ts).
-  const auto notice = noticeOf(item);
+  const auto notice = timeline::noticeOf(item);
   return !notice || notice->summary.isEmpty() ? QStringLiteral("Notification") : notice->summary;
 }
 

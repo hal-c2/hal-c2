@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "TimelineSummary.h"
+
 namespace composer {
 
 namespace {
@@ -848,6 +850,38 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
     }
   }
   return std::nullopt;
+}
+
+Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages) {
+  QList<QJsonObject> waiting;
+  for (const QJsonObject& run : runs) {
+    if (run.value(QLatin1String("status")).toString() == QLatin1String("queued")) waiting.append(run);
+  }
+  // By queue position, which the MC keeps whole; a run's id settles a tie, so
+  // the order is the same whatever order the runs came in.
+  std::sort(waiting.begin(), waiting.end(), [](const QJsonObject& a, const QJsonObject& b) {
+    const double left = a.value(QLatin1String("queuePosition")).toDouble(a.value(QLatin1String("ordinal")).toDouble());
+    const double right = b.value(QLatin1String("queuePosition")).toDouble(b.value(QLatin1String("ordinal")).toDouble());
+    if (left != right) return left < right;
+    return a.value(QLatin1String("id")).toString() < b.value(QLatin1String("id")).toString();
+  });
+  Queued queued;
+  for (const QJsonObject& run : waiting) {
+    const QString runId = run.value(QLatin1String("id")).toString();
+    const auto found = messages.constFind(run.value(QLatin1String("userMessageId")).toString());
+    if (found == messages.cend()) continue;
+    const QJsonObject& message = *found;
+    if (message.value(QLatin1String("notification")).isObject() || message.value(QLatin1String("delegatedCompletion")).isObject() ||
+        message.value(QLatin1String("providerWake")).toBool()) {
+      const std::optional<timeline::Notice> notice = timeline::noticeOf(message);
+      queued.waiting.append(QVariantMap{{QStringLiteral("runId"), runId},
+                                        {QStringLiteral("summary"), notice && !notice->summary.isEmpty() ? notice->summary : QStringLiteral("Notification")},
+                                        {QStringLiteral("outcome"), notice ? notice->outcome : QString()}});
+      continue;
+    }
+    queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId}, {QStringLiteral("text"), message.value(QLatin1String("text")).toString()}});
+  }
+  return queued;
 }
 
 }  // namespace composer

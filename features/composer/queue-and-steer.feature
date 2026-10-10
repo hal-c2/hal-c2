@@ -159,16 +159,17 @@ Feature: Follow-ups while the agent is working
     Then the composer lists the queued messages "check the logs" and "update the docs"
 
   @desktop
-  Scenario Outline: What the MC queued for the agent itself is not in the user's queue
+  Scenario Outline: What the MC queued for the agent itself waits under what it stands for
     Given "check the logs" is queued
     And the MC queued <its own> for the agent
     Then the composer lists only the queued message "check the logs"
+    And the composer shows "<summary>" waiting behind it
 
     Examples:
-      | its own                                                            |
-      | a delegated task's result                                          |
-      | a delegated task's result stored before results were notifications |
-      | the agent's own wake-up                                            |
+      | its own                                                            | summary                     |
+      | a delegated task's result                                          | Tax tests finished          |
+      | a delegated task's result stored before results were notifications | Tax tests finished          |
+      | the agent's own wake-up                                            | Background activity updated |
 
   @desktop
   Scenario: Removing a queued message cancels its run

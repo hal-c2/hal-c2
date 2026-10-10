@@ -250,6 +250,46 @@ const Steps steps([] {
                   [&] { return S("the composer to offer Stop; it is %1").arg(show(composer(world))); });
   });
 
+  // A queued run behind the running turn and its message; `fields` are what
+  // the message carries beyond its text.
+  const auto queue = [](World& world, const QString& text, const QJsonObject& fields) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const int ordinal = ++fake.ordinal;
+    const QString run = S("run-%1").arg(ordinal);
+    QJsonObject message{{S("id"), S("message:") + run}, {S("role"), S("user")}, {S("text"), text}};
+    for (auto it = fields.begin(); it != fields.end(); ++it) message.insert(it.key(), it.value());
+    setEntity(world.mc, world.thread, S("message"), S("message:") + run, message);
+    setEntity(world.mc, world.thread, S("run"), run,
+              {{S("id"), run}, {S("ordinal"), ordinal}, {S("status"), S("queued")}, {S("queuePosition"), ordinal},
+               {S("userMessageId"), S("message:") + run}, {S("requestedAt"), kNow}});
+    world.sync();
+  };
+  step(S("the message %1 is waiting for the current turn").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
+    queue(world, c[0], {});
+  });
+  // As apps/server-ex/lib/hal_c2/orchestration/delegation.ex queues it.
+  step(S("the result of the delegated task %1 is waiting for the current turn").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
+    queue(world, S("<delegated_task_result taskId=\"task:1\" title=\"%1\" status=\"completed\" childThreadId=\"thread-9\">\ndone\n</delegated_task_result>").arg(c[0]),
+          {{S("createdBy"), S("system")},
+           {S("delegatedCompletion"), QJsonObject{{S("taskId"), S("task:1")}, {S("status"), S("completed")}}},
+           {S("notification"), QJsonObject{{S("summary"), c[0] + S(" finished")}, {S("outcome"), S("completed")}}}});
+  });
+  step(S("the composer lists %1 with %1 waiting behind it").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const auto texts = [&world](const QString& prefix) {
+      // Every visible match: a Repeater's delegates are only in the item tree.
+      QStringList found;
+      world.findWhere([&](QQuickItem* item) {
+        if (item->objectName().startsWith(prefix)) found.append(item->property("text").toString());
+        return false;
+      });
+      return found;
+    };
+    world.waitFor([&] { return texts(S("queueText-")) == QStringList{c[0]} && texts(S("queueWaiting-")) == QStringList{c[1]}; },
+                  [&] { return S("the queue to list %1 then %2; it lists %3, then %4, of the turn %5")
+                                 .arg(c[0], c[1], texts(S("queueText-")).join(S(" | ")), texts(S("queueWaiting-")).join(S(" | ")),
+                                      show(world.state(S("turn")).toMap())); });
+  });
+
   step(S("the user stops the agent"), [](World& world, const Captures&, const Table&) {
     QQuickItem* action = world.item(S("primaryAction"));
     expect(action->property("stopMode").toBool(), S("the composer does not offer Stop"));
