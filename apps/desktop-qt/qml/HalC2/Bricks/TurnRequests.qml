@@ -559,6 +559,7 @@ Item {
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
+                        Accessible.name: qsTr("Scroll queued messages")
                     }
                     onFocusedItemChanged: {
                         let row = focusedItem;
