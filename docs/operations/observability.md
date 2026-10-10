@@ -2,583 +2,86 @@
 
 > For maintainers. Using HAL-C2? See [docs/user](../user/).
 
-HAL-C2 has one server-side observability model:
+The MC has three sources of diagnostic data:
 
-- pretty logs go to stdout for humans
-- completed spans go to a local NDJSON trace file
-- traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
+- logs go to stdout for humans
+- while tracing is on, finished spans go to a local NDJSON trace file
+- client spans can be forwarded over OTLP to a real backend like Grafana LGTM
 
-The local trace file is the persisted source of truth for normal local launches. Those launches do not
-write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr on the remote host at `~/.local/state/hal-c2/ssh-launch/<state>/server.log` (under
-`$XDG_STATE_HOME` when the host sets it).
+Resource sampling is separate: see [resource telemetry](../internals/resource-telemetry.md).
 
-## Where To Find Things
+## Where to find things
 
 ### Logs
 
-Logs are human-facing:
-
-- destination: stdout
-- format: `Logger.consolePretty()`
-- normal local persistence: none
-- SSH-managed launch persistence: `ssh-launch/<state>/server.log` in the remote host's state directory
-- remote export: OTLP only, when configured
-
-If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
-
-Configuring a logs endpoint takes over that job. The server then exports log records, which cover
-every message instead of only the ones inside an active span and carry the trace and span ids so
-they still line up with the trace. `Logger.tracerLogger` is dropped in that mode, so the same
-message is not exported twice and the trace file stops carrying log messages. stdout output and
-SSH-managed launch persistence stay unchanged either way.
+Logs are human-facing: Elixir's `Logger` writes to stdout. Under the background service, stdout and
+stderr append to `logs/boot-service.log` in the MC's state directory ([Running HAL-C2 in the
+background](../user/background-service.md)). A foreground `mise run mc` has no log file.
 
 ### Traces
 
-Completed spans are written as NDJSON records to `serverTracePath`, which is
-`logs/server.trace.ndjson` in the server's state directory: `~/.local/state/hal-c2/logs/...` for an
-installed server, `<root>/state/logs/...` under a root (`HAL_C2_HOME`, `--base-dir`, `--home-dir`),
-`<worktree>/.hal-c2/state/logs/...` for a linked worktree dev run, and
-`~/.local/state/hal-c2-dev/logs/...` for a dev run from the main checkout.
+[`HalC2.Traces`](../../apps/server-ex/lib/hal_c2/traces.ex) owns the trace file. Tracing is off
+until `HAL_C2_TRACE=1` is in the MC's environment at start. While it is on, `Traces.span/3` appends
+one `effect-span` record per finished span to `logs/server.trace.ndjson` in the MC's state
+directory, rotating at 10 MiB into `.1` … `.10`. The state directory is
+`~/.local/state/hal-c2/elixir` for an installed MC, `~/.local/state/hal-c2-dev/elixir` for the dev
+MC, and `<dir>/state` for an MC given `HAL_C2_MC_HOME=<dir>` ([storage](../internals/storage.md)).
+Settings → Diagnostics reads the files back (`server.getTraceDiagnostics`).
 
-Important fields common to both record types:
+Spans cover boundaries the MC chose to trace, such as `orchestration.dispatchCommand` and
+`checkpoint.capture`; grep for `HalC2.Traces.span` to see them all. Records have:
 
-- `type`: `effect-span` or `otlp-span`
-- `name`: span name
-- `traceId`, `spanId`, `parentSpanId`: correlation
-- `durationMs`: elapsed time
+- `type`: `effect-span` for the MC's own spans, `otlp-span` for a client's
+- `name`, `traceId`, `spanId`, `durationMs`
 - `attributes`: structured context
-- `events`: embedded logs and custom events
+- `exit` on `effect-span` records: `Success` or `Failure`
 
-`effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. `otlp-span`
-records instead carry OTLP resource, scope, and optional status fields.
-
-The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
-`packages/shared/src/observability.ts`.
-
-DPoP proof failures include the safe `environment.dpop.failure_code` span
-attribute. A `time_window` failure means that a signed proof was too old or too
-far in the future for the environment server's allowed window. It can point to
-a date or time problem on either device, but it can also result from a delayed
-request.
+Clients post OTLP JSON to `/api/observability/v1/traces`. While tracing is on the MC keeps those
+spans in the same file as `otlp-span` records.
 
 ### Metrics
 
-Metrics are not written to a local file.
+The MC exports no metrics and keeps no metrics file.
 
-- local persistence: none
-- remote export: OTLP only, when configured
-- current definitions: `apps/server/src/observability/Metrics.ts`
+## Forwarding to an OTLP backend
 
-If OTLP is not configured, metrics still exist in-process, but you will not have a local artifact to inspect.
+Set `HAL_C2_OTLP_TRACES_URL` to a collector's trace endpoint, and `HAL_C2_OTLP_HEADERS`
+(`key=value,key=value`, values URL-encoded) for any headers it needs. The MC forwards the client
+spans it accepts there, whether or not tracing is on. It does not forward its own spans.
 
-### Related Artifacts
-
-Provider event NDJSON files still exist for provider runtime streams. Those are separate from the main server trace file.
-
-## Run The Server In Instrumented Mode
-
-There are two useful modes:
-
-- local-only: stdout + local `server.trace.ndjson`
-- full local observability: stdout + local trace file + OTLP export to Grafana/Tempo/Prometheus
-
-The local trace file is always on. OTLP export is opt-in.
-
-### Option 1: Local Traces Only
-
-You do not need any extra env vars. Just run the app normally and inspect `server.trace.ndjson`.
-
-Examples:
+With Grafana LGTM:
 
 ```bash
-npx hal-c2
+docker run --name lgtm -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm
+HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces mise run mc
 ```
 
-```bash
-node --run dev
-```
+Grafana is then at `http://localhost:3000` (login `admin` / `admin`). The MC reads this at start,
+so restart it after changing the variables. The installed service takes its environment from the
+unit or launch agent, not from your shell.
+
+## Debugging from the trace file
 
 ```bash
-node --run dev:desktop
-```
-
-### Option 2: Run With A Local LGTM Stack
-
-#### 1. Start Grafana LGTM
-
-```bash
-docker run --name lgtm \
-  -p 3000:3000 \
-  -p 4317:4317 \
-  -p 4318:4318 \
-  --rm -ti \
-  grafana/otel-lgtm
-```
-
-Then open `http://localhost:3000`.
-
-Default Grafana login:
-
-- username: `admin`
-- password: `admin`
-
-#### 2. Export OTLP env vars
-
-```bash
-export HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces
-export HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs
-export HAL_C2_OTLP_SERVICE_NAME=hal-c2-local
-```
-
-Optional:
-
-```bash
-export HAL_C2_TRACE_MIN_LEVEL=Info
-export HAL_C2_TRACE_TIMING_ENABLED=true
-```
-
-#### 3. Launch the app from that same shell
-
-CLI:
-
-```bash
-npx hal-c2
-```
-
-Monorepo web/server dev:
-
-```bash
-node --run dev
-```
-
-Monorepo desktop dev:
-
-```bash
-node --run dev:desktop
-```
-
-Packaged desktop app:
-
-Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `HAL_C2_OTLP_*`.
-
-macOS app bundle example:
-
-```bash
-HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-HAL_C2_OTLP_SERVICE_NAME=hal-c2-desktop \
-"/Applications/HAL-C2.app/Contents/MacOS/HAL-C2"
-```
-
-Direct binary example:
-
-```bash
-HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-HAL_C2_OTLP_SERVICE_NAME=hal-c2-desktop \
-./path/to/your/desktop-app-binary
-```
-
-Do not rely on launching from Finder, Spotlight, the dock, or the Start menu after setting shell env vars. Those launches usually will not pick them up.
-
-#### 4. Fully restart after changing env
-
-The backend reads observability config at process start. If you change OTLP env vars, stop the app completely and start it again.
-
-## How To Use Traces And Metrics To Debug The Server
-
-### Start With The Local Trace File
-
-The trace file is the fastest way to inspect raw span data.
-
-Resolve the path for the launch mode once. An installed server keeps its logs in the XDG state
-directory:
-
-```bash
-TRACE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2/logs/server.trace.ndjson"
-```
-
-A server given a root (`HAL_C2_HOME`, `--base-dir`, `--home-dir`) keeps them under that root:
-
-```bash
-TRACE_FILE="$HAL_C2_HOME/state/logs/server.trace.ndjson"
-```
-
-A dev server started from a linked worktree uses that worktree's `.hal-c2`:
-
-```bash
-TRACE_FILE="$WORKTREE/.hal-c2/state/logs/server.trace.ndjson"
-```
-
-A dev run from the main checkout uses the development profile:
-
-```bash
-TRACE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2-dev/logs/server.trace.ndjson"
-```
-
-Tail the selected file:
-
-```bash
+TRACE_FILE=~/.local/state/hal-c2-dev/elixir/logs/server.trace.ndjson
 tail -f "$TRACE_FILE"
 ```
 
-Show failed spans:
+Failed spans:
 
 ```bash
-jq -c 'select(.type == "effect-span" and .exit._tag != "Success") | {
-  name,
-  durationMs,
-  exit,
-  attributes
-}' "$TRACE_FILE"
+jq -c 'select(.type == "effect-span" and .exit._tag != "Success") | {name, durationMs, exit, attributes}' "$TRACE_FILE"
 ```
 
-Show slow spans:
+Slow spans:
 
 ```bash
-jq -c 'select(.durationMs > 1000) | {
-  name,
-  durationMs,
-  traceId,
-  spanId
-}' "$TRACE_FILE"
+jq -c 'select(.durationMs > 1000) | {name, durationMs, traceId, spanId}' "$TRACE_FILE"
 ```
 
-Inspect embedded log events:
-
-```bash
-jq -c 'select(any(.events[]?; .attributes["effect.logLevel"] != null)) | {
-  name,
-  durationMs,
-  events: [
-    .events[]
-    | select(.attributes["effect.logLevel"] != null)
-    | {
-        message: .name,
-        level: .attributes["effect.logLevel"]
-      }
-  ]
-}' "$TRACE_FILE"
-```
-
-Follow one trace:
-
-```bash
-jq -r 'select(.traceId == "TRACE_ID_HERE") | [
-  .name,
-  .spanId,
-  (.parentSpanId // "-"),
-  .durationMs
-] | @tsv' "$TRACE_FILE"
-```
-
-Filter orchestration commands:
-
-```bash
-jq -c 'select(.attributes["orchestration.command_type"] != null) | {
-  name,
-  durationMs,
-  commandType: .attributes["orchestration.command_type"],
-  aggregateKind: .attributes["orchestration.aggregate_kind"]
-}' "$TRACE_FILE"
-```
-
-Filter git activity:
-
-```bash
-jq -c 'select(.attributes["git.operation"] != null) | {
-  name,
-  durationMs,
-  operation: .attributes["git.operation"],
-  cwd: .attributes["git.cwd"],
-  hookEvents: [
-    .events[]
-    | select(.name == "git.hook.started" or .name == "git.hook.finished")
-  ]
-}' "$TRACE_FILE"
-```
-
-### Use Tempo When You Need A Real Trace Viewer
-
-Tempo is better than raw NDJSON when you want to:
-
-- search across many traces
-- inspect parent/child relationships visually
-- compare many slow traces
-- drill into one failing request without hand-joining by `traceId`
-
-Recommended flow in Grafana:
-
-1. Open `Explore`.
-2. Pick the `Tempo` data source.
-3. Set the time range to something recent like `Last 15 minutes`.
-4. Start broad. Do not begin with a very narrow query.
-5. Look for spans from your configured service name, then narrow by span name or attributes.
-
-Good first searches:
-
-- service name such as `hal-c2-local`, `hal-c2-dev`, or `hal-c2-desktop`
-- span names like `sendTurn` or a Git operation such as `GitVcsDriver.statusDetails.status`
-- Git spans whose `git.operation` attribute identifies the operation
-- orchestration spans with attributes like `orchestration.command_type`
-
-Once you know traces are arriving, narrower TraceQL queries for names such as `sendTurn` or Git
-operation names become useful.
-
-### Use Metrics To See Systemic Problems
-
-Traces are best for one request. Metrics are best for trends.
-
-Good metric families to watch:
-
-- `hal_c2_rpc_request_duration`
-- `hal_c2_orchestration_command_duration`
-- `hal_c2_orchestration_command_ack_duration`
-- `hal_c2_provider_turn_duration`
-- `hal_c2_git_command_duration`
-
-Counters tell you volume and failure rate:
-
-- `hal_c2_rpc_requests_total`
-- `hal_c2_orchestration_commands_total`
-- `hal_c2_provider_turns_total`
-- `hal_c2_git_commands_total`
-
-Use metrics when the question is:
-
-- "is this always slow?"
-- "did this get worse after a change?"
-- "which command type is failing most often?"
-
-Use traces when the question is:
-
-- "what happened in this specific request?"
-- "which child span caused this one slow interaction?"
-- "what logs were emitted inside the failing flow?"
-
-### What The New Ack Metric Means
-
-`hal_c2_orchestration_command_ack_duration` measures:
-
-- start: command dispatch enters the orchestration engine
-- end: the first committed domain event for that command is published by the server
-
-That is a server-side acknowledgment metric. It does not measure:
-
-- websocket transit to the browser
-- client receipt
-- React render time
-
-If you need those later, add client-side instrumentation or a dedicated server fanout metric.
-
-## Common Workflows
-
-### "Why did this request fail?"
-
-1. Start with the local NDJSON file.
-2. Find `effect-span` records where `exit._tag != "Success"`.
-3. Group by `traceId`.
-4. Inspect sibling spans and span events.
-5. If needed, move to Tempo for the full trace tree.
-
-### "Why is the UI feeling slow?"
-
-1. Search for slow top-level spans in the trace file or Tempo.
-2. Check child spans for sqlite, git, provider, or terminal work.
-3. Look at the matching duration metrics to see whether the slowness is systemic.
-
-### "Did this command take too long to acknowledge?"
-
-1. Check `hal_c2_orchestration_command_ack_duration` by `commandType`.
-2. If it is high, inspect the corresponding orchestration trace.
-3. Look at child spans for projection, sqlite, provider, or git work.
-
-### "Are git hooks causing latency?"
-
-1. Filter `git.operation` spans.
-2. Inspect `git.hook.started` and `git.hook.finished` events.
-3. Compare hook timing to the enclosing git span duration.
-
-### "Why do I have spans locally but nothing in Grafana?"
-
-Usually one of these is true:
-
-- `HAL_C2_OTLP_TRACES_URL` was not set
-- the app was launched from a different environment than the one where you exported the vars
-- the app was not fully restarted after changing env
-- Grafana is looking at the wrong time range or service name
-
-If the local NDJSON file is updating, local tracing is working. The problem is almost always OTLP export configuration or process startup.
-
-## How To Think About Adding Tracing To Future Code
-
-### Prefer Boundaries Over Tiny Helpers
-
-Good span boundaries:
-
-- RPC methods
-- orchestration command handling
-- provider adapter calls
-- external process calls
-- persistence writes
-- queue handoffs
-
-Avoid tracing every tiny helper. Most helpers should inherit the active span rather than create a new one.
-
-### Reuse `Effect.fn(...)` Where It Already Exists
-
-The codebase already uses `Effect.fn("name")` heavily. That should usually be your first tracing boundary.
-
-For ad hoc work:
-
-```ts
-import { Effect } from "effect";
-
-const runThing = Effect.gen(function* () {
-  yield* Effect.annotateCurrentSpan({
-    "thing.id": "abc123",
-    "thing.kind": "example",
-  });
-
-  yield* Effect.logInfo("starting thing");
-  return yield* doWork();
-}).pipe(Effect.withSpan("thing.run"));
-```
-
-### Put High-Cardinality Detail On Spans
-
-Use span annotations for IDs, paths, and other detailed context:
-
-```ts
-yield *
-  Effect.annotateCurrentSpan({
-    "provider.thread_id": input.threadId,
-    "provider.request_id": input.requestId,
-    "git.cwd": input.cwd,
-  });
-```
-
-### Keep Metric Labels Low Cardinality
-
-Good metric labels:
-
-- operation kind
-- method name
-- provider kind
-- aggregate kind
-- outcome
-
-Bad metric labels:
-
-- raw thread IDs
-- command IDs
-- file paths
-- cwd
-- full prompts
-- full model strings when a normalized family label would do
-
-Detailed context belongs on spans, not metrics.
-
-### Use Logs As Span Events
-
-Logs inside a span become part of the trace story:
-
-```ts
-yield * Effect.logInfo("starting provider turn");
-yield * Effect.logDebug("waiting for approval response");
-```
-
-Those messages show up as span events because `Logger.tracerLogger` is installed.
-
-### Use The Pipeable Metrics API
-
-`withMetrics(...)` is the default way to attach a counter and timer to an effect:
-
-```ts
-import { someCounter, someDuration, withMetrics } from "../observability/Metrics.ts";
-
-const program = doWork().pipe(
-  withMetrics({
-    counter: someCounter,
-    timer: someDuration,
-    attributes: {
-      operation: "work",
-    },
-  }),
-);
-```
-
-## Detailed API Reference
-
-### Runtime Wiring
-
-The server observability layer is assembled in `apps/server/src/observability/Layers/Observability.ts`.
-
-It provides:
-
-- pretty stdout logger
-- `Logger.tracerLogger`
-- local NDJSON tracer
-- optional OTLP trace exporter
-- optional OTLP metrics exporter
-- optional OTLP log exporter
-- Effect trace-level and timing refs
-
-The desktop main process is a second producer, assembled in
-`apps/desktop/src/app/DesktopObservability.ts`. It reads the same `HAL_C2_OTLP_*` names and the same
-Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
-window and menu handling, backend supervision, and updates. It reports as service `desktop`
-regardless of `HAL_C2_OTLP_SERVICE_NAME`, so a collector shows it alongside the backend rather than
-mixed into it. It exports traces and logs only; the main process records no metrics, so the metrics
-endpoint applies to the backend alone.
-
-### Env Vars
-
-Local trace file:
-
-- `HAL_C2_TRACE_FILE`: override trace file path
-- `HAL_C2_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
-- `HAL_C2_TRACE_MAX_FILES`: rotated file count, default `10`
-- `HAL_C2_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
-- `HAL_C2_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
-- `HAL_C2_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
-
-OTLP export:
-
-- `HAL_C2_OTLP_TRACES_URL`: OTLP trace endpoint
-- `HAL_C2_OTLP_METRICS_URL`: OTLP metric endpoint
-- `HAL_C2_OTLP_LOGS_URL`: OTLP log endpoint
-- `HAL_C2_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `HAL_C2_OTLP_SERVICE_NAME`: service name, default `hal-c2-server`
-- `HAL_C2_OTLP_HEADERS`: extra headers for all three exporters, same format as
-  `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
-- `HAL_C2_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
-
-If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
-on stdout only.
-
-### What Is Instrumented Today
-
-Current high-value span and metric boundaries include:
-
-- Effect RPC websocket request spans from `effect/rpc`
-- RPC request metrics in `apps/server/src/observability/RpcInstrumentation.ts`
-- startup phases
-- orchestration command processing
-- orchestration command acknowledgment latency
-- provider session and turn operations
-- git command execution and git hook events
-- terminal session lifecycle
-- sqlite query execution
-
-### Current Constraints
-
-- logs outside spans are not persisted in the trace file; SSH-managed launch stdout/stderr is still
-  captured in its launcher log
-- metrics are not snapshotted locally
-- the old `serverLogPath` still exists in config for compatibility, but the trace file is the primary
-  structured persisted artifact
+## Adding tracing
+
+Wrap a boundary, not a tiny helper: a command dispatch, a checkpoint, a request to a provider. Put
+high-cardinality detail (ids, paths) in the span's attributes. A function returning `{:error, reason}`
+or raising records a failure and returns its result unchanged, so wrapping does not change
+behavior.

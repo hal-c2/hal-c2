@@ -1,11 +1,10 @@
 # Desktop (Qt) shell
 
-`apps/desktop-qt` is the desktop client, replacing the legacy Electron app. It
+`apps/desktop-qt` is the desktop client. It
 is a compiled Qt 6 / QML binary (`hal-c2-qt`) whose window, chrome, layout and
 colours are QML "bricks" a user can rearrange and restyle from
 `~/.config/hal-c2/shell/`, fed by the shell's own connection to the MC. It
-embeds no web content. Nothing in `apps/web` or `apps/server-ex` may become
-Qt-specific.
+embeds no web content. Nothing in `apps/server-ex` may become Qt-specific.
 
 ## Process model
 
@@ -20,12 +19,11 @@ NativeShell (McClient) ── WebSocket (protocol 3) ─────────
   protocol-3 connection (`McClient`), and its C++ controllers own the state
   of every piece of the window.
 - **The Node desktop host** owns everything TypeScript-owned: the MC's
-  lifecycle today; SSH, Tailscale, secrets and updates as they are ported from
-  `apps/desktop`. It reports to the shell over its stdout as newline-delimited
+  lifecycle today. It reports to the shell over its stdout as newline-delimited
   JSON (`ready {mc: {origin, token}}`, `error {message}`, `exit {code}`); the
   shell closes the host's stdin when it exits, which is the host's cue to stop
   the MC it started.
-- **The MC is started the way Electron starts it.** A release
+- **The host starts the MC.** A release
   (`HAL_C2_MC_RELEASE`, else the bundled `hal-c2-mc/`) runs `bin/hal_c2
 start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
@@ -127,16 +125,14 @@ panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
 and chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
 `WindowControls` (glyph buttons, or macOS traffic lights with
-`trafficLights: true`), `TitleBar` and `HalC2Wordmark` (the web app's "HAL-C2"
-mark as a filled `Shape`, sized by its height). `ShellIcon` draws the web app's
-lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
-pass an icon name (`iconName: "git-branch"`) and get the same glyph the web
-app shows, at any size or color.
+`trafficLights: true`), `TitleBar` and `HalC2Wordmark` (the "HAL-C2"
+mark as a filled `Shape`, sized by its height). `ShellIcon` draws lucide
+icons as a `Shape` from the path table in `js/lucide.js`, so bricks
+pass an icon name (`iconName: "git-branch"`) and get the glyph at any size or color.
 
 `DefaultShell` is a `ShellWindow` filled with `DefaultLayout`, the layout as
 an item, so that another root can show it beside a layout of its own
-(`apps/mobile-qt`, see [mobile-qt.md](mobile-qt.md)). It is laid out like the
-web app: the sidebar's brand band ("HAL-C2"
+(`apps/mobile-qt`, see [mobile-qt.md](mobile-qt.md)). It holds the sidebar's brand band ("HAL-C2"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
 run / open / git pills, the timeline, and the composer card with the checkout
 strip welded under it. Frameless windows get their drag handle and buttons
@@ -209,8 +205,7 @@ asks the running terminal for its palette over OSC 10 / 11 / 12 / 17 / 4 and
 writes `theme.json` into the shell directory from the answer, keeping the
 shell on the file contract.
 
-Its shape is the web app's own `ThemeFile` (`apps/web/src/themePalette.ts`;
-the Settings → Theme editor exports it) plus a shell-only `window` section:
+Its shape is a `ThemeFile` (the Settings → Theme editor exports one) plus a shell-only `window` section:
 
 ```json
 {
@@ -224,7 +219,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
 }
 ```
 
-- `colors.*` keys are the web's theme roles (`canvas`, `chrome`, `surface`,
+- `colors.*` keys are the theme roles (`canvas`, `chrome`, `surface`,
   `text`, `textMuted`, `accent`, `sidebar`, `terminalBackground`, … — the
   `ThemeColorRole` list in `packages/shared/src/themePalettes.ts`).
   `variants.<appearance>` overrides `colors` for that appearance.
@@ -377,7 +372,7 @@ shared controllers still publish on the first window's bridge, which outlives
 that window, and every other window mirrors the shared state from it. The
 last window is never forgotten; the shell emits `lastWindowClosed` and
 `main.cpp` quits, except on macOS, where the app stays running and activating
-it shows the window again (as Electron's `DesktopLifecycle` did). Qt's own
+it shows the window again. Qt's own
 quit-on-last-window is off, since a hot reload or a closed popup must not
 quit. Pass a stable `id` to reopen a known window rather than opening another;
 ids name folders, so the shell accepts only `[A-Za-z0-9_-]{1,32}` and
@@ -389,8 +384,7 @@ allowing launch-profile-specific window rules.
 ### Notification delivery
 
 `AlertController` decides when a thread alerts, from the shell's own rows
-(every machine of the cluster), as the web's
-`ThreadNotificationCoordinator` does. It compares each thread with what it saw
+(every machine of the cluster). It compares each thread with what it saw
 last, so the snapshot after connecting, or reconnecting, is a baseline rather
 than a burst of old completions. This device's `notificationMode` and
 `inAppNotificationsEnabled` pick a toast while the window has focus, or a
@@ -442,7 +436,7 @@ What each `Shell.state` key carries and which actions its controller takes.
 ### `sidebar`
 
 `SidebarController` publishes `ShellSidebarState` from the shell's MC rows
-(`SidebarModel`, a port of the web sidebar's logic): project groups, the
+(`SidebarModel`): project groups, the
 current scope, the drafts, and the thread list already bucketed
 (`pinned`/`active`/`snoozed`/`settled`), sorted, and annotated with status,
 status label, unread, branch, the snooze wake label, the woke timestamp and
@@ -485,7 +479,7 @@ scope's or the open route's project without a key), `draft.open`,
 first send promotes it (`ComposerController`); a draft whose thread row
 arrives, or whose project goes, is dropped. The draft's text is kept with
 the draft: the composer's `composer.text.set` on a draft route saves it
-through `DraftController`, so it survives a restart. As in the web app, the
+through `DraftController`, so it survives a restart. The
 sidebar lists only drafts that hold something, and the open draft keeps the
 row it had when the window opened it, so a fresh draft is not listed while
 the user types into it.
@@ -549,10 +543,9 @@ It is its own key, `modelPicker`, because `composer` republishes on every
 keystroke and an OpenCode catalogue runs to dozens of models. It holds the
 enabled instances in rail order, their models already filtered, ordered and
 marked (favourite, legacy, disabled reason), plus the picker's chords
-resolved from the user's keybindings. The `ModelPicker` brick copies the web
-picker's rail, ranking, rows and keys from that (`js/modelPicker.js` names
-the web files it mirrors), so search stays in QML and only a choice or a star
-crosses back. `composer.model.select` accepts only a ready instance's listed
+resolved from the user's keybindings. The `ModelPicker` brick draws the
+rail, ranking, rows and keys from that (`js/modelPicker.js`), so search stays in QML and only a
+choice or a star crosses back. `composer.model.select` accepts only a ready instance's listed
 model, and once a thread has run a turn only its own provider's. Runtime and
 interaction modes are set on the thread before a send only when the user
 changed them, and plan mode appears only with the `planModeEnabled` setting
@@ -578,12 +571,11 @@ Editing a queued message (the queue row's Edit, or the edit key with the
 caret at the start of the draft) swaps its text into the thread's composer
 and sets the thread's draft aside, so the set-aside draft is what is saved to
 disk; a send saves the edit with `queued-run.edit` (text only, so its images
-stay as they were) and gives the draft back. The web keeps the edit under its
-own draft target instead; the swap keeps every composer path on one target.
+stay as they were) and gives the draft back. The swap keeps every composer path on one target.
 
 Terminal excerpts (`composer.terminalContext.add`, from a terminal's
-right-click Add to chat or the web's terminal document) are chips on the
-draft, not inline links as in the web's editor: the Qt editor is plain text.
+right-click Add to chat) are chips on the
+draft, not inline links: the Qt editor is plain text.
 A send appends one inline context link per excerpt to the message text and
 carries the excerpts as `context` records, because the MC only hands the
 provider records whose link is in the text (`HalC2.ComposerContext`). The
@@ -610,15 +602,14 @@ MC's `orchestration.getTurnDiff`, `getFullThreadDiff` and `projects.*` RPCs
 on the thread's own environment. The Agents tab (`AgentsPanel` over
 `AgentsModel`) needs no RPC: it reads the `subagent` entities and running
 `command_execution` items the thread's stream already carries, and its
-elapsed times tick only while it shows (the web dropped this tab when lineage
-moved to the title bar; the desktop keeps it). A terminal tab is
+elapsed times tick only while it shows. A terminal tab is
 `terminal:<group>`: one of `TerminalController`'s panel groups (below), made
 by `rightPanel.add {kind: "terminal"}` and closed, terminals and all, with its
 tab; `TerminalPanel` draws it. The Pull requests tab (`PullRequestsPanel`
 over `ThreadPullRequests`) reads the links the thread row already carries,
 links and unlinks with the `thread.pull-request.link`/`.unlink` commands, and
 refreshes with `pullRequests.invalidate`; linking accepts any repository on a
-host a project reads, as the web dialog does. Offline its rows stay as last
+host a project reads. Offline its rows stay as last
 synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 `ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
 `preview` shape, subscribed only while it shows, and opens each in the user's
@@ -631,8 +622,7 @@ in `RightPanelController::nativeKinds`.
 
 The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
 with no input injection, zoom or popup control, so it cannot host the agent's
-preview tabs (that host was
-only ever Electron's `desktopBridge`). The embedding scenarios in
+preview tabs. The embedding scenarios in
 `features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
 
 The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
@@ -707,8 +697,7 @@ it; the drawer is available wherever the header is
 (`features/terminal/drawer.feature`).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
-  else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
-  web client. The MC restarts a shell whose launch env changed, so the shell
+  else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables. The MC restarts a shell whose launch env changed, so the shell
   must send the same env every time.
 - **Replay.** A session keeps the transcript it attached with plus what has
   arrived since (capped like other clients' buffers), so a tab created late replays
@@ -718,7 +707,7 @@ it; the drawer is available wherever the header is
 - **One write in flight.** Keys typed while `terminal.write` is pending
   coalesce into the next one, so the shell sees the user's order.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
-  hidden, like the web's drawer, so output keeps arriving and switching
+  hidden, so output keeps arriving and switching
   back costs nothing. Leaving a thread parks its sessions, still attached,
   for the last ten threads left; returning reuses them instead of attaching
   again.
@@ -731,15 +720,15 @@ it; the drawer is available wherever the header is
   (`terminal.close`, a terminal tab of the right panel) goes through one
   `MenuController` question naming each terminal; a shell that exits on its
   own takes its terminal with it unasked. When `terminal.close` fails the
-  shell is sent `exit` instead, as the web does.
+  shell is sent `exit` instead.
 - **Links are found from the text.** qml-ghostty exposes no cell contents, so
   `TerminalSplits` maps a click to a character of `Terminal.text()`
-  (`js/terminalLinks.js`, the patterns of `packages/shared/terminalLinks.ts`)
+  (`js/terminalLinks.js`)
   by counting a row per `columns` characters. Wide characters above the click
   shift that count; the fix is a link API in qml-ghostty, not more arithmetic
   here. Web addresses open in the system browser whatever `browserLinkTarget`
   says, since the desktop draws no pages.
-- **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
+- **Groups.** Terminals are laid out in groups: a
   terminal never split is a group of its own, `terminal.split` (side by side)
   and `terminal.splitVertical` (stacked) add one after the focused terminal,
   at most four to a group. A panel group is a right panel tab and never shows
@@ -751,12 +740,12 @@ it; the drawer is available wherever the header is
 ### Settings sections
 
 The settings nav (`SettingsNav`) and every section behind it are bricks.
-`js/settingsPages.js` lists the sections in the web's order: each names its
+`js/settingsPages.js` lists the sections: each names its
 brick, the state key it `requires` before it is listed, and the words and
 rows search finds it by. `SettingsHost` loads the brick for
 `ShellWindow.settingsSection`, and `settings.navigate` opens any section from
 anywhere. A section `under` another (Diagnostics and Open
-source licenses, under General, as on the web) is left out of the nav, reached
+source licenses, under General) is left out of the nav, reached
 by a `link` row of its parent, and keeps the parent marked
 (`settingsPages.current`).
 
@@ -772,7 +761,7 @@ each bump, so opening the same result twice scrolls back to it. A folded
 group that is a target opens itself on the same bump (`LoadBalancingGroup`).
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
-a kind and the web's wording). Each key's store and default are
+a kind and its wording). Each key's store and default are
 `SettingsController`'s row table: `setting`, `defaultOf`, `isDefault`,
 `onDevice`, `set` and `reset` read and write it wherever it lives. The MC
 leaves defaults out of its document, and a null `sidebarAutoSettleAfterDays`
@@ -823,7 +812,7 @@ Home, the pull requests page and usage are routes of their own, drawn by
 and `UsageController`; they too follow MC shapes only while open. Home is
 never where a window with projects stays: once every environment has
 reported, `DraftController::land` replaces it with the most recent project's
-draft (`sidebar::mostRecentProject`, the web's "updated_at" order), reusing
+draft (`sidebar::mostRecentProject`, in "updated_at" order), reusing
 the draft other windows landed on. `HomePage` shows the add-project hero with
 no projects, and `landing.failed` with its `landing.retry` when the draft
 could not be kept. The open thread vanishing (deleted, or its environment
@@ -836,23 +825,21 @@ sections shows, reads a value across them as mixed or not, and writes a
 change to every connected target, a project's as its
 `projectSettingsOverrides` entry. Background activity is not project-scoped,
 so its rows are read-only at a project scope. Discovery of source control
-tools scans only the scope's first connected environment, as the web did,
+tools scans only the scope's first connected environment,
 and so does Integrations' device status. Integrations is only the device hub:
-the desktop embeds no browser, so the web's browser defaults have no native
-counterpart. A picked project follows its folders when the sidebar regroups
-(`SidebarController::grouped`), as the web's settings project groups do. The
+the desktop embeds no browser, so there are no browser defaults to set. A picked project follows its folders when the sidebar regroups
+(`SidebarController::grouped`). The
 Project section also carries how new threads start (model, permissions,
-workspace, submodules), which the web splits between it and General, since the
-native General page holds only this device's settings.
+workspace, submodules), since the General page holds only this device's settings.
 
 SnapShots is native (`SnapShotController`, the `SnapShotSettings` brick), but
 its platform half is only the xdg-desktop-portal backend (`PortalSnapShot`,
 over QtDBus), used on every Wayland desktop (see `linux-snap-shot.md`). On
 macOS, Windows and X11 the section says capture is unavailable; those
-scenarios, and the Electron helpers, are `@backlog-desktop`. The portal gives no
+scenarios, and the compositor helpers, are `@backlog-desktop`. The portal gives no
 flash, animation or accessibility tree, so those rows stay locked. A capture
 lands through `ComposerController::attachImage`, shrunk to the attachment
-limit like the web's. The shell's settings navigation and search are its own
+limit. The shell's settings navigation and search are its own
 (`js/settingsPages.js`).
 
 ### `route`
@@ -904,8 +891,7 @@ resolves as `theme`. The choice lives in this device's preferences: `appearance`
 (`system`, `light`, `dark`), `theme`, `themeHalves` (a theme per appearance)
 and `customThemes`. An id is looked up among the built-ins first, then this
 device's saved themes, then the themes the shell's own MC publishes. Themes
-from other machines are never offered. The lookup mirrors the web's
-`getThemeDefinition`: missing roles come from the T3 Chat palette, and a
+from other machines are never offered. Missing roles come from the T3 Chat palette, and a
 theme with one appearance takes that half only. An id that is no longer found
 draws the standard look, published as `hal-c2`. The built-ins are `src/native/themes.json`, generated from
 `packages/shared/src/themePalettes.ts`. Run `node apps/desktop-qt/scripts/gen-themes.mjs`
@@ -973,7 +959,7 @@ because most rices bring their own title bar.
 ### `keybindings`
 
 `KeybindingController` (the `Keybindings` singleton) keeps the keymap. It
-merges `src/native/Keybindings.cpp`'s copy of the web defaults with the rules
+merges `src/native/Keybindings.cpp`'s copy of the default keymap with the rules
 the MC pushes as `config.keybindings` (a custom rule for a command replaces
 that command's defaults, the newest match wins, rules naming an unknown
 command are dropped) and evaluates `when` against the shell's own context:
@@ -998,8 +984,8 @@ toasts "Unable to run command" only for the command it ran.
 The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
 drawn by `CommandPalette`) lists those rows as its actions, so an action
 reaches the palette by being registered there, never by the palette naming
-it; only the order of the root list (`kRootCommands`, the web's hand-picked
-actions) is its own. It adds the shell's threads by key (every machine of
+it; only the order of the root list (`kRootCommands`, a hand-picked
+list) is its own. It adds the shell's threads by key (every machine of
 the cluster), the sidebar's projects, the settings sections
 `js/settingsPages.js` hands it (without those whose `requires` is missing)
 and, from two characters, threads whose messages match. Go to file
@@ -1014,7 +1000,7 @@ QtQuick already names.
 The application menu's accelerators (`menuKeys()`: mod+, for settings,
 mod+=, mod++, mod+- and mod+0 for zoom) are not keymap rules and not rows in
 Settings → Keybindings; they resolve only after every rule, so a user's rule
-for the same chord wins, as it does over Electron's menu.
+for the same chord wins.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Each entry of `Keybindings.shortcuts` says whether the key is the shell's with
@@ -1025,7 +1011,7 @@ Who takes a key follows focus:
 - A focused terminal keeps every key except the sequences that resolve, in
   that focus, to a native command or a project script.
   Those `Shortcut`s stay enabled, so a native command runs once and a
-  terminal still gets Ctrl+K. The web's defaults bind `mod+d` to
+  terminal still gets Ctrl+K. The default keymap binds `mod+d` to
   `terminal.split` in a terminal, so off macOS a terminal loses Ctrl+D (EOF)
   unless the user rebinds it.
 - From native chrome (a focused composer included), only a sequence that
@@ -1035,11 +1021,11 @@ Who takes a key follows focus:
   control has focus.
 
 Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
-the application's key events before any window sees them and ports
-`apps/desktop/src/window/QuitHold.ts`: `confirmQuit` "hold" (the default)
+the application's key events before any window sees them and implements
+the `confirmQuit` setting: "hold" (the default)
 quits after 1.2 seconds held, "double-click" after two presses within half a
 second, "direct" at once, and two quick presses always quit. "Still held" is
-proven by auto-repeat, as in Electron. The hint is the shared `quitHint`
+proven by auto-repeat. The hint is the shared `quitHint`
 ({message} or null) that `ShellWindow` shows; `app.quit` in the palette quits
 at once. The controller only emits `quitRequested` and `concealRequested`;
 `main.cpp` quits and hides the windows, and tests swap its clock with
@@ -1057,7 +1043,7 @@ The `Notifications` brick renders only the shell's own `toasts`.
 `ToastController` is what native controllers call (`show`, `error`,
 `showActions` with up to two buttons, `replace` to update one in place), with
 its own timing; its ids start with `native:`. Every toast has a native
-producer with the web's text, such as
+producer, such as
 `KeybindingController`'s "Keybindings updated" on a `config.keybindings` push
 and `ProviderUpdateNotice`'s launch offer of provider updates
 (`ProviderUpdatePrimaryNotification`), whose dismissed version sets are this
@@ -1100,8 +1086,7 @@ the header; the thread menu's "Rename" asks for it with
 
 `GitController` publishes `git` from `WorkspaceController`'s `vcs` status.
 The recommended
-action and the menu follow `apps/tui/src/gitActions.logic.ts`, not the web's
-`GitActionsControl.logic.ts`: the ledger (`source-control/git-actions.feature`)
+action and the menu follow `apps/tui/src/gitActions.logic.ts`: the ledger (`source-control/git-actions.feature`)
 is written against the TUI's labels and reasons, named for the host's change
 requests (PR, MR). Actions: `git.quick`, `git.menu {id}`, `git.commit
 {message, filePaths|null, featureBranch}`, `git.defaultBranch {choice}`,
@@ -1120,7 +1105,7 @@ in its error toast.
 
 ### Composer layout
 
-The `Composer` brick is the web's composer card: a centered card (768 px
+The `Composer` brick is a centered card (768 px
 max) with the attachment chips, the editor and a footer of ghost pickers —
 model, effort, permissions, the plan/build toggle — and the round send/stop
 button. The context strip hangs under the card with the environment
@@ -1168,7 +1153,7 @@ shape, folded into a `TimelineModel` per thread: the active one plus a few
 recently active ones stay subscribed. The fold is
 `packages/client-runtime/src/v3/threadShape.ts` in C++; the rows follow the
 TUI's timeline (folds of settled turns, tool call groups, markers) and the
-brick draws them as the web's `MessagesTimeline` does. A message's time and
+brick draws them. A message's time and
 actions fade in on hover but keep their place while hidden, so hovering never
 re-lays out the list; `Timeline.alwaysShowMeta` shows them where there is no
 hover (on by default on Android and iOS). A thread is

@@ -1,13 +1,13 @@
 # Keybindings
 
-Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
+Customize shortcuts in **Settings → Keybindings** on desktop. That page
 also lists the command IDs and defaults available in your version.
 
 ## Composer controls
 
 In **Settings → General → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
-inserts a new line. This applies to the web and desktop composer at desktop widths.
+inserts a new line. This applies to the desktop composer at desktop widths.
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
 `mod+Enter` to do the opposite for one message, even when the send shortcut
@@ -31,7 +31,7 @@ the provider list. Use Up/Down to move and Enter to choose. Right returns to
 model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
 search. These provider shortcuts can also be changed in Settings.
 
-These shortcuts run inside the focused web or desktop client. `mod` uses Command
+These shortcuts run inside the focused desktop client. `mod` uses Command
 on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
@@ -92,15 +92,12 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `modelPickerOpen`, `composerFocus`, `composerDraft`,
-`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`turnRunning`, `editableFocus`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
-the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
-desktop app. Unknown keys evaluate to `false`.
+the keyboard. `isDesktop` is true in the desktop app. Unknown keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
-model picker is open. Those defaults use `isDesktop` so they do not steal the
-browser's tab-switch shortcuts. Remove that condition in Settings if you want
-the same jumps in a browser.
+model picker is open.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
@@ -135,8 +132,8 @@ through the pages you have visited, like a browser's back and forward buttons.
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel
-tab. When nothing remains to close, it closes the window. In a browser, `mod+w`
-closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
+tab. When nothing remains to close, it closes the window. To keep `mod+w` for
+the window, rebind `rightPanel.close` and `terminal.close` to an available
 shortcut such as `alt+w`.
 
 Many defaults include `!terminalFocus` so they do not intercept terminal input.

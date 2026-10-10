@@ -2,7 +2,7 @@
 
 ## Purpose
 
-HAL-C2 exposes V2 orchestration through its app-owned MCP endpoint. A provider
+HAL-C2 exposes orchestration through its app-owned MCP endpoint. A provider
 agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
@@ -19,171 +19,73 @@ Delegated tasks always create a HAL-C2 child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 
-`ThreadManagementService` is the shared server application boundary for V2
-WebSocket commands and MCP. It owns project-scoped lookup, listing, send-mode
-selection, durable send postconditions, wait polling, and interrupt selection;
-`OrchestratorV2` remains the lower-level command/event processor. Transport
-adapters only authenticate, resolve transport-specific inputs, and shape
-responses.
+The tools are thin over the same commands the clients send.
+[`HalC2.Mcp.Tools`](../../apps/server-ex/lib/hal_c2/mcp/tools.ex) and its area modules own
+project-scoped lookup, listing, send-mode selection, wait polling, and interrupt selection, and
+call [`HalC2.Orchestration`](../../apps/server-ex/lib/hal_c2/orchestration.ex) for the commands
+themselves. [`HalC2.Mcp`](../../apps/server-ex/lib/hal_c2/mcp.ex) only authenticates, routes the
+JSON-RPC request, and shapes the response.
 
 ## Transport And Authentication
 
-The orchestration tools share the existing authenticated HTTP MCP endpoint:
+The tools are served at `POST /mcp` on the MC, as JSON-RPC over HTTP (MCP's streamable HTTP
+transport, answered with plain JSON):
 
 ```text
 http://127.0.0.1:<server-port>/mcp
 ```
 
-The provider-visible server key is `hal-c2`. The endpoint registers both the
-preview toolkit and the orchestration toolkit.
+The provider-visible server key is `hal-c2`. Follow-up requests must send
+`mcp-protocol-version: 2025-06-18`.
 
-Before `ProviderSessionManager` opens a new V2 provider session, it asks
-`McpSessionRegistry` for a credential scoped to:
+When a provider session opens, `HalC2.Mcp.for_agent/2` hands the runtime a bearer credential for
+the HAL-C2 thread and the concrete provider instance, so every tool call acts as the thread that
+made it. The credential lives in memory only and is not persisted in orchestration state. It lapses
+after a day without MCP traffic unless the thread has a run in progress, and is revoked when the
+thread's provider session stops. A project turns the whole server off for its threads with
+`enableAgentBrowserAccess` in its settings overrides, and then the runtime gets no server.
 
-- the HAL-C2 environment;
-- the parent HAL-C2 thread;
-- the concrete provider instance; and
-- the provider session.
-
-The credential grants `preview` and `orchestration` capabilities. Credentials
-expire after a maximum lifetime, expire when idle, and are revoked when the
-provider session is released. The raw token is not persisted in orchestration
-state.
-
-The MCP HTTP server resolves the bearer token and supplies the resulting
-`McpInvocationScope` to tool handlers. Orchestration handlers additionally
-check the `orchestration` capability before reading or mutating state.
+The tools check what the caller may touch, not a credential capability: a caller sees only threads
+of its own project, and changing another thread needs a caller that is itself running.
 
 ## Provider Injection
 
-### Codex V2
+Each runtime projects the same authenticated endpoint into its provider's native MCP
+configuration. The token never reaches logs or diagnostics.
 
-Codex app-server receives the remote MCP server through command-line config
-overrides:
+- **Codex** gets `mcp_servers.hal-c2` (`url` and `http_headers`) in the config of its thread
+  parameters ([`Codex.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/codex/thread_runtime.ex)).
+- **Claude** gets an HTTP server in `--mcp-config`, `mcp__hal-c2` in `--allowedTools`, and the
+  shared instructions (`priv/mcp_instructions.md`) appended to its system prompt
+  ([`Claude.Protocol`](../../apps/server-ex/lib/hal_c2/claude/protocol.ex)).
+- **ACP agents** (Grok, OpenCode, Antigravity, registry agents) get it in the `mcpServers` field of
+  `session/new`, `session/load` and `session/fork`, and only when the agent advertises HTTP MCP
+  support ([`Acp.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/acp/thread_runtime.ex)).
+  ACP does not define native subagents or active steering, so these providers use
+  orchestrator-owned child threads, and steering is cancel-and-restart.
+- **Pi** has no MCP client. When a credential exists, `HalC2.Pi.launch/2` writes the HAL-C2 bridge
+  extension ([`priv/pi/hal-c2-mcp-extension.ts`](../../apps/server-ex/priv/pi/hal-c2-mcp-extension.ts))
+  into the cache directory and starts `pi --mode rpc --extension <cache>/pi-hal-c2-mcp-extension.ts`
+  with `HAL_C2_MCP_URL` and `HAL_C2_MCP_BEARER_TOKEN` in its environment. The extension lists the
+  endpoint's tools and registers each with `pi.registerTool` under a `mcp__hal-c2__` namespace
+  (`mcp__hal-c2__delegate_task` and the rest), calling the original tool name over HTTP.
 
-```text
--c mcp_servers.hal-c2.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.hal-c2.bearer_token_env_var="HAL_C2_MCP_BEARER_TOKEN"
-```
+Pi keeps ownership of native extension discovery. HAL-C2 does not replace Pi's `subagent` tool.
+Durable delegation goes through the namespaced `delegate_task` tool and the shared child-thread
+lifecycle.
 
-The provider-session token is placed in `HAL_C2_MCP_BEARER_TOKEN`. Both the
-production Codex launcher and the injectable test launcher use the same
-projection helper.
+## Provider Support
 
-### Claude Agent SDK V2
-
-Claude receives an HTTP MCP server in its query options:
-
-```ts
-{
-  mcpServers: {
-    "hal-c2": {
-      type: "http",
-      url: "http://127.0.0.1:<port>/mcp",
-      headers: {
-        Authorization: "Bearer <provider-session-token>",
-      },
-    },
-  },
-  allowedTools: [
-    // existing allowed tools
-    "mcp__hal-c2__*",
-  ],
-}
-```
-
-The adapter logs only whether MCP configuration exists; it does not log the
-server headers or token.
-
-### Cursor Agent SDK V2
-
-Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
-`mcpServers` agent and send options. The adapter passes the authorization header
-to the SDK but projects only redacted option metadata into protocol diagnostics.
-
-### Grok ACP V2
-
-Grok receives the authenticated HTTP MCP endpoint through the ACP
-`session/new`, `session/load`, and `session/fork` `mcpServers` field. The shared
-ACP adapter owns standard protocol behavior; the Grok flavor adds xAI extension
-requests such as structured user questions.
-
-ACP does not define native subagents or active steering. Grok therefore uses
-orchestrator-owned child threads and implements steering through
-cancel-and-restart. Its current driver also lacks `session/fork`, so app forks
-use portable context transfer. These are orchestrator policies, not
-provider-specific MCP tools.
-
-### ACP Registry V2
-
-The `acpRegistry` driver is the generic flavor of the same shared ACP adapter.
-Each provider instance names an agent from the official ACP Registry. Settings
-searches the registry through the connected server, then prepares a compatible
-distribution before persisting the provider instance. Binary distributions use
-a managed, versioned cache; declared checksums are verified when present.
-Version-pinned `npx` packages install globally through `npm`; `uvx` packages use
-`uv tool install`. ACP launches the resulting global command directly, so the
-same command is available for terminal authentication. A local executable may
-override the installed command without changing the registry-declared arguments
-or environment.
-
-Search, preparation, provider status, and session startup share one
-server-scoped catalog service. This keeps platform selection and registry
-validation identical across settings and runtime use. Catalog inspection never
-starts an ACP process, probes models, or performs authentication. The managed
-provider snapshot creates a disposable `session/new` through the normal provider
-refresh lifecycle, using success as the authentication-readiness proof and
-projecting advertised models into the snapshot. Terminal-only login remains a
-manual operation on the connected server.
-
-Capabilities such as session loading, session forking, models, modes, and MCP
-transport are enabled only when the selected agent advertises them. Missing
-features degrade through V2 policy: steering uses interrupt-and-restart,
-forking uses portable context when native `session/fork` is unavailable, and
-subagents use orchestrator-owned child threads. Registry agents do not receive
-provider-specific extensions; those remain in flavors such as Grok.
-
-### Pi V2
-
-Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a HAL-C2-owned extension into the server cache and spawns
-`pi --mode rpc --extension <cache>/pi-hal-c2-mcp-extension.ts` with:
-
-```text
-HAL_C2_MCP_URL=http://127.0.0.1:<port>/mcp
-HAL_C2_MCP_BEARER_TOKEN=<provider-session-token>
-```
-
-The extension connects to that HTTP endpoint, lists tools, and registers each
-one with `pi.registerTool` under a `mcp__hal-c2__` namespace
-(`mcp__hal-c2__delegate_task`, `mcp__hal-c2__hal_c2_thread_launch`, and the rest).
-The bridge calls the original MCP tool name over HTTP. Follow-up requests send
-`mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared HAL-C2
-orchestration instructions.
-
-Pi keeps ownership of native extension discovery. HAL-C2 does not replace Pi's
-`subagent` tool or reproduce Pi's package and project-trust loader. Durable
-delegation goes through the namespaced HAL-C2 MCP `delegate_task` tool and the
-shared orchestration child-thread lifecycle. When Pi's example `subagent`
-extension is installed, the adapter observes its documented `details.results`
-shape and projects task cards with no child thread id. Unknown result shapes
-remain ordinary dynamic tool output.
-
-### Provider Support
-
-A provider instance can run child tasks when its live `ProviderInstance`
-exposes a V2 `orchestrationAdapter` — the same registration the orchestrator
-resolves when a `delegated_task.request` executes. That covers Codex, Claude
-Agent SDK, Cursor Agent SDK, Grok, generic registry agents over ACP, OpenCode,
-OpenCode 2, Pi, Antigravity, and any future driver that builds an adapter.
-Capability discovery still reports other registered provider instances, but
-marks them unavailable for orchestration when no adapter resolves. This keeps
-provider selection model-visible without allowing a request that cannot run.
+Capability discovery reports every registered provider instance and marks the ones that cannot run
+a child task unavailable, with a model-visible reason such as disabled, missing executable, or
+missing authentication. This keeps provider selection visible to the model without allowing a
+request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+This page describes the orchestration tools. The full set the MC advertises is in
+`priv/mcp_tools.json` and `priv/mcp_mc_tools.json`, and only the tools `HalC2.Mcp.Tools` implements
+are listed to agents.
 
 ### `orchestrator_capabilities`
 
@@ -195,8 +97,7 @@ Returns:
 - whether each provider can run a child task; and
 - feature flags for polling, cancellation, and batch thread creation.
 
-Unavailable providers include model-visible constraints such as missing V2
-adapter support, disabled state, missing executable, or missing authentication.
+Unavailable providers include model-visible constraints such as disabled state, missing executable, or missing authentication.
 
 ### `delegate_task`
 
@@ -229,8 +130,8 @@ when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
 Delegation requires an active parent run owned by the MCP credential's
-provider session. The request becomes the V2 command
-`delegated_task.request`.
+provider session. The request becomes the
+`delegated_task.request` command.
 
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
@@ -271,7 +172,7 @@ the published task result.
 
 ### `task_cancel`
 
-Interrupts the currently active task run through the normal V2 `run.interrupt`
+Interrupts the currently active task run through the normal `run.interrupt`
 command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
 reason. Use `hal_c2_thread_interrupt` to interrupt a later follow-up run.
 
@@ -376,27 +277,26 @@ status and does not cancel work.
 
 ### `hal_c2_thread_interrupt`
 
-Interrupts a selected active run through the normal V2 `run.interrupt` command.
+Interrupts a selected active run through the normal `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
 ## Delegated Task Lifecycle
 
-The MCP server is a command ingress into V2. It does not call provider adapters
-directly.
+The MCP server is a command ingress. It does not call provider runtimes directly.
 
 ```text
 provider model
   -> MCP tools/call delegate_task
-  -> authenticated OrchestratorMcpService
-  -> shared ThreadManagementService
-  -> V2 delegated_task.request command
+  -> authenticated HalC2.Mcp, HalC2.Mcp.Tools
+  -> HalC2.Orchestration.Delegation
+  -> delegated_task.request command
   -> child thread + child run
   -> parent app_owned subagent projection
   -> parent/child execution nodes
   -> consumed subagent_spawn context transfer
-  -> normal provider effect and runtime ingestion
+  -> normal provider turn and runtime ingestion
   -> child run reaches a terminal state
   -> parent subagent/node/turn item finalized
   -> consumed subagent_result context transfer
@@ -425,7 +325,7 @@ results use the latest assistant content from the final work turn.
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
 - Provider instances must be enabled, installed, available, authenticated, and
-  backed by a V2 adapter.
+  backed by a runtime.
 - A requested model must be advertised by the selected provider when the
   provider publishes a model list.
 - `clientRequestId` derives stable command, thread, and message IDs within the
@@ -454,41 +354,16 @@ orchestration_error
 
 ## Code Ownership
 
-- Shared schemas: `packages/contracts/src/orchestratorMcp.ts` and
-  `packages/contracts/src/threadMetadataMcp.ts`
-- MCP services: `apps/server/src/mcp/OrchestratorMcpService.ts` and the focused
-  `apps/server/src/mcp/ThreadMetadataMcpService.ts`
-- Tool definitions and handlers:
-  `apps/server/src/mcp/toolkits/orchestrator/`
-- HTTP registration and authentication:
-  `apps/server/src/mcp/McpHttpServer.ts`
-- Credential lifecycle: `apps/server/src/mcp/McpSessionRegistry.ts`
-- Provider injection:
-  `apps/server/src/orchestration-v2/ProviderSessionManager.ts` and V2 adapters
-- Durable delegated-task command and finalization:
-  `apps/server/src/orchestration-v2/Orchestrator.ts`
+- Tool schemas and instructions: `apps/server-ex/priv/mcp_tools.json`,
+  `mcp_mc_tools.json` and `mcp_instructions.md`
+- HTTP endpoint, credentials and routing: `apps/server-ex/lib/hal_c2/mcp.ex`
+- Tool handlers: `apps/server-ex/lib/hal_c2/mcp/tools.ex` and `mcp/tools/`
+- Provider injection: the runtimes' `thread_runtime.ex` (`codex/`, `claude/`, `acp/`, `pi/`)
+- Delegated tasks, command and finalization: `apps/server-ex/lib/hal_c2/orchestration/delegation.ex`
 
 ## Verification
 
-The integration test uses the real MCP toolkit registration, V2 orchestrator,
-SQL persistence, event ingestion, projections, and checkpoints. Only the
-external provider adapters are deterministic test implementations.
-
-Coverage includes:
-
-- capability discovery;
-- cross-provider delegated completion;
-- prompt-only child context;
-- parent and child lineage projections;
-- spawn and result context transfers;
-- async status polling;
-- cancellation;
-- batch ordinary-thread creation;
-- project-scoped thread listing and timeline reads;
-- ordinary-thread send, wait, steering, and interruption;
-- inheritance and per-thread provider overrides; and
-- idempotent retries.
-
-Provider adapter tests separately verify Codex, Claude, Cursor, Grok, and ACP
-Registry behavior and MCP injection. The provider-session manager test verifies
-that credentials exist before an adapter opens and are revoked when it closes.
+The MC's ExUnit tests (`apps/server-ex/test/hal_c2/mcp_test.exs`) call the real endpoint with real
+credentials against the real store, with deterministic provider runtimes. The delegation behaviour
+is a scenario in `features/mc/orchestration/delegation.feature`; the MCP server's own is under
+`features/mc/orchestration/`.

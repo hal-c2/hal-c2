@@ -1,174 +1,76 @@
 # Testing Strategy
 
-V2 should be validated with a small number of high-value integration tests rather than a large suite of unit tests that mock away the behavior being tested.
+Orchestration is validated with a small number of high-value integration tests rather than a large suite of unit tests that mock away the behavior being tested.
 
 The goal is not "no test doubles ever." The goal is that test doubles exist only at true process, network, clock, id, and filesystem boundaries. Core orchestration behavior must run for real.
 
 ## Testing Principle
 
-The default V2 test shape is:
+The default test shape is:
 
 ```text
 command dispatch
-  -> real Orchestrator
-  -> real ProviderAdapter
-  -> replayed ProviderRuntime transport
-  -> real adapter normalizer
-  -> real V2 event store/sink using production persistence semantics
-  -> real V2 projection/projector
-  -> real Checkpoint policy
+  -> real HalC2.Orchestration
+  -> real provider runtime (HalC2.Codex, Claude, Pi, Acp)
+  -> scripted fake provider process
+  -> real normalizer and TurnWriter
+  -> real HalC2.Store, with production persistence semantics
+  -> real stream state the clients read
+  -> real checkpoint policy
   -> assertions
 ```
 
-The replay framework replaces the external provider process or network stream. It does not replace the adapter, normalizer, command/event infrastructure, projection reducers/projectors, checkpoint policy, or business logic.
-
-Raw provider frames in replay transcripts are realistic transport evidence. In production, equivalent raw frames are diagnostic log data with bounded retention. Integration tests should still use real normalized orchestration persistence/projections so replay input exercises the same adapter and orchestration paths as live provider output.
+The fake replaces the external provider process or network stream. It does not replace the runtime, the normalizer, the command and event infrastructure, the projections, the checkpoint policy, or the business logic. The fakes are executables under `apps/server-ex/test/support` (`fake_codex.py`, `fake_claude.py`, `fake_acp_scripted.py`, `fake_pi_rpc.py`, and others) that the runtime starts as it would the real CLI, so the process, the framing, and the shutdown path are the production ones.
 
 ## Allowed Test Substitutes
 
 Allowed substitutes:
 
-- provider runtime transport, backed by deterministic replay transcripts.
-- Effect runtime time, controlled in tests with `TestClock` from `effect/testing`.
-- Effect `Random`, provided with a deterministic test implementation for stable UUIDs/numbers.
-- temporary filesystem/worktree.
-- temporary database or in-memory database with the same repository interfaces.
-- fake process supervisor only when it is testing process failure behavior directly.
+- the provider process or its network peer, backed by a scripted fake.
+- time and ids, only where a test needs them fixed.
+- temporary home, filesystem and git worktree (`HAL_C2_MC_HOME` pointing at a scratch directory).
+- fake CLIs for `gh`, `adb`, `tailscale` and the like at the process boundary.
+- a fake process supervisor only when it is testing process failure behavior directly.
 
 Not allowed in integration tests:
 
-- mocked orchestrator.
-- mocked provider adapter.
-- mocked provider event normalizer.
-- mocked command/event infrastructure or V2 event sink.
-- mocked projection reducer.
-- mocked checkpoint service behavior.
+- mocked orchestration.
+- mocked provider runtime or event normalizer.
+- mocked command/event infrastructure or event store.
+- mocked projection or stream state.
+- mocked checkpoint behavior.
 - mocked provider capability policy.
-- pre-normalized domain events used as the input for adapter tests.
-- custom clock/id services that duplicate Effect's `Clock`, `DateTime`, or `Random` services.
+- pre-normalized domain events used as the input for runtime tests.
 
-Pure reducer tests are still valid, but they should be few and targeted. They should test projection invariants directly, not replace integration coverage.
+Pure tests are still valid, but they should be few and targeted. They should test invariants of an algebra directly (`HalC2.Patch`, `HalC2.StreamState`), not replace integration coverage.
 
-Production code should read time through Effect runtime APIs, such as `DateTime.now` and `Clock.currentTimeMillis`, not through `Date.now` or ad hoc wrappers. Production code should allocate random values through `effect/Random`, not through direct `crypto.randomUUID`, `Math.random`, or a custom global id generator.
+## Scripted Fakes
 
-Tests should provide Effect test services:
+- A fake takes its script from the test (a config file, a turn's text, or environment), and logs every request it receives, so a test can assert what the MC sent.
+- A fake keeps the provider's real protocol, ordering, and ids, including the races a real peer shows.
+- A fake is deterministic. A test that needs to hold a turn open uses a gate the test controls (such as the gate files `fake_codex.py` documents) and does not sleep.
+- A recorded real transcript is evidence for a fake, not a replacement for one. Redaction preserves ids, method names, lifecycle ordering, and correlation structure.
 
-```ts
-import { TestClock } from "effect/testing";
-```
+Recovery tests use the fake only at the provider process boundary. A restart is tested by stopping and restarting the MC's own processes against durable persistence. Idle cleanup and crash recovery are tested through the production lifecycle (`HalC2.Orchestration.Recovery`). Tests must not add runtime functions whose only purpose is to restart sessions for assertions.
 
-The id allocator can still expose domain-specific helpers such as `newRunId` or `newNodeId`, but those helpers should be implemented on top of `Random` so test layers can produce deterministic values without mocking orchestration logic.
+## Waiting
 
-## Generic Replay Runtime
-
-Replay must be provider-neutral. Codex NDJSON fixtures are one provider's transcript format, not the framework itself.
-
-```ts
-type ProviderReplayTranscript = {
-  provider: ProviderKind;
-  protocol: string;
-  version: string;
-  scenario: string;
-  entries: ProviderReplayEntry[];
-};
-
-type ProviderReplayEntry =
-  | {
-      type: "expect_outbound";
-      label?: string;
-      frame: unknown;
-    }
-  | {
-      type: "emit_inbound";
-      label?: string;
-      frame: unknown;
-      afterMs?: number;
-    }
-  | {
-      type: "runtime_exit";
-      status: "success" | "error" | "cancelled";
-      error?: unknown;
-    };
-```
-
-The replay runtime owns deterministic transport semantics:
-
-- ordered inbound event emission.
-- outbound command assertion.
-- pause/resume and timing control.
-- runtime exit/error simulation.
-- resume cursor/session restoration.
-- transcript metadata validation.
-
-The replay runtime must not know what a turn, plan, approval, subagent, or checkpoint means. Provider adapters interpret provider-specific frames.
-
-Recovery tests use replay only at the provider transport boundary. App restart is tested by tearing down and recreating the outermost orchestrator/server layer against durable persistence. Idle cleanup and crash recovery are tested through production lifecycle services such as the session reaper or runtime recovery policy. Tests must not add adapter or orchestrator methods whose only purpose is to restart sessions for assertions.
-
-## Provider Transcript Formats
-
-Each provider can have its own raw frame format inside the generic replay envelope.
-
-Examples:
-
-```text
-Codex replay transcript
-  -> JSON-RPC app-server requests/responses/notifications
-  -> consumed by CodexAdapter
-
-Claude replay transcript
-  -> Claude Agent SDK query() outbound options and yielded SDKMessage chunks
-  -> consumed by ClaudeAdapter
-
-Cursor replay transcript
-  -> Cursor Agent SDK open/send calls and ordered onDelta/run results
-  -> consumed by CursorAdapter
-
-OpenCode replay transcript
-  -> OpenCode SDK requests/responses plus ordered SSE events
-  -> consumed by OpenCodeAdapter
-
-ACP replay transcript
-  -> logical JSON-RPC requests/responses/notifications over a strict NDJSON peer
-  -> consumed by AcpAdapter and a provider flavor (Grok or ACP Registry)
-```
-
-Fixtures should preserve raw provider evidence as closely as possible. Expected V2 events or projections are assertions, not fixture input.
-
-For Claude, the initial replay boundary is the async iterable returned by the Agent SDK `query()`
-call. A transcript should include the `query` prompt/options we sent and then replay the raw
-`SDKMessage` chunks in provider order. This intentionally tests the V2 adapter against real Claude
-SDK output; it does not test the SDK's own subprocess or transport parser.
-
-ACP fixtures run against a child-process replay peer that validates every outbound frame and
-serves recorded inbound frames. This replaces only the external ACP driver transport; the shared
-runtime, adapter normalization, orchestration, persistence, and projections remain production code.
-The generic ACP Registry harness retargets protocol-standard ACP transcripts;
-provider-extension transcripts remain scoped to the flavor that owns the extension.
-
-OpenCode fixtures replace the SDK client at its HTTP/SSE boundary. They must preserve races between
-request responses and SSE events, because user messages and terminal `session.status` events can
-arrive before the corresponding `promptAsync` or `abort` response. Subagent fixtures must retain
-both parent and child session ids so root-only terminal behavior remains testable.
-
-Provider transcript recorders live with the server orchestration testkit, not with provider client
-packages. Use `bun run record:codex-replay -- --scenario <name>` for Codex app-server transcripts
-and `bun run record:claude-replay -- --scenario <name>` for Claude Agent SDK transcripts. Use
-`pnpm --filter hal-c2 record:cursor-replay -- --scenario <name>` for Cursor Agent SDK transcripts.
+The server is event-sourced and its async flows emit typed receipts and stream updates. A test waits on those, with `await_stream` and the worker drains, and never on a sleep or a poll. A test that needs a timeout to pass is wrong.
 
 ## Contract Test Levels
 
 Recommended levels:
 
-1. Schema tests for V2 contracts.
-2. Pure projection tests for hard invariants.
-3. Provider adapter replay tests from raw transcript to V2 domain events.
-4. Full orchestration integration tests from commands through replay runtime to final projection.
+1. Pure tests for hard invariants and algebras.
+2. Provider runtime tests from a scripted fake process to normalized entities.
+3. Full orchestration integration tests from commands through a fake provider to the final stream state.
+4. Property tests (`mix prop`, see `apps/server-ex/prop/README.md`) for stateful services, with a model of what the service promises.
 
-The fourth level is the most important one. It is the test that catches lifecycle mismatches such as child turns closing parent runs or checkpoints being captured too early.
+The third level is the most important one. It is the test that catches lifecycle mismatches such as child turns closing parent runs or checkpoints being captured too early.
 
-## First Ten Integration Tests
+## Invariants Worth A Strong Test
 
-V2 should start with roughly ten strong tests:
+Each of these protects a lifecycle invariant and deserves an integration test:
 
 1. `simple`: sending one message creates one run, one root node, one provider turn, one assistant response, and one root checkpoint.
 2. `multi_turn`: follow-up messages create monotonically ordered app runs on the same app thread.
@@ -177,31 +79,21 @@ V2 should start with roughly ten strong tests:
 5. `steering_restart_fallback`: a provider without native steering interrupts the active attempt and creates a replacement attempt under the same run.
 6. `subagent`: child provider turns create nested execution nodes and never complete the parent run.
 7. `subagent_checkpoint`: child/subagent nodes create nested checkpoint scopes without advancing the app run count.
-8. `thread_rollback`: rollback targets checkpoint scopes and reconciles provider rollback snapshots.
-9. `approval_request`: provider approval callbacks become durable runtime requests and are resolved through the real adapter path.
+8. `thread_rollback`: rollback targets checkpoint scopes and reconciles provider rollback state.
+9. `approval_request`: provider approval callbacks become durable runtime requests and are resolved through the real runtime path.
 10. `provider_switch_return`: switching away from a provider creates a context handoff, and switching back resumes the prior provider thread with a delta handoff.
 
 Additional tests should be added only when they protect a new invariant or reproduce a real failure mode.
 
-## Fixture Rules
-
-- Fixtures are raw provider transcripts, not mocked domain events.
-- Fixtures should include enough outbound expectations to prove the app sent the correct provider commands.
-- Fixtures should include protocol metadata, provider version, model, cwd policy, and capture timestamp.
-- Fixture playback must be deterministic under Effect `TestClock` and deterministic `Random` layers.
-- When a provider transcript is generated from a real run, keep the original provider frame ordering.
-- Redaction should preserve ids, method names, lifecycle ordering, and correlation structure.
-- Fixture transcripts are test input and diagnostic evidence. They do not imply production stores all raw provider frames in SQLite.
-
 ## Assertions
 
-Assertions should prefer final projections and durable normalized orchestration events over incidental implementation calls.
+Assertions should prefer final stream state and durable normalized events over incidental implementation calls.
 
 Good assertions:
 
-- duplicate command dispatch returns the original receipt sequence without replaying provider transport.
-- stored-event sequence monotonicity.
-- snapshot sequence plus stream-after-sequence behavior.
+- duplicate command dispatch returns the original receipt without replaying provider transport.
+- store sequence monotonicity.
+- catch-up from an offset yields what live delivery would have.
 - run status and ordinal.
 - active/final run attempt.
 - execution node parent/child structure.
@@ -209,25 +101,9 @@ Good assertions:
 - checkpoint scope hierarchy.
 - pending/resolved runtime requests.
 - handoff coverage and strategy.
-- replay transcript frame count and normalized event count when relevant.
 
 Weak assertions:
 
 - exact internal function call counts.
 - private helper invocation order.
-- mocked callback arguments below the adapter/runtime boundary.
-
-## Implementation Order
-
-Testing infrastructure should be built before production rewrites:
-
-1. V2 contract schemas.
-2. Effect service definitions.
-3. provider runtime transport abstraction.
-4. generic replay runtime.
-5. Codex, Claude, Cursor, OpenCode, and ACP transcript loaders for app-owned provider replay fixtures.
-6. projection reducer tests for core invariants.
-7. full command-to-projection integration tests.
-8. production layers.
-
-This keeps the architecture executable while it is being built and prevents tests from validating only simplified mocks.
+- mocked callback arguments below the runtime boundary.

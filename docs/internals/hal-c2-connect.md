@@ -24,7 +24,7 @@ mint responses also bind the credential to the client proof key. The relay
 verifies those bindings before returning a credential. This prevents a different
 process behind the tunnel from impersonating the linked environment. The checks
 meet in the
-[environment cloud handlers](../../apps/server/src/cloud/http.ts) and
+[MC's Connect handlers](../../apps/server-ex/lib/hal_c2/connect.ex) and
 [relay connector](../../infra/relay/src/environments/EnvironmentConnector.ts).
 
 The relay holds the signing authority for mint requests. DPoP protects an honest
@@ -52,11 +52,10 @@ an idle resource, retaining the hostname reservation for the next startup.
 It also retains the allocation record so the environment remains "offline"
 rather than becoming "not authorized".
 
-Two cases must retain the tunnel across shutdown. A link installed through a
-client has no startup provisioning path and depends on its stored connector
-token. An update handoff immediately starts a replacement server, and replacing
-the tunnel would add routing propagation delay to every update. These exceptions
-belong to [shutdown handling](../../apps/server/src/cloud/http.ts).
+A link installed through a client keeps its tunnel across shutdown: it has no
+startup provisioning path and depends on its stored connector token. Only the
+command-line link releases it, in
+[shutdown handling](../../apps/server-ex/lib/hal_c2/connect.ex).
 
 Release and unlink claim the allocation generation before deleting external
 resources. A delayed cleanup must not delete a tunnel reused by a concurrent
@@ -75,7 +74,7 @@ The CLI is a public OAuth client using PKCE and stores no client secret.
 Loopback CLI authorization starts on the hosted `/connect` page so sign-in
 completes before entering Clerk's authorize endpoint. Sending a signed-out
 browser straight to that endpoint loses the authorize parameters during the
-sign-in redirect. The [shared flow](../../packages/shared/src/connectAuth.ts)
+sign-in redirect. The [MC's flow](../../apps/server-ex/lib/hal_c2/connect/oauth.ex)
 preserves PKCE and state for the loopback callback.
 
 SSH and headless sessions use Clerk's OAuth device authorization grant because

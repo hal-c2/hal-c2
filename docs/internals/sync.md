@@ -95,8 +95,7 @@ sidebar and the threads the user opened in a local SQLite cache, paints from it 
 is up, and subscribes with what it holds. Its rules are in
 [desktop-qt.md](./desktop-qt.md#client-cache).
 
-The TypeScript clients (`packages/client-runtime/src/v3`: the TUI and the legacy web and mobile
-apps) send no handle, window, kinds or sidebar version. They are sent whole threads and the whole
-sidebar as before, and resume a dropped socket from an in-memory offset. They do benefit from the
+The TUI (`packages/client-runtime/src/v3`) sends no handle, window, kinds or sidebar version. It is sent whole threads and the whole
+sidebar as before, and resumes a dropped socket from an in-memory offset. It does benefit from the
 catch-up no longer falling back to a snapshot. Giving the TUI a cache means seeding its fold from
 kept entities first: a patch needs the entity it changes.

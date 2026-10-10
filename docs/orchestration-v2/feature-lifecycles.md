@@ -1,6 +1,6 @@
 # Feature Lifecycles
 
-This document describes how core user-facing features should work in V2. These flows describe target behavior, not current implementation constraints.
+This document describes how core user-facing features should work. These flows describe the intended behavior; where a provider cannot do something, the capability system says so.
 
 ## Creating Threads
 
@@ -259,7 +259,7 @@ Resumption has three related meanings:
 2. Resume a provider-native conversation/session.
 3. Recover or recreate a live provider runtime process while preserving app and provider-thread continuity.
 
-V2 always supports app-thread resumption from stored events/projections. Provider-thread resumption is a required provider adapter primitive. Every provider harness must expose a cursor/session/thread handle that can be used to resume prior provider state.
+V2 always supports app-thread resumption from stored events/projections. Provider-thread resumption is a required provider runtime primitive. Every provider harness must expose a cursor/session/thread handle that can be used to resume prior provider state.
 
 Provider runtime recovery is also a core primitive, not a test-only hook. The same recovery path is used when:
 
@@ -467,7 +467,7 @@ user-input.respond(RuntimeRequestId, answers)
   -> run resumes/runs
 ```
 
-If the provider does not support structured questions, the adapter may project a plain assistant message and no respondable request.
+If the provider does not support structured questions, the runtime may project a plain assistant message and no respondable request.
 
 ## Plans And Todo Lists
 

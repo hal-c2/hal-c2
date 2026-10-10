@@ -7,8 +7,8 @@ Terms whose meaning matters across HAL-C2. Architecture and lifecycle constraint
 
 | Term           | Meaning                                                                                                                                                                        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Environment    | One running server and the machine, credentials, workspace access, and state it owns.                                                                                          |
-| Client         | A web, desktop, or mobile UI connected to an environment. The desktop app can also host a server.                                                                              |
+| Environment    | One running MC and the machine, credentials, workspace access, and state it owns.                                                                                              |
+| Client         | A desktop, phone, or terminal UI connected to an environment.                                                                                                                  |
 | Project        | An environment-local workspace record rooted at a directory.                                                                                                                   |
 | Workspace root | The project's base filesystem directory on the environment.                                                                                                                    |
 | Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                                                                                               |
@@ -21,26 +21,23 @@ Terms whose meaning matters across HAL-C2. Architecture and lifecycle constraint
 
 Parking a thread means settling or snoozing it to move it out of active work.
 
-| Term                    | Meaning                                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| Command                 | A request to change domain state. Accepting it does not mean its side effects have finished. |
-| Event                   | A persisted fact produced by a command.                                                      |
-| Decider                 | The pure logic that turns a command and current state into events.                           |
-| Projection / read model | A view of current state derived from persisted events.                                       |
-| Projector               | The logic that applies events to a read model.                                               |
-| Reactor                 | A worker that performs follow-up work in response to recorded intent or runtime signals.     |
-| Command receipt         | A durable record of a command's result, used to make retries idempotent.                     |
-| Runtime receipt         | A test-only signal that an asynchronous milestone completed.                                 |
-| Quiesced                | The relevant follow-up workers have finished, beyond the provider turn merely ending.        |
+| Term            | Meaning                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Command         | A request to change domain state. Accepting it does not mean its side effects have finished.                                   |
+| Stream          | A project or a thread: the unit with its own event log and live state on the MC, addressed by its string id.                   |
+| Patch / event   | A persisted change to one entity of a stream. Its `seq` is the MC-wide offset clients resume from.                             |
+| Projection      | The state of a stream folded from its patches, or a view derived from it for the sidebar or a client. Snapshots cache it.      |
+| Handle / window | What a client's copy of a thread is a copy of, and how much of it the client holds. See [sync](./sync.md).                     |
+| Command receipt | A durable record of a command's result in the store, used to make retries idempotent.                                          |
+| Runtime         | The module that runs one provider's sessions and writes their turns into the thread's log.                                     |
+| Settlement      | An MC deciding, without a client, that a thread needs nobody any more (`thread.auto-settle`) and moving it out of active work. |
 
 ## Providers and checkpoints
 
 | Term                | Meaning                                                                                                      |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Provider            | The agent runtime HAL-C2 controls, such as Codex or Claude Code.                                             |
-| Driver              | The integration for a provider kind.                                                                         |
-| Provider instance   | One configured provider, with its own settings and lifecycle. Multiple instances can use the same driver.    |
-| Adapter             | The boundary translating a provider's native protocol into HAL-C2 operations and events.                     |
+| Provider instance   | One configured provider, with its own settings and lifecycle. Several instances can share one provider kind. |
 | Session             | The provider runtime attached to a thread. A session can be stopped and resumed without deleting the thread. |
 | Runtime mode        | The thread's permission policy. See [permission modes](../user/permission-modes.md).                         |
 | Interaction mode    | How the agent approaches the task, such as planning. Separate from permission policy.                        |
@@ -53,7 +50,7 @@ Parking a thread means settling or snoozing it to move it out of active work.
 | Term                 | Meaning                                                                                                                                                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                        |
-| Pull request sync    | The reactor that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
+| Pull request sync    | The MC process that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.            |
 | Current pull request | The link used by single-review controls and older clients. Open work takes precedence; a completed single chain points at its top layer. Unrelated terminal links use the latest update. |
 
 ## Composer context
