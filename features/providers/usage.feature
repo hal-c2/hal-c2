@@ -6,6 +6,11 @@
 #   apps/server-ex/lib/hal_c2/usage/aggregator.ex
 #   apps/web/src/routes/usage.tsx, apps/web/src/components/usage/ (environment filter, model prices dialog)
 #   packages/contracts/src/usage.ts (UsageSummary, UsageReadError, cost sources)
+#   apps/server/src/usage/usagePricing.ts (bare family names unpriced, bracket suffix stripped)
+#   apps/server/src/usage/usageTranscripts.ts (Codex token_count dedupe, fork-copy suppression)
+#   apps/server/src/usage/UsageLimitSources.ts (provider with no history folder)
+#   apps/server/src/provider/CodexTurnTokenUsage.ts, apps/server/src/provider/ClaudeTurnTokenUsage.ts (per-turn usage records)
+#   apps/server/src/usage/usageScanCache.ts, usageTranscriptReader.ts, UsageService.ts (resume guard, tail lines, saved scan, shared scans, price floor)
 
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
@@ -62,6 +67,18 @@ Feature: Usage
     Given a turn on a model missing from the price table
     When the user opens Usage
     Then that model's cost is marked unpriced
+
+  @backlog @mc
+  Scenario: A bare model family name is marked unpriced rather than guessed
+    Given a turn recorded only the model family name "opus"
+    When the user opens Usage
+    Then that model is marked unpriced rather than priced at one generation's rate
+
+  @backlog @mc
+  Scenario: A model's larger context variant is priced at its base rate
+    Given a turn on a model recorded with a bracketed context-size suffix such as "[1m]"
+    When the user opens Usage
+    Then that model is priced at the rate of its base model
 
   @mc
   Scenario: Usage uses a saved copy of prices when the price table cannot be fetched
@@ -133,6 +150,119 @@ Feature: Usage
     When the user opens Usage again
     Then only the new lines of that transcript are read
 
+  @backlog @mc
+  Scenario: Codex repeating an unchanged token count is counted once
+    Given a Codex session re-sends the same token count at a stream boundary
+    When the user opens Usage
+    Then the repeated count adds nothing to the totals
+
+  # Legacy: apps/server/src/usage/usageTranscriptReader.ts (tailRecords), usageScanCache.ts
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (tail)
+  @backlog @mc
+  Scenario: A transcript line the CLI is still writing is counted once it is complete
+    Given a transcript whose last line has no line ending yet
+    When the user opens Usage
+    Then that unfinished line is counted in the totals
+    When the CLI finishes the line and the user opens Usage again
+    Then the line is counted once
+
+  # Legacy: apps/server/src/usage/usageTranscriptReader.ts (guard hash, shrunk file)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (size and mtime resume)
+  @backlog @mc
+  Scenario Outline: A transcript that did not just grow is read again from the start
+    Given the user opened Usage and a transcript was read
+    And the transcript was then <change>
+    When the user opens Usage again
+    Then the whole transcript is read again
+    And its earlier lines are not counted twice
+
+    Examples:
+      | change                                                  |
+      | rewritten with different text but the same start        |
+      | replaced by a shorter file                              |
+
+  # Legacy: apps/server/src/usage/usageScanCache.ts (decodeScanCache, cache version, corrupt rows)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@cache_version)
+  @backlog @mc
+  Scenario Outline: A saved scan the MC cannot trust is discarded
+    Given the MC saved its scan of the history before it restarted
+    And the saved scan <damage>
+    When the user opens Usage
+    Then the affected transcripts are read from the start
+    And the usage page is still shown
+
+    Examples:
+      | damage                                         |
+      | was written by an older version of the MC      |
+      | is not readable                                |
+      | has one entry that is damaged                  |
+
+  # Legacy: apps/server/src/usage/UsageService.ts (in-flight scans keyed by request and prices)
+  @backlog @mc
+  Scenario: Identical requests that overlap share one scan
+    Given the user opened Usage in two clients at the same moment
+    When both ask for the same window and time zone
+    Then the transcripts are scanned once and both get the same totals
+
+  # Legacy: apps/server/src/usage/UsageService.ts ("does not share an in-flight scan after custom prices change")
+  @backlog @mc
+  Scenario: A scan under way does not answer a request made after a price changed
+    Given a usage scan is under way
+    When the user saves a custom price and asks for usage
+    Then the new request gets totals priced with the new price
+
+  # Legacy: apps/server/src/usage/UsageService.ts ("does not orphan an in-flight scan when its first caller is interrupted")
+  @backlog @mc
+  Scenario: A scan other callers wait for survives its first caller leaving
+    Given two clients wait on the same usage scan
+    When the client that started it disconnects
+    Then the other client still receives the totals
+
+  # Legacy: apps/server/src/usage/UsageService.ts (RATES_REFRESH_FLOOR_MS, "refetches a rate table inside its TTL only when the client asks")
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/pricing.ex (@refresh_floor_ms)
+  @backlog @mc
+  Scenario: Refreshing again within a minute does not fetch prices again
+    Given the user refreshed Usage and prices were fetched ten seconds ago
+    When the user refreshes Usage again
+    Then the price table is not fetched again
+    And an ordinary open of Usage never fetches inside the daily refresh
+
+  # Legacy: apps/server/src/usage/UsageService.ts (pricing fetched while transcripts stream, 10 s timeout)
+  @backlog @mc
+  Scenario: A price table that is slow to fetch does not hold up the scan
+    Given the price table has to be fetched and the source is slow
+    When the user opens Usage
+    Then the transcripts are scanned while the table is fetched
+    And a fetch that takes longer than 10 seconds is treated as failed
+
+  # Legacy: apps/server/src/usage/UsageService.ts (collectDirs: MTIME_SLACK_MS)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@mtime_slack_ms)
+  @backlog @mc
+  Scenario: Only transcripts touched near the window are read, and only records inside it count
+    Given a Claude transcript last changed 30 hours before the window began, holding records from before and inside the window
+    And another transcript last changed 40 hours before the window began
+    When the user opens Usage for that window
+    Then the first transcript is read and only its records inside the window are counted
+    And the second transcript is not opened
+
+  # Legacy: apps/server/src/usage/UsageService.ts (codexEventOccurrences)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (codex_key)
+  @backlog @mc
+  Scenario: A moved copy of a Codex rollout counts once but equal events inside one rollout all count
+    Given a Codex rollout was copied into another folder
+    And one rollout has two token counts with identical time, model and totals
+    When the user opens Usage
+    Then each event of the copied rollout is counted once
+    And the two identical events inside a single rollout are both counted
+
+  # Legacy: apps/server/src/usage/usageTranscripts.ts (Grok reads updates.jsonl only)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/transcripts.ex
+  @backlog @mc
+  Scenario: Only Grok's session update log is read as usage
+    Given a Grok session folder with "updates.jsonl" and other JSONL files
+    When the user opens Usage
+    Then only "updates.jsonl" contributes to the totals
+
   @mc
   Scenario: History cleaned up by the CLI still counts for 90 days
     Given a transcript that was counted last week and has since been deleted by the CLI
@@ -144,6 +274,15 @@ Feature: Usage
     Given the transcripts cannot be scanned
     When the user opens Usage
     Then the user is told "Transcripts could not be scanned."
+
+  # Clients leave a missing source out of the totals; saved records keep counting.
+  @backlog @mc
+  Scenario: A provider with no history folder on an environment is noted and its saved usage still counts
+    Given an environment where Grok has never written a history folder
+    And the MC counted Grok usage there before
+    When the user opens Usage
+    Then the environment says it has no transcript directory for Grok
+    And the Grok usage counted before is still in the totals
 
   @desktop @mobile @backlog-mobile
   Scenario: Usage can be filtered by environment
@@ -188,3 +327,55 @@ Feature: Usage
   Scenario: The TUI shows usage totals
     When the user opens Usage in the TUI
     Then tokens and estimated cost per provider are shown
+
+  # Per-turn totals of apps/server/src/provider/CodexTurnTokenUsage.ts and ClaudeTurnTokenUsage.ts,
+  # recorded on each provider turn (they feed the usage analytics, not the Usage page).
+  @backlog @mc
+  Scenario: A finished turn records how many tokens it used
+    Given a Codex turn that read 12000 tokens, 9000 of them cached, and wrote 800
+    When the turn completes
+    Then the turn is recorded with complete usage of 12000 input and 800 output tokens
+    And the cached tokens are not above the input tokens
+
+  @backlog @mc
+  Scenario Outline: A turn that did not finish records its usage as partial
+    Given a <provider> turn that used some tokens
+    When the turn ends <ending>
+    Then the turn's usage is recorded as partial
+
+    Examples:
+      | provider | ending                |
+      | Codex    | interrupted by user   |
+      | Codex    | with an error         |
+      | Claude   | interrupted by user   |
+      | Claude   | with an error         |
+
+  @backlog @mc
+  Scenario Outline: A turn whose provider reported no usage records it as unavailable
+    Given a <provider> turn for which the provider reported no token counts
+    When the turn ends
+    Then the turn's usage is recorded as unavailable
+
+    Examples:
+      | provider |
+      | Codex    |
+      | Claude   |
+
+  @backlog @mc
+  Scenario: Codex counts only what the turn used of a thread-wide total
+    Given a Codex thread whose running total was 50000 tokens before a turn
+    When the turn ends with a running total of 53000 tokens
+    Then the turn is recorded as having used 3000 tokens
+
+  @backlog @mc
+  Scenario: Usage that arrives after a turn ended is not added to the next turn
+    Given a Codex turn has ended
+    When Codex reports a late token count for it during the next turn
+    Then the late count is not recorded against the next turn
+
+  @backlog @mc
+  Scenario: A turn's usage says when subagents ran in it
+    Given a Claude turn in which the agent started a subagent
+    When the turn completes
+    Then the turn's usage says it covers the main agent only
+    And it says subagents ran

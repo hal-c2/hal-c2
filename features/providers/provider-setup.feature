@@ -3,6 +3,8 @@
 #   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.respond, provider.auth.complete, provider.auth.cancel, provider.auth.logout, provider.auth.subscribe)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, versionAdvisory)
 #   apps/server/src/provider/providerMaintenance.ts, apps/server/src/provider/providerMaintenanceRunner.ts
+#   apps/server/src/provider/providerMaintenanceCommandCoordinator.ts, apps/server/src/provider/providerInstallation.ts
+#   apps/server/src/provider/ProviderAuthFlow.ts, apps/server/src/provider/Layers/ProviderAuthService.ts
 #   apps/server/src/provider/providerCompatibility.ts (applyProviderCompatibility, latestVersionStatus)
 #   apps/server-ex/lib/hal_c2/provider_compatibility.ex (compatibilityAdvisory)
 #   apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
@@ -45,6 +47,98 @@ Feature: Provider setup, updates and sign-in
     When the user opens Claude's update details
     Then no update command is offered for Claude
 
+  # Ownership is proven from where the executable really lives, never from a name
+  # (apps/server/src/provider/providerMaintenance.ts resolvePackageManagedProviderMaintenance).
+  @backlog @mc
+  Scenario Outline: A package manager that proves it owns the executable updates it
+    Given Codex's executable lives in <location>
+    When the user opens Codex's update details
+    Then the update command runs <updater> to install the latest Codex
+
+    Examples:
+      | location                         | updater                                   |
+      | a Vite+ global install           | Vite+ against that global install         |
+      | a Bun global install             | Bun against that global install           |
+      | a pnpm global install            | pnpm against that global install          |
+      | an npm global prefix             | npm against that same prefix              |
+
+  @backlog @mc
+  Scenario: A package inside a project folder is not a global install
+    Given Codex's executable is a package inside a project's node_modules
+    When the user opens Codex's update details
+    Then no update command is offered for Codex
+
+  @backlog @mc
+  Scenario: A Node installed by Homebrew still updates its global packages through npm
+    Given Codex was installed with npm into a Node that Homebrew installed
+    When the user opens Codex's update details
+    Then the update command runs npm and not Homebrew
+
+  @backlog @mc
+  Scenario: A Homebrew keg outside the Homebrew that would run the upgrade is not updated by it
+    Given Codex's executable sits in a Homebrew keg under a different prefix than the brew on the path
+    When the user opens Codex's update details
+    Then no update command is offered for Codex
+
+  @backlog @mc
+  Scenario: A version manager's shim is never updated through Homebrew
+    Given Codex's executable is a shim that resolves into Homebrew's mise
+    When the user opens Codex's update details
+    Then no update command is offered for Codex
+
+  @backlog @mc
+  Scenario: A provider's own updater targets the home that instance uses
+    Given Codex was installed by its own installer
+    And this Codex instance uses its own provider home
+    When the user updates Codex
+    Then Codex's updater runs against that home and not the default one
+
+  @backlog @mc
+  Scenario: The update command is copyable as written
+    Given Codex's executable path contains spaces
+    When the user opens Codex's update details
+    Then the update command quotes that path so it can be pasted into a shell
+
+  @backlog @mc
+  Scenario: The installer's own answer decides whether a newer Homebrew version exists
+    Given Codex was installed with Homebrew
+    And npm already has a release that Homebrew has not published yet
+    When the MC checks provider versions
+    Then Codex is compared against the version Homebrew would install
+
+  @backlog @mc
+  Scenario: A Homebrew install whose latest version cannot be read shows no update
+    Given Codex was installed with Homebrew
+    And Homebrew does not answer within ten seconds
+    When the MC checks provider versions
+    Then Codex's update status is unknown
+
+  @backlog @mc
+  Scenario: Latest versions are looked up at most once an hour per package
+    Given Codex was installed with npm
+    When the MC checks provider versions twice within an hour
+    Then the registry is asked for the latest Codex version once
+
+  @backlog @mc
+  Scenario: A registry that does not answer leaves the update status unknown
+    Given Codex was installed with npm
+    And the package registry does not answer within four seconds
+    When the MC checks provider versions
+    Then Codex's update status is unknown
+    And no error is shown to the user
+
+  @backlog @mc
+  Scenario Outline: A provider that cannot be updated yet is not checked against the registry
+    Given Codex is <state>
+    When the MC checks provider versions
+    Then no latest version is looked up for Codex
+
+    Examples:
+      | state                            |
+      | disabled                         |
+      | not installed                    |
+      | installed but reports no version |
+
   Scenario: Only providers that support it sign in from HAL-C2
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
@@ -69,6 +163,83 @@ Feature: Provider setup, updates and sign-in
     When a sign-in fails
     Then the error shown to the user contains no sign-in code or return address
 
+  # ProviderAuthFlow.ts keeps a running sign-in private to the client that started it. This
+  # differs from "A sign-in is shared by every client of the MC" above; see the audit report.
+  @backlog @mc
+  Scenario: Another client sees that a sign-in is running but not its address or code
+    Given the user started a sign-in for an ACP agent on one client
+    When another client looks at that provider
+    Then it shows "Sign-in is in progress in another client."
+    And it shows no sign-in address or interaction
+
+  @backlog @mc
+  Scenario: Only the client that started a sign-in can answer or cancel it
+    Given the user started a sign-in for an ACP agent on one client
+    When another client answers or cancels that sign-in
+    Then the user is told "This sign-in is no longer active in this client."
+    And the sign-in keeps running
+
+  @backlog @mc
+  Scenario: A sign-in that expired cannot be answered
+    Given a sign-in for an ACP agent expired after five minutes
+    When the user answers it
+    Then the user is told "This sign-in is no longer active in this client."
+
+  @backlog @mc
+  Scenario: A sign-in method the provider does not offer is refused
+    When the user starts a sign-in with a method the provider did not advertise
+    Then the user is told "The provider did not advertise this sign-in method."
+
+  @backlog @mc
+  Scenario Outline: A sign-in tells the user where it is
+    Given the user started a sign-in for an ACP agent
+    When <event>
+    Then the sign-in shows "<message>"
+
+    Examples:
+      | event                                          | message                         |
+      | the provider has been asked to start           | Starting sign-in.               |
+      | the provider waits for the user to finish      | Complete sign-in to continue.   |
+      | the provider is checking the finished sign-in  | Checking provider sign-in.      |
+      | the user cancels the sign-in                   | Sign-in cancelled.              |
+      | the sign-in fails for no known reason          | Sign-in failed. Start again.    |
+      | five minutes pass without an answer            | Sign-in expired. Start again.   |
+
+  @backlog @mc
+  Scenario: Signing out says whether it worked
+    Given the user is signed in to an ACP agent
+    When the user signs out and it succeeds
+    Then the provider shows "Signed out."
+    When the user signs out and it fails
+    Then the provider shows "Could not sign out. Try again."
+
+  @backlog @mc
+  Scenario: Sign-in methods already known stay listed when a refresh fails
+    Given an ACP agent's sign-in methods were listed
+    When the MC cannot refresh them
+    Then the earlier methods stay listed
+    And the user is told why they could not be refreshed
+
+  @backlog @mc
+  Scenario: A sign-in cannot start while the provider is signing out
+    Given the provider is signing out
+    When the user starts a sign-in
+    Then the user is told "Provider setup is already in progress."
+
+  @backlog @mc
+  Scenario: A second client cannot start a sign-in while another client's runs
+    Given the user started a sign-in for an ACP agent on one client
+    When another client starts a sign-in for the same instance
+    Then the user is told "Provider setup is already in progress."
+    And the first sign-in keeps running
+
+  @backlog @mc
+  Scenario: Instances that share a login are told when it changed
+    Given two instances of a provider share one login
+    When the login of one of them changes
+    Then the other instance shows "This provider's shared sign-in changed."
+    And its running sessions stop
+
   Scenario: A provider update waits for another update to finish
     Given a Claude update is running
     When the user updates Codex
@@ -82,6 +253,62 @@ Feature: Provider setup, updates and sign-in
     Given Codex was reinstalled somewhere else after the last check
     When the user updates Codex
     Then the update fails asking the user to refresh and try again
+
+  @backlog @mc
+  Scenario: An update that runs too long is stopped
+    Given Codex is behind the latest version
+    And its update command does not finish within five minutes
+    When the user updates Codex
+    Then the update fails as timed out
+
+  @backlog @mc
+  Scenario: A failed update command reports its exit code and output
+    Given Codex is behind the latest version
+    And its update command exits with code 1 and prints an error
+    When the user updates Codex
+    Then the update fails naming exit code 1
+    And the update's result carries the command's error output
+
+  @backlog @mc
+  Scenario: An update's output is capped
+    Given Codex is behind the latest version
+    And its update command prints far more than ten thousand characters
+    When the user updates Codex
+    Then the update's result carries only the first ten thousand characters of that output
+
+  @backlog @mc
+  Scenario: An update to a version that is no longer recommended is refused
+    Given the user asked to install the recommended "0.1.5" of Codex
+    And "0.1.5" stopped being the recommended version before the update ran
+    When the update starts
+    Then the update fails telling the user to refresh provider settings
+    And no update command is run
+
+  @backlog @mc
+  Scenario Outline: An update to a latest release that turned incompatible is refused when it runs
+    Given Codex is behind the latest version
+    And that latest release was marked <status> for this HAL-C2 release after the last check
+    When the user updates Codex
+    Then the update fails saying the latest version is incompatible with this HAL-C2 release
+    And no update command is run
+
+    Examples:
+      | status      |
+      | unsupported |
+      | broken      |
+
+  @backlog @mc
+  Scenario: An update that cannot be verified is reported as unchanged
+    Given Codex is behind the latest version
+    And its update command succeeds but the provider's version cannot be read afterwards
+    When the user updates Codex
+    Then the user is told the update finished but the version could not be verified
+
+  @backlog @mc
+  Scenario: A second update for the same provider is refused while one runs
+    Given a Codex update is running
+    When the user updates Codex again
+    Then the second update is refused saying an update is already running for that provider
 
   Scenario Outline: A provider version outside the supported range is flagged
     Given the installed provider version is <status> for this HAL-C2 release

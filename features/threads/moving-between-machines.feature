@@ -5,6 +5,8 @@
 #   apps/server/scripts/thread-transfer.ts (legacy archive: format "hal-c2-thread-export" version 1,
 #     thread events, projection rows, attachments and terminal logs as base64 with sha256; target
 #     project inferred from the workspace root or the only project, else named)
+#   apps/server/scripts/list-threads.ts, export-thread.ts, import-thread.ts (command-line listing, export
+#     and import: overwrite and own-install guards, backup, cleanup, file name checks, opt-in scrollback)
 #   apps/server-ex/lib/hal_c2/streams.ex, apps/server-ex/lib/hal_c2/stream_state.ex (a thread is one
 #     event stream owned by one MC)
 #   apps/server-ex/lib/hal_c2/thread_move.ex (the destination asks before it imports, and a move cut
@@ -634,6 +636,144 @@ Feature: Moving a thread and its agent to another machine
       When the user imports it on "desktop"
       Then the user is told the file is damaged
       And nothing is imported
+
+    @backlog @mc
+    Scenario: The threads available for export are listed from the command line
+      Given "laptop" holds threads "Alpha" and "Beta" in different projects and a deleted thread "Gamma"
+      When the user lists the threads of "laptop" from the command line
+      Then each of "Alpha" and "Beta" is listed with its id, its project folder and its title
+      And the most recently updated thread is listed first
+      But "Gamma" is not listed
+
+    @backlog @mc
+    Scenario: Listing threads from the command line works while the MC is stopped
+      Given the MC on "laptop" is stopped
+      When the user lists the threads of "laptop" from the command line
+      Then the threads are listed from what "laptop" has stored
+      And nothing on "laptop" is changed
+
+    @backlog @mc
+    Scenario: A machine with no threads says so
+      Given "laptop" holds no threads
+      When the user lists the threads of "laptop" from the command line
+      Then the user is told no threads were found
+
+    @backlog @mc
+    Scenario: The thread list can be printed as JSON
+      When the user lists the threads of "laptop" from the command line asking for JSON
+      Then the complete list is printed as one JSON document with each thread's id, title and project
+
+    @backlog @mc
+    Scenario: A title with line breaks stays on one line in the printed thread list
+      Given a thread's title contains line breaks and tabs
+      When the user lists the threads of "laptop" from the command line
+      Then the thread is printed on one line with the breaks shown as spaces
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (find_thread)
+    @backlog @mc
+    Scenario: Exporting a thread that does not exist says so
+      When the user exports "Zeta" on "laptop" to the file "zeta.hal-c2-thread"
+      Then the user is told there is no thread "Zeta" on "laptop"
+      And no file is written
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (find_thread)
+    @backlog @mc
+    Scenario: A thread title that two threads share is not guessed
+      Given "laptop" has two threads called "Alpha"
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told several threads are called "Alpha" and to name one by its id
+      And no file is written
+
+    @backlog @mc
+    Scenario: Exporting never overwrites a file that already exists
+      Given the file "alpha.hal-c2-thread" already exists
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told the output file already exists
+      And the existing file is untouched
+
+    @backlog @mc
+    Scenario: Terminal scrollback leaves with an export only when the user asks for it
+      Given "Alpha" has terminal scrollback that may contain secrets
+      When the user exports "Alpha" on "laptop" without asking for terminal scrollback
+      Then the file holds no terminal scrollback
+      When the user exports "Alpha" again asking for terminal scrollback
+      Then the file holds the terminal scrollback
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (export_file, owner-only file)
+    @backlog @mc
+    Scenario: An exported thread file is readable only by its owner
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then no other user of "laptop" can read the file
+
+    @backlog @mc
+    Scenario: The user is told what an export contained
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told the thread's title and id, the file's path, and how many events, attachments and terminal logs it holds
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (the file cannot be read)
+    @backlog @mc
+    Scenario Outline: A file that is not a thread file is refused
+      Given <file>
+      When the user imports it on "desktop"
+      Then the user is told the file could not be used
+      And nothing is imported
+
+      Examples:
+        | file                                           |
+        | a path where there is no file                  |
+        | a file that is not a HAL-C2 thread file        |
+        | a thread file cut short                        |
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (project name)
+    @backlog @mc
+    Scenario: Importing into a project the destination does not have is refused
+      When the user imports "alpha.hal-c2-thread" on "desktop" into the project "nonexistent"
+      Then the user is told "desktop" has no project "nonexistent"
+      And nothing is imported
+
+    @backlog @mc
+    Scenario Outline: A file naming something that does not belong to its thread is refused
+      Given a thread file whose <entry> is <problem>
+      When the user imports it on "desktop"
+      Then the user is told the file is not safe to import
+      And nothing is imported
+
+      Examples:
+        | entry          | problem                                         |
+        | attachment     | named with a folder path                        |
+        | attachment     | named for a different thread                    |
+        | terminal log   | named with a folder path                        |
+        | terminal log   | named for a different thread                    |
+
+    @backlog @mc
+    Scenario: An import never replaces a different file the destination already has
+      Given "desktop" already has a file under the name of one of the thread file's attachments
+      And its contents differ from the attachment's
+      When the user imports the file on "desktop"
+      Then the user is told the attachment already exists with different contents
+      And nothing is imported
+      And the file "desktop" had is untouched
+
+    @backlog @mc
+    Scenario: A file the destination already has with the same contents is reused
+      Given "desktop" already has an identical copy of one of the thread file's attachments
+      When the user imports the file on "desktop"
+      Then "Alpha" is listed under "desktop" with all its attachments
+      And the identical copy is not written again
+
+    @backlog @mc
+    Scenario: An import that fails part way leaves the destination as it was
+      Given the destination cannot take the thread's events after its files were copied
+      When the user imports the file on "desktop"
+      Then the user is told the import failed
+      And the attachments and terminal scrollback the import copied are removed
+      And "desktop" lists no thread "Alpha"
+
+    @backlog @mc
+    Scenario: An import keeps a copy of the destination's stored data from before it
+      When the user imports the file on "desktop"
+      Then the user is told where the copy of "desktop"'s data from before the import was kept
+      And only the owner can read the copy
 
     @backlog @shared
     Scenario: Exporting a thread from the app

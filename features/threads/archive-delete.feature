@@ -154,6 +154,21 @@ Feature: Archiving and deleting threads
     Then "Old spike" is deleted
     And the user is told "Failed to delete worktree"
 
+  @backlog @desktop @mobile
+  Scenario: A worktree removed whose Git status cannot be refreshed is reported
+    Given the worktree of "Old spike" is removed but the project's Git status cannot be read afterwards
+    When the user deletes "Old spike" and its worktree
+    Then "Old spike" is deleted
+    And the user is told "Worktree deleted, but Git status refresh failed"
+
+  @backlog @desktop @mobile
+  Scenario: Deleting the open thread when the next thread cannot be opened
+    Given the user is viewing "Old spike"
+    And the next thread cannot be opened
+    When the user deletes "Old spike"
+    Then "Old spike" is deleted
+    And the user is told "Thread deleted, but navigation failed"
+
   @desktop @mobile @backlog-mobile
   Scenario: Deleting the open thread opens the next thread in the project
     Given the user is viewing "Old spike"

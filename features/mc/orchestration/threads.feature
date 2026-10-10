@@ -9,6 +9,9 @@
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand)
 #   apps/server-ex/lib/hal_c2/orchestration.ex
 #   apps/server/src/orchestration-v2/ (decider and projector for thread commands)
+#   apps/server/src/orchestration-v2/Orchestrator.ts (archive stopping the provider session)
+#   apps/server/src/orchestration-v2/ResourceCleanupService.ts, ThreadDeletion.ts, EffectWorker.ts
+#     (terminals and attached files cleaned up after archive and delete)
 #   docs/internals/glossary.md
 Feature: Thread lifecycle in the orchestration engine
   A thread is the durable conversation for a project. The engine creates it,
@@ -126,6 +129,20 @@ Feature: Thread lifecycle in the orchestration engine
     When a client archives "t1"
     Then both queued runs are cancelled
 
+  @mc @backlog
+  Scenario: Archiving a thread closes its terminals and deletes their history
+    Given thread "t1" has two open terminals with saved output
+    When a client archives "t1"
+    Then both terminals are closed
+    And their saved output is deleted
+
+  @backlog @mc
+  Scenario: Archiving a thread stops its agent's live session
+    Given thread "t1" is idle with a live provider session that left work running in the background
+    When a client archives "t1"
+    Then the provider session of "t1" is stopped with the reason "Thread archived."
+    And the background work ends with it
+
   @mc
   Scenario: Unarchiving a thread makes it active again
     Given thread "t1" is archived
@@ -165,6 +182,46 @@ Feature: Thread lifecycle in the orchestration engine
     Given thread "t1" has a live provider session
     When a client deletes "t1"
     Then the provider session of "t1" is stopped before "t1" is removed
+
+  @mc @backlog
+  Scenario: Deleting a thread closes its terminals and deletes their history
+    Given thread "t1" has an open terminal with saved output
+    When a client deletes "t1"
+    Then the terminal is closed
+    And its saved output is deleted
+
+  @mc @backlog
+  Scenario: Deleting a thread removes the files attached to its messages
+    Given thread "t1" has messages with two attached files
+    When a client deletes "t1"
+    Then both attached files are removed from the MC's attachment storage
+    And a file that is already gone does not stop the rest from being removed
+
+  @mc @backlog
+  Scenario: Cleanup after deleting a thread is finished after a restart
+    Given a client deleted "t1" and the MC stopped before its terminals and attached files were cleaned up
+    When the MC starts again
+    Then the terminals' saved output and the attached files of "t1" are removed
+
+  @mc @backlog
+  Scenario: Deleting a thread cancels its running and queued work
+    Given thread "t1" has a running turn and a queued message "Next"
+    When a client deletes "t1"
+    Then the running turn and the run for "Next" are cancelled
+    And nothing of "t1" starts afterwards
+
+  @mc @backlog
+  Scenario: Deleting a thread closes the approvals and questions it was waiting on
+    Given thread "t1" waits on an approval and on a question
+    When a client deletes "t1"
+    Then both requests are cancelled with the reason "The thread was deleted."
+    And neither can be answered any more
+
+  @mc @backlog
+  Scenario: Deleting a thread that is already deleted keeps the first deletion time
+    Given thread "t1" was deleted at 10:00
+    When a client deletes "t1" again at 10:05
+    Then thread "t1" still records 10:00 as the time it was deleted
 
   @mc
   Scenario: Deleting a thread emits a removal to shell subscribers
@@ -219,3 +276,54 @@ Feature: Thread lifecycle in the orchestration engine
     Given a running turn in thread "parent" created thread "child"
     When the creation is recorded on the parent
     Then the parent's timeline links to "child" and the run that created it
+
+  @mc @backlog
+  Scenario Outline: A deleted thread refuses further changes
+    Given thread "t1" was deleted
+    When a client tries to <change> "t1"
+    Then the command fails with "Thread t1 is deleted."
+
+    Examples:
+      | change                       |
+      | record a visit to            |
+      | rename                       |
+      | archive                      |
+      | pin                          |
+      | snooze                       |
+      | settle                       |
+      | mark unread                  |
+      | change the model of          |
+      | link a pull request to       |
+
+  @mc @backlog
+  Scenario: A thread that never finished a turn cannot be marked unread
+    Given thread "t1" exists in "demo" and has no completed run
+    When a client marks "t1" unread
+    Then the command fails with "Thread t1 has no completed run to mark unread."
+
+  @mc @backlog
+  Scenario: A visit with a time that is not a timestamp is refused
+    Given thread "t1" exists in "demo"
+    When a client records a visit to "t1" at "yesterday-ish"
+    Then the command fails saying the visit time is not a valid timestamp
+    And the read watermark of "t1" is unchanged
+
+  @mc @backlog
+  Scenario: A metadata update meant for an empty thread fails once the thread has a message
+    Given thread "t1" exists in "demo"
+    And a client prepared a workspace change for "t1" while it was empty
+    When a message reaches "t1" before the change is applied
+    Then the change fails with "Thread t1 is no longer empty."
+    And the branch and worktree of "t1" are unchanged
+
+  @mc @backlog
+  Scenario Outline: Recording a created thread checks where it came from
+    Given a running turn in thread "parent" created thread "child"
+    When the creation is recorded <how>
+    Then the command fails saying <reason>
+
+    Examples:
+      | how                                                  | reason                                             |
+      | on a node that is not the root of the creating run   | the parent node is not the root of that run        |
+      | for a "child" that lives in another project          | the target thread belongs to another project       |
+      | with a run that is not a run of "child"              | the target run does not belong to the thread       |

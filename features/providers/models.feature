@@ -73,6 +73,19 @@ Feature: Models
     When the MC downloads a manifest that is not valid
     Then the last usable manifest is kept
 
+  # ClaudeModelManifest.ts hasValidClaudeManifestAdapters: the rest of the manifest being
+  # sound does not save a Claude catalog whose version range or profile is malformed.
+  @backlog
+  Scenario Outline: A manifest with a malformed Claude catalog is refused as a whole
+    When the MC downloads a manifest whose Claude catalog has <problem>
+    Then the last usable manifest is kept
+
+    Examples:
+      | problem                                                  |
+      | a model gated by a version that is not a semantic version |
+      | a model whose minimum version is not below its maximum   |
+      | a profile with a malformed effort or context window map  |
+
   Scenario: A bundled manifest newer than the cached one wins
     Given the MC was updated with a manifest newer than its cached copy
     When the MC starts
@@ -84,6 +97,70 @@ Feature: Models
     When the MC refreshes the manifest
     Then OpenCode's versions are judged by the fetched policy
     And the other provider keeps its bundled policy
+
+  # Refresh rules of apps/server/src/provider/ModelManifest.ts (TTL one hour, retry five
+  # minutes, ten second download limit).
+  @backlog
+  Scenario: The manifest is downloaded at most once an hour
+    Given the MC fetched the model manifest less than an hour ago
+    When the MC would refresh the manifest
+    Then no download is made
+
+  @backlog
+  Scenario: A failed manifest download is retried after five minutes
+    Given the MC's last manifest download failed two minutes ago
+    When the MC would refresh the manifest
+    Then no download is made
+    When five minutes have passed since the failed download
+    Then the manifest is downloaded again
+
+  @backlog
+  Scenario: A manifest download that takes too long is abandoned
+    Given the manifest server does not answer within ten seconds
+    When the MC refreshes the manifest
+    Then the last usable manifest is kept
+    And no error is shown to the user
+
+  @backlog
+  Scenario: Refreshing the manifest by hand ignores the schedule
+    Given the MC fetched the model manifest a minute ago
+    When the user refreshes the models
+    Then the manifest is downloaded again
+
+  @backlog
+  Scenario: The manifest is not downloaded when provider update checks are off
+    Given the user turned off provider update checks
+    When the MC would refresh the manifest
+    Then no download is made
+    And the bundled or last cached manifest is used
+
+  @backlog
+  Scenario: The manifest names a provider's default model
+    Given a provider reports "model-a" as its default
+    And the manifest names "model-b" as that provider's default
+    When the MC has read the provider's model list
+    Then "model-b" is the default
+    And the names that pointed at "model-a" as the default now point at "model-b"
+
+  @backlog
+  Scenario: A manifest default the provider does not offer is ignored
+    Given a provider reports "model-a" as its default
+    And the manifest names a default that the provider does not list
+    When the MC has read the provider's model list
+    Then "model-a" stays the default
+
+  @backlog
+  Scenario: Custom models are never marked legacy by the manifest
+    Given the user added a custom model that the manifest does not list
+    When the MC has read the provider's model list
+    Then the custom model is not labelled legacy
+
+  @backlog
+  Scenario: A Codex model is judged by its family
+    Given the manifest lists "gpt-6-astra" as a current Codex model
+    And Codex reports a dated variant of "gpt-6-astra"
+    When the MC has read the Codex model list
+    Then the variant is not labelled legacy
 
   Scenario: Adding a custom model
     When the user adds the custom model "my-model" to Claude

@@ -9,6 +9,7 @@
 #   packages/contracts/src/project.ts (project.update, project.delete, autoPull)
 #   packages/contracts/src/rpc.ts (projects.mutate; projects.list and projects.remove are
 #     unrouted names, dropped in parity/rpc.feature)
+#   apps/server/src/cli/project.ts (hal-c2 project add, remove, rename; live server or stored state)
 
 Feature: Removing and updating projects
   A project entry can be renamed, changed, and removed. Removing a project clears its
@@ -110,3 +111,81 @@ Feature: Removing and updating projects
       And automatic pull was never turned on for "shop"
       When the MC starts
       Then "shop" is not pulled
+
+  Rule: Managing projects from the command line
+
+    @backlog @mc
+    Scenario: A folder is added as a project from the command line
+      When the operator runs "hal-c2 project add ~/code/api"
+      Then the project "api" is listed for "laptop"
+      And the command prints the new project's id, title and folder
+
+    @backlog @mc
+    Scenario: A project added from the command line can be given a title
+      When the operator runs "hal-c2 project add ~/code/api --title 'API server'"
+      Then the project "API server" is listed for "laptop"
+
+    @backlog @mc
+    Scenario: A folder that is already a project is not added twice
+      When the operator runs "hal-c2 project add /home/sam/shop"
+      Then the command fails saying an active project already exists for "/home/sam/shop"
+      And "shop" is still the only project at that folder
+
+    @backlog @mc
+    Scenario Outline: An empty title is refused from the command line
+      When the operator <command>
+      Then the command fails saying the project title cannot be empty
+      And no project changes
+
+      Examples:
+        | command                                        |
+        | runs "hal-c2 project add ~/code/api --title ' '" |
+        | runs "hal-c2 project rename shop ' '"          |
+
+    @backlog @mc
+    Scenario Outline: A project is named on the command line by its id or its folder
+      When the operator runs "hal-c2 project rename <project> 'Shop web'"
+      Then the project at "/home/sam/shop" is titled "Shop web"
+
+      Examples:
+        | project         |
+        | its project id  |
+        | /home/sam/shop  |
+
+    @backlog @mc
+    Scenario: A project whose folder is gone can still be named by its folder
+      Given the folder "/home/sam/shop" no longer exists
+      When the operator runs "hal-c2 project remove /home/sam/shop"
+      Then "shop" is no longer listed for "laptop"
+
+    @backlog @mc
+    Scenario: Renaming a project to its own title changes nothing
+      When the operator runs "hal-c2 project rename shop shop"
+      Then the command says "shop" is already named that
+      And no change is made
+
+    @backlog @mc
+    Scenario: A project that does not exist is reported by name
+      When the operator runs "hal-c2 project remove /home/sam/nothing"
+      Then the command fails saying no active project was found for "/home/sam/nothing"
+
+    @backlog @mc
+    Scenario: Removing a project that has threads needs force
+      Given "shop" has threads
+      When the operator runs "hal-c2 project remove shop"
+      Then the command fails and "shop" keeps its threads
+      When the operator runs "hal-c2 project remove shop --force"
+      Then "shop" and its threads are removed
+      But the files in "/home/sam/shop" are untouched
+
+    @backlog @mc
+    Scenario: A running MC applies a project command and its clients see it at once
+      Given a client is watching the project list
+      When the operator runs "hal-c2 project add ~/code/api"
+      Then the client sees "api" appear without reloading
+
+    @backlog @mc
+    Scenario: With the MC stopped a project command changes the stored projects
+      Given the MC is not running
+      When the operator runs "hal-c2 project add ~/code/api"
+      Then "api" is listed once the MC starts

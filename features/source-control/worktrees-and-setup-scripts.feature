@@ -16,6 +16,9 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (checkout mode)
 #   packages/contracts/src/shell.ts (workspace.envMode.set)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (a new thread's checkout, the previous worktree)
+#   apps/server/src/vcs/GitVcsDriverCore.ts (renameBranch, resolveAvailableBranchName)
+#   apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: checkout progress, timeouts, base ref, folder name)
+#   apps/server/src/project/ProjectSetupScriptRunner.ts, WorktreeSetupTracker.ts (output cleaning and caps)
 
 Feature: Worktrees and setup scripts
   A thread can start in its own worktree. The MC creates it from a base ref, runs the
@@ -69,6 +72,21 @@ Feature: Worktrees and setup scripts
     Then the worktree first sits on a temporary branch
     And the branch is renamed to a name the writer model derives from the message
 
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolveAvailableBranchName, renameBranch)
+  @mc @backlog
+  Scenario: A renamed temporary branch whose new name is taken gets a number
+    Given the branch "feature/add-tax" already exists
+    When the temporary branch of a new worktree is renamed to "feature/add-tax"
+    Then the worktree's branch is "feature/add-tax-1"
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolveAvailableBranchName: 100 candidates)
+  @mc @backlog
+  Scenario: A rename that finds no free name fails and keeps the temporary branch
+    Given "feature/add-tax" and the hundred numbered names after it already exist
+    When the temporary branch of a new worktree is renamed to "feature/add-tax"
+    Then the user is told no available branch name could be found for "feature/add-tax"
+    And the worktree stays on its temporary branch
+
   @mc
   Scenario: A client that names the temporary branch itself gets it renamed too
     Given the client names the new worktree's temporary branch "hal-c2/42a5d641"
@@ -93,6 +111,40 @@ Feature: Worktrees and setup scripts
       | Check out files    |
       | Run setup script   |
       | Start agent        |
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: onCheckoutProgress, parseGitCheckoutProgressLine)
+  @mc @backlog
+  Scenario: Checking out a large worktree reports how far it is
+    Given "shop" is large enough that checking out its files takes a while
+    When the user sends the first message of a thread in a new worktree
+    Then the "Check out files" stage reports the share of files checked out as it grows
+    And the stage ends at its full share when the checkout finishes
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (WORKTREE_ADD_TIMEOUT_MS, WORKTREE_REMOVE_TIMEOUT_MS)
+  @mc @backlog
+  Scenario Outline: Creating and removing a worktree is given minutes, not seconds
+    Given "shop" is so large that <action> takes <duration>
+    When the user <request>
+    Then the git command is not stopped by the usual 30 second limit
+    And it is stopped only after 5 minutes
+
+    Examples:
+      | action                | duration       | request                                              |
+      | checking out files    | 2 minutes      | sends the first message of a thread in a new worktree |
+      | removing the worktree | 2 minutes      | removes the worktree                                  |
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: gh-merge-base)
+  @mc @backlog
+  Scenario: A new worktree's branch remembers the branch it started from
+    Given a worktree is created for the new branch "feature/tax" based on "origin/dev"
+    When the pull request for "feature/tax" is created
+    Then it targets "dev"
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: sanitizedBranch)
+  @mc @backlog
+  Scenario: A branch with slashes gets a single folder name
+    When a worktree is created for the branch "feature/tax/rates" with no path given
+    Then its folder under the repository's name is "feature-tax-rates"
 
   @mc
   Scenario: Submodule initialization is its own setup stage
@@ -125,6 +177,66 @@ Feature: Worktrees and setup scripts
     Given "shop" has a setup script that prints many lines
     When the user sends the first message of a thread in a new worktree
     Then the setup script stage shows the last 5 lines of its output as it runs
+
+  # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (stripTerminalControl, OUTPUT_LINE_MAX_LENGTH), WorktreeSetupTracker.ts
+  @mc @backlog
+  Scenario Outline: Setup script output is shown as plain, short lines
+    Given "shop" has a setup script that prints <output>
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage shows <shown>
+
+    Examples:
+      | output                                                  | shown                                         |
+      | colored text and cursor movements                       | the same text without the colors and movement |
+      | a progress bar that redraws one line with carriage returns | each redraw as a line of its own           |
+      | a single line of 1,000 characters                       | the first 400 characters of it                |
+      | output that never ends a line                           | no more than the last few thousand characters kept in memory |
+
+  # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (wrapCommandForCompletion, completionSentinel)
+  @mc @backlog
+  Scenario Outline: The end of a setup script is noticed however the script is written
+    Given "shop" has a setup script that <script>
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage ends with the script's own exit status
+    And nothing the script printed is taken for its end
+
+    Examples:
+      | script                                          |
+      | ends with a comment line                        |
+      | reads from its input until it is closed         |
+      | prints a line that looks like a completion mark |
+      | is a few lines long with a here-document        |
+
+  # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (observeTerminalCompletion), ThreadLaunchService.ts
+  @mc @backlog
+  Scenario: A setup terminal that is closed before the script finishes fails the setup script
+    Given the setup script must finish before the agent starts
+    And its terminal is closed while it is still running
+    When the setup stops waiting for it
+    Then the setup fails with "Setup script exited with no exit code."
+    And the agent does not start
+
+  # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (runForThread env: COLORTERM, NO_COLOR, FORCE_COLOR)
+  # Other terminals advertise truecolour (terminal/sessions.feature). The MC already sets
+  # NO_COLOR for the setup terminal (worktree_setup.ex) but still gives it COLORTERM "truecolor".
+  @mc @backlog
+  Scenario: A setup script's terminal, unlike the user's terminals, does not advertise colour
+    Given "shop" has a setup script set to run when a worktree is created
+    When the user sends the first message of a thread in a new worktree
+    Then the script's terminal asks tools for plain output without colour
+    And a tool that probes the terminal for truecolour does not wait for an answer
+
+  # Legacy: apps/server/src/project/WorktreeSetupTracker.ts (clampText), packages/contracts/src/worktreeSetup.ts
+  @mc @backlog
+  Scenario Outline: A long setup detail or error is shortened before clients see it
+    Given a setup stage reports a <kind> of 5,000 characters
+    When a client reads the setup
+    Then the <kind> is cut to <limit> characters and ends with an ellipsis
+
+    Examples:
+      | kind   | limit |
+      | detail | 200   |
+      | error  | 1,000 |
 
   @mc
   Scenario: A failing setup script that must finish first fails the setup
@@ -180,6 +292,29 @@ Feature: Worktrees and setup scripts
     When the MC restarts
     Then no setup progress is shown for that thread
 
+  # Legacy: apps/server/src/project/WorktreeSetupTracker.ts (finish, FINISHED_RETENTION)
+  @mc @backlog
+  Scenario Outline: A stage still running when the setup ends is settled with it
+    Given a thread's worktree setup is running a stage
+    When the setup <ending>
+    Then that stage is reported as "<status>"
+    And stages that never started are left as they were
+
+    Examples:
+      | ending         | status  |
+      | finishes       | done    |
+      | fails          | failed  |
+      | is cancelled   | skipped |
+
+  # Legacy: apps/server/src/project/WorktreeSetupTracker.ts (FINISHED_RETENTION, begin)
+  @mc @backlog
+  Scenario: A finished setup stays readable for half a minute and a new one replaces it
+    Given a thread's worktree setup finished
+    When a client reads the setup 20 seconds later
+    Then it sees the finished setup with its outcome
+    When the thread starts another worktree setup
+    Then clients see only the new setup from its first stage on
+
   @desktop @mobile @backlog-mobile
   Scenario: The setup card shows the base, branch and path
     When the user sends the first message of a thread in a new worktree
@@ -229,3 +364,76 @@ Feature: Worktrees and setup scripts
     Given the thread works in the worktree on "feature/tax"
     When the agent asks for its worktree status
     Then it learns it is attached, with the worktree path, branch and project root
+
+  @backlog @desktop
+  Scenario Outline: The workspace choice is named for what it is
+    Given the user is writing the first message of a new thread in "shop" <where>
+    When the user opens the workspace choice
+    Then the choices are "<project>" and "New worktree"
+
+    Examples:
+      | where                      | project           |
+      | in the project folder      | Current checkout  |
+      | in an existing worktree    | Current worktree  |
+
+  @backlog @desktop
+  Scenario Outline: A thread that has started keeps its workspace
+    Given a thread in "shop" has started <where>
+    When the user looks at the thread's workspace
+    Then it reads "<label>" and cannot be changed
+
+    Examples:
+      | where                     | label           |
+      | in the project folder     | Local checkout  |
+      | in a worktree             | Worktree        |
+
+  @backlog @desktop
+  Scenario: Several chosen models always get a worktree each
+    Given the user chose two models for a new thread in "shop"
+    When the user looks at the workspace choice
+    Then it reads "New worktree" and cannot be changed
+    And it says each model starts in its own worktree
+
+  @backlog @desktop
+  Scenario: The previous worktree is named after its branch
+    Given the most recently used worktree of "shop" is on "feature/tax"
+    When the user opens the workspace choice of a new thread
+    Then it offers "Previous worktree (feature/tax)"
+
+  @backlog @desktop
+  Scenario: A previous worktree with no branch is just called the previous worktree
+    Given the most recently used worktree of "shop" is on no branch
+    When the user opens the workspace choice of a new thread
+    Then it offers "Previous worktree"
+
+  @backlog @desktop
+  Scenario Outline: Some worktrees are not offered as the previous worktree
+    Given the most recently used worktree of "shop" <situation>
+    And an older thread in "shop" used another worktree
+    When the user opens the workspace choice of a new thread
+    Then the other worktree is offered as the previous worktree
+
+    Examples:
+      | situation                                          |
+      | is the worktree the new thread is already in       |
+      | belongs only to an archived thread                 |
+
+  @backlog @desktop
+  Scenario: No previous worktree is offered when there is none
+    Given no thread in "shop" has used a worktree
+    When the user opens the workspace choice of a new thread
+    Then the choices are the current checkout and a new worktree only
+
+  @backlog @desktop
+  Scenario: The base of a new worktree can be started from origin
+    Given the user chose a new worktree for a new thread in "shop"
+    When the user opens the base picker
+    Then it offers "Start from origin" with a switch for starting the worktree from origin
+    And it explains this creates the worktree from the latest matching branch on origin instead of the local branch
+
+  @backlog @desktop
+  Scenario: The choice to start from origin belongs to the new thread
+    Given "Start new worktrees from origin" is off in the settings
+    When the user turns on "Start from origin" in a new thread's base picker
+    Then that thread's worktree starts from origin
+    And the setting stays off

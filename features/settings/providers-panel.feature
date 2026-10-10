@@ -67,6 +67,51 @@ Feature: Providers settings panel
       When "Build box" reconnects
       Then the providers of "Build box" are listed
 
+    @backlog @desktop
+    Scenario: Providers wait for what the session may change before they can be edited
+      Given the user's session has not yet been told what it may change on "Build box"
+      When the user shows the providers of "Build box"
+      Then the user is told the session is being checked for what it may change
+      And no setting can be changed until that is known
+
+    @backlog @desktop
+    Scenario: A permissions check that fails does not lock an older environment
+      Given "Build box" runs a version that does not report what a session may change
+      When the user shows the providers of "Build box"
+      Then the providers can be edited
+      And a change the environment refuses is reported
+
+    @backlog @desktop
+    Scenario: An edit in progress survives a permissions refresh
+      Given the user is typing a provider's display name
+      When the session's permissions are checked again in the background
+      Then the panel stays on the provider
+      And the text the user typed is kept
+
+    @backlog @desktop
+    Scenario Outline: With nothing to show the panel says what is missing
+      Given <state>
+      When the user opens the Providers settings
+      Then the user is told "<message>"
+
+      Examples:
+        | state                                    | message                                                             |
+        | no environment is connected              | Connect an execution environment before configuring providers.      |
+        | the environments are still being read    | Reading connected execution environments.                           |
+
+    # Legacy: apps/web/src/components/settings/ProviderSettingsPanel.logic.ts (resolveSelectedProviderEnvironmentId)
+    @backlog @desktop
+    Scenario Outline: The environment shown falls back when the chosen one is gone
+      Given the user chose to show the providers of "Build box"
+      And <situation>
+      When the Providers settings are shown
+      Then the providers of "<shown>" are listed
+
+      Examples:
+        | situation                                                          | shown     |
+        | "Build box" was removed and this machine is still there            | This machine |
+        | "Build box" and this machine were removed and "Laptop" is left     | Laptop    |
+
     @desktop
     Scenario: Leaving the Providers settings stops following providers
       Given "Gemini" can sign in from HAL-C2 and is signed out
@@ -131,11 +176,68 @@ Feature: Providers settings panel
       When the user goes back to choosing a driver
       Then the choices already made are kept
 
+    @backlog @desktop
+    Scenario: An instance id may not be longer than 64 characters
+      When the user enters an instance id of 65 letters and continues
+      Then the user stays on the identity step and is told "Instance ID must be 64 characters or fewer."
+
+    @backlog @desktop
+    Scenario: A long label still gets a usable instance id
+      Given an instance with the id suggested for a 100 character label exists
+      When the user adds a "Claude" provider with that label
+      Then the suggested instance id is a number-suffixed id of at most 64 characters
+
+    @backlog @desktop
+    Scenario: A provider can be added without typing anything
+      When the user chooses "Claude" and adds it with the suggested label and id
+      Then an instance with the id "claudeAgent" is listed
+      And it is shown with the provider's own name
+
+    @backlog @desktop
+    Scenario: Jumping ahead past an invalid id stops at the identity step
+      Given the instance id is invalid
+      When the user jumps straight to the configuration step
+      Then the user lands on the identity step
+      And the problem with the id is shown
+
+    @backlog @desktop
+    Scenario: Each provider keeps its own label and accent while choosing
+      Given the user typed the label "Work" for "Claude" and picked a green accent
+      When the user chooses "Codex" and then "Claude" again
+      Then "Claude" still has the label "Work" and the green accent
+
+    @backlog @desktop
+    Scenario: The wizard cannot be moved while an instance is being saved
+      Given the user is adding a provider instance and saving has started
+      When the user tries to move to another step or add it again
+      Then nothing changes
+      And only one instance is created
+
     @desktop
     Scenario: An instance that cannot be saved is reported
       Given saving settings on "Laptop" fails
       When the user adds a provider instance
       Then the user is told the provider instance could not be added
+
+    # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (badgeLabel, hasDefaultInstance)
+    @backlog @desktop
+    Scenario Outline: A provider still in early access is marked in the choices and on its instances
+      When the user opens the choice of providers to add
+      Then "<provider>" is marked "Early Access"
+      And every "<provider>" instance in the list carries the same mark
+
+      Examples:
+        | provider     |
+        | Pi           |
+        | ACP Registry |
+
+    # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (hasDefaultInstance: false)
+    @backlog @desktop
+    Scenario: ACP Registry agents exist only as instances the user adds
+      Given no ACP Registry agent has been added
+      When the user opens the provider settings
+      Then no ACP Registry instance is listed
+      And ACP Registry is offered only when adding an instance
 
   Rule: Adding an agent from the ACP Registry
 
@@ -196,7 +298,194 @@ Feature: Providers settings panel
       When the MC is asked to uninstall "gemini-cli"
       Then the uninstall is refused
 
+    @backlog @desktop
+    Scenario: The registry step lists compatible agents before the user types
+      When the user opens the ACP Registry step
+      Then the compatible agents are listed without a search
+      And the user is told how many were found
+
+    @backlog @desktop
+    Scenario: The registry is searched when typing pauses
+      When the user types "gem" and keeps typing
+      Then the registry is not searched on every letter
+      When the user stops typing for a moment
+      Then the registry is searched for "gem"
+      When the user presses Enter
+      Then the registry is searched at once
+
+    @backlog @desktop
+    Scenario: Searching again for the same text refreshes the results
+      Given the user searched the ACP Registry for "gemini"
+      When the user searches for "gemini" again
+      Then the results are read again
+      And the earlier results stay visible while they refresh
+
+    @backlog @desktop
+    Scenario: A registry that cannot be reached reports why
+      Given the ACP Registry cannot be reached from the environment
+      When the user opens the ACP Registry step
+      Then the user is shown the reason the search failed
+
+    @backlog @desktop
+    Scenario Outline: An agent being prepared says what is happening
+      Given the registry agent "<agent>" is distributed <distribution>
+      When the user adds "<agent>"
+      Then the agent shows "<progress>"
+      And searching is unavailable until it is ready
+
+      Examples:
+        | agent      | distribution | progress    |
+        | gemini-cli | as a binary  | Downloading |
+        | other-cli  | as a package | Preparing   |
+
+    @backlog @desktop
+    Scenario: An agent that cannot be prepared says why and the user can try another
+      Given preparing "gemini-cli" fails with "The agent could not be downloaded."
+      When the user adds "gemini-cli"
+      Then the user is shown "The agent could not be downloaded."
+      And the user can search for and add another agent
+
+    @backlog @desktop
+    Scenario: Registry icons are only fetched from the official registry
+      Given a registry agent has an icon outside the official registry address
+      When the registry results are shown
+      Then that icon is not fetched
+      And the agent shows its default icon
+
+    @backlog @desktop
+    Scenario Outline: A registry icon that is not a small image is not used
+      Given the registry agent's icon <problem>
+      When the registry results are shown
+      Then the agent shows its default icon
+
+      Examples:
+        | problem                          |
+        | is larger than 512 KB            |
+        | is not an image                  |
+        | redirects to another address     |
+
+    # The browser's persistent cache for registry icons has no counterpart on the native clients.
+    @desktop @dropped
+    Scenario: A registry icon is fetched once and kept
+      Given the registry lists the same icon for several agents
+      When the registry results are shown on two days
+      Then the icon is fetched once and reused
+
   Rule: Native ACP sessions and model providers
+
+    @backlog @desktop
+    Scenario: Native sessions are listed for one project at a time
+      Given the environment has the projects "hal-c2" and "shop"
+      When the user lists the native sessions of the agent
+      Then the sessions of the first project are listed
+      When the user chooses "shop"
+      Then the sessions of "shop" are listed
+
+    @backlog @desktop
+    Scenario: Native sessions need a project to import into
+      Given the environment has no projects
+      When the user opens an agent that lists native sessions
+      Then the user is told to add a project before importing sessions
+
+    @backlog @desktop
+    Scenario: A long list of native sessions loads more on request
+      Given the agent has more native sessions than it returns at once
+      When the user lists the native sessions
+      Then the first page is listed with an option to load more
+      When the user loads more
+      Then the next page is added below the first
+
+    @backlog @desktop
+    Scenario: Importing a session that was already imported says so
+      Given a native session was already imported as a thread
+      When the user imports that session again
+      Then the user is told it was already imported
+      And no second thread is created
+
+    @backlog @desktop
+    Scenario Outline: Only what the agent supports is offered for native sessions
+      Given the agent <ability>
+      When the user opens its native sessions
+      Then <offer>
+
+      Examples:
+        | ability                         | offer                                    |
+        | cannot list sessions            | no session list is offered               |
+        | can list but not resume or load | sessions are listed but cannot be imported |
+        | can list but not delete         | sessions are listed without delete       |
+
+    @backlog @desktop
+    Scenario: Deleting a native session asks first and names it
+      Given the agent has a native session titled "Fix login"
+      When the user deletes that session
+      Then the user is asked to confirm permanently deleting "Fix login"
+      When the user cancels
+      Then the session is still listed
+
+    @backlog @desktop
+    Scenario: A session without a title is named by its id when deleting
+      Given the agent has a native session with no title and the id "s-42"
+      When the user deletes that session
+      Then the user is asked to confirm permanently deleting "s-42"
+
+    @backlog @desktop
+    Scenario: One session operation at a time per project
+      Given the user is importing a native session
+      Then listing, importing, deleting and changing project are unavailable until it finishes
+
+    @backlog @desktop
+    Scenario: A failed session or provider operation is reported with its reason
+      Given the agent refuses to list its sessions with "Not signed in."
+      When the user lists the native sessions
+      Then the user is told the sessions could not be listed and why
+
+    @backlog @desktop
+    Scenario Outline: A model provider needs an API type and a base URL before saving
+      Given the agent offers a configurable model provider
+      When the user leaves <missing> empty
+      Then saving is not possible
+
+      Examples:
+        | missing    |
+        | the API type |
+        | the base URL |
+
+    @backlog @desktop
+    Scenario: A model provider's API type is chosen from what the agent supports
+      Given the agent's model provider supports two API types
+      When the user opens the model provider
+      Then only those two API types are offered
+      And a model provider already set shows its current API type and base URL
+
+    @backlog @desktop
+    Scenario: A model provider shows whether it is configured
+      Given the agent has one model provider configured and one that is not
+      When the user lists the agent's model providers
+      Then the configured one is marked "Configured" and the other "Disabled"
+
+    @backlog @desktop
+    Scenario: Disabling a model provider asks first
+      When the user disables a configured model provider
+      Then the user is asked to confirm disabling it by name
+      When the user cancels
+      Then the model provider stays configured
+
+    @backlog @desktop
+    Scenario: Saved headers are never shown again
+      Given a model provider was saved with an authorization header
+      When the user lists the agent's model providers again
+      Then the headers field is empty and says headers are write-only
+
+    @backlog @desktop
+    Scenario Outline: Logging out is offered only when the agent cannot be signed in from HAL-C2
+      Given the agent can sign out and <sign-in>
+      When the user opens the agent's native sessions
+      Then logging out <result>
+
+      Examples:
+        | sign-in                         | result           |
+        | signs in from its own terminal  | is offered       |
+        | signs in from HAL-C2            | is not offered   |
 
     @mc @desktop
     Scenario: Importing a native session continues it as a thread
@@ -297,6 +586,76 @@ Feature: Providers settings panel
       When the user deletes the instance
       Then the user is told the provider was deleted but managed files remain
 
+    @backlog @desktop
+    Scenario: Emptying a setting field removes it so the default applies
+      Given an OpenCode instance has the server URL "http://127.0.0.1:4096"
+      When the user empties the server URL
+      Then the instance no longer stores a server URL
+      And the settings the panel does not show are kept as they were
+
+    @backlog @desktop
+    Scenario Outline: A switch left at its default is not stored
+      Given a provider setting that is <default> by default and currently <stored>
+      When the user sets it to <chosen>
+      Then <outcome>
+
+      Examples:
+        | default | stored | chosen | outcome                          |
+        | off     | on     | off    | the setting is no longer stored  |
+        | on      | off    | on     | the setting is no longer stored  |
+        | on      | unset  | off    | the setting is stored as off     |
+
+    @backlog @desktop
+    Scenario: Providers nobody set up are not listed
+      Given only Codex and Claude have been configured
+      When the user opens the Providers settings
+      Then Codex and Claude are listed
+      And the providers that were never configured and are off are not listed
+
+    @backlog @desktop
+    Scenario Outline: A disabled provider the user configured stays listed
+      Given Grok is off and <configured>
+      When the user opens the Providers settings
+      Then Grok is listed
+
+      Examples:
+        | configured                         |
+        | the user added an instance of it   |
+        | the user gave it a binary path     |
+
+    @backlog @desktop
+    Scenario: A link to a provider that was removed does not open another account
+      Given the user follows a link to the instance "claudeAgent_work"
+      And that instance no longer exists on this environment
+      When the Providers settings open
+      Then the user is told the provider instance is no longer available on this device
+      And no other instance is selected or changed
+
+    @backlog @desktop
+    Scenario: A link to a provider opens that instance
+      Given the user follows a link to the instance "claudeAgent_work"
+      When the Providers settings open
+      Then "claudeAgent_work" is shown for editing
+
+    @backlog @desktop
+    Scenario: With no providers configured the panel says so
+      Given the environment has no provider instances
+      When the user opens the Providers settings
+      Then the user is told no providers are configured
+
+    @backlog @desktop
+    Scenario: Changing one instance leaves the others as another client saved them
+      Given another client changed the display name of "claudeAgent_work" after this panel loaded
+      When the user turns "codex" off in this panel
+      Then only "codex" changes
+      And "claudeAgent_work" keeps the name the other client saved
+
+    @backlog @desktop
+    Scenario: Resetting or deleting an instance keeps the user's model preferences
+      Given the user favourited and hid models of "codex" on this device
+      When the user resets "codex" to its defaults
+      Then the favourite and hidden models are kept on this device
+
     # The scramble is the page's own; tests/tst_ProvidersSettings.qml drives it.
     @desktop
     Scenario: The signed-in account email stays hidden until asked
@@ -330,6 +689,104 @@ Feature: Providers settings panel
       When the user removes the downloaded runtime and confirms
       Then the environment removes it
       And the card offers installing Antigravity again
+
+    @backlog @desktop @plugin-antigravity
+    Scenario Outline: The runtime card says where the runtime stands
+      Given <state>
+      When the user opens the Antigravity instance
+      Then the card says "<status>"
+
+      Examples:
+        | state                                                         | status                                              |
+        | the runtime is not installed and its size is not known        | Not installed.                                      |
+        | the runtime is not installed and the download is 140 MB       | 140 MB download.                                    |
+        | 12.5 MB of a 140 MB download have arrived                      | Downloading 12.5 MB of 140.0 MB.                    |
+        | the download is being unpacked                                | Extracting Antigravity.                             |
+        | the download is being checked                                 | Checking the downloaded runtime.                    |
+        | the runtime is installed                                      | Installed.                                          |
+        | a custom binary path is set and nothing runs there            | The configured Antigravity runtime is unavailable.  |
+        | a custom binary path is set and the instance is off           | The configured Antigravity runtime has not been checked. |
+
+    @backlog @desktop @plugin-antigravity
+    Scenario Outline: The install action names what it will do
+      Given <state>
+      When the user opens the Antigravity instance
+      Then the install action reads "<action>"
+
+      Examples:
+        | state                                         | action                      |
+        | nothing is installed                          | Install Antigravity         |
+        | a managed runtime is not installed yet        | Install managed runtime     |
+        | a newer runtime is available                  | Update Antigravity          |
+        | the runtime is installed and current          | Reinstall Antigravity       |
+        | the last installation failed                  | Retry installation          |
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: Removing the runtime says what is kept
+      Given the Antigravity runtime is installed on "Laptop"
+      When the user removes the downloaded runtime
+      Then the user is asked to confirm removing it from "Laptop"
+      And the question says the Google sign-in and thread history are kept
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: A custom binary path is not hidden by a managed install
+      Given a managed runtime is installed
+      And the instance's binary path points at a runtime that does not work
+      When the user opens the Antigravity instance
+      Then Antigravity is shown as unavailable
+      And signing in is not offered
+
+    @backlog @desktop @plugin-antigravity
+    Scenario Outline: Antigravity setup is withheld when this session cannot use it
+      Given <state>
+      When the user opens the Antigravity instance
+      Then the card says "<message>"
+      And no installation or sign-in is started
+
+      Examples:
+        | state                                   | message                                      |
+        | the session may only view providers     | Provider setup is read-only.                 |
+        | the environment is too old for setup    | Update this environment to manage Antigravity. |
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: Pressing sign in twice starts one sign-in
+      Given Antigravity is signed out
+      When the user presses sign in twice before the first start has answered
+      Then one sign-in is started
+
+    @backlog @desktop @plugin-antigravity
+    Scenario Outline: Sign-in actions follow what is known about the account
+      Given the account is <account>
+      When the user opens the Antigravity instance
+      Then the instance offers <actions>
+
+      Examples:
+        | account                                                 | actions                    |
+        | signed out                                              | sign in only               |
+        | unknown                                                 | sign in only               |
+        | signed in, with the runtime unable to name the account  | change account and sign out |
+        | signed in earlier but its credentials expired            | sign in again              |
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: A sign-in is finished from the pasted address only while it is current
+      Given the user pasted a return address for a sign-in that was since replaced
+      When the user submits it
+      Then nothing is sent to the environment
+      And the sign-in state is read again
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: A pasted return address shows signed in only once the environment confirms it
+      Given the user submitted a return address
+      When the environment has not yet verified the sign-in
+      Then the card does not say "Signed in."
+      When the environment confirms the sign-in
+      Then the card says the user is signed in
+
+    @backlog @desktop @plugin-antigravity
+    Scenario: The same status message is shown once
+      Given the runtime and the sign-in report the same problem
+      When the user opens the Antigravity instance
+      Then the problem is shown once
 
   # Sign-in is MC-addressed (provider.auth.*), so only environments a cluster MC serves
   # sign in from the panel. Signing out is in providers/provider-setup.feature.
@@ -435,6 +892,76 @@ Feature: Providers settings panel
       When the user pastes "http://localhost:1455/callback?code=abc" as the final sign-in address
       Then the environment finishes the sign-in with "http://localhost:1455/callback?code=abc"
 
+    @backlog @desktop
+    Scenario: Signing out says what it will stop
+      Given "Gemini" is signed in from HAL-C2 on "Laptop"
+      When the user signs out of "Gemini"
+      Then the user is asked to confirm signing out of "Gemini" on "Laptop"
+      And the question says threads sharing the sign-in are stopped and thread history is kept
+
+    @backlog @desktop
+    Scenario: A device code is shown to type in the browser
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      When the user signs in to "Gemini" and the agent asks for a device code
+      Then the code is shown with the instruction to enter it in the browser
+
+    @backlog @desktop
+    Scenario: The sign-in link can be copied
+      Given "Gemini" is waiting for the user to finish signing in in the browser
+      When the user copies the sign-in link
+      Then the link is on the clipboard
+      When the clipboard cannot be written
+      Then the user is told the link could not be copied
+
+    @backlog @desktop
+    Scenario: A sign-in page that cannot be opened offers the link
+      Given "Gemini" is waiting for the user to finish signing in in the browser
+      When the user opens the sign-in page and the computer cannot open it
+      Then the user is told to copy the link and open it in a browser
+
+    @backlog @desktop
+    Scenario Outline: The panel says what sign-in is possible
+      Given <state>
+      When the user opens the instance
+      Then the account row says "<message>"
+
+      Examples:
+        | state                                               | message                                                              |
+        | the agent has not yet advertised its sign-in methods | Discovering sign-in methods…                                         |
+        | the agent advertises no sign-in the app can run     | No in-app sign-in advertised. Follow the provider's docs to finish setup. |
+        | the agent can sign in and the user is signed out    | Sign in on Laptop.                                                   |
+
+    @backlog @desktop
+    Scenario: A method the agent no longer offers is not sent
+      Given the user chose the sign-in method "API key"
+      And the agent stopped offering "API key"
+      When the user signs in
+      Then the sign-in starts with the provider's default method
+
+    @backlog @desktop
+    Scenario: A long pasted answer reaches the sign-in terminal in pieces in order
+      Given the agent's login terminal waits for input
+      When the user pastes 10,000 characters into the sign-in terminal
+      Then the environment receives them in order, 4,096 characters at a time
+
+    @backlog @desktop
+    Scenario: A failed send to the sign-in terminal drops what was still queued
+      Given the user pasted a long answer into the sign-in terminal
+      When the environment rejects one piece
+      Then the pieces that had not been sent are discarded
+      And the user is told the input could not be sent
+
+    @backlog @desktop
+    Scenario Outline: The wizard's sign-in step can be finished or skipped
+      Given the user added an agent that signs in from HAL-C2 and <state>
+      When the sign-in step is shown
+      Then the step offers "<action>"
+
+      Examples:
+        | state                  | action        |
+        | is not signed in yet   | Skip for now  |
+        | is signed in           | Done          |
+
   # MC behaviour of provider updates and version advisories is owned by settings/updates.feature
   # and providers/provider-setup.feature; this rule holds what the panel adds.
   Rule: Updates
@@ -501,6 +1028,55 @@ Feature: Providers settings panel
       When the user installs the recommended version of "OpenCode"
       Then the environment installs "1.14.19" of "OpenCode"
 
+    # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionLabel)
+    @backlog @desktop
+    Scenario Outline: A provider's version is shown in one readable form
+      Given a provider reports the version "<reported>"
+      When the user looks at the provider
+      Then its version reads "<shown>"
+
+      Examples:
+        | reported                        | shown      |
+        | 1.2.3                           | v1.2.3     |
+        | v1.2.3                          | v1.2.3     |
+        | nightly-build                   | nightly-build |
+        | agy_acp_server_20260818_01_RC01 | 2026-08-18 RC01 |
+        | agy_acp_server_20260818_01      | 2026-08-18 |
+
+    # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
+    @backlog @desktop
+    Scenario Outline: A version warning without a message from the MC still says what to do
+      Given the installed "OpenCode" is of limited support and the MC gave no message
+      And <recommendation>
+      When the user opens the version details of "OpenCode"
+      Then the details say "<detail>"
+
+      Examples:
+        | recommendation                                  | detail                         |
+        | "1.14.19" is the recommended version            | Use v1.14.19 for full support. |
+        | the supported range is "1.14 to 1.16"           | Use 1.14 to 1.16 for full support. |
+        | no version or range is recommended              | Update for full support.       |
+
+    # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
+    @backlog @desktop
+    Scenario Outline: A newer provider version that does not work with this release is not offered
+      Given "Codex" is behind its latest release
+      And the latest release is <status> for this HAL-C2 release
+      When the user opens the version details of "Codex"
+      Then no update is offered
+
+      Examples:
+        | status              |
+        | known to be broken  |
+        | unsupported         |
+
+    # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
+    @backlog @desktop
+    Scenario: A provider that is up to date shows no version warning
+      Given "Codex" is on its latest release
+      When the user opens the version details of "Codex"
+      Then no update or warning is shown
+
   Rule: The models list
 
     @desktop
@@ -516,6 +1092,46 @@ Feature: Providers settings panel
       Then the list says "12 models · 2 favorites · 1 hidden"
       When the user filters the models by "mini"
       Then only models whose name or id has "mini" are listed
+
+    @backlog @desktop
+    Scenario Outline: An empty models list says why
+      Given <state>
+      When the user opens the provider's models
+      Then the list says "<message>"
+
+      Examples:
+        | state                                     | message                                  |
+        | the provider has not reported any models  | No models reported for this provider yet. |
+        | the user filtered the models by "zzz"     | No models match.                         |
+
+    @backlog @desktop
+    Scenario: Favourites come first and hidden models sink to the end
+      Given Codex has the models "a", "b" and "c", "c" is a favourite and "a" is hidden
+      When the user opens Codex's models
+      Then the list shows "c", then "b", then "a"
+
+    @backlog @desktop
+    Scenario: Moving a model only moves it within its group
+      Given "b" is the last visible model and "a" is hidden below it
+      When the user moves "b" down
+      Then "b" stays above "a"
+      And the order is kept on this device
+
+    @backlog @desktop
+    Scenario: Every built-in model can be disabled or enabled at once
+      Given Codex has built-in models "a" and "b", a custom model "mine" and a hidden entry for a model that is gone
+      When the user disables all models
+      Then "a" and "b" are hidden from the picker
+      And "mine" is still offered
+      When the user enables all models
+      Then "a" and "b" are offered again
+      And the hidden entry for the model that is gone is kept
+
+    @backlog @desktop
+    Scenario: A custom model cannot be hidden from the picker
+      When the user looks at the picker switch of a custom model
+      Then the switch is on and cannot be turned off
+      And it is explained that custom models are always shown in the picker
 
   Rule: Custom models
 
@@ -555,7 +1171,78 @@ Feature: Providers settings panel
         | claude-fable-5-1 | That model is already built in.     |
         | my-model         | That custom model is already saved. |
 
+    # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd, MAX_CUSTOM_MODEL_LENGTH)
+    @backlog @desktop
+    Scenario: A custom model id longer than 256 characters is refused
+      When the user adds a custom model to Claude whose id has 257 characters
+      Then the user is told "Model slugs must be 256 characters or less."
+      And nothing is saved
+
+    # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (FILTER_THRESHOLD, handleAdd)
+    @backlog @desktop
+    Scenario: A short models list has no filter
+      Given Codex reports eight models
+      When the user opens Codex's models
+      Then the models cannot be filtered
+      When Codex reports a ninth model
+      Then the models can be filtered
+
+    # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd clears the filter)
+    @backlog @desktop
+    Scenario: A custom model added while filtering is shown at once
+      Given Codex reports twelve models and the user filtered them by "mini"
+      When the user adds the custom model "my-model" to Codex
+      Then the filter is cleared
+      And "my-model" is listed and brought into view
+
+    # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (driverKind antigravity)
+    @backlog @desktop @plugin-antigravity
+    Scenario: Antigravity's models cannot be extended with custom ones
+      When the user opens Antigravity's models
+      Then no custom model can be added
+
     @desktop
     Scenario: A custom model without options uses the provider's defaults
       When the user adds a custom model with no options
       Then the composer uses the provider's default options for it
+
+    @backlog @desktop
+    Scenario Outline: A custom option that repeats an id is named in the message
+      Given the custom model "my-model" has the options <options>
+      When the user saves the custom model
+      Then the user is told "<message>"
+      And nothing is saved
+
+      Examples:
+        | options                                            | message                                |
+        | "effort" and "effort"                              | Option 2: id "effort" is used twice.   |
+        | "effort" with the choices "low" and "low"          | Option 1: choice "low" is used twice.  |
+        | "effort" with a choice that has no value           | Option 1 has a choice without a value. |
+
+    @backlog @desktop
+    Scenario: A custom model's name falls back to its id
+      When the user adds the custom model "my-model" and leaves its name empty
+      Then the model is listed as "my-model"
+
+    @backlog @desktop
+    Scenario: A custom choice without a label is shown by its value
+      When the user adds a choice with the value "high" and no label to a custom option
+      Then the composer lists that choice as "high"
+
+    @backlog @desktop
+    Scenario: A custom option offers the options the provider actually reads
+      When the user adds an option to a custom Claude model
+      Then the suggested options are reasoning, fast mode and thinking
+      And an option with any other id is saved as typed
+
+    @backlog @desktop
+    Scenario: Copying options from Claude leaves out what a custom model cannot carry
+      Given a built-in Claude model offers an "ultrathink" reasoning choice and a context window
+      When the user copies the options of that model into a custom model
+      Then the copy offers the reasoning choices except "ultrathink"
+      And the copy does not offer the context window
+
+    @backlog @desktop
+    Scenario: A custom option can be a switch
+      When the user adds a custom option that is on or off
+      Then the composer offers it as a switch

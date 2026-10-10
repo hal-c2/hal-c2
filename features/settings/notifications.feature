@@ -1,6 +1,7 @@
 # Sources:
 #   apps/web/src/components/settings/NotificationSettings.tsx
 #   apps/web/src/threadNotifications.ts
+#   apps/web/src/assets/notification-completion.mp3, notification-input.mp3 (the sounds)
 #   apps/web/src/components/ThreadNotificationCoordinator.tsx
 #   apps/web/src/components/settings/SettingsPanels.tsx (in-app notifications)
 #   apps/desktop-qt/parity/features.backlog.test.ts (thread-notifications)
@@ -29,6 +30,24 @@ Feature: Thread notifications
         | Sound only                | the completion sound plays                              |
         | Notifications with sound  | a system notification is shown and the sound plays      |
 
+    # The web app bundled its own completion and input sounds (apps/web/src/assets/*.mp3).
+    # The Qt desktop (main.cpp) only asks the Linux sound theme's player, so another system
+    # or a Linux desktop without one stays silent.
+    @backlog @desktop
+    Scenario Outline: The notification sound plays on every system
+      Given the notification mode is "Sound only"
+      And the user is on <system>
+      When "Fix login" finishes
+      Then the completion sound plays
+      When "Fix login" asks the user a question
+      Then the input sound plays
+
+      Examples:
+        | system                                  |
+        | macOS                                   |
+        | Windows                                 |
+        | Linux without a sound theme player      |
+
     @desktop
     Scenario: Notifications need the system's permission
       Given the system has not allowed notifications
@@ -41,6 +60,14 @@ Feature: Thread notifications
       Given the user is using HAL-C2 over plain HTTP in a web browser
       When the user chooses notifications only
       Then the user is told notifications need HTTPS or the desktop app and that sound only is still available
+
+    # Legacy: apps/web/src/components/settings/NotificationSettings.tsx (permission request throws)
+    @backlog @desktop
+    Scenario: A permission request that cannot be made keeps the mode and offers sound only
+      Given the system cannot show the permission request
+      When the user chooses notifications with sound
+      Then the notification mode is unchanged
+      And the user is told notifications are unavailable and that sound only is still available
 
   Rule: What the user is told
 
@@ -92,3 +119,88 @@ Feature: Thread notifications
       Then the app shows a badge of 2
       When the user brings HAL-C2 to the front
       Then the notifications are dismissed and the badge is cleared
+
+    # Likely already implemented: apps/desktop-qt/src/native/AlertController.cpp
+    @backlog @desktop
+    Scenario: A thread that stays waiting does not notify again
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      And "Fix login" asked for approval and notified
+      When "Fix login" is still waiting for the same approval after the environment sends its state again
+      Then no further notification is shown
+
+    @backlog @desktop
+    Scenario: A new request from the same thread notifies again
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      And "Fix login" asked for approval and notified
+      When "Fix login" is answered and then asks for approval again in a new run
+      Then a system notification titled "Approval needed" is shown
+
+    @backlog @desktop
+    Scenario: A thread that finished before is not announced as finishing again
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      And "Fix login" finished and notified
+      When the environment sends its state again with "Fix login" finished at the same time
+      Then no further notification is shown
+
+    @backlog @desktop
+    Scenario Outline: The sound depends on what the thread needs
+      Given the notification mode is "Sound only"
+      When "Fix login" <event>
+      Then the <sound> sound plays
+
+      Examples:
+        | event                | sound      |
+        | finishes             | completion |
+        | asks for approval    | input      |
+        | asks a question      | input      |
+        | fails                | input      |
+        | hits its usage limit | input      |
+
+    @backlog @desktop
+    Scenario: A toast is not shown when in-app notifications are off
+      Given in-app notifications are off
+      And HAL-C2 is in front showing another thread
+      When "Fix login" finishes
+      Then no toast is shown
+      And no system notification is shown
+
+    @backlog @desktop
+    Scenario: A toast says whether the thread failed, needs input or finished
+      Given in-app notifications are on
+      And HAL-C2 is in front showing another thread
+      When "Fix login" fails
+      Then the toast titled "Thread failed" is shown as an error
+      When "Fix login" asks a question
+      Then the toast titled "Input needed" is shown as a warning
+      When "Fix login" finishes
+      Then the toast titled "Thread completed" is shown as a success
+
+    @backlog @desktop
+    Scenario: Changing the notification mode clears waiting notifications
+      Given two system notifications are waiting
+      When the user changes the notification mode
+      Then the notifications are dismissed and the badge is cleared
+
+    @backlog @desktop
+    Scenario: Removing an environment clears its waiting notifications
+      Given a system notification is waiting for a thread on the environment "work"
+      When the user removes the environment "work"
+      Then that notification is dismissed
+      And the badge no longer counts it
+
+    @backlog @desktop
+    Scenario: A badge over nine says so
+      Given ten system notifications are waiting
+      Then the badge reads "9+" where the platform draws the count
+
+    # The web app's tab icon wore the badge instead; there is no tab in the desktop client.
+    @desktop @dropped
+    Scenario: The browser tab's icon shows the count of waiting notifications
+      Given the user runs HAL-C2 in a browser tab
+      And two system notifications are waiting
+      Then the tab's icon shows a badge of 2
+      When the user brings the tab to the front
+      Then the tab's icon is restored

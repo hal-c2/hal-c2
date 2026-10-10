@@ -1,6 +1,7 @@
 # Sources:
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
 #   apps/web/src/components/threadActionMenu.logic.ts (Settle thread, Un-settle thread)
+#   apps/web/src/components/ChatView.tsx (settled notice in the open thread)
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Settled section, settled limit)
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
@@ -27,6 +28,29 @@ Feature: Settling threads
     Given "Ship checkout" is settled
     When the user un-settles "Ship checkout"
     Then "Ship checkout" returns to the top of the active threads
+
+  @backlog @desktop
+  Scenario: An open settled thread says so and can be un-settled there
+    Given "Ship checkout" is settled
+    When the user opens "Ship checkout"
+    Then the thread says "This thread is settled" and that sending a message un-settles it
+    When the user chooses "Un-settle"
+    Then "Ship checkout" returns to the active threads
+
+  @backlog @desktop
+  Scenario: An un-settle that fails is reported
+    Given the user has opened "Ship checkout", which is settled
+    And the environment rejects the un-settle
+    When the user chooses "Un-settle"
+    Then the user is told "Failed to un-settle thread" with the reason
+    And "Ship checkout" stays settled
+
+  @backlog @desktop
+  Scenario: A settled thread that woke earlier does not say it woke
+    Given "Ship checkout" woke from a snooze and was then settled
+    When the user opens "Ship checkout"
+    Then the thread says it is settled
+    And it does not say it woke from a snooze
 
   @tui
   Scenario: Settling reports the result

@@ -13,7 +13,7 @@
 #     thread.metadata.update, thread.model-selection.set, provider.switch, thread.pin,
 #     thread.unpin, thread.settle, thread.unsettle, thread.snooze, thread.unsnooze,
 #     thread.archive, thread.unarchive, thread.mark-unread
-#   apps/server/src/mcp/toolkits/thread, orchestrator, environment, attachment
+#   apps/server/src/mcp/toolkits/thread, orchestrator, environment, attachment, project
 Feature: Agents working with threads through MCP tools
   An agent reads, messages, creates and organizes threads of its own project as
   the thread it runs in. Writes follow the access rules of the MCP server.
@@ -144,6 +144,24 @@ Feature: Agents working with threads through MCP tools
     Then those settings change
     And settings outside the allowed list are left alone
 
+  @backlog @mc
+  Scenario: Long custom writing instructions are cut when an agent reads the environment
+    Given the writing style has custom instructions of 5,000 characters
+    When the agent of "caller" reads the environment
+    Then the custom instructions arrive cut to 4,000 characters
+    And they are flagged as truncated
+
+  @backlog @mc
+  Scenario Outline: A credential from another environment cannot reach this one's preferences
+    Given a credential that was issued by another environment
+    When its agent <action>
+    Then it fails with code "capability_denied" and "This credential belongs to another environment."
+
+    Examples:
+      | action                       |
+      | reads the environment        |
+      | updates the preferences      |
+
   @mc
   Scenario: Launching a thread starts it with the caller's model and modes
     When the agent of "caller" launches a thread in "demo" with message "Write the release notes"
@@ -156,6 +174,29 @@ Feature: Agents working with threads through MCP tools
     Then a new thread exists in "demo"
     And its worktree is based on "feature/base"
     And its first run waits until the worktree is ready
+
+  # Legacy: apps/server/src/mcp/toolkits/project/tools.ts and handlers.ts (hal_c2_thread_launch)
+  @backlog @mc
+  Scenario: A launch that names no workspace starts in the project root, not in the caller's worktree
+    Given thread "caller" works in worktree "/work/x" on branch "feature/x"
+    When the agent of "caller" launches a thread in "demo" without saying where it works
+    Then the new thread works in the project root with no worktree
+    And it does not share the caller's worktree or branch
+
+  # Legacy: apps/server/src/mcp/toolkits/project/tools.ts, attachment/tools.ts (input schemas)
+  @backlog @mc
+  Scenario Outline: A launch or an attachment send over the input limits is refused
+    When the agent of "caller" <request>
+    Then the tool refuses the input as invalid
+    And no thread is created and nothing is sent
+
+    Examples:
+      | request                                                        |
+      | launches a thread with a message of 120,001 characters         |
+      | launches a thread with 9 attachments                           |
+      | sends 9 attachments to "t2"                                    |
+      | sends no attachments to "t2"                                   |
+      | sends attachments to "t2" with a message of 120,001 characters |
 
   @mc
   Scenario: A launched thread accepts only freshly uploaded attachments
@@ -331,3 +372,46 @@ Feature: Agents working with threads through MCP tools
     Then it receives the caller's inherited provider, model and modes
     And each provider instance with its models, options and whether it can run a child task and why not
     And that batches hold at most 20 threads
+
+  @backlog @mc
+  Scenario: A thread the user attached as context can be read from another project
+    Given the user attached thread "elsewhere" of another project to a message of "caller"
+    When the agent of "caller" reads "elsewhere"
+    Then it receives the thread's messages
+    But listing, sending to or interrupting "elsewhere" is still refused
+
+  @backlog @mc
+  Scenario: A thread an agent attached does not widen what the agent can read
+    Given a message written by an agent of "caller" carries a context record naming thread "elsewhere" of another project
+    When the agent of "caller" reads "elsewhere"
+    Then the tool fails with code "thread_not_found"
+
+  @backlog @mc
+  Scenario: A deleted thread cannot be read
+    Given thread "t2" was deleted
+    When the agent of "caller" reads "t2"
+    Then the tool fails with code "thread_not_found" saying "Thread t2 is no longer available."
+
+  @backlog @mc
+  Scenario Outline: Interrupting a thread says what happened
+    Given <situation>
+    When the agent of "caller" interrupts "t2"
+    Then the answer's status is <status>
+
+    Examples:
+      | situation                                              | status                            |
+      | "t2" has a turn running                                | interrupt_requested               |
+      | "t2" has no turn running                               | no_active_run                     |
+      | the agent names a run of "t2" that already finished    | that run's final status           |
+
+  @backlog @mc
+  Scenario: Repeating a send with the same request key delivers it once
+    Given the agent of "caller" sent "run the tests" to "t2" with request key "k1"
+    When it repeats the send with request key "k1"
+    Then "t2" received the message once
+
+  @backlog @mc
+  Scenario: Repeating an interrupt with the same request key interrupts once
+    Given the agent of "caller" interrupted "t2" with request key "k1"
+    When it repeats the interrupt with request key "k1"
+    Then the turn of "t2" was interrupted once

@@ -3,6 +3,7 @@
 #   apps/web/src/lib/terminalContext.ts (normalizeTerminalContextSelection, formatTerminalContextLabel, expired contexts)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
 #   apps/web/src/composerDraftStore.ts (terminalContexts on drafts, legacy placeholder migration)
+#   apps/web/src/components/ChatView.tsx, ChatView.logic.ts (buildExpiredTerminalContextToastCopy: expired excerpts at send)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml (the terminal menu's Add to chat)
 #   apps/desktop-qt/src/native/ComposerController.cpp (addTerminalContext, withTerminalContexts)
@@ -61,6 +62,25 @@ Feature: Adding terminal output to a message
     Given a restored draft holds a terminal excerpt with no text left
     When the user sends the message
     Then the empty excerpt is not sent
+
+  @backlog @desktop
+  Scenario Outline: The user is told when expired terminal excerpts are left out of a message
+    Given the draft reads "Why did this fail?" and holds <count> whose text is gone
+    When the user sends the message
+    Then the message is sent without them
+    And the user sees a "warning" toast "<title>" saying "Re-add it if you want that terminal output included."
+
+    Examples:
+      | count                 | title                                        |
+      | one terminal excerpt  | Expired terminal context omitted from message  |
+      | two terminal excerpts | Expired terminal contexts omitted from message |
+
+  @backlog @desktop
+  Scenario: A draft holding only expired terminal excerpts is not sent
+    Given the draft holds nothing but a terminal excerpt whose text is gone
+    When the user sends the message
+    Then nothing is sent and the draft is kept
+    And the user sees a "warning" toast "Expired terminal context won't be sent" saying "Remove it or re-add it to include terminal output."
 
   @backlog @desktop
   Scenario: Drafts saved by older versions keep their terminal excerpts

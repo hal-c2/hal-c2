@@ -212,6 +212,20 @@ Feature: The desktop's thread list against its MC
       Then the MC receives a "thread.unsnooze" command for "t1"
       And the toast "Snoozed until 11:00" is gone
 
+    @backlog @desktop
+    Scenario Outline: A wake time is told the way a person would say it
+      Given this device's "timestampFormat" is set to "24-hour"
+      And it is Wednesday 2026-09-23 at 10:00
+      When a thread is snoozed until <wake>
+      Then the user sees the toast "Snoozed until <said>"
+
+      Examples:
+        | wake                  | said              |
+        | today 17:30           | 17:30             |
+        | tomorrow 09:00        | tomorrow 09:00    |
+        | Monday 09:00          | Mon 09:00         |
+        | 2026-10-14 09:00      | Oct 14, 09:00     |
+
     @desktop
     Scenario: Dismissing the menu snoozes nothing
       Given the user opens the snooze menu for "env-a:t1" at 40, 120

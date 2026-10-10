@@ -1,5 +1,6 @@
 # Sources:
 #   apps/web/src/routes/_chat.index.tsx (IndexDraftLanding: the draft, the hero, the retry)
+#   apps/web/src/routes/_chat.index.tsx (HostedStaticOnboardingState), apps/web/src/routes/__root.tsx (the local environment off counts as no server)
 #   apps/web/src/components/Sidebar.logic.ts (sortScopedProjectsForSidebar, "updated_at")
 #   apps/web/src/hooks/useHandleNewThread.ts (a project's draft is reused)
 #   apps/web/src/components/ThreadRouteView.tsx (a missing thread or draft goes to the index)
@@ -85,3 +86,26 @@ Feature: A window with no thread lands on a new thread
       Given the desktop shell is connected to its MC
       When the MC has the project "p1" titled "proj-1"
       Then the window shows a new draft in "proj-1"
+
+  Rule: With no environment at all, the user is asked to connect one
+
+    @backlog @desktop
+    Scenario: With the local environment off and nothing else connected the window asks for a connection
+      Given the local environment is turned off and no other environment is saved
+      When the user opens the app
+      Then the window says "Connect to a computer running HAL-C2"
+      And it says the local environment is turned off and can be turned back on in Connections
+      And it offers "Open Connections", which opens the connections settings
+
+    @backlog @desktop
+    Scenario: With the local environment off a saved environment lands on a new thread as usual
+      Given the local environment is turned off and the environment "studio" is saved with projects
+      When the user opens the app
+      Then the window shows a new draft in the most recent project of "studio"
+
+    # The hosted web app has no server of its own; the native clients always start from an MC or a saved one.
+    @dropped @desktop
+    Scenario: The hosted web app with nothing connected explains how to add a machine
+      Given the user opens the hosted web app with no environment saved
+      Then the page says "Connect to a computer running HAL-C2"
+      And it says to add the machine with a pairing link, or to sign in to HAL-C2 Connect where that is offered

@@ -11,6 +11,8 @@
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
+#   apps/web/src/components/ChatView.tsx (typing and pasting with nothing focused, focus on returning
+#     to the window, page keys from the composer)
 
 Feature: Keyboard focus and keyboard-only use
   Everything a user can do with the pointer can be done from the keyboard, and focus lands
@@ -53,6 +55,66 @@ Feature: Keyboard focus and keyboard-only use
     Scenario: A new thread puts focus in the composer
       When the user starts a new thread
       Then the composer has keyboard focus
+
+    @backlog @desktop
+    Scenario: Typing with nothing focused goes to the composer
+      Given the user is looking at a thread and no field has keyboard focus
+      When the user types "h"
+      Then the composer has keyboard focus
+      And the draft reads "h"
+
+    @backlog @desktop
+    Scenario Outline: Typing is left where it belongs
+      Given the user is looking at a thread
+      And <situation>
+      When the user types "h"
+      Then the composer's draft is unchanged
+
+      Examples:
+        | situation                                  |
+        | another text field has keyboard focus      |
+        | a button or a list row has keyboard focus  |
+        | a menu or a dialog is open                 |
+        | the key is pressed with a modifier held    |
+        | the user is composing with an input method |
+
+    @backlog @desktop
+    Scenario: Pasting text with nothing focused goes to the composer
+      Given the user is looking at a thread and no field has keyboard focus
+      And the clipboard holds the text "npm test"
+      When the user pastes
+      Then the composer has keyboard focus
+      And the draft reads "npm test"
+
+    @backlog @desktop
+    Scenario: Coming back to the window puts focus in the composer
+      Given the user is looking at a thread and keyboard focus was last outside any field
+      When the user switches to another app and back
+      Then the composer has keyboard focus
+
+    @backlog @desktop
+    Scenario Outline: Coming back to the window leaves focus with what takes typing
+      Given the user is looking at a thread and <holder> has keyboard focus
+      When the user switches to another app and back
+      Then <holder> still has keyboard focus
+
+      Examples:
+        | holder                         |
+        | the terminal drawer            |
+        | a terminal in the right panel  |
+        | a search field                 |
+
+    @backlog @desktop
+    Scenario Outline: Page keys in the composer scroll the conversation
+      Given the composer has keyboard focus and the conversation is longer than the view
+      When the user presses <key>
+      Then the conversation scrolls <direction> by a page
+      And the composer keeps keyboard focus
+
+      Examples:
+        | key      | direction |
+        | PageUp   | up        |
+        | PageDown | down      |
 
   Rule: Keyboard-only thread list
 

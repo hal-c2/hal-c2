@@ -2,7 +2,9 @@
 #   apps/desktop-qt/src/native/ToastController.cpp (timing, dismiss, a failure without a reason)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/desktop-qt/tests/native/features/ToastSteps.cpp
-#   apps/web/src/components/ui/toast.tsx (the five second timeout, the stack)
+#   apps/web/src/components/ui/toast.tsx (the five second timeout, the stack, thread-scoped toasts,
+#     expanded on keyboard focus, timers held while HAL-C2 is not in front, long error clamp and copy)
+#   apps/web/src/components/GitActionsControl.logic.ts (success toasts leave after their own timeout)
 #   @base-ui/react toast store (limit, expanded on hover or focus, timers held while expanded)
 #   Shared domain: desktop/native-toasts.feature owns which toasts the Qt shell raises itself and
 #   which it leaves to the page; timeline/notifications.feature owns alerts about threads.
@@ -72,3 +74,51 @@ Feature: Toasts
     When the user collapses the toasts
     And 1 second passes
     Then the toast "Failed to settle thread" is gone
+
+  @backlog @desktop @mobile
+  Scenario: Only the newest three toasts show while the stack is collapsed
+    When the user settles "env-a:t1"
+    And the user settles "env-a:t2"
+    And the user settles "env-a:t3"
+    And the user settles "env-a:t4"
+    Then the user sees 3 toasts while the stack is collapsed
+    When the user expands the toasts
+    Then the user sees 4 toasts
+
+  @backlog @desktop
+  Scenario: A toast about a thread shows only while that thread is open
+    Given the user is looking at "env-a:t2"
+    When the user settles "env-a:t1"
+    Then the user sees no toast
+    When the user opens "env-a:t1"
+    Then the user sees an "error" toast "Failed to settle thread" saying "No"
+
+  @backlog @desktop
+  Scenario: A timed toast counts down only while HAL-C2 is in front
+    Given the user sees a "success" toast "Committed abc0001"
+    And 4 seconds pass
+    When HAL-C2 is in the background for 30 seconds
+    Then the user sees a "success" toast "Committed abc0001"
+    When HAL-C2 comes to the front
+    And 6 seconds pass
+    Then the toast "Committed abc0001" is gone
+
+  @backlog @desktop
+  Scenario: Keyboard focus in the toast stack expands it
+    Given the user settles "env-a:t1"
+    And the user sees an "error" toast "Failed to settle thread" saying "No"
+    And 4 seconds pass
+    When the user moves keyboard focus into the toasts
+    And 30 seconds pass
+    Then the user sees an "error" toast "Failed to settle thread"
+    When the user moves keyboard focus out of the toasts
+    And 1 second passes
+    Then the toast "Failed to settle thread" is gone
+
+  @backlog @desktop
+  Scenario: A long error is shortened in its toast and can still be copied whole
+    Given the MC refuses "thread.settle" with a reason of 300 characters
+    When the user settles "env-a:t1"
+    Then the error toast shows its message in at most four lines
+    When the user copies the error from the toast
+    Then the clipboard holds the whole 300-character reason

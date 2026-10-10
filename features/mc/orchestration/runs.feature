@@ -11,6 +11,15 @@
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn)
 #   apps/server-ex/proof/models/turns.maude
 #   apps/server/src/orchestration-v2/ (run lifecycle)
+#   apps/server/src/orchestration-v2/RunExecutionService.ts (interrupt outcome, open subagents, bare
+#     compact command, preparation failure, events of threads sharing a provider process)
+#   apps/server/src/orchestration-v2/Orchestrator.ts (interrupt request item)
+#   apps/server/src/orchestration-v2/assistantStreaming.ts (what paragraph streaming holds back)
+#   apps/server/src/orchestration-v2/EventSink.ts (late updates of an attempt that was replaced)
+#   apps/server/src/orchestration-v2/ProviderFailure.ts (failure messages, redaction, retry titles)
+#   apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts (sign-in changes block session starts)
+#   apps/server/src/orchestration-v2/ProviderTurnStartService.ts (sign-out and compact commands)
+#   apps/server/src/orchestration-v2/ProviderSessionManager.ts (workspace checks, sign-out closes sessions)
 #   apps/server/src/provider/Errors.ts (ProviderInstanceNotFoundError),
 #     apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 #   docs/internals/glossary.md
@@ -142,6 +151,35 @@ Feature: Runs and turns
     When a turn streams assistant text
     Then the text is written a paragraph at a time
 
+  @mc @backlog
+  Scenario: Reasoning streams by the same mode as the reply
+    Given project "demo" streams responses by "paragraph"
+    And "t1" has a running turn
+    When the provider streams reasoning text
+    Then the reasoning is written a paragraph at a time, at most every 400 ms
+    And by "turn" it is written only when the reasoning is finished
+
+  @mc @backlog
+  Scenario Outline: Paragraph streaming holds back text whose shape could still change
+    Given project "demo" streams responses by "paragraph"
+    And "t1" has a running turn
+    When the provider has streamed <text so far>
+    Then <what is written>
+
+    Examples:
+      | text so far                                             | what is written                                   |
+      | a paragraph and half of the next line                   | only the paragraph is written                     |
+      | a paragraph and an opened code block with blank lines   | nothing inside the open code block is written     |
+      | a code block nested in a list item, then its close      | the text up to and including the close is written |
+      | a first paragraph with no blank line after it yet       | nothing is written                                |
+
+  @mc @backlog
+  Scenario: The held-back tail is written when the reply finishes
+    Given project "demo" streams responses by "paragraph"
+    And the provider streamed a reply that ends without a blank line
+    When the provider finishes the reply
+    Then the whole reply is written at once, whatever was held back
+
   @mc
   Scenario: Tool output streams without waiting for a paragraph
     Given "t1" has a running turn
@@ -217,12 +255,116 @@ Feature: Runs and turns
     Then the partial answer stays in the failed run
     And the run is marked failed
 
+  @backlog @mc
+  Scenario: Late updates from an attempt that was replaced are ignored
+    Given a turn of "t1" was restarted as a new attempt
+    When the first attempt reports a late change to the run or to its provider conversation
+    Then the run keeps following the new attempt
+    And the provider conversation the new attempt claimed is not changed
+
   @mc @shared @backlog-mobile
   Scenario: A provider retry is recorded as a retry
     Given the provider retries a failed request during a turn of "t1"
     When the retry is recorded
     Then the turn's work log shows a provider retry
     And no second user turn is created
+
+  @backlog @mc
+  Scenario Outline: A provider retry says how it ended
+    Given the provider is retrying a failed request during a turn of "t1"
+    When <ending>
+    Then the retry's entry in the turn's work log reads "<title>"
+    And the turn has only that one entry for the failure
+
+    Examples:
+      | ending                                       | title                  |
+      | the retry succeeds                           | Provider recovered     |
+      | the provider gives up                        | Provider error         |
+      | the provider gives up on its usage limit     | Usage limit reached    |
+      | the user stops the turn while it is retrying | Provider retry stopped |
+
+  @backlog @mc
+  Scenario Outline: A failed turn says what the user can do about it
+    When a turn of "t1" fails because <cause>
+    Then the run fails with "<message>"
+
+    Examples:
+      | cause                                                   | message                                                                                                                  |
+      | the provider's session could not be opened              | The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.       |
+      | the provider's conversation could not be resumed        | The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs. |
+      | the provider could not start the turn                   | The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.   |
+      | the provider's event stream closed mid-turn             | The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.  |
+      | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
+      | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
+
+  @backlog @mc
+  Scenario Outline: A failure message never shows credentials
+    When the provider fails a turn of "t1" with a message holding <secret>
+    Then the failure the thread records shows <shown>
+
+    Examples:
+      | secret                                     | shown                                    |
+      | a URL with a user name, password and query | the URL without its credentials or query |
+      | a bearer or basic authorization value      | "[REDACTED]" in place of the value       |
+      | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
+      | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
+
+  @backlog @mc
+  Scenario: A very long failure message is cut short
+    When the provider fails a turn of "t1" with a message longer than 4,096 characters
+    Then the failure the thread records is at most 4,096 characters and ends with "…"
+
+  @backlog @mc
+  Scenario: A turn cannot start while its provider's sign-in is changing
+    Given the user is signing in to or out of the provider of "t1"
+    When the user sends "Hi" to "t1"
+    Then the run fails with "This provider's sign-in is changing. Try again after it finishes."
+
+  @backlog @mc
+  Scenario: A sign-in change holds back every instance that shares the login
+    Given two instances of a provider share one saved login
+    When the user signs out of the first while a turn is starting on the second
+    Then the second's turn fails with "This provider's sign-in is changing. Try again after it finishes."
+
+  @backlog @mc
+  Scenario: Signing out of a provider stops the sessions of that instance
+    Given "t1" is idle with a provider session
+    When the user signs out of the provider instance of "t1"
+    Then the provider process for "t1" stops
+    And sessions on other instances keep running
+
+  @backlog @mc
+  Scenario: A sign-out sent as a message is handled by the MC, not the agent
+    Given the provider of "t1" has a sign-out command
+    When the user sends that command by itself to "t1"
+    Then the provider instance is signed out and the run completes with "Provider signed out"
+    And the command is not sent to the agent
+
+  @backlog @mc
+  Scenario: A sign-out sent as a message signs out the provider the thread last ran on
+    Given "t1" last ran on one provider instance and the user has since picked another
+    When the user sends the sign-out command by itself to "t1"
+    Then the instance "t1" last ran on is signed out
+
+  @backlog @mc
+  Scenario: A sign-out sent as a message that fails says why
+    Given the provider of "t1" cannot be signed out
+    When the user sends the sign-out command by itself to "t1"
+    Then the run fails with "Provider sign-out failed" and the provider's reason
+
+  @backlog @mc
+  Scenario: Compacting a thread with no conversation is refused
+    Given "t1" has no conversation yet
+    When the user sends "/compact" to "t1"
+    Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
+    And nothing is sent to the provider
+
+  @backlog @mc
+  Scenario: A workspace that is missing or is not a folder fails the turn before the provider starts
+    Given the workspace of "t1" is not a worktree and its folder is gone
+    When the user sends "Hi" to "t1"
+    Then the run fails
+    And no provider process is started for it
 
   @mc
   Scenario: The next queued message starts when a run ends
@@ -277,3 +419,67 @@ Feature: Runs and turns
     Given "t1" has run a Claude turn
     When the user uploads feedback for "t1"
     Then it fails with "Provider 'claudeAgent' does not support feedback uploads."
+
+  @backlog @mc
+  Scenario: An interrupt is recorded as a request and then as its outcome
+    Given "t1" has a running turn
+    When the user interrupts the run giving the reason "wrong branch"
+    Then the run records an item titled "Interrupt requested" saying "wrong branch"
+    And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
+
+  @backlog @mc
+  Scenario: An interrupt without a reason says only that it was requested
+    Given "t1" has a running turn
+    When the user interrupts the run without a reason
+    Then the run records an item titled "Interrupt requested" saying "Interrupt requested"
+
+  @backlog @mc
+  Scenario: Interrupting a run that has no provider conversation is refused
+    Given "t1" has a run that never reached a provider conversation
+    When the user interrupts that run
+    Then the command fails saying the run is not interruptible
+
+  @backlog @mc
+  Scenario Outline: A turn that does not complete ends the provider subagents it left open
+    Given "t1" has a running turn with a provider subagent still at work
+    When the turn ends as <status>
+    Then the subagent, its item on the turn and the work in its own thread end as <status>
+    And nothing of the subagent is left streaming
+
+    Examples:
+      | status      |
+      | interrupted |
+      | failed      |
+      | cancelled   |
+
+  @backlog @mc
+  Scenario Outline: Only a bare compact command compacts the conversation
+    When the user sends <message> to "t1"
+    Then <outcome>
+
+    Examples:
+      | message                               | outcome                                         |
+      | "/compact"                            | the provider is asked to compact, not to answer |
+      | " /COMPACT "                          | the provider is asked to compact, not to answer |
+      | "/compact" with "shot.png" attached   | the provider receives it as an ordinary message |
+
+  @backlog @mc
+  Scenario: Compacting on a provider that cannot compact fails the run
+    Given "t1" runs on a provider that offers no context compaction
+    When the user sends "/compact" to "t1"
+    Then the run fails with "This provider does not support context compaction."
+    And "t1" can take its next message
+
+  @backlog @mc
+  Scenario: A run the MC cannot prepare fails with a short message
+    Given the MC hits an internal error while getting the run of "t1" ready
+    When the user sends "Hi" to "t1"
+    Then the run fails with "Run preparation failed."
+    And the internal error text is not shown on the run
+
+  @backlog @mc
+  Scenario: Output of another thread on a shared provider process stays off this run
+    Given "t1" and thread "t2" share one provider process and both have a running turn
+    When the provider reports output for the turn of "t2"
+    Then nothing is recorded on the run of "t1"
+    And the output is recorded on the run of "t2"

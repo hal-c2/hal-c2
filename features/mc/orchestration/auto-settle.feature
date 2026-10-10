@@ -4,6 +4,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.auto-settle)
 #   apps/server/src/orchestration-v2/ (auto-settle reactor)
+#   apps/server/src/orchestration-v2/ThreadSettlementService.ts (several pull requests, branch lookups,
+#     reused branches, lookup failures, project-only rules)
 #   docs/user/thread-sidebar.md
 Feature: Threads settle on their own
   A thread that is done, because its pull request merged or closed or because
@@ -135,3 +137,83 @@ Feature: Threads settle on their own
     When a client unsettles "t1"
     And the MC sweeps for threads to settle
     Then thread "t1" is not settled
+
+  @backlog @mc
+  Scenario: A closed pull request settles the thread even when settle-on-merge is off
+    Given auto-settle on merge is off
+    And thread "t1" links a pull request that closed after the user last worked in it
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: One open pull request among several linked ones keeps the thread active
+    Given thread "t1" links a pull request that merged an hour ago and another that is still open
+    When the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+
+  @backlog @mc
+  Scenario: With several finished pull requests the one that finished last decides
+    Given thread "t1" links a pull request that merged before the user's last message
+    And thread "t1" links another pull request that merged after it
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: A thread with no linked pull request settles from the merged one on its branch
+    Given thread "t1" is on a branch whose pull request merged after the user last worked in it
+    And thread "t1" links no pull request
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: The branch's pull request is looked up in the project folder when the worktree is gone
+    Given thread "t1" is on a branch whose pull request merged after the user last worked in it
+    And the worktree of "t1" has been removed
+    When the MC sweeps for threads to settle
+    Then the pull request is looked up from the folder of "demo"
+    And thread "t1" is settled
+
+  # A branch name used again for new work: the old merge must not settle it.
+  @backlog @mc
+  Scenario: A new open pull request on the branch keeps the thread active after the old one merged
+    Given the pull request of "t1" merged after the user last worked in it
+    And the branch of "t1" now has a new open pull request in the repository of "demo"
+    When the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+
+  @backlog @mc
+  Scenario: A merge settles only the threads of that pull request
+    Given thread "t1" belongs to pull request 7 and thread "t2" to pull request 8, both open
+    When the MC learns pull request 7 merged
+    Then thread "t1" is settled without waiting for the next periodic sweep
+    And thread "t2" is not settled
+
+  @backlog @mc
+  Scenario: A quiet thread settles although its pull request cannot be looked up
+    Given thread "t1" finished its last turn 4 days ago
+    And the source control host cannot be reached
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: One failed pull request lookup does not stop the rest of the sweep
+    Given the pull request of "t1" cannot be looked up
+    And thread "t2" links a pull request that merged after the user last worked in it
+    When the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+    And thread "t2" is settled
+
+  @backlog @mc
+  Scenario: A project that turns settling on is swept although the environment has it off
+    Given auto-settle after days and auto-settle on merge are both off for the environment
+    And project "demo" sets auto-settle after 1 day
+    And thread "t1" finished its last turn 2 days ago
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: A message whose turn failed to start does not hold the thread
+    Given the user sent a message in "t1" a minute ago and its turn failed to start
+    And the linked pull request of "t1" merged after that message
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled

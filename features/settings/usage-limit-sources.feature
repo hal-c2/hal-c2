@@ -94,3 +94,97 @@ Feature: Usage limit sources
     Given the user is connected with read-only access
     When the user opens usage providers
     Then the user cannot add a hub
+
+  @backlog @desktop
+  Scenario: With no hubs the list says so
+    Given no hub is configured on the machine
+    When the user opens usage providers
+    Then the user is told "No usage providers configured."
+
+  @backlog @desktop
+  Scenario Outline: A hub is listed by its label or address
+    Given a hub at "https://hub.example.ts.net:8318" that <state>
+    When the user opens usage providers
+    Then the hub is listed as "<title>" with "<detail>"
+
+    Examples:
+      | state                                  | title    | detail                                                 |
+      | is labelled "Team hub"                 | Team hub | CLI Proxy · https://hub.example.ts.net:8318            |
+      | is labelled "Team hub" and is disabled | Team hub | CLI Proxy · Disabled · https://hub.example.ts.net:8318 |
+
+    # Dropped: contradicts the passing "The user adds a hub" (a hub with no label is listed under
+    # its host name, the label apps/server-ex/lib/hal_c2/usage_limit_sources.ex gives it). The web
+    # showed the full URL (apps/web/src/components/settings/UsageProviderSettings.tsx).
+    @dropped
+    Examples:
+      | state                        | title                           | detail               |
+      | has no label                 | https://hub.example.ts.net:8318 | CLI Proxy            |
+      | has no label and is disabled | https://hub.example.ts.net:8318 | CLI Proxy · Disabled |
+
+  @backlog @desktop
+  Scenario: Adding a hub says whose accounts it shows and where the key stays
+    When the user opens the dialog to add a hub on the machine "workstation"
+    Then the dialog says it shows the quota of every account the hub pools, next to the providers on "workstation"
+    And that the key stays on that machine
+    And the label field says it defaults to the hub's host name
+
+  @backlog @desktop
+  Scenario Outline: A hub cannot be added without a URL and a key
+    When the user fills in the URL "<url>" and the management key "<key>"
+    Then adding the hub is <availability>
+
+    Examples:
+      | url                   | key      | availability |
+      | https://hub.example   | secret   | available    |
+      | https://hub.example   |          | not available |
+      |                       | secret   | not available |
+      | https://hub.example   |  (spaces) | not available |
+      | (spaces)              | secret   | not available |
+
+  @backlog @desktop
+  Scenario: A hub is saved with its text trimmed
+    When the user adds a hub with the URL " https://hub.example ", the key " secret " and the label " Team hub "
+    Then the hub is saved with the URL "https://hub.example", the key "secret" and the label "Team hub"
+    And it is switched on
+
+  @backlog @desktop
+  Scenario: Pressing Enter adds the hub
+    Given the add hub dialog is filled in
+    When the user presses Enter
+    Then the hub is added and the dialog closes
+
+  @backlog @desktop
+  Scenario: Cancelling the add hub dialog leaves nothing behind
+    Given the user typed a URL and a key in the add hub dialog
+    When the user cancels
+    Then the dialog closes and no hub is added
+    And opening it again shows empty fields
+
+  @backlog @desktop
+  Scenario: Adding the same hub again updates it
+    Given a hub at "https://hub.example" is already configured
+    When the user adds a hub at "https://hub.example" with a new key
+    Then there is still one hub at "https://hub.example"
+    And it uses the new key
+
+  @backlog @desktop
+  Scenario: Hubs on different ports or hosts are different hubs
+    Given a hub at "https://hub.example:8318" is configured
+    When the user adds a hub at "https://hub.example:9000"
+    And the user adds a hub at "https://hub-example.com"
+    Then three hubs are listed
+
+  @backlog @desktop
+  Scenario: Removing a hub explains what goes and what stays
+    Given a hub "Team hub"
+    When the user chooses to remove "Team hub"
+    Then the user is asked "Remove Team hub?"
+    And told its management key is deleted from the MC, its accounts leave limits and the hub itself is untouched
+    And told adding it again with the URL and key brings them back
+    And cancelling keeps the hub
+
+  @backlog @desktop
+  Scenario: Hubs belong to the machine whose providers are being managed
+    Given the user manages the providers of the machine "workstation"
+    When the user adds a hub
+    Then the hub is kept on "workstation" and not on any other machine

@@ -10,10 +10,12 @@
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Add environment, Create pairing link,
 #     pairing link scopes, QR code, hosted app link, pairing code)
 #   apps/web/src/components/settings/pairingUrls.ts
+#   apps/server/src/startupAccess.ts (printed link, token in the fragment, QR code, wildcard host)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp (a created link's secret lives only while the page is open)
 #   packages/shared/src/remote.ts, packages/client-runtime/src/connection/onboarding.ts
 #     (a host without a scheme: HTTPS, then plain HTTP)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx
+#   apps/web/src/hostedPairing.ts (hosted pairing request, hosted channel selection)
 #   apps/mobile/src/features/connection/pairing.ts (host and code, QR payloads)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
 #   apps/desktop-qt/host/pairingUrl.ts (pairing URL announced by a server)
@@ -41,6 +43,24 @@ Feature: Pairing a client with an environment
   Scenario: A pairing link names the address the operator gives it
     When an operator asks for a pairing link for "https://box.tailnet.ts.net"
     Then the printed link starts with that address
+
+  @backlog @mc
+  Scenario: A pairing link keeps its token out of the address a server sees
+    When an operator asks the MC for a pairing link
+    Then the printed link carries its token after a "#", not in the query
+
+  @backlog @mc
+  Scenario: A pairing link printed on the host can be scanned
+    When an operator asks the MC for a pairing link
+    Then the output holds the link, its token and a QR code of the link
+    And the QR code is drawn in the terminal with block characters
+
+  @backlog @mc
+  Scenario: An MC listening on every interface prints an address a device can reach
+    Given the MC listens on every network interface
+    When an operator asks the MC for a pairing link without naming an address
+    Then the link names one of the machine's non-loopback addresses
+    And the port is the one the MC actually listens on
 
   @mc
   Scenario: An administrator creates a labelled pairing link
@@ -193,3 +213,38 @@ Feature: Pairing a client with an environment
     Given the environment is reachable over HTTPS
     When the user copies the hosted app link
     Then a browser can pair through app.hal-c2.example without installing anything
+
+  # The hosted app's pairing page is a browser route. QML clients pair from the app itself.
+  @dropped @desktop
+  Scenario: A hosted app pairing link without its host or token says so
+    Given the hosted app is opened from a pairing link that has no host or no token
+    Then the page says the link is missing its backend host or token
+    And it offers no retry
+
+  # The hosted app's pairing page is a browser route. QML clients pair from the app itself.
+  @dropped @desktop
+  Scenario: A hosted app pairing token is submitted only once
+    Given the hosted app already submitted the link's one-time token
+    When the user asks to pair again from the same page
+    Then the page says the token was already submitted and to request a new pairing link
+
+  # The hosted app's pairing page is a browser route. QML clients pair from the app itself.
+  @dropped @desktop
+  Scenario: A hosted app pairing that fails hints at the browser's limits
+    Given the backend is not reachable from the browser, does not allow hosted clients, or is not served over HTTPS
+    When the hosted app tries to pair
+    Then the page says pairing failed and shows the host
+    And it says to verify reachability, CORS for hosted clients and HTTPS
+    And it says to request a new pairing link if the backend accepted the token
+
+  # The hosted app's update track switches which deployed build a browser loads; there is no hosted app.
+  @dropped @desktop
+  Scenario Outline: The hosted app switches between the latest and nightly builds
+    Given the user opened the hosted app on the <from> build
+    When the user switches the update track to <to>
+    Then the browser loads the hosted app's <to> build
+
+    Examples:
+      | from    | to      |
+      | latest  | nightly |
+      | nightly | latest  |

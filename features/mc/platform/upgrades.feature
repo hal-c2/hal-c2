@@ -9,6 +9,11 @@
 #   apps/server-ex/lib/hal_c2/web/socket.ex (serverUpdate shape, config.ready updateOutcome, @state_version)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   packages/contracts/src/server.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate)
+#   apps/server/src/cloud/selfUpdate.ts (exact versions, staged preflight, continue running threads)
+#   apps/server/src/cloud/servicePreflight.ts, apps/server/src/cloud/serviceProtocol.ts
+#   apps/server/src/cloud/pinnedRuntime.ts (staged install, checksum, atomic publish, one install at a time)
+#   apps/server/src/serviceLauncher.ts (deferred restart marker, exact versions in service state)
+#   apps/server/src/cloud/serviceLauncherClient.ts (launcher context, version match, 30 second reply)
 #   docs/internals/server-updates.md
 #   docs/user/updating.md
 #   docs/user/background-service.md (hal-c2 update, channels)
@@ -127,6 +132,40 @@ Feature: MC self-update and hot upgrades
       | the requested version is the running one | already runs                |
       | no target version is given               | No target version was given |
 
+  @backlog @mc
+  Scenario Outline: A target that is not an exact version is refused
+    When a client asks the MC to update to "<target>"
+    Then the update fails saying it is not an exact version
+    And the running MC is left as it was
+
+    Examples:
+      | target |
+      | latest |
+      | ^1.2.0 |
+      | 1.2    |
+
+  @backlog @mc
+  Scenario: A staged version that cannot run on this machine is refused before the MC stops
+    Given the MC downloaded and staged the target version
+    And the staged version's own preflight says it cannot run here
+    When a client asks the MC to update
+    Then the update fails with the preflight's reason
+    And the running MC keeps serving without interruption
+
+  @backlog @mc
+  Scenario: An update can ask running turns to carry on after the restart
+    Given turns are running on the MC
+    When a client asks the MC to update and to continue running threads
+    Then those threads are marked to continue once the new version is up
+    And a restart that does not happen clears those marks
+
+  @backlog @mc
+  Scenario: An MC with no background service explains how to enable remote updates
+    Given an MC that is neither the desktop app's server nor a background service
+    When a client asks the MC to update
+    Then the update fails saying remote updates need the background service
+    And it says to run the service install command on the server machine
+
   @mc
   Scenario: A bundle is taken from the MC's own cache first
     Given the MC already downloaded the target version
@@ -152,6 +191,31 @@ Feature: MC self-update and hot upgrades
     When the MC updates
     Then the update fails saying the bundle does not match its checksum
     And the running version is unchanged
+
+  @backlog @mc
+  Scenario: A download cut off midway leaves no half-installed version
+    Given the MC is downloading a version to install
+    When the download is interrupted
+    Then nothing is left that could be mistaken for an installed version
+    And the running version is unchanged
+
+  @backlog @mc
+  Scenario: A version that is only partly installed is installed again
+    Given an earlier install of a version stopped before it finished
+    When the MC updates to that version
+    Then it replaces the partial install with a complete one
+
+  @backlog @mc
+  Scenario: A complete installed version survives a failed re-install
+    Given a version that is fully installed
+    When another install of the same version fails its checks
+    Then the installed version is left in place
+
+  @backlog @mc
+  Scenario: Two installs of one version never run side by side
+    Given two requests install the same version at once
+    Then they take turns
+    And the version ends up whole
 
   @mc
   Scenario: The bundle location can be overridden
@@ -256,6 +320,44 @@ Feature: MC self-update and hot upgrades
     Given a restart into a new version fails before it is ready
     Then the service wrapper starts the previous version again
     And the database is restored to its state before the trial
+
+  @backlog @mc
+  Scenario: A restart the service deferred is forgotten once it runs the version it names
+    Given an update asked the service to restart later
+    When the service starts and runs the version it was asked for
+    Then the deferred restart is cleared
+    And a service that is still on an older version keeps waiting for a newer one
+
+  @backlog @mc
+  Scenario: Only exact versions are accepted as the service's active version
+    Given the service's state names a version that is not an exact version
+    When the service starts
+    Then it refuses the state rather than guessing a version
+
+  @backlog @mc
+  Scenario Outline: An MC refuses to start under a launcher it cannot trust
+    Given the service launcher started the MC and <problem>
+    When the MC starts
+    Then it stops saying "<message>"
+
+    Examples:
+      | problem                                  | message                                                  |
+      | handed it startup context it cannot read | The service launcher supplied invalid startup context.   |
+      | started a different version than the MC  | The service launcher started a different hal-c2 version. |
+      | left it with no channel back             | The service launcher IPC channel is unavailable.         |
+
+  @backlog @mc
+  Scenario: A service that never answers an update request fails the update
+    Given the service launcher is not answering
+    When a client asks the MC to update
+    Then the update fails after thirty seconds saying the launcher did not respond
+    And the running MC keeps serving
+
+  @backlog @mc
+  Scenario: A service that goes away mid-request fails the update at once
+    Given an update request is waiting on the service launcher
+    When the service launcher disconnects
+    Then the update fails saying the launcher disconnected before acknowledging
 
   # Desktop-app two-phase update handoff. An MC updates itself in place or restarts under
   # bin/hal-c2-service; the Electron app's bundled backend is not how HAL-C2 ships the MC.

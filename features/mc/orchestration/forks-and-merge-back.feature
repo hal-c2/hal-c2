@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/fork.ex
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 #   apps/server/src/orchestration-v2/ (fork and merge-back transfers)
+#   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts, CodexAdapterV2.ts (native fork points)
 #   docs/internals/ (context transfers and handoffs)
 Feature: Forking a thread and merging work back
   A fork is a new thread that starts with a copy of its source's history through
@@ -123,6 +124,37 @@ Feature: Forking a thread and merging work back
     Given "f1" is a fork of "t1" at run 2 on "grok"
     When the user sends "Try again" to "f1"
     Then the provider receives a transcript of the copied history before the message
+
+  # ClaudeAdapterV2.ts resolveClaudeForkCursor, CodexAdapterV2.ts resolveCodexForkBoundary:
+  # a native fork needs the provider's own mark for the run it forks at.
+  @backlog @mc
+  Scenario Outline: A native fork whose fork point the provider cannot find fails the fork's first run
+    Given "f1" is a fork of "t1" at run 1 on "<provider>"
+    And <missing>
+    When the user sends "Try again" to "f1" on "<provider>"
+    Then the run fails saying the thread cannot be forked from that turn
+    And the provider's conversation for "t1" is unchanged
+
+    Examples:
+      | provider    | missing                                                        |
+      | codex       | run 1's turn is not in the provider's conversation for "t1"    |
+      | claudeAgent | the provider recorded no message position for run 1's turn     |
+
+  @backlog @mc @plugin-codex
+  Scenario: Codex forks at a run it kept no reference for by trimming the later turns
+    Given "f1" is a fork of "t1" at run 1 on "codex"
+    And the MC holds no Codex turn reference for run 1
+    When the user sends "Try again" to "f1" on "codex"
+    Then Codex forks the whole conversation and drops the turns after run 1 from the fork
+    And the conversation of "t1" keeps every turn
+
+  @backlog @mc @plugin-codex
+  Scenario: Codex cannot trim a fork whose history is paginated
+    Given "f1" is a fork of "t1" at run 1 on "codex"
+    And the MC holds no Codex turn reference for run 1
+    And Codex keeps the forked conversation as paginated history
+    When the user sends "Try again" to "f1" on "codex"
+    Then the run fails saying the fork point cannot be honoured on paginated history
 
   @mc
   Scenario: Merging a fork back queues its work for the parent's next run

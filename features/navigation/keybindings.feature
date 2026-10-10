@@ -2,6 +2,7 @@
 #   docs/user/keybindings.md
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
+#   apps/web/src/keybindings.ts (layout letters, AltGr, esc, last matching rule, shadowed labels, shortcut labels)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap and its native commands)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
@@ -22,6 +23,7 @@
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
 #   thread.editQueuedMessage, thread.previous, thread.next, thread.copyReference,
 #   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run
+#   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
 
 Feature: Keybindings
   Every command has an id, and most have a default shortcut that only applies in a given
@@ -239,6 +241,56 @@ Feature: Keybindings
       When the user presses Command and N
       Then no new thread starts
 
+    @backlog @desktop
+    Scenario: A shortcut follows the letter the keyboard layout types
+      Given the user's layout types "k" on the physical key where QWERTY has "l"
+      When the user presses mod and that key
+      Then the command bound to mod+k runs
+      And the command bound to mod+l does not
+
+    @backlog @desktop
+    Scenario: A shortcut still works on a layout that does not type Latin letters
+      Given the user's layout is Russian
+      And the physical key that types "k" on QWERTY types a Cyrillic letter
+      When the user presses mod and that key
+      Then the command bound to mod+k runs
+
+    @backlog @desktop
+    Scenario: AltGr typing a symbol does not run a shortcut
+      Given the user is on Windows with a layout where AltGr+Q types "@"
+      And a command is bound to ctrl+alt+q
+      When the user types "@" with AltGr
+      Then the command does not run
+      And the character is typed
+
+    @backlog @desktop
+    Scenario: A binding written with esc is the Escape key
+      Given "diff.toggle" is bound to "mod+esc"
+      When the user presses mod and Escape
+      Then the command "diff.toggle" runs
+
+    @backlog @desktop
+    Scenario: A shadowed command shows no shortcut
+      Given "diff.toggle" is bound to mod+shift+y
+      And later "chat.new" is bound to mod+shift+y in the same context
+      When the user looks at the shortcut shown beside "diff.toggle"
+      Then no shortcut is shown for it
+      And "chat.new" shows mod+shift+y
+
+    @backlog @desktop
+    Scenario Outline: Shortcuts are written the way the platform writes them
+      Given the user is on <platform>
+      When a shortcut for <chord> is displayed
+      Then it reads "<label>"
+
+      Examples:
+        | platform | chord                      | label        |
+        | macOS    | mod+shift+k                | ⇧⌘K          |
+        | macOS    | ctrl+alt+up                | ⌃⌥Up         |
+        | Linux    | mod+shift+k                | Ctrl+Shift+K |
+        | Windows  | ctrl+alt+shift+meta+space  | Ctrl+Alt+Shift+Meta+Space |
+        | Linux    | mod+esc                    | Ctrl+Esc     |
+
   Rule: What the commands do
 
     @desktop
@@ -286,6 +338,25 @@ Feature: Keybindings
       Given the user has several projects
       When the user starts a new local thread
       Then a new thread starts in the current project without asking
+
+    @backlog @desktop
+    Scenario: A new thread starts at once when there is only one project to choose
+      Given the user has one project
+      When the user starts a new thread
+      Then a new thread starts in that project without asking
+
+    @backlog @desktop
+    Scenario Outline: Thread shortcuts wait while the command palette is open
+      Given the command palette is open
+      When the user presses the shortcut for "<command>"
+      Then "<command>" does not run
+
+      Examples:
+        | command        |
+        | chat.new       |
+        | chat.newLocal  |
+        | thread.undo    |
+        | preview.toggle |
 
     @desktop
     Scenario Outline: Closing with mod+w closes the innermost thing first

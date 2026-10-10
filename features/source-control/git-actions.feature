@@ -4,6 +4,7 @@
 #   apps/web/src/components/GitActionsControl.logic.ts (buildMenuItems, resolveQuickAction)
 #   apps/web/src/components/GitActionsControl.tsx
 #   apps/web/src/shell/ShellGitBridge.tsx
+#   apps/web/src/hooks/useGitActions.ts (the reasons an action is unavailable)
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
 #   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu, results, init)
@@ -91,6 +92,22 @@ Feature: Recommended git action and the git menu
       | is behind its upstream                    | Push      | Pull or rebase before pushing.        |
       | is behind its upstream                    | Create PR | Pull or rebase before creating a PR.  |
       | has uncommitted changes                   | Create PR | Commit changes before creating a PR.  |
+
+  # The shell's git bridge words these itself (apps/web/src/hooks/useGitActions.ts).
+  @backlog @desktop
+  Scenario Outline: The shell's git menu names why pushing or creating a pull request cannot run
+    Given the checkout <state>
+    When the user opens the git menu
+    Then "<entry>" is unavailable because "<reason>"
+
+    Examples:
+      | state                         | entry     | reason                                                        |
+      | has uncommitted changes       | Push      | Commit or stash local changes before pushing.                 |
+      | is on a detached HEAD         | Push      | Detached HEAD: check out a branch before pushing.             |
+      | has no upstream and no origin | Push      | Add an "origin" remote before pushing.                        |
+      | has nothing to push           | Push      | No local commits to push.                                     |
+      | has nothing to include        | Create PR | No local commits to include in a PR.                          |
+      | has no origin remote          | Create PR | Add an "origin" remote before creating a PR.                  |
 
   @desktop @tui
   Scenario: Opening the pull request of the branch

@@ -106,6 +106,54 @@ Feature: Links and rendering inside terminals
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
 
+    @backlog @desktop
+    Scenario: Hovering a link underlines all of it and shows it can be followed
+      Given the shell prints a web address that wraps across two lines
+      When the user moves the pointer over one piece of it
+      Then every piece of the address is underlined
+      And the pointer shows that it can be followed
+      When the pointer moves off the address
+      Then the underline and the pointer go back to normal
+
+    @backlog @desktop
+    Scenario: A link is not offered while a program has the mouse
+      Given a program in the terminal has asked to receive mouse events
+      When the user moves the pointer over a web address in the output
+      Then the address is not underlined
+      And pressing on it goes to the program
+
+    @backlog @desktop
+    Scenario: A click that moves a little still follows the link
+      Given the shell prints a web address
+      When the user presses on the address and releases a few pixels away
+      Then the address is followed
+
+    @backlog @desktop
+    Scenario: Dragging from a link selects text instead of following it
+      Given the shell prints a web address
+      When the user presses on the address and drags well away before releasing
+      Then the text between the press and the release is selected
+      And the address is not followed
+
+    @backlog @desktop
+    Scenario: A link replaced before the pointer is released is not followed
+      Given the user pressed on a link
+      When the output changes so that another address is under the pointer before release
+      Then nothing is followed
+
+    @backlog @desktop
+    Scenario: Clicking a link twice or three times selects a word or a line
+      Given the shell prints a web address
+      When the user double-clicks and then triple-clicks on the address
+      Then the word is selected and then the whole line
+      And the address is not followed
+
+    @backlog @desktop
+    Scenario: A link cut off by the edge of the screen is not offered
+      Given a web address wraps so that its start has scrolled above the top of the screen
+      Then the part still on screen is not a link
+      And nothing is opened for a half-seen address
+
   Rule: The web terminal renders like a native terminal
 
     @desktop

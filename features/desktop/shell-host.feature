@@ -6,7 +6,15 @@
 #   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs on NativeShell::ready)
 #   apps/desktop-qt/tests/native/features/ConnectionSteps.cpp (the scripted screenshot)
 #   apps/server-ex/lib/hal_c2/desktop.ex (bootstrap line on standard input)
+#   apps/desktop/src/backend/DesktopBackendManager.ts (restart delays, readiness timeout)
+#   apps/desktop/src/app/DesktopLifecycle.ts (SIGINT and SIGTERM quit)
+#   apps/desktop/src/app/DesktopLinuxUrlHandler.ts (hal-c2:// handler registered on Linux)
+#   apps/desktop/src/app/DesktopApp.ts (fatal startup error dialog), DesktopAppIdentity.ts (About panel build line)
+#   apps/desktop/src/app/DesktopObservability.ts (log files, backend output log, OTLP endpoints)
+#   apps/desktop/src/linuxSecretStorage.ts, DesktopEarlyElectronStartup.ts (Linux password store choice)
+#   apps/desktop/src/settings/DesktopAppSettings.ts (damaged settings file, Tailscale port fallback)
 #   docs/internals/desktop-qt.md (process model)
+#   apps/web/src/legacyStorage.ts, apps/web/src/clientPersistenceStorage.ts (what a browser kept; dropped)
 #   Shared domain: connections/ owns pairing; mc/platform/ owns the MC's side of the bootstrap.
 
 Feature: The desktop app runs its own MC
@@ -233,6 +241,89 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the desktop app says the MC failed to start, with its exit code
 
+    # Legacy: apps/desktop/src/app/DesktopApp.ts (handleFatalStartupError)
+    @backlog @desktop
+    Scenario: A failure while the app starts is shown with the step it failed in
+      Given something unexpected fails while the desktop app starts
+      When the user starts the desktop app
+      Then the desktop app says "HAL-C2 failed to start" with the step it failed in and the reason
+      And the app quits afterwards
+
+    @backlog @desktop
+    Scenario: A failure while the app is already quitting is not shown
+      Given the user quit the desktop app while it was starting
+      And something fails during that shutdown
+      Then no failure message is shown
+
+    # Legacy: apps/desktop/src/app/DesktopAppIdentity.ts (About panel)
+    @backlog @desktop
+    Scenario Outline: The About panel names the app and the build it came from
+      Given the desktop app is <build>
+      When the user opens the About panel
+      Then it shows the app's name and version
+      And its build line reads "<build line>"
+
+      Examples:
+        | build                                           | build line   |
+        | a release built from commit 0123456789abcdef    | 0123456789ab |
+        | run from a development checkout                 | unknown      |
+
+    # Legacy: apps/desktop/src/app/DesktopObservability.ts (desktop log files, backend output log, OTLP endpoints)
+    @backlog @desktop
+    Scenario: The desktop app keeps what its MC prints in a log file
+      Given the desktop app started its MC
+      When the MC prints output or an error
+      Then the output is kept in a log file in the app's log folder
+      And a failure of the MC shows up there with the time it happened
+
+    @backlog @desktop
+    Scenario: The desktop app's log files stop growing at a fixed size
+      Given the desktop app's log file is full at 10 MiB
+      When the app writes more
+      Then it starts a new file and keeps at most ten older ones
+      And the oldest is removed
+
+    @backlog @desktop
+    Scenario Outline: A telemetry endpoint set in the environment wins over the saved one
+      Given the saved settings name a <signal> endpoint
+      And the environment names another <signal> endpoint
+      When the user starts the desktop app
+      Then the app exports its <signal> to the environment's endpoint
+      And the other signals keep their own endpoints
+
+      Examples:
+        | signal  |
+        | traces  |
+        | metrics |
+        | logs    |
+
+    # Legacy: apps/desktop/src/backend/DesktopBackendManager.ts (restart delay, readiness timeout)
+    @backlog @desktop
+    Scenario: An MC that exits while the app runs is started again with growing delays
+      Given the desktop app started its MC and the window is open
+      When the MC exits unexpectedly several times in a row
+      Then the app starts it again after half a second
+      And each further restart waits twice as long, up to ten seconds
+
+    @backlog @desktop
+    Scenario: An MC that does not answer within a minute is reported
+      Given the MC starts but never answers
+      When the user starts the desktop app
+      Then after a minute the desktop app says the MC did not become ready
+
+    # Legacy: apps/desktop/src/app/DesktopLifecycle.ts (SIGINT, SIGTERM)
+    @backlog @desktop
+    Scenario Outline: Stopping the app from a terminal quits it cleanly
+      Given the desktop app started its MC
+      When the desktop app is sent <signal>
+      Then the MC stops
+      And the app exits
+
+      Examples:
+        | signal  |
+        | SIGINT  |
+        | SIGTERM |
+
     @desktop
     Scenario: The MC's port the desktop app was told to use is taken
       Given "HAL_C2_MC_PORT" names a port another program listens on
@@ -247,6 +338,67 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the desktop app says that port is in use and names "HAL_C2_WEB_PORT"
       And no MC is started
+
+    # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (readSettings, normalizeDesktopSettingsDocument)
+    @backlog @desktop
+    Scenario: A damaged desktop settings file starts the app with its defaults
+      Given the desktop app's own settings file cannot be read as settings
+      When the user starts the desktop app
+      Then the app starts with the default desktop settings
+      And the file is not repaired until the user changes a setting
+
+    # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (normalizeTailscaleServePort)
+    @backlog @desktop
+    Scenario: A saved Tailscale HTTPS port that is not a valid port falls back to 443
+      Given the desktop settings file holds a Tailscale HTTPS port outside 1 to 65535
+      When the user starts the desktop app
+      Then Tailscale HTTPS uses port 443
+
+  Rule: The app fits the desktop it runs on
+
+    # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
+    @backlog @desktop
+    Scenario: On Linux a link for HAL-C2 opens the installed app
+      Given the user runs the packaged app on Linux
+      When the app starts
+      Then the system is told that HAL-C2 opens links such as "hal-c2://pair"
+      And opening such a link from a browser or another app brings up HAL-C2
+
+    @backlog @desktop
+    Scenario: Failing to register the link handler does not stop the app
+      Given the user runs the packaged app on Linux
+      And the system's link handler registration fails
+      When the app starts
+      Then the app starts normally
+
+    @backlog @desktop
+    Scenario: An unpackaged app does not take over the system's links
+      Given the user runs the app from a development checkout on Linux
+      When the app starts
+      Then the system's link handlers are left as they were
+
+    # Legacy: apps/desktop/src/linuxSecretStorage.ts, apps/desktop/src/settings/DesktopAppSettings.ts (linuxPasswordStore)
+    # Uncertain: depends on how the Qt desktop stores secrets; may be dropped with Electron's safeStorage.
+    @backlog @desktop
+    Scenario Outline: On Linux the app picks where it keeps secrets from the desktop environment
+      Given the user runs the app on Linux with the password store set to "<setting>"
+      And the desktop environment is "<desktop>"
+      When the app starts
+      Then secrets are kept in <store>
+
+      Examples:
+        | setting         | desktop | store             |
+        | auto            | KDE     | the KDE wallet    |
+        | auto            | GNOME   | the GNOME keyring |
+        | auto            | Sway    | the GNOME keyring |
+        | kwallet6        | GNOME   | the KDE Wallet 6  |
+        | gnome-libsecret | KDE     | the GNOME keyring |
+
+    @backlog @desktop
+    Scenario: A password store given on the command line wins over the setting
+      Given the password store setting is "kwallet"
+      When the user starts the app on Linux with the password store "gnome-libsecret" on the command line
+      Then secrets are kept in the GNOME keyring
 
   Rule: A scripted screenshot shows what the user would see
 
@@ -263,3 +415,44 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app asking for a screenshot, with a pairing link for an MC that is not running
       Then the screenshot shows the desktop app saying it cannot reach the MC
       And the desktop app quits with a failure code
+
+  Rule: What only a browser tab did has no replacement
+
+    # Legacy: apps/web/src/lib/chunkReloadGuard.ts. The native app ships whole; nothing loads lazily from a server.
+    @dropped @desktop
+    Scenario: A page that went stale after an update reloads once by itself
+      Given a web page was loaded before the app was updated
+      When it asks for a script the update removed
+      Then the page reloads once to pick up the new version
+      And a second failure is shown instead of reloading again
+
+    # Legacy: apps/web/src/lib/bootError.ts. The native app has no boot splash to replace.
+    @dropped @desktop
+    Scenario: A web page that fails to start says it could not load and offers Reload
+      Given the web page fails while starting
+      Then the page says "HAL-C2 could not load."
+      And it offers a Reload button
+
+    # Legacy: apps/web/src/lib/favicon.ts, apps/web/public/manifest.webmanifest, apps/web/index.html.
+    # The tab's icon, its installable-app manifest and its theme colour are the browser's.
+    @dropped @desktop
+    Scenario: A browser tab carries the app's icon and can be installed as an app
+      Given the user opens the app in a browser
+      Then the tab shows the app's icon
+      And the browser offers to install it as a standalone app
+
+    # Legacy: apps/web/src/legacyStorage.ts. The state was the browser's own storage, which the native app never read.
+    @dropped @desktop
+    Scenario: A browser that used the app before the rename keeps its saved state
+      Given a browser saved the app's settings and connections under the names from before the rename
+      When the user opens the app in that browser after the rename
+      Then the settings and connections are carried over to the new names
+      And anything already saved under a new name is left as it is
+
+    # Legacy: apps/web/src/clientPersistenceStorage.ts. An older browser copy of the device settings; the native app keeps its own.
+    @dropped @desktop
+    Scenario: Device settings a browser saved in the older form read with today's follow-up default
+      Given a browser holds device settings saved in the older form, with follow-ups set to queue
+      When the user opens the app in that browser
+      Then the other settings are as saved
+      And follow-ups use the current default

@@ -7,6 +7,9 @@
 #   apps/mobile/src/features/diagnostics/crash-log-model.ts
 #   apps/mobile/src/features/observability/tracing.ts
 #   apps/mobile/src/features/devices/ (device viewer, stream fallbacks, device options)
+#   apps/mobile/src/features/devices/DevicePreviewRouteScreen.tsx (host retry, buttons, close when no device)
+#   apps/mobile/src/features/devices/DeviceStreamWebView.tsx (start timeout, one automatic restart)
+#   apps/mobile/src/features/devices/device-preview-button.tsx (device count)
 #   apps/mobile/src/features/showcase/ (screenshot capture scenes, sample environments)
 #   docs/user/devices.md (mobile device viewer)
 # Usage accounting and devices are specified in features/providers/ and the MC domains.
@@ -116,6 +119,103 @@ Feature: Usage, diagnostics and devices on a phone
       | the credit was redeemed on another device | That credit was already redeemed. |
 
   @backlog @mobile
+  Scenario: Usage opens on its limits unless a link asks for the usage totals
+    When the user opens usage from the settings
+    Then the limits are shown
+    When the user opens usage from a link that asks for the usage totals
+    Then the usage totals are shown
+
+  @backlog @mobile
+  Scenario Outline: With every environment left out, usage asks to select one
+    Given the user shows <tab> for no environment at all
+    Then the user is told to select an environment to see <tab>
+
+    Examples:
+      | tab    |
+      | usage  |
+      | limits |
+
+  @backlog @mobile
+  Scenario: A period with no activity says so
+    Given no agent did anything in the past 7 days
+    When the user opens usage for the past 7 days
+    Then the user is told there was no activity in this window
+
+  @backlog @mobile
+  Scenario: Environments that share transcripts are named when they are counted once
+    Given "My MacBook" and "Office Mac" read the same transcript directory
+    When the user opens usage
+    Then the user is told which transcript directory was counted once across environments
+
+  @backlog @mobile
+  Scenario Outline: An environment says when its usage is still on its way
+    Given "Office Mac" <situation>
+    When the user opens usage
+    Then "Office Mac" is described as "<status>"
+
+    Examples:
+      | situation                                          | status                |
+      | has not connected yet and has no saved usage       | Waiting for connection… |
+      | is loading usage for the first time                | Loading usage…        |
+      | is refreshing usage it has saved                   | Updating usage…       |
+      | failed to report usage and has none saved          | Usage unavailable     |
+
+  @backlog @mobile
+  Scenario: The environment filter marks environments that are still loading
+    Given "Office Mac" is still loading usage
+    When the user looks at the usage environment filter
+    Then the filter says some environments are loading
+
+  @backlog @mobile
+  Scenario: The user opens an account from the limits to see its details
+    Given the limits pool two Codex accounts
+    When the user opens one account
+    Then the account's name, plan and masked email are shown
+    And the time its window resets is shown
+    And the environments it is signed in on are listed
+    When the user reveals the email
+    Then the full email is shown
+
+  @backlog @mobile
+  Scenario: An account's details say how much of the pool its reset gives back
+    Given the limits pool two Codex accounts
+    And the account's window resets soon
+    When the user opens the account
+    Then the account's details say how much of the pool it restores
+
+  @backlog @mobile
+  Scenario: An account that stops reporting limits says so on its details
+    Given the user has an account's details open
+    When that account stops reporting limits on the selected environments
+    Then the details say the account is no longer reporting limits
+
+  @backlog @mobile
+  Scenario: Limits that could not be refreshed keep the last known values and say so
+    Given "Office Mac" could not refresh limits
+    When the user opens usage limits
+    Then the last known limits are shown
+    And the user is told "Office Mac" could not refresh limits
+
+  @backlog @mobile
+  Scenario Outline: Reset credits say what is banked
+    Given the account has <credits> banked
+    When the user opens usage limits
+    Then the account's credits are described as "<summary>"
+
+    Examples:
+      | credits                                | summary                                          |
+      | no reset credit                        | No reset credits banked                          |
+      | one reset credit that expires in time  | 1 reset credit banked, with when the next expires |
+      | three reset credits                    | 3 reset credits banked                           |
+
+  @backlog @mobile
+  Scenario: A reset credit that fails for another reason says it could not be used
+    Given the account has a reset credit banked
+    And the environment cannot reach the provider
+    When the user uses a reset credit and confirms
+    Then the user is told the reset credit could not be used
+
+  @backlog @mobile
   Scenario: No startup crashes is reported plainly
     Given the app has not crashed during launch in the last 7 days
     When the user opens diagnostics
@@ -198,6 +298,88 @@ Feature: Usage, diagnostics and devices on a phone
     Given the simulator cannot be shut down
     When the user chooses to shut down the device
     Then the user is told the device could not be shut down
+
+  @backlog @mobile
+  Scenario: The device viewer closes when the thread has no device left open
+    Given the user is viewing the agent's simulator
+    When the agent closes the simulator
+    Then the device viewer closes by itself
+
+  @backlog @mobile
+  Scenario: Device buttons wait until the device takes input
+    Given the user opens the device viewer from "Fix checkout"
+    And the device is not yet taking input
+    Then the home, app switcher and rotate buttons cannot be used
+    When the device starts taking input
+    Then the home button can be used
+
+  @backlog @mobile
+  Scenario Outline: The device options only offer buttons the platform has
+    Given the user is viewing an agent's <device>
+    When the user opens the device options
+    Then "<offered>" is offered
+    And "<not offered>" is not offered
+
+    Examples:
+      | device           | offered       | not offered   |
+      | iOS simulator    | Rotate device | Back          |
+      | Android emulator | Back          | Rotate device |
+
+  @backlog @mobile
+  Scenario: The device viewer stops streaming while the app is in the background
+    Given the user is viewing the agent's simulator
+    When the user switches to another app
+    Then the device stream stops
+    When the user returns to HAL-C2
+    Then the device's live screen is shown again
+
+  @backlog @mobile
+  Scenario: A device host that failed can be retried from the viewer
+    Given the environment's device host "Build Mac" failed to start
+    When the user opens the device options
+    Then "Retry Build Mac" is offered
+    When the user chooses "Retry Build Mac"
+    Then the environment tries "Build Mac" again
+
+  @backlog @mobile
+  Scenario: The device viewer explains who updates the device tools
+    Given the user is viewing the agent's simulator
+    When the user chooses device tool versions
+    Then the user is told which tools are installed on that device's host
+    And the user is told whether HAL-C2 or the user updates them
+
+  @backlog @mobile
+  Scenario: A device viewer that cannot get access to the device says why and can retry
+    Given the environment cannot hand the phone access to the device
+    When the user opens the device viewer
+    Then the user is told why the device is unavailable
+    When the user chooses to retry
+    Then the phone asks the environment for access again
+
+  @backlog @mobile
+  Scenario: A device viewer that never starts says so
+    Given the device viewer has not started streaming after 15 seconds
+    Then the user is told the viewer could not start
+    And the user is offered to reconnect
+
+  @backlog @mobile
+  Scenario: A device viewer that stops working restarts once by itself
+    Given the user is viewing the agent's simulator
+    When the viewer stops working
+    Then the viewer restarts and the device's live screen is shown again
+    When the viewer stops working again before the screen is shown
+    Then the user is told the viewer stopped
+    And the user is offered to reconnect
+
+  @backlog @mobile
+  Scenario Outline: A thread says how many devices are open
+    Given the agent in "Fix checkout" has <count> devices open
+    Then the thread offers <offer>
+
+    Examples:
+      | count | offer                              |
+      | 1     | to view one device                 |
+      | 3     | to view 3 devices, showing the 3   |
 
   # Showcase scenes drive store screenshots. The need to produce consistent screenshots of
   # the phone app stays with the QML client, so it is kept as backlog.

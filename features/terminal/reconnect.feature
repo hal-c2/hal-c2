@@ -4,6 +4,9 @@
 #   packages/contracts/src/terminal.ts (TerminalAttachInput, TerminalAttachStreamEvent, TerminalMetadataStreamEvent, history limits)
 #   apps/server-ex/lib/hal_c2/terminal.ex (attach, restartIfNotRunning, history persistence)
 #   apps/server-ex/lib/hal_c2/terminal/history.ex (query stripping, split escapes, UTF-8 carry, trimming)
+#   apps/server/src/terminal/Manager.ts (evictInactiveSessionsIfNeeded, legacy per-thread log migration, readHistory)
+#   apps/server/src/terminal/Manager.test.ts, OutputProtocol.test.ts (attach streams across close and
+#     reopen, output during the snapshot, ordering through exit, the pending-output window)
 #   apps/server-ex/lib/hal_c2/terminal/hub.ex (metadata snapshot, upsert, remove)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (terminal and terminals subscription shapes, unknown MC)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (remote terminal hub watch)
@@ -60,6 +63,35 @@ Feature: Reattaching to terminals
       Then the shell keeps running
       And its output keeps being recorded
 
+    # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
+    #   closed and reopened)
+    @backlog @mc
+    Scenario: A client attached to a terminal stays attached when it is closed and opened again
+      Given a client attached to a running terminal
+      When the terminal is closed and then opened again
+      Then the client is told the terminal closed
+      And receives a snapshot of the new shell
+      And does not have to attach again
+
+    # Legacy: apps/server/src/terminal/Manager.test.ts (buffers attach output delivered during the
+    #   initial snapshot callback; streams attach snapshots followed by live events without duplicates)
+    @backlog @mc
+    Scenario: Output that arrives while a client is receiving its snapshot is not lost
+      Given a running terminal whose shell prints as a client attaches
+      When the shell prints "during snapshot" before the client has taken its snapshot
+      Then the client receives its snapshot first
+      And then receives "during snapshot" exactly once
+      And receives no second snapshot
+
+    # Legacy: apps/server/src/terminal/Manager.test.ts (preserves queued PTY output ordering through exit
+    #   callbacks)
+    @backlog @mc
+    Scenario: Output queued before a shell ends arrives before its exit
+      Given a running terminal
+      When the shell prints "first" and "second" and exits at once
+      Then attached clients receive "first", then "second", then the exit
+      And a client attaching afterwards receives a snapshot that already includes the exit
+
   Rule: The MC keeps a bounded, replayable history
 
     @mc
@@ -97,6 +129,22 @@ Feature: Reattaching to terminals
         | amount          | kept             |
         | 6,000 lines     | 5,000 lines      |
         | 10 MiB of text  | 8 MiB of text    |
+
+    @backlog @mc
+    Scenario: The MC keeps at most 128 ended terminals in memory
+      Given the MC holds 128 terminals whose shells have ended
+      When another terminal's shell ends
+      Then the ended terminal that changed least recently is dropped from the MC's list
+      And its saved output stays on disk
+      And a terminal whose shell is running is never dropped
+
+    @backlog @mc
+    Scenario: Output saved by an older layout is picked up by the default terminal
+      Given the terminal log folder holds an old per-thread file for "thread-1" with the text "old build"
+      When a client opens the default terminal of "thread-1"
+      Then the history begins with "old build"
+      And the old file is replaced by the default terminal's own saved file
+      And the terminal "term-2" of that thread does not receive the old text
 
     @mc
     Scenario: Replayed history does not make the shell answer old questions

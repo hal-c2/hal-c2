@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task,
 #     update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
 #   apps/server/src/scheduledTasks/ScheduledTaskService.ts, Schedule.ts and their tests
+#   apps/server/src/mcp/OrchestratorMcpService.ts (scheduled task title)
 #   packages/contracts/src/scheduledTask.ts, rpc.ts (scheduledTasks.subscribe)
 #   V2 commands issued: message.dispatch (queue_after_active, scheduledTaskId), and a
 #     thread launch with an initial message
@@ -173,6 +174,29 @@ Feature: Scheduled tasks
     When the MC starts
     Then task "a" last failed with "The server stopped during this run."
 
+  @backlog @mc
+  Scenario: A task cut short by a restart is not run again at once
+    Given task "a" runs every hour and was running when the MC stopped
+    When the MC starts and checks its schedule
+    Then task "a" does not run again straight away
+    And its run count includes the interrupted run
+    And it is next due one interval after the restart
+
+  @backlog @mc
+  Scenario: A task that cannot be read does not stop the others
+    Given the stored record of task "a" is corrupt
+    And task "b" is due
+    When the MC checks its schedule
+    Then task "b" runs
+    And task "a" is skipped without an error to the clients
+
+  @backlog @mc
+  Scenario: A corrupt task that was running when the MC stopped is released
+    Given the stored record of task "a" is corrupt and shows it running when the MC stopped
+    When the MC starts
+    Then task "a" is no longer marked running
+    And it is not run again
+
   @mc
   Scenario: Tasks survive a restart
     Given task "a" exists
@@ -195,6 +219,20 @@ Feature: Scheduled tasks
   Scenario: An agent's task title defaults to the start of its prompt
     When an agent schedules a task without a title
     Then the title is the first 60 characters of the prompt
+
+  # Dropped: contradicts the passing scenario above (apps/server-ex/lib/hal_c2/mcp/tools.ex
+  # takes the first 60 characters). The Node server cut the first line at 80 characters and fell
+  # back to a fixed title; revive this and retire the one above if that is the title we want.
+  @dropped @mc
+  Scenario Outline: An agent's task title comes from the first line of its prompt
+    When an agent schedules a task without a title and with a prompt that <prompt>
+    Then the title is <title>
+
+    Examples:
+      | prompt                              | title                                |
+      | starts with a line of 100 characters | the first 80 characters of that line |
+      | has several lines                   | the first line, trimmed              |
+      | starts with an empty line           | "Scheduled task"                     |
 
   @mc
   Scenario: Unbinding a task from the thread makes it launch fresh worktrees

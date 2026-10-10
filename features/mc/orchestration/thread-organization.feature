@@ -6,8 +6,9 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread field updates)
 #   apps/server/src/orchestration-v2/ (projector for organization fields)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (thread mutation guards and field updates,
-#     message.dispatch unsettling and unsnoozing its thread)
+#     message.dispatch unsettling and unsnoozing its thread, settle stopping the provider session)
 #   apps/server/src/orchestration/decider.ts (thread.settle also unpins and unsnoozes)
+#   apps/server/src/orchestration/ThreadSettlementPolicy.ts (queued turn start window, both directions)
 #   apps/desktop-qt/src/native/SidebarController.cpp (undoing a settle snoozes again)
 #   apps/web/src/hooks/useThreadActions.ts (ThreadSnoozeBlockedError, ThreadArchiveBlockedError)
 #   docs/user/thread-sidebar.md
@@ -150,6 +151,127 @@ Feature: Organizing threads in the engine
       | waits for an approval                 |
       | waits for an answer to a question     |
       | has a queued run that has not started |
+
+  # A message from a client whose clock is off still counts as waiting for its turn,
+  # but only within two minutes either way; older or further ahead is stale data.
+  @backlog @mc
+  Scenario Outline: A message no turn has picked up holds the thread only within two minutes of now
+    Given the user's newest message on "t1" is stamped <stamped> and no turn has picked it up
+    When a client settles "t1"
+    Then <result>
+
+    Examples:
+      | stamped             | result                                                                    |
+      | 30 seconds ago      | the command fails with "Thread t1 has active or blocked work and cannot be settled." |
+      | 30 seconds from now | the command fails with "Thread t1 has active or blocked work and cannot be settled." |
+      | 5 minutes ago       | thread "t1" is settled by override                                        |
+      | 5 minutes from now  | thread "t1" is settled by override                                        |
+
+  @backlog @mc
+  Scenario Outline: A message a turn has picked up, or whose session failed, no longer holds the thread
+    Given the user's newest message on "t1" arrived 30 seconds ago
+    And <condition>
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+
+    Examples:
+      | condition                                                   |
+      | a turn requested after that message has ended               |
+      | the provider session of "t1" is in an error state           |
+
+  @backlog @mc
+  Scenario: A message imported from an agent's history never holds a thread
+    Given the newest message on "t1" was imported from an agent session a minute ago
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+
+  @backlog @mc
+  Scenario: Settling a settled thread again changes nothing
+    Given thread "t1" is settled
+    When a client settles "t1" again
+    Then no error is reported
+    And thread "t1" keeps its original settled time
+
+  # Settled means done with the thread, so nothing it left running (a monitor, a dev
+  # server, subagents) carries on behind it. Archiving does the same (threads.feature).
+  @backlog @mc
+  Scenario Outline: Settling a thread stops its agent's live session
+    Given thread "t1" is idle with a live provider session that left work running in the background
+    When <who> settles "t1"
+    Then the provider session of "t1" is stopped with the reason "Thread settled."
+    And the background work ends with it
+
+    Examples:
+      | who                      |
+      | a client                 |
+      | the MC, automatically    |
+
+  @backlog @mc
+  Scenario: Snoozing to the wake time a thread already has changes nothing
+    Given thread "t1" is snoozed until tomorrow 09:00
+    When a client snoozes "t1" until tomorrow 09:00 again
+    Then thread "t1" keeps its original snoozed-at time
+
+  @backlog @mc
+  Scenario: Manual settling dismisses a question the provider is not waiting on
+    Given thread "t1" waits only for an answer to a question the provider does not block on
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+    And the question is dismissed
+
+  @backlog @mc
+  Scenario: Automatic settling never dismisses a pending question
+    Given thread "t1" waits only for an answer to a question the provider does not block on
+    When the MC settles "t1" automatically
+    Then the command fails with "Thread t1 has active or blocked work and cannot be settled."
+
+  @backlog @mc
+  Scenario Outline: A settled thread is brought back when the agent needs the user
+    Given thread "t1" is settled
+    When the provider raises <need> on "t1"
+    Then thread "t1" is active by override
+    And the request is pending on "t1"
+
+    Examples:
+      | need                           |
+      | an approval request            |
+      | a question for the user        |
+
+  @backlog @mc
+  Scenario Outline: A settled thread is brought back when its agent session comes alive
+    Given thread "t1" is settled
+    When the provider session of "t1" becomes <status>
+    Then thread "t1" is active by override
+
+    Examples:
+      | status   |
+      | starting |
+      | running  |
+
+  @backlog @mc
+  Scenario Outline: A settled thread stays settled when its agent session only reports an outcome
+    Given thread "t1" is settled
+    When the provider session of "t1" becomes <status>
+    Then thread "t1" is still settled
+
+    Examples:
+      | status  |
+      | ready   |
+      | stopped |
+      | error   |
+
+  @backlog @mc
+  Scenario: A snoozed thread stays snoozed while its agent session starts
+    Given thread "t1" is snoozed until tomorrow 09:00
+    When the provider session of "t1" becomes running
+    Then thread "t1" is still snoozed until tomorrow 09:00
+
+  @backlog @mc
+  Scenario: Automatic settling is refused when the user settled or unsettled the thread first
+    Given the MC decided to settle "t1" automatically
+    And a client unsettles "t1" before the MC's settle is applied
+    When the MC's automatic settle is applied
+    Then the command fails with "thread t1 changed before automatic settlement"
 
   # A delegated task's result only wakes the agent; it is not the user's work.
   @mc

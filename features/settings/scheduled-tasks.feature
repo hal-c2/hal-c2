@@ -7,6 +7,8 @@
 #   packages/contracts/src/rpc.ts (scheduledTasks.list, scheduledTasks.upsert, scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, scheduledTasks.subscribe)
 #   apps/web/src/components/settings/ScheduledTasksSettings.tsx
 #   apps/web/src/components/settings/scheduledTasksSettings.logic.ts
+#   apps/web/src/components/settings/scheduledTasksSettings.logic.test.ts
+#   apps/web/src/components/chat/ThreadAutomationsPanel.tsx (the tasks bound to a thread, in its details)
 #   apps/web/src/components/WorktreeBaseBranchPicker.tsx
 #   apps/desktop-qt/src/native/ScheduledTasksController.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
@@ -239,3 +241,192 @@ Feature: Scheduled tasks
       Given the environment "laptop" is disconnected
       When the user opens scheduled tasks for "laptop"
       Then the user is offered to reconnect "laptop"
+
+    @backlog @desktop
+    Scenario Outline: A task's schedule is described in words
+      Given a task that runs <schedule>
+      When the user opens scheduled tasks
+      Then the task says "<label>"
+
+      Examples:
+        | schedule                              | label                    |
+        | every 15 minutes                      | Every 15 min             |
+        | every 90 seconds                      | Every 90 sec             |
+        | at 09:00 on every day                 | Daily at 09:00           |
+        | at 09:00 from Monday to Friday        | Weekdays at 09:00        |
+        | at 18:30 on Saturday and Sunday       | Sat, Sun at 18:30        |
+
+    @backlog @desktop
+    Scenario Outline: The next run is said relative to now
+      Given an enabled task whose next run is <when>
+      When the user opens scheduled tasks
+      Then the task says "<label>"
+
+      Examples:
+        | when                      | label                 |
+        | 45 seconds away           | in under a minute     |
+        | 12 minutes away           | in 12m                |
+        | 3 hours away              | in 3h                 |
+        | 2 days away               | in 2d                 |
+
+    @backlog @desktop
+    Scenario: A task with no next run says it is not scheduled
+      Given an enabled task that has no next run
+      When the user opens scheduled tasks
+      Then the task says "Not scheduled"
+
+    @backlog @desktop
+    Scenario: A selection with no tasks says so
+      Given the selected environment and project have no scheduled tasks
+      When the user opens scheduled tasks
+      Then the user is told "No scheduled tasks"
+
+    @backlog @desktop
+    Scenario: Scheduled tasks that cannot be loaded say why
+      Given the environment cannot list its scheduled tasks
+      When the user opens scheduled tasks
+      Then the user is told "Could not load scheduled tasks" with the reason
+
+    @backlog @desktop
+    Scenario Outline: A task action that fails is reported
+      Given a task "Check Sentry"
+      And the environment refuses to <action> it
+      When the user <action>s the task
+      Then the user is told "Could not update scheduled task" with the reason
+      And the task is left as it was
+
+      Examples:
+        | action |
+        | pause  |
+        | run    |
+        | delete |
+
+    @backlog @desktop
+    Scenario: A task can be paused, run and deleted only once at a time
+      Given the user paused a task and the environment has not answered yet
+      Then the task's controls are unavailable until it answers
+
+    @backlog @desktop
+    Scenario: A task that cannot be saved is reported and stays open
+      Given the environment refuses to save the task
+      When the user saves a task
+      Then the user is told "Could not save scheduled task" with the reason
+      And the editor stays open with what the user typed
+
+    @backlog @desktop
+    Scenario: Tasks of several environments are listed under each machine
+      Given the user has two connected environments
+      When the user opens scheduled tasks
+      Then each machine's tasks are listed under its own name
+      And with a single environment no machine name is shown
+
+    @backlog @desktop
+    Scenario: A task runs on the machine the user chose
+      Given the user has two connected environments
+      When the user starts a new task
+      Then it asks which machine it runs on
+      And changing the machine clears the project, model and base branch chosen so far
+
+    @backlog @desktop
+    Scenario: A task keeps its machine once saved
+      Given a task "Check Sentry" on "laptop"
+      When the user edits it
+      Then its machine cannot be changed
+
+    @backlog @desktop
+    Scenario: A new task only offers the projects in scope
+      Given projects "api" and "web" and the settings scope is project "api"
+      When the user starts a new task
+      Then only "api" can be chosen as its project
+
+    @backlog @desktop
+    Scenario: A new task's model falls back to what is usable
+      Given the project has no default model
+      And the environment's default model is from a provider that is signed out
+      When the user starts a new task
+      Then its model is the first current model of a provider that is installed and signed in
+      And a legacy model is never chosen by default
+
+    @backlog @desktop
+    Scenario: Editing a task keeps its model options and access mode
+      Given a task created by an agent with a model option and plan mode
+      When the user edits only its title and saves
+      Then the task keeps its model options, access mode and interaction mode
+
+    @backlog @desktop
+    Scenario: Choosing every weekday or none runs the task daily
+      Given a new task that runs at a fixed time
+      When the user selects all seven weekdays and saves
+      Then the task runs daily
+
+    @backlog @desktop
+    Scenario: An interval may be fractions of a minute above one minute
+      When the user saves a task that runs every 1.5 minutes
+      Then it runs every 90 seconds
+
+    @backlog @desktop
+    Scenario: Following a link to a task opens it for editing
+      Given a task "Check Sentry" in the selected project
+      When the user follows a link to that task
+      Then its editor opens once the list has loaded
+
+  Rule: A thread shows the tasks that send to it
+
+    @backlog @desktop
+    Scenario: A thread's details list the tasks bound to it
+      Given the task "Check Sentry" sends its prompt into the thread "Triage"
+      And the task "Nightly build" sends its prompt into a new thread each time
+      When the user opens the details of "Triage"
+      Then "Check Sentry" is listed under "Automations" with how its last run went and when it runs next
+      And "Nightly build" is not listed
+
+    @backlog @desktop
+    Scenario: A thread with no tasks bound to it shows no automations
+      Given no task sends its prompt into the thread "Triage"
+      When the user opens the details of "Triage"
+      Then the details have no "Automations" section
+
+    @backlog @desktop
+    Scenario: A paused task says so in the thread's details
+      Given the task "Check Sentry" is bound to "Triage" and paused
+      When the user opens the details of "Triage"
+      Then "Check Sentry" is shown as paused with no next run
+
+    @backlog @desktop
+    Scenario: A task is paused and resumed from the thread's details
+      Given the task "Check Sentry" is bound to "Triage"
+      When the user pauses "Check Sentry" from the details of "Triage"
+      Then the task stops running on its schedule and everything else about it is unchanged
+      When the user resumes it from the details
+      Then the task is scheduled again
+
+    @backlog @desktop
+    Scenario: A task is run now from the thread's details
+      Given the task "Check Sentry" is bound to "Triage"
+      When the user runs "Check Sentry" now from the details of "Triage"
+      Then the task's prompt is sent into "Triage"
+      And the task cannot be run again from the details while it is running
+
+    @backlog @desktop
+    Scenario Outline: A task action from the thread's details that fails is reported
+      Given the task "Check Sentry" is bound to "Triage"
+      When the user <action> from the details of "Triage" and the environment refuses
+      Then the user sees an "error" toast "<title>" with the reason
+
+      Examples:
+        | action                    | title                       |
+        | pauses "Check Sentry"     | Could not update automation |
+        | runs "Check Sentry" now   | Could not run automation    |
+
+    @backlog @desktop
+    Scenario: Tasks that cannot be loaded are not mistaken for no tasks
+      Given the scheduled tasks of the environment cannot be loaded
+      When the user opens the details of "Triage"
+      Then the details say "Could not load automations" with the reason
+
+    @backlog @desktop
+    Scenario: The thread's details lead to the task's settings
+      Given the task "Check Sentry" is bound to "Triage"
+      When the user chooses to edit "Check Sentry" from the details of "Triage"
+      Then the scheduled tasks settings of that environment open with "Check Sentry" ready to edit
+      And "Manage scheduled tasks" opens the same settings without a task chosen

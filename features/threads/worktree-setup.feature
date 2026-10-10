@@ -2,6 +2,9 @@
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   packages/contracts/src/rpc.ts (subscribeWorktreeSetup, worktreeSetup.cancel)
+#   apps/mobile/src/features/threads/worktree-setup-card.tsx (Work locally, background setup script, output tail)
+#   apps/mobile/src/features/threads/worktree-setup-state.ts
+#   packages/client-runtime/src/worktreeSetup.ts (which setup the conversation shows)
 
 Feature: Preparing a new thread's worktree
   A thread started in a new worktree waits while the worktree is made and the project's
@@ -127,3 +130,46 @@ Feature: Preparing a new thread's worktree
       | made the worktree but its setup script failed | Worktree ready, setup script failed |
       | failed                                        | Worktree setup failed               |
       | was cancelled                                 | Worktree setup cancelled            |
+
+  # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
+  @backlog @desktop @mobile
+  Scenario: A setup that went cleanly leaves the conversation once the agent is replying
+    Given the setup of "Cart totals" finished with every step done
+    When the agent starts replying in "Cart totals"
+    Then the conversation no longer shows the setup
+    But a setup that failed, or whose script failed, or that was cancelled, stays shown
+
+  # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
+  @backlog @desktop @mobile
+  Scenario: The setup is history once the user sends a follow-up
+    Given the setup of "Cart totals" failed
+    When the user sends another message in "Cart totals"
+    Then the conversation no longer shows the setup
+    And a setup that is still running is always shown
+
+  # Legacy: packages/client-runtime/src/worktreeSetup.ts (findRecordedWorktreeSetup)
+  @backlog @desktop @mobile
+  Scenario: A reopened conversation shows the setup the MC recorded
+    Given the setup of "Cart totals" is still running
+    When the user opens "Cart totals" from another client
+    Then that client shows the setup as running
+    And follows its steps live until it settles
+
+  @backlog @mobile
+  Scenario: The user gives up on the worktree and works in the project folder instead
+    Given the setup of "Cart totals" is still running and the agent has not started
+    When the user chooses to work locally from the setup details
+    Then the setup is cancelled
+    And the first message of "Cart totals" is sent again to work in the project folder itself
+
+  @backlog @mobile
+  Scenario: A setup script that keeps running after the agent started is still reachable
+    Given the agent of "Cart totals" started while the setup script is still running
+    Then the conversation says how long the agent has been working
+    And the user can open the setup progress by naming the script that is still running
+
+  @backlog @mobile
+  Scenario: The setup details show the last lines of the setup script's output
+    Given the setup script of "Cart totals" is running or failed
+    When the user opens the setup details
+    Then the user sees the last few lines of the script's output

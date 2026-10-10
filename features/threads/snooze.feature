@@ -2,8 +2,10 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
+#   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
 #   apps/web/src/components/CustomSnoozeDialog.tsx
 #   apps/web/src/components/threadActionMenu.logic.ts (Snooze submenu, Wake thread)
+#   apps/web/src/components/ChatView.tsx (snoozed and woke notices in the open thread)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Snoozed section)
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Snooze, Wake, Woke pill, wake label)
 #   packages/contracts/src/shell.ts (thread.snoozeMenu, thread.unsnooze, thread.wokeDismiss)
@@ -164,6 +166,36 @@ Feature: Snoozing threads
     When the user opens "Refactor cart"
     Then "Refactor cart" is no longer marked as woke
 
+  @backlog @desktop
+  Scenario: An open snoozed thread says so and can be woken there
+    Given "Refactor cart" is snoozed until tomorrow
+    When the user opens "Refactor cart"
+    Then the thread says "This thread is snoozed" and that sending a message wakes it
+    When the user chooses "Wake now"
+    Then "Refactor cart" is active again
+
+  @backlog @desktop
+  Scenario: A wake that fails is reported
+    Given the user has opened "Refactor cart", which is snoozed until tomorrow
+    And the environment rejects the wake
+    When the user chooses "Wake now"
+    Then the user is told "Failed to wake thread" with the reason
+    And "Refactor cart" stays snoozed
+
+  @backlog @desktop
+  Scenario: A thread that woke says so in the conversation until dismissed
+    Given "Refactor cart" woke from a snooze and the user has not seen it since
+    When the user is shown "Refactor cart"
+    Then the thread says "Thread woke from snooze" and to send a message to continue
+    When the user dismisses that notice
+    Then "Refactor cart" is no longer marked as woke in the thread list either
+
+  @backlog @desktop
+  Scenario: Sending a message clears the woke notice
+    Given "Refactor cart" says it woke from a snooze
+    When the user sends a message in "Refactor cart"
+    Then the woke notice is gone
+
   @desktop
   Scenario: Snoozing several threads at once
     Given the user has selected three threads
@@ -190,3 +222,29 @@ Feature: Snoozing threads
     When the user snoozes "Refactor cart" until tomorrow
     Then the next thread in the list opens
     And the user can undo the snooze
+
+  @backlog @desktop @mobile
+  Scenario: A run that finished before the snooze does not wake the thread
+    Given a run in "Refactor cart" finished a minute ago
+    And the user snoozes "Refactor cart" until tomorrow
+    When the user looks at the thread list
+    Then "Refactor cart" is still snoozed
+    And it is not marked as woke
+
+  @backlog @desktop @mobile
+  Scenario: A turn that never began stops blocking the snooze after two minutes
+    Given a message to "Refactor cart" is waiting for its turn to start
+    And snoozing is unavailable
+    When two minutes pass without the turn starting
+    Then the user can snooze "Refactor cart"
+
+  @backlog @desktop @mobile
+  Scenario Outline: A waiting turn stops blocking the snooze when it is taken up or fails
+    Given a message to "Refactor cart" is waiting for its turn to start
+    When <event>
+    Then the user can snooze "Refactor cart"
+
+    Examples:
+      | event                                    |
+      | the agent starts a turn with the message |
+      | the agent session fails                  |
