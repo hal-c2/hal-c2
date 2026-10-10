@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@hal-c2/shared": "workspace:*",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "lucide-react": "^0.564.0"
   }
 }
