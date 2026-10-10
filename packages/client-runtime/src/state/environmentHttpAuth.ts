@@ -118,8 +118,6 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
     readonly headers: EnvironmentHttpAuthHeaders;
   }) => Effect.Effect<A, E, R>;
-  /** Some endpoints report rejected credentials in a successful response. */
-  readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
 }): Effect.fn.Return<
   A,
   RemoteEnvironmentRequestError,
@@ -181,20 +179,6 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
           continue;
         }
         return yield* result.failure;
-      }
-
-      if (
-        authorization?._tag === "Dpop" &&
-        input.isUnauthorizedResponse?.(result.success) === true
-      ) {
-        if (rejectedAccessToken === undefined) {
-          rejectedAccessToken = authorization.accessToken;
-          continue;
-        }
-        return yield* new RemoteEnvironmentAuthFetchError({
-          message: "The environment rejected the renewed session authorization.",
-          cause: result.success,
-        });
       }
       return result.success;
     }

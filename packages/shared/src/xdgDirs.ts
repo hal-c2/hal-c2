@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - pure path arithmetic, usable from scripts and Electron without an Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off - pure path arithmetic, usable from scripts without an Effect runtime.
 /**
  * Where HAL-C2 keeps its files: the XDG Base Directory layout, or one root.
  *
@@ -23,10 +23,10 @@
  * `dev`/`userdata` level. There are no per-kind `HAL_C2_*_DIR` overrides.
  *
  * `~/.t3` and `~/.hal-c2` are never a root. A `HAL_C2_HOME` that names one of
- * them (old service units did) is ignored here and left for the migration to
- * copy from (`legacyHomeCandidates`).
+ * them (old service units did) is ignored here and left for the MC's migration
+ * to copy from.
  *
- * This module is pure and synchronous so scripts, Electron, the TUI and Effect
+ * This module is pure and synchronous so scripts, the desktop host, the TUI and Effect
  * code can all use it. Existence checks belong to the caller.
  */
 
@@ -188,34 +188,4 @@ export const resolveHalC2Dirs = (options: HalC2DirsOptions): HalC2Dirs => {
     cache: under(env.XDG_CACHE_HOME, defaults.cache, "cache"),
     runtime: runtimeBase === undefined ? state : path.join(runtimeBase, appDir),
   };
-};
-
-/**
- * The old homes the migration may copy from, most specific first: a relocated
- * T3 Code install named by `T3CODE_HOME` or `T3_HOME`, then `~/.hal-c2`, then
- * `~/.t3`. The caller keeps the first one that exists. A `HAL_C2_HOME` that
- * names an old home counts too, since old service units wrote such units.
- */
-export const legacyHomeCandidates = (
-  options: Pick<HalC2DirsOptions, "env" | "homeDir" | "platform">,
-): readonly string[] => {
-  const { env, homeDir, platform } = options;
-  const path = pathFor(platform);
-  const oldHomeAsRoot = absoluteEnvPath(env.HAL_C2_HOME, platform);
-  const named = [
-    oldHomeAsRoot !== undefined && isLegacyHome(oldHomeAsRoot, options) ? oldHomeAsRoot : undefined,
-    absoluteEnvPath(env.T3CODE_HOME, platform),
-    absoluteEnvPath(env.T3_HOME, platform),
-  ].filter((value): value is string => value !== undefined);
-  const homes = LEGACY_HOME_DIR_NAMES.map((name) => path.join(homeDir, name));
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const candidate of [...named, ...homes]) {
-    const key = normalize(candidate, platform);
-    if (!seen.has(key)) {
-      seen.add(key);
-      ordered.push(candidate);
-    }
-  }
-  return ordered;
 };

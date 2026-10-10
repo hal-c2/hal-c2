@@ -4,13 +4,6 @@ export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"]
 export const MOBILE_DEFAULT_THEME_ID = "hal-c2";
 
 /**
- * Every palette the mobile app can render. Declared here so host-side tooling
- * (the app-store screenshot harness) can validate a requested theme without
- * importing React Native application code.
- */
-export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
-
-/**
  * Ids a theme may not take: the appearance keywords a stored preference uses,
  * every built-in, and the legacy aliases older saves still carry. Taking one
  * would either be shadowed by the built-in or capture clients that never chose
@@ -40,10 +33,9 @@ export const UNPUBLISHABLE_THEME_IDS: ReadonlySet<string> = new Set([
 ]);
 
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
-export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
 
-/** Product roles shared by web CSS, React Native tokens, and native surfaces. */
+/** Product roles every client's theme colours. */
 export const THEME_COLOR_ROLES = [
   "canvas",
   "chrome",

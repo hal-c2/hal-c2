@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { halC2HomeRoot, isLegacyHome, legacyHomeCandidates, resolveHalC2Dirs } from "./xdgDirs.ts";
+import { halC2HomeRoot, isLegacyHome, resolveHalC2Dirs } from "./xdgDirs.ts";
 
 const linux = { homeDir: "/home/me", platform: "linux" as const };
 const mac = { homeDir: "/Users/me", platform: "darwin" as const };
@@ -126,38 +126,5 @@ describe("resolveHalC2Dirs", () => {
     expect(isLegacyHome("C:\\Users\\ME\\.T3", windows)).toBe(true);
     expect(halC2HomeRoot({ ...linux, env: { HAL_C2_HOME: "relative" } })).toBeUndefined();
     expect(halC2HomeRoot({ ...linux, env: { HAL_C2_HOME: "/srv/hal-c2 " } })).toBe("/srv/hal-c2");
-  });
-});
-
-describe("legacyHomeCandidates", () => {
-  it("orders a named T3 install before the dot directories", () => {
-    expect(legacyHomeCandidates({ ...linux, env: { T3CODE_HOME: "/srv/t3" } })).toEqual([
-      "/srv/t3",
-      "/home/me/.hal-c2",
-      "/home/me/.t3",
-    ]);
-    expect(legacyHomeCandidates({ ...linux, env: { T3_HOME: "/srv/t3" } })[0]).toBe("/srv/t3");
-    expect(legacyHomeCandidates({ ...linux, env: {} })).toEqual([
-      "/home/me/.hal-c2",
-      "/home/me/.t3",
-    ]);
-  });
-
-  it("treats a HAL_C2_HOME that names an old home as a source, not a root", () => {
-    expect(legacyHomeCandidates({ ...linux, env: { HAL_C2_HOME: "/home/me/.t3" } })).toEqual([
-      "/home/me/.t3",
-      "/home/me/.hal-c2",
-    ]);
-    expect(legacyHomeCandidates({ ...linux, env: { HAL_C2_HOME: "/srv/hal-c2" } })).toEqual([
-      "/home/me/.hal-c2",
-      "/home/me/.t3",
-    ]);
-  });
-
-  it("drops relative values", () => {
-    expect(legacyHomeCandidates({ ...linux, env: { T3CODE_HOME: "t3" } })).toEqual([
-      "/home/me/.hal-c2",
-      "/home/me/.t3",
-    ]);
   });
 });

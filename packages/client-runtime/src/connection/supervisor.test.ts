@@ -1,4 +1,8 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@hal-c2/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
+} from "@hal-c2/contracts";
 import { RelayClientTracer } from "@hal-c2/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -21,7 +25,7 @@ import {
 } from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { fetchEnvironmentSessionState } from "../state/session.ts";
+import { fetchEnvironmentShellSnapshot } from "../state/shellSnapshotHttp.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -75,6 +79,13 @@ const PREPARED_CONNECTION: PreparedConnection = {
 };
 
 const TEST_RPC_CLIENT = {} as WsRpcProtocolClient;
+const SHELL = {
+  schemaVersion: 1,
+  snapshotSequence: 1,
+  projects: [],
+  threads: [],
+  archivedThreads: [],
+} satisfies OrchestrationV2ShellSnapshot;
 
 function transient(message = "Connection failed.") {
   return new ConnectionTransientError({
@@ -1194,7 +1205,7 @@ describe("EnvironmentSupervisor", () => {
       const bootstrapFails = yield* Ref.make(false);
       const bootstrapCalls = yield* Ref.make(0);
       const httpPaths: Array<string> = [];
-      const sessionAuthorizations: Array<string | null> = [];
+      const shellAuthorizations: Array<string | null> = [];
       const fetchFn = ((input, init) => {
         const request = new Request(input, init);
         const pathname = new URL(request.url).pathname;
@@ -1227,22 +1238,9 @@ describe("EnvironmentSupervisor", () => {
                 expiresAt: "2026-09-04T01:00:00.000Z",
               }),
             );
-          case "/api/auth/session": {
-            const authorization = request.headers.get("authorization");
-            sessionAuthorizations.push(authorization);
-            return Promise.resolve(
-              Response.json({
-                authenticated: authorization === "DPoP access-token-2",
-                auth: {
-                  policy: "loopback-browser",
-                  bootstrapMethods: ["one-time-token"],
-                  sessionMethods: ["dpop-access-token"],
-                  sessionCookieName: "hal_c2_session_test",
-                },
-                scopes: AuthStandardClientScopes,
-              }),
-            );
-          }
+          case "/api/orchestration/shell":
+            shellAuthorizations.push(request.headers.get("authorization"));
+            return Promise.resolve(Response.json(SHELL));
           default:
             return Promise.reject(new Error(`Unexpected HTTP request to ${request.url}`));
         }
@@ -1320,15 +1318,15 @@ describe("EnvironmentSupervisor", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const session = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-      const readSession = fetchEnvironmentSessionState({
+      const readShell = fetchEnvironmentShellSnapshot({
         prepared,
         signer: Option.some(signer),
         remoteAuthorization: Option.some(remoteAuthorization),
       }).pipe(Effect.provide(httpLayer));
 
       yield* TestClock.adjust("2 hours");
-      expect((yield* readSession).authenticated).toBe(true);
-      expect(sessionAuthorizations).toEqual(["DPoP access-token-2"]);
+      expect(yield* readShell).toEqual(SHELL);
+      expect(shellAuthorizations).toEqual(["DPoP access-token-2"]);
       expect(yield* Ref.get(bootstrapCalls)).toBe(1);
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
       expect(yield* Ref.get(harness.releaseCount)).toBe(0);
@@ -1339,10 +1337,10 @@ describe("EnvironmentSupervisor", () => {
 
       yield* TestClock.adjust("2 hours");
       yield* Ref.set(bootstrapFails, true);
-      const failure = yield* readSession.pipe(Effect.flip);
+      const failure = yield* readShell.pipe(Effect.flip);
       expect(failure._tag).toBe("RemoteEnvironmentAuthFetchError");
       expect(yield* Ref.get(bootstrapCalls)).toBe(2);
-      expect(sessionAuthorizations).toEqual(["DPoP access-token-2"]);
+      expect(shellAuthorizations).toEqual(["DPoP access-token-2"]);
       expect(httpPaths.filter((path) => path === "/api/auth/websocket-ticket")).toHaveLength(1);
       expect(httpPaths.filter((path) => path === "/oauth/token")).toHaveLength(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
