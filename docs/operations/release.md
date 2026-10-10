@@ -45,7 +45,7 @@ it, in place when the change allows and through a restart when it does not.
 `.github/workflows/release-mc.yml` publishes the bundles MCs update from (`HalC2.Upgrade`):
 `hal-c2-mc-<version>-<platform>.tar.gz` and its `.sha256` for `darwin-arm64`, `linux-x64` and
 `linux-arm64`, on an `mc-v<version>` prerelease. Push a `mc-v<version>` tag, or dispatch it with
-a `version` (defaulting to `apps/server/package.json`). MCs fetch from that release unless
+a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that release unless
 `HAL_C2_UPGRADE_URL` names another host, and pass bundles on to their cluster peers. See the
 [MC README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
 
