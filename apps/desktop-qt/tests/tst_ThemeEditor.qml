@@ -153,6 +153,12 @@ Item {
             keyClick(Qt.Key_Tab);
             compare(json.text, "x");
             verify(!json.activeFocus && !composer.activeFocus);
+            // Shift+Tab comes back to the field, and leaves it for the button above.
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            verify(json.activeFocus);
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            compare(json.text, "x");
+            verify(findChild(dialog.contentItem, "chooseFiles").activeFocus);
             keyClick(Qt.Key_Escape);
             tryVerify(() => !dialog.visible);
             tryVerify(() => composer.activeFocus);

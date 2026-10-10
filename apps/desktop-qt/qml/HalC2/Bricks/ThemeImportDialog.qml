@@ -67,8 +67,9 @@ Popup {
             color: dialog.foreground
             wrapMode: TextEdit.Wrap
             Accessible.name: qsTr("Theme JSON")
-            // Tab leaves the field for the buttons rather than indenting the JSON.
+            // Tab and Shift+Tab leave the field for the buttons rather than indenting the JSON.
             Keys.onTabPressed: nextItemInFocusChain().forceActiveFocus(Qt.TabFocusReason)
+            Keys.onBacktabPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason)
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
             font.pixelSize: Math.round(12 * Theme.fontScale)
             background: Rectangle {
