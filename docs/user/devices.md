@@ -61,7 +61,7 @@ back from the device after a change.
 
 ## Agents and devices
 
-When an agent opens a device, it floats over the chat in web and desktop clients
+When an agent opens a device, it floats over the chat in the desktop client
 connected to the thread, the same way an agent-driven browser does. Turn off
 **Auto-show floating preview** in **Settings → Integrations → Browser** to open a
 right-panel tab instead. In the mobile app, open the agent's thread and tap the
@@ -83,7 +83,7 @@ started from then on; your own Device panel is unaffected.
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the
-local network, Tailscale, and HAL-C2 Connect. Live video needs a secure page
+local network, Tailscale, and HAL-C2 Connect. Live video needs a secure connection
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video.
 
@@ -116,4 +116,4 @@ localhost without forwarding or another reachable address.
 
 The connected HAL-C2 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
 
-To receive newer tool versions on a remote environment, update that environment's HAL-C2 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; HAL-C2 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.
+To receive newer tool versions on a remote environment, update that environment's HAL-C2 server. Updating only the desktop or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; HAL-C2 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

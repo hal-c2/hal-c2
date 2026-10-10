@@ -68,7 +68,7 @@ void DraftController::activate() {
   commands->add(newThread, keybindings::commandLabel(newThread), [this] { startNew({}); });
   commands->setTerms(newThread, {QStringLiteral("new thread"), QStringLiteral("chat"), QStringLiteral("create"),
                                  QStringLiteral("draft")});
-  // The web's chat.newLocal: the contextual create, never a project chooser.
+  // The contextual create, never a project chooser.
   const QString newLocal = QStringLiteral("chat.newLocal");
   commands->add(newLocal, keybindings::commandLabel(newLocal), [this] {
     if (const sidebar::ProjectGroup* group = defaultGroup()) startIn(*group);
@@ -203,8 +203,7 @@ bool DraftController::startNew(const QVariantMap& payload) {
     group = NativeShell::of(this)->sidebar()->group(requested.toString());
     if (!group) return true;
   } else {
-    // The web's chat.new: with several projects, none of them showing or in
-    // scope, it asks which one.
+    // With several projects, none of them showing or in scope, it asks which one.
     SidebarController* sidebar = NativeShell::of(this)->sidebar();
     if (!shownProject() && !sidebar->scope() && sidebar->groups().size() > 1) {
       NativeShell::of(this)->controller<KeybindingController>()->commands()->run(QStringLiteral("thread.newIn"));
@@ -263,7 +262,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
 }
 
 // Home passes through (NavigationController), so the draft takes its place
-// rather than stacking on it, as the web's replace navigation does.
+// rather than stacking on it.
 void DraftController::land() {
   if (!m_landsOnDraft || !m_active || !m_store->synchronized()) return;
   if (NativeShell::of(this)->controller<NavigationController>()->route().kind != QLatin1String("home")) {

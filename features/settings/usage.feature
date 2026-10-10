@@ -9,6 +9,7 @@
 #   packages/contracts/src/providerUsageLimits.ts
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
 #   apps/web/src/components/usage/UsagePage.tsx
+#   packages/shared/src/usageFormat.ts (token, percentage and day labels)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 #   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/UsageChart.qml (the chart)
@@ -16,6 +17,7 @@
 #   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
 #   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, chart)
 #   apps/web/src/components/usage/UsagePriceOverrides.tsx, apps/web/src/components/usage/usagePriceTable.ts (model prices dialog)
+#   apps/web/src/components/usage/usagePriceTargets.ts (per-environment save results)
 #   apps/web/src/components/usage/usagePagePreferences.ts (environment subset)
 #   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
@@ -135,11 +137,86 @@ Feature: Usage and limits
       Then "laptop" reports saved and "server" reports not saved
       And retrying only saves to "server"
 
+    # Legacy: apps/web/src/components/usage/usagePriceTargets.ts, UsagePriceOverrides.tsx
+    @backlog @desktop
+    Scenario: A price save an environment refuses says to try again
+      Given the user applies a price to "laptop"
+      And "laptop" refuses the change
+      When the user saves the price
+      Then "laptop" reports "Not saved · Could not save. Try again."
+      And the staged price is kept for another try
+
+    @backlog @desktop
+    Scenario: An environment removed before a retry is reported as removed
+      Given a price could not be saved to "server"
+      And the user removed "server" from this app
+      When the user retries the failed saves
+      Then "server" reports "Not saved · Environment removed"
+
+    @backlog @desktop
+    Scenario: Model prices say so when no environment is connected
+      Given no environment is connected
+      When the user opens model prices
+      Then the user is told to connect an environment to set model prices
+
+    @backlog @desktop
+    Scenario: An environment with no custom prices says how to add one
+      Given the selected environment has no custom prices
+      When the user opens model prices
+      Then the user is told there are no custom prices and that a row overrides automatic pricing
+
     @backlog @shared
     Scenario: Environments with different prices show the price as mixed
       Given "laptop" and "server" have different prices for "my-model"
       When the user views prices for all environments
       Then the price for "my-model" shows as mixed
+
+    @backlog @desktop
+    Scenario Outline: A model price that is incomplete or invalid is not saved
+      Given the user is adding a price for a model
+      When the user enters <entry>
+      Then the user is told "<message>"
+      And nothing is saved
+
+      Examples:
+        | entry                                  | message                                      |
+        | no model ID                            | Enter a model ID.                            |
+        | an output rate but no input rate       | Input is required on laptop.                 |
+        | a negative output rate                 | Use non-negative numbers for prices.         |
+        | a rate that is not a number            | Use non-negative numbers for prices.         |
+
+    @backlog @desktop
+    Scenario: A model that already has a price row is edited there
+      Given "my-model" already has a custom price
+      When the user adds a new price for "my-model"
+      Then the user is told "This model already has a row. Edit its prices there."
+
+    @backlog @desktop
+    Scenario: An explicit zero cache rate means free
+      When the user sets a cache read rate of 0 for a model
+      Then cache reads of that model cost nothing
+      And a blank cache rate still uses the input rate
+
+    @backlog @desktop
+    Scenario Outline: An environment whose prices cannot be changed says why
+      Given an environment that <state>
+      When the user opens model prices
+      Then that environment is marked "<reason>"
+      And the other environments can still be saved
+
+      Examples:
+        | state                                    | reason                      |
+        | is offline                               | Offline                     |
+        | has not sent its settings yet            | Prices not loaded           |
+        | runs a server that cannot set prices     | Update server to edit prices |
+        | is still checking this session's access  | Checking permissions…       |
+        | this session may only read               | Read-only access            |
+
+    @backlog @desktop
+    Scenario: Environments are chosen before prices are shown
+      Given no environment is selected
+      When the user opens model prices
+      Then the user is asked to select an environment to see and change its model prices
 
   Rule: Reading usage
 
@@ -247,6 +324,23 @@ Feature: Usage and limits
     Scenario: Each model shows its share of the cost
       Given the user views cost for the past 7 days
       Then each model shows what percentage of the total cost it makes up
+
+    # Legacy: packages/shared/src/usageFormat.ts (formatTokens, formatPercent, formatDayShort)
+    @backlog @desktop
+    Scenario Outline: Usage figures are written short enough to line up in a column
+      Given a model used <tokens> tokens on "2026-08-07" and makes up a share of 0.123 of the cost
+      When the user views usage broken down by model and by day
+      Then the tokens read "<shown>"
+      And the day reads "Aug 7"
+      And the share reads "12.3%"
+
+      Examples:
+        | tokens         | shown  |
+        | 804            | 804    |
+        | 804,000        | 804K   |
+        | 76,700,000     | 76.7M  |
+        | 19,900,000,000 | 19.9B  |
+        | 1,000,000      | 1M     |
 
     @desktop @backlog-desktop
     Scenario: The user chooses several environments to add up
@@ -364,3 +458,28 @@ Feature: Usage and limits
         | the account has no credit left            | No reset credit left.             |
         | the credit was redeemed on another device | That credit was already redeemed. |
 
+    @backlog @desktop
+    Scenario Outline: A limit says whether usage is keeping up with its window
+      Given a limit window that is <elapsed> through its period with <used> used
+      When the user views limits
+      Then the limit says usage is <pace>
+
+      Examples:
+        | elapsed | used | pace                                                  |
+        | 20%     | 60%  | ahead of pace: spending faster than the window elapses |
+        | 50%     | 50%  | on pace with the window                               |
+        | 80%     | 30%  | under pace: headroom left for the rest of the window  |
+
+    @backlog @desktop
+    Scenario: A limit says when it resets
+      Given a limit window that resets in 3 hours
+      When the user views limits
+      Then the limit shows the time it resets and how long that is from now
+
+    @backlog @desktop
+    Scenario: An account's email can be revealed and hidden
+      Given the limits show a provider account whose email is masked
+      When the user reveals the email
+      Then the full email is shown
+      When the user hides it again
+      Then the email is masked

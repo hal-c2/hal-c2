@@ -1,6 +1,6 @@
 defmodule HalC2.ProviderUsageLimits.Claude do
   @moduledoc """
-  Claude Code subscription usage, as the Node server shapes it (claudeUsageLimits.ts).
+  Claude Code subscription usage.
 
   Two sources produce windows with the same ids, so a turn's update lands on the row
   the probe drew:
@@ -159,7 +159,7 @@ defmodule HalC2.ProviderUsageLimits.Claude do
   end
 
   @doc false
-  # `auth` fields for the account `initialize` reports, as the Node server labels them.
+  # `auth` fields for the account `initialize` reports.
   def account(%{} = account) do
     method = String.downcase(String.replace(account["tokenSource"] || "", ~r/[\s_-]+/, ""))
     subscription = account["subscriptionType"]

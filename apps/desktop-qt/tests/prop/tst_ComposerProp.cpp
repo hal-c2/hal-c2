@@ -672,7 +672,7 @@ struct Prompt : Command {
   }
 };
 
-// The web's stash: the draft goes aside, or an empty draft takes back the only entry.
+// The stash: the draft goes aside, or an empty draft takes back the only entry.
 struct Stash : Command {
   void apply(Model& m) const override {
     Target& target = m.targets[m.open];

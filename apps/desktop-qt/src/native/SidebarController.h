@@ -22,12 +22,12 @@ class ShellStore;
 class ToastController;
 
 // Owns the `sidebar` key once the shell has its MC's first snapshot: rows
-// and projects come from ShellStore, grouped as the web app groups them
-// (sidebar::groupProjects), drafts from DraftController, and the row actions
+// and projects come from ShellStore, grouped by
+// sidebar::groupProjects, drafts from DraftController, and the row actions
 // (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
 // scope stay here.
 //
-// As the web app's SidebarDraftBlock, a draft is listed only once it holds
+// A draft is listed only once it holds
 // something (ComposerController::draftPreview), newest first. The draft the
 // window shows keeps the row it had when the window opened it: none for one
 // that was empty then, and the same label however the user types.
@@ -57,7 +57,7 @@ public:
   // `thread.select.toggle {key}` adds or removes one, `thread.select.range
   // {key}` selects from the anchor (the last one toggled or opened) to it,
   // `thread.select.clear` drops them all, as does scoping the list or opening
-  // a thread. As the web app's threadSelectionStore.
+  // a thread.
   QStringList selection() const;
   void clearSelection();
   void deselect(const QStringList& keys);
@@ -75,11 +75,10 @@ public:
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
-  // Where a window that showed a parked thread goes, as the web app does:
+  // Where a window that showed a parked thread goes:
   // settling and snoozing move to the next card, else a new thread in the
-  // project (useThreadParking); archiving to a new thread in the project
-  // (useThreadActions archiveThread); deleting to the project's first other
-  // thread (fallbackAfterDelete), else nowhere, which lands the window on a
+  // project; archiving to a new thread in the project; deleting to the
+  // project's first other thread (fallbackAfterDelete), else nowhere, which lands the window on a
   // draft (DraftController::land).
   enum class Leave { NextCard, ProjectDraft, ProjectFallback };
   // Runs `command`, which takes the thread `key` out of the list (settle,
@@ -142,8 +141,7 @@ private:
   void readSettings();
   // Reading a thread is a visit: while the window shows one, the MC is told
   // the thread was seen up to its newest change (`thread.visit`, visitedAt
-  // its updatedAt), which clears "Done" on every device. As the web app's
-  // ChatView: once per change, an unseen completion at once and other
+  // its updatedAt), which clears "Done" on every device. Once per change, an unseen completion at once and other
   // activity at most every few seconds; an MC that does not keep the
   // watermark (no `lastVisitedAt` on its rows) is not told.
   void visitOpenThread();

@@ -1,5 +1,4 @@
-// Settings → General, Background activity (the web's background activity row
-// and its Advanced dialog): the profile the selected environments' MCs gate
+// Settings → General, Background activity: the profile the selected environments' MCs gate
 // their background work by (`backgroundActivity`, HalC2.BackgroundPolicy), and
 // with Advanced chosen the Git fetch interval and whether work pauses while
 // the host is locked, kept as a custom profile's overrides on the profile it

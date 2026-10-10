@@ -9,8 +9,7 @@
 //
 // Prose HTML refers to classes (h1..h6, c for inline code, hr, and checked or
 // unchecked task items) that the brick styles from the theme, so a theme
-// change never re-parses a reply. Margins follow `.chat-markdown` in the web app's
-// index.css.
+// change never re-parses a reply. Margins are the brick's.
 
 var PARAGRAPH_MARGIN = 10.4;
 var HEADING_TOP = 20;
@@ -903,7 +902,7 @@ function context(lineBreaks, refs) {
 }
 
 // ---------------------------------------------------------------------------
-// Quotes of assistant replies (packages/shared/src/assistantCitations.ts)
+// Quotes of assistant replies (AssistantCitation in packages/contracts)
 
 var CITATION_LINK = /\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/g;
 var CITATION_CONTEXT = 32;
@@ -1349,7 +1348,7 @@ function segments(text, options, state) {
 // Rendering helpers for the brick
 
 // The stylesheet prose and table cells share, from the theme: link colour,
-// heading colour (the web's contrast-foreground), muted text for h6, the
+// heading colour, muted text for h6, the
 // inline code fill and the rule colour.
 function styleHead(theme) {
     var heading = "font-weight:600;color:" + theme.heading + ";";

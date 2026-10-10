@@ -8,8 +8,7 @@
 class McClient;
 class ShellBridge;
 
-// An attachment of the draft opened to look at (the web's
-// AttachmentFilePreview): an image large, Markdown rendered or as its source,
+// An attachment of the draft opened to look at: an image large, Markdown rendered or as its source,
 // any other text as text, and what cannot be shown named as such.
 //
 // Publishes `attachmentViewer`, null while closed: {id, name, kind (image |

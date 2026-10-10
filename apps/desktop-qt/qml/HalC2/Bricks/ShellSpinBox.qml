@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A number field in the web app's clothes (number-field.tsx): a bordered input
+// A number field in the theme's colours: a bordered input
 // with a minus stepper on the left and a plus on the right. Replaces the stock
 // SpinBox, whose colours come from a system palette.
 SpinBox {

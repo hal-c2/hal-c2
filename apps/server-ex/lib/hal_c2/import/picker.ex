@@ -1,7 +1,7 @@
 defmodule HalC2.Import.Picker do
   @moduledoc """
   `mix hal_c2.threads.import` and `bin/hal-c2-service threads import`: lists the
-  threads of a T3 Code or Node HAL-C2 install on this machine and imports the ones
+  threads of a T3 Code or earlier HAL-C2 install on this machine and imports the ones
   you pick into the running MC (`HalC2.Import.PreviousInstall`), asked of that MC
   over HTTP with its own access token.
 

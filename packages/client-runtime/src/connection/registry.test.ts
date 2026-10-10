@@ -60,7 +60,6 @@ import * as ConnectionWakeups from "./wakeups.ts";
 import { watchDiscoveredCompatibility } from "./layer.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import type { RelayEnvironmentStatusResponse } from "@hal-c2/contracts/relay";
-import { runDesktopCommitWithReconnectObserver } from "../state/server.ts";
 import { v2ShellSnapshot } from "../state/orchestrationV2TestFixtures.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -454,33 +453,6 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
-  it.effect("replays connected state when arming a desktop commit observer", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([TARGET]);
-
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.start;
-        yield* awaitConnectionState(
-          registry,
-          TARGET.environmentId,
-          (state) => state.phase === "connected",
-        );
-
-        const commits = yield* Ref.make(0);
-        const result = yield* runDesktopCommitWithReconnectObserver(
-          registry.stateChanges(TARGET.environmentId),
-          Ref.update(commits, (count) => count + 1).pipe(
-            Effect.andThen(Effect.fail("commit refused")),
-          ),
-        ).pipe(Effect.flip, Effect.timeout("1 second"));
-
-        expect(result).toBe("commit refused");
-        expect(yield* Ref.get(commits)).toBe(1);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
-  );
-
   it.effect("does not acquire a session after the registry scope has already closed", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);

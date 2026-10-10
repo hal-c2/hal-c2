@@ -66,7 +66,7 @@ QJsonObject providerFor(const QJsonArray& providers, const QString& driver) {
   return best;
 }
 
-// The web's quoteProviderBinary.
+// A provider binary's path, quoted for the command line it is shown in.
 QString quoteBinary(const QString& path, const QString& fallback, const QString& os) {
   static const QRegularExpression safe(QStringLiteral("^[A-Za-z0-9_./:\\\\-]+$"));
   if (safe.match(path).hasMatch() && (os == QLatin1String("windows") || !path.contains(QLatin1Char('\\')))) return path;

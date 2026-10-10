@@ -1,9 +1,13 @@
 # Sources:
+#   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
 #   docs/user/keybindings.md (Desktop quit shortcut, mod+w)
 #   apps/web/src/components/QuitHoldOverlay.tsx
 #   apps/desktop/src/window/QuitHold.ts
 #   apps/desktop/src/window/DesktopApplicationMenu.ts (Settings..., View zoom items, Quit)
-#   apps/desktop/src/window/DesktopWindow.ts (zoomMain)
+#   apps/desktop/src/window/DesktopWindow.ts (zoomMain, saved bounds and maximized state, minimum size, native context menu, held close shortcut)
+#   apps/desktop/src/app/DesktopClerk.ts (single-instance lock, second launch reveals the window)
+#   apps/desktop/src/electron/ElectronShell.ts (parseSafeExternalUrl: which links may leave the app)
+#   apps/desktop/src/settings/DesktopAppSettings.ts (default and minimum window size)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands, title from `route`)
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route's title)
 #   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
@@ -117,6 +121,29 @@ Feature: Windows, zoom and quitting
       Given the shell theme sets the window opacity to 0.9
       Then the window is drawn at that opacity
 
+    # Legacy: apps/desktop/src/window/DesktopWindow.ts (render-process-gone recovery)
+    @backlog @desktop
+    Scenario: A window whose page crashes comes back by itself
+      Given a thread is open in the window
+      When the window's page crashes or runs out of memory
+      Then the window reloads itself after a moment
+      And the thread comes back from the MC with its work still running
+
+    @backlog @desktop
+    Scenario: A window that keeps crashing stops reloading itself
+      Given the window's page has crashed and reloaded three times within a minute
+      When the page crashes a fourth time within that minute
+      Then the window is not reloaded again
+
+    # Legacy: apps/desktop/src/window/DesktopWindow.ts (bounds persistence when the saved position cannot be restored)
+    @backlog @desktop
+    Scenario: A saved position that could not be restored is kept until the user moves the window
+      Given the first window was left on a screen that is no longer connected
+      When the app starts and the window opens at its default size
+      Then the saved position is kept
+      When the user moves or resizes the window
+      Then the new position is saved
+
   Rule: More than one window
 
     @desktop
@@ -228,6 +255,46 @@ Feature: Windows, zoom and quitting
       Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 
+    @backlog @desktop
+    Scenario: The first window opens at a comfortable size it cannot shrink below
+      Given the user has never resized the window
+      When the app starts
+      Then the first window opens at 1100 by 780
+      And it cannot be made smaller than 840 by 620
+
+    @backlog @desktop
+    Scenario: The first window remembers its size and position across restarts
+      Given the user moved and resized the first window
+      When the user restarts the app
+      Then the first window opens where and as large as it was left
+
+    @backlog @desktop
+    Scenario: A maximized first window is maximized again after a restart
+      Given the user maximized the first window
+      When the user restarts the app
+      Then the first window opens maximized
+
+    @backlog @desktop
+    Scenario: A saved position that is no longer on any screen is not used
+      Given the first window was left on a screen that is no longer connected
+      When the user restarts the app
+      Then the first window opens at its default size on a connected screen
+
+    # Electron's single-instance lock (DesktopClerk.ts); the Qt app's own lock decision is the maintainers'.
+    @backlog @desktop
+    Scenario: Starting the app again brings the open window forward
+      Given the app is already running
+      When the user starts the app a second time
+      Then no second copy of the app runs
+      And the open window is shown in front, restored if it was minimized
+
+    @backlog @desktop
+    Scenario: Holding the close shortcut closes one window, not all of them
+      Given three windows are open
+      When the user holds mod+w so that it repeats
+      Then only the window in front closes
+      And the others stay open
+
   Rule: Zoom
 
     @desktop
@@ -267,6 +334,119 @@ Feature: Windows, zoom and quitting
       When the user opens a context menu
       Then the menu appears at the pointer
 
+    # The web app drew these itself when no desktop shell was present
+    # (apps/web/src/contextMenuFallback.ts); the Qt shell's menus must keep the same rules.
+    @backlog @desktop
+    Scenario Outline: A context menu closes without choosing anything
+      Given a context menu is open
+      When the user <closes it>
+      Then the menu closes
+      And no entry is chosen
+      And focus returns to where it was before the menu opened
+
+      Examples:
+        | closes it                              |
+        | presses Escape                         |
+        | clicks outside the menu                |
+        | opens a context menu somewhere else    |
+
+    @backlog @desktop
+    Scenario: Only one context menu is open at a time
+      Given a context menu is open
+      When the user opens a context menu elsewhere
+      Then the first menu closes
+      And only the second menu is shown
+
+    # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
+    @backlog @desktop
+    Scenario: A context menu opened near the edge stays inside the window
+      Given the pointer is at the bottom right corner of the window
+      When the user opens a context menu
+      Then the whole menu is visible inside the window with a small margin
+
+    # ContextMenuHost.qml flattens a submenu into a labelled section instead of
+    # opening one; maintainer decision whether that replaces this scenario.
+    @backlog @desktop
+    Scenario: A submenu opens beside its entry and flips when there is no room
+      Given a context menu with a submenu
+      When the user hovers or clicks the submenu's entry
+      Then the submenu opens beside it
+      And where there is no room on that side it opens on the other
+
+    # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
+    @backlog @desktop
+    Scenario: Disabled entries cannot be chosen and destructive ones are marked
+      Given a context menu with a disabled entry and a destructive entry
+      When the user clicks the disabled entry
+      Then nothing happens and the menu stays open
+      And the destructive entry is visibly marked as destructive
+
+    @backlog @desktop
+    Scenario: A context menu closes when what it was about changes
+      Given a context menu is open on a terminal selection
+      When the selection is cleared
+      Then the menu closes with nothing chosen
+
+    # The Electron desktop's native context menu (DesktopWindow.ts).
+    @backlog @desktop
+    Scenario: A misspelled word offers corrections in its context menu
+      Given the user typed a misspelled word in a text field
+      When the user opens the context menu on the word
+      Then up to five spelling suggestions are offered
+      And choosing one replaces the word
+
+    @backlog @desktop
+    Scenario: A misspelled word with no corrections says so
+      Given the user typed a word the spell checker has no suggestion for
+      When the user opens the context menu on the word
+      Then the menu says there are no suggestions
+      And that entry cannot be chosen
+
+    @backlog @desktop
+    Scenario Outline: A text field's context menu offers only what can be done
+      Given <situation>
+      When the user opens the context menu in the text field
+      Then <entry> is available
+      And the entries that do not apply cannot be chosen
+
+      Examples:
+        | situation                                        | entry        |
+        | some text is selected in an editable field       | cut and copy |
+        | text is selected in read-only text               | copy         |
+        | the clipboard holds text and the field is empty  | paste        |
+
+    @backlog @desktop
+    Scenario: A link's context menu can copy the link
+      Given the conversation shows a link
+      When the user opens the context menu on the link
+      Then the user can copy the link address
+
+    @backlog @desktop
+    Scenario: An image's context menu can copy the image
+      Given the conversation shows an image
+      When the user opens the context menu on the image
+      Then the user can copy the image
+
+    @backlog @desktop
+    Scenario Outline: A link leaves the app only when it is safe to open
+      Given the conversation shows a link to <address>
+      When the user opens the link
+      Then <result>
+
+      Examples:
+        | address                                              | result                                           |
+        | an https or http page                                | it opens in the system browser                   |
+        | an ssh remote folder in VS Code or Zed               | it opens in that editor                          |
+        | an address with a user name and password in it       | nothing opens                                    |
+        | a file path or a script address                      | nothing opens                                    |
+
+    @backlog @desktop
+    Scenario: A link never replaces the app's own page
+      Given the conversation shows a link to a web page
+      When the user opens the link
+      Then the page opens outside the app
+      And the app's window keeps showing HAL-C2
+
   Rule: Quitting and the application menu
 
     @desktop
@@ -297,6 +477,28 @@ Feature: Windows, zoom and quitting
     @desktop
     Scenario: Direct mode quits on one press
       Given the quit shortcut is set to Direct
+      When the user presses mod+Q
+      Then the app quits
+
+    # Legacy: apps/desktop/src/window/QuitHold.ts (other keys, concealed window, unreadable setting)
+    @backlog @desktop
+    Scenario: Pressing another key cancels a quit in progress
+      Given the quit shortcut is set to Hold
+      And the user is holding mod+Q
+      When the user presses another key
+      Then the app keeps running
+      And a following single press of mod+Q starts over
+
+    @backlog @desktop
+    Scenario: A held quit hides the window until the shortcut is released
+      Given the quit shortcut is set to Hold
+      When the user has held mod+Q long enough to quit
+      Then the window disappears at once
+      And the repeats of the held keys do not reach the next application
+
+    @backlog @desktop
+    Scenario: The quit shortcut quits even when its setting cannot be read
+      Given the quit shortcut setting cannot be read
       When the user presses mod+Q
       Then the app quits
 

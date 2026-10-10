@@ -7,9 +7,8 @@ defmodule HalC2.Vcs.Watch do
   something changed. Local status is read again when told (`refresh/1`: a turn
   ended, a git action ran); remote status is fetched on the background activity
   settings' `automaticGitFetchInterval` (never at 0) while a client in front shows
-  this checkout, as the Node server does (`HalC2.BackgroundPolicy`). An MC without
-  automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`) only fetches when asked
-  (`vcs.refreshStatus`).
+  this checkout (`HalC2.BackgroundPolicy`). An MC without automatic actions
+  (`HAL_C2_MC_NO_AUTO_ACTIONS`) only fetches when asked (`vcs.refreshStatus`).
   """
 
   use GenServer, restart: :temporary

@@ -3,17 +3,17 @@
  * Writes the third-party license manifest a Qt client's Open source licenses
  * page reads (src/native/LicensesController).
  *
- * The desktop's holds the web app's packages, which the bricks' icons come
- * from (scripts/gen-icons.mjs), and the notices tagged `desktop-qt` in
- * third-party-licenses.config.json (Qt, the MC's runtime, Node.js).
- * stage-runtime.mjs writes it to <runtime>/licenses/; `vp run licenses` writes
- * the one a dev build reads, apps/desktop-qt/licenses/ (gitignored), without
- * fetching missing SPDX texts.
+ * The desktop's holds the packages of the Cursor sidecar the MC release ships
+ * (packages/cursor-acp) and the notices tagged `desktop-qt` in
+ * third-party-licenses.config.json (Qt, the MC's runtime, Node.js, the bricks'
+ * icons). stage-runtime.mjs writes it to <runtime>/licenses/; `vp run licenses`
+ * writes the one a dev build reads, apps/desktop-qt/licenses/ (gitignored),
+ * without fetching missing SPDX texts.
  *
  * The phone's (`--mobile`) holds the notices tagged `mobile-qt` and no
- * packages: an APK ships no JavaScript, and the icons have a notice of their
- * own there, so writing it needs no node_modules. The Android build compiles
- * it into the binary (apps/mobile-qt/cmake/Licenses.cmake).
+ * packages: an APK ships no JavaScript, so writing it needs no node_modules.
+ * The Android build compiles it into the binary
+ * (apps/mobile-qt/cmake/Licenses.cmake).
  *
  * Usage: node third-party-licenses.ts <output> [--offline | --mobile]
  */
@@ -35,7 +35,12 @@ async function writeManifest(
 
 export async function writeDesktopLicenseManifest(output: string, offline: boolean): Promise<void> {
   await writeManifest(output, {
-    packageManifests: [{ bundle: "web", path: new URL("../../web/package.json", import.meta.url) }],
+    packageManifests: [
+      {
+        bundle: "desktop-qt",
+        path: new URL("../../../packages/cursor-acp/package.json", import.meta.url),
+      },
+    ],
     bundleName: "desktop-qt",
     allowMissingGeneratedNotices: offline,
   });

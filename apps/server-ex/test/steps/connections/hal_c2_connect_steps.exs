@@ -691,7 +691,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
           "Unlink an unused environment in HAL-C2 Connect, then restart HAL-C2 on this machine."
 
         "sign in again, then restart" ->
-          "sign out with `hal-c2 connect logout`, then run `hal-c2 connect` again. Restart HAL-C2 after signing in."
+          "sign out with `mix hal_c2.connect logout`, then run `mix hal_c2.connect` again. Restart HAL-C2 after signing in."
 
         "check the host's clock and update" ->
           "Check this machine's date and time, update HAL-C2, then restart it."
@@ -1040,7 +1040,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert Secrets.get("cloud-cli-oauth-token") == nil
     assert HalC2.Connect.cli_token() == nil
 
-    assert "Signed out of HAL-C2 Connect locally.\nThe background service is managed separately with `hal-c2 service`." in context.printed
+    assert "Signed out of HAL-C2 Connect locally.\nThe background service is managed separately with `hal-c2-mc`." in context.printed
 
     context
   end
@@ -1299,7 +1299,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- link helpers ------------------------------------------------------------------------
 
-  # Links the MC as the web client does (`linkEnvironment.ts`): a relay challenge,
+  # Links the MC: a relay challenge,
   # the MC's proof for it, the relay's link, and the relay's answer back to the MC.
   defp link(context) do
     relay_host(context, %{"PATH" => context.relay_bin})
@@ -1354,7 +1354,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     }
   end
 
-  # What `hal-c2 connect link` saves on the host: the wish for a managed link and the
+  # What `mix hal_c2.connect link` saves on the host: the wish for a managed link and the
   # operator's sign-in. The MC acts on it when it starts.
   defp cli_link(context) do
     relay_host(context, %{"PATH" => context.relay_bin})

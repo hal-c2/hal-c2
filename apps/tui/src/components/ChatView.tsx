@@ -174,7 +174,7 @@ function branchPickerOptions(refs: ReadonlyArray<VcsRef>): ReadonlyArray<SelectO
 
 type ThreadRow = Extract<Row, { kind: "thread" }>;
 
-// Top-level layout + state wiring (mirrors apps/web/src/components/ChatView.tsx):
+// Top-level layout + state wiring:
 // owns the external store + UI state, derives the row window and pane heights,
 // routes key bindings to actions, and composes Sidebar / MessagesTimeline /
 // ChatComposer / ThreadTerminalDrawer.

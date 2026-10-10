@@ -25,7 +25,7 @@ QDateTime endOf(const QJsonObject& entity) {
   return completed.isValid() ? completed : timeOf(entity, QLatin1String("updatedAt"));
 }
 
-// apps/web/src/components/chat/V2LifecycleRow.tsx STATUS_VISUALS.
+// The label a lifecycle status reads as.
 QString statusLabel(const QString& status) {
   if (kLive.contains(status)) return QStringLiteral("Working");
   if (status == QLatin1String("idle")) return QStringLiteral("Idle · resumable");
@@ -35,7 +35,7 @@ QString statusLabel(const QString& status) {
   return {};
 }
 
-// The web's AgentsPanel formatElapsedSeconds: 12s, 3m 04s, 1h 02m.
+// 12s, 3m 04s, 1h 02m.
 QString formatElapsed(qint64 total) {
   const qint64 seconds = std::max<qint64>(0, total);
   const qint64 minutes = seconds / 60;

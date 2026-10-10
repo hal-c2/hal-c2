@@ -1,25 +1,24 @@
 # Welcome wizard
 
-HAL-C2 shows a setup flow when you open a new installation or connect to the
-hosted app for the first time. Existing workspaces skip this flow.
+HAL-C2 shows a setup flow when you open a new installation. Existing workspaces
+skip this flow.
 
 ## Connect your computers
 
-Select one or more computers to set up. If you opened HAL-C2 directly from a
-server or the desktop app, that computer is already connected and selected.
-It is identified by its name, which may differ from the device running your
-browser.
+Select one or more computers to set up. If you opened HAL-C2 from the desktop app, that
+computer is already connected and selected. It is identified by its name, which
+may differ from the device running the app.
 
 You can add more computers before continuing:
 
 - **HAL-C2 Connect** connects computers that are signed in to your account.
-  [Install the CLI](./install.md#command-line) and run `hal-c2 connect` on each
-  computer you want to add, then start HAL-C2 or run `hal-c2 serve` so the
-  computer stays available.
-- **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `hal-c2 serve`, then run `hal-c2 pair --tailscale` and paste
-  the pairing link. You can also run `hal-c2 serve --host <address>` and use
-  `hal-c2 pair` when the server is already reachable on your network.
+  Run `mix hal_c2.connect` on each computer you want to add (see
+  [HAL-C2 Connect](./remote-access.md#hal-c2-connect)), and keep its MC running so the computer
+  stays available.
+- **Add a computer** connects directly to an MC on your network or tailnet.
+  Run `mix hal_c2.pair --tailscale` on that computer and paste the pairing link.
+  For a LAN address, start the MC with `HAL_C2_MC_HOST=<address>` and run
+  `mix hal_c2.pair http://<address>:<port>`.
 
 Saved computers and computers discovered through HAL-C2 Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.

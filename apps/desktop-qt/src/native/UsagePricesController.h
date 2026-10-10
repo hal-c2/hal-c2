@@ -13,7 +13,7 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// Custom model prices for Usage (the web's UsagePriceOverrides): what a
+// Custom model prices for Usage: what a
 // million tokens of a model cost, kept by each environment in its settings
 // (`usagePriceOverrides`, apps/server-ex HalC2.Usage.Pricing), edited here
 // for the environments the usage page has chosen, all at once.

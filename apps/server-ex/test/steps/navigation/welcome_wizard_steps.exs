@@ -5,8 +5,7 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
 
   The agents' history lives in a fixture home outside the MC's home: Claude Code
   transcripts under `.claude/projects`, Codex's under `.codex/sessions`. How the
-  wizard groups, orders and preselects what a scan returns is the web client's
-  (`apps/web/src/onboarding/projectImport.logic.ts`), reproduced in `listing/1`.
+  wizard groups, orders and preselects what a scan returns is reproduced in `listing/1`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -15,7 +14,7 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
   alias HalC2.Test.Mc.World
 
   @day 86_400
-  # WelcomeWizard.tsx
+  # Welcome wizard strings
   @other_folders "Other folders"
   @scan_limit "Scan limit reached. Some projects or conversations may be missing."
 

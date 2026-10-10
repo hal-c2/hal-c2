@@ -11,8 +11,7 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
-// Rows sit in a centred column as wide as the composer and look like the web
-// app's (apps/web/src/components/chat/MessagesTimeline.tsx, WorkLog.tsx). The
+// Rows sit in a centred column as wide as the composer. The
 // view follows new output while it is at the end. Scrolling away stops that
 // and offers a way back to the latest output. Folds and tool call groups open
 // and close through the model's toggle(rowId). A message's time and actions
@@ -50,7 +49,7 @@ Item {
     // Whether a reply's row can revert the thread to its turn's checkpoint.
     property var revertable: rowId => root.model !== null && typeof root.model.checkpointOf === "function" && Object.keys(root.model.checkpointOf(rowId)).length > 0
     // Whether rows show their time and actions without the pointer over them:
-    // touch screens have no hover (the web's pointer-coarse).
+    // touch screens have no hover.
     property bool alwaysShowMeta: Qt.platform.os === "android" || Qt.platform.os === "ios"
     // The centred column rows are laid out in, as wide as the composer's.
     readonly property real columnWidth: Math.max(0, Math.min(width - 40, 768))
@@ -75,7 +74,7 @@ Item {
     // The pull request a message mentions is to be linked to the thread.
     signal pullRequestLinkRequested(string url)
 
-    // Links the pull request a message mentions (the web's link action on a mention).
+    // Links the pull request a message mentions.
     component LinkPullRequestButton: IconButton {
         property string url
         objectName: "linkPullRequest"
@@ -88,7 +87,7 @@ Item {
     // The user's long messages shown in full, by row id; kept here so a row
     // scrolled away and back stays as the user left it.
     property var fullMessages: ({})
-    // packages/shared/src/chatMessages.ts shouldCollapseUserMessage.
+    // Whether a user message is long enough to show only its first lines.
     function collapsible(text) {
         return text.trim().length > 0 && (text.length > 600 || text.split("\n").length > 8);
     }
@@ -218,9 +217,9 @@ Item {
     readonly property color warningColor: Theme.palette.color("warning", "#fe9a00")
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
-    // The web's tokens: bg-message, text-message-foreground, bg-accent (the
-    // hover wash), bg-muted, bg-secondary, text-secondary-label,
-    // text-icon-muted, text-tool-error-icon, success, info and the page.
+    // The row colours: the message surface and its text, the hover wash, the
+    // muted and secondary surfaces, labels and icons, the tool error icon,
+    // success, info and the page.
     readonly property color messageColor: Theme.palette.color("messageSurface", "#141414")
     readonly property color messageTextColor: Theme.palette.color("messageForeground", "#f5f5f5")
     readonly property color hoverColor: Theme.palette.color("accentSurface", "#141414")
@@ -278,7 +277,7 @@ Item {
         ToolTip.text: stampHover.hovered ? root.timeTitle(stamp.rowId, stamp.entryId) : ""
     }
 
-    // A ghost icon button in a row's meta line (the web's xs ghost-muted).
+    // A ghost icon button in a row's meta line.
     component IconButton: Rectangle {
         id: button
         property string icon
@@ -333,7 +332,7 @@ Item {
         }
     }
 
-    // A rounded status label (the web's status pills).
+    // A rounded status label.
     component Pill: Rectangle {
         property alias text: pillText.text
         property alias textColor: pillText.color
@@ -350,7 +349,7 @@ Item {
         }
     }
 
-    // One line of the work log (WorkLog.tsx): a 24px icon box, the label
+    // One line of the work log: a 24px icon box, the label
     // truncated, then the trailing children. Interactive lines wash on hover.
     component WorkLine: Rectangle {
         id: line
@@ -611,7 +610,7 @@ Item {
             // Whether the row's time and actions show: only this row's
             // pointer changes it.
             readonly property bool showMeta: root.alwaysShowMeta || rowHover.hovered
-            // The space under the row, by kind (the web's row padding).
+            // The space under the row, by kind.
             readonly property int gap: {
                 switch (row.kind) {
                 case "message":
@@ -782,7 +781,7 @@ Item {
                         visible: (row.text ?? "").length > 0
                         anchors.right: parent.right
                         width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
-                        // The web's max-h-44.
+                        // A collapsed message shows at most 176px.
                         height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 24
                         radius: 16
                         color: root.messageColor
@@ -1554,8 +1553,7 @@ Item {
 
             Component {
                 id: error
-                // The failure's heading, then its message (the web's failed
-                // work entry).
+                // The failure's heading, then its message.
                 Column {
                     WorkLine {
                         id: errorLine
@@ -1662,7 +1660,7 @@ Item {
         }
     }
 
-    // "Working for 12s" under the rows (the web's working row), a static
+    // "Working for 12s" under the rows, a static
     // line redrawn once a second while the agent works; "Sending…" while the
     // user's message is on its way.
     Item {
@@ -1745,7 +1743,7 @@ Item {
         }
     }
 
-    // Back to the latest output once the user scrolled away (the web's glass
+    // Back to the latest output once the user scrolled away (the glass
     // "Scroll to end" button).
     ShellButton {
         id: jump

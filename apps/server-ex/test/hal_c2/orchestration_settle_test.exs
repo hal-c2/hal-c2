@@ -39,7 +39,7 @@ defmodule HalC2.OrchestrationSettleTest do
   defp stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
   defp thread(thread_id), do: StreamState.get(stream(thread_id), "thread")[thread_id]
 
-  # The Node server's settle emits thread.unsnoozed after thread.settled, and the
+  # Settling emits thread.unsnoozed after thread.settled, and the
   # desktop's undo snoozes again because the MC ended the snooze.
   test "settling a snoozed thread ends its snooze", %{thread_id: thread_id} do
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.settle", "threadId" => thread_id})

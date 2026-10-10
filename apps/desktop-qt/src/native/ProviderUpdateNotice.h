@@ -16,15 +16,14 @@ class SettingsController;
 class ShellBridge;
 class ToastController;
 
-// The toast that offers provider updates when the app starts, as the web's
-// ProviderUpdatePrimaryNotification does: the enabled providers of this
+// The toast that offers provider updates when the app starts: the enabled providers of this
 // machine's environment that are behind their latest release, one per driver,
 // in one "Update Available" toast. Update runs `server.updateProvider` for
 // each one the MC can update itself and reports how it went; Settings opens
 // the Providers section. Closing the toast dismisses that set of versions for
 // good (this device's `dismissedProviderUpdateNotificationKeys`); a set is
-// offered once per run either way. One per process, as in the web app: the
-// toast shows in the window in use.
+// offered once per run either way. One per process: the toast shows in
+// the window in use.
 class ProviderUpdateNotice : public QObject, public NativeController {
   Q_OBJECT
 

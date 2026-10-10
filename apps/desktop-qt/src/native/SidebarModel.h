@@ -15,10 +15,7 @@
 #include <optional>
 
 // The native sidebar's rules: the MC's thread rows in, the `sidebar` view
-// model out. A port of the web app's shell sidebar (apps/web/src/shell/
-// shellSidebarState.ts, Sidebar.logic.ts and client-runtime's
-// state/threadSettled.ts, state/threadSort.ts), so both render the same rows.
-// Pure: every clock is passed in.
+// model out. Pure: every clock is passed in.
 namespace sidebar {
 
 using Nullable = std::optional<QString>;
@@ -96,7 +93,7 @@ Nullable wokeAt(const Thread& thread, qint64 nowMs);
 QString wakeLabel(const QString& snoozedUntil, qint64 nowMs);
 QString status(const Thread& thread);
 // The most urgent of `statuses` (approval, input, working, waiting, then the
-// rest), as the web app's resolveProjectStatusIndicator; "ready" when none is.
+// rest); "ready" when none is.
 QString mostUrgentStatus(const QStringList& statuses);
 // How long a working thread's run has been going ("3m", "1h 5m"); empty
 // under a minute and for a thread that is not working.
@@ -149,7 +146,7 @@ struct Project {
 Project projectFromRow(const QString& environmentId, const QJsonObject& row);
 
 // A workspace path in the form two paths compare in: trimmed, without trailing
-// separators, and Windows paths case- and separator-folded (@hal-c2/shared/path).
+// separators, and Windows paths case- and separator-folded.
 QString normalizePath(const QString& path);
 // `<environmentId>:<normalized workspace root>`: one folder on one machine.
 QString physicalKey(const Project& project);
@@ -174,20 +171,17 @@ struct ProjectGroup {
   QList<Project> members;
 };
 
-// The web app's logical grouping (client-runtime's state/projectGrouping.ts) and
-// sidebar order (Sidebar.logic.ts sortLogicalProjectsForSidebar), from every
-// project the shell sees.
+// The logical grouping and sidebar order of every project the shell sees.
 QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads);
 
 // The project a window with no thread lands in: the first of every project the
-// shell sees in the web app's "updated_at" order (Sidebar.logic.ts
-// sortScopedProjectsForSidebar), whatever order the sidebar is set to.
+// shell sees in "updated_at" order, whatever order the sidebar is set to.
 std::optional<Project> mostRecentProject(const QList<Project>& projects, const QList<Thread>& threads);
 
 // Where a window that showed the deleted thread `key` goes: the first other
 // thread of its project on its environment in `sortOrder` ("updated_at" or
-// "created_at"), as the web app's getFallbackThreadIdAfterDelete, leaving out the
+// "created_at"), leaving out the
 // archived and subagent rows the sidebar does not list either.
 std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
 
@@ -231,9 +225,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
 
 // The order of the pinned and the active threads is kept as one key per
 // thread (pinOrderKey, activeOrderKey): base-26 strings that sort as text, so
-// moving a thread writes its own key only. A port of client-runtime's
-// state/threadSort.ts (pinOrderKeyBetween, generateSpreadPinOrderKeys,
-// planPinnedReorder).
+// moving a thread writes its own key only.
 //
 // A key strictly between two neighbours; no bound is the section's edge.
 // Nothing when the bounds are corrupt or out of order.
@@ -261,8 +253,7 @@ struct SnoozePreset {
 // A wake time the user wrote: a date and a time of day in `zone`
 // ("2026-09-25", "08:30"), or an amount of minutes, hours or days from now.
 // Nothing for what cannot be read, is not in the future, or is a time of day
-// the zone skips (a daylight saving change). As client-runtime's
-// resolveCustomSnooze.
+// the zone skips (a daylight saving change).
 struct CustomSnooze {
   QString mode;  // "date" or "duration"
   QString date;
@@ -272,7 +263,7 @@ struct CustomSnooze {
 };
 Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
-// "12-hour", "24-hour" or "locale", as the web app's timestampFormat setting.
+// "12-hour", "24-hour" or "locale", the timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,
                                   const QLocale& locale);

@@ -1,7 +1,7 @@
 # Shell examples
 
 Each folder is a complete rice: a `shell.qml` layout composed from the
-`HalC2.Bricks` module and a `theme.json` in the web app's theme format (plus the
+`HalC2.Bricks` module and a `theme.json` in the theme file format (plus the
 shell-only `window`, `radius` and `fonts` keys). Copy one into your config dir
 and the app reloads on save:
 
@@ -11,7 +11,7 @@ cp examples/glass/*.* ~/.config/hal-c2/shell/
 
 | Example     | Idea                                                                                                                                                                                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `minimal`   | The default layout with the title bar moved to the bottom, on the web app's own dark palette (`theme.json` here is the default theme, so it is the one to copy when a rice should start from stock colours).                                                                                                                                            |
+| `minimal`   | The default layout with the title bar moved to the bottom, on the stock dark palette (`theme.json` here is the default theme, so it is the one to copy when a rice should start from stock colours).                                                                                                                                                    |
 | `dashboard` | Rosé light theme, an icon rail that also carries settings, and a Dashboard button that pulls a widget drawer over the centre: today, the month, the open workspace, thread meters, and the agent, with a cat at play (a Lottie animation; needs the Qt Lottie module, `qt6-lottie` on Arch, and shows the agent's initial without it).                  |
 | `glass`     | The shape of a Mac app: one rounded window with a hairline edge, traffic lights, a translucent sidebar for the compositor to blur behind, and a unified toolbar over an opaque content column.                                                                                                                                                          |
 | `terminal`  | Status line with the wordmark, a prompt mark, counts and the model; mono type, sharp corners. Made for a tiling desktop such as Omarchy, with flags at the top of `shell.qml` for a clock, window buttons and a chip of the palette's sixteen colours. Its `theme.json` is Tokyo Night as `vp run theme:qt` writes it from a terminal in those colours. |
@@ -65,12 +65,6 @@ everything the shell publishes, `Shell.dispatch(action, payload)` to act,
 `CentreHost` showing `route.kind` and, while `settingsActive`, a
 `SettingsHost` showing `settingsSection` in its place with the composer
 hidden, as the examples do.
-
-Shells written for older builds placed a `WebSurface` (or reached the
-built-in layout's `webView`) for the embedded web page. That page is gone:
-put a `CentreHost` and a `SettingsHost` where the `WebSurface` was, bind
-`visible` to `!settingsActive` and `settingsActive`, and use
-`DefaultShell.centreView` in place of `webView`.
 
 A broken `shell.qml` never locks you out: the built-in shell takes over with
 the error shown in an overlay.

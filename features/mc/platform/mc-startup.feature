@@ -7,12 +7,16 @@
 #   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster boot flags), rel/overlays/bin/hal-c2-data-dir (the release's home)
 #   apps/server-ex/rel/hal-c2-mc.sh (the single-file MC)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
-#   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
+#   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex (server-runtime.json)
 #   apps/server/src/serverRuntimeState.ts (the record's fields, as the Node server writes them)
+#   apps/server/src/auth/ServerSecretStore.ts (owner-only secrets, reuse, failures propagate)
+#   apps/server/src/os-jank.ts, apps/server/src/pathExpansion.ts (PATH and HOME hydration, ~ expansion)
+#   apps/desktop/src/shell/DesktopShellEnvironment.ts (usual Windows tool folders, SSH agent, session bus, UTF-8 locale)
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   packages/contracts/src/desktopBootstrap.ts
+#   apps/server/src/bootstrap.ts (no input, undecodable line, one second wait for the envelope)
 #   packages/contracts/src/environment.ts (ExecutionEnvironmentDescriptor)
 #   docs/user/remote-access.md (hal-c2 serve, hal-c2 serve --host)
 #   docs/user/background-service.md (service install, status, removal)
@@ -145,6 +149,24 @@ Feature: Starting the MC
     Then it writes an access token file readable only by its owner
     And local tools connect with that token
 
+  @backlog @mc
+  Scenario: The MC's secrets are kept readable by its owner only
+    When the MC creates a secret it keeps on disk
+    Then the secrets directory and the secret's file are not readable by other users
+
+  @backlog @mc
+  Scenario: A secret that already exists is reused, never regenerated
+    Given the MC already stored a secret
+    When the MC needs that secret again, or two parts of it need it at once
+    Then every one of them gets the same stored secret
+
+  @backlog @mc
+  Scenario: A secret that cannot be written stops what needed it
+    Given the MC cannot write its secrets directory
+    When it needs to create a secret
+    Then the step that needed it fails with the reason
+    And the MC does not carry on as if the secret existed
+
   @mc
   Scenario: A running MC records where local tools can find it
     When the MC is serving clients
@@ -156,6 +178,26 @@ Feature: Starting the MC
     Given the MC is serving clients
     When the MC stops
     Then its state directory holds no runtime record
+
+  @backlog @mc
+  Scenario: The runtime record says when the background service supervises the MC
+    Given the MC runs under the background service
+    When a local tool reads its runtime record
+    Then the record says the service manages it
+    And an MC started by hand is not marked as service-managed
+
+  @backlog @mc
+  Scenario: A runtime record left by a process that is gone is ignored
+    Given a runtime record whose process no longer exists
+    When a local tool looks for a running MC
+    Then it does not treat that MC as running
+
+  @backlog @mc
+  Scenario: A runtime record that cannot be read fails loudly instead of looking absent
+    Given a runtime record that is damaged
+    When a local tool reads it
+    Then the tool is told the record is unreadable
+    And it is not told that no MC is running
 
   @mc
   Scenario: The environment id survives restarts
@@ -181,6 +223,91 @@ Feature: Starting the MC
     Then it names the environment id, label, platform and server version
     And it declares orchestration protocol version 3
     And it lists the MC's capabilities
+
+  @backlog @mc
+  Scenario: An MC started with a minimal environment finds the tools on the user's search path
+    Given the MC is started by a service manager or a desktop launcher with a short PATH
+    When the MC starts
+    Then the MC adds the folders the user's login shell would have on its PATH
+    And provider and editor commands installed there can be started
+
+  @backlog @mc
+  Scenario: Folders the MC was started with stay on its search path
+    Given the MC is started with a PATH that names a folder the login shell does not
+    When the MC starts
+    Then that folder is still searched
+    And the folders from the login shell are searched as well
+
+  @backlog @mc
+  Scenario: A login shell that cannot be read does not stop the MC
+    Given the user's login shell fails or does not answer when the MC asks for its PATH
+    When the MC starts
+    Then the MC starts with the PATH it was given
+    And the failure is written to the log
+
+  @backlog @mc
+  Scenario: On macOS a user's PATH is read from the login session when the shell gives none
+    Given the MC runs on macOS and the login shell gives no PATH
+    When the MC starts
+    Then the MC takes the PATH of the user's login session
+
+  @backlog @mc
+  Scenario: On Windows the MC repairs a stale environment from the user's settings
+    Given the MC runs on Windows with an environment that predates the user's latest settings
+    When the MC starts
+    Then the MC uses the user's current PATH and variables
+    And a failure to read them is written to the log without stopping the MC
+
+  # Legacy: apps/desktop/src/shell/DesktopShellEnvironment.ts (installWindowsEnvironment, knownWindowsCliDirs)
+  @backlog @mc
+  Scenario: On Windows the places command line tools are usually installed are searched
+    Given the MC runs on Windows and the user's PATH does not name where npm, Node, Volta, pnpm, bun or scoop put commands
+    When the MC starts
+    Then those usual folders under the user's profile are searched as well
+    And a folder that is already on the PATH is not listed twice
+
+  # Legacy: apps/desktop/src/shell/DesktopShellEnvironment.ts (installPosixEnvironment)
+  @backlog @mc
+  Scenario: An MC started from a desktop launcher finds the user's SSH agent
+    Given the MC is started without an SSH agent socket
+    And the user's login shell has one
+    When the MC starts
+    Then SSH connections the MC makes use that agent
+    And an agent socket the MC was given is kept
+
+  @backlog @mc
+  Scenario: An MC started from a desktop launcher on Linux finds the user's session bus
+    Given the MC runs on Linux without a session bus address
+    And the user's runtime folder holds a session bus
+    When the MC starts
+    Then the MC uses that session bus
+
+  @backlog @mc
+  Scenario: Agents started by an MC on macOS without a locale write UTF-8
+    Given the MC runs on macOS started by a launcher that sets no locale
+    And the user's login shell has none either
+    When an agent produces text with non-ASCII characters
+    Then the text is decoded as UTF-8
+
+  @backlog @mc
+  Scenario: A locale the MC was given is not mixed with the login shell's
+    Given the MC runs on macOS with one locale variable set
+    When the MC starts
+    Then the locale variables the MC was given are kept as they are
+
+  @backlog @mc
+  Scenario: An MC started without a HOME finds the user's home folder
+    Given the MC is started by a service manager that sets no HOME
+    When the MC starts
+    Then the MC uses the home folder of the account it runs as
+    And a HOME it was given is kept
+
+  @backlog @mc
+  Scenario: A leading tilde in a configured folder means the user's home folder
+    Given a folder setting or flag is written as "~/work/hal-c2"
+    When the MC reads it
+    Then the folder is the user's home folder followed by "work/hal-c2"
+    But "~someone" is not expanded to another user's home
 
   @mc
   Scenario: A release runs as a background service that restarts into upgrades
@@ -252,6 +379,18 @@ Feature: Starting the MC
     Then the MC listens on that host and port
     And the token never appears in the process arguments or environment
 
+  @backlog @mc
+  Scenario: A start with no bootstrap input starts the MC normally
+    Given nothing writes a bootstrap line to the MC's standard input
+    When the MC starts
+    Then it starts from its own configuration without waiting on the desktop app
+
+  @backlog @mc
+  Scenario: A bootstrap line that cannot be understood stops the start
+    Given the desktop app launches the MC in bootstrap mode
+    When it writes a line that is not a valid bootstrap
+    Then the MC stops saying the bootstrap could not be decoded
+
   @mc
   Scenario: The HAL-C2 home the desktop app names is the root of the MC's files
     Given the desktop app launches the MC in bootstrap mode with the HAL-C2 home "/tmp/sandbox"
@@ -265,7 +404,8 @@ Feature: Starting the MC
     When the MC starts
     Then its database is in "~/.local/share/hal-c2/elixir"
 
-  @mc
+  # The Electron desktop app that named its binary is gone; the Qt desktop starts the MC with Node.
+  @mc @dropped
   Scenario: The desktop app's Electron runs the MC's JavaScript sidecars
     Given the desktop app names its Electron binary for the MC
     When the MC starts a JavaScript sidecar

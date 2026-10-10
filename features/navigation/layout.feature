@@ -19,7 +19,13 @@
 #   apps/web/src/components/AppSidebarLayout.tsx (sidebar width)
 #   apps/web/src/components/threadSidebarWidth.ts
 #   apps/web/src/components/preview/RightPanelResizeHandle.tsx
+#   apps/web/src/hooks/useResizableWidth.ts, usePreviewPanelInlineSize.ts (limits, one width per thread)
+#   apps/web/src/components/ui/sidebar.tsx, apps/web/src/hooks/useResizeDrag.ts (a click on the edge
+#     is not a resize, a drag ends when the window loses focus, no resize-driven drawer in the shell)
 #   apps/web/src/components/RightPanelTabs.tsx
+#   apps/web/src/components/RightPanelSheet.tsx (the right panel over the thread on a narrow window)
+#   apps/web/src/rightPanelStore.ts (closing several tabs, saved panels, floating thread details)
+#   apps/web/src/rightPanelLayout.ts (thread details beside or over the conversation)
 #   apps/web/src/components/chat/PanelLayoutControls.tsx
 #   packages/contracts/src/keybindings.ts (sidebar.toggle, rightPanel.toggle, rightPanel.close,
 #   rightPanel.toggleMaximized, threadPanel.toggle, terminal.toggle)
@@ -101,6 +107,40 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the user resized the sidebar
       When the user resets the sidebar width
       Then the sidebar returns to its default width
+
+    @backlog @desktop
+    Scenario: Clicking the sidebar's edge without dragging leaves it as it is
+      Given the sidebar is open at a width the user chose
+      When the user clicks the sidebar's edge without moving
+      Then the sidebar keeps its width
+      And the sidebar stays open
+
+    @backlog @desktop
+    Scenario: Releasing a drag on the sidebar's edge is not also a click
+      When the user drags the sidebar's edge and lets go
+      Then the sidebar has the width where it was released
+      And nothing else is activated by the release
+
+    @backlog @desktop
+    Scenario Outline: A resize in progress ends where it is when the window loses focus
+      Given the user is dragging the <edge>
+      When the window loses focus
+      Then the <edge> keeps the width it had at that moment
+      And that width is remembered
+
+      Examples:
+        | edge               |
+        | sidebar's edge     |
+        | right panel's edge |
+
+    @backlog @desktop
+    Scenario: Resizing the window does not hide or show the sidebar
+      Given the sidebar is open
+      When the user makes the window narrow and then wide again
+      Then the sidebar is still open
+      Given the sidebar is hidden
+      When the user makes the window wide
+      Then the sidebar is still hidden
 
   Rule: Header
 
@@ -287,6 +327,30 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user drags the right panel's edge
       Then the right panel takes the new width
 
+    @backlog @desktop
+    Scenario: The right panel keeps within its limits
+      Given the right panel is open
+      When the user drags the right panel's edge far to the left or far to the right
+      Then the right panel is never narrower than 360 pixels
+      And it is never wider than 70 percent of the window
+      And the thread beside it keeps at least 360 pixels
+
+    @backlog @desktop
+    Scenario: Each thread keeps its own right panel width
+      Given the right panel is open on "Fix login" and on "Add tests"
+      When the user drags the right panel's edge on "Fix login"
+      And the user switches to "Add tests"
+      Then the right panel on "Add tests" keeps the width it had
+      When the user returns to "Fix login"
+      Then the right panel is the width the user dragged it to
+
+    @backlog @desktop
+    Scenario: Switching threads in the middle of a drag leaves both widths alone
+      Given the user is dragging the right panel's edge on "Fix login"
+      When the user switches to "Add tests" before letting go
+      Then the right panel on "Fix login" keeps the width it had before the drag
+      And the right panel on "Add tests" keeps its own width
+
     # The web's inline floor (apps/web/src/hooks/usePreviewPanelInlineSize.ts).
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
@@ -361,6 +425,192 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details panel names "Planning" as the thread it was forked from
       When the user opens the related thread "Planning"
       Then the thread "Planning" is open
+
+    @backlog @desktop
+    Scenario Outline: An open right panel with no tabs offers what it can show, each with a letter
+      Given the right panel is open with no tabs
+      And the user is not typing in a field
+      When the user presses "<letter>"
+      Then a <kind> tab opens in the right panel
+
+      Examples:
+        | letter | kind                  |
+        | B      | browser               |
+        | T      | terminal              |
+        | F      | files                 |
+        | D      | diff                  |
+        | P      | pull request          |
+        | L      | linked pull requests  |
+        | M      | device                |
+
+    @backlog @desktop
+    Scenario: The letters of an empty right panel are left alone while the user types
+      Given the right panel is open with no tabs
+      And the user is typing in the composer
+      When the user types "d"
+      Then "d" is typed into the composer
+      And no tab opens in the right panel
+
+    @backlog @desktop
+    Scenario: An empty right panel is worked with the arrow keys
+      Given the right panel is open with no tabs
+      When the user moves down the offered kinds with the arrow keys and presses Enter
+      Then the highlighted kind opens as a tab
+
+    @backlog @desktop
+    Scenario Outline: An empty right panel says why a kind cannot be opened
+      Given the right panel is open with no tabs
+      And <situation>
+      Then <kind> is listed but cannot be opened
+      And it reads "<hint>"
+
+      Examples:
+        | situation                                 | kind                 | hint                                |
+        | no project is open                        | terminal             | Available when a project is open.   |
+        | no project is open                        | files                | Available when a project is open.   |
+        | the project is not a Git repository       | diff                 | Available for Git repositories.     |
+        | the thread's branch has no pull request   | pull request         | No pull request on this branch yet. |
+        | the thread has no linked pull requests    | linked pull requests | No linked pull requests available.  |
+
+    @backlog @desktop
+    Scenario Outline: A right panel tab's menu closes several tabs at once
+      Given the right panel has "Diff", "Files" and "Terminal" tabs in that order
+      When the user chooses "<action>" from the "Files" tab's menu
+      Then the right panel has <left>
+
+      Examples:
+        | action             | left                              |
+        | Close              | the "Diff" and "Terminal" tabs    |
+        | Close others       | only the "Files" tab              |
+        | Close to the right | the "Diff" and "Files" tabs       |
+        | Close all          | no tabs and is closed             |
+
+    @backlog @desktop
+    Scenario: Closing tabs is not offered where there is nothing to close
+      Given the right panel has "Diff" and "Files" tabs in that order
+      When the user opens the "Files" tab's menu
+      Then "Close to the right" cannot be chosen
+      And "Close others" can be chosen
+
+    @backlog @desktop
+    Scenario: Closing the active tab moves to the tab beside it
+      Given the right panel has "Diff", "Files" and "Terminal" tabs and "Files" is active
+      When the user closes the "Files" tab
+      Then a neighbouring tab is active
+      And the right panel stays open
+
+    @backlog @desktop
+    Scenario: Closing the last tab closes the right panel
+      Given the right panel has only a "Diff" tab
+      When the user closes the "Diff" tab
+      Then the right panel is closed
+
+    @backlog @desktop
+    Scenario: A middle click closes a right panel tab
+      Given the right panel has "Diff" and "Files" tabs
+      When the user middle-clicks the "Diff" tab
+      Then only the "Files" tab remains
+
+    @backlog @desktop
+    Scenario: A file tab's path can be copied from its menu
+      Given the right panel has a tab for "src/cart.ts"
+      When the user chooses "Copy path" from that tab's menu
+      Then the file's path is on the clipboard
+
+    @backlog @desktop
+    Scenario Outline: Each right panel tab is named after what it shows
+      Given the right panel has a tab showing <content>
+      Then the tab is named "<name>"
+
+      Examples:
+        | content                                        | name           |
+        | the file "src/checkout/cart.ts"                | cart.ts        |
+        | pull request 42                                | #42            |
+        | the thread's linked pull requests              | Pull requests  |
+        | a page titled "Shop – Cart"                    | Shop – Cart    |
+        | a page without a title at "localhost:5173"     | localhost:5173 |
+        | a browser tab that has not loaded a page       | Browser        |
+        | the simulator "iPhone 17" that was not renamed | iPhone 17      |
+
+    @backlog @desktop
+    Scenario: More tabs than fit can be scrolled through
+      Given the right panel has more tabs than fit across it
+      When the user scrolls the tabs sideways
+      Then the tabs that were out of view come into view
+      And scrolling further is not offered at either end
+
+    @backlog @desktop
+    Scenario: The active tab is brought into view
+      Given the right panel has more tabs than fit across it
+      When a tab that is out of view becomes active
+      Then that tab is scrolled into view
+
+    @backlog @desktop
+    Scenario: A narrow window shows the right panel over the thread
+      Given the window is too narrow to show the thread and the right panel side by side
+      When the user opens the right panel
+      Then the right panel slides over the thread
+      And dismissing it shows the thread again
+
+    @backlog @desktop
+    Scenario: Thread details float when there is no room beside the conversation
+      Given the conversation would be too narrow with the thread details beside it
+      When the user toggles the thread details panel
+      Then the thread details open over the conversation instead of beside it
+
+    @backlog @desktop
+    Scenario: Thread details float while the right panel fills the window
+      Given the right panel fills the window
+      When the user toggles the thread details panel
+      Then the thread details open over the right panel
+
+    @backlog @desktop
+    Scenario: Floating thread details are not reopened by a restart
+      Given the thread details are open over the conversation
+      When the desktop quits and starts again
+      Then the thread details are not open
+      And the user's choice to keep them beside the conversation is remembered
+
+    @backlog @desktop
+    Scenario: Opening the right panel closes floating thread details
+      Given the thread details are open over the conversation
+      When the user opens the right panel
+      Then the floating thread details close
+
+    @backlog @desktop
+    Scenario: A saved right panel whose tab kinds no longer exist opens without them
+      Given the right panel was saved by an older version with a tab kind that no longer exists
+      When the user opens that thread
+      Then the remaining tabs are shown and the first of them is active
+      And a panel left with no tabs stays closed
+
+    @backlog @desktop
+    Scenario: File tabs whose workspace is gone are dropped
+      Given the right panel has a tab for a file in a worktree that was removed
+      When the user opens that thread
+      Then that file tab is gone
+      And a tab showing an attachment of the conversation is kept
+
+    # Legacy: apps/web/src/rightPanelStore.ts (openPullRequest, pullRequestSurfaceId)
+    @backlog @desktop
+    Scenario: Opening a pull request that already has a tab goes to that tab
+      Given the right panel has tabs for pull requests 42 and 43 of "acme/shop"
+      When the user opens pull request 42 again
+      Then its tab is active
+      And no tab is added
+
+    # Legacy: apps/web/src/rightPanelStore.ts (pullRequestSurfaceId: host and environment are part of a tab's identity)
+    @backlog @desktop
+    Scenario Outline: Pull requests that only look alike each get their own tab
+      Given the right panel has a tab for pull request 42 of "acme/shop" on "github.com"
+      When the user opens <other>
+      Then the right panel has <tabs>
+
+      Examples:
+        | other                                                        | tabs                        |
+        | pull request 42 of "acme/shop" on "github.example.com"       | a second tab for it         |
+        | pull request 42 of "acme/shop" read from another environment | a second tab for it         |
+        | pull request 42 of "acme/shop" on "GITHUB.COM"               | the one tab, now active     |
 
   Rule: Terminal drawer
 

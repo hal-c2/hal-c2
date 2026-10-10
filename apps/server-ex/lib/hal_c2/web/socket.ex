@@ -241,7 +241,7 @@ defmodule HalC2.Web.Socket do
       %{{:git_action, ^action_id} => id} ->
         frame = Protocol.encode(%{"t" => "gitAction", "id" => id, "event" => event})
 
-        # The action's last event ends the subscription, as the Node server's stream ends.
+        # The action's last event ends the subscription.
         if event["kind"] in ["action_finished", "action_failed"],
           do: {:push, frame, unsubscribe(state, id)},
           else: {:push, frame, state}
@@ -639,7 +639,7 @@ defmodule HalC2.Web.Socket do
 
     with {:ok, :ok} <- remote(mc, HalC2.Settings, :watch, [self()]),
          {:ok, config} <- remote(mc, HalC2.Environment, :server_config, []) do
-      # Published themes follow the snapshot, as the Node server streams them.
+      # Published themes follow the snapshot.
       themes =
         case remote(mc, HalC2.EnvironmentThemes, :current, []) do
           {:ok, themes} when is_list(themes) -> themes
@@ -1207,7 +1207,7 @@ defmodule HalC2.Web.Socket do
   defp allowed?(%{scopes: :all}, _scope), do: true
   defp allowed?(%{scopes: scopes}, scope), do: scope in scopes
 
-  # The scope each shape needs, as the Node server's subscribe methods declare it.
+  # The scope each shape needs.
   defp shape_scope({:terminal, _, _}), do: "terminal:operate"
   defp shape_scope({:terminals, _}), do: "terminal:operate"
   # By environment, as its MC form needs, wherever it is served.

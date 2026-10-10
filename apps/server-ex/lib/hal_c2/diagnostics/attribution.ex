@@ -1,11 +1,10 @@
 defmodule HalC2.Diagnostics.Attribution do
   @moduledoc """
   The MC's own file I/O by what it is for, the resource monitor's application
-  I/O (`apps/server/src/resourceTelemetry/ResourceAttribution.ts`): logical bytes
+  I/O: logical bytes
   read and written, calls and time, per component and operation, since the MC
   started. The trace file (`server-trace`, `append`) and provider event logs
-  (`provider-event-log`, `native.append`) record here, as they do on the TypeScript
-  server.
+  (`provider-event-log`, `native.append`) record here.
 
   These are the bytes the MC asked to read or write, not what reached the disk;
   the storage counters of each process (`/proc/<pid>/io`) are separate.

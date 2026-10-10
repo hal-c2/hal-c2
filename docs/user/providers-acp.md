@@ -26,7 +26,7 @@ code; review an agent's source and license before adding it.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your HAL-C2 server. That stays true when you
-connect through a hosted web app, HAL-C2 Connect, or a relay.
+connect through HAL-C2 Connect or a relay.
 
 Agents install under `tools/<agent-id>/<version>/` in HAL-C2's
 [cache directory](./install.md#where-hal-c2-keeps-its-files). HAL-C2 verifies SHA-256 when the Registry entry
@@ -38,7 +38,7 @@ but keeps package installs. To use an existing local binary, set **Executable ov
 
 ## Signing in
 
-Open the agent's account section in **Settings → Providers** on web or desktop. Choose
+Open the agent's account section in **Settings → Providers** on desktop. Choose
 **Sign in** and, if the agent offers several methods, select one. For an installed, configured
 provider, mobile also offers **Settings → Provider accounts**.
 

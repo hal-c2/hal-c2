@@ -16,10 +16,9 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// The shell's keymap, as the `Keybindings` QML singleton: the web defaults
+// The shell's keymap, as the `Keybindings` QML singleton: the default keymap
 // with the user's rules from the MC's keybindings.json merged over them
-// (the `keybindingRules` of the MC's config), resolved the way the web
-// resolves them, and run natively where the shell has the command.
+// (the `keybindingRules` of the MC's config), and run natively where the shell has the command.
 //
 // ShellWindow registers one window shortcut per sequence in `shortcuts` and
 // hands every activation to press(). Who gets a key:
@@ -29,8 +28,8 @@ class ShellStore;
 //     with the focused control.
 //   - In a terminal, only a sequence that resolves to a native command with
 //     terminalFocus set is taken (mod+j, mod+d, mod+shift+d, mod+n, mod+w by
-//     default, as the web's); every other chord, Ctrl+K included, reaches the
-//     terminal. Where mod is Ctrl, the web's split takes Ctrl+D from the shell.
+//     default); every other chord, Ctrl+K included, reaches the
+//     terminal. Where mod is Ctrl, the split takes Ctrl+D from the shell.
 //   - Unmodified keys are never registered.
 //   - The application menu's accelerators (mod+, for settings, the app zoom)
 //     come after every keymap binding, and are not rows in Settings.
@@ -64,7 +63,7 @@ public:
   // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
   // What still runs while the command palette is open: the palette's own modes and
-  // theme commands (apps/web CommandPalette.tsx) and what belongs to the window.
+  // theme commands, and what belongs to the window.
   static inline const QSet<QString> kOverPalette{
       QStringLiteral("commandPalette.toggle"), QStringLiteral("filePicker.toggle"), QStringLiteral("projectSearch.toggle"),
       QStringLiteral("theme.select"),          QStringLiteral("appearance.cycle"),  QStringLiteral("themeEditor.toggle"),
@@ -186,6 +185,6 @@ private:
   QString m_fileIssue;
   void followFile(const QJsonObject& config);
   // When "Keybindings updated" last showed; pushes closer than the cooldown
-  // stay quiet, as the web's do.
+  // stay quiet.
   QDateTime m_reloadToastAt;
 };

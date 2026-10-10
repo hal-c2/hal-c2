@@ -1,7 +1,7 @@
 defmodule HalC2.PreviewAutomation do
   @moduledoc """
   Routes agents' browser actions (`preview_*` MCP tools) to a desktop client's
-  browser panel, as the Node server's PreviewAutomationBroker does.
+  browser panel.
 
   A desktop registers as a host with the `previewAutomation` shape (`connect/2`),
   which streams it requests; it answers each with `previewAutomation.respond`

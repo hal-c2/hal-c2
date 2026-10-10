@@ -7,8 +7,8 @@
 #include <optional>
 
 // A checkout's hal-c2.json (packages/contracts halC2ProjectFile.ts), read as
-// the web's parseHalC2ProjectFile reads it: JSON that may carry comments and
-// trailing commas, and that either matches the format or is no file at all.
+// JSON that may carry comments and trailing commas, and that either matches
+// the format or is no file at all.
 namespace projectfile {
 
 inline const QString kName = QStringLiteral("hal-c2.json");

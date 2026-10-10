@@ -9,9 +9,11 @@
 #   packages/contracts/src/providerUsageLimits.ts, packages/contracts/src/usageLimitSourceId.ts
 #   apps/server/src/ws.ts, packages/shared/src/usageLimits.ts (usageLimitsCommand, withUsageLimitsCommands)
 #   apps/server/src/provider/makeManagedServerProvider.ts (re-probe on settings change, disabled providers)
-#   apps/server/src/usage/cliproxyApi.ts (per-account read failures, account listing failure)
+#   apps/server/src/usage/cliproxyApi.ts (per-account read failures, account listing failure,
+#     enabled accounts only, credit lookup failure, redemption outcomes and cooldown warning)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config shape with usageLimitsCommand)
 #   apps/desktop-qt/src/native/UsageController.cpp (limits, one account per driver and email)
+#   apps/web/src/components/chat/ComposerUsageLimits.tsx (the /usage-limits answer above the composer)
 
 Feature: Subscription limits
   Provider plugins that can read a subscription's remaining allowance report it as
@@ -148,6 +150,72 @@ Feature: Subscription limits
     When the user uses that reset credit
     Then the hub redeems it and the account's limits are read again
 
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (readAccounts: enabled codex and claude auth files only)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
+  @mc @backlog
+  Scenario: A hub's disabled accounts and other providers are left out
+    Given a hub that lists a disabled Codex account, an enabled Claude account and a Gemini account
+    When the MC reads the hub
+    Then only the enabled Claude account is reported
+    And a reset credit cannot be redeemed on the disabled Codex account
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (credits endpoint failure keeps usage)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (credits)
+  @mc @backlog
+  Scenario: A hub's credit lookup failing keeps the account's windows
+    Given a hub whose Codex account reports its windows but whose credit lookup fails
+    When the MC reads the hub
+    Then the account shows its windows with no reset credits
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (failed account never publishes the upstream body)
+  @mc @backlog
+  Scenario: What a hub's upstream said is not shown to clients
+    Given a hub account whose upstream request fails with a message that holds a secret
+    When the MC reads the hub
+    Then the account is reported as not read
+    And the secret text is not in anything sent to clients
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (Claude weekly scoped windows)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
+  @mc @backlog
+  Scenario: A hub's Claude account shows its per-model weekly limits
+    Given a hub Claude account that reports a weekly limit scoped to one model
+    When the MC reads the hub
+    Then the account shows its session and weekly windows and the model's own weekly window
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (consume outcomes)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (@outcomes)
+  @mc @backlog
+  Scenario Outline: A hub answers a reset credit redemption with what happened
+    Given a hub account with a banked reset credit
+    When the hub answers the redemption with <answer>
+    Then the user is told <outcome>
+    And the hub's cooldown for that account is <cooldown>
+
+    Examples:
+      | answer              | outcome                                 | cooldown          |
+      | success             | the reset was applied                   | cleared           |
+      | nothing to reset    | there was nothing to reset right now    | left alone        |
+      | no credit           | the account has no reset credit left    | left alone        |
+      | already redeemed    | the credit was already redeemed         | cleared           |
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (cooldown clearing failure is a warning)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
+  @mc @backlog
+  Scenario: A reset applied through a hub whose cooldown cannot be cleared still succeeds
+    Given a hub account with a banked reset credit
+    When the user uses the reset credit and the hub cannot clear the account's cooldown
+    Then the reset is reported as applied
+    And the user is warned that routing may resume only after the hub's cooldown expires
+
+  # Legacy: apps/server/src/usage/cliproxyApi.ts (account in a redemption must be one the hub listed)
+  @mc @backlog
+  Scenario: A redemption for an account the hub does not list is not forwarded
+    Given a hub that lists two accounts
+    When the user uses a reset credit naming an account the hub does not list
+    Then the MC sends nothing to the hub's upstream
+    And the user is told the account is missing or disabled
+
   @mc
   Scenario Outline: Other providers report their own windows
     Given <provider> is signed in with a subscription
@@ -216,6 +284,34 @@ Feature: Subscription limits
     Given an Antigravity thread
     When the user opens the composer's command menu
     Then "/usage-limits" is not offered
+
+  @backlog @desktop
+  Scenario Outline: The /usage-limits answer says whose limits it shows
+    Given a Codex thread whose limits come from <accounts>
+    When the user sends "/usage-limits"
+    Then the answer is headed "Usage limits" and says "<summary>"
+
+    Examples:
+      | accounts                                   | summary        |
+      | the one Codex account on the "Pro" plan    | Codex · Pro    |
+      | a second Codex instance named "Work"       | Codex · Work   |
+      | three accounts pooled by a hub             | 3 accounts     |
+
+  @backlog @desktop
+  Scenario: An account named by its email is hidden in the /usage-limits answer until asked for
+    Given a hub account is labelled "sam@example.com"
+    When the user sends "/usage-limits"
+    Then the answer does not show "sam@example.com"
+    When the user chooses to reveal the account
+    Then the answer shows "sam@example.com"
+    And the user can hide it again
+
+  @backlog @desktop
+  Scenario: The /usage-limits answer is dismissed without sending anything
+    Given the answer to "/usage-limits" is shown above the composer
+    When the user dismisses the usage limits
+    Then the answer is gone
+    And nothing was sent to the agent
 
   @backlog @mobile
   Scenario: The subscription usage widget shows remaining quotas

@@ -1,9 +1,9 @@
 defmodule HalC2.SourceControl.ChangeRequests do
   @moduledoc """
   The change request of a branch on the hosts other than GitHub, for a checkout's
-  status (`HalC2.Vcs`), read the way the Node server's source control providers read
-  it: a GitLab merge request through `glab`, an Azure DevOps pull request through
-  `az`, a Forgejo or Gitea one through fj or tea (`HalC2.SourceControl.Forgejo`), and
+  status (`HalC2.Vcs`): a GitLab merge request through `glab`, an Azure DevOps pull
+  request through `az`, a Forgejo or Gitea one through fj or tea
+  (`HalC2.SourceControl.Forgejo`), and
   a Bitbucket one through its REST API.
 
   A host that cannot be asked (no CLI, not signed in, offline) has no change request,

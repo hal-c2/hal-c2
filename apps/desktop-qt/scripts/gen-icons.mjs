@@ -2,7 +2,7 @@
 // icons the bricks draw, flattened to one SVG path per icon on a 24-unit grid
 // so ShellIcon needs a single PathSvg. Add a name to ICONS and run
 // `node apps/desktop-qt/scripts/gen-icons.mjs` from the repo root; the icon
-// data comes from the lucide-react package the web app depends on.
+// data comes from the lucide-react devDependency of this package.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
@@ -138,8 +138,7 @@ const ICONS = [
 ];
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repoRoot = NodePath.join(here, "..", "..", "..");
-const require = NodeModule.createRequire(NodePath.join(repoRoot, "apps/web/package.json"));
+const require = NodeModule.createRequire(NodePath.join(here, "..", "package.json"));
 const iconsDir = NodePath.dirname(require.resolve("lucide-react/dist/esm/icons/x.js"));
 const output = NodePath.join(here, "..", "qml/HalC2/Bricks/js/lucide.js");
 

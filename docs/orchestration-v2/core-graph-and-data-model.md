@@ -330,7 +330,7 @@ A provider session may host one or more provider threads if the provider support
 
 The session entity is durable metadata for a live-or-recoverable runtime, not the runtime handle itself. The in-memory process/client handle may disappear because the server restarted, an idle reaper released it, or the provider process crashed. In all cases, the app keeps the `ProviderSession`, `ProviderThread`, and native resume refs in durable state, then recreates the live runtime through the normal provider session manager path.
 
-Provider runtime ids and ordinals must not depend on adapter process memory. If a value is persisted or must survive recovery, it is allocated by the orchestrator/correlation/id services or derived from durable provider refs.
+Provider runtime ids and ordinals must not depend on runtime process memory. If a value is persisted or must survive recovery, it is allocated by the orchestrator/correlation/id services or derived from durable provider refs.
 
 ## ProviderThread
 
@@ -478,8 +478,8 @@ type RuntimeRequest = {
 };
 ```
 
-The permission kinds are the same canonical domain values used by V1 `ProviderRequestKind`.
-Adapters map provider-native callback names such as Codex `item/commandExecution/requestApproval`
+The permission kinds are canonical domain values.
+Runtimes map provider-native callback names such as Codex `item/commandExecution/requestApproval`
 and Claude tool permission names into these app-level values.
 
 Requests may remain visible after restart, but they are only respondable if their `responseCapability` is live.
@@ -591,7 +591,7 @@ V2 should expose separate projections:
 
 The UI can remain simple while the graph remains precise.
 
-Projection streaming should use the existing app snapshot-plus-cursor contract. A thread-detail subscription should return a projection snapshot at sequence `N`, then stream only events after `N`. The frontend should not receive events already reflected in the snapshot. Reconnects may reset from a fresh snapshot instead of replaying local client state; the fresh snapshot and its `snapshotSequence` become the new cursor boundary.
+Projection streaming uses the snapshot-plus-offset contract in [sync.md](../internals/sync.md): a subscription returns the state at an offset, then streams only what follows. The client does not receive changes already reflected in the snapshot.
 
 ## Turn Item Projection
 

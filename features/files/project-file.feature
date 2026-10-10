@@ -95,3 +95,19 @@ Feature: The hal-c2.json project file
     And the checkout also has "public/favicon.ico"
     When a client asks for the icon of "shop"
     Then "branding/mark.svg" is served
+
+  # Legacy: apps/server/src/project/HalC2ProjectFileLoader.ts (HAL_C2_PROJECT_FILE_NAMES)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/project_file.ex
+  @mc @backlog
+  Scenario: A checkout that only has the old t3.json is read from it
+    Given the checkout has a "t3.json" declaring the action "Dev" and no hal-c2.json
+    When the user looks at the actions of "shop"
+    Then "Dev" is offered to import from the project file
+
+  # Legacy: apps/server/src/project/HalC2ProjectFileLoader.ts (only a missing file falls through)
+  @mc @backlog
+  Scenario: hal-c2.json wins over t3.json, even when hal-c2.json cannot be read
+    Given the checkout has a "t3.json" declaring the action "Old" and a hal-c2.json that cannot be read
+    When the user looks at the actions of "shop"
+    Then no actions are offered from either file
+    And a warning is logged that the project file could not be read

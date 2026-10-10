@@ -9,6 +9,15 @@
 #   apps/mobile/src/features/cloud/ConnectOnboarding.tsx (Set up HAL-C2 Connect)
 #   apps/mobile/src/features/cloud/HalC2ConnectProfilePage.tsx (registered servers)
 #   apps/mobile/src/features/cloud/linkEnvironment.ts
+#   apps/mobile/src/features/cloud/ConnectOnboardingRouteScreen.tsx (setup sheet, pull to refresh, no cloud config)
+#   apps/mobile/src/features/cloud/connectOnboarding.ts, connectOnboardingNavigation.ts, connectOnboardingOptOut.ts
+#   apps/mobile/src/features/cloud/CloudAuthProvider.tsx (sign-out and account switch cleanup)
+#   apps/mobile/src/features/cloud/cloudEnvironmentPresentation.ts (relay status texts)
+#   apps/mobile/src/features/connection/ConnectionEnvironmentRow.tsx (switch, edit label and address, managed by Connect)
+#   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx (add button, pairing state)
+#   apps/mobile/src/state/use-remote-environment-registry.ts (unsupported client notice, pairing failure text, form cleared on success)
+#   apps/mobile/src/lib/storage.test.ts, connection.ts (what the phone keeps of an environment, unreadable saved lists)
+#   apps/mobile/src/lib/authClientMetadata.ts (how the phone presents itself when it pairs)
 #   apps/mobile/app.config.ts (local network usage, camera)
 #   apps/mobile-qt/src/Pairing.cpp (one environment at a time: pairing.pair, pairing.forget; pairing with
 #     another: pairing.add, pairing.cancel; a link from outside the app is shown and never spent: openLink;
@@ -149,6 +158,19 @@ Feature: Pairing a phone with environments
     And the user adds the environment
     Then the environment is added to the phone
 
+  # Likely already implemented: apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
+  @backlog @mobile
+  Scenario: An environment cannot be added without an address
+    Given the pairing form has no address
+    Then the user cannot add the environment
+
+  @backlog @mobile
+  Scenario: The phone shows it is pairing while it waits
+    Given the pairing form has an address and a pairing code
+    When the user adds the environment
+    Then the form says it is pairing
+    And the user cannot add the environment a second time until pairing ends
+
   @backlog @mobile
   Scenario Outline: The address the user types is completed with a sensible scheme
     When the user enters the pairing address "<typed>"
@@ -172,6 +194,34 @@ Feature: Pairing a phone with environments
     Given the environment at the pairing address is offline
     When the user tries to pair with it
     Then the user is told the environment could not be reached
+    And no environment is added
+
+  @backlog @mobile
+  Scenario: An environment this app version cannot pair with is refused in a notice
+    Given the environment at the pairing address runs a version this app does not support
+    When the user tries to pair with it
+    Then the user is shown a notice titled "Client not supported" that says why
+    And no environment is added
+
+  @backlog @mobile
+  Scenario: The pairing form is emptied once the environment is added
+    Given the pairing form has an address and a pairing code
+    When the user adds the environment
+    Then the environment is added to the phone
+    And the pairing form is empty
+
+  @backlog @mobile
+  Scenario: A pairing that fails without a reason says so plainly
+    Given the environment fails the pairing without saying why
+    When the user tries to pair with it
+    Then the user is told "Failed to pair with the environment."
+    And no environment is added
+
+  @backlog @mobile
+  Scenario: An iPhone that is refused local network access is told how to allow it
+    Given the phone has not allowed HAL-C2 to find devices on the local network
+    When the user tries to pair with an environment on the local network
+    Then the user is told to allow local network access for HAL-C2 in the system settings
     And no environment is added
 
   # New behaviour, the next two: the session a link buys is saved on the phone before the phone
@@ -317,6 +367,64 @@ Feature: Pairing a phone with environments
     When the user copies the trace id
     Then the trace id is on the clipboard
 
+  # Likely already implemented: apps/mobile/src/features/connection/ConnectionEnvironmentRow.tsx
+  @backlog @mobile
+  Scenario: The user switches an environment off without removing it
+    Given the phone is paired with "My MacBook"
+    When the user switches "My MacBook" off
+    Then "My MacBook" is shown as off
+    And "My MacBook" stays listed with its saved credential and cached threads
+    And the phone stops connecting to "My MacBook"
+
+  @backlog @mobile
+  Scenario: A switched-off environment shows none of its connection problems
+    Given the phone is paired with "My MacBook" and "Office Mac"
+    And "My MacBook" cannot be reached
+    When the user switches "My MacBook" off
+    Then the phone shows no connection problem for "My MacBook"
+    And the phone's overall connection follows "Office Mac" alone
+
+  @backlog @mobile
+  Scenario: The user switches an environment back on
+    Given "My MacBook" is switched off
+    When the user switches "My MacBook" on
+    Then the phone connects to "My MacBook"
+    And its threads are listed again
+
+  @backlog @mobile
+  Scenario: A switched-off environment cannot be reconnected by hand
+    Given "My MacBook" is switched off
+    When the user opens the details of "My MacBook"
+    Then reconnecting is not offered until "My MacBook" is switched on
+
+  @backlog @mobile
+  Scenario: An environment the app cannot talk to cannot be switched on
+    Given an environment runs a server version the app does not support
+    Then the user cannot switch it on
+    And it is explained as not supported rather than shown as off
+
+  @backlog @mobile
+  Scenario: The user changes the address of an environment on the phone
+    Given the phone is paired with an environment at "192.168.1.100:8080"
+    When the user changes its address to "192.168.1.20:8080" and saves
+    Then the environment is listed with the address "192.168.1.20:8080"
+
+  @backlog @mobile
+  Scenario: An environment that cannot be updated says why
+    Given the phone is paired with "My MacBook"
+    And the phone cannot save the change
+    When the user renames "My MacBook" and saves
+    Then the user is told the environment could not be updated, with the reason
+    And what the user typed is still in the form
+
+  @backlog @mobile
+  Scenario: An environment managed by HAL-C2 Connect is not edited by hand
+    Given the phone uses "Office Mac" through HAL-C2 Connect
+    When the user opens the details of "Office Mac"
+    Then the user is told it is managed by HAL-C2 Connect and its tunnel details update automatically
+    And its label and address cannot be changed
+    And the user can still reconnect it and remove it from the phone
+
   @backlog @mobile
   Scenario: Signing in to HAL-C2 Connect offers to set up relayed environments
     Given the user has environments registered with HAL-C2 Connect
@@ -354,6 +462,133 @@ Feature: Pairing a phone with environments
     When the user deregisters "Old Laptop" and confirms
     Then "Old Laptop" is no longer registered
 
+  # Likely already implemented: apps/mobile/src/features/cloud/HalC2ConnectProfilePage.tsx
+  @backlog @mobile
+  Scenario: The registered servers say when they were linked
+    Given "Old Laptop" is registered with the user's HAL-C2 Connect account without a link date
+    When the user opens their registered servers
+    Then "Old Laptop" says its link date is unavailable
+
+  @backlog @mobile
+  Scenario: The registered servers say they are loading
+    Given the user's registered servers are being fetched
+    When the user opens their registered servers
+    Then the user is told the environments are loading
+
+  @backlog @mobile
+  Scenario: Registered servers that cannot be loaded say why and can be refreshed
+    Given HAL-C2 Connect cannot be reached
+    When the user opens their registered servers
+    Then the user is told why the servers could not be loaded
+    And the user can copy the trace ID
+    When the user pulls down to refresh
+    Then the phone asks HAL-C2 Connect for the registered servers again
+
+  @backlog @mobile
+  Scenario: An account with no registered servers says how to link one
+    Given the user has no server registered with HAL-C2 Connect
+    When the user opens their registered servers
+    Then the user is told no servers are registered
+    And the user is told to link a server from its own settings
+
+  @backlog @mobile
+  Scenario: Only one server is deregistered at a time
+    Given "Old Laptop" and "Old Desktop" are registered with the user's HAL-C2 Connect account
+    And the user confirmed deregistering "Old Laptop"
+    When the deregistration is still in progress
+    Then "Old Desktop" cannot be deregistered yet
+
+  @backlog @mobile
+  Scenario: Signing out of HAL-C2 Connect removes the relayed environments from the phone
+    Given the phone uses "Office Mac" through HAL-C2 Connect
+    When the user signs out of HAL-C2 Connect
+    Then "Office Mac" is no longer listed on this phone
+    And "Office Mac" stays registered with HAL-C2 Connect
+
+  @backlog @mobile
+  Scenario: Signing out of HAL-C2 Connect forgets the phone's relay sign-in
+    Given the phone has used the relay with the account "alice"
+    When the user signs out of HAL-C2 Connect
+    Then the phone no longer holds a relay credential for "alice"
+    And the phone is no longer registered for agent activity alerts under "alice"
+
+  @backlog @mobile
+  Scenario: Relayed environments already on the phone stay listed without a HAL-C2 Connect session
+    Given the phone has "Office Mac" saved through HAL-C2 Connect
+    And the app build has no HAL-C2 Connect
+    When the user opens the list of environments
+    Then "Office Mac" is listed and can be switched off or removed
+    And no other environments of the account are offered
+
+  @backlog @mobile
+  Scenario: The set up of HAL-C2 Connect is closed when the user signs out before it opens
+    Given the user has just signed in to HAL-C2 Connect
+    When the user signs out before the setup is shown
+    Then the setup is not shown
+
+  @backlog @mobile
+  Scenario: The set up of HAL-C2 Connect is shown when the phone cannot tell whether it was declined
+    Given the phone cannot read whether the user declined the setup for this account
+    When the user signs in to HAL-C2 Connect
+    Then the user is offered to set up HAL-C2 Connect
+
+  @backlog @mobile
+  Scenario: The set up of HAL-C2 Connect asks a signed-out user to sign in
+    Given the setup of HAL-C2 Connect is showing
+    And the user signed out of HAL-C2 Connect
+    Then the user is told to sign in to their HAL-C2 account to set up HAL-C2 Connect
+    And the user is not offered to decline the setup
+
+  @backlog @mobile
+  Scenario: The set up of HAL-C2 Connect refreshes the account's environments when pulled down
+    Given the setup of HAL-C2 Connect is showing
+    When the user pulls down to refresh
+    Then the phone asks HAL-C2 Connect for the account's environments again
+
+  @backlog @mobile
+  Scenario: A build without HAL-C2 Connect closes its setup
+    Given the app build has no HAL-C2 Connect
+    When a link opens the setup of HAL-C2 Connect
+    Then the setup closes straight away
+
+  @backlog @mobile
+  Scenario: The account's environments say they are loading
+    Given the user is signed in to HAL-C2 Connect
+    And the account's environments are being fetched
+    When the user opens the list of environments
+    Then the user is told the linked cloud environments are loading
+
+  @backlog @mobile
+  Scenario: Environments of the account that cannot be loaded say why and can be tried again
+    Given the user is signed in to HAL-C2 Connect
+    And HAL-C2 Connect cannot be reached
+    When the user opens the list of environments
+    Then the user is told the HAL-C2 Connect environments could not be loaded, with the reason
+    And the user can copy the trace ID
+    And environments already connected through HAL-C2 Connect are still listed
+    When the user tries again
+    Then the phone asks HAL-C2 Connect for the account's environments again
+
+  @backlog @mobile
+  Scenario Outline: An environment of the account says what is known of its relay
+    Given the account has "Office Mac" whose relay <state>
+    When the user opens the list of environments
+    Then "Office Mac" says <status>
+
+    Examples:
+      | state                      | status                              |
+      | is being checked           | available, checking relay status    |
+      | answers with no status     | available, relay status unknown     |
+      | reports it is online       | available, relay online             |
+      | reports it is offline      | that the relay is offline           |
+
+  @backlog @mobile
+  Scenario: An environment of the account can be inspected for its error
+    Given the account has "Old Laptop" whose relay reports an error
+    When the user taps "Old Laptop"
+    Then the full error is shown
+    And the user can copy its trace ID
+
   @backlog @mobile
   Scenario Outline: The user chooses how an environment may use GitHub
     Given the phone is paired with "My MacBook"
@@ -371,3 +606,42 @@ Feature: Pairing a phone with environments
     Given an environment runs a server version the app does not support
     Then the user is told to use compatible versions of the app and server
     And the phone does not keep trying to sync it
+
+  @backlog @mobile
+  Scenario: A short-lived relay token is not kept on the phone
+    Given the phone uses "Office Mac" through HAL-C2 Connect
+    When the app is closed and opened again
+    Then "Office Mac" is still listed
+    And the phone asks HAL-C2 Connect for a fresh token before connecting
+
+  @backlog @mobile
+  Scenario: A list of environments the phone cannot read is not shown as a crash
+    Given the saved list of environments on the phone is unreadable
+    When the user opens the app
+    Then the environments list is empty
+    And the user can pair again
+
+  @backlog @mobile
+  Scenario: Saving an environment is not done over a list the phone could not read
+    Given the phone's secure store cannot be read
+    When the user pairs with "Office Mac"
+    Then "Office Mac" is not added
+    And the environments the phone already had are not erased
+
+  @backlog @mobile
+  Scenario Outline: The environment lists the phone by what kind of device it is
+    Given the user pairs from <device> running <system>
+    When the user looks at the environment's authorized clients
+    Then the phone is listed as "HAL-C2 Mobile", a <kind>, with the system "<os> <major>" and the model "<model>"
+
+    Examples:
+      | device          | system         | kind   | os      | major | model             |
+      | an iPhone 15 Pro | iOS 18.2       | phone  | iOS     | 18    | iPhone 15 Pro     |
+      | a Pixel 9       | Android 15.2.1 | phone  | Android | 15    | Pixel 9           |
+      | an iPad Pro     | iPadOS 18.2    | tablet | iOS     | 18    | iPad Pro 13-inch  |
+
+  @backlog @mobile
+  Scenario: The environment is told the app version the phone runs
+    Given the phone runs app version "1.2.3"
+    When the user pairs with "My MacBook"
+    Then "My MacBook" lists the phone with the app version "1.2.3"

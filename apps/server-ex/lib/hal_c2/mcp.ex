@@ -14,8 +14,8 @@ defmodule HalC2.Mcp do
   A project can turn the server off for its threads (`enableAgentBrowserAccess`
   in its settings overrides).
 
-  Tool definitions and the instructions agents get come from the Node server
-  (`scripts/export-mcp-tools.ts`), so both servers advertise the same tools.
+  Tool definitions (`priv/mcp_tools.json`, `priv/mcp_mc_tools.json`) and the instructions
+  agents get (`priv/mcp_instructions.md`) are edited in place.
   """
 
   use GenServer
@@ -103,7 +103,7 @@ defmodule HalC2.Mcp do
   end
 
   # A credential stays alive while its agent calls in or its thread has a run in
-  # progress (the Node server touches it on every provider turn); an idle one lapses.
+  # progress; an idle one lapses.
   defp alive(token, caller, last_alive) do
     now = System.monotonic_time(:millisecond)
 

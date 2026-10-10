@@ -1,6 +1,0 @@
-{
-  "platforms": ["android"],
-  "android": {
-    "modules": ["expo.modules.hal_c2_markdowntext.HalC2MarkdownTextSelectionModule"]
-  }
-}

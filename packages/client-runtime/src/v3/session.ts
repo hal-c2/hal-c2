@@ -462,7 +462,7 @@ export function makeV3Session(input: {
                 payload: { providers: decodeProviders(frame.providers) },
               },
             ];
-          // Only subscribers that understand the event get it, as on the Node server.
+          // Only subscribers that ask for the event get it.
           if (frame.t === "config.themes" && request.environmentThemes === true)
             return [
               {
@@ -484,7 +484,7 @@ export function makeV3Session(input: {
       );
 
     // An MC never bootstraps a project from its cwd, so its welcome is complete at
-    // once; the stream then stays open like the Node server's lifecycle stream.
+    // once; the stream then stays open.
     // A welcome and ready for each (re)connection, and a ready again whenever the MC
     // moves to another version in place; readies carry how its last update went.
     const serverLifecycle = () => {
@@ -980,7 +980,7 @@ export function makeV3Session(input: {
       );
 
     // Runs once on the checkout's MC. The stream ends with the action, failing
-    // after action_failed as the Node server's does.
+    // after action_failed.
     const runStackedAction = (request: { readonly cwd: string; readonly actionId: string }) =>
       Stream.callback<unknown, unknown>((queue) =>
         Effect.acquireRelease(
@@ -1440,7 +1440,10 @@ export function makeV3Session(input: {
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+          catch: (cause) =>
+            cause instanceof ClusterRpcError
+              ? cause
+              : new ClusterRpcError(String(cause), undefined),
         }),
       mcMembers,
     } satisfies RpcSession;

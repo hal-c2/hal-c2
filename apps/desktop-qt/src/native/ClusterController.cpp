@@ -13,7 +13,7 @@
 
 namespace {
 
-// What the loopback hint tells the user to do instead (as the TUI's clusterState.ts).
+// What the loopback hint tells the user to do instead.
 const QString kLocalOnlyHint =
     QStringLiteral("Only this machine can open it: the MC listens on loopback. Invite over Tailscale instead.");
 

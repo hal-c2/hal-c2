@@ -18,10 +18,10 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// The command palette (the web's CommandPalette), as the `PaletteModel` QML
+// The command palette, as the `PaletteModel` QML
 // singleton and the list the CommandPalette brick shows. It has four modes:
 //
-//   - command (commandPalette.toggle, mod+k). With no query, the web's
+//   - command (commandPalette.toggle, mod+k). With no query, the
 //     hand-picked actions (kRootCommands, each while its owner lists it) and
 //     Recent Threads. A query adds every listed command in
 //     Keybindings.commands (CommandRegistry), the sidebar's projects, the
@@ -32,7 +32,7 @@ class ShellStore;
 //     "Linked thread" or "Archived thread"); from two characters on, threads
 //     whose messages match too
 //     (`orchestration.searchThreads` on every online environment). A query
-//     filters and ranks as the web does (CommandPalette.logic.ts); a leading
+//     filters and ranks the rows; a leading
 //     ">" keeps to actions. A menu command (CommandRegistry::addMenu) opens its
 //     choices as a submenu; Backspace on an empty query leaves it.
 //   - files (filePicker.toggle): the route thread's files by name
@@ -102,7 +102,7 @@ public:
   static constexpr int kFileLimit = 200;
   static constexpr int kContentLimit = 500;
   static constexpr int kMessageLimit = 20;
-  // The root list with no query, in order (the web's actionItems).
+  // The root list with no query, in order.
   static const QStringList kRootCommands;
 
   CommandPaletteController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);

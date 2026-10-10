@@ -8,8 +8,7 @@ defmodule HalC2.ThreadArchive do
   project it lived in (its root and repository), attachments and terminal scrollback,
   a `git bundle` of its checkpoint refs, a bundle of the branch of its own worktree
   and, when its provider can carry one, the agent's native session
-  (`HalC2.PortableSessions`). Version 1 is
-  the Node server's archive (`apps/server/scripts/thread-transfer.ts`); it imports
+  (`HalC2.PortableSessions`). Version 1 is the archive an earlier install wrote; it imports
   through `HalC2.Import.V2` without a session.
 
   Every carried file has a name and a sha256. A built archive leaves the large ones
@@ -481,8 +480,8 @@ defmodule HalC2.ThreadArchive do
     end
   end
 
-  # The Node server's file names only the project's root: the project at that root,
-  # else a checkout of the same repository, else the only project, as its script did.
+  # Version 1 files name only the project's root: the project at that root,
+  # else a checkout of the same repository, else the only project.
   defp candidates(projects, %{"version" => 1, "thread" => meta} = archive) do
     root = meta["sourceWorkspaceRoot"]
 
@@ -645,7 +644,7 @@ defmodule HalC2.ThreadArchive do
     :ok
   end
 
-  # --- version 1 (the Node server's archive) -------------------------------------------
+  # --- version 1 (an earlier install's archive) ----------------------------------------
 
   defp write_v1(archive, project) do
     meta = archive["thread"]
@@ -687,7 +686,7 @@ defmodule HalC2.ThreadArchive do
         terminal = v1_terminal(name, id),
         do: Terminal.put_scrollback(id, terminal, bytes(file))
 
-    # The Node server's provider sessions do not come along: the next message hands
+    # Provider sessions from an earlier install do not come along: the next message hands
     # the conversation over.
     loaded = StreamState.load(Store.path(), id)
 
@@ -710,7 +709,7 @@ defmodule HalC2.ThreadArchive do
     {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
   end
 
-  @doc "The terminal a Node server's scrollback file `name` belongs to in `thread_id`, or `nil`."
+  @doc "The terminal an earlier install's scrollback file `name` belongs to in `thread_id`, or `nil`."
   def v1_terminal(name, thread_id) do
     prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}"
 

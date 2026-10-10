@@ -1,6 +1,6 @@
 #pragma once
 
-// The open thread's relatives (the web's ThreadRelationshipsControl): the
+// The open thread's relatives: the
 // thread it was forked from and the forks made of it, from the shell's rows
 // (`lineage`, `forkedFrom`), and forking and merging back.
 //

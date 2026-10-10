@@ -3,6 +3,9 @@
 #     /api/pull-requests/diff, 404 fallback)
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (hosted-web-app)
 #   apps/server/src/http.ts (static web app, browser session)
+#   apps/server/src/httpResponseErrorGuard.ts (a client that hangs up mid-response)
+#   apps/server/src/orchestration-v2/http.ts, packages/contracts/src/environmentHttp.ts
+#     (/api/orchestration shell and thread snapshots, history pages)
 #   apps/web/src/environments/primary/auth.ts
 #   apps/web/src/hostedPairing.ts
 #   docs/internals/remote.md (Hosted web is a client)
@@ -67,6 +70,48 @@ Feature: The MC's HTTP surface and what it hosts
       | the pull request provider is unavailable  | service unavailable     |
       | fetching the diff fails                   | bad gateway             |
 
+  @mc @backlog
+  Scenario: A client loads the shell snapshot over HTTP and then follows the socket
+    Given a client with orchestration:read
+    When it asks for "/api/orchestration/shell"
+    Then it receives every project and active thread row with the sequence they are at
+    And subscribing to the shell after that sequence sends only what changed since
+
+  @mc @backlog
+  Scenario: The HTTP shell snapshot does not wait for repository lookups
+    Given a project whose repository identity is still being looked up
+    When a client asks for the shell snapshot over HTTP
+    Then the answer comes at once with that project's repository left empty
+    And the repository arrives later over the socket
+
+  @mc @backlog
+  Scenario Outline: A client loads a thread over HTTP
+    Given a client with orchestration:read
+    When it asks for "<route>" of an existing thread
+    Then it receives <answer> and the sequence it is at
+
+    Examples:
+      | route                                        | answer                                                     |
+      | /api/orchestration/threads/:threadId         | the whole thread                                           |
+      | /api/orchestration/threads/:threadId/bounded | its newest turns, a history cursor and whether more exists |
+      | /api/orchestration/threads/:threadId/history | the page of turns before the cursor it sent                |
+
+  @mc @backlog
+  Scenario Outline: Orchestration snapshots that cannot be served over HTTP
+    When a client asks for a thread over HTTP and <problem>
+    Then the MC answers <status> with reason "<reason>"
+
+    Examples:
+      | problem                                   | status          | reason                 |
+      | the thread does not exist                 | not found       | thread_not_found       |
+      | its history cursor is not one the MC gave | invalid request | invalid_history_cursor |
+
+  @mc @backlog
+  Scenario: Orchestration snapshots over HTTP need the read scope
+    Given a client without orchestration:read
+    When it asks for the shell snapshot or a thread over HTTP
+    Then the MC refuses the request
+
   # hosted-web-app: the MC serves the QML client bundle for the desktop and mobile
   # clients' downloadable overlay, so a thin client can load its UI from the MC it pairs with.
   @backlog @mc
@@ -112,3 +157,10 @@ Feature: The MC's HTTP surface and what it hosts
     When a browser opens it
     Then the secret is exchanged directly with the MC
     And it is removed from the browser history
+
+  @backlog @mc
+  Scenario: A client that hangs up mid-response does not take the MC down
+    Given a client is receiving a large response or a socket upgrade
+    When the client disconnects before the MC finishes writing
+    Then the MC drops that connection
+    And every other client keeps being served

@@ -6,8 +6,8 @@ defmodule HalC2.Orchestration.Recovery do
   would stay "running" and refuse its next message.
 
   A run the MC accepted but never handed to its provider goes back to the
-  front of the queue instead, and `continue/0` starts it once, as the Node
-  server's effect outbox replays pending provider work.
+  front of the queue instead, and `continue/0` starts it once, the way an effect
+  outbox replays pending provider work.
 
   Work a provider left running in the background after its turn (a subagent, a
   background command) died with the process too, and is ended the same way; a thread
@@ -140,9 +140,9 @@ defmodule HalC2.Orchestration.Recovery do
 
   @doc """
   Asks each thread whose turn the restart cut off to continue, when its project's
-  `continueThreadsAfterServerUpdate` is on and nothing newer was sent, as the Node
-  server does. Runs once the MC can start turns; an MC without automatic actions
-  (`HAL_C2_MC_NO_AUTO_ACTIONS`) only ends the tasks of interrupted children.
+  `continueThreadsAfterServerUpdate` is on and nothing newer was sent. Runs once the MC
+  can start turns; an MC without automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`) only
+  ends the tasks of interrupted children.
   """
   def continue do
     runs = :persistent_term.get({__MODULE__, :continuable}, [])

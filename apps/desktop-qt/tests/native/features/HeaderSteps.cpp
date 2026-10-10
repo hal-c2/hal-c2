@@ -60,7 +60,7 @@ const Steps steps([] {
     expect(title.text == kLongTitle && title.truncated, QStringLiteral("the header shows \"%1\" (shortened: %2)").arg(title.text).arg(title.truncated));
   });
   step(QStringLiteral("the start of the title still shows"), [](World& world, const Captures&, const Table&) {
-    // Room for a few letters, not a bare ellipsis (the web's header keeps 40 px).
+    // Room for a few letters, not a bare ellipsis (40 px).
     const Title title = layOutTitle(world);
     expect(title.width >= 40, QStringLiteral("the title has %1 px").arg(title.width));
   });

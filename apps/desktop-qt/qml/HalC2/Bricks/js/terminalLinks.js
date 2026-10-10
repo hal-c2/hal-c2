@@ -1,7 +1,6 @@
 .pragma library
 
-// Web addresses and file paths in terminal output, as packages/shared
-// terminalLinks.ts finds them, and the one under a cell of the Terminal.
+// Web addresses and file paths in terminal output, and the one under a cell of the Terminal.
 
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/gi;
 const FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;

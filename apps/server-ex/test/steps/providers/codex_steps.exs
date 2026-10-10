@@ -371,7 +371,7 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
-  # The Node server named a question's node and item after the provider's item, not
+  # An earlier install named a question's node and item after the provider's item, not
   # after the request as this MC does.
   step "a thread imported with a Codex question that is not answered yet", context do
     context =

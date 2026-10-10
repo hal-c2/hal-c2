@@ -519,7 +519,7 @@ defmodule HalC2.ScheduledTasks do
     clock.() |> DateTime.truncate(:millisecond)
   end
 
-  # Millisecond precision like the TS server's `toISOString`, whatever the source.
+  # Millisecond precision like `Date#toISOString`, whatever the source.
   defp iso(%DateTime{microsecond: {us, _}} = at),
     do: DateTime.to_iso8601(%{at | microsecond: {div(us, 1000) * 1000, 3}})
 end

@@ -1,6 +1,6 @@
 defmodule HalC2.ProviderUsageLimits.Codex do
   @moduledoc """
-  Codex subscription usage, as the Node server shapes it (codexUsageLimits.ts).
+  Codex subscription usage.
 
   `account/rateLimits/read` and the `account/rateLimits/updated` notification carry
   the same snapshot, so `windows/1` serves the probe (`probe/1`) and a turn's update
@@ -163,7 +163,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
           Limits.unavailable(checked_at, "probeFailed")
 
         {:ok, _} ->
-          # Usage is an enrichment with its own short deadline, as on the Node server.
+          # Usage is an enrichment with its own short deadline.
           case call(conn, "account/rateLimits/read", nil, 3_000) do
             {:ok, %{} = response} -> limits(response, checked_at)
             failure -> Limits.unavailable(checked_at, "probeFailed", failure(failure))
@@ -177,7 +177,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   end
 
   @doc false
-  # `auth` fields for the signed-in account, as the Node server labels it.
+  # `auth` fields for the signed-in account.
   def account(%{"type" => "apiKey"}), do: %{"type" => "apiKey", "label" => "OpenAI API Key"}
 
   def account(%{"type" => "amazonBedrock"}),

@@ -1,9 +1,8 @@
 defmodule HalC2.TextGeneration.Style do
   @moduledoc """
   How generated commits and pull requests are written, from the project's
-  `sourceControlWritingStyle` setting, as the Node server's `GitManager.ts`
-  resolves it. `HalC2.GitActions` passes `policy/1` and `pr_template/2` to
-  `HalC2.TextGeneration`.
+  `sourceControlWritingStyle` setting. `HalC2.GitActions` passes `policy/1` and
+  `pr_template/2` to `HalC2.TextGeneration`.
 
   A policy is `%{kind:, commit:, change_request:}`, the instructions added to the
   commit and change request prompts: Conventional Commits, the user's own

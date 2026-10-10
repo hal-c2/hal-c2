@@ -7,7 +7,7 @@ import HalC2.Shell
 
 // The header strip: project / thread breadcrumb on the left, the run, open
 // and git pills on the right, from Shell.state.workspace. Checkout mode and
-// branch live under the Composer, as in the web app.
+// branch live under the Composer.
 Rectangle {
     id: strip
 
@@ -28,7 +28,7 @@ Rectangle {
     // toggle; true shows it in the sidebar's place.
     property var sidebarToggle: null
     // Same for the right panel: null hides the toggle, otherwise whether the
-    // panel is open. The web app's header keeps this button next to the pills.
+    // panel is open. The header keeps this button next to the pills.
     property var panelToggle: null
     // Whether the thread details column shows, or null away from a thread.
     property var detailsToggle: null
@@ -170,8 +170,7 @@ Rectangle {
                 }
 
                 Layout.fillWidth: true
-                // Room for a few letters of the title beside the chevron, as
-                // the web's header keeps (ChatHeader.tsx: min-w-10).
+                // Room for a few letters of the title beside the chevron (40 px).
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
@@ -377,8 +376,7 @@ Rectangle {
             compact: strip.compact
         }
 
-        // The terminal drawer's toggle is the strip's, next to the panel's,
-        // as in the web app's header.
+        // The terminal drawer's toggle is the strip's, next to the panel's.
         ShellButton {
             visible: Terminals.available
             subtle: true

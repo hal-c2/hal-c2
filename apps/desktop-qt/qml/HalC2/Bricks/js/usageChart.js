@@ -1,6 +1,6 @@
 .pragma library
 
-// The usage chart's arithmetic, as the web's UsageProviderChart.tsx does it.
+// The usage chart's arithmetic.
 
 // A scale whose maximum is a readable 1/2/5 x 10^n step at or above `peak`,
 // so the tallest period is never drawn past the top of the plot.

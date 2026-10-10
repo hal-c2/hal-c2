@@ -15,8 +15,8 @@ Rectangle {
     // rail, say) turns these off so the brick is just the thread list.
     property bool showScope: true
     property bool showFooter: true
-    // The brand band ("HAL-C2" plus the collapse toggle) is what the web app
-    // shows above its sidebar; a rice with its own title bar leaves it off.
+    // The brand band ("HAL-C2" plus the collapse toggle) is shown above the
+    // sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
     // A list that may be under a finger (a phone's, a tablet's): a finger
@@ -183,7 +183,7 @@ Rectangle {
                 open: open
             });
             for (const item of items) {
-                // A folded shelf still shows the open thread, as the web does.
+                // A folded shelf still shows the open thread.
                 if (!open && item.key !== state.activeThreadKey) {
                     continue;
                 }

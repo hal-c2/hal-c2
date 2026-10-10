@@ -6,8 +6,7 @@
 #include <QVariantList>
 
 // An instance's custom models (`config.customModels`: bare slugs or {slug,
-// name, capabilities {optionDescriptors}}), as the web's ProviderModelsSection
-// and customModelEditor.logic keep them. The editor edits options as
+// name, capabilities {optionDescriptors}}). The editor edits options as
 // [{id, label, type: select | boolean, choices [{id, label, isDefault}]}].
 namespace ProviderCustomModels {
 

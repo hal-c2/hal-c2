@@ -1,4 +1,4 @@
-// Settings → Storage, natively (the web's StorageSettingsPanel): the cleanup
+// Settings → Storage: the cleanup
 // rules the MC sweeps by (HalC2.StorageCleanup), across the settings scope
 // (SettingsScopeController). At a project scope only the worktree rules show,
 // as the project's `worktreeCleanup` override: inherited, off, or its own

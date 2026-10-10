@@ -25,7 +25,7 @@ const QString kKey = QStringLiteral("pullRequestList");
 // Where the filters are kept on this device.
 const QString kPreferences = QStringLiteral("pullRequestList");
 
-// The filters and their defaults (the web's pullRequestListPreferences.ts).
+// The filters and their defaults.
 const QVariantMap kDefaults{
     {QStringLiteral("state"), QStringLiteral("open")},  {QStringLiteral("involvement"), QStringLiteral("all")},
     {QStringLiteral("draft"), QString()},               {QStringLiteral("review"), QString()},

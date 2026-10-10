@@ -13,6 +13,7 @@
 #   apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx
 #   apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx
 #   apps/tui/src/approvals.ts (stale versus transient respond failure)
+#   packages/client-runtime/src/pendingRequests.ts (which requests are still open, their order, older native types)
 #   apps/desktop-qt/src/native/ComposerController.cpp (answers sent once, failed answers)
 #   apps/tui/src/components/ChatView.tsx (approve, decline, cycle pending approvals)
 #   apps/tui/src/components/ComposerPendingUserInputPanel.tsx
@@ -95,6 +96,39 @@ Feature: Approvals and agent questions
     Then the user sees "2/3"
     When the user moves back
     Then the user sees "1/3"
+
+  # Legacy: packages/client-runtime/src/pendingRequests.ts (derivePendingRequests sorts by createdAt)
+  @backlog @desktop @mobile
+  Scenario: Pending requests are answered in the order they were asked
+    Given the agent asked "Which database?" and then asked to run "npm test"
+    When the user opens the pending requests
+    Then "Which database?" comes first and "npm test" second
+
+  # Legacy: packages/client-runtime/src/pendingRequests.ts (closedApprovals, closedUserInputs)
+  @backlog @desktop @mobile
+  Scenario: A request that was settled stays settled whatever order the news arrived in
+    Given the client hears that an approval was resolved before it hears that it was asked
+    Then the approval is not offered to the user
+
+  # Legacy: packages/client-runtime/src/pendingRequests.ts (parseQuestions)
+  @backlog @desktop @mobile
+  Scenario: A question with nothing the user could answer is not shown
+    Given the agent asked a question that has no options and allows no custom answer
+    Then the user is not asked it
+
+  # Legacy: packages/client-runtime/src/pendingRequests.ts (requestKindFromRequestType)
+  @backlog @desktop @mobile
+  Scenario Outline: An approval recorded by an older version is shown as the kind of request it was
+    Given a thread recorded an approval of the native type "<type>"
+    When the user opens the thread
+    Then the approval is shown as a request to <kind>
+
+    Examples:
+      | type                       | kind                  |
+      | exec_command_approval      | run a command         |
+      | apply_patch_approval       | change files          |
+      | file_read_approval         | read a file           |
+      | mcp_elicitation_approval   | answer an MCP request |
 
   @shared @backlog-mobile
   Scenario: A request whose agent is gone cannot be answered

@@ -17,10 +17,7 @@
 // provider instances and models of the environment's config (`providers`),
 // this device's favourites and model order, the model's options, the
 // permission modes, what Enter sends, and the @, $ and / suggestions. Pure
-// functions, ported from the web (shellComposerState.ts, providerInstances.ts,
-// modelOrdering.ts, packages/shared/src/model.ts, composer-logic.ts,
-// composerSlashCommandSearch.ts, providerSkillSearch.ts, searchRanking.ts), so
-// ComposerController publishes what the web app does.
+// functions, which ComposerController publishes.
 namespace composer {
 
 // One provider instance of the config's `providers`, as the picker lists it.
@@ -136,7 +133,7 @@ QString pathLink(const QString& path);
 // The text the empty menu shows for the trigger.
 QString emptyText(const QString& kind);
 
-// searchRanking.ts scoreQueryMatch: lower is better, nothing is no match.
+// How well a value matches a query: lower is better, nothing is no match.
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,
                                    std::optional<int> boundaryBase, std::optional<int> includesBase,
                                    std::optional<int> fuzzyBase, const QString& boundaryMarkers = QStringLiteral(" -_/"));
@@ -145,9 +142,9 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
 // the timeline holds, each in the order it runs: the user's queued follow-ups
 // (`runId`, `text`), and what the MC queued for the agent itself, a delegated
 // task's result or the provider's wake-up (`runId`, `summary`, `outcome`), which
-// is not the user's to edit, steer with or remove (apps/web session-logic.ts
-// getUserQueuedThreadRuns). A run whose message has not arrived yet is in
-// neither: which it is, and what it says, comes with the message.
+// is not the user's to edit, steer with or remove. A run whose message has not
+// arrived yet is in neither: which it is, and what it says, comes with the
+// message.
 struct Queued {
   QVariantList queue;
   QVariantList waiting;

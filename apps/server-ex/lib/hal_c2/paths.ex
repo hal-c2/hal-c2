@@ -7,7 +7,7 @@ defmodule HalC2.Paths do
   config (settings, keybindings, themes), data (what the user cannot get back),
   state (logs, the migration record) and cache (what can be downloaded again). Each
   kind is HAL-C2's directory for that kind plus an `elixir` level, so the MC never
-  collides with the TypeScript server that shares the root
+  collides with another server that shares the root
   (`packages/shared/src/xdgDirs.ts` is the twin of `app_dirs/4`).
 
   The `:home` application env picks the layout:
@@ -221,7 +221,7 @@ defmodule HalC2.Paths do
   @doc """
   Whether `dir` may be a root of `kind` (`:root` for `HAL_C2_HOME`, `:mc` for
   `HAL_C2_MC_HOME`): absolute, and not an old home. An MC root inside one is
-  refused too, since an MC home from before was `~/.t3/elixir` or `~/.hal-c2/elixir`.
+  refused too, since an MC home an earlier install wrote was `~/.t3/elixir` or `~/.hal-c2/elixir`.
   """
   def root?(dir, kind, user_home, platform \\ platform()) do
     case absolute(dir, platform) do

@@ -315,7 +315,7 @@ defmodule HalC2.Steps.Threads do
     end)
   end
 
-  # Moves a thread as a client does (`planPinnedReorder` in threadSort.ts): one key
+  # Moves a thread the way a client's pinned reorder does: one key
   # between its new neighbours, or fresh keys for the section when a neighbour has none.
   defp move(context, moved, place) do
     section = if World.row(context, moved)["pinnedAt"], do: :pinned, else: :active
@@ -367,7 +367,7 @@ defmodule HalC2.Steps.Threads do
   defp rows(context),
     do: Map.new(context.threads, fn {title, _} -> {title, World.row(context, title)} end)
 
-  # The sidebar's order for a section of this scenario's threads (threadSort.ts).
+  # The sidebar's order for a section of this scenario's threads.
   defp order(_context, :pinned, rows) do
     rows
     |> Enum.filter(fn {_, row} -> row["pinnedAt"] != nil and row["archivedAt"] == nil end)
@@ -412,7 +412,7 @@ defmodule HalC2.Steps.Threads do
     end
   end
 
-  # `pinOrderMidpoint` from threadSort.ts: base-26 digit strings as fractions in (0, 1).
+  # `pinOrderMidpoint`: base-26 digit strings as fractions in (0, 1).
   defp midpoint(a, b) do
     n = if b == "", do: 0, else: shared_prefix(a, b, 0)
 
@@ -438,7 +438,7 @@ defmodule HalC2.Steps.Threads do
   defp tail(s, n) when byte_size(s) <= n, do: ""
   defp tail(s, n), do: binary_part(s, n, byte_size(s) - n)
 
-  # `generateSpreadPinOrderKeys` from threadSort.ts.
+  # Keys for `count` threads, spread across the key space so later moves find room.
   defp spread_keys(count) do
     width = Stream.iterate(2, &(&1 + 1)) |> Enum.find(&(Integer.pow(26, &1) > (count + 1) * 2))
     step = Integer.pow(26, width) / (count + 1)
@@ -644,14 +644,15 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  # Clients drop deleted rows (`shellShape.ts`); a fresh client gets it marked deleted.
+  # Clients drop deleted rows (`packages/client-runtime/src/v3/shellShape.ts`); a fresh
+  # client gets it marked deleted.
   step "no client lists {string}", %{args: [thread]} = context do
     assert World.fresh_shell(context)[World.thread_id(context, thread)]["deletedAt"] != nil
     context
   end
 
-  # The MC keeps the stream, as the TypeScript server does; what a client reads
-  # from it is the thread marked deleted, which it treats as `thread.deleted`.
+  # The MC keeps the stream; what a client reads from it is the thread marked
+  # deleted, which it treats as `thread.deleted`.
   step "its history can no longer be read", context do
     id = World.thread_id(context, "Old spike")
 
@@ -2797,9 +2798,9 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  # A thread the first version (the Node server's version 1 orchestrator) logged, with
-  # a user and an agent message and whatever `detail` names; the MC's import folds it
-  # (`HalC2.Import.V1Thread`) as the Node server's startup migration does.
+  # A thread the first version (HAL-C2 before the MC, its version 1 orchestrator) logged,
+  # with a user and an agent message and whatever `detail` names; the MC's import folds
+  # it (`HalC2.Import.V1Thread`).
   step ~r/^the first version's thread "(?<title>[^"]+)" had (?<detail>.+)$/,
        %{args: [title, detail]} = context do
     id = "v1-" <> (title |> String.downcase() |> String.replace(" ", "-"))
@@ -3303,7 +3304,7 @@ defmodule HalC2.Steps.Threads do
       "updatedAt" => "2026-09-01T10:00:00.000Z"
     }
 
-  # Writes a Node server event log (its `orchestration_events` table) of
+  # Writes an event log from HAL-C2 before the MC (its `orchestration_events` table) of
   # `{aggregate, stream, type, occurred_at, payload}` events.
   defp v2_log(context, events, titles, version \\ 2, path \\ nil) do
     path = path || Path.join(context.mc.home, "previous-state.sqlite")
@@ -3540,7 +3541,7 @@ defmodule HalC2.Steps.Threads do
     |> Map.fetch!(id)
   end
 
-  # Launches the thread "Launched" as the web client does, remembering its first message.
+  # Launches the thread "Launched", remembering its first message.
   defp launch(context, project, strategy, fields \\ %{}) do
     text = "List the files in the checkout"
 

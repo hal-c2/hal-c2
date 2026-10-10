@@ -1,10 +1,9 @@
-// Settings → Project, natively (the web's ProjectsSettings and
-// ProjectSettingsPanel): the picked logical project's name and icon, which
+// Settings → Project: the picked logical project's name and icon, which
 // every checkout in the scope takes (`project.update` on each, in turn), its
 // checkouts and removing them (ProjectController asks first), and how new
 // threads start: the model, permissions, workspace and worktree submodules,
 // as the project's overrides or, with no project picked, the environments'
-// defaults (the web keeps the last two on General, whose native page holds
+// defaults (kept off General, whose page holds
 // only this device's settings).
 //
 // Publishes `projectSettings`: {open, status (pick | empty | missing |
@@ -425,7 +424,7 @@ private:
   }
 
   // Where the first selected environment's default model comes from (the
-  // web's SettingInheritance): the layers it resolves through, top down, the
+  // layers it resolves through, top down, the
   // first one set being in effect; and from an environment's view, the
   // projects that override it.
   QVariantMap modelInheritance(const QString& environmentId, const QVariantList& models) const {

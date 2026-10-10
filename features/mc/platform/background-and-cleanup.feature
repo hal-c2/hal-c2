@@ -10,6 +10,8 @@
 #   packages/contracts/src/settings.ts (backgroundActivity, storageCleanup)
 #   apps/web/src/components/settings/SettingsPanels.tsx (background activity, storage cleanup)
 #   docs/internals/resource-telemetry.md (host power feed)
+#   apps/server/src/background/BackgroundPolicy.ts (foreground rule, thermal, suspended, stale power)
+#   apps/server/src/background/HostPowerMonitor.ts (older reports ignored)
 
 Feature: Background work and storage cleanup on the MC
   The MC only does periodic work that a client in front is looking at, and within the
@@ -79,6 +81,50 @@ Feature: Background work and storage cleanup on the MC
     Given a client in front shows a checkout and provider status
     When the host reports it is locked
     Then the MC pauses periodic git and provider refreshes
+
+  @backlog @mc
+  Scenario Outline: A host under strain pauses background work whatever the profile
+    Given a client in front shows a checkout and provider status
+    When the host reports <state>
+    Then the MC pauses periodic git and provider refreshes
+
+    Examples:
+      | state                         |
+      | its thermal state is serious  |
+      | its thermal state is critical |
+      | it is suspended               |
+
+  @backlog @mc
+  Scenario: A client that is visible but not focused or recently used does not keep work running
+    Given the background activity profile is "balanced"
+    And a client shows a checkout but its window is not focused
+    And the user has not touched it recently
+    Then the MC does no periodic work for that checkout
+    When the user interacts with the client again
+    Then the MC resumes refreshing that checkout
+
+  @backlog @mc
+  Scenario Outline: A client on a constrained device does not keep work running
+    Given a client in front shows a checkout
+    And the client reports <state>
+    Then the MC does no periodic work for that checkout on its behalf
+
+    Examples:
+      | state                              |
+      | low power mode, with pausing on    |
+      | being unplugged, with pausing on   |
+
+  @backlog @mc
+  Scenario: A host power reading that has gone stale pauses nothing
+    Given a client in front shows a checkout
+    And the host's last power report is too old to trust
+    Then the MC keeps refreshing that checkout
+
+  @backlog @mc
+  Scenario: A host power report older than one already accepted is ignored
+    Given the host reported it is locked
+    When an older report that says it is unlocked arrives afterwards
+    Then the MC still treats the host as locked
 
   @mc
   Scenario: A client reads the policy the MC applies

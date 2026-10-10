@@ -7,6 +7,8 @@
 #   apps/mobile/src/components/SegmentedControl.tsx (font scaling limits)
 #   apps/mobile/src/features/usage/UsageRouteScreen.tsx (range labels read in full)
 #   apps/mobile/src/features/settings/appearance/
+#   apps/mobile/src/components/VideoAttachmentTile.tsx, MediaActionsMenu.tsx (Play, media actions)
+#   apps/mobile/modules/hal-c2-composer-editor/ios/HalC2ComposerEditorView.swift (references as accessibility buttons)
 # Desktop and TUI accessibility are specified with their domains. This file covers screen
 # readers, text size and motion on phones and tablets.
 
@@ -75,6 +77,13 @@ Feature: Accessibility on phones and tablets
     Then it hints that the upload can be retried
 
   @backlog @mobile
+  Scenario: Each reference in the draft is a button for a screen reader
+    Given the draft references "src/cart.ts" and "Fix checkout"
+    When a screen reader moves through the composer
+    Then each reference is focused on its own as a button named by its label
+    And activating a reference opens its details
+
+  @backlog @mobile
   Scenario: Dictation state is announced
     Given a screen reader is on
     When the user starts dictating
@@ -123,3 +132,22 @@ Feature: Accessibility on phones and tablets
   Scenario: Tap targets are large enough to hit
     When the user looks at any action in the thread list or composer
     Then its touch area is at least 44 points square
+
+  @backlog @mobile
+  Scenario: A video is announced as something to play
+    Given a message carries the video "demo.mp4"
+    When a screen reader focuses the video
+    Then it announces "Play demo.mp4" as a button
+
+  @backlog @mobile
+  Scenario: A picture's or video's media actions are offered without touching and holding
+    Given a message carries the video "demo.mp4"
+    When a screen reader user opens the actions for the video
+    Then the user is offered to save or share it
+    And the user is told that touching and holding offers media actions
+
+  @backlog @mobile
+  Scenario: A full-screen picture or video has a media actions button
+    Given the user opened a video full screen
+    When a screen reader focuses the top of the screen
+    Then a button labelled "Media actions" is offered

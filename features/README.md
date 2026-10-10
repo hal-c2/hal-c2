@@ -1,9 +1,10 @@
 # HAL-C2 feature specifications
 
 Every behaviour HAL-C2 has, will have, or has deliberately dropped is written here in Gherkin.
-This tree is the feature-loss ledger for the move from the legacy surfaces to the HAL-C2 stack:
+This tree is the ledger of what HAL-C2 does, including everything the surfaces it started from did.
+Those surfaces are no longer in the tree:
 
-| Legacy, to be deleted                     | Replaced by                            |
+| Removed                                   | Replaced by                            |
 | ----------------------------------------- | -------------------------------------- |
 | the Node server (`apps/server`)           | the MC (`apps/server-ex`)              |
 | the Electron desktop app (`apps/desktop`) | the Qt/QML desktop (`apps/desktop-qt`) |
@@ -11,8 +12,7 @@ This tree is the feature-loss ledger for the move from the legacy surfaces to th
 | the web app (`apps/web`)                  | nothing; there is no web client        |
 |                                           | the QML TUI (`apps/tui`)               |
 
-A legacy surface can be deleted once every scenario it served passes on its replacement. A
-behaviour that is not in this tree does not exist as far as the move is concerned.
+A behaviour that is not in this tree does not exist as far as HAL-C2 is concerned.
 
 ## Layout
 
@@ -49,12 +49,11 @@ Surface tags say where a scenario must hold. A scenario carries every surface it
 - `@shared` is shorthand for `@desktop @mobile @tui` and means the QML is shared between them.
 
 Status tags say whether the HAL-C2 stack delivers the scenario today. The HAL-C2 stack is the
-MC, native QML, and the TUI. Anything served by `apps/server`, `apps/web` or
-`apps/mobile` does not count.
+MC, native QML, and the TUI.
 
 - No status tag means the scenario passes on every one of its surfaces now.
-- `@backlog` means it passes on none of its surfaces yet: the product does this today through
-  code that is going away, or it is new intended behaviour. This is the list of things we
+- `@backlog` means it passes on none of its surfaces yet: a removed surface did this and it
+  is not carried over, or it is new intended behaviour. This is the list of things we
   must not lose.
 - `@backlog-mc`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
   pass on that one surface yet. When a `@backlog @desktop @mobile` scenario starts passing on
@@ -99,12 +98,16 @@ scenario waits for.
   #   packages/contracts/src/orchestrationV2.ts (thread.snooze, thread.unsnooze)
   ```
 
+  `# Sources:` lines that name `apps/server`, `apps/web`, `apps/desktop` or `apps/mobile` name files
+  that are no longer in the tree. They are provenance, readable at commit `8212e08f9`
+  (`git show 8212e08f9:<path>`).
+
 ## Ledger rule
 
 Each of these must be named in at least one `# Sources:` block:
 
 - every page under `docs/user/`
-- every settings panel in `apps/web/src/components/settings/*Settings.tsx`
+- every settings panel of the removed web app (`apps/web/src/components/settings/*Settings.tsx` at `8212e08f9`)
 - every RPC method in `packages/contracts/src/rpc.ts` (see `parity/rpc.feature`)
 - every command and event in `packages/contracts/src/orchestrationV2.ts` (see `parity/commands.feature`)
 - every keybinding id in `packages/contracts/src/keybindings.ts` (see `navigation/keybindings.feature`)

@@ -1,5 +1,5 @@
 defmodule HalC2.Projection.BackgroundWorkTest do
-  # Cases ported from packages/shared/src/orchestrationV2PendingBackgroundWork.test.ts.
+  # Pending background work cases.
   use ExUnit.Case, async: true
 
   alias HalC2.Projection.BackgroundWork

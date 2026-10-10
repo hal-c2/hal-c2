@@ -1,7 +1,6 @@
 defmodule HalC2.Orchestration.LimitRecovery do
   @moduledoc """
-  Resumes threads a provider stopped on a usage limit, ported from the Node server's
-  `UsageLimitRecoveryWorker`. A thread whose latest run failed on a limit with a
+  Resumes threads a provider stopped on a usage limit. A thread whose latest run failed on a limit with a
   known reset is armed (`limitRecovery` on the thread) when the user asks for it or
   `autoResumeLimitedThreads` / `snoozeLimitedThreads` is on; once the reset passes an
   armed auto-resume sends "Continue where you left off.".

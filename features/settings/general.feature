@@ -1,8 +1,10 @@
 # Sources:
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
+#   apps/web/src/components/ui/draft-input.tsx, apps/web/src/hooks/useCommitOnBlur.ts (typed text settings)
 #   apps/desktop-qt/src/native/ProjectController.cpp (addProjectBaseDirectory: where Add project browses from)
 #   apps/web/src/components/settings/SettingInheritance.tsx (reset buttons)
+#   apps/web/src/components/ChatView.tsx, ChatView.logic.ts, apps/web/src/rightPanelStore.ts (when proactive panels open and what holds them back)
 #   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
 #   apps/server-ex/lib/hal_c2/settings.ex
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
@@ -92,6 +94,24 @@ Feature: General settings
       Then the number of days before settling is shown with its default
       And the user can change the number of days
 
+    # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (AutoSettleDaysInput), packages/contracts/src/settings.ts (1 to 90 days)
+    @backlog @desktop
+    Scenario Outline: Only whole days from 1 to 90 are kept as the inactivity limit
+      Given "Auto-settle inactive threads" is on with 3 days
+      When the user types <entry> as the number of days
+      Then the inactivity limit <result>
+      When the user leaves the field
+      Then the field shows <shown>
+
+      Examples:
+        | entry | result          | shown |
+        | 0     | stays at 3 days | 3     |
+        | 91    | stays at 3 days | 3     |
+        | 3.5   | stays at 3 days | 3     |
+        | empty | stays at 3 days | 3     |
+        | 90    | becomes 90 days | 90    |
+        | 1     | becomes 1 day   | 1     |
+
     @backlog @mobile
     Scenario: Environments whose auto-settle settings differ can be brought in line
       Given "laptop" settles threads after 3 days and "server" after 7 days
@@ -173,6 +193,67 @@ Feature: General settings
       Given proactive panels are off
       When the user opens a thread with a linked pull request
       Then no side panel opens by itself
+
+    @backlog @desktop
+    Scenario Outline: Proactive panels open the changes of a turn that just finished only when they are large
+      Given proactive panels are on and the thread has no linked pull request
+      When a turn the user watched finishes having changed <files> with <lines> changed lines
+      Then the diff of the working tree <outcome>
+
+      Examples:
+        | files   | lines | outcome                 |
+        | 3 files | 6     | opens beside the thread |
+        | 1 file  | 50    | opens beside the thread |
+        | 2 files | 49    | does not open           |
+        | 0 files | 0     | does not open           |
+
+    @backlog @desktop
+    Scenario: A panel the user chose during a turn is not replaced when the turn finishes
+      Given proactive panels are on
+      And the user opened the file explorer beside the thread while a turn was running
+      When that turn finishes with large changes
+      Then the file explorer stays open
+      And a later turn that finishes with large changes may open the diff again
+
+    @backlog @desktop
+    Scenario: A panel the user chose in one thread does not hold back another thread
+      Given proactive panels are on
+      And the user closed the side panel of the thread "Cart totals"
+      When the user opens another thread with a linked pull request
+      Then the pull request panel opens with that thread
+
+    @backlog @desktop
+    Scenario: A thread with several pull requests opens their list
+      Given proactive panels are on
+      When the user opens a thread linked to pull requests 12 and 14
+      Then the list of the thread's pull requests opens instead of one of them
+
+    @backlog @desktop
+    Scenario: A linked pull request keeps a finished turn's changes from opening
+      Given proactive panels are on and the thread has a linked pull request
+      When a turn finishes with large changes
+      Then the diff does not open over the pull request
+
+    @backlog @desktop
+    Scenario Outline: Proactive panels stay closed where they would get in the way
+      Given proactive panels are on
+      And <situation>
+      When <trigger>
+      Then no side panel opens by itself
+
+      Examples:
+        | situation                                              | trigger                                             |
+        | the window is so narrow the panel covers the thread    | the user opens a thread with a linked pull request  |
+        | the window is so narrow the panel covers the thread    | a turn finishes with large changes                  |
+        | the project folder is not a Git repository             | a turn finishes with large changes                  |
+
+    @backlog @desktop
+    Scenario: An open pull request panel follows the thread's pull request even with proactive panels off
+      Given proactive panels are off
+      And the pull request panel shows the thread's linked pull request 12
+      When the thread becomes linked to pull request 14 instead
+      Then the panel shows pull request 14
+      But a panel showing anything else is left as it is
 
     @desktop
     Scenario Outline: Composer preferences change how the composer behaves
@@ -258,6 +339,42 @@ Feature: General settings
       Given the add project base directory is empty
       When the user starts adding a project
       Then the folder browser opens in the home folder
+
+  # Legacy: apps/web/src/components/ui/draft-input.tsx, apps/web/src/hooks/useCommitOnBlur.ts
+  # (the base directory, provider binary paths and names, the browser profile name)
+  Rule: Typed text settings
+
+    @backlog @desktop
+    Scenario: A typed setting is saved when the user presses Enter or leaves the field
+      Given the add project base directory is "~/code"
+      When the user types "~/src" in the base directory field
+      Then the setting is still "~/code"
+      When the user presses Enter
+      Then the setting is "~/src"
+
+    @backlog @desktop
+    Scenario: Leaving a typed setting saves it once
+      When the user types "~/src" in the base directory field and clicks elsewhere
+      Then the setting is saved as "~/src" once
+
+    @backlog @desktop
+    Scenario: A typed setting that was not changed is not saved
+      Given the add project base directory is "~/code"
+      When the user clicks into the base directory field and leaves it again
+      Then nothing is saved
+
+    @backlog @desktop
+    Scenario: A setting changed elsewhere does not replace what the user is typing
+      Given the user is typing "~/sr" in the base directory field
+      When the setting is reset to its default from another window
+      Then the field still shows "~/sr"
+
+    @backlog @desktop
+    Scenario: Enter that confirms an input method composition does not save the field
+      Given the user is composing text in the base directory field with an input method
+      When the user presses Enter to confirm the composition
+      Then the field stays open for editing
+      And nothing is saved yet
 
   Rule: Confirmations
 

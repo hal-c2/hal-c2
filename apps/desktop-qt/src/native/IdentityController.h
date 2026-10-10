@@ -15,9 +15,7 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// What tells projects and environments apart at a glance (the web's
-// ProjectFavicon, ProjectIconPickerDialog, ProjectFaviconPickerDialog and
-// EnvironmentIconPicker).
+// What tells projects and environments apart at a glance.
 //
 // Publishes `projectIcons`: every project's icon by `<environmentId>:<projectId>`,
 //   {kind (monogram | emoji | lucide | image), text, emoji, name, color, tint,

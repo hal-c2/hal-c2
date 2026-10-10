@@ -11,6 +11,8 @@
 #   apps/web/src/components/chat/composerSubmission.ts (length validation)
 #   apps/web/src/components/ChatView.tsx (send path, offline, background send, multi-model)
 #   packages/contracts/src/settings.ts (sendShortcut)
+#   apps/web/src/components/composerFooterLayout.ts, apps/web/src/components/chat/ChatComposer.tsx (when the composer shrinks to one line)
+#   apps/web/src/components/chat/CompactComposerControlsMenu.tsx (controls of a narrow composer)
 
 Feature: Drafting and sending a message
   The user writes a turn and sends it to the agent. Drafts survive switching
@@ -173,6 +175,29 @@ Feature: Drafting and sending a message
     Then the user is told the background prompt could not be sent
     And the user can restore "refactor utils" into the composer
 
+  @backlog @desktop
+  Scenario: A failed background prompt is not restored over a newer draft
+    Given the background prompt "refactor utils" could not be sent
+    And the user has since typed "add tests" in that composer
+    When the user asks to restore the failed prompt
+    Then the composer still reads "add tests"
+    And the user is told to send or clear the current prompt before restoring
+
+  @backlog @desktop
+  Scenario: A background start that cannot open a fresh composer still starts the thread
+    Given the user is writing the first message of a new thread
+    And a fresh draft cannot be opened
+    When the user sends it in the background
+    Then the thread starts with that message
+    And the user is told "Could not open a fresh composer"
+
+  @backlog @desktop
+  Scenario: A background start that fails after the user moved on points back to its draft
+    Given the user sent a first message in the background and a fresh draft opened
+    When the thread fails to start
+    Then the user is told "Background task failed" with the reason
+    And the notice offers to open the draft that failed
+
   @desktop
   Scenario: One prompt starts a thread for each chosen model
     Given the project is a Git repository
@@ -180,3 +205,69 @@ Feature: Drafting and sending a message
     When the user chooses two models and a base branch and sends "Add caching"
     Then one thread per model starts with "Add caching"
     And each thread works in its own worktree
+
+  @backlog @desktop
+  Scenario: Scrolling a long conversation shrinks the composer to one line
+    Given the conversation is longer than the window and "Collapse composer on scroll" is on
+    And the draft holds one line of text
+    When the user scrolls the conversation
+    Then the composer shrinks to one line showing the draft
+    When the user clicks into the composer
+    Then the composer is back at its full size
+
+  @backlog @desktop
+  Scenario Outline: The composer keeps its size while it has something to show
+    Given the conversation is longer than the window and "Collapse composer on scroll" is on
+    And <state>
+    When the user scrolls the conversation
+    Then the composer keeps its full size
+
+    Examples:
+      | state                                              |
+      | the draft holds several lines of text              |
+      | a suggestion list is open                          |
+      | the stash is open                                  |
+      | the agent's task list is open                      |
+      | the user is dragging a file over the composer      |
+      | the thread's worktree is still being prepared      |
+      | no provider can be used                            |
+      | the environment cannot be reached                  |
+      | the last send was refused and the reason is shown  |
+      | a draft image may not have been saved              |
+
+  @backlog @desktop
+  Scenario: A conversation that fits the window never shrinks the composer
+    Given the conversation is shorter than the window
+    When the user scrolls the conversation
+    Then the composer keeps its full size
+
+  @backlog @desktop
+  Scenario: Clicking away or switching windows does not shrink or grow the composer
+    Given the composer is at its full size
+    When the user clicks a message in the conversation
+    Then the composer keeps its full size
+    Given the composer has shrunk to one line
+    When the user switches to another application and back
+    Then the composer is still one line
+
+  @backlog @desktop
+  Scenario: A shrunk composer still shows the draft's images
+    Given the draft carries five images and the composer has shrunk to one line
+    Then three of the images are shown small beside the draft
+    And the composer says two more images are attached
+    When the user chooses to see the rest
+    Then the composer is back at its full size showing all five
+
+  @backlog @desktop
+  Scenario: A control opened by its shortcut grows the composer first
+    Given the composer has shrunk to one line and its controls are hidden
+    When the user presses the model picker shortcut
+    Then the composer is back at its full size with the model picker open
+
+  @backlog @desktop
+  Scenario: A narrow composer folds its mode and access controls into one menu
+    Given the composer is too narrow to show all its controls
+    Then the mode, access and model option controls are offered in one menu of further controls
+    And the model can still be chosen beside it
+    When the user chooses "Plan" as the mode in that menu
+    Then the next turn plans instead of making changes

@@ -65,7 +65,7 @@ RuntimeRequest:
   or providerTurnId + requestOrdinal
 ```
 
-If a provider recycles ids, the provider adapter must widen the scope until the mapping is unambiguous.
+If a provider recycles ids, the provider runtime must widen the scope until the mapping is unambiguous.
 
 ## Mapping Store
 
@@ -162,7 +162,7 @@ type RuntimeEvent = {
 };
 ```
 
-Downstream systems should use app ids. Provider refs are preserved for inspection and adapter routing.
+Downstream systems should use app ids. Provider refs are preserved for inspection and runtime routing.
 
 ## Command Routing
 
@@ -217,7 +217,7 @@ child turn/started and turn/completed
 
 The child provider turn keeps its own provider refs. It is linked to the parent through `parentNodeId`, not by replacing its turn id with the parent turn id.
 
-For weak providers, the adapter may create a child node by ordinal under the active parent node.
+For weak providers, the runtime may create a child node by ordinal under the active parent node.
 
 ## Replay Determinism
 

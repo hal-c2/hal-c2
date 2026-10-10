@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A checkbox in the web app's clothes (checkbox.tsx): an `input` outline on
+// A checkbox in the theme's colours: an `input` outline on
 // the canvas, the accent fill with its foreground mark when checked. Replaces
 // the stock CheckBox, whose colours come from a system palette.
 CheckBox {

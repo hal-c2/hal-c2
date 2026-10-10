@@ -54,8 +54,7 @@ std::pair<QString, QString> repositoryOf(const QJsonObject& project) {
 }
 
 // One name for an Azure DevOps repository however it is reached, over SSH,
-// visualstudio.com or dev.azure.com (canonicalRepositoryKey in
-// packages/shared/src/sourceControl.ts).
+// visualstudio.com or dev.azure.com.
 QString canonicalKey(QString key) {
   static const QRegularExpression ssh(
       QStringLiteral("^(?:ssh\\.dev\\.azure\\.com|vs-ssh\\.visualstudio\\.com)/v3/([^/]+)/([^/]+)/([^/]+)$"));
@@ -185,7 +184,7 @@ std::optional<ThreadPullRequests::Target> ThreadPullRequests::parseUrl(const QSt
   return Target{host, match.captured(1).toLower(), number, url.trimmed()};
 }
 
-// As the web's LinkPullRequestDialog: a URL may name any repository on a host
+// A URL may name any repository on a host
 // a project here reads, since that project lends the MC its credentials
 // there (findProjectOnChangeRequestHost); Azure DevOps reads with the
 // checkout's own organization and project, so there it takes a project of that

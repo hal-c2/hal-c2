@@ -14,7 +14,7 @@ Loader {
 
     active: brick.length > 0
     source: active ? Qt.resolvedUrl(brick + ".qml") : ""
-    // Escape that nothing in the page took leaves Settings, as the web's route does
+    // Escape that nothing in the page took leaves Settings
     // (a popup, dialog or search clear takes it first).
     Keys.onEscapePressed: event => {
         Shell.dispatch("settings.back");

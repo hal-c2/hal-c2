@@ -1,6 +1,7 @@
 # Sources:
 #   packages/client-runtime/src/load-balancing.ts (chooseLoadBalancedEnvironment)
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
+#   apps/web/src/components/settings/LoadBalancingSettings.test.ts (older weights snap to four preferences, closed summary)
 #   apps/web/src/components/ChatView.tsx (balanced environment for new drafts)
 #   apps/server-ex/lib/hal_c2/load_balancing.ex (hal-c2.placeThread)
 #   apps/server-ex/lib/hal_c2/rpc.ex (server.getHostResources)
@@ -129,3 +130,61 @@ Feature: Load balancing new threads across machines
     When the user starts a new thread in "api" on a phone
     Then the thread starts on the machine the user picked
     And load balancing is not offered on the phone
+
+  @backlog @desktop @tui
+  Scenario Outline: Each machine has one of four load preferences
+    Given load balancing is on with several machines connected
+    When the user sets "server" to <preference>
+    Then "server" receives <effect>
+
+    Examples:
+      | preference  | effect                                          |
+      | Prefer      | the most new threads when it has the room       |
+      | Normal      | new threads by free CPU and memory alone        |
+      | Less often  | fewer new threads than its free resources imply |
+      | Manual only | no balanced threads, only ones the user picks   |
+
+  @backlog @desktop @tui
+  Scenario Outline: A preference saved by an older version shows as the nearest one
+    Given a machine's saved weight is <weight>
+    When the user opens load balancing settings
+    Then the machine shows <preference>
+
+    Examples:
+      | weight  | preference  |
+      | none    | Normal      |
+      | 50      | Normal      |
+      | 0       | Manual only |
+      | 10      | Less often  |
+      | 80      | Prefer      |
+
+  @backlog @desktop @tui
+  Scenario: The closed load balancing section summarises what is not normal
+    Given load balancing is on
+    And "server" is set to Prefer and "laptop" to Less often
+    And "build-box" is left at Normal
+    When the user looks at load balancing with the section closed
+    Then the summary reads "server prefer · laptop less often"
+
+  @backlog @desktop @tui
+  Scenario: The closed load balancing section says when it is off
+    Given load balancing is off
+    When the user looks at load balancing with the section closed
+    Then the summary reads "Off"
+    And with every machine at Normal while it is on, no summary is shown
+
+  @backlog @desktop @tui
+  Scenario: Preferences wait for load balancing to be turned on
+    Given load balancing is off
+    Then every machine's preference is shown but cannot be changed
+    When the user turns load balancing on
+    Then the preferences can be changed
+
+  @backlog @desktop @tui
+  Scenario: Only machines that are switched on are listed for balancing
+    Given a cluster of the machines "laptop", "server" and "build-box"
+    And "build-box" is switched off
+    When the user opens load balancing settings
+    Then "laptop" and "server" are listed
+    And "build-box" is not
+    And load balancing is not offered when only one machine is left switched on

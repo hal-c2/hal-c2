@@ -3,16 +3,12 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { TimestampFormat } from "./settings.ts";
 
 /**
- * Contract between the web app and a native shell hosting it (the Qt shell
- * in apps/desktop-qt). The shell exposes `window.halC2Shell`; the page publishes
- * derived view models with `publish(key, value)` and receives user intent
- * from shell-rendered chrome as actions. Once its own connection to the MC
- * has a snapshot the shell also builds the sidebar and sends the sidebar's
- * row actions and plain turns itself (`ShellNativeState`); everything else
- * still goes through the page.
+ * View models the Qt shell publishes under `Shell.state` (sidebar, composer,
+ * git, settings, notifications, …) and the actions its chrome dispatches.
+ * The TUI builds the same view models from its own MC connection.
  *
- * Imported as `@hal-c2/contracts/shell` so only shell-hosted code pulls
- * these schemas into its bundle.
+ * Imported as `@hal-c2/contracts/shell` so only shell code pulls these
+ * schemas into its bundle.
  */
 
 export const ShellSidebarThreadStatus = Schema.Literals([
@@ -521,10 +517,9 @@ export const ShellContextMenuItem = Schema.Struct({
 export type ShellContextMenuItem = typeof ShellContextMenuItem.Type;
 
 /**
- * Published under the `contextMenu` key while the page waits for a choice:
- * every `localApi.contextMenu.show` becomes a native menu. `surfaceId` names
- * the web surface whose coordinates `x`/`y` are in (`"shell"` = window
- * coordinates, for menus opened from native chrome). Null when closed.
+ * Published under the `contextMenu` key while a menu waits for a choice.
+ * `surfaceId` names the surface whose coordinates `x`/`y` are in (`"shell"` =
+ * window coordinates). Null when closed.
  */
 export const ShellContextMenuState = Schema.Struct({
   requestId: Schema.String,
@@ -865,20 +860,3 @@ export const ShellAction = Schema.Union([
   }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
-
-/** `window.halC2Shell`, injected by the shell before any page script runs. */
-export interface HalC2Shell {
-  readonly protocolVersion: number;
-  /** Which web surface this document is in (`"primary"`, `"shell"`, …). */
-  readonly surfaceId: string;
-  readonly ready: Promise<unknown>;
-  publish(key: string, value: unknown): Promise<void>;
-  /** Resolves to an unsubscribe function once the channel is connected. */
-  onAction(listener: (action: string, payload: unknown) => void): Promise<() => void>;
-  /** Everything published so far, keyed as published (any document's view models). */
-  getState(): Promise<Readonly<Record<string, unknown>>>;
-  /** Calls `listener` now and on every publish; resolves to an unsubscribe function. */
-  onState(listener: (state: Readonly<Record<string, unknown>>) => void): Promise<() => void>;
-  /** Dispatch an action as native chrome would (lets a secondary document reach the primary). */
-  dispatch(action: string, payload?: unknown): Promise<void>;
-}

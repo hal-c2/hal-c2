@@ -89,3 +89,82 @@ Feature: Source Control settings
   Scenario: Seeing source control tools from the terminal client
     When the user opens source control settings in the terminal client
     Then each tool is shown as authenticated, unavailable or needing setup
+
+  @backlog @desktop
+  Scenario: Source control tools need a connected environment
+    Given no environment is connected
+    When the user opens Settings, Source Control
+    Then the user is told to connect an environment to inspect its version control tools and hosting integrations
+
+  @backlog @desktop
+  Scenario: Several environments show one machine's tools at a time
+    Given the user is editing settings across "Laptop" and "Build box"
+    When the panel loads
+    Then the tools of "Laptop" are listed
+    And the version control section is named after "Laptop"
+
+  @backlog @desktop
+  Scenario: The first scan shows placeholders and can be rescanned only once it ends
+    When the panel is still running its first scan
+    Then placeholders stand in for the tools
+    And rescanning is not possible until the scan ends
+
+  @backlog @desktop
+  Scenario Outline: A hosting tool says why it cannot be used yet
+    Given the hosting tool "GitLab" <state>
+    When the panel loads
+    Then its line reads "<text>"
+
+    Examples:
+      | state                                                    | text                                                                       |
+      | is installed and signed in as "tanya"                    | Authenticated as tanya                                                      |
+      | is installed but not signed in                           | GitLab is not authenticated on this server, with how to sign in on the host |
+      | is available without a command line tool to sign in with | Available, with its install hint                                           |
+      | is installed but its sign-in could not be checked        | Could not verify GitLab, with the reason or the install hint               |
+      | is not on this server                                    | Not available on this server, with its install hint                         |
+
+  @backlog @desktop
+  Scenario: A tool's availability is shown, not changed
+    When the user looks at a tool's availability
+    Then it shows on only when the tool is available and, for a hosting tool, signed in
+    And the user cannot change it from the panel
+
+  @backlog @desktop
+  Scenario: Git's details open from its row or from a search for the fetch interval
+    Given the panel lists Git
+    When the user searches settings for the automatic fetch interval
+    Then Git's details open with the interval in view
+    And no other tool offers details
+
+  @backlog @desktop
+  Scenario Outline: A fetch interval is kept as whole seconds from zero
+    When the user enters <typed> as the automatic Git fetch interval
+    Then it is kept as <kept> seconds
+
+    Examples:
+      | typed | kept |
+      | 45    | 45   |
+      | 12.6  | 13   |
+      | -5    | 0    |
+      | empty | 0    |
+
+  @backlog @desktop
+  Scenario: A custom fetch interval makes the background profile advanced
+    Given the background activity profile is "Balanced"
+    When the user sets a fetch interval that is not the profile's
+    Then General settings show the background activity profile as advanced
+    And the shared background activity policy still decides whether a fetch may run when the timer fires
+
+  @backlog @desktop
+  Scenario: Scanning can be retried from the empty state
+    Given nothing was detected on the environment
+    When the user chooses to scan from the empty state
+    Then the environment is scanned again
+    And scanning cannot be started twice while it runs
+
+  @backlog @desktop
+  Scenario: Hosting tools are listed alone when there is no version control tool
+    Given the environment reports hosting tools but no version control tool
+    When the panel loads
+    Then the hosting tools are listed
+    And the rescan control is on that list

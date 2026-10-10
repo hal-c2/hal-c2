@@ -1,7 +1,7 @@
 defmodule HalC2.Devices do
   @moduledoc """
   iOS Simulators and Android Emulators on this MC's machine (`device.*` RPCs and
-  the `devices` shape), as on the Node server.
+  the `devices` shape).
 
   Discovery, boot and streaming go through expo-device-hub, which the MC installs
   on first use under `<home>/tools` and runs with the system Node on a loopback
@@ -11,7 +11,7 @@ defmodule HalC2.Devices do
 
   The MC keeps which thread has which device open, so the Device panel and the
   agent tools agree. Watchers get `{:hal_c2_devices, mc, DeviceServiceState}` on every
-  change. Every machine is its own host: SSH hosts configured for the Node server
+  change. Every machine is its own host: SSH device hosts in settings
   are reported unavailable, since in a cluster a remote machine runs its own MC.
   Long work (installs, boots, hub requests) runs in the caller; the server only
   keeps the state and starts the helper processes.

@@ -125,6 +125,51 @@ Feature: Checkpoints and rewinding
       | the message's attachments are still preparing | Wait for attachments to finish preparing before rewinding.                                 |
       | the composer has no room for the attachments  | Make room for this message's attachments in the composer before rewinding.                 |
 
+  @backlog @desktop
+  Scenario: A thread on an unreachable computer cannot be rewound
+    Given the thread's environment "studio" is offline
+    When the user edits from the second message
+    Then the user is told "Reconnect studio before reverting checkpoints."
+    And the conversation and the workspace are unchanged
+
+  @backlog @desktop
+  Scenario Outline: A message whose attachments cannot be brought back is not rewound
+    Given the second message carries <attachment>
+    When the user edits from the second message
+    Then the thread shows "<message>"
+    And the conversation is not rewound and the draft is unchanged
+
+    Examples:
+      | attachment                                               | message                                                 |
+      | the file "notes.pdf", which the environment no longer has | Could not restore attachment: notes.pdf                 |
+      | an attachment of a kind the composer cannot hold         | This message has an attachment that cannot be restored. |
+
+  @backlog @desktop
+  Scenario: Editing from a message that has already gone says so
+    Given another client rewound the thread past the second message
+    When the user edits from the second message
+    Then the thread shows "The message to rewind is no longer available."
+
+  @backlog @desktop
+  Scenario: A rewind the environment never finishes stops waiting after two minutes
+    Given the environment accepts a rewind but never reports it done
+    When the user edits from the second message and two minutes pass
+    Then the thread shows "Timed out waiting for the thread to rewind."
+    And the thread can be used again
+
+  @backlog @desktop
+  Scenario: Editing from a message keeps what the user had already drafted
+    Given the draft reads "also update the docs"
+    When the user edits from the second message, which read "fix the totals"
+    Then the draft reads "also update the docs", a blank line, then "fix the totals"
+
+  @backlog @desktop
+  Scenario: A rewind does not ask to confirm before it has been refused
+    Given the agent is still working
+    When the user rolls back to a checkpoint
+    Then the user is told "Interrupt the current turn before reverting checkpoints."
+    And the user is not asked to confirm anything
+
   @mc
   Scenario: A checkpoint that no longer exists cannot be restored
     Given the checkpoint after turn 1 has gone stale

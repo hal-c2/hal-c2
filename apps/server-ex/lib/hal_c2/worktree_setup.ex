@@ -1,7 +1,7 @@
 defmodule HalC2.WorktreeSetup do
   @moduledoc """
   Preparing a new thread's git worktree before its first turn (`subscribeWorktreeSetup`,
-  `worktreeSetup.cancel`), as the Node server does.
+  `worktreeSetup.cancel`).
 
   A thread launched with the `worktree` strategy gets a `preparing` run; a worker then
   fetches the base branch when asked, adds the worktree on a temporary
@@ -173,7 +173,7 @@ defmodule HalC2.WorktreeSetup do
     {:noreply, %{state | watchers: watchers}}
   end
 
-  # How a preparation failure is recorded on the run, as the Node server words it.
+  # How a preparation failure is recorded on the run.
   defp failure(message),
     do: %{
       "class" => "validation_error",

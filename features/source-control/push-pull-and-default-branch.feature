@@ -11,6 +11,8 @@
 #   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/tui/src/store.ts (pullGit, runGitAction)
+#   apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
+#   apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: base-branch upstream, aliases, chosen remote)
 
 Feature: Pushing, pulling and guarding the default branch
   Pushing publishes the branch to its upstream, pulling only fast-forwards, and anything
@@ -32,6 +34,54 @@ Feature: Pushing, pulling and guarding the default branch
     Given "feature/tax" has never been pushed
     When the user pushes
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
+  @mc @backlog
+  Scenario Outline: The first push goes to the remote the repository's settings name
+    Given "feature/tax" has never been pushed
+    And <settings>
+    When the user pushes
+    Then the branch is pushed to "<remote>"
+
+    Examples:
+      | settings                                                                              | remote                  |
+      | the branch is set to push to "fork" and the repository's push default is "backup"     | fork/feature/tax        |
+      | the repository's push default is "backup" and the branch has no push remote           | backup/feature/tax      |
+      | no push remote or push default is set and "origin" and "upstream" exist               | origin/feature/tax      |
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: upstream is the branch's base)
+  @mc @backlog
+  Scenario: A branch cut from another branch is pushed under its own name
+    Given "feature/tax" was cut from "origin/dev" and tracks it
+    And "feature/tax" is 1 commit ahead
+    When the user pushes
+    Then "origin/feature/tax" has the new commit and "origin/dev" is unchanged
+    And "feature/tax" tracks "origin/feature/tax" from now on
+    And "dev" is remembered as the base the pull request will target
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: isAliasOfUpstreamHead)
+  @mc @backlog
+  Scenario: A branch that tracks a remote branch of the same name under another prefix is pushed to it
+    Given the local branch "upstream/effect-atom" tracks "origin/effect-atom"
+    And "upstream/effect-atom" is 1 commit ahead
+    When the user pushes
+    Then "origin/effect-atom" has the new commit
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: remoteName option)
+  @mc @backlog
+  Scenario: Pushing to a chosen remote publishes the branch there and tracks it
+    Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
+    And the repository also has the remote "fork"
+    When the user pushes "feature/tax" to "fork"
+    Then "fork/feature/tax" has the new commit
+    And "feature/tax" tracks "fork/feature/tax" from now on
+
+  # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: resolvePublishBranchName)
+  @mc @backlog
+  Scenario: A branch named after a remote branch is published without the remote's prefix
+    Given the checkout is on a local branch named "origin/hotfix"
+    When the user pushes it to "origin"
+    Then "origin/hotfix" has the new commit
 
   @mc
   Scenario: Pushing an up to date branch does nothing

@@ -220,8 +220,7 @@ defmodule HalC2.GitActions do
 
   # Runs `git commit` with its trace2 events on the pipe its stderr goes to (fd 3, a
   # copy of stderr), so hooks are reported as they start and finish (`hook_started`,
-  # `hook_finished`) around the output lines they print (`hook_output`), the way the
-  # Node server does. A hook prints to that pipe too, so its start, its output and its
+  # `hook_finished`) around the output lines they print (`hook_output`). A hook prints to that pipe too, so its start, its output and its
   # exit arrive in the order they happened; a trace file read beside the pipe could
   # show the exit first. Not fd 2: a git a hook runs inherits the target, and would
   # write its trace into output the hook reads. Returns `{exit status, stderr without

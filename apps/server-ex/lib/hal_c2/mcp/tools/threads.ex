@@ -609,7 +609,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end)
   end
 
-  # The input schema's `minItems`/`maxItems`, which the TS server validates.
+  # The input schema's `minItems`/`maxItems` bounds, enforced here too.
   defp batch_size(threads)
        when is_list(threads) and threads != [] and length(threads) <= @max_batch_threads,
        do: :ok

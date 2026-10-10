@@ -294,9 +294,9 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
     @mc
     Scenario Outline: A service installed before is still recognised
       Given a <manager> service installed before, whose definition sets <variable>
-      When the user runs "hal-c2 service status"
+      When the user runs "hal-c2-mc status"
       Then the service is reported as installed
-      And the user can remove it with "hal-c2 service uninstall"
+      And the user can remove it with "hal-c2-mc uninstall"
 
       Examples:
         | manager | variable    |
@@ -333,19 +333,19 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
     @mc
     Scenario: A new service relies on the XDG directories
       Given no HAL-C2 home is configured
-      When the user runs "hal-c2 service install"
+      When the user runs "hal-c2-mc install"
       Then the service definition names no HAL-C2 home
       And the service keeps its files in the XDG directories
 
     @mc
     Scenario: A new service keeps a home the user chose
       Given HAL_C2_HOME is "/srv/hal-c2"
-      When the user runs "hal-c2 service install"
+      When the user runs "hal-c2-mc install"
       Then the service definition sets HAL_C2_HOME to "/srv/hal-c2"
 
     @mc
     Scenario: Reinstalling a service from before rewrites it for the XDG directories
       Given a service installed before whose definition sets T3CODE_HOME
       And no HAL-C2 home is configured
-      When the user runs "hal-c2 service install"
+      When the user runs "hal-c2-mc install"
       Then the service definition names no HAL-C2 home and no T3CODE_HOME

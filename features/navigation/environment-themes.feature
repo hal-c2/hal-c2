@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/settings.ex (notify_themes)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (config.themes)
 #   apps/server/src/cli/theme.ts (hal-c2 theme set, clear, show)
+#   apps/server/src/environmentTheme.ts (published theme limits: count, size, total size)
 #   docs/internals/desktop-qt.md (theme.json ricing contract)
 #   apps/desktop-qt/src/ThemeStore.cpp
 #   apps/desktop-qt/src/native/ThemeController.cpp (follows the themes its own MC publishes)
@@ -63,6 +64,12 @@ Feature: Environment themes and the desktop shell theme
     Scenario: Only a bounded number of themes is published
       When 40 valid theme files are written into the themes folder
       Then at most 32 themes are published
+
+    @backlog @mc
+    Scenario: Published themes are bounded in total size
+      When valid theme files of 30 KB each are written into the themes folder
+      Then the published themes together stay within 192 KB
+      And the files that do not fit are not published
 
   Rule: Following published themes
 
@@ -143,6 +150,91 @@ Feature: Environment themes and the desktop shell theme
       Given the server default is "nightfall"
       When the server operator runs "hal-c2 theme show"
       Then the default theme and every published theme are listed
+
+    @backlog @mc
+    Scenario: Setting a theme from a file publishes it and makes it the default
+      Given the file "~/themes/nightfall.json" holds a valid theme
+      When the server operator runs "hal-c2 theme set ~/themes/nightfall.json"
+      Then the MC publishes a theme with the id "nightfall"
+      And connected clients switch to "nightfall"
+
+    @backlog @mc
+    Scenario: A theme file can be published under another id
+      Given the file "~/themes/draft.json" holds a valid theme
+      When the server operator runs "hal-c2 theme set ~/themes/draft.json --id nightfall"
+      Then the MC publishes a theme with the id "nightfall"
+      And "nightfall" is the default
+
+    @backlog @mc
+    Scenario: Setting an id that is not published lists the published ones
+      Given the themes "nightfall" and "dawn" are published
+      When the server operator runs "hal-c2 theme set midnight"
+      Then the command fails saying "midnight" is not published
+      And it lists "nightfall" and "dawn"
+      And it says a theme is published by passing a theme file instead of an id
+      And no default is set
+
+    @backlog @mc
+    Scenario: A path that does not exist is an error, not a theme id
+      When the server operator runs "hal-c2 theme set ~/themes/missing.json"
+      Then the command fails saying the file does not exist
+      And no default is set
+
+    @backlog @mc
+    Scenario Outline: A theme file the MC would not publish is refused by the command
+      Given the file "~/themes/nightfall.json" is <problem>
+      When the server operator runs "hal-c2 theme set ~/themes/nightfall.json"
+      Then the command fails and says why
+      And nothing is published
+      And no default is set
+
+      Examples:
+        | problem                                   |
+        | not valid JSON                            |
+        | without any colors                        |
+        | larger than 32 KB                         |
+        | a named pipe instead of a regular file    |
+        | named with capital letters                |
+        | named after a built-in theme              |
+
+    @backlog @mc
+    Scenario: A theme file reached through a symbolic link is published from its target
+      Given "~/themes/current.json" is a symbolic link to a valid theme file
+      When the server operator runs "hal-c2 theme set ~/themes/current.json --id nightfall"
+      Then the MC publishes "nightfall" with the target's colors
+
+    @backlog @mc
+    Scenario: Publishing again replaces the earlier file, and a failure keeps the earlier one
+      Given the theme "nightfall" is published
+      And the MC's settings cannot be written
+      When the server operator runs "hal-c2 theme set ~/themes/nightfall.json" with new colors
+      Then the command fails
+      And "nightfall" is still published with its earlier colors
+
+    @backlog @mc
+    Scenario: Setting a theme keeps the rest of the settings file
+      Given the MC's settings file holds a key this version does not know
+      When the server operator runs "hal-c2 theme set nightfall"
+      Then the settings file still holds that key
+      And it names "nightfall" as the default theme
+
+    @backlog @mc
+    Scenario: A settings file that cannot be read stops the command
+      Given the MC's settings file is not valid JSON
+      When the server operator runs "hal-c2 theme set nightfall"
+      Then the command fails saying the settings cannot be read
+      And the settings file is left exactly as it was
+
+    @backlog @mc
+    Scenario Outline: Showing the default theme says when nothing is set or published
+      Given <state>
+      When the server operator runs "hal-c2 theme show"
+      Then the output says <result>
+
+      Examples:
+        | state                           | result                                           |
+        | no default theme is set         | the environment theme is not set                 |
+        | no theme is published           | none is published and where to put one           |
 
   Rule: The desktop shell theme file
 

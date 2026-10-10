@@ -26,7 +26,7 @@ QVariant nullable(const QString& value) {
   return value.isNull() ? QVariant::fromValue(nullptr) : QVariant(value);
 }
 
-// What the checkout's host calls a change request (packages/shared sourceControl.ts).
+// What the checkout's host calls a change request (HalC2.SourceControl).
 struct Terms {
   QString shortLabel;
   QString singular;
@@ -299,7 +299,7 @@ void GitController::publish() {
   }
   QVariant pending = QVariant::fromValue(nullptr);
   if (m_pending) pending = defaultBranchCopy(m_pending->action, m_pending->branch, m_pending->includesCommit, terms(s));
-  // The web's formatGitActionElapsed.
+  // The elapsed time of the running action.
   QVariant progress = QVariant::fromValue(nullptr);
   if (m_action != 0 && m_startedAt.isValid()) {
     const qint64 seconds = std::max<qint64>(0, m_startedAt.secsTo(toasts()->now()));

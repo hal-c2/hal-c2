@@ -31,8 +31,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @state_version 2
 
-  # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}, as the Node
-  # adapter maps it. Auto lets Codex's own reviewer answer what it would ask the user.
+  # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}. Auto lets Codex's own reviewer answer what it would ask the user.
   @runtime_policies %{
     "approval-required" => {"untrusted", "user", "readOnly"},
     "auto-accept-edits" => {"on-request", "user", "workspaceWrite"},
@@ -443,7 +442,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           do: %{"type" => "image", "url" => "data:#{mime};base64,#{data}"}
   end
 
-  # As the Node server reads a permissions request: file writes are a file change,
+  # A permissions request: file writes are a file change,
   # file reads a file read; anything else stays a plain permission.
   defp permissions_kind(%{"fileSystem" => %{} = fs}) do
     cond do
@@ -1449,7 +1448,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | subagents: subagents}
   end
 
-  # What a web search looked for, as the Node server lists it.
+  # What a web search looked for.
   defp web_patterns(item) do
     action = item["action"] || %{}
 

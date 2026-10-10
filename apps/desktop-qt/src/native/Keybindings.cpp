@@ -15,7 +15,7 @@ Rule rule(const QString& key, const QString& command, const QString& when = {}) 
   return {key, command, when.isEmpty() ? std::nullopt : std::optional<QString>(when)};
 }
 
-// DEFAULT_KEYBINDINGS in packages/shared/src/keybindings.ts, in its order.
+// The default keymap, in its order.
 QList<Rule> buildDefaults() {
   const QString notTerminal = QStringLiteral("!terminalFocus");
   const QString terminal = QStringLiteral("terminalFocus");
@@ -193,7 +193,7 @@ QString wrapped(const WhenPtr& when) {
   return QLatin1Char('(') + whenText(when) + QLatin1Char(')');
 }
 
-// Web `event.key` names → portable QKeySequence names (shellKeybindings.ts).
+// Browser `event.key` names → portable QKeySequence names.
 QString qtKeyName(const QString& key) {
   static const QHash<QString, QString> names{
       {QStringLiteral(" "), QStringLiteral("Space")},     {QStringLiteral("arrowdown"), QStringLiteral("Down")},
@@ -469,7 +469,7 @@ QString commandLabel(const QString& command) {
 }
 
 QString recordedKey(int key, int modifiers, bool mac) {
-  // Qt reports the shifted character; the web records the physical key.
+  // Qt reports the shifted character; a keymap records the physical key.
   static const QHash<QChar, QChar> unshifted{
       {u'{', u'['}, {u'}', u']'}, {u'<', u','}, {u'>', u'.'}, {u'?', u'/'}, {u':', u';'}, {u'"', u'\''},
       {u'|', u'\\'}, {u'~', u'`'}, {u'!', u'1'}, {u'@', u'2'}, {u'#', u'3'}, {u'$', u'4'}, {u'%', u'5'},

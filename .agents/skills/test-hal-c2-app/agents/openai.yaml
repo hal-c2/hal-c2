@@ -1,4 +1,0 @@
-interface:
-  display_name: "HAL-C2 App Testing"
-  short_description: "Test web and desktop in HAL-C2's Browser panel"
-  default_prompt: "Use $test-hal-c2-app to verify the affected web or desktop flow through HAL-C2's Browser panel."

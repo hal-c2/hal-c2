@@ -2,6 +2,8 @@
 #   docs/user/thread-sidebar.md (Searching threads)
 #   apps/web/src/components/Sidebar.tsx (thread search, result keyboard)
 #   apps/web/src/components/Sidebar.logic.ts (title search, content matches)
+#   apps/web/src/components/ThreadSearchMatch.tsx, search/HighlightedSearchLine.tsx (the excerpt)
+#   packages/shared/src/threadPullRequests.ts (threadPullRequestSearchTerms)
 #   apps/tui/src/components/Sidebar.logic.ts (filter)
 #   apps/tui/src/commands.ts (Filter threads)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
@@ -86,6 +88,43 @@ Feature: Searching threads
     Then only titles are matched
     When the user types "da"
     Then threads whose messages contain "da" are added below the title matches
+
+  @backlog @desktop
+  Scenario Outline: Threads are found by their linked pull requests
+    Given "Fix OAuth loop" is linked to pull request 12 "Rotate refresh tokens" of "acme/app"
+    When the user searches threads for "<query>"
+    Then "Fix OAuth loop" is found
+
+    Examples:
+      | query                               |
+      | #12                                 |
+      | acme/app#12                         |
+      | https://github.com/acme/app/pull/12 |
+      | refresh tokens                      |
+
+  @backlog @desktop
+  Scenario: Threads matching by title or pull request come before threads matching by message
+    Given "Add dark mode" has a message containing "oauth"
+    When the user searches threads for "oauth"
+    Then "Fix OAuth loop" is listed before "Add dark mode"
+
+  @backlog @desktop
+  Scenario: A message match shows who said it and highlights the match
+    Given the user wrote "Please add OAuth scopes" in "Add dark mode"
+    When the user searches threads for "oauth"
+    Then the result for "Add dark mode" shows "You:" and an excerpt with "OAuth" highlighted
+
+  @backlog @desktop
+  Scenario: A message match from the agent is attributed to the agent
+    Given the agent said "The OAuth client is registered" in "Add dark mode"
+    When the user searches threads for "oauth"
+    Then the result for "Add dark mode" shows "Agent:" and an excerpt with "OAuth" highlighted
+
+  @backlog @desktop
+  Scenario: A search that finds nothing says so once the messages were searched
+    When the user searches threads for "zzzzqqq"
+    Then the list says "Searching thread messages…" while the messages are searched
+    And then says "No threads found"
 
   @desktop @mobile @backlog-mobile
   Scenario: Searching spans every connected environment

@@ -38,7 +38,7 @@ defmodule HalC2.Projection do
     end
   end
 
-  # Projects imported from the Node log carry `projectId`; newer ones carry `id`.
+  # Projects imported from an earlier install's log carry `projectId`; newer ones carry `id`.
   defp project_shell(project) do
     base = %{
       "id" => JS.get(project, "id") || JS.get(project, "projectId"),

@@ -11,17 +11,9 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
-    "./settings": {
-      "types": "./src/settings.ts",
-      "import": "./src/settings.ts"
-    },
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
-    },
-    "./legacy-orchestration": {
-      "types": "./src/orchestration.ts",
-      "import": "./src/orchestration.ts"
     },
     "./shell": {
       "types": "./src/shell.ts",

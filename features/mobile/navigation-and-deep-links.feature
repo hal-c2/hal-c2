@@ -2,6 +2,8 @@
 #   docs/internals/mobile-navigation.md (root stack, overlay routes, previews)
 #   apps/mobile/src/Stack.tsx (route table, deep link prefixes, not found)
 #   apps/mobile/src/features/shortcuts/ (Android launcher shortcuts, allowlisted links)
+#   apps/mobile/src/features/threads/useThreadHeaderOptions.tsx (way to the thread list when the thread is the only screen)
+#   apps/mobile/src/components/AndroidScreenHeader.tsx (Navigate up, header actions folded into More actions)
 #   apps/mobile/app.config.ts (hal-c2, hal-c2-dev and hal-c2-preview schemes)
 #   apps/mobile/plugins/withIosSceneLifecycle
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (screens follow the route; Back goes back one step)
@@ -70,6 +72,14 @@ Feature: Navigating the phone app and opening links into it
     And the user can return home
 
   @backlog @mobile
+  Scenario: A thread that is the only screen offers a way to the thread list
+    Given the phone opened "Fix checkout" from a link with no screen behind it
+    When the user looks at the thread's header
+    Then the user is offered to go to the threads list
+    When the user chooses to go to the threads list
+    Then the home screen is shown in place of the thread
+
+  @backlog @mobile
   Scenario: A bare app link does not reset where the user was
     Given the user is reading "Fix checkout"
     When the phone opens the app with a link that has no path
@@ -121,6 +131,51 @@ Feature: Navigating the phone app and opening links into it
     When the user opens "Fix checkout" from a launcher shortcut
     Then the home screen is shown
 
+  @backlog @mobile
+  Scenario: The new task launcher shortcut starts a task
+    Given the app is running on an Android phone
+    When the user chooses "New task" from the app icon's shortcuts
+    Then a new task opens
+
+  @backlog @mobile
+  Scenario: Reopening a recent thread moves it to the front of the shortcuts
+    Given the launcher shortcuts list "Fix checkout", "Add search" and "Refactor auth"
+    When the user opens "Refactor auth"
+    Then the launcher lists "Refactor auth" first
+    And "Refactor auth" is listed only once
+
+  @backlog @mobile
+  Scenario: A fourth recent thread pushes the oldest out of the shortcuts
+    Given the launcher shortcuts list "Fix checkout", "Add search" and "Refactor auth"
+    When the user opens "Tax line"
+    Then the launcher lists "Tax line", "Fix checkout" and "Add search"
+    And "Refactor auth" is no longer listed
+
+  @backlog @mobile
+  Scenario: A recent thread with no title is listed as a thread
+    Given the user opened a thread that has no title yet
+    Then the launcher lists it as "Thread"
+
+  @backlog @mobile
+  Scenario: A recent thread keeps its name while the thread loads
+    Given the launcher lists "Fix checkout"
+    When the user reopens it and its title has not loaded yet
+    Then the launcher still lists "Fix checkout"
+
+  @backlog @mobile
+  Scenario: A shortcut that points anywhere but a new task or a thread goes nowhere
+    Given a launcher shortcut left over from another version points to another screen
+    When the user chooses it
+    Then nothing opens beyond the app itself
+
+  @backlog @mobile
+  Scenario: Recent threads that cannot be read do not erase the saved list
+    Given the app cannot read the saved list of recent threads on launch
+    Then the launcher offers a new task and no recent threads
+    And the saved list is left as it was
+    When the user launches the app again and the saved list can be read
+    Then the recent threads are offered again
+
   # New behaviour: the React Native app has no Siri or App Shortcuts integration.
   @backlog @mobile
   Scenario: Siri and App Shortcuts can start a task
@@ -133,3 +188,29 @@ Feature: Navigating the phone app and opening links into it
     Given the user is on an iPhone
     When the user runs the shortcut to open "Fix checkout"
     Then "Fix checkout" is shown
+
+  @backlog @mobile
+  Scenario Outline: An Android screen header keeps its first actions in view and puts the rest in a menu
+    Given the user is on an Android screen whose header has <count> actions
+    And the screen is <width> wide
+    Then <direct> of them are shown in the header
+    And the others are under "More actions"
+
+    Examples:
+      | count | width           | direct |
+      | 2     | any width       | 2      |
+      | 4     | under 600 dp    | 1      |
+      | 4     | 600 dp or more  | 3      |
+
+  @backlog @mobile
+  Scenario: An action in a header's "More actions" menu keeps its checked and unavailable states
+    Given an Android screen header has a toggle that is on and an action that is unavailable under "More actions"
+    When the user opens "More actions"
+    Then the toggle is shown as on
+    And the unavailable action cannot be chosen
+
+  @backlog @mobile
+  Scenario: An Android screen header can go back with "Navigate up"
+    Given the user opened a screen that has a screen behind it on an Android phone
+    When the user chooses "Navigate up" in its header
+    Then the screen behind it is shown

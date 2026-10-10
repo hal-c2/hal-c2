@@ -6,6 +6,12 @@
 #   apps/server-ex/lib/hal_c2/checkpoint.ex
 #   apps/server-ex/lib/hal_c2/orchestration/rollback.ex
 #   apps/server/src/checkpointing/ (checkpoint reactor, rollback)
+#   apps/server/src/checkpointing/CheckpointStore.ts, CheckpointDiffQuery.ts (file summaries,
+#     path prefixes, which turns count)
+#   apps/server/src/vcs/GitVcsDriver.ts (checkpoint capture and restore corners)
+#   apps/server/src/orchestration-v2/CheckpointCaptureService.ts, CheckpointRollbackService.ts,
+#     CheckpointRestoreSafety.ts (repeated captures, shared workspaces, provider changes)
+#   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (which turns a rewind drops)
 #   docs/user/ (diffs and rewinding a thread)
 Feature: Checkpoints, diffs and rewinding
   Each finished run captures its workspace as a hidden git commit, so every turn
@@ -52,6 +58,98 @@ Feature: Checkpoints, diffs and rewinding
     When the host loses power right after the capture
     Then the checkpoint ref is readable after the MC restarts
 
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: sparse checkout)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
+  @mc @backlog
+  Scenario: A sparse checkout is captured without counting the folders it leaves out as deleted
+    Given the worktree of "t1" is a sparse checkout that leaves out the folder "docs"
+    When a run of "t1" completes
+    Then the checkpoint still holds "docs"
+    And the turn's diff does not list the files of "docs" as removed
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: CHECKPOINT_RECOVERY_MAX_CANDIDATES, CHECKPOINT_RECOVERY_TIMEOUT)
+  @mc @backlog
+  Scenario: A repository inside the workspace that has no commit yet does not fail the capture
+    Given the worktree of "t1" holds a folder "vendor/lib" that is its own repository with no commits
+    When a run of "t1" completes
+    Then the checkpoint is captured without "vendor/lib"
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: recovery limits)
+  @mc @backlog
+  Scenario Outline: A capture that would take too much work to recover from fails instead
+    Given the worktree of "t1" holds <situation>
+    When a run of "t1" completes
+    Then the checkpoint is marked as an error
+
+    Examples:
+      | situation                                                                    |
+      | more than 64 untracked folders that need checking for their own repositories |
+      | untracked folders that take longer than 5 seconds to check                   |
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (legacyCheckpointRef, deleteCheckpointRefs)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
+  @mc @backlog
+  Scenario: Checkpoints made before the hidden namespace was renamed are still used
+    Given a checkpoint of "t1" exists only under the old hidden namespace
+    When the user views that turn's diff or rewinds to it
+    Then the old checkpoint is used
+    When the thread's checkpoints are deleted
+    Then the old checkpoint is deleted along with the new ones
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: commit identity)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
+  @mc @backlog
+  Scenario: A checkpoint is committed under HAL-C2's own identity
+    Given the user has no git name or email configured
+    When a run of "t1" completes
+    Then the checkpoint is captured
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: racy index timestamps)
+  @mc @backlog
+  Scenario: A file edited again within the same second of an earlier capture is captured as edited
+    Given a checkpoint of "t1" was captured a moment ago
+    And "src/a.ts" was edited again within the same second without its size or modification time changing
+    When a run of "t1" completes
+    Then the checkpoint holds the new content of "src/a.ts"
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: user index fallback)
+  @mc @backlog
+  Scenario Outline: A damaged git index does not stop a checkpoint and is left as it was
+    Given the index of the worktree of "t1" is <state>
+    When a run of "t1" completes
+    Then the checkpoint holds the files as they are on disk
+    And the index is still <state>
+
+    Examples:
+      | state                  |
+      | missing                |
+      | not a valid index file |
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: filter runs, temp index cleanup)
+  @mc @backlog
+  Scenario: Capturing a checkpoint leaves no work files behind and skips filters for unchanged files
+    Given the worktree of "t1" has a content filter configured and one file changed since the last commit
+    When a run of "t1" completes
+    Then the filter ran only for the changed file
+    And the repository's metadata folder holds no leftover checkpoint files
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: non-cone sparse checkout)
+  @mc @backlog
+  Scenario: A checkpoint that would record false deletions fails instead
+    Given the worktree of "t1" is a sparse checkout that is not folder-based
+    And the checkpoint cannot reuse the worktree's index
+    When a run of "t1" completes
+    Then the run's checkpoint has status error
+    And the error says the checkpoint index cannot be rebuilt for a non-cone sparse checkout
+
+  # Legacy: apps/server/src/vcs/GitVcsDriver.ts (restoreCheckpoint: empty workspace)
+  # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
+  @mc @backlog
+  Scenario: Restoring a checkpoint with no files leaves the workspace folder in place
+    Given the checkpoint of run 1 holds no files
+    When the user rewinds "t1" to before run 2
+    Then the workspace folder still exists and is empty
+
   @mc
   Scenario: The diff of one turn
     Given runs 1 and 2 of "t1" completed with checkpoints
@@ -93,6 +191,63 @@ Feature: Checkpoints, diffs and rewinding
     Given thread "f1" is a fork of "t1" after run 2
     When a client asks for the full diff of "f1" through turn 2
     Then the patch starts from the workspace before the first run of "t1"
+
+  @backlog @mc
+  Scenario: Turns that were rewound do not count in diff turn numbers
+    Given runs 1, 2 and 3 of "t1" completed and the thread was rewound to run 1
+    And a new run of "t1" completed afterwards
+    When a client asks for the diff of turn 2 of "t1"
+    Then the patch shows what the new run changed
+
+  @backlog @mc
+  Scenario: A patch keeps its path prefixes whatever the repository's diff settings
+    Given the repository of "demo" is configured to show diffs without path prefixes
+    When a client asks for the diff of turn 1 of "t1"
+    Then every file in the patch is still named with its "a/" and "b/" prefixes
+
+  @backlog @mc
+  Scenario Outline: A checkpoint's file list counts each kind of change
+    When a run of "t1" completes after <change>
+    Then the checkpoint lists <listed>
+
+    Examples:
+      | change                                                     | listed                                   |
+      | renaming "old.ts" to "new.ts"                              | "new.ts" and not "old.ts"                |
+      | adding an image                                            | the image with no added or removed lines |
+      | adding an empty file                                       | the file with no added or removed lines  |
+      | editing a file whose name has spaces and non-Latin letters | the file under its exact name            |
+      | editing "b.ts" and then "a.ts"                             | "a.ts" before "b.ts"                     |
+
+  @backlog @mc
+  Scenario: A checkpoint lists its files even when its patch is very large
+    When a run of "t1" completes after writing a file of tens of megabytes
+    Then the checkpoint still lists that file with its line counts
+
+  @backlog @mc
+  Scenario: A checkpoint whose file list cannot be worked out is still ready
+    Given listing the files a run of "t1" changed fails
+    When the run completes
+    Then a ready checkpoint for that run exists with no files listed
+
+  @backlog @mc
+  Scenario: A workspace folder inside a repository is checkpointed
+    Given thread "t3" works in a subfolder of a repository, with no git folder of its own
+    When a run of "t3" completes after changing a file
+    Then a ready checkpoint for that run exists
+
+  @backlog @mc
+  Scenario: A capture asked for twice leaves the first checkpoint in place
+    Given a run of "t1" completed with a checkpoint
+    When the capture for that run is asked for again after a restart
+    Then the run keeps the checkpoint it had
+    And no second checkpoint item is added to the run
+
+  @backlog @mc
+  Scenario: A placeholder never replaces a checkpoint that was really captured
+    Given a run of "t1" completed with a captured checkpoint
+    When the provider's own diff for that run arrives as a placeholder because no checkpoint was found
+    Then the run keeps the checkpoint it had
+    And the command fails saying the turn already has a captured checkpoint
 
   @mc
   Scenario: Rewinding a thread to a checkpoint
@@ -163,6 +318,24 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds "t1" to run 1 restoring files
     Then the command fails explaining that file restore requires an isolated worktree
 
+  @backlog @mc
+  Scenario Outline: A worktree another thread has worked in counts as shared
+    Given <other>
+    When the user rewinds "t1" to run 1 restoring files
+    Then the command fails explaining that file restore requires an isolated worktree
+
+    Examples:
+      | other                                                                  |
+      | an archived thread "t2" also points at the worktree of "t1"            |
+      | thread "t2" points at the worktree of "t1" through a symbolic link     |
+      | thread "t2" ran turns in the worktree of "t1" before moving elsewhere  |
+
+  @backlog @mc
+  Scenario: A rewind is refused when the thread moved to another provider meanwhile
+    Given runs 1 and 2 of "t1" completed with checkpoints
+    When the user rewinds "t1" to run 1 and the thread's active provider changes before the rewind runs
+    Then the rewind fails saying the active provider changed before the rewind could run
+
   @mc
   Scenario: Rewinding an unknown thread is refused
     When the user rewinds thread "missing" to a checkpoint
@@ -217,6 +390,14 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds it to an early run
     Then the command fails explaining the provider could not roll back
     And no run is marked rolled back
+
+  # CodexAdapterV2.ts resolveCodexRollbackTurnCount.
+  @backlog @mc @plugin-codex
+  Scenario: A Codex thread whose target turn is not in its recorded history cannot rewind
+    Given a Codex thread whose run 1 has no turn in the history the MC recorded for Codex
+    When the user rewinds it to run 1
+    Then the command fails saying the target turn was not found in the provider's turn history
+    And Codex is not asked to drop any turns
 
   # Dropped: a subagent works in its run's worktree, so the run's own checkpoint already
   # holds its changes and a rewind already undoes them. Upstream never wrote a nested

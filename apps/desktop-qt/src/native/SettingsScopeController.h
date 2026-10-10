@@ -16,8 +16,8 @@ class McClient;
 class ShellBridge;
 class ShellStore;
 
-// Where the native settings sections that edit environments' settings apply
-// (the web's settingsScope.ts and scopedSettings.ts): all projects or one
+// Where the native settings sections that edit environments' settings apply:
+// all projects or one
 // logical project, across every environment or on one. A change is written
 // to every connected environment in the scope, and a project's to its
 // `projectSettingsOverrides` entry on each environment with a checkout of it.

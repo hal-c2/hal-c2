@@ -11,7 +11,7 @@ class McClient;
 class ShellBridge;
 
 // What a file of the thread's workspace offers from its entry in the Files
-// tab (the web's fileContextMenu and FileBrowserPanel), each on a path
+// tab each on a path
 // relative to the workspace:
 //   `files.open {path}`            the viewer
 //   `files.reveal {path}`          the environment's file manager, on the file

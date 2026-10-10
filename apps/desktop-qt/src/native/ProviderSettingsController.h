@@ -23,7 +23,7 @@ class ShellStore;
 // The Providers settings section ("/settings/providers"), which the shell
 // owns: the providers configured on one environment, how each stands
 // (installed, signed in, its version and models), turning one on or off,
-// signing in and out, and updating it (the web's ProviderSettingsPanel).
+// signing in and out, and updating it.
 //
 // While the section shows, the chosen environment's `config` shape brings its
 // providers, and each provider that signs in from HAL-C2 has its

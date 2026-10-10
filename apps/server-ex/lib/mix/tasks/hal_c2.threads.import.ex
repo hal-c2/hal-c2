@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.HalC2.Threads.Import do
   @shortdoc "Picks threads from T3 Code or an older HAL-C2 and imports them"
   @moduledoc """
-  Lists the threads of a T3 Code or Node HAL-C2 install on this machine and imports
+  Lists the threads of a T3 Code or earlier HAL-C2 install on this machine and imports
   the ones you pick into the running MC (`HalC2.Import.Picker`).
 
       mix hal_c2.threads.import

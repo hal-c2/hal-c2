@@ -294,7 +294,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("setup asks the user to allow capture and then to choose a shortcut"), [](World& world, const Captures&, const Table&) {
     // The portal asks for capture at the first capture, so setup opens on the
-    // shortcut with allowing capture the step before it, as the web's does.
+    // shortcut with allowing capture the step before it.
     expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut") &&
                field(world, QStringLiteral("wizard.heading")) == QLatin1String("Choose your shortcut"),
            QStringLiteral("setup to ask for a shortcut; Snap Shot is %1").arg(show(snapShot(world))));

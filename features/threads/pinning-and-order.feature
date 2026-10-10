@@ -1,13 +1,17 @@
 # Sources:
 #   docs/user/thread-sidebar.md (Pinning, Undo, Arranging threads, drag between sections)
 #   apps/web/src/components/Sidebar.tsx (pin, unpin, drag and drop, confirm unpin)
+#   apps/web/src/components/Sidebar.drag.ts, Sidebar.pointer.ts (drag collisions, a drag that is cancelled)
+#   apps/web/src/components/chat/threadContextDrag.ts (dropping threads on the composer)
 #   apps/web/src/components/sidebar/SidebarThreadUndoNotice.tsx
 #   apps/web/src/hooks/showThreadUndoNotice.ts
 #   apps/web/src/hooks/threadUndo.ts
+#   apps/web/src/hooks/useThreadActions.ts (the title each failed undo reports)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (pinned section, divider)
 #   apps/desktop-qt/parity/features.backlog.test.ts (sidebar-multi-select-and-reorder)
 #   packages/contracts/src/orchestrationV2.ts (thread.pin, thread.unpin, thread.pin.reorder, thread.active.reorder, thread.pinned, thread.unpinned, thread.pin-reordered, thread.active-reordered)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (pin, unpin, pin.reorder, active.reorder)
+#   apps/web/src/components/ChatView.tsx (the pin shortcut on the open thread)
 
 Feature: Pinning and arranging threads
   Pinned threads stay at the top of the list. Pinned and active threads can be put in
@@ -49,6 +53,25 @@ Feature: Pinning and arranging threads
     Then the user is asked "Unpin thread 'Beta'? This will move the thread out of your pinned section."
     And "Beta" stays pinned until the user confirms
 
+  @backlog @desktop
+  Scenario Outline: The pin shortcut pins or unpins the open thread and reports a refusal
+    Given the user has "Beta" open and it is <state>
+    And the environment refuses the change with "Not now"
+    When the user presses the shortcut that pins a thread
+    Then the user sees an "error" toast "<message>" saying "Not now"
+    And "Beta" is still <state>
+
+    Examples:
+      | state      | message                |
+      | not pinned | Failed to pin thread   |
+      | pinned     | Failed to unpin thread |
+
+  @backlog @desktop
+  Scenario: The pin shortcut does nothing where there is nothing to pin
+    Given the user is writing the first message of a new thread
+    When the user presses the shortcut that pins a thread
+    Then nothing is pinned and no error is shown
+
   @desktop @mobile @backlog-mobile
   Scenario Outline: Undoing a thread change
     Given the user just <changed> "Beta"
@@ -61,6 +84,20 @@ Feature: Pinning and arranging threads
       | settled  |
       | snoozed  |
       | archived |
+
+  @backlog @desktop @mobile
+  Scenario Outline: An undo that fails says so and leaves the thread as it is
+    Given the user just <changed> "Beta"
+    And the environment refuses the undo
+    When the user undoes the change
+    Then the user is told "<message>"
+    And "Beta" stays <changed>
+
+    Examples:
+      | changed  | message                |
+      | archived | Failed to undo archive |
+      | unpinned | Failed to undo unpin   |
+      | settled  | Failed to undo settle  |
 
   @desktop
   Scenario Outline: The undo offer counts the threads it will restore and names the shortcut
@@ -133,6 +170,55 @@ Feature: Pinning and arranging threads
     When a new thread "Delta" is created
     Then "Delta" is listed above the arranged threads
 
+  @backlog @desktop @mobile
+  Scenario: A thread that is reopened leads the active threads
+    Given "Gamma" was settled and the user arranged the active threads by hand
+    When the user reopens "Gamma"
+    Then "Gamma" is listed above the arranged threads
+    And a thread that wakes from the settled section on new activity is listed there too
+
+  @backlog @desktop @mobile
+  Scenario: Pinned threads that were never arranged follow the arranged ones, newest first
+    Given "Alpha" was pinned before the environment learned to arrange pinned threads
+    And "Beta" and "Gamma" were arranged by hand
+    When the user looks at the pinned section
+    Then "Beta" and "Gamma" are listed in the order the user gave them
+    And "Alpha" is listed after them
+
+  @backlog @desktop @mobile
+  Scenario: Moving a thread beside one that was never arranged arranges the section once
+    Given "Alpha" and "Beta" are pinned and were never arranged
+    When the user moves "Beta" above "Alpha"
+    Then the pinned threads are listed as "Beta", "Alpha"
+    And every pinned thread now has a place of its own in the order
+    When the user moves "Alpha" above "Beta"
+    Then only "Alpha" is changed
+
+  @backlog @desktop @mobile
+  Scenario: Arranging leaves the places of threads that are filtered out alone
+    Given "Gamma" is hidden from the thread list by a filter
+    And "Alpha" and "Beta" are pinned in that order
+    When the user moves "Beta" above "Alpha"
+    Then "Gamma" keeps its place in the order
+    And no thread is given the place "Gamma" holds
+
+  @backlog @desktop @mobile
+  Scenario: Threads that share a place in the order are listed the same way on every device
+    Given "Alpha" on "Laptop" and "Alpha" on "Build box" were given the same place in the order
+    When two devices look at the pinned section
+    Then both list the threads in the same order
+
+  @backlog @mobile
+  Scenario Outline: A thread at either end of the list cannot be moved past it
+    Given "Alpha", "Beta" and "Gamma" are pinned in that order
+    When the user looks at the arrangement actions of <thread>
+    Then nothing is offered that would move <thread> <direction> past the end
+
+    Examples:
+      | thread  | direction |
+      | "Alpha" | up        |
+      | "Gamma" | down      |
+
   @desktop @mobile @backlog-mobile
   Scenario: Activity does not reorder threads
     When the agent finishes work in "Gamma"
@@ -198,3 +284,48 @@ Feature: Pinning and arranging threads
     Given the user prefers reduced motion
     When a thread moves in the list
     Then it moves without animation
+
+  @backlog @desktop
+  Scenario: Dragging threads out of the list onto the composer attaches them as context
+    Given "Alpha" and "Gamma" are selected
+    When the user drags "Alpha" out of the list and drops it on the composer
+    Then the composer references "Alpha" and "Gamma"
+    And the order of the threads in the list is unchanged
+
+  @backlog @desktop
+  Scenario: Dropping a dragged thread outside the list and outside the composer does nothing
+    When the user drags "Beta" out of the list and drops it somewhere that is not the composer
+    Then "Beta" stays where it was
+    And no thread changes section
+
+  @backlog @desktop
+  Scenario Outline: A drag that is interrupted changes nothing
+    When the user starts dragging "Beta" and <interruption>
+    Then "Beta" stays where it was
+
+    Examples:
+      | interruption                  |
+      | presses Escape                |
+      | the window loses focus        |
+      | the window is resized         |
+      | releases the button elsewhere |
+
+  @backlog @desktop
+  Scenario: Letting go of a dragged thread does not open it
+    When the user drags "Beta" to a new place and lets go
+    Then "Beta" is not opened by the release
+
+  @backlog @desktop
+  Scenario Outline: A drag the environment refuses puts the thread back and says so
+    Given the environment refuses the change
+    When the user drags "Beta" <where>
+    Then "Beta" returns to where it was
+    And the user is told "<told>"
+
+    Examples:
+      | where                                | told                              |
+      | onto the settled section header      | Failed to settle thread           |
+      | into the active section from settled | Failed to un-settle thread        |
+      | into the active section from snoozed | Failed to wake thread             |
+      | to a new place among active threads  | Failed to reorder active threads  |
+      | to a new place among pinned threads  | Failed to reorder pinned threads  |

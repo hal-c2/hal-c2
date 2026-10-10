@@ -17,7 +17,7 @@ class ShellBridge;
 class ShellStore;
 
 // The header and the composer's context strip for the route's thread (a
-// draft too), from the MC: publishes `workspace` in the web's
+// draft too), from the MC: publishes `workspace` in the
 // ShellWorkspaceState shape (packages/contracts shell.ts) less the terminal
 // fields, which the Terminals singleton owns. The thread and its project are
 // ShellStore rows, the checkout's git status the MC's `vcs` shape, the refs

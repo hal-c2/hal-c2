@@ -1,11 +1,11 @@
 # Appearance and themes
 
-On web and desktop, open **Settings → Appearance** to choose a theme and follow the system
+On desktop, open **Settings → Appearance** to choose a theme and follow the system
 appearance or stay in light or dark mode. To use different themes for light and dark mode, select
 the corresponding preview within each theme. Appearance preferences are saved separately on each
-device or browser.
+device.
 
-On web and desktop, use **Change theme** in the command palette to select a theme without leaving chat.
+On desktop, use **Change theme** in the command palette to select a theme without leaving chat.
 Press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to open the theme picker directly.
 **Change appearance** there chooses System, Light, or Dark independently of
 the theme. **Cmd+Option+Shift+A** on macOS or **Ctrl+Alt+Shift+A** on Windows/Linux cycles through
@@ -27,7 +27,7 @@ Git-backed projects show branch and worktree controls below the composer while y
 The controls retreat as the composer docks after you send the first message.
 
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
-applies to the web and desktop clients.
+applies to the desktop client.
 
 ## Motion
 
@@ -38,14 +38,14 @@ without replaying its transitions.
 
 ## Custom themes
 
-On web and desktop, choose **Create theme** to adjust a palette, or import a HAL-C2 or VS Code
+On desktop, choose **Create theme** to adjust a palette, or import a HAL-C2 or VS Code
 theme. The theme editor's color picker lets you select an area of the app to find the color to
 change. Export your theme as JSON to share it.
 
 ## Environment themes
 
-Environment themes and defaults come from the server serving your web app or the desktop app's
-main local environment. A hosted web app and additional connections do not use them.
+Environment themes and defaults come from the desktop app's main local environment.
+Additional connections do not use them.
 
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. **Duplicate** makes an independent copy you can edit. A saved custom theme with the same ID

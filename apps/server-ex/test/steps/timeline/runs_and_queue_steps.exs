@@ -124,7 +124,7 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
     end
   end
 
-  # Grok cannot take a steer: as in the Node server, its turn is interrupted and
+  # Grok cannot take a steer: its turn is interrupted and
   # the message, queued first, runs as soon as it ends.
   step "the message is queued behind the running turn", context do
     title = World.current(context)

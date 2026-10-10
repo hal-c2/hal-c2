@@ -10,9 +10,7 @@
 #include <memory>
 #include <optional>
 
-// The web keymap, ported from @hal-c2/shared/keybindings and the web settings
-// logic (apps/web/src/components/settings/KeybindingsSettings.logic.ts), so the
-// shell resolves the same rules to the same commands: the defaults, the user's
+// The keymap: the defaults, the user's
 // rules from the MC's keybindings.json merged over them, `when` conditions,
 // and the last matching rule winning.
 namespace keybindings {

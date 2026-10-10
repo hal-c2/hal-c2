@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (for example 0.0.43). Defaults to apps/server/package.json."
+        description: "Version to publish (for example 0.0.43). Defaults to apps/server-ex/VERSION."
         required: false
         type: string
 
@@ -47,7 +47,7 @@ jobs:
           elif [ -n "${{ inputs.version }}" ]; then
             version="${{ inputs.version }}"
           else
-            version="$(node -p 'require("./apps/server/package.json").version')"
+            version="$(tr -d '[:space:]' <apps/server-ex/VERSION)"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

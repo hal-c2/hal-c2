@@ -1126,7 +1126,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(_message, state), do: state
 
   # A rejected window pauses Claude inside the turn; the turn's end reports it as a
-  # usage limit resetting at the latest window's reset, as the Node adapter does.
+  # usage limit resetting at the latest window's reset.
   defp rate_limit(_info, %{turn: nil} = state), do: state
 
   defp rate_limit(info, state) do

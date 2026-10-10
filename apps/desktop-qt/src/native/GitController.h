@@ -109,8 +109,7 @@ private:
     bool busy = false;
     QString error;
     // The hosts it can publish to: [{value, label, ready, hint, account}],
-    // `hint` saying how to make a host ready (the web's
-    // getPublishProviderReadiness). Until the MC answers, none is ready.
+    // `hint` saying how to make a host ready. Until the MC answers, none is ready.
     QVariantList hosts;
   };
   std::optional<Publishing> m_publishing;

@@ -191,7 +191,7 @@ defmodule HalC2.Acp.Auth do
     end
   end
 
-  # `offset` counts UTF-16 code units, as clients (and the Node server) measure the
+  # `offset` counts UTF-16 code units, as clients measure the
   # transcript: a byte count would make a client replay the tail of what it already
   # showed. A character split across PTY reads waits in `partial`.
   defp terminal_loop(

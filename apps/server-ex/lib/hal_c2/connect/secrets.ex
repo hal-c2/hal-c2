@@ -1,8 +1,8 @@
 defmodule HalC2.Connect.Secrets do
   @moduledoc """
   The MC's HAL-C2 Connect secrets: one file per name at `<home>/secrets/<name>.bin`
-  (owner-only), the layout the Node server's `ServerSecretStore` uses, so a home
-  linked by either server stays linked.
+  (owner-only), the layout earlier installs wrote, so a home linked by either
+  stays linked.
   """
 
   @doc "The secret's bytes, or nil."

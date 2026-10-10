@@ -44,7 +44,7 @@ QVariant nullable(const Nullable& value) {
   return value ? QVariant(*value) : QVariant::fromValue(nullptr);
 }
 
-// Missing and malformed timestamps sort as the epoch, as the web app's sorts do.
+// Missing and malformed timestamps sort as the epoch.
 qint64 sortableMs(const Nullable& iso) {
   return parseIso(iso).value_or(0);
 }
@@ -623,8 +623,7 @@ QList<ProjectGroup> groupProjects(const QList<Project>& projects, const Grouping
     sorted.append(entry);
   }
 
-  // "manual" keeps the given order; the web app's hand-arranged order is not
-  // carried over (native stores start fresh).
+  // "manual" keeps the given order.
   if (settings.sortOrder != QLatin1String("manual")) {
     QSet<qsizetype> withThreads;
     for (const Thread& thread : threads) {
@@ -767,7 +766,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("createdAt"), thread.createdAt},
           {QStringLiteral("latestUserMessageAt"), nullable(thread.latestUserMessageAt)},
           {QStringLiteral("updatedAt"), thread.updatedAt},
-          // The time the row's age counts from, as the web's rows: a settled row's is the
+          // The time the row's age counts from: a settled row's is the
           // one that orders its shelf, any other's its last message. Never just `updatedAt`,
           // which pinning, snoozing and settling also move.
           {QStringLiteral("timeAt"), parked && !snoozed ? nullable(settledTimestamp(thread))

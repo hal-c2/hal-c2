@@ -37,8 +37,7 @@ class ShellBridge;
 //   Settings.device.appearance, Settings.writeDevice("appearance", "dark")
 //
 // The rows of the settings pages go through `setting` / `set` / `reset`,
-// which know which store a key is in and its default (the web's
-// DEFAULT_CLIENT_SETTINGS and DEFAULT_SERVER_SETTINGS). Failures are toasted.
+// which know which store a key is in and its default. Failures are toasted.
 class SettingsController : public QObject, public NativeController {
   Q_OBJECT
   // The MC's document has been read since the shell connected.

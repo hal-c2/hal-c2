@@ -13,6 +13,8 @@
 #   apps/desktop-qt/tests/tst_GitActions.qml
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit message prompt)
 #   apps/tui/src/store.ts (runGitAction)
+#   apps/server/src/textGeneration/TextGenerationUtils.ts (commit subject cap, PR title fallback)
+#   apps/server/src/git/GitManager.ts (runPrStep: reuse, base branch, bounded context, body file)
 
 Feature: Committing with written or generated messages
   The user reviews what goes into a commit, may leave the message to the writer model,
@@ -33,6 +35,16 @@ Feature: Committing with written or generated messages
     When the user commits without writing a message
     Then the writer model writes the commit message from the staged diff
     And the commit is made with that message
+
+  @backlog @mc
+  Scenario Outline: The commit subject the writer gives is cleaned up
+    When the writer model answers the commit message <raw>
+    Then the commit subject is <subject>
+
+    Examples:
+      | raw                                  | subject                                  |
+      | a subject longer than 72 characters  | cut to at most 72 characters             |
+      | empty                                | "Update project files"                   |
 
   @tui
   Scenario: A blank message is written for the user in the terminal client
@@ -120,6 +132,75 @@ Feature: Committing with written or generated messages
       | Repository conventions | follow the repository's pull request style, recent subjects and AGENTS.md |
       | Conventional Commits   | keep the title concise without forcing Conventional Commit syntax         |
       | Custom instructions    | follow the user's own instructions                                        |
+
+  @backlog @mc
+  Scenario: A pull request title the writer leaves empty falls back to a generic title
+    When the writer model answers the pull request title with nothing
+    Then the pull request title is "Update project changes"
+
+  # Legacy: apps/server/src/git/GitManager.ts (runPrStep: findOpenPr before generating)
+  @mc @backlog
+  Scenario: A branch that already has an open pull request gets no second one
+    Given the branch "feature/tax" is pushed and has the open pull request #42
+    When the user runs "Create PR"
+    Then no text is written and nothing is created on the host
+    And the result is the existing pull request #42 with its link
+
+  # Legacy: apps/server/src/git/GitManager.ts (runPrStep)
+  @mc @backlog
+  Scenario: A pull request is not created for a branch that was never pushed
+    Given the branch "feature/tax" has commits and no upstream
+    When the user runs "Create PR" without pushing
+    Then the action fails with "Current branch has not been pushed. Push before creating a PR."
+
+  # Legacy: apps/server/src/git/GitManager.ts (runPrStep)
+  @mc @backlog
+  Scenario: A pull request is not created from a detached checkout
+    Given the checkout is on a detached HEAD
+    When the user runs "Create PR"
+    Then the action fails with "Cannot create a pull request from detached HEAD."
+
+  # Legacy: apps/server/src/git/GitManager.ts (resolveBaseBranch)
+  @mc @backlog
+  Scenario Outline: The pull request goes to the branch the checkout was set up to target
+    Given <situation>
+    When the user runs "Create PR"
+    Then the pull request targets "<base>"
+
+    Examples:
+      | situation                                                                              | base    |
+      | "feature/tax" has the recorded merge base "release" and the host's default is "main"   | release |
+      | "feature/tax" tracks "origin/develop" and is not from a fork                           | develop |
+      | "feature/tax" tracks a branch of the same name and the host's default is "trunk"       | trunk   |
+      | the host cannot be asked and the remote's default branch is "master"                   | master  |
+      | nothing records a default branch                                                       | main    |
+
+  # Legacy: apps/server/src/git/GitManager.ts (resolveBaseRangeRef)
+  @mc @backlog
+  Scenario: The pull request text describes the changes since the base as the remote has it
+    Given the local "main" is behind "origin/main"
+    When the user runs "Create PR" for a branch based on "main"
+    Then the writer is given the commits and changes since "origin/main"
+
+  # Legacy: apps/server/src/git/GitManager.ts (runPrStep: limitContext 20,000 / 20,000 / 60,000)
+  @mc @backlog
+  Scenario Outline: The writer is given a bounded view of a large pull request
+    Given the branch has a <part> longer than <limit> characters
+    When the user runs "Create PR"
+    Then the writer is given at most <limit> characters of the <part>
+
+    Examples:
+      | part              | limit  |
+      | commit list       | 20,000 |
+      | summary of files  | 20,000 |
+      | patch             | 60,000 |
+
+  # Legacy: apps/server/src/git/GitManager.ts (runPrStep: bodyFile)
+  @mc @backlog
+  Scenario: The written description is handed to the host through a file that is removed afterwards
+    When the user runs "Create PR" and the host accepts or refuses the pull request
+    Then the description file in the MC's temporary folder is gone
+    And a description that cannot be written there fails the action with "Failed to write pull request body temp file."
 
   # mc/orchestration/text-generation.feature holds which pull request template the writer
   # is given, and which model writes commits, pull requests and branch names.

@@ -141,16 +141,13 @@ defmodule HalC2.MixProject do
     Mix.Task.run("test", args)
   end
 
-  # `HAL_C2_MC_VERSION` names a build apart from the package's release (nightlies, local builds).
+  # `HAL_C2_MC_VERSION` names a build apart from the release in `VERSION` (nightlies, local builds).
   defp hal_c2_version do
-    System.get_env("HAL_C2_MC_VERSION") || package_version()
+    System.get_env("HAL_C2_MC_VERSION") || release_version()
   end
 
-  defp package_version do
-    Path.expand("../server/package.json", __DIR__)
-    |> File.read!()
-    |> JSON.decode!()
-    |> Map.fetch!("version")
+  defp release_version do
+    Path.expand("VERSION", __DIR__) |> File.read!() |> String.trim()
   end
 
   # What a running MC compares with a new release to decide whether it can load

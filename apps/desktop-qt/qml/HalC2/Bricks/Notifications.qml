@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // Toasts, newest first (Shell.state.toasts, NativeShell's ToastController),
-// as the web app's stack: the newest in front, two more peeking out behind it,
+// as a stack: the newest in front, two more peeking out behind it,
 // the rest kept but hidden until the stack is expanded. The pointer over the
 // stack expands it; on a touch screen a tap does, and a tap outside it or on it
 // again collapses it. Expanding holds every toast's time (the controller's).
@@ -22,7 +22,7 @@ Item {
     // Theme has thinned (Appearance's glass).
     property bool opaque: false
     // Anchored by its bottom edge: the newest sits at the bottom and the stack
-    // peeks and expands upwards (the web's bottom positions).
+    // peeks and expands upwards.
     property bool fromBottom: false
     // Taller than this when expanded, the stack scrolls.
     property real maximumHeight: Infinity
@@ -248,7 +248,7 @@ Item {
                 color: host.opaque ? Qt.tint(Theme.palette.color("canvas", "#0b0b0d"), Theme.palette.color("surfaceOverlay", "#18181b")) : Theme.palette.color("surfaceOverlay", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
                 border.width: 1
-                // Slides in from the edge, like the web app's toasts.
+                // Slides in from the edge.
                 transform: Translate {
                     x: card.entered ? 0 : 24
 

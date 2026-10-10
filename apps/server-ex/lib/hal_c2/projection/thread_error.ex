@@ -1,7 +1,6 @@
 defmodule HalC2.Projection.ThreadError do
   @moduledoc """
-  The error a thread shows, ported from the Node server's
-  `orchestrationV2ThreadError.ts`.
+  The error a thread shows.
 
   Only a failed root turn of the latest run owns the thread's failure; a provider
   session error that says something different supersedes its classification.

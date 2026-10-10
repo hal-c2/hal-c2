@@ -1,45 +1,35 @@
 # HAL-C2 Connect setup
 
-Deployment and client configuration for HAL-C2 Connect. The [architecture note](../internals/hal-c2-connect.md)
+Deployment and MC configuration for HAL-C2 Connect. The [architecture note](../internals/hal-c2-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
 provisioning instructions.
 
 ## Public application configuration
 
-HAL-C2 Connect is disabled in a fresh clone. HAL-C2 has no public deployment of its own: the
-repository-root example still carries upstream T3 Code's public identifiers, with the relay URL
-replaced by the `relay.hal-c2.example` placeholder. Copy it as a starting point:
+HAL-C2 Connect is disabled in a fresh clone. HAL-C2 has no public deployment of its own, so the
+repository-root [`.env.example`](../../.env.example) carries no values.
 
-```sh
-cp .env.example .env
-```
-
-For your own deployment, set these values in the repository-root `.env` or `.env.local`:
+For your own deployment, set these values in the environment the MC starts with. The MC does not
+read a `.env` file itself, so export them or put them in the service's environment:
 
 ```dotenv
 HAL_C2_CLERK_PUBLISHABLE_KEY=<publishable key>
-HAL_C2_CLERK_JWT_TEMPLATE=<JWT template name>
 HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID=<public OAuth application client ID>
 HAL_C2_RELAY_URL=https://relay.example.com
 ```
 
-Process variables take precedence over `.env.local`, then `.env`. Use these canonical names;
-the build loader supplies framework-specific aliases. These values are public identifiers.
-`CLERK_SECRET_KEY` belongs only in the relay's secrets, never in client configuration.
-
-Client and bundled-server builds embed the public values, so set them before building.
-EAS preview and production environments need the publishable key, JWT template name, and relay URL.
-Bundled servers also accept runtime overrides for operator-managed deployments.
+These values are public identifiers. `CLERK_SECRET_KEY` belongs only in the relay's secrets, never
+in the MC's configuration.
 
 Copy `infra/relay/.env.example` to `infra/relay/.env` for relay deployment settings.
 Deploy `prod` before personal stages because it owns the retained database that their branches
 depend on. The stack's `PublishClientConfig` action writes the resulting relay URL back to the root `.env`.
 
-## CLI OAuth application
+## Operator OAuth application
 
 In Clerk's OAuth applications settings:
 
-1. Create a public OAuth application for the HAL-C2 CLI, using authorization-code exchange with PKCE.
+1. Create a public OAuth application for the operator's sign-in (`mix hal_c2.connect`), using authorization-code exchange with PKCE.
 2. Allow the redirect URI `http://127.0.0.1:34338/callback`.
 3. Enable the `openid`, `profile`, `email`, and `offline_access` scopes.
 4. Enable **Device authorization grant** on the application. Headless and SSH authorization use
@@ -56,80 +46,9 @@ Create a Clerk JWT template named `hal-c2-relay` with claims:
 { "aud": "hal-c2-relay" }
 ```
 
-Set `HAL_C2_CLERK_JWT_TEMPLATE=hal-c2-relay` for clients and
-`CLERK_JWT_AUDIENCE=hal-c2-relay` for the relay. The production relay deployment environment
+Set `CLERK_JWT_AUDIENCE=hal-c2-relay` for the relay. The production relay deployment environment
 also defines `CLERK_JWT_TEMPLATE`. The audience stays the same across relay stages; the relay
 URL selects the deployment.
-
-## Desktop OAuth redirects
-
-Enable Clerk's Native API and add the desktop redirects to its SSO redirect allowlist:
-
-```text
-hal-c2-dev://app/
-hal-c2://app/
-```
-
-Add the corresponding origin to the Clerk instance's Backend API `allowed_origins` array.
-Development uses `hal-c2-dev://app`; production uses `hal-c2://app`. Update the array with
-`PATCH https://api.clerk.com/v1/instance` using the Clerk secret key, preserving existing entries.
-The Clerk Electron integration handles token
-persistence and system-browser callback delivery.
-
-## Android native sign-in redirects
-
-Clerk's native Android SDK uses `clerk://<applicationId>.callback`. In the Clerk instance selected by the app's publishable key, add each supported package to **Native applications > Allowlist for mobile SSO redirect**:
-
-| Variant     | Callback                                       |
-| ----------- | ---------------------------------------------- |
-| Development | `clerk://io.github.halc2.app.dev.callback`     |
-| Preview     | `clerk://io.github.halc2.app.preview.callback` |
-| Production  | `clerk://io.github.halc2.app.callback`         |
-
-Preserve existing entries. These callbacks are separate from the `hal-c2-dev` / `hal-c2-preview` / `hal-c2` navigation schemes. A private development build using the production Clerk key still needs its development callback allowed by that instance's administrator; rebuilding the same package does not change the allowlist.
-
-## Desktop passkeys
-
-For a production macOS app with bundle ID `io.github.halc2.app`:
-
-1. Create an explicit macOS App ID in the Apple Developer portal with **Associated Domains**.
-2. Create a provisioning profile for that App ID and the distribution signing certificate.
-3. In Clerk's Native API settings, add an iOS app with the same Apple Team ID and bundle ID.
-   This setting also configures Electron/macOS passkeys.
-4. Check `https://<frontend-api>/.well-known/apple-app-site-association`. Its
-   `webcredentials.apps` must include `<TEAM_ID>.io.github.halc2.app`.
-5. Configure signing as described in the [release runbook](./release.md#signing-local-electron-builds).
-
-Local signed builds additionally use:
-
-```dotenv
-HAL_C2_APPLE_TEAM_ID=ABC1234567
-HAL_C2_MACOS_PROVISIONING_PROFILE=/absolute/path/to/hal-c2.provisionprofile
-# Override only when the RP domain differs from the Clerk Frontend API hostname.
-HAL_C2_CLERK_PASSKEY_RP_DOMAINS=example.clerk.accounts.dev,clerk.example.com
-```
-
-Without the override, the build derives the RP domain from the Clerk publishable key.
-After changing Associated Domains, bump the build version before rebuilding. macOS can otherwise
-reuse stale Shared Web Credentials metadata for the same app/version pair.
-
-The ordinary `dev:desktop` launcher is unsigned and cannot exercise macOS passkeys. For renderer
-HMR, install a signed build, start `vp run dev:web`, and launch the installed executable with the
-actual web and server ports. For example, with the default ports:
-
-```sh
-VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
-HAL_C2_PORT=13773 \
-  "/Applications/HAL-C2 (Alpha).app/Contents/MacOS/HAL-C2 (Alpha)"
-```
-
-Rebuild the signed app after native dependency, main-process, preload, entitlement, provisioning,
-or signing changes. Renderer edits can reuse it. Verify the installed bundle before testing:
-
-```sh
-codesign --verify --deep --strict "/Applications/HAL-C2 (Alpha).app"
-codesign -d --entitlements :- "/Applications/HAL-C2 (Alpha).app"
-```
 
 ## Restricting sign-ups
 

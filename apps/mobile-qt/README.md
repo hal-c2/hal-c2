@@ -143,8 +143,9 @@ link, percent-encoded>'`, whether it is running or not.
   picture with `adb emu virtualscene-image wall <png>`, under a new file name each time (a name
   it has shown is not read again). From where the macro stops, the wall's left edge is out of
   the frame and a chair covers its bottom: a code drawn in the top right of the picture reads.
-- The launcher icon is the legacy app's (`apps/mobile/assets/android-icon-*.png`, rendered by
-  `scripts/export-android-icons.ts`), copied into the package when it is configured.
+- The launcher icon's foreground (`android/res/mipmap-xxxhdpi/ic_launcher_foreground.png`) is
+  rendered by `scripts/export-android-icons.ts` (`assets/README.md`); the monochrome layer beside
+  it is not.
 - The emulator refuses to start an Android 14 image with less than about 7.4 GB of free disk,
   whatever data partition size the AVD asks for.
 - The app's own log lines carry the tag `default`:

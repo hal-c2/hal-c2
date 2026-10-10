@@ -314,7 +314,7 @@ def build(args) -> None:
     method = """<ol class="prose">
 <li>The Qt desktop (<code>hal-c2-qt</code>) in the <code>mise run desktop:cua</code> sandbox: a headless sway with its own bus and AT-SPI registry, driven by cua-driver, against a scratch MC seeded with a read-only snapshot of real data.</li>
 <li>The checklist: every area at several window sizes, with the sidebar and right panel open and closed, in light, dark and a custom theme; every control clicked and every flow completed, mutating flows in a scratch project only; keyboard-only passes. <a href="#coverage">Coverage</a> records what this audit actually visited and what it skipped.</li>
-<li>Findings checked against the code behind them, the <code>features/</code> ledger and the legacy web app; severities argued against the ui-ux-pro-max guidelines; items judged fine carry a justification.</li></ol>"""
+<li>Findings checked against the code behind them and the <code>features/</code> ledger; severities argued against the ui-ux-pro-max guidelines; items judged fine carry a justification.</li></ol>"""
     findings_html = "".join(
         f'<h3 class="area">{E(area)} <span class="muted">({len(fs)})</span></h3><div class="cards">'
         + "\n".join(card(f) for f in fs)

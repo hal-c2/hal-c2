@@ -1,9 +1,11 @@
 # Provider constraints
 
 Orchestration records intent and state without knowing which provider runs a thread. Provider
-protocols, account ownership, permissions, and capabilities belong at the
-[adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
-instead of spreading provider checks through reactors and clients.
+protocols, account ownership, permissions, and capabilities belong in the per-provider runtimes
+(`HalC2.Codex`, `HalC2.Claude`, `HalC2.Pi`, `HalC2.Acp` for Grok, OpenCode, Antigravity and the
+other ACP agents) that [`HalC2.Orchestration`](../../apps/server-ex/lib/hal_c2/orchestration.ex)
+calls. Normalize there instead of spreading provider checks through the orchestration modules and
+clients.
 
 A driver kind identifies an integration; an instance identifies one configuration and account
 lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
@@ -11,126 +13,81 @@ session or catalog state.
 
 ## Process and account isolation
 
-HAL-C2-managed OpenCode chat uses one server per thread. Its MCP registrations are directory-scoped, while
-HAL-C2's MCP connection is thread-scoped. Sharing a chat server between threads in one directory would
-let them replace each other's connection. Catalog and text-generation work can share the
-[instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
-after an idle period. External OpenCode servers remain externally owned and can require an
-external restart to pick up configuration changes.
-
-OpenCode also stores persistent approval grants per directory. Automatic full-access replies use
-`once` so they cannot widen a supervised thread's permissions on a shared external server.
-See the [adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+Each OpenCode agent process runs the [HTTP server](../../apps/server-ex/lib/hal_c2/acp/opencode.ex)
+`opencode acp --port` offers, on loopback with a password made for that process, for the calls ACP
+lacks (forking a session at a user message, reading its messages). Nothing else shares that server.
 
 Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
-trust discovery. HAL-C2 injects only its namespaced MCP bridge, so a Pi session behaves as it does in
-the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
-Forks use Pi's CLI in the destination directory because RPC session switching retains the source
-session's cwd. Provider switches still use portable handoff summaries.
-See the [adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+trust discovery. HAL-C2 adds only its MCP bridge extension, so a Pi session behaves as it does in
+the Pi TUI. Pi session files back native resume, rewind, and same-instance thread forks, which
+use `pi --fork`. See the [runtime](../../apps/server-ex/lib/hal_c2/pi/thread_runtime.ex).
 
-Antigravity separates account profiles per instance while sharing installed executables across the
-environment. It forces file-based credential storage because the native macOS keychain entry would
-otherwise be shared across instances. The launch environment removes ambient Google credentials,
-so an instance cannot silently use another account or billing project. The agent also resolves
-its user-global skill directories under that profile, so the profile links those two directories
-back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
-See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
+Antigravity separates account profiles per instance while sharing the installed executable across
+the environment. Every instance runs with a private Google profile under the MC's `providers/`
+directory, and the Google variables in the MC's own environment are removed from the launch
+environment, so an instance cannot silently use another account or billing project. See
+[`HalC2.Acp.Antigravity`](../../apps/server-ex/lib/hal_c2/acp/antigravity.ex).
 
-The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
-client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer
-selecting the version for new processes. Running processes hold leases on their version. Updates
-and removal must respect those leases instead of replacing executables under a running agent.
+The [Antigravity installer](../../apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex)
+outlives client connections. One install runs at a time, a cancelled or failed one leaves the
+previous runtime active, and removal waits until no session or sign-in uses the runtime. Do not
+replace an executable under a running agent.
 
 ## Setup must not happen as a health-check side effect
 
-Opening a provider session can start MCP servers, run hooks, or launch a login browser.
-[Grok probes](../../apps/server/src/provider/Layers/GrokProvider.ts) avoid authentication and
-session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
-explicit setup or model refresh; background checks use initialization only.
+Opening a provider session can start MCP servers, run hooks, or launch a login browser. A probe
+therefore reads what an agent offers from `initialize`
+([`HalC2.Acp.Auth.methods/1`](../../apps/server-ex/lib/hal_c2/acp/auth.ex)) and does not open a
+session. An Antigravity thread never opens the agent's sign-in link either: a missing or expired
+login fails the turn and shows the instance as signed out, and sign-in runs from Settings.
 
-[Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
-HAL-C2 auth session. The client carries the return URL back to the environment because the provider's
-loopback listener may be on another machine. Forward only the callback for the owned pending flow;
-a successful callback HTTP request is not proof that provider authentication finished. The native
-process owns token exchange and storage.
-
-Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
-metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
-do not establish current access, and an authoritative empty catalog must clear the old list.
-
-Antigravity text-generation helpers deny tool requests, but native hooks and MCP configuration can
-run before the prompt. They reject profiles with such configuration before launch. Prompt
-instructions and tool denial do not create a native sandbox.
-See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
+[Antigravity sign-in](../../apps/server-ex/lib/hal_c2/acp/antigravity/auth.ex) belongs to the
+initiating HAL-C2 auth session. The agent's loopback listener may be on another machine, so a
+user pastes the final redirect URL and the MC forwards only the callback for the owned pending
+flow. A successful callback page is not proof that authentication finished; a sign-in succeeds
+only once a session opens and lists the account's models.
 
 ## Provider updates run only through the owning installer
 
-A one-click update is offered only when the resolved executable's path proves which installer owns
-it. Homebrew and npm are proven by the real path (symlinks followed): a versioned keg or cask under
-`brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
-Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
-the resolved path or its real target, since those installers place real files or their own symlinks
-there. Anything unproven stays manual-only but still reports the version gap. npm updates pin
-`--prefix` because the `npm` on `PATH` can belong to a different Node than the one that owns the
-provider. Homebrew
-compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them.
-See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
-
-Ownership is cached per instance and re-read immediately before an update runs. The
-[runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
-changed since the advisory, and reports success only when the refreshed provider is still installed
-with a readable, current version.
+A one-click update is offered only when the resolved executable's location proves which installer
+owns it: Homebrew, a global npm prefix, or Claude Code's own `claude update`. Anything unproven
+stays manual-only but still reports the version gap. An update checks that the installer is still
+the one the providers were last reported with, and afterwards that the provider is no longer
+behind. See [`HalC2.ProviderUpdates`](../../apps/server-ex/lib/hal_c2/provider_updates.ex).
 
 ## Protocol traps
 
 Codex async questions arrive as notifications and are answered with a new user message. There is
-no pending RPC response to send. The
-[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) persists them as
-`user_input_request` turn items and runtime requests with `responseCapability: { type: "message" }`.
-Their execution nodes do not block the run. Web, desktop, and mobile use their normal question
-panels, and requests remain pending after a turn finishes, a provider exits, or the server restarts.
-
-`runtime-request.respond` reads the persisted request and question item, validates required
-answers, and commits the resolution and a user message in one transaction. Repeating the same
-command returns its receipt without posting the answer twice. The normal message path starts or
-resumes a run, queues behind active work, or steers when the adapter supports it. Blocking questions
-retain the provider's live response path. Do not infer that a request has disappeared merely because
-it is outside the recent history window.
+no pending RPC response to send. The runtime persists them as `user_input_request` turn items and
+runtime requests with `responseCapability: { type: "message" }`
+([`TurnWriter`](../../apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex)). Their execution
+nodes do not block the run, and requests remain pending after a turn finishes, a provider exits,
+or the MC restarts. Do not infer that a request has disappeared merely because it is outside the
+recent history window.
 
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
-## Attachments and stored history
+## Attachments
 
-Attachments live outside the project workspace. The
-[attachment boundary](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) validates and claims
-uploads for a thread; adapters choose native input formats for those environment-local files.
-A path in the prompt does not grant filesystem access. Keep provider sandbox and approval rules
-in force; copying uploads into the project to bypass them changes that boundary.
-
-File attachments introduced a replay compatibility limit. Image-only clients cannot decode
-file-bearing messages, and an image-only server can fail the entire environment's startup when
-replaying one such event. Rollouts and downgrades must account for persisted history as well as
-current client support.
+Attachments live outside the project workspace. [`HalC2.Attachments`](../../apps/server-ex/lib/hal_c2/attachments.ex)
+validates uploads and the thread's MC claims them; runtimes choose native input formats for those
+environment-local files. A path in the prompt does not grant filesystem access. Keep provider
+sandbox and approval rules in force; copying uploads into the project to bypass them changes that
+boundary.
 
 ## Provider diagnostics
 
-Native event logs retain lifecycle events, responses, and failures. Token deltas and duplicate raw
-frames are filtered before adapters copy or redact payloads. The filter accepts both legacy native
-events and v2 protocol envelopes; decode failures remain visible through diagnostic frames.
+[`HalC2.ProviderLog`](../../apps/server-ex/lib/hal_c2/provider_log.ex) keeps native event logs
+(lifecycle events, responses, failures). Token deltas and duplicate raw frames are filtered before
+payloads are copied or redacted. Log payloads have a 64 KiB budget; large or deeply nested
+payloads become structural summaries that retain routing identifiers, methods, status, and error
+fields. These limits apply to diagnostics; provider event handling is unchanged.
 
-Log payloads have a 64 KiB encoded budget. Large or deeply nested payloads become structural
-summaries that retain routing identifiers, methods, status, and error fields. Traversal is bounded
-before redaction and serialization, so logging a large response does not require several full
-copies. These limits apply to diagnostics; provider event handling is unchanged.
-
-Codex resumes with metadata-only reads when it needs a thread's identity and update time. Its
-initialization capabilities opt out of `turn/diff/updated`: HAL-C2 derives diffs from checkpoints.
-The logger filters those notifications before traversal when an older provider still sends them.
+Codex's initialization opts out of `turn/diff/updated`: HAL-C2 derives diffs from checkpoints. The
+logger filters those notifications when an older provider still sends them.
 
 Model classification has its own [manifest constraints](./model-manifest.md). Assistant-reference
 handling is documented under [citations](./assistant-citations.md).

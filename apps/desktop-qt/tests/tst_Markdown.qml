@@ -4,7 +4,7 @@ import HalC2.Shell
 import "../qml/HalC2/Bricks"
 import "../qml/HalC2/Bricks/js/markdown.js" as Md
 
-// The Markdown brick: the web's chat markdown in native segments
+// The Markdown brick: chat markdown in native segments
 // (features/timeline/markdown.feature).
 Item {
     id: root

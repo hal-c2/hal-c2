@@ -2,21 +2,19 @@ defmodule HalC2.TextGeneration do
   @moduledoc """
   Short structured text from a coding agent: commit messages and pull request
   content for `HalC2.GitActions`, branch names for `HalC2.WorktreeSetup`, and thread
-  titles for `HalC2.Orchestration`, with the Node server's prompts
-  (`HalC2.TextGeneration.Prompts`).
+  titles for `HalC2.Orchestration`. The prompts live in `HalC2.TextGeneration.Prompts`.
 
   Commits, pull requests, and branch names are written by the project's source
   control writer model when its provider is usable, otherwise by its text
   generation model, which also writes titles (`model_selection/2`). A selection
   whose provider is disabled, not installed, or has no runner here falls back to
-  the first usable provider, with that provider's default model, as Node does.
+  the first usable provider, with that provider's default model.
 
   Claude runs `claude -p` with a JSON schema and no tools; Codex runs `codex exec`
   in a read-only sandbox; Grok, OpenCode, Cursor, and Antigravity answer one ACP
   prompt in an empty directory, with every tool and permission request refused
-  (Antigravity fails outright on one, as `AntigravityTextGeneration.ts` does); Pi
-  answers one prompt in an ephemeral `pi --mode rpc --no-session` without
-  extensions or tools (`PiTextGeneration.ts`).
+  (Antigravity fails outright on one); Pi answers one prompt in an ephemeral
+  `pi --mode rpc --no-session` without extensions or tools.
   """
 
   alias HalC2.Acp.Antigravity
@@ -24,7 +22,7 @@ defmodule HalC2.TextGeneration do
   alias HalC2.JsonRpc.Connection
   alias HalC2.TextGeneration.Prompts
 
-  # Node's text generation defaults: the selection, and each provider's model.
+  # Text generation defaults: the selection, and each provider's model.
   @default_selection %{
     "instanceId" => "codex",
     "model" => "gpt-6-luna",
@@ -40,14 +38,14 @@ defmodule HalC2.TextGeneration do
     "pi" => "default",
     "antigravity" => "antigravity-default"
   }
-  # The order Node falls back through when the selected provider cannot be used.
+  # The order text generation falls back through when the selected provider cannot be used.
   @fallback_order ~w(codex claudeAgent cursor grok pi opencode antigravity)
   @acp_drivers ~w(grok opencode cursor antigravity)
   # What Antigravity may answer before text generation is refused, in characters.
   @antigravity_max_output 128_000
 
   @doc """
-  How long a writing agent may take before it is stopped: 3 minutes, as in Node.
+  How long a writing agent may take before it is stopped: 3 minutes.
   Tests shorten it with the `:text_generation_timeout` app env.
   """
   def timeout, do: Application.get_env(:hal_c2, :text_generation_timeout, 180_000)
@@ -607,7 +605,7 @@ defmodule HalC2.TextGeneration do
   end
 
   # The conversation files a text prompt's session left in the profile, known by the
-  # unique directory it ran in (`AntigravitySessionFiles.ts`).
+  # unique directory it ran in.
   defp remove_antigravity_session(id, dir) do
     acp = Path.join(Antigravity.profile(id), "antigravity-acp")
 

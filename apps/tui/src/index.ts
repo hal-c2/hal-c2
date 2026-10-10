@@ -25,7 +25,7 @@ import {
   parseLaunchArgs,
   resolveMcDirs,
 } from "./mcDiscovery.ts";
-import { makeHttpSocketTicketMinter, makeSocketTicketMinter } from "./socketTicket.ts";
+import { makeHttpSocketTicketMinter } from "./socketTicket.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
@@ -36,40 +36,15 @@ import {
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
 const hostPlatform = process.platform;
 
-// The Bun entry point. Started by the Node `hal-c2 tui` launcher it gets the
-// server origin and a bearer via env and mints websocket URLs over the IPC
-// channel to the launcher, which answers each request for the whole session.
-// Started on its own (`mise run tui`) it finds the MC itself, or pairs
+// The Bun entry point (`mise run tui`). It finds the MC on this machine, or pairs
 // with a remote one from `--url` (mcDiscovery.ts), and buys its socket tickets
 // over HTTP.
 
-const processSend = process.send as ((message: unknown) => boolean) | undefined;
-const launcherTickets =
-  typeof processSend === "function"
-    ? makeSocketTicketMinter({ send: (message) => processSend.call(process, message) })
-    : null;
-if (launcherTickets) {
-  process.on("message", launcherTickets.receive);
-  process.on("disconnect", launcherTickets.disconnect);
-}
-
-/** Where to connect and as whom: the launcher's env, the local MC, or a paired remote. */
+/** Where to connect and as whom: the local MC, or a paired remote. */
 async function resolveConnection(): Promise<
   Pick<TuiOptions, "origin" | "bearerToken" | "environmentId" | "orchestrationProtocolVersion">
 > {
-  const argv = process.argv.slice(2);
-  const origin = process.env.HAL_C2_TUI_ORIGIN;
-  const bearerToken = process.env.HAL_C2_TUI_BEARER;
-  // The launcher passes no flags (a wrapper may leave the entry's path in argv).
-  if (!argv.some((arg) => arg.startsWith("--")) && (origin || bearerToken)) {
-    if (!origin || !bearerToken) {
-      throw new LaunchError(
-        `${origin ? "HAL_C2_TUI_BEARER" : "HAL_C2_TUI_ORIGIN"} is missing: HAL_C2_TUI_ORIGIN and HAL_C2_TUI_BEARER go together.`,
-      );
-    }
-    return { origin, bearerToken };
-  }
-  const args = parseLaunchArgs(argv);
+  const args = parseLaunchArgs(process.argv.slice(2));
   const dirs = {
     baseDir: args.baseDir,
     dev: args.dev,
@@ -140,16 +115,6 @@ function resolveQmlDir(): string {
 
 async function main(): Promise<void> {
   const logPath = process.env.HAL_C2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
-  let connection: Awaited<ReturnType<typeof resolveConnection>>;
-  try {
-    connection = await resolveConnection();
-  } catch (error) {
-    if (!(error instanceof LaunchError)) throw error;
-    process.stderr.write(`hal-c2 tui: ${error.message}\n`);
-    process.exit(1);
-  }
-  const { origin } = connection;
-
   const appendLog = (line: string) => {
     try {
       NodeFS.appendFileSync(logPath, `${line}\n`);
@@ -158,8 +123,8 @@ async function main(): Promise<void> {
     }
   };
 
-  // Read the user's keymap and plugin locations before taking over the terminal,
-  // so a broken keymap.json stops here with a readable error.
+  // Read the user's keymap and plugin locations before connecting or taking over
+  // the terminal, so a broken keymap.json stops here with a readable error.
   const configDir = resolveShellConfigDir({
     env: process.env,
     homeDir: NodeOS.homedir(),
@@ -172,11 +137,19 @@ async function main(): Promise<void> {
     warn: (message) => configWarnings.push(message),
   });
 
+  let connection: Awaited<ReturnType<typeof resolveConnection>>;
+  try {
+    connection = await resolveConnection();
+  } catch (error) {
+    if (!(error instanceof LaunchError)) throw error;
+    process.stderr.write(`hal-c2 tui: ${error.message}\n`);
+    process.exit(1);
+  }
+  const { origin } = connection;
+
   const options: TuiOptions = {
     ...connection,
-    mintSocketUrl:
-      launcherTickets?.mint ??
-      makeHttpSocketTicketMinter({ origin, bearerToken: connection.bearerToken }),
+    mintSocketUrl: makeHttpSocketTicketMinter({ origin, bearerToken: connection.bearerToken }),
     logPath,
   };
   const runtime = buildTuiRuntime(options);
@@ -246,7 +219,7 @@ async function main(): Promise<void> {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();
     },
-    // The launcher says which HAL-C2 release this client is; servers behind it are offered an update.
+    // `HAL_C2_TUI_APP_VERSION` names the HAL-C2 release this client is; servers behind it are offered an update.
     appVersion: process.env.HAL_C2_TUI_APP_VERSION?.trim() || null,
     dismissedUpdates: fileMutedThreads(NodePath.join(configDir, "dismissed-updates.json")),
     // Plugins turned off, and where downloaded ones came from, are this device's too.
@@ -309,8 +282,8 @@ async function main(): Promise<void> {
     host.destroy();
   }
   // The renderer is already torn down (handleExit). Dispose the RPC runtime, then
-  // force-exit: the live WebSocket and the IPC channel to the parent would
-  // otherwise keep Bun's event loop alive, so a single Ctrl+C wouldn't fully quit.
+  // force-exit: the live WebSocket would otherwise keep Bun's event loop alive,
+  // so a single Ctrl+C wouldn't fully quit.
   await Promise.race([
     client.dispose().catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, 300)),

@@ -39,7 +39,7 @@ const QStringList& colors() {
 }
 
 QString tint(const QString& color) {
-  // Tailwind's 500s, as the web's swatches.
+  // Tailwind's 500s.
   static const QHash<QString, QString> hex{
       {QStringLiteral("gray"), QStringLiteral("#6b7280")},    {QStringLiteral("red"), QStringLiteral("#ef4444")},
       {QStringLiteral("orange"), QStringLiteral("#f97316")},  {QStringLiteral("amber"), QStringLiteral("#f59e0b")},
@@ -125,7 +125,7 @@ QVariantMap icon(const QJsonObject& row) {
             {QStringLiteral("tint"), tint(text(picked, "color"))}, {QStringLiteral("automatic"), false}};
   }
   if (kind == QLatin1String("lucide")) {
-    // A symbol this build cannot draw shows as the folder the web falls back to.
+    // A symbol this build cannot draw shows as the folder.
     const QString name = symbols().contains(text(picked, "name")) ? text(picked, "name") : QStringLiteral("folder-code");
     return {{QStringLiteral("kind"), kind}, {QStringLiteral("name"), name}, {QStringLiteral("symbol"), text(picked, "name")},
             {QStringLiteral("color"), text(picked, "color")}, {QStringLiteral("tint"), tint(text(picked, "color"))}, {QStringLiteral("automatic"), false}};

@@ -2,10 +2,12 @@
 #   docs/user/keybindings.md (keybindings.json, rule shape, when keys, precedence)
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
+#   apps/server/src/keybindings.ts (malformed or unwritable file, hand edits, concurrent changes)
 #   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the MC changes them)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake MC)
 #   apps/web/src/routes/__root.tsx (the "Keybindings updated" toast, KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS)
+#   apps/web/src/routes/__root.tsx (the "Invalid keybindings configuration" warning and its "Open keybindings.json")
 
 Feature: Customising keybindings
   Custom rules live in keybindings.json in the HAL-C2 home. Each rule names a key, a command and
@@ -63,6 +65,44 @@ Feature: Customising keybindings
       When the MC reads the keybindings
       Then only the rule is returned
 
+    @backlog @mc
+    Scenario: Editing keybindings.json by hand reaches connected clients
+      Given a client is connected to the MC
+      When the user saves a new rule into keybindings.json with a text editor
+      Then the client receives the updated keybindings without the MC restarting
+
+    @backlog @mc
+    Scenario: A rule that cannot be read is reported by its position
+      Given keybindings.json holds a valid rule and then an entry with no command
+      When a client reads the MC's keybindings
+      Then the valid rule is returned
+      And the client is told the second entry is invalid
+
+    @backlog @mc
+    Scenario Outline: A keybindings file that is not a list is never overwritten by a change
+      Given keybindings.json holds a document that is not a list of rules
+      When a client <change>
+      Then the MC refuses the change saying the file is malformed
+      And keybindings.json is left exactly as it was
+
+      Examples:
+        | change                       |
+        | adds a keybinding rule       |
+        | removes a keybinding rule    |
+
+    @backlog @mc
+    Scenario: A keybinding change that cannot be written is reported and leaves the file alone
+      Given keybindings.json cannot be written
+      When a client adds a keybinding rule
+      Then the client is told the keybindings could not be saved
+      And keybindings.json still holds the earlier rules
+
+    @backlog @mc
+    Scenario: Rules added at the same moment are all kept
+      Given two clients are connected to the MC
+      When both add a different keybinding rule at the same moment
+      Then keybindings.json holds both rules
+
   Rule: Clients merge custom rules with the defaults
 
     @desktop
@@ -117,6 +157,26 @@ Feature: Customising keybindings
       When the MC adds the rule mod+alt+g for "diff.toggle"
       And the MC adds the rule mod+alt+h for "diff.toggle"
       Then the user sees the toast "Keybindings updated" once
+
+    @backlog @desktop
+    Scenario: A keybindings file the MC cannot use is announced with the reason
+      Given the user saved keybindings.json with a rule the MC cannot read
+      When the MC reloads the keybindings
+      Then the user sees a "warning" toast "Invalid keybindings configuration" with the MC's reason
+      And no "Keybindings updated" toast is shown for that reload
+
+    @backlog @desktop
+    Scenario: The invalid keybindings warning opens the file in the user's editor
+      Given the user sees the warning "Invalid keybindings configuration"
+      When the user chooses "Open keybindings.json" on it
+      Then keybindings.json opens in the user's preferred editor
+
+    @backlog @desktop
+    Scenario: A keybindings file that cannot be opened from the warning says so
+      Given the user sees the warning "Invalid keybindings configuration"
+      And the environment cannot open files in an editor
+      When the user chooses "Open keybindings.json" on it
+      Then the user sees an "error" toast "Unable to open keybindings file" with the reason
 
     @desktop
     Scenario: Starting with custom keybindings is not announced

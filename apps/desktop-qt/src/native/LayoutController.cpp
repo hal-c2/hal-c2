@@ -18,7 +18,7 @@ const NativeControllerRegistrar<LayoutController> registrar(QStringLiteral("layo
 const QString kSidebarCollapsed = QStringLiteral("sidebarCollapsed");
 const QString kZoomLevel = QStringLiteral("zoomLevel");
 const QString kSidebarWidthKey = QStringLiteral("sidebarWidth");
-// The Electron zoom menu's step, and Chromium's 25% to 500%.
+// The zoom menu's step, and the range of 25% to 500%.
 constexpr double kZoomStep = 0.5;
 constexpr double kMinZoomLevel = -7.5;
 constexpr double kMaxZoomLevel = 8.5;

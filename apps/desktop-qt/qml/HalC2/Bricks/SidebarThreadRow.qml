@@ -7,8 +7,7 @@ import HalC2.Shell
 // One thread (or draft) row of the Sidebar brick: a card for pinned and
 // active threads (project, status or age, title, branch), a slim line for
 // snoozed and settled ones. Hovering or focusing the row swaps the status
-// slot for the section's actions (snooze and settle, wake, un-settle), the
-// same ones the web app's sidebar shows on hover.
+// slot for the section's actions (snooze and settle, wake, un-settle).
 Item {
     id: row
 
@@ -70,7 +69,7 @@ Item {
     readonly property bool pinned: !draft && item.pinned === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
     readonly property bool showActions: hasActions && (hover.hovered || focused)
-    // The status word the web app's sidebar uses for each state; empty when the
+    // The status word for each state; empty when the
     // row is at rest, then the slot shows the age (or the wake time).
     readonly property string statusWord: {
         if (row.offline) {
@@ -154,7 +153,7 @@ Item {
     // a human (done, failed, woke) and the one that is open.
     readonly property bool recedes: offline || !active && !woke && item.unread !== true && item.status !== "failed" && item.status !== "limited"
     // Titles keep the prompt's line breaks; the row shows them on one line,
-    // as the web app does, so a multi-line title never overflows the card.
+    // so a multi-line title never overflows the card.
     readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()
     readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.timeAt ?? item.updatedAt, ageNow)
 
@@ -322,7 +321,7 @@ Item {
         }
     }
 
-    // The menu opens on press, anywhere on the row, like the web app's. A
+    // The menu opens on press, anywhere on the row. A
     // finger has no buttons to tell apart, so it would open the menu too.
     TapHandler {
         acceptedButtons: Qt.RightButton

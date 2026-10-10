@@ -32,8 +32,8 @@ QString actionsLabel() {
   return CommandPaletteController::tr("Actions");
 }
 
-// The web's normalizeSearchText: compatibility-decomposed, marks dropped,
-// lower case, whitespace collapsed.
+// Search text: compatibility-decomposed, marks dropped, lower case,
+// whitespace collapsed.
 QString normalize(const QString& text) {
   const QString decomposed = text.normalized(QString::NormalizationForm_KD);
   QString out;
@@ -878,8 +878,8 @@ void CommandPaletteController::rebuildCommand() {
                     target.isEmpty() ? tr("Settings") : section.value(QStringLiteral("detail")).toString(), {},
                     {normalize(label), normalize(section.value(QStringLiteral("keywords")).toString())}});
   }
-  // Each keybinding command, after the settings it mirrors (the web's
-  // secondary settings results): found by its label, id and keys.
+  // Each keybinding command, after the settings it mirrors: found by its
+  // label, id and keys.
   QHash<QString, qsizetype> shortcuts;
   for (const QVariant& value : shell->controller<KeybindingController>()->bindings()) {
     const QVariantMap binding = value.toMap();
@@ -936,7 +936,7 @@ void CommandPaletteController::refilter(bool refreshed) {
   }
 
   if (query.isEmpty()) {
-    // The web's hand-picked actions, in its order, then recent threads.
+    // The hand-picked actions, in order, then recent threads.
     for (const QString& command : kRootCommands) {
       for (int index = 0; index < m_entries.size(); ++index) {
         const Entry& entry = m_entries.at(index);
@@ -1310,7 +1310,7 @@ void CommandPaletteController::searchFolders(int generation) {
                  });
 }
 
-// The web's resolved add path: a whole folder is the browsed parent; a named
+// The resolved add path: a whole folder is the browsed parent; a named
 // one is the folder of that name when it exists; anything else, as typed.
 QString CommandPaletteController::browsedPath() const {
   const QString query = m_query.trimmed();

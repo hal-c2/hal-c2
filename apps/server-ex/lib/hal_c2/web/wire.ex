@@ -2,9 +2,8 @@ defmodule HalC2.Web.Wire do
   @moduledoc """
   Thread entities as they go to clients. The MC keeps the whole of a command's
   output, a file change's diff, and a handoff's history, but clients never show
-  them, so they stay off the socket, as they do on the Node server
-  (`WireProjection.ts`). A failed command keeps the fact that it failed. Subagent
-  text and dynamic tool values past their limits are cut or summarized.
+  them, so they stay off the socket. A failed command keeps the fact that it failed.
+  Subagent text and dynamic tool values past their limits are cut or summarized.
 
   Events carry patches, not entities, so a patch is trimmed by the type of the turn
   item it changes, which the stream that owns the item knows.

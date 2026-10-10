@@ -1,7 +1,9 @@
 # Install HAL-C2
 
 HAL-C2 runs coding agents on your computer and lets you control them from its
-desktop, web, or mobile app. Set up the machine where the agents will work first.
+desktop, terminal, or phone app. The MC (mission control) is the server that
+runs the agents and keeps your threads; set it up on the machine where the
+agents will work first.
 
 ## Requirements
 
@@ -10,51 +12,35 @@ launch HAL-C2 and configure providers afterwards.
 
 ## Command line
 
-The install script downloads the `hal-c2` archive for your platform from
-[GitHub Releases](https://github.com/hal-c2/hal-c2/releases) and verifies it:
+Each release publishes the MC as a single file for macOS on Apple Silicon
+(`darwin-arm64`) and for Linux on x86_64 (`linux-x64`) and arm64 (`linux-arm64`).
+Download `hal-c2-mc-<version>-<platform>` from
+[GitHub Releases](https://github.com/hal-c2/hal-c2/releases), where the releases
+named `mc-v<version>` hold it, beside its `.sha256`. It needs no Erlang or Elixir.
+Make it executable and run it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.sh | sh
+chmod +x hal-c2-mc-<version>-<platform>
+./hal-c2-mc-<version>-<platform>
 ```
 
-On Windows, in PowerShell:
+The first run unpacks the MC into HAL-C2's data directory and starts it; every
+run after that starts the version the MC last moved to. It listens on
+`127.0.0.1:3790`.
 
-```powershell
-irm https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.ps1 | iex
-```
+| Task                                             | Command                                      |
+| ------------------------------------------------ | -------------------------------------------- |
+| Start the MC in the terminal                     | `./hal-c2-mc-<version>-<platform>`           |
+| Keep it running in the background (macOS, Linux) | `./hal-c2-mc-<version>-<platform> install`   |
+| Inspect the background service                   | `./hal-c2-mc-<version>-<platform> status`    |
+| Restart the background service                   | `./hal-c2-mc-<version>-<platform> restart`   |
+| Stop and remove the background service           | `./hal-c2-mc-<version>-<platform> uninstall` |
 
-This puts `hal-c2` in `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `HAL_C2_CHANNEL=nightly` to install the nightly train, or
-`HAL_C2_VERSION` to pin an exact version.
+See [Running in the background](./background-service.md) for what the service does.
+An MC moves to a newer version from the client's update notice, and passes it on to
+the other MCs in its cluster ([Updating HAL-C2](./updating.md)).
 
-| Task                                             | Command                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| Start the server and open the web app            | `hal-c2`                                                      |
-| Start the server without a browser               | `hal-c2 serve`                                                |
-| Keep it running in the background (macOS, Linux) | `hal-c2 service install` ([details](./background-service.md)) |
-| Move to the newest release                       | `hal-c2 update`                                               |
-| Remove it again                                  | `hal-c2 uninstall`                                            |
-
-Run `hal-c2 --help` for the full reference.
-
-The `hal-c2` npm package is not yet published, so `npx hal-c2` does not work
-yet.
-
-### Intel Macs
-
-There is no `hal-c2` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/hal-c2/hal-c2#running-from-source)):
-
-```bash
-git clone https://github.com/hal-c2/hal-c2
-cd hal-c2 && vp i && vp run build:desktop
-node apps/server/dist/bin.mjs
-```
-
-`hal-c2 update` and the background service do not apply to a server run this way;
-update it with `git pull` and a rebuild.
+There is no Windows or Intel Mac build yet.
 
 ## Where HAL-C2 keeps its files
 
@@ -89,10 +75,10 @@ app. Caches and downloaded tools are not copied; HAL-C2 fetches them again when
 it needs them.
 
 To bring over threads you made in T3 Code after that, run
-`hal-c2-service threads import` in a terminal while HAL-C2 is running. It lists
-the threads of T3 Code and of an earlier HAL-C2 on this machine; mark the ones
-you want with Space and press Enter. Each comes with its subagent threads,
-attachments and terminal scrollback, and the old install is only read.
+`./hal-c2-mc-<version>-<platform> threads import` in a terminal while HAL-C2 is
+running. It lists the threads of T3 Code and of an earlier HAL-C2 on this machine;
+mark the ones you want with Space and press Enter. Each comes with its subagent
+threads, attachments and terminal scrollback, and the old install is only read.
 
 Worktrees your threads already use stay where they are, such as under
 `~/.t3/worktrees`, and keep working. New worktrees go to HAL-C2's data
@@ -105,46 +91,18 @@ HAL-C2 and delete its data directory and `~/.local/state/hal-c2/migrated-from.js
 If the copy fails, HAL-C2 starts empty and logs why; your old directory is left
 as it was.
 
-## Desktop app
+## Desktop, terminal, and phone apps
 
-Download a release from [GitHub Releases](https://github.com/hal-c2/hal-c2/releases).
-Package-manager installs (winget, Homebrew, AUR) are not yet published for HAL-C2.
-
-### Windows Subsystem for Linux
-
-Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install the provider CLIs inside that distro. HAL-C2 installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
-
-```bash
-hal-c2 app
-```
-
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `hal-c2 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
-
-## Mobile app
-
-The HAL-C2 mobile app is not yet published to the App Store or Google Play;
-until it is, build it from source. The phone connects to a server on another machine. Follow
-[remote access](./remote-access.md) to link it through HAL-C2 Connect or a pairing URL.
-
-If the app crashes during launch, open Settings → Diagnostics on the next launch
-that succeeds. It lists startup crashes from the last 7 days with the error and
-component stack that store crash reports leave out. Copy the report and paste it
-into an issue on [hal-c2/hal-c2](https://github.com/hal-c2/hal-c2/issues). Error messages can quote values from the app, so read it over
-before sharing.
+None of the clients has a download yet. To use one, run it from source: the
+[README](../../README.md#running-from-source) lists what to install, and
+`mise run release:install` builds the MC, and on x86_64 Linux and macOS the
+desktop app, and installs them for your user. The desktop app uses the MC already
+running on the same files, and starts the MC it carries when there is none. Link a
+phone or another computer to an MC with [remote access](./remote-access.md).
 
 ## Providers
 
-Open **Settings → Providers** in the web or desktop app, select the environment,
+Open **Settings → Providers** in the desktop app, select the environment,
 and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.

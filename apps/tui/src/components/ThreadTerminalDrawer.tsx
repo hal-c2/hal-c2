@@ -14,8 +14,7 @@ import {
 } from "../terminalView.ts";
 import { THEME, usePalette } from "../theme.ts";
 
-// The embedded terminal pane (mirrors apps/web/src/components/ThreadTerminalDrawer.tsx).
-// It owns a headless xterm emulator — the same engine as the web — fed by the
+// The embedded terminal pane. It owns a headless xterm emulator fed by the
 // thread's PTY stream, and renders the grid into OpenTUI with the terminal's own
 // colours.
 

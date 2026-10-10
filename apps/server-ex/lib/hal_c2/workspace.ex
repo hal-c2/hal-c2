@@ -155,7 +155,7 @@ defmodule HalC2.Workspace do
         {:ok, matches} ->
           {:ok, %{"matches" => Enum.take(matches, limit), "truncated" => length(matches) > limit}}
 
-        # A regex that does not compile is searched for literally, as the Node server does.
+        # A regex that does not compile is searched for literally.
         {:regex_error, message} ->
           with {:ok, matches} <- grep(root, query, false, input) do
             {:ok,
@@ -254,8 +254,8 @@ defmodule HalC2.Workspace do
 
   # Fuzzy ranking: a name that starts with the query, then one that contains it, then
   # a path containing it, then the query's letters in order; shorter paths first.
-  # An empty query browses: the most recently changed entries first, as the Node
-  # server's index orders them by modification frecency.
+  # An empty query browses: the most recently changed entries first, by modification
+  # frecency.
   defp rank(entries, root, "") do
     Enum.sort_by(
       entries,

@@ -25,8 +25,8 @@ defmodule HalC2.Vcs do
     end
   end
 
-  # `git status` gets the Node server's 30 seconds, and its output a bound: one cut
-  # short would be parsed as a different working tree.
+  # `git status` gets 30 seconds, and its output a bound: one cut short would be
+  # parsed as a different working tree.
   @status_timeout 30_000
   @status_max_bytes 50_000_000
 

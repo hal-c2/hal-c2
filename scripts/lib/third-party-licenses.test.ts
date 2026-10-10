@@ -3,21 +3,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import {
-  generateThirdPartyLicenseManifest,
-  THIRD_PARTY_LICENSES_FILE_NAME,
-  thirdPartyLicensesPlugin,
-} from "./third-party-licenses.js";
+import { generateThirdPartyLicenseManifest } from "./third-party-licenses.js";
 
 const tempDirectories: string[] = [];
-const REPOSITORY_ROOT = NodePath.resolve(
-  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-  "../..",
-);
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
@@ -60,7 +51,7 @@ async function createFixture(): Promise<{
         name: "demo-asset",
         license: "CC-BY-4.0",
         noticeFile: "asset-notice.txt",
-        bundles: ["assets", "web"],
+        bundles: ["assets", "desktop-qt"],
       },
     ],
     packageOverrides: [],
@@ -77,36 +68,18 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
-  it("keeps the GhosttyKit notice pinned to the vendored framework revision", async () => {
-    const [config, revision] = await Promise.all([
-      NodeFSP.readFile(NodePath.join(REPOSITORY_ROOT, "third-party-licenses.config.json"), "utf8"),
-      NodeFSP.readFile(
-        NodePath.join(
-          REPOSITORY_ROOT,
-          "apps/mobile/modules/hal-c2-terminal/Vendor/libghostty/VERSION",
-        ),
-        "utf8",
-      ),
-    ]);
-
-    expect(config).toContain(revision.trim());
-    expect(config).toContain(
-      "https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed",
-    );
-  });
-
   it("collects production packages and custom asset notices", async () => {
     const fixture = await createFixture();
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest).toEqual({
       schemaVersion: 1,
       entries: [
         {
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
           kind: "custom",
           license: "CC-BY-4.0",
           name: "demo-asset",
@@ -115,7 +88,7 @@ describe("third-party license generation", () => {
           version: null,
         },
         {
-          bundles: ["web"],
+          bundles: ["desktop-qt"],
           kind: "package",
           license: "MIT",
           name: "demo-dependency",
@@ -148,7 +121,7 @@ describe("third-party license generation", () => {
               preamble: ["Adapted for HAL-C2."],
             },
           ],
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
         },
       ],
       packageOverrides: [],
@@ -156,7 +129,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries.find((entry) => entry.name === "generated-asset")?.noticeText).toBe(
@@ -172,7 +145,7 @@ describe("third-party license generation", () => {
           name: "generated-asset",
           license: "MIT",
           generatedNotices: [{ licenseId: "MIT" }],
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
         },
       ],
       packageOverrides: [],
@@ -180,7 +153,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
       allowMissingGeneratedNotices: true,
     });
 
@@ -199,13 +172,13 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
-  it("includes custom notices selected by the dev server bundle", async () => {
+  it("includes custom notices selected by the bundle name", async () => {
     const fixture = await createFixture();
     await writeJson(fixture.configFile, {
       customNotices: [
@@ -220,49 +193,11 @@ describe("third-party license generation", () => {
       packageOverrides: [],
     });
 
-    const plugin = thirdPartyLicensesPlugin({
+    const manifest = await generateThirdPartyLicenseManifest({
       bundleName: "desktop",
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
-    let middleware:
-      | ((
-          request: { readonly url: string },
-          response: {
-            statusCode: number;
-            setHeader(name: string, value: string): void;
-            end(body: string): void;
-          },
-          next: (error?: Error) => void,
-        ) => void)
-      | undefined;
-    if (typeof plugin.configureServer !== "function") {
-      throw new Error("Expected the license plugin to define a configureServer hook.");
-    }
-    plugin.configureServer.call(
-      {} as never,
-      {
-        middlewares: {
-          use(handler: typeof middleware) {
-            middleware = handler;
-          },
-        },
-      } as never,
-    );
-    if (!middleware) throw new Error("Expected the license plugin to register middleware.");
-
-    const responseBody = await new Promise<string>((resolve, reject) => {
-      middleware!(
-        { url: `/${THIRD_PARTY_LICENSES_FILE_NAME}` },
-        {
-          statusCode: 0,
-          setHeader() {},
-          end: resolve,
-        },
-        (error) => reject(error ?? new Error("License middleware skipped the request.")),
-      );
-    });
-    const manifest = JSON.parse(responseBody) as { entries: ReadonlyArray<{ name: string }> };
 
     expect(manifest.entries.some((entry) => entry.name === "desktop-only-asset")).toBe(true);
   });
@@ -274,7 +209,7 @@ describe("third-party license generation", () => {
     await expect(
       generateThirdPartyLicenseManifest({
         configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+        packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
       }),
     ).rejects.toThrow("does not include a license or notice file");
   });
@@ -298,7 +233,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries.find((entry) => entry.name === "demo-dependency")?.noticeText).toBe(
@@ -322,7 +257,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries[0]?.noticeText).toBe("Override text");
@@ -354,7 +289,7 @@ describe("third-party license generation", () => {
     });
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
     expect(manifest.entries[0]?.license).toBe("(Apache-2.0 AND BSD-3-Clause)");
     expect(manifest.entries[0]?.noticeText).toBe(
@@ -376,7 +311,7 @@ describe("third-party license generation", () => {
     await expect(
       generateThirdPartyLicenseManifest({
         configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+        packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
       }),
     ).rejects.toThrow("can define only one");
   });
@@ -401,7 +336,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries[0]?.noticeText).toBe("Repository text");
@@ -425,7 +360,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries.find((entry) => entry.name === "demo-sibling")?.noticeText).toBe(
@@ -454,7 +389,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries[0]?.noticeText).toBe("Exact text");
@@ -465,10 +400,10 @@ describe("third-party license generation", () => {
     await writeJson(fixture.configFile, {
       customNotices: [
         {
-          name: "web-only-asset",
+          name: "desktop-only-asset",
           license: "MIT",
           noticeFile: "asset-notice.txt",
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
         },
       ],
       packageOverrides: [],
@@ -476,10 +411,10 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "mobile-qt", path: fixture.appManifest }],
     });
 
-    expect(manifest.entries.some((entry) => entry.name === "web-only-asset")).toBe(false);
+    expect(manifest.entries.some((entry) => entry.name === "desktop-only-asset")).toBe(false);
   });
 
   it("can show a multi-file notice under a label that differs from its client manifests", async () => {
@@ -501,7 +436,7 @@ describe("third-party license generation", () => {
           license: "MIT AND Apache-2.0",
           noticeFiles: ["tool-license.txt", "vendor-notice.txt"],
           bundles: ["device-tools"],
-          includeInBundles: ["mobile", "web"],
+          includeInBundles: ["mobile-qt", "desktop-qt"],
         },
       ],
       packageOverrides: [],
@@ -509,7 +444,7 @@ describe("third-party license generation", () => {
 
     const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
-      packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+      packageManifests: [{ bundle: "mobile-qt", path: fixture.appManifest }],
     });
 
     expect(manifest.entries.find((entry) => entry.name === "optional-tool")).toMatchObject({
@@ -525,7 +460,7 @@ describe("third-party license generation", () => {
     await expect(
       generateThirdPartyLicenseManifest({
         configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+        packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
       }),
     ).rejects.toThrow('Custom third-party notice "demo-asset" is empty');
   });
@@ -538,13 +473,13 @@ describe("third-party license generation", () => {
           name: "duplicate-asset",
           license: "MIT",
           noticeFile: "asset-notice.txt",
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
         },
         {
           name: "duplicate-asset",
           license: "CC0-1.0",
           noticeFile: "asset-notice.txt",
-          bundles: ["assets", "web"],
+          bundles: ["assets", "desktop-qt"],
         },
       ],
       packageOverrides: [],
@@ -553,7 +488,7 @@ describe("third-party license generation", () => {
     await expect(
       generateThirdPartyLicenseManifest({
         configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+        packageManifests: [{ bundle: "desktop-qt", path: fixture.appManifest }],
       }),
     ).rejects.toThrow("duplicate custom notice for duplicate-asset");
   });

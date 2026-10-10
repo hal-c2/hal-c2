@@ -10,10 +10,9 @@
 
 // The shell's palette for QML (the `Theme` singleton): the theme
 // ThemeController resolves (the base), with `<configDir>/theme.json`, watched,
-// on top. The file is the web app's own ThemeFile format (`{version, id, name,
+// on top. The file is the theme file format (`{version, id, name,
 // appearance, colors, variants}`, role names such as `canvas`, `chrome`,
-// `text`, `sidebar`) plus a shell-only `window` section, so the web's Theme
-// Editor can author it.
+// `text`, `sidebar`) plus a shell-only `window` section.
 class ThemeStore : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool loaded READ loaded NOTIFY themeChanged)
@@ -28,7 +27,7 @@ class ThemeStore : public QObject {
   // Reading this notified receiver makes palette.color(...) reactive in QML.
   // A direct call to a C++ invokable does not record a binding dependency.
   Q_PROPERTY(ThemeStore* palette READ palette NOTIFY themeChanged)
-  // What a link in prose reads in: the web's --info-foreground.
+  // What a link in prose reads in: the info foreground.
   Q_PROPERTY(QColor link READ link NOTIFY themeChanged)
   Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
   Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)

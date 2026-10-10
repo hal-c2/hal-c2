@@ -1,8 +1,8 @@
 defmodule HalC2.Service do
   @moduledoc """
-  The MC as a background service for the operator's user (`hal-c2 service`,
-  `apps/server/src/cloud/bootService.ts`): a systemd user unit on Linux, a
-  LaunchAgent on macOS. The unit runs the release's `bin/hal-c2-service` (or
+  The MC as a background service for the operator's user (`mix hal_c2.service`):
+  a systemd user unit on Linux, a LaunchAgent on macOS. The unit runs the release's
+  `bin/hal-c2-service` (or
   `mix hal_c2.server` from a checkout). It names a home only when the user chose one
   (`HAL_C2_MC_HOME`, or a `HAL_C2_HOME` that is not an old home); otherwise the
   service uses the XDG directories (`HalC2.Paths`). A unit written before, by
@@ -73,7 +73,7 @@ defmodule HalC2.Service do
 
   def command(_), do: {:error, "usage: hal-c2-service install | status | restart | uninstall"}
 
-  @doc "What `hal-c2 service status` prints for a `status/0`."
+  @doc "What `mix hal_c2.service status` prints for a `status/0`."
   def format_status(status) do
     cond do
       not status["supported"] ->
@@ -94,7 +94,7 @@ defmodule HalC2.Service do
         next =
           if status["current"],
             do: [],
-            else: ["  Next: Run `hal-c2 service install` to repair it."]
+            else: ["  Next: Run `hal-c2-mc install` to repair it."]
 
         Enum.join(
           [headline, "  Unit: #{status["unitPath"]}", "  Logs: #{status["logPath"]}"] ++
@@ -118,16 +118,15 @@ defmodule HalC2.Service do
       ~S|Lingering is disabled. HAL-C2 will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.|
 
   def problem_message("service-disabled"),
-    do:
-      "The service is not enabled to start automatically. Run `hal-c2 service install` to repair it."
+    do: "The service is not enabled to start automatically. Run `hal-c2-mc install` to repair it."
 
   def problem_message("service-stopped"),
     do:
-      "The service is not running. Check the service log and `systemctl --user status hal-c2.service`, then run `hal-c2 service install`."
+      "The service is not running. Check the service log and `systemctl --user status hal-c2.service`, then run `hal-c2-mc install`."
 
   def problem_message("restart-pending"),
     do:
-      "A newer version is installed but the service is still running the previous one. Run `hal-c2 service restart` to switch."
+      "A newer version is installed but the service is still running the previous one. Run `hal-c2-mc restart` to switch."
 
   @doc """
   `%{"supported", "installed", "current", "problems", "unitPath", "logPath"}`: whether

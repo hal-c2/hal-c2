@@ -908,10 +908,10 @@ defmodule HalC2.Steps.Common do
   }
 
   # Runs a git action by its menu label in the checkout under test (`context.cwd`), or
-  # `hal-c2 service <command>` as the scenario's user (`HalC2.Test.Storage.service/2`).
+  # `hal-c2-mc <command>` as the scenario's user (`HalC2.Test.Storage.service/2`).
   step "the user runs {string}", %{args: [label]} = context do
     case label do
-      "hal-c2 service " <> command ->
+      "hal-c2-mc " <> command ->
         HalC2.Test.Storage.service(context, command)
 
       "hal-c2 pair" ->
@@ -1521,7 +1521,7 @@ defmodule HalC2.Steps.Common do
   end
 
   # Into a draft ("a new thread titled ...") this launches the thread with a title
-  # asked for, as the web client does; otherwise it is sent to the current thread.
+  # asked for; otherwise it is sent to the current thread.
   step "the user sends {string}", %{args: [text]} = context do
     case context[:draft] do
       nil ->
@@ -1906,7 +1906,7 @@ defmodule HalC2.Steps.Common do
 
   step "the user starts a new thread in {string}", %{args: [project]} = context do
     # The client fills a new thread from the project's settings over the
-    # environment's (`resolveProjectSettings`), which `HalC2.Settings.for_project/1` mirrors.
+    # environment's; `HalC2.Settings.for_project/1` resolves them.
     settings = HalC2.Settings.for_project(World.project(context, project).id)
 
     fields =

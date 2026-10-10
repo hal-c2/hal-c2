@@ -483,8 +483,7 @@ Item {
         // What waits behind the running turn, stacked as one card: the user's
         // follow-ups in the order they run, then what the MC queued for the
         // agent (a delegated task's result), named by what it stands for. It
-        // folds to its header, and scrolls past a few rows, as the web's
-        // QueuedRunsControl does.
+        // folds to its header, and scrolls past a few rows.
         ShellCard {
             id: queueCard
 

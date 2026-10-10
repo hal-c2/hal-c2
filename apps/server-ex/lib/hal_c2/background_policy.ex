@@ -1,7 +1,6 @@
 defmodule HalC2.BackgroundPolicy do
   @moduledoc """
-  When an MC may do background work nobody is looking at, as the Node server's
-  BackgroundPolicy decides it.
+  When an MC may do background work nobody is looking at.
 
   Clients report what they show and whether they are in front
   (`server.reportClientActivity`): each report is a lease on some scopes (a

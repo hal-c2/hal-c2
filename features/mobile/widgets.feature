@@ -3,6 +3,7 @@
 #   apps/mobile/modules/hal-c2-subscription-widget
 #   apps/mobile/app.config.ts (expo-widgets families, frequent updates, push updates)
 #   apps/mobile/src/features/usage/ (subscription usage coordinator)
+#   apps/mobile/src/widgets/ (subscriptionUsageSnapshot.ts, SubscriptionUsage.tsx, AgentActivity.tsx, SubscriptionUsageCoordinator.tsx, useSubscriptionUsage.ts)
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
 
@@ -53,6 +54,29 @@ Feature: Home screen and lock screen widgets
     Then the widget asks the user to open HAL-C2 to refresh
 
   @backlog @mobile
+  Scenario: The app asks for fresh usage at most every five minutes
+    Given the app is open and "My MacBook" is connected
+    When the app comes to the front again within five minutes of the last ask
+    Then the app does not ask "My MacBook" for usage again
+    When five minutes have passed
+    Then the app asks "My MacBook" for fresh usage
+
+  @backlog @mobile
+  Scenario: The app does not ask for usage while it is in the background or the environment is away
+    Given the user has a subscription usage widget
+    When the app is in the background
+    Then the app does not ask any environment for usage
+    When the app is open and "My MacBook" is not connected
+    Then the app does not ask "My MacBook" for usage
+
+  @backlog @mobile
+  Scenario: A widget with many limits keeps the session and weekly limits
+    Given a provider reports eight limits including a session limit and a weekly limit
+    When the user looks at the usage widget
+    Then the widget shows at most six limits
+    And the session limit and the weekly limit are among them
+
+  @backlog @mobile
   Scenario: A widget with no connected environment asks the user to connect
     Given the phone is not paired with any environment
     Then the usage widget asks the user to open HAL-C2 to connect
@@ -73,6 +97,47 @@ Feature: Home screen and lock screen widgets
   Scenario: Tapping the usage widget opens the usage limits
     When the user taps the subscription usage widget
     Then the app opens on the usage limits
+
+  @backlog @mobile
+  Scenario: Resizing the usage widget on an Android home screen changes how many limits it shows
+    Given the user is on an Android phone
+    And several providers report two limits each
+    When the user makes the usage widget taller
+    Then the widget shows more limits
+    When the user makes the usage widget shorter
+    Then the widget shows fewer limits
+
+  @backlog @mobile
+  Scenario: A widget that is too short shows every provider before any second limit
+    Given the user is on an Android phone
+    And "Codex" and "Claude" each report a session and a weekly limit
+    And the usage widget has room for two limits
+    Then the widget shows the session limit of "Codex" and of "Claude"
+    And no weekly limit is shown
+
+  @backlog @mobile
+  Scenario: A widget that cannot fit every limit counts the rest
+    Given the user is on an Android phone
+    And the providers report six limits in total
+    And the usage widget has room for four
+    Then the widget says 2 more
+
+  @backlog @mobile
+  Scenario Outline: The usage widget says when it last checked
+    Given the user is on an Android phone
+    And the widget's usage <state>
+    Then the widget's footer reads "<footer>"
+
+    Examples:
+      | state                         | footer                         |
+      | was last checked at 14:05      | As of the time of that check   |
+      | has no time of its last check | Last checked unavailable       |
+
+  @backlog @mobile
+  Scenario: A limit is read to a screen reader as one line
+    Given the usage widget shows "Codex" session limit at 62% remaining
+    When a screen reader focuses that limit
+    Then it reads the provider, the limit, the percentage remaining and when it resets together
 
   @backlog @mobile
   Scenario: The activity widget lists the agents that need the user first
@@ -116,3 +181,31 @@ Feature: Home screen and lock screen widgets
     Given the widgets show usage and activity
     When the user removes every environment and signs out
     Then the widgets no longer show the user's usage or threads
+
+  @backlog @mobile
+  Scenario: A usage period the provider reports no limit for says so
+    Given the user set the Claude usage widget's period to "Weekly"
+    And Claude reports a session limit but no weekly limit
+    Then the widget says no weekly limit was reported for Claude
+
+  @backlog @mobile
+  Scenario: Pooled accounts are labelled as pooled on the usage widget
+    Given two Codex accounts are pooled
+    Then the usage widget labels Codex as "2 accounts · pooled"
+
+  @backlog @mobile
+  Scenario: Usage is treated as out of date once a limit resets
+    Given the widget shows a Codex limit that resets in 3 minutes
+    When 3 minutes pass without the app being opened
+    Then the widget asks the user to open HAL-C2 to refresh instead of showing the old percentage
+
+  @backlog @mobile
+  Scenario: A failure anywhere outweighs a newer success in the activity summary
+    Given one agent failed and a newer one finished successfully and nothing else is active
+    Then the activity widget summarises the work as failed
+
+  @backlog @mobile
+  Scenario: Tapping the activity widget opens the thread that needs the user
+    Given the activity widget lists one agent working and one waiting for approval
+    When the user taps the widget outside any single agent
+    Then the thread waiting for approval is shown

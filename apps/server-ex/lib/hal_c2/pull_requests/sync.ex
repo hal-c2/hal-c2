@@ -1,8 +1,8 @@
 defmodule HalC2.PullRequests.Sync do
   @moduledoc """
   Keeps every thread link's host snapshot and native stack current
-  (`thread.pull-request-link.sync`), as the Node server's `PullRequestSyncReactor`
-  does, and links a stack's other layers to the thread with `source: "stack"`. A
+  (`thread.pull-request-link.sync`), and links a stack's other layers to the thread
+  with `source: "stack"`. A
   layer the user unlinked stays a tombstone and is never added again.
 
   A sweep a minute asks the host once per pull request however many threads link it,

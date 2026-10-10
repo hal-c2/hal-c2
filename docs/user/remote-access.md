@@ -1,7 +1,11 @@
 # Remote access
 
-Connect a phone, browser, or another desktop app to HAL-C2 running on a different
+Connect a phone, the terminal app, or another desktop app to HAL-C2 running on a different
 machine. That machine must stay running and reachable while you work.
+
+Commands marked `mix` run in a source checkout, in `apps/server-ex`, as `mise exec -- mix <task>`.
+The MC file you [install](./install.md#command-line) has `cluster` and `threads`
+commands of its own, shown below.
 
 ## HAL-C2 Connect
 
@@ -10,27 +14,24 @@ up router forwarding. It runs through a relay you host yourself; there is no
 public HAL-C2 relay. Deploy one as described in
 [HAL-C2 Connect setup](../operations/connect-setup.md), then point the server at it
 with `HAL_C2_RELAY_URL` (for example `https://relay.hal-c2.example`, a placeholder for
-your own domain) and set `HAL_C2_HOSTED_APP_URL` to the web app that completes
-sign-in for headless hosts (placeholder `https://app.hal-c2.example`).
+your own domain) and set `HAL_C2_HOSTED_APP_URL` to the hosted page that completes
+sign-in (placeholder `https://app.hal-c2.example`).
 
-In the desktop app on the host, open **Settings →
-Connections**, sign in, and enable **HAL-C2 Connect** for that environment.
-
-For a command-line host, run:
+On the host, run:
 
 ```bash
-hal-c2 connect
+mix hal_c2.connect
 ```
 
-Follow the sign-in instructions. Setup offers a
+Follow the sign-in instructions: the command opens the sign-in page in a browser on the
+host, and over SSH, or with `--headless`, prints a link and a short code. Open the link
+on any device, confirm the code matches, and approve. The command continues on its
+own, so you do not need to forward an OAuth callback port. Setup offers a
 [background service](./background-service.md); if you decline it, start the
-server with `hal-c2 serve`. Saving your sign-in alone does not make the machine
-reachable.
+MC yourself. Saving your sign-in alone does not make the machine reachable.
 
 On your other device, sign in to the same HAL-C2 Connect account and choose the
-environment. Over SSH, the CLI prints a browser link and a short code. Open the
-link on any device, confirm the code matches, and approve. The CLI continues on
-its own, so you do not need to forward an OAuth callback port.
+environment.
 
 HAL-C2 Connect renews access credentials when needed without disconnecting a healthy
 connection. Pull request diffs and provider settings keep working after the
@@ -41,28 +42,21 @@ disconnect an otherwise healthy conversation.
 
 Use direct pairing when the other device can reach the host's network address.
 
-On a desktop host, open **Settings → Connections**, enable **Network access**,
-then create a pairing link using an address the other device can reach. Changing
-network access restarts the desktop app. You can turn it off in the same place.
+An MC listens on its own loopback address only, so no other device reaches it until you
+tell it which address to listen on. Start the MC with `HAL_C2_MC_HOST` set to the host's LAN or
+tailnet address (`<private-ip>` below); `HAL_C2_MC_PORT` changes the port.
 
-For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
-address:
-
-```bash
-hal-c2 serve --host <private-ip>
-```
-
-If a server is already running, generate a fresh link without restarting it:
+Then create a pairing link. In the desktop app, open **Settings → Connections**, choose
+which machine the device pairs with, give the device a label, and choose **Create pairing
+link**. From the command line, run, with the address a device can reach:
 
 ```bash
-hal-c2 pair
+mix hal_c2.pair http://<private-ip>:<port>
 ```
 
-Scan the QR code on your phone or paste the pairing URL into **Add environment**
-in the receiving app. Connection settings are under **Settings → Connections**
-on web and desktop and **Settings → Environments** on mobile. A loopback address
-such as `127.0.0.1` reaches only the device opening the link, so Settings shows
-no QR code for one.
+Scan the QR code on your phone or paste the pairing URL into the receiving app's
+pairing field. A loopback address such as `127.0.0.1` reaches only the device opening
+the link, so Settings shows no QR code for one.
 
 When your machines are [clustered](#cluster-your-machines), **Settings →
 Connections** asks which machine the link is for. A phone reaches the whole
@@ -142,23 +136,16 @@ Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 
-Join both devices to the same tailnet. In the desktop app, enable **Tailscale
-HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
-
-To start a command-line server with Tailscale HTTPS:
-
-```bash
-hal-c2 serve --tailscale-serve
-```
-
-For an already-running server:
+Join both devices to the same tailnet. In the desktop app, choose **Create over
+Tailscale** next to **Create pairing link** in **Settings → Connections**. From the command
+line:
 
 ```bash
-hal-c2 pair --tailscale
+mix hal_c2.pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
-The mapping created by `pair --tailscale` persists across restarts. Remove its
+The mapping created for it persists across restarts. Remove its
 default-port mapping with:
 
 ```bash
@@ -166,62 +153,29 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `hal-c2 pair --help` for other pairing options.
-
-### Hosted web app
-
-A hosted copy of the web app (`app.hal-c2.example` stands in for wherever you host it)
-needs an HTTPS endpoint. It connects directly
-to your server; a hosted pairing link does not make an unreachable backend
-reachable or convert HTTP to HTTPS.
-
-For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
-open it, or pair from the desktop app. On mobile, an IP address entered without a
-scheme uses HTTP, so include `https://` when your server uses HTTPS.
-
-## Desktop-managed SSH
-
-In the desktop app, open **Settings → Connections → Add environment**, choose
-**SSH**, and enter a host or SSH alias such as `user@example.com`. HAL-C2 starts
-or reuses a server there and opens the port forward for you. Projects, provider
-credentials, and agent work stay on the remote machine.
-
-The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
-`tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
-The first launch downloads HAL-C2's server into its data directory on the host
-(`~/.local/share/hal-c2/runtime` unless the host sets `XDG_DATA_HOME`), so it
-takes longer than later ones.
-Provider CLIs must be on the `PATH` of a non-interactive login shell there;
-check with:
-
-```bash
-ssh user@example.com 'sh -lc "command -v claude codex"'
-```
-
-If SSH reconnecting fails after an app update, retry the launch once. Removing
-the connection stops a server that HAL-C2 launched; a server that was already
-running is left alone.
-
-For Antigravity's Google callback on a remote host, see
-[remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
+`--tailscale-serve-port`.
 
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
-pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `hal-c2 auth --help`.
+pairings; revoke a device's session to remove its existing access. From the
+command line:
+
+```bash
+mix hal_c2.auth session list
+mix hal_c2.auth session revoke <session-id>
+```
 
 A session with an open connection stays listed after its access credential
 expires.
 
-To remove an environment from HAL-C2 Connect, open your account menu's **HAL-C2 Connect**
-page, or **Settings → HAL-C2 Connect** on mobile, and choose **Deregister**. This
-revokes its cloud access and frees its host space even when the environment is
-offline or has been wiped.
+To remove an environment from HAL-C2 Connect, deregister it from your account on the
+hosted app. This revokes its cloud access and frees its host space even when the
+environment is offline or has been wiped.
 
-On a command-line host, `hal-c2 connect unlink` disables exposure while retaining
-your login; `hal-c2 connect logout` also clears that login. Background-service
+On the host, `mix hal_c2.connect unlink` disables exposure while retaining
+your login; `mix hal_c2.connect logout` also clears that login. Background-service
 [removal](./background-service.md#manage-the-service) is separate.
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in
@@ -229,34 +183,23 @@ screenshots, logs, or bug reports.
 
 ## HAL-C2 Connect troubleshooting
 
-Run `hal-c2 connect status` on the host to inspect saved authorization and link
+Run `mix hal_c2.connect status` on the host to inspect saved authorization and link
 configuration. It is not a live reachability check. If the environment appears
-offline, run `hal-c2 service status` and read the displayed log. If it disappears
+offline, run the MC file's `status` command and read the displayed log. If it disappears
 when SSH closes, see [background-service troubleshooting](./background-service.md#troubleshooting).
 
-| Error                                                     | Recovery                                                                                                                                                |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart HAL-C2 on the host.                                                                                      |
-| `auth_invalid` or `invalid_bearer`                        | Run `hal-c2 connect login`. If credentials were revoked, run `hal-c2 connect logout`, then `hal-c2 connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update HAL-C2, then restart it.                                                                                         |
-| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                           |
-| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                         |
+| Error                                                     | Recovery                                                                                                                                                        |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart HAL-C2 on the host.                                                                                              |
+| `auth_invalid` or `invalid_bearer`                        | Run `mix hal_c2.connect login`. If credentials were revoked, run `mix hal_c2.connect logout`, then `mix hal_c2.connect` again. Restart the MC after signing in. |
+| Expired or invalid link proof                             | Check the host's date and time, update HAL-C2, then restart it.                                                                                                 |
+| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                                   |
+| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                 |
 
-After fixing a permanent rejection, restart the host's server. On Linux, use
+After fixing a permanent rejection, restart the host's MC. On Linux, use
 `systemctl --user restart hal-c2.service` for the background service. For a
-foreground server, stop it and run `hal-c2 serve` again with your usual options.
+foreground MC, stop it and start it again with your usual options.
 Include the diagnostic message and trace ID when reporting a persistent failure.
 
 For a connection that still fails after linking, check the date and time on both
-devices. For server version warnings, follow [Updating HAL-C2](./updating.md).
-
-## Using the Desktop App as a Remote Only
-
-If a computer should only drive work running elsewhere, turn off its local environment. In the
-desktop app, open **Settings → Connections** and switch off **Local
-environment**. HAL-C2 restarts without a local server: no local agents or terminals run, WSL
-backends stay off, and other devices can no longer connect to this computer. Your projects,
-history, and saved connections are kept, and you keep working through pairing, HAL-C2 Connect, or SSH.
-
-Switch **Local environment** back on in the same place to restart with your previous local
-settings.
+devices. For version warnings, follow [Updating HAL-C2](./updating.md).

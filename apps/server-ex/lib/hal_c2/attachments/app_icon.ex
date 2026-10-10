@@ -1,8 +1,8 @@
 defmodule HalC2.Attachments.AppIcon do
   @moduledoc """
   The icon of an application on the host, for a work log entry that names one
-  (`native-app-icon` assets). The Node server asks macOS (Spotlight and the app
-  bundle); this MC reads the freedesktop entries a Linux host installs: the
+  (`native-app-icon` assets). This MC reads the freedesktop entries a Linux host
+  installs: the
   `applications/*.desktop` files under `$XDG_DATA_HOME` and `$XDG_DATA_DIRS`, and the
   icon their `Icon=` key names from the hicolor theme or `pixmaps`.
   """

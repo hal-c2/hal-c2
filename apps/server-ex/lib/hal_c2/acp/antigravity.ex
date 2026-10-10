@@ -88,7 +88,7 @@ defmodule HalC2.Acp.Antigravity do
 
   # --- platform and release -------------------------------------------------------
 
-  @doc "This host as Node names it: `{\"linux\" | \"darwin\" | \"win32\", \"x64\" | \"arm64\"}`."
+  @doc "This host's OS and CPU as `{\"linux\" | \"darwin\" | \"win32\", \"x64\" | \"arm64\"}`."
   def platform do
     Application.get_env(:hal_c2, :antigravity_platform) ||
       {os(), arch(to_string(:erlang.system_info(:system_architecture)))}

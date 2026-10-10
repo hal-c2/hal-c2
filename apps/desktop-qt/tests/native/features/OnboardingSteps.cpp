@@ -162,7 +162,7 @@ void checkAgents(World& world) {
   world.waitFor([&] {
     const QVariantList sections = onboarding(world).value(QStringLiteral("agents")).toList();
     if (sections.isEmpty()) return false;
-    // An agent the MC does not report stays "checking", as on the web.
+    // An agent the MC does not report stays "checking".
     for (const QVariant& entry : sections.first().toMap().value(QStringLiteral("cards")).toList()) {
       if (entry.toMap().value(QStringLiteral("state")) != QLatin1String("checking")) return true;
     }

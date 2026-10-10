@@ -1,7 +1,7 @@
 defmodule HalC2.ProjectFavicon do
   @moduledoc """
-  The icon file a project shows, as the Node server's `ProjectFaviconResolver`
-  finds it: the project's saved `faviconPath`, then the checkout's hal-c2.json
+  The icon file a project shows, found in this order: the project's saved
+  `faviconPath`, then the checkout's hal-c2.json
   `iconPath`, then well-known favicon locations, then an icon an HTML or root
   route source links to. Paths other than the saved one stay inside the checkout.
   """

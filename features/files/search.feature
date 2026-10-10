@@ -1,7 +1,10 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/workspace.ex (search_entries, rank, search_contents)
 #   apps/web/src/components/search/ProjectContentSearchDialog.tsx
+#   apps/server/src/workspace/WorkspaceSearchIndex.ts (content time budget, per-file cap, whole words, ranges)
+#   apps/server/src/workspace/WorkspaceEntries.test.ts (typo-resistant file search)
 #   apps/web/src/components/files/ProjectFilePicker.tsx
+#   apps/web/src/components/files/ProjectFilePicker.logic.ts (limit, highlighted characters)
 #   apps/web/src/components/CommandPalette.tsx (Go to file, Search project contents)
 #   apps/tui/src/features.backlog.test.ts (file mentions)
 #   packages/contracts/src/filesystem.ts (ProjectSearchEntriesInput, ProjectSearchContentsInput)
@@ -29,6 +32,13 @@ Feature: Searching project files
       When a client searches "shop" for files named "sct"
       Then "src/cart.ts" is returned
 
+    # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (supports typo-resistant file search through fff)
+    @mc @backlog
+    Scenario: A name typed with two letters swapped still finds the file
+      Given "shop" holds "src/components/Composer.tsx"
+      When a client searches "shop" for files named "compoesr"
+      Then "src/components/Composer.tsx" is returned
+
     @mc
     Scenario Outline: A leading mention or relative prefix is ignored
       When a client searches "shop" for files named "<query>"
@@ -48,6 +58,21 @@ Feature: Searching project files
         | kind        | query | returned           |
         | folders     | src   | "src"              |
         | image files | logo  | "assets/logo.png"  |
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches before applying the result limit)
+    @mc @backlog
+    Scenario: A search for image files drops everything else before it applies the limit
+      Given "shop" holds 300 files named like "logo" and only 3 of them are images
+      When a client searches "shop" for image files named "logo" with a limit of 50
+      Then the 3 images are returned
+      And the result is not marked as truncated
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches ... kind directory)
+    @mc @backlog
+    Scenario: Asking for folders and image files at once returns image files
+      Given "shop" holds "public/icon.svg" and the folder "public"
+      When a client searches "shop" for image files and folders with an empty query
+      Then only "public/icon.svg" is returned
 
     @mc
     Scenario: A search returns a limited number of matches and says there are more
@@ -74,6 +99,32 @@ Feature: Searching project files
     Scenario: The file picker says when nothing matches
       When the user goes to a file and types "zzz"
       Then the user is told no files match
+
+    @backlog @desktop @mobile
+    Scenario Outline: The file picker says when it is still working or has nothing to list
+      Given <state>
+      When the user goes to a file
+      Then the picker says "<message>"
+
+      Examples:
+        | state                                   | message                    |
+        | the project's files are still indexing  | Indexing workspace files…  |
+        | a search is still running               | Searching workspace files… |
+        | the project has no files                | No files found.            |
+
+    @backlog @desktop
+    Scenario: The picker lists only files, in the order the environment ranked them
+      Given the environment ranks "src/cart.ts" above "src/cart/index.ts" for "cart"
+      When the user goes to a file and types "cart"
+      Then only files are listed, folders are left out
+      And "src/cart.ts" is listed before "src/cart/index.ts"
+      And the characters that matched are highlighted in each path
+
+    @backlog @desktop
+    Scenario: The picker lists at most 200 files
+      Given 500 files match "a"
+      When the user goes to a file and types "a"
+      Then 200 files are listed
 
   Rule: Finding text across files
 
@@ -116,6 +167,54 @@ Feature: Searching project files
       When a client searches the contents of "shop" for "total"
       Then "logs/huge.log" is not returned
 
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (CONTENT_SEARCH_TIME_BUDGET_MS)
+    @mc @backlog
+    Scenario: A content search that runs out of its short time budget returns what it has
+      Given "shop" is so large that a content search cannot read every file in a quarter of a second
+      When a client searches the contents of "shop" for "total"
+      Then the matches found so far are returned
+      And the result is marked as truncated
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
+    @mc @backlog
+    Scenario: One file with a very large number of matches does not fill the whole result
+      Given "logs/trace.log" in "shop" contains "total" on 1,000 lines
+      And "src/cart.ts" contains "total" once
+      When a client searches the contents of "shop" for "total" with a limit of 200
+      Then no more than 100 matches come from "logs/trace.log"
+      And "src/cart.ts" is returned
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (isWholeWordRange, mapContentMatchRanges)
+    @mc @backlog
+    Scenario Outline: Whole-word search treats punctuation and accented letters like a word processor
+      Given "src/cart.ts" contains the line "<line>"
+      When a client searches the contents of "shop" for "<query>" matching whole words
+      Then the line <result>
+
+      Examples:
+        | line                | query | result          |
+        | total, subtotal     | total | is returned     |
+        | subtotal only       | total | is not returned |
+        | (total)             | (total) | is returned   |
+        | écran total écrans  | écran | is returned     |
+        | écrans only         | écran | is not returned |
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (mapContentMatchRanges: byte offsets to characters)
+    @mc @backlog
+    Scenario: The match range counts characters even when the line has wide characters before it
+      Given "src/cart.ts" contains the line "日本語 total"
+      When a client searches the contents of "shop" for "total"
+      Then the match range starts at character 4 of the line
+
+    # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (buildContentSearchQuery)
+    @mc @backlog
+    Scenario: A regular expression search is case-insensitive unless the user asked to match case
+      Given "src/cart.ts" contains the line "const Total = 1"
+      When a client searches the contents of "shop" for "T.tal" as a regular expression
+      Then the line is returned
+      When a client searches the contents of "shop" for "t.tal" as a regular expression matching case
+      Then the line is not returned
+
     @desktop
     Scenario: Content search groups matches by file and opens a match at its line
       When the user searches the project contents for "total"
@@ -127,6 +226,29 @@ Feature: Searching project files
     Scenario: The result count summarises matches and files
       When the user searches the project contents for "cart"
       Then the user sees how many results were found in how many files
+
+    @backlog @desktop
+    Scenario: A long list of content matches is shown a part at a time
+      Given the search for "item" has 450 matches
+      When the user looks at the results
+      Then the first 100 matches are shown
+      When the user scrolls to the end of the shown matches
+      Then the next matches are added below
+      And the result count still says 450 results
+
+    @backlog @desktop
+    Scenario: The keyboard can move past the matches shown so far
+      Given the search for "item" has 450 matches and 100 are shown
+      When the user moves down to the 101st match with the keyboard
+      Then the 101st match is shown and highlighted
+
+    @backlog @desktop
+    Scenario: Enter does not open a match from the previous search
+      Given the user searched the project contents for "total" and sees its matches
+      When the user changes the query to "cart" and presses Enter before its matches arrive
+      Then no match is opened
+      When the matches for "cart" arrive and the user presses Enter
+      Then the highlighted match for "cart" opens at its line
 
     @desktop
     Scenario Outline: Content search explains empty and invalid states

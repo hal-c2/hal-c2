@@ -1,8 +1,7 @@
 defmodule HalC2.TextGeneration.Prompts do
   @moduledoc """
-  The prompts `HalC2.TextGeneration` sends, worded exactly as the Node server's
-  `TextGenerationPrompts.ts` builds them, and the thread context a regenerated
-  title reads (`ThreadTitleContext.ts`).
+  The prompts `HalC2.TextGeneration` sends, and the thread context a regenerated
+  title reads.
 
   A policy (`HalC2.TextGeneration.Style`) adds its instructions to commit and change
   request prompts; attachments are described by name, type, and size.

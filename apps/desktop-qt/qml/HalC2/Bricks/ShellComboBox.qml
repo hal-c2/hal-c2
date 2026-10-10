@@ -5,11 +5,11 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// A select in the web app's clothes: the composer's ghost pickers by default
+// A select: the composer's ghost pickers by default
 // (icon, muted label, chevron), `outline: true` for a bordered field.
-// The popup marks the current value (a quiet fill and a check, the web's
-// `data-selected`) and the row the keyboard is on (`highlighted`, the hover
-// fill); `markCurrent: false` leaves the current value unmarked.
+// The popup marks the current value (a quiet fill and a check) and the row
+// the keyboard is on (`highlighted`, the hover fill); `markCurrent: false`
+// leaves the current value unmarked.
 // `disabledRows` greys out the rows at those indexes in the popup; keys can still
 // reach them, so `onActivated` should refuse them too.
 ComboBox {

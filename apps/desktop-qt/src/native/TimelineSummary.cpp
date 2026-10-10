@@ -17,7 +17,7 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
-// packages/shared/src/halC2McpToolPresentation.ts: the orchestration tools a
+// The orchestration tools a
 // summary describes by what they did. The rest of HAL-C2's tools are counted
 // as tools used.
 const QHash<QString, QString>& orchestrationActions() {
@@ -52,7 +52,7 @@ QString orchestrationAction(const QString& toolName) {
 }
 
 // An MCP result as the provider adapters keep it: the data it carries and
-// whether it reports an error (halC2ToolSummary.ts readResult).
+// whether it reports an error.
 struct Result {
   QJsonObject data;
   bool failed = false;

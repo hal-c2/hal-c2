@@ -7,7 +7,7 @@
 #include <QStringList>
 
 // The provider drivers a user can add an instance of, with the settings each
-// one's form shows: the web's DRIVER_OPTIONS (providerDriverMeta.ts) and the
+// one's form shows: the driver options and the
 // `providerSettingsForm` annotations of packages/contracts settings.ts, whose
 // order and wording these follow. Keep them in step when a driver's settings
 // change there.
@@ -37,7 +37,7 @@ struct Variable {
 };
 
 // A custom model option the driver reads, and its usual choices
-// (customModelEditor.logic.ts DESCRIPTOR_PRESETS_BY_KIND).
+// (descriptor presets by kind).
 struct Option {
   QString id;
   QString label;

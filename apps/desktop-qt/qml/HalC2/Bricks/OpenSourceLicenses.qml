@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Open source licenses, natively (the web's OpenSourceLicenses):
+// Settings → Open source licenses:
 // the third-party notices LicensesController reads from the manifest shipped
 // beside the app, searchable, each opening to its full text
 // (features/settings/licenses.feature). A list, not a SettingsPage: there are

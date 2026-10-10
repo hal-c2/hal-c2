@@ -1,7 +1,6 @@
 defmodule HalC2.Projection.PullRequests do
   @moduledoc """
-  A thread's pull request links, ported from the parts of the Node server's
-  `threadPullRequests.ts` and `changeRequestUrl.ts` the shell needs.
+  A thread's pull request links, as far as the shell needs them.
 
   Older thread payloads stored a single `linkedPullRequest`; `of/1` turns it into a
   one-element link list. An explicit `pullRequests` array, even an empty one, wins.
@@ -89,7 +88,7 @@ defmodule HalC2.Projection.PullRequests do
     end
   end
 
-  @doc "The link key of a legacy `ThreadLinkedPullRequest` (`legacyThreadPullRequestKey`)."
+  @doc "The link key of a `linkedPullRequest` from a payload older than `pullRequests`."
   @spec legacy_key(map) :: map
   # Legacy Azure selectors omit the organization and project; recover them from the URL.
   def legacy_key(linked) do

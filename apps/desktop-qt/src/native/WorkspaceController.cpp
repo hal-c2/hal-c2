@@ -75,14 +75,13 @@ QVariant nullable(const std::optional<QString>& value) {
   return value ? QVariant(*value) : QVariant::fromValue(nullptr);
 }
 
-// packages/shared sanitizeNewRefName: trimmed, whitespace runs as "-".
+// A new ref's name: trimmed, whitespace runs as "-".
 QString refName(const QString& raw) {
   static const QRegularExpression spaces(QStringLiteral("\\s+"));
   return raw.trimmed().replace(spaces, QStringLiteral("-"));
 }
 
-// packages/shared deriveLocalBranchNameFromRemoteRef: "origin/feature/x" is
-// "feature/x".
+// The local branch of a remote ref: "origin/feature/x" is "feature/x".
 QString localBranchOf(const QString& remoteRef) {
   const qsizetype slash = remoteRef.indexOf(QLatin1Char('/'));
   if (slash <= 0 || slash == remoteRef.size() - 1) return remoteRef;
@@ -124,7 +123,7 @@ void WorkspaceController::activate() {
     // The environment's default actions reach every project without its own.
     connect(settings, &SettingsController::settingsChanged, this, &WorkspaceController::refresh);
   }
-  // The web's OpenInPicker shortcut: the route's folder in the preferred editor.
+  // The Open in shortcut: the route's folder in the preferred editor.
   if (auto* keys = shell->controller<KeybindingController>()) {
     const QString openFavorite = QStringLiteral("editor.openFavorite");
     keys->commands()->add(openFavorite, keybindings::commandLabel(openFavorite), [this] { openInEditor({}); });
@@ -141,10 +140,10 @@ void WorkspaceController::setDraftResolver(std::function<std::optional<DraftPlac
   refresh();
 }
 
-// client-runtime startThreadTurn's bootstrap, from the checkout the header
+// The bootstrap of a thread's first turn, from the checkout the header
 // shows: a new worktree off the picked (else current) branch, the worktree
 // picked, or the project folder. A folder that is not a repository always
-// starts in the folder, as the web's send mode.
+// starts in the folder.
 WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) const {
   Launch launch;
   const std::optional<DraftPlace> draft = m_resolveDraft ? m_resolveDraft(draftId) : std::nullopt;
@@ -423,8 +422,7 @@ void WorkspaceController::loadMoreRefs() {
                  });
 }
 
-// The web's resolveLiveThreadBranchUpdate, for a thread that was on the
-// checkout's branch: a thread deliberately on another branch is left alone,
+// For a thread that was on the checkout's branch: a thread deliberately on another branch is left alone,
 // as is a worktree's temporary branch.
 void WorkspaceController::followCheckout(const QString& previousRef, const QString& ref) {
   if (!m_place || !m_place->draftId.isEmpty() || m_switching) return;
@@ -750,7 +748,7 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
   } else if (action == QLatin1String("workspace.branch.more")) {
     loadMoreRefs();
   } else if (action == QLatin1String("workspace.branch.copy")) {
-    // The branch the header names (the web's "Copy branch name").
+    // The branch the header names ("Copy branch name").
     const QString branch = build().value(QStringLiteral("branch")).toString();
     if (!branch.isEmpty()) {
       NativeShell::of(this)->controller<ThreadMenuController>()->copy(branch, QStringLiteral("Branch name copied"),
@@ -827,7 +825,7 @@ bool WorkspaceController::openInEditor(const QString& editorId, const QString& p
   return true;
 }
 
-// The web's openChangedFileInEditor (GitActionsControl.tsx).
+// Opens a changed file in the preferred editor.
 void WorkspaceController::openFileInEditor(const QString& path) {
   if (!m_place || path.isEmpty()) return;
   const QString cwd = m_place->cwd();

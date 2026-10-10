@@ -11,10 +11,14 @@
 #   apps/web/src/components/settings/AddProviderInstanceDialog.tsx, apps/web/src/components/settings/AddProviderInstanceWizardSteps.tsx
 #   apps/web/src/components/settings/ProviderAccentColorPicker.tsx, apps/web/src/components/settings/providerDriverMeta.ts
 #   apps/web/src/components/settings/providerStatus.ts
+#   apps/server/src/provider/providerStatusCache.ts (last known status, built-in ordering)
+#   apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts, apps/server/src/provider/Layers/ProviderInstanceRegistryHydration.ts
+#   apps/server/src/provider/Layers/ProviderRegistry.ts, apps/server/src/provider/makeManagedServerProvider.ts
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability)
 #   packages/contracts/src/settings.ts (provider instance settings, environment variables, binaryPath)
 #   packages/contracts/src/rpc.ts (server.refreshProviders)
 #   apps/desktop-qt/src/native/ProviderSettingsInstances.cpp (rename, accent), ComposerModel.cpp (the picker's name and colour)
+#   packages/client-runtime/src/state/providerInstanceDisplay.ts (name from id, initials, accent, account badge)
 
 @mc
 Feature: Provider instances
@@ -86,6 +90,78 @@ Feature: Provider instances
     When the user clears the accent colour
     Then the instance uses the default colour
 
+  # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx
+  @backlog @desktop
+  Scenario Outline: A typed accent colour is taken only as a complete hex value
+    Given the instance "claudeAgent_work" has a green accent
+    When the user types "<typed>" as its accent colour
+    Then the accent colour <result>
+
+    Examples:
+      | typed   | result                 |
+      | #22c5   | stays green            |
+      | 22c55e  | stays green            |
+      | #22C55E | becomes #22c55e        |
+
+  # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx (FALLBACK_ACCENT_COLOR)
+  @backlog @desktop
+  Scenario: The accent chooser starts from a blue when the instance has none
+    Given the instance "claudeAgent_work" has no accent colour
+    When the user opens its accent colour chooser
+    Then the chooser starts from blue
+    And there is no way to clear a colour until one has been picked
+
+  # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (resolveProviderInstanceDisplayName)
+  @backlog @desktop @mobile
+  Scenario Outline: An instance is named by what the MC calls it, or else by its id
+    Given the instance "<id>" which the MC <naming>
+    When the user sees the instance in a picker, a thread row or the settings
+    Then it is shown as "<shown>"
+
+    Examples:
+      | id               | naming                                     | shown              |
+      | claudeAgent_work | names "Work Claude"                        | Work Claude        |
+      | codex_personal   | names only with the driver's own label     | Codex Personal     |
+      | myCustomInstance | does not name                              | My Custom Instance |
+      | codex            | names only with the driver's own label     | Codex              |
+
+  # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, shouldShowInstanceBadge)
+  @backlog @desktop @mobile
+  Scenario Outline: An instance's icon carries a badge only where the brand alone would be ambiguous
+    Given <situation>
+    When the user sees the icon of the instance
+    Then the icon <badge>
+
+    Examples:
+      | situation                                                                  | badge                       |
+      | "Codex" is the only instance of its provider and has no accent colour       | has no badge                |
+      | "Codex" and "Codex Work" are both instances of the same provider            | has a badge with initials   |
+      | "Codex" is the only instance of its provider and has an accent colour       | has a badge with initials   |
+      | two agents from the ACP registry that are different agents                  | have no badge               |
+      | two instances of the same agent from the ACP registry                       | have a badge with initials  |
+
+  # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, normalizeProviderAccentColor)
+  @backlog @desktop @mobile
+  Scenario Outline: A badge shows up to two initials of the instance's name
+    Given the instance is shown as "<name>"
+    When the user sees its badge
+    Then the badge reads "<initials>"
+
+    Examples:
+      | name           | initials |
+      | Work Claude    | WC       |
+      | Personal       | PE       |
+      | codex_work     | CW       |
+      | Claude Code CLI | CC      |
+      | 🙂 Smile       | 🙂S      |
+
+  # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (normalizeProviderAccentColor)
+  @backlog @desktop @mobile
+  Scenario: A stored accent colour that is not a complete hex value is ignored
+    Given the settings give the instance "claudeAgent_work" the accent "green"
+    When the user sees the instance in a picker or a thread row
+    Then it is shown in its default colour
+
   Scenario: Deleting a custom instance removes it
     Given the custom instance "claudeAgent_work"
     When the user deletes it
@@ -102,6 +178,47 @@ Feature: Provider instances
     When the user opens the provider list
     Then "acme_work" is listed as unavailable with its configuration preserved
     And sending a message on "acme_work" is refused with a clear error
+
+  # ProviderInstanceRegistryLive.ts and ProviderInstanceRegistryHydration.ts
+  @backlog
+  Scenario: An instance whose configuration is invalid is unavailable and says why
+    Given the settings contain a Codex instance "codex_work" whose configuration is not valid
+    When the user opens the provider list
+    Then "codex_work" is listed as unavailable with the reason that its configuration is invalid
+    And the other instances work as before
+
+  @backlog
+  Scenario: An instance that fails to start is unavailable and says why
+    Given a provider instance whose driver fails while it starts
+    When the user opens the provider list
+    Then the instance is listed as unavailable with the driver's failure
+    And the other instances work as before
+
+  @backlog
+  Scenario: Settings from before instances still give each built-in provider an instance
+    Given the settings have a Codex entry in the older per-provider shape and no Codex instance
+    When the MC starts
+    Then Codex is listed as an instance with those settings
+
+  @backlog
+  Scenario: An instance entry wins over the older per-provider settings
+    Given the settings have both an older Codex entry and a Codex instance with other settings
+    When the MC starts
+    Then Codex uses the instance's settings
+
+  @backlog
+  Scenario: A settings change reaches the provider list without restarting the MC
+    Given the user has the provider list open
+    When the user adds a provider instance in settings
+    Then the new instance appears in the provider list
+    And instances the change did not touch keep running
+
+  @backlog
+  Scenario: A settings change that cannot be applied leaves the other instances working
+    Given the user has the provider list open
+    When settings are saved that one instance cannot start with
+    Then that instance is listed as unavailable
+    And later settings changes are still applied
 
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
@@ -164,6 +281,94 @@ Feature: Provider instances
       | signed out                   | Not authenticated         |
       | failing its startup checks   | Unavailable               |
       | signed in                    | Authenticated             |
+
+  @backlog @desktop
+  Scenario Outline: A provider that works but cannot be fully verified says so
+    Given a provider that is <state>
+    When the user opens the provider list
+    Then the provider reads "<headline>"
+
+    Examples:
+      | state                                              | headline         |
+      | installed but not fully verified                   | Needs attention  |
+      | ready with no way to tell whether it is signed in  | Available        |
+
+  @backlog @desktop
+  Scenario: The sign-in plan is named beside the status
+    Given Codex is signed in on the "Pro" plan
+    When the user opens the provider list
+    Then Codex reads "Authenticated · Pro"
+
+  @backlog @desktop
+  Scenario Outline: A provider without its own message gets a plain explanation
+    Given a provider that is <state> and gave no message
+    When the user opens the provider instance
+    Then it explains "<detail>"
+
+    Examples:
+      | state                      | detail                                                                 |
+      | not checked yet            | Waiting for the server to report installation and authentication details. |
+      | disabled                   | This provider is installed but disabled for new sessions in HAL-C2.    |
+      | not installed              | CLI not detected on PATH.                                              |
+      | failing its startup checks | The provider failed its startup checks.                                |
+
+  @backlog @desktop
+  Scenario: A problem is not hidden behind an earlier sign-in
+    Given Codex was signed in and its latest check failed with "Network unreachable"
+    When the user opens the provider list
+    Then Codex reads "Unavailable" with "Network unreachable"
+    And it is not shown as authenticated
+
+  @backlog @desktop
+  Scenario: A provider the user just turned off reads as disabled at once
+    Given Codex reports as ready and the user turns it off
+    When the settings change is saved but the provider has not been checked again
+    Then Codex reads "Disabled"
+
+  # The Node server persists each instance's last status under its instance id and sorts
+  # built-in providers first (providerStatusCache.ts hydrateCachedProvider, orderProviderSnapshots).
+  @backlog
+  Scenario: Providers are listed in a stable order
+    Given Codex, Claude, Cursor, Grok, OpenCode, Antigravity and a custom "acme" instance are configured
+    When a client lists the providers
+    Then they are listed in that order
+    And a second instance of one provider follows the first by name
+
+  @backlog
+  Scenario: A restarted MC lists the last known status before it checks again
+    Given Codex was checked, found installed and signed in, and the MC then restarted
+    When a client lists the providers before the first new check finishes
+    Then Codex is listed with its last known version, status and sign-in
+    And it is checked again in the background
+
+  @backlog
+  Scenario: A last known status is not trusted for a provider that changed
+    Given Codex was last checked while enabled
+    And Codex is now disabled
+    When the MC restarts and a client lists the providers
+    Then Codex is listed as disabled and not with its old status
+
+  @backlog
+  Scenario: Another instance's last known status is not used
+    Given the last known status was recorded for "codex_work"
+    And "codex_work" now belongs to a different provider
+    When the MC restarts and a client lists the providers
+    Then "codex_work" is not listed with that status
+
+  @backlog
+  Scenario: A last known model list keeps what is still configured
+    Given Codex's last known models included a custom model the user has since removed
+    And a built-in model it has not reported again
+    When the MC restarts and a client lists the providers
+    Then the removed custom model is not listed
+    And the built-in model is still listed
+
+  @backlog
+  Scenario: A damaged last known status is ignored
+    Given the last known status of Codex cannot be read
+    When the MC restarts and a client lists the providers
+    Then Codex is listed as not checked yet
+    And it is checked again in the background
 
   Scenario Outline: A custom binary path runs that executable
     Given the <provider> instance has the binary path "<path>"

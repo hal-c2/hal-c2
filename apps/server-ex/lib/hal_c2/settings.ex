@@ -43,7 +43,7 @@ defmodule HalC2.Settings do
 
   @doc """
   The settings as they apply to one project: its `projectSettingsOverrides` entry
-  over the environment's values, as the Node server resolves them. A model
+  over the environment's values. A model
   override on a disabled provider falls back to the environment's.
   """
   def for_project(project_id), do: resolve(settings(), project_id)

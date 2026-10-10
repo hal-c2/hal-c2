@@ -5,7 +5,7 @@ defmodule HalC2.Acp.Sessions do
   agent in the project's root (`HalC2.Acp.with_agent/3`), makes one call, and stops it.
 
   Importing a session creates a thread whose provider thread points at the session,
-  as the Node server does, so the first message resumes or loads it; the history
+  so the first message resumes or loads it; the history
   stays with the agent. The thread id derives from the instance and session id, so
   importing twice finds the same thread.
   """
@@ -225,7 +225,7 @@ defmodule HalC2.Acp.Sessions do
 
   # --- helpers ---------------------------------------------------------------------
 
-  @doc "The thread an imported session becomes, as the Node server derives it."
+  @doc "The thread an imported session becomes."
   def thread_id(instance, session_id) do
     parts = [
       "provider",

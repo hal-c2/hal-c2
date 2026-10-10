@@ -1,8 +1,7 @@
 defmodule HalC2.ProviderUsageLimits.Acp do
   @moduledoc """
   Subscription quota of the ACP agents whose vendors publish it, read from the
-  account the agent's CLI is signed in to, as the Node server's readers do
-  (`grokUsageLimits.ts`, `cursorUsageLimits.ts`, `openCodeUsageLimits.ts`):
+  account the agent's CLI is signed in to:
 
     * Grok: the billing period's credit use, from the grok.com sign-in in
       `$GROK_HOME/auth.json`;

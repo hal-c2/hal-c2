@@ -20,7 +20,7 @@ type ProviderCapabilities = {
 };
 ```
 
-Capabilities should be versioned and emitted by each adapter at session start.
+Capabilities should be versioned and emitted by each runtime at session start.
 
 ## Session Capabilities
 
@@ -39,7 +39,7 @@ Policy examples:
 - If model switching is unsupported, start a new provider session.
 - If pending requests do not survive restart, mark old requests `not_resumable`.
 
-Provider-thread resumption is not a capability. It is a required adapter primitive. Adapters must be able to start from a stored provider cursor/session/thread handle or return a runtime resume failure.
+Provider-thread resumption is not a capability. It is a required runtime primitive. Runtimes must be able to start from a stored provider cursor/session/thread handle or return a runtime resume failure.
 
 ## Thread Capabilities
 
@@ -72,7 +72,7 @@ type TurnCapabilities = {
 };
 ```
 
-If `terminalStatusQuality` is weak, V2 should use adapter policy to infer terminal state, but still mark correlation strength accordingly.
+If `terminalStatusQuality` is weak, V2 should use runtime policy to infer terminal state, but still mark correlation strength accordingly.
 
 `supportsActiveSteering` means the provider can modify an in-flight turn directly. `supportsSteeringByInterruptRestart` means V2 can implement app-level steering by interrupting the active turn and starting a replacement attempt. Most providers should support the latter if they support interruption and normal follow-up turns.
 
@@ -103,7 +103,7 @@ type ToolCapabilities = {
 };
 ```
 
-Weak providers may produce only textual tool summaries. The adapter can still create ordered `turnItems` and execution nodes by scoped ordinal.
+Weak providers may produce only textual tool summaries. The runtime can still create ordered `turnItems` and execution nodes by scoped ordinal.
 
 ## Approval Capabilities
 
@@ -247,29 +247,21 @@ plan_updated unsupported
 
 The UI should not hide unsupported behavior behind provider-specific errors. It should receive typed capability results.
 
-## Adapter Contract
+## Runtime Contract
 
-Each provider adapter should expose:
+Each provider runtime (`HalC2.Codex`, `Claude`, `Pi`, `Acp`) is a per-thread process that exposes the same small surface to `HalC2.Orchestration`, mirrored by the provider plugin behaviour in [`HalC2.Plugins.Kinds`](../../apps/server-ex/lib/hal_c2/plugins/kinds.ex):
 
-```ts
-type ProviderAdapter = {
-  getCapabilities(): ProviderCapabilities;
-  startSession(input): ProviderSession;
-  ensureProviderThread(input): ProviderThread;
-  sendRun(input): ProviderTurnStartResult;
-  steerRun?(input): void;
-  interrupt(input): void;
-  respondToRequest(input): void;
-  readThreadSnapshot?(input): ProviderThreadSnapshot;
-  rollbackThread?(input): ProviderThreadSnapshot | void;
-  forkThread?(input): ProviderThread;
-  streamEvents(): Stream<ProviderAdapterEvent>;
-};
+```elixir
+start_turn(thread_id, turn)             # also starts or resumes the provider thread, or forks it
+interrupt(thread_id, run_id)
+steer(thread_id, run_id, message)       # only when the provider can steer
+respond(thread_id, request_id, response)
+rollback(thread_id, plan)               # only when the provider can roll back
 ```
 
-Optional methods are guarded by capabilities. The orchestration layer should not call optional methods without checking capability or going through a policy wrapper.
+Optional operations are guarded by capabilities. The orchestration layer should not call them without checking capability or going through a policy wrapper.
 
-Raw provider frames should be logged by the provider transport/runtime as bounded diagnostics. Adapter streams should expose normalized provider events that the V2 normalizer can turn into app orchestration events.
+Raw provider frames are logged by the runtime as bounded diagnostics ([`HalC2.ProviderLog`](../../apps/server-ex/lib/hal_c2/provider_log.ex)). The runtime normalizes provider events and writes them as orchestration entities through [`TurnWriter`](../../apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex).
 
 ## Capability-Driven UI
 

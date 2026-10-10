@@ -1,7 +1,7 @@
 defmodule HalC2.Environment.Machine do
   @moduledoc """
-  The host's hardware shape for the environment icon (`platform.machine`), as the
-  Node server detects it: Apple product names on macOS, DMI on Linux. Every probe
+  The host's hardware shape for the environment icon (`platform.machine`): Apple
+  product names on macOS, DMI on Linux. Every probe
   may fail; `nil` means no signal, and clients draw a generic server until the
   user picks an icon. Detected once per MC.
   """

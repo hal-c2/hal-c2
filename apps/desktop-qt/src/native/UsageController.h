@@ -19,11 +19,10 @@ class ShellStore;
 
 // The usage page, which the shell owns (the route `usage`): token use and
 // estimated cost from each environment's session history, and how much of each
-// provider's rate limits is left (the web's UsagePage).
+// provider's rate limits is left.
 //
 // Usage: every chosen environment is asked for `server.getUsageSummary` over
-// the window, and the answers merge as packages/shared usageMerge.ts merges
-// them: the newest read owns a transcript directory several environments share,
+// the window, and the answers merge: the newest read owns a transcript directory several environments share,
 // an environment keeps only the providers whose directories it owns, and one on
 // an older contract is left out and named. An environment still scanning does
 // not hold back the others.

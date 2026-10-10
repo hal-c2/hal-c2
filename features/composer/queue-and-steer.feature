@@ -242,3 +242,90 @@ Feature: Follow-ups while the agent is working
     And the user switches to thread B and back to thread A
     Then the composer holds "unrelated draft" again
     And the queued message still reads "fix typo"
+
+  @backlog @desktop
+  Scenario Outline: The send control says what sending will do
+    Given the draft reads "tweak"
+    And <situation>
+    Then the send control is named "<name>"
+
+    Examples:
+      | situation                                                   | name                  |
+      | the running turn has finished                               | Submit message        |
+      | a turn is running and the follow-up behaviour is "steer"    | Steer message         |
+      | a turn is running and the follow-up behaviour is "queue"    | Queue message         |
+      | the user is editing a queued message                        | Update queued message |
+
+  @backlog @desktop
+  Scenario: The send control says how to send the other way
+    Given the follow-up behaviour setting is "queue"
+    And the draft reads "tweak"
+    When the user rests on the send control
+    Then the user reads that a click queues and a Ctrl or Cmd click steers
+    When the user holds Ctrl or Cmd
+    Then the send control is named "Steer message"
+
+  @backlog @desktop
+  Scenario Outline: A send control that cannot be used says why
+    Given the draft reads "tweak"
+    And <situation>
+    Then the send control cannot be used and says "<reason>"
+
+    Examples:
+      | situation                                      | reason                   |
+      | the environment is disconnected                | Environment disconnected |
+      | the environment is still connecting            | Connecting               |
+      | the thread's worktree is still being prepared  | Preparing worktree       |
+      | the message is on its way to the MC            | Submitting message       |
+      | a queued message's edit is being saved         | Updating queued message  |
+
+  @backlog @desktop
+  Scenario: A running turn with nothing to send offers only Stop
+    Given the composer is empty
+    Then the send control is replaced by a control that stops the turn
+    When the user types "tweak"
+    Then the send control is back
+
+  @backlog @desktop
+  Scenario: The queue can be folded away and says how much it holds
+    Given "a" and "b" are queued
+    Then the queue is headed "Queued" with the count 2
+    When the user folds the queue away
+    Then "a" and "b" are hidden and the count is still shown
+
+  @backlog @desktop
+  Scenario: A queued message is listed before the MC confirms it
+    Given the MC has not yet confirmed a message the user queued
+    Then the message is listed in the queue as being saved
+    And it cannot be edited, reordered, steered or removed until the MC confirms it
+
+  @backlog @desktop
+  Scenario: A queued message is moved with the arrow keys
+    Given "a", "b" and "c" are queued in that order
+    When the user focuses the handle of "c" and presses Up twice
+    Then the queue order is "c", "a", "b"
+
+  @backlog @desktop
+  Scenario: A queued message cannot steer when no turn is running
+    Given the queue is held after a restart and the turn is no longer running
+    When the user looks at a queued message
+    Then steering it is unavailable and says "There is no active run to steer"
+
+  @backlog @desktop
+  Scenario: One queue action at a time
+    Given "a" and "b" are queued
+    When the user removes "a" and the MC has not answered yet
+    Then "b" cannot be edited, steered or removed until it has
+
+  @backlog @desktop
+  Scenario: A queued message being edited is marked in the queue
+    Given "fix typo" is queued with an image
+    When the user starts editing it in the composer
+    Then the queue marks "fix typo" as being edited and offers to cancel the edit
+    And the composer shows the message's image, which the user can remove
+
+  @backlog @desktop
+  Scenario: A held queue says its messages are safe
+    Given "later" was queued when the MC restarted
+    When the MC comes back
+    Then the queue is headed "Queue held after restart" and says "Messages stay saved until you resume."

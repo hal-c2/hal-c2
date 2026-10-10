@@ -1,77 +1,38 @@
 # Server updates
 
-A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
-selected by systemd or launchd. It is the only runtime writer of durable service
-state. Server children request updates over inherited IPC; they never rewrite
-their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
-processes do not self-update.
+An MC moves to another version through [`HalC2.Upgrade`](../../apps/server-ex/lib/hal_c2/upgrade.ex),
+which `server.updateServer` calls. A version arrives as a release bundle; the MC compares its
+`upgrade.json` manifest with the one it runs. If only HAL-C2's own code differs, that code is
+loaded in place and nothing restarts, so sockets and provider sessions stay up. Anything else
+installs the whole bundle and exits with status 75, which `bin/hal-c2-service` answers by
+starting the MC again on the new version. Only a release can install a version; a checkout run
+by `mise run mc` reports no `serverSelfUpdate` capability.
 
-Exact-version installs keep restarts independent of npm cache eviction or a moving
-release tag. Installation and preflight happen in staging before publishing an
-immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+## Restart and rollback
 
-## Commit boundary
-
-The launcher durably records the pending update before acknowledging it, then
-stops the old child and starts the target as a trial. Service-state writes use
-same-directory replacement with file and directory fsync. Invalid state stops
-startup rather than guessing which runtime to boot.
-
-The trial must finish migrations, acquire dependencies, bind HTTP, and park every
-long-running root at the activation gate before reporting `prepared`. The launcher
-then commits the target version durably and replies `committed`. Only then may the
-child release its gates, accept commands, and publish ready. Keep fallible startup
-acquisitions before this boundary. A listener alone does not prove the runtime is
-ready to commit.
-
-A failed or timed-out trial returns to the old version. After commit, the target
-is authoritative and the service manager's ordinary restart policy applies.
-
-## Database rollback
-
-After the old child exits, the launcher snapshots SQLite's main file, WAL, and
-shared-memory file. This makes trial migrations reversible without down
-migrations. The snapshot is made once per update and survives launcher restarts;
-replacing it during a retry could capture changes from the failed trial.
-
-Rollback stops the trial before restoring. A durable restore marker makes an
-interrupted restore finish before either version boots. Keep the snapshot until
-commit, or until both restoration and the terminal rollback state are durable.
-Attachments and other files outside SQLite are outside this rollback boundary.
+`releases/start_erl.data` names the version the next boot runs. The previous file is kept beside
+it until the new version boots, and `bin/hal-c2-service` puts it back and starts the old version
+if it cannot.
+`HalC2.Upgrade` takes no copy of the SQLite file. A rollback restores the code, not the data, so a
+migration must be written to be read by the version before it, or must not run in an update that
+can fail to boot.
 
 ## Client acknowledgement
 
-An accepted update is still pending. Clients correlate the launcher's update ID
-with the ready event after reconnecting, then check the outcome and target version.
-A reconnect alone cannot distinguish successful replacement from rollback. Older
-servers without an update ID retain version-only correlation.
-
-Desktop updates have a separate two-phase handoff because installing the app stops
-its bundled backend. Preparation returns a token while the connection is alive;
-the client commits that token only after receiving it. Otherwise backend shutdown
-could lose the only successful RPC result. The client must then observe the
-prepared version after reconnecting. If installation fails, desktop restarts the
-stopped backends and replays the failure for the same token.
+An accepted update is still pending. The outcome is written to `<data>/upgrades/outcome.json`
+with an update ID and reported with the MC's next `ready`. Clients correlate that ID after
+reconnecting, then check the outcome and target version. A reconnect alone cannot tell a
+successful replacement from a rollback. One update runs at a time; another asked for meanwhile
+is refused.
 
 ## Recovering interrupted threads
 
-Restart continuation is an environment-owned preference, off by default. The
-[v2 recovery service](../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts)
-requires matching durable run, provider thread, session, and native resume identity.
-Ordinary queued work, finished runs, and background-only work do not qualify.
+Provider processes die with the MC, so [`HalC2.Orchestration.Recovery`](../../apps/server-ex/lib/hal_c2/orchestration/recovery.ex)
+ends every run still active on the MC's threads as interrupted before the MC takes requests.
+Otherwise a thread would stay "running" and refuse its next message. A run the MC accepted but
+never handed to its provider goes back to the front of the queue instead.
 
-Recovery retires effects tied to the lost process and records continuation intent
-in the durable outbox. That intent survives another restart before provider startup.
-Continuation effects wait for activation; a slow provider must not delay the server's
-readiness or the launcher's commit boundary. Graceful shutdown captures intent before
-closing providers, then reconciles after ingestion has stopped so a late completion
-cannot be overwritten by a stale cancellation.
-
-The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
-rechecks the preference, archive state, provider selection, and newer user work before
-dispatching. Stable command and message IDs prevent duplicate submissions after an
-outbox retry. Codex resumes without adding provider prompt text; other adapters receive
-the continuation message through their normal turn path.
+Continuing a cut-off thread is a project setting (`continueThreadsAfterServerUpdate`), and
+`continue/0` runs only after the MC can start turns. A slow provider must not
+delay readiness. Work a provider left running in the background after its turn dies with the
+process and is ended the same way.

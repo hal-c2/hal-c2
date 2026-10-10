@@ -4,8 +4,7 @@ defmodule HalC2.Traces do
 
   While tracing is on (`config :hal_c2, trace: true`, `HAL_C2_TRACE=1`), `span/3` appends
   one `effect-span` record per finished span to `<home>/logs/server.trace.ndjson`,
-  rotating at 10 MiB into `.1` … `.10`, in the record shape of
-  `packages/shared/src/observability.ts`. Clients post OTLP JSON to
+  rotating at 10 MiB into `.1` … `.10`. Clients post OTLP JSON to
   `/api/observability/v1/traces`; `accept/1` keeps those spans as `otlp-span`
   records and, when `HAL_C2_OTLP_TRACES_URL` names a collector, forwards the
   payload there. `diagnostics/0` reads the files back into
@@ -395,7 +394,8 @@ defmodule HalC2.Traces do
     end
   end
 
-  # Effect spans carry an exit; OTLP spans from clients carry a status, 2 being an error.
+  # `effect-span` records carry an exit; OTLP spans from clients carry a status,
+  # 2 being an error.
   defp outcome(%{"exit" => %{"_tag" => tag} = exit}), do: {tag, failure_cause(exit["cause"])}
 
   defp outcome(%{"status" => %{"code" => code} = status}) when code in ["2", 2],

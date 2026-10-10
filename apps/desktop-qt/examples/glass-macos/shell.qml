@@ -13,7 +13,7 @@ ShellWindow {
 
     readonly property color canvas: Theme.palette.color("canvas", "#fafafa")
     readonly property color hairline: Theme.palette.color("sidebarBorder", "#00000014")
-    // The web app's breakpoints: the sidebar goes off-canvas under 768 and
+    // The breakpoints: the sidebar goes off-canvas under 768 and
     // the right panel becomes a sheet under 980. Above them both sit beside
     // the content, as in the app.
     readonly property bool compact: width < 768

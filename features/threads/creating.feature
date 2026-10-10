@@ -1,7 +1,11 @@
 # Sources:
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
+#   apps/web/src/components/ChatView.tsx (several models: started count, failed model, uncertain start, send gates)
 #   apps/web/src/components/Sidebar.tsx (SidebarDraftBlock: only a draft with content is listed)
+#   apps/web/src/components/Sidebar.logic.ts (shouldCreateNewThreadInCurrentProject)
+#   apps/web/src/composerDraftStore.ts (what a draft keeps when its project, branch or machine changes)
+#   apps/web/src/components/sidebar/SidebarThreadHeader.tsx (the new thread button and its hint)
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
 #   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts)
@@ -13,6 +17,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.create, launchThread)
 #   apps/server/src/cli/app.test.ts, apps/web/src/desktopAppActivation.ts (hal-c2 app <folder>)
 #   The basic "hal-c2 app ~/code/api" case lives in settings/install.feature.
+#   apps/desktop/src/app/DesktopAppActivationBroker.ts, DesktopAppActivation.ts, packages/shared/src/desktopAppControlSocket.ts
+#     (queueing before the window is ready, timeouts, closing, request limits, socket privacy)
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -33,6 +39,30 @@ Feature: Creating threads
     Given the thread list is scoped to the project "docs"
     When the user starts a new thread
     Then a draft thread opens in "docs"
+
+  @backlog @desktop
+  Scenario: The new thread button asks which project when there are several
+    Given the environment also has the project "docs"
+    When the user presses the new thread button in the thread list
+    Then the user is asked which project to start the thread in
+
+  @backlog @desktop
+  Scenario: The new thread button starts straight away when there is one project
+    Given "shop" is the only project
+    When the user presses the new thread button in the thread list
+    Then a draft thread opens in "shop" without asking
+
+  @backlog @desktop
+  Scenario: Shift on the new thread button starts in the current project
+    Given the environment also has the project "docs"
+    When the user presses the new thread button in the thread list with Shift held
+    Then a draft thread opens in "shop" without asking
+    And the button's hint says Shift starts the thread in the current project
+
+  @backlog @desktop
+  Scenario: The new thread button does nothing without a project
+    Given the environment has no projects
+    Then the new thread button in the thread list is disabled
 
   @backlog @desktop @mobile
   Scenario: A new thread keeps the current model and mode
@@ -164,11 +194,93 @@ Feature: Creating threads
     When the user tries to pick more than one model for the first message
     Then only one model can be chosen
 
+  @backlog @desktop
+  Scenario: Several models that all start are counted in one notice
+    Given "shop" is a Git project
+    When the user sends the first message to the models "Opus", "GPT-5" and "Gemini"
+    Then the user is told "Started 3 threads in background"
+    And the draft is empty and ready for another prompt
+
+  @backlog @desktop
+  Scenario: A model that fails to start is named and kept for another try
+    Given "shop" is a Git project
+    And starting a thread for "Gemini" will be refused
+    When the user sends the first message to the models "Opus" and "Gemini"
+    Then the user is told "Started 1 thread in background"
+    And the user is told "Could not start Gemini" with the reason
+    And the draft has its prompt back with only "Gemini" still chosen
+
+  @backlog @desktop
+  Scenario: A failed start does not put back a prompt over a newer draft
+    Given a request to several models is still starting
+    And the user has typed a new prompt in the emptied draft
+    When one of the models fails to start
+    Then the new prompt is left as it is
+
+  @backlog @desktop
+  Scenario: A start that may have gone through is not sent twice by accident
+    Given "shop" is a Git project
+    And the answer to starting "Gemini" is lost, so it may be running
+    When the user sends the same request to "Gemini" again
+    Then no second request is sent
+    And the user is told the previous request may have started and to open its thread first
+    And the notice offers to open that thread
+
+  @backlog @desktop
+  Scenario: The user allows a retry that could make a duplicate thread
+    Given the user was told a request to "Gemini" may have started
+    When the user chooses "Allow retry" and confirms that a duplicate thread could result
+    Then sending to "Gemini" again starts a new thread
+
+  @backlog @desktop
+  Scenario: Several models need a new thread with a base branch
+    Given the user has chosen several models
+    And the draft has no base branch
+    When the user sends the first message
+    Then the user is told "Choose models and a base branch" and that each model gets its own worktree
+    And nothing is sent
+
+  @backlog @desktop
+  Scenario: A model whose provider is not ready stops the whole request
+    Given the user has chosen the models "Opus" and "Gemini"
+    And the provider for "Gemini" is not ready
+    When the user sends the first message
+    Then the user is told "Provider for Gemini is unavailable."
+    And no thread is started for either model
+
+  @backlog @desktop
+  Scenario: An older server cannot start several models
+    Given the environment's server is too old to set up a worktree per thread
+    And the user has chosen several models
+    When the user sends the first message
+    Then the user is told "Update this server before starting multiple models."
+    And nothing is sent
+
+  @backlog @desktop
+  Scenario: A draft whose project is gone cannot be sent
+    Given the draft's project is no longer available
+    When the user sends the first message
+    Then the user is told "Choose a project first"
+    And the draft keeps its prompt
+
   @desktop @mobile @backlog-mobile
   Scenario: Changing a draft's project picks an environment that has it
     Given the project "api" exists only on the environment "server"
     When the user moves the draft to "api"
     Then the draft targets the environment "server"
+
+  @backlog @desktop
+  Scenario: Changing a draft's project lets go of its branch but keeps how it will work
+    Given a draft in "shop" set to use a new worktree from "release", started from origin
+    When the user moves the draft to "api"
+    Then the draft is still set to use a new worktree started from origin
+    And the draft has no base branch and no worktree
+
+  @backlog @desktop
+  Scenario: Choosing a branch for a draft on Auto balance pins it to that machine
+    Given the user chose "Auto balance" for a new thread
+    When the user chooses the branch "release" for the draft
+    Then the draft runs on the machine whose branch was chosen instead of a balanced one
 
   @backlog @desktop @mobile
   Scenario: A failed thread creation is reported
@@ -209,4 +321,56 @@ Feature: Creating threads
       | the desktop app's own environment is not connected                   | the desktop app's local environment is not connected |
       | the command runs in WSL but the desktop app's environment is Windows | cross-platform paths are not supported               |
       | the folder cannot be added as a project                              | HAL-C2 could not add the project                    |
+
+  # Legacy: apps/desktop/src/app/DesktopAppActivationBroker.ts, DesktopAppActivation.ts (control socket)
+  @backlog @desktop
+  Scenario: hal-c2 app starts the desktop app when it is not running
+    Given the desktop app is not running
+    When the user runs "hal-c2 app ~/code/shop"
+    Then the desktop app starts and brings its window to the front
+    And the desktop app opens a new thread in "shop" once it is ready
+
+  @backlog @desktop
+  Scenario: Folders sent while the window is still starting are opened one at a time
+    Given the desktop app's window is still starting
+    When the user runs "hal-c2 app ~/code/shop" and "hal-c2 app ~/code/docs"
+    Then each folder opens a thread in its own project
+    And each command reports its own result
+
+  @backlog @desktop
+  Scenario Outline: hal-c2 app reports a desktop app that could not finish
+    Given <situation>
+    When the user runs "hal-c2 app ~/code/shop"
+    Then the command fails saying "<message>"
+
+    Examples:
+      | situation                                                   | message                                                    |
+      | the desktop app takes longer than 15 seconds to open it     | The desktop app did not finish opening the project in time. |
+      | the HAL-C2 window closes while it is opening the project    | The HAL-C2 window closed before it opened the project.      |
+      | the desktop app is quitting                                 | HAL-C2 is shutting down.                                    |
+
+  @backlog @desktop
+  Scenario: Interrupting hal-c2 app before the window is ready drops the request
+    Given the desktop app's window is still starting
+    And the user ran "hal-c2 app ~/code/shop"
+    When the user interrupts the command
+    Then no thread is opened in "shop" once the window is ready
+
+  @backlog @desktop
+  Scenario: The desktop app's control channel is private to the user
+    Given the desktop app is running on Linux or macOS
+    Then only the user who started it can talk to it
+    And a leftover channel from an app that no longer runs is replaced at startup
+
+  @backlog @desktop
+  Scenario Outline: The desktop app refuses a malformed command
+    Given the desktop app is running
+    When a program sends it <request>
+    Then it answers that the request is invalid and does nothing
+
+    Examples:
+      | request                                |
+      | more than 64 KiB of text               |
+      | text that is not valid JSON            |
+      | a request that reuses a request's id   |
 

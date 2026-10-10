@@ -6,6 +6,7 @@
 #   apps/tui/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts (thread status priority, project status)
 #   apps/web/src/components/ThreadHoverCard.tsx
+#   apps/web/src/components/Sidebar.tsx (the hover preview: branch warning, handoff, last error)
 #   apps/web/src/hooks/useThreadVisitedMigration.ts
 #   packages/contracts/src/shell.ts (thread.markUnread)
 #   packages/contracts/src/orchestrationV2.ts (thread.visit, thread.mark-unread, thread.visited, thread.marked-unread)
@@ -147,6 +148,14 @@ Feature: Unread and status in the thread list
     When the user marks "Build search" unread
     Then the row for "Build search" reads "Done"
 
+  @backlog @desktop
+  Scenario: Marking the open thread unread is not undone by still looking at it
+    Given the user has "Build search" open and it is read
+    When the user marks "Build search" unread
+    Then "Build search" stays unread while it remains open
+    When the agent adds to "Build search" or the user leaves and opens it again
+    Then "Build search" is read
+
   @desktop
   Scenario: Marking several threads unread
     Given the user has selected three read threads
@@ -163,3 +172,46 @@ Feature: Unread and status in the thread list
   Scenario: Pointing at a thread previews it
     When the user rests the pointer on "Build search"
     Then a preview shows the thread's project, branch and latest activity
+
+  @backlog @desktop
+  Scenario: The preview warns when the checkout is on another branch
+    Given "Build search" works on the branch "feature/search"
+    And the checkout is on the branch "main"
+    When the user rests the pointer on "Build search"
+    Then the preview says "You're currently checked out on another branch."
+
+  @backlog @desktop
+  Scenario: The preview names the model and the provider instance
+    Given the user has two instances of the same provider
+    When the user rests the pointer on "Build search"
+    Then the preview shows the thread's model and the name of its provider instance
+
+  @backlog @desktop
+  Scenario: The preview says which providers a thread was handed off from
+    Given "Build search" was handed off from Codex to Claude
+    When the user rests the pointer on "Build search"
+    Then the preview says "Handed off from Codex"
+
+  @backlog @desktop
+  Scenario Outline: The preview says why the thread stopped
+    Given the last run of "Build search" ended with <failure>
+    When the user rests the pointer on "Build search"
+    Then the preview says "<told>"
+
+    Examples:
+      | failure                    | told                |
+      | the provider's usage limit | Usage limit reached |
+      | any other error            | Error occurred      |
+
+  @backlog @desktop
+  Scenario: The preview says which machine and terminal processes a thread has
+    Given "Build search" is on the environment "work" and has two terminal processes running
+    When the user rests the pointer on "Build search"
+    Then the preview names the machine "work"
+    And the preview says "2 terminal processes running"
+
+  @backlog @desktop
+  Scenario: The preview lists the thread's pull requests
+    Given "Build search" is linked to pull requests 12 and 14
+    When the user rests the pointer on "Build search"
+    Then the preview lists both pull requests with their state

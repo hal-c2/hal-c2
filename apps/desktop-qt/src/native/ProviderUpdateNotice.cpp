@@ -56,7 +56,7 @@ bool updating(const QJsonObject& provider) {
   return status == QLatin1String("queued") || status == QLatin1String("running");
 }
 
-// ProviderUpdateLaunchNotification.logic.ts isProviderUpdateCandidate.
+// Whether a provider is offered an update at launch.
 bool candidate(const QJsonObject& provider) {
   const QString compatibility = text(provider, QLatin1StringView("compatibilityAdvisory.latestVersionStatus"));
   return provider.value(QLatin1String("enabled")).toBool() && compatibility != QLatin1String("broken") &&
@@ -246,7 +246,7 @@ void ProviderUpdateNotice::runUpdates(const QJsonArray& providers) {
   update.count = int(providers.size());
   m_update = update;
 
-  // One after another, as the web does; the first refusal ends it.
+  // One after another; the first refusal ends it.
   struct Run {
     QJsonArray providers;
     qsizetype next = 0;

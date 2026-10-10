@@ -1,10 +1,11 @@
 # Connection runtime
 
-Web, the desktop renderer, and mobile share one connection owner per environment
-in `packages/client-runtime`. Platform code supplies storage, credentials, network
-signals, and application lifecycle events. React views consume the runtime.
-Keeping retries and session lifetime here prevents competing reconnect loops when
-several views need the same environment.
+The TUI shares one connection owner per environment in `packages/client-runtime`. Platform
+code supplies storage, credentials, network signals, and application lifecycle events. The Qt
+desktop and phone clients keep the same rules in their own C++ owner,
+[`McClient`](../../apps/desktop-qt/src/native/McClient.h). Keeping retries and session
+lifetime in one place prevents competing reconnect loops when several views need the same
+environment.
 
 ## One transport retry owner
 
@@ -16,16 +17,16 @@ unchanged conditions.
 
 Foregrounding needs different treatment depending on the connection's state.
 It wakes a retry immediately, leaves an ordinary in-flight attempt alone, and
-probes an established session before replacing it. A long mobile background
+probes an established session before replacing it. A long background
 suspension forces replacement because the OS can kill a socket without reporting
 closure. Treating every foreground event as a reconnect delays healthy attempts;
 treating every resume as harmless leaves suspended sockets stuck.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
-and cached data. Explicit removal closes the scope and clears credentials,
-projections, and platform-owned state such as drafts. Cloud-account changes apply
-to relay registrations; they must not discard directly paired environments.
+and cached data. Explicit removal closes the scope and clears credentials
+and projections. Cloud-account changes apply to relay registrations; they must not discard
+directly paired environments.
 
 ## HTTP authorization
 

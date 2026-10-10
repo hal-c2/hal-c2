@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// A button in the web app's clothes. Outline by default (the header pills),
+// A button. Outline by default (the header pills),
 // `subtle` for the ghost buttons, `primary` for the accent one; `iconName` is a
 // lucide id drawn before the text, `chevron` appends the menu chevron. A
 // button with only an icon or only the chevron names itself on hover from its
@@ -24,7 +24,7 @@ Button {
     readonly property bool iconOnly: text.length === 0 && iconName.length > 0 && !chevron
     readonly property bool chevronOnly: text.length === 0 && iconName.length === 0 && chevron
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
-    // The theme owns the surface's alpha (it is the web app's `--accent`); ghost
+    // The theme owns the surface's alpha (the accent surface); ghost
     // buttons use it as authored, outline ones at half strength.
     readonly property color hoverFill: Qt.alpha(accentSurface, accentSurface.a * (control.subtle ? 1 : 0.5))
     readonly property color focusRing: Theme.palette.color("focus", "#3b82f6")
@@ -57,7 +57,7 @@ Button {
     background: Rectangle {
         radius: control.radius
         color: control.primary ? (control.down ? Qt.darker(Theme.palette.color("accent", "#2563eb"), 1.15) : control.hovered ? Qt.lighter(Theme.palette.color("accent", "#2563eb"), 1.08) : Theme.palette.color("accent", "#2563eb")) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? Qt.alpha(control.hoverFill, 0) : Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32)
-        // Keyboard focus draws the web app's ring; pointer focus stays quiet.
+        // Keyboard focus draws a ring; pointer focus stays quiet.
         border.color: control.visualFocus ? control.focusRing : control.primary || control.subtle ? "transparent" : Theme.palette.color("input", "#27272a")
         border.width: control.visualFocus || !(control.primary || control.subtle) ? 1 : 0
 

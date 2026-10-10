@@ -2,11 +2,10 @@
 // going down and up, Q auto-repeating (with X11's paired releases), Q's
 // release going unseen (macOS swallows it while Command is down), other keys,
 // the palette's Quit, `confirmQuit` changing, and time passing on the
-// controller's own clock. The model is the Electron shell's handler
-// (apps/desktop/src/window/QuitHold.ts) with its settings read answered at
-// once, plus the hold hint lingering after a release. After every step the
-// quits, the windows concealed, the hint, and which presses the window saw
-// are the model's.
+// controller's own clock. The model is the quit handler with its settings
+// read answered at once, plus the hold hint lingering after a release. After
+// every step the quits, the windows concealed, the hint, and which presses the
+// window saw are the model's.
 
 #include "Prop.h"
 

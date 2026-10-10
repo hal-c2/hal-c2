@@ -7,6 +7,10 @@
 #   docs/user/devices.md (SSH device hosts)
 #   apps/server-ex/lib/hal_c2/devices.ex (device.testHost, ssh hosts reported unavailable)
 #   apps/server-ex/lib/hal_c2/rpc.ex (device.testHost, device.list retryHostId)
+#   apps/server/src/device/SshDeviceHost.ts, sshDeviceScript.ts, localSshDeviceHost.ts, DeviceHost.ts,
+#     and their tests, DeviceMultiHost.test.ts (the SSH transport, remote helper lifecycle, skipping a host
+#     that is this machine, several hosts side by side; all dropped with SSH hosts, a remote machine is
+#     an MC of the cluster)
 
 Feature: Device hosts
   Simulators and emulators on another machine used to be reached over SSH from an environment.

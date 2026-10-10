@@ -1,9 +1,0 @@
-{
-  "platforms": ["apple", "android"],
-  "apple": {
-    "modules": ["HalC2ComposerEditorModule"]
-  },
-  "android": {
-    "modules": ["expo.modules.hal_c2_composereditor.HalC2ComposerEditorModule"]
-  }
-}

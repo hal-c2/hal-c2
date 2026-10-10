@@ -1,7 +1,6 @@
 defmodule HalC2.SourceControl.Forgejo do
   @moduledoc """
-  Forgejo and Gitea servers, as the Node server reaches them (`ForgejoCli.ts`,
-  `ForgejoSourceControlProvider.ts`): through `fj` (Forgejo CLI 0.6 or later) when it
+  Forgejo and Gitea servers: through `fj` (Forgejo CLI 0.6 or later) when it
   holds a login for the server, else through `tea`.
 
   `fj` keeps its tokens in its `keys.json`; the MC reads the token and calls the

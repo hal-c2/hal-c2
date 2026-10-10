@@ -1,5 +1,5 @@
 defmodule HalC2.Projection.TimelineTest do
-  # Visibility cases ported from packages/shared/src/orchestrationV2Timeline.test.ts.
+  # Timeline visibility cases.
   use ExUnit.Case, async: true
 
   alias HalC2.Projection.Timeline

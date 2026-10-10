@@ -6,6 +6,8 @@
 #     fail_prepared)
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/server/src/orchestration-v2/ (launch and prepared run handling)
+#   apps/server/src/orchestration-v2/ThreadLaunchService.ts (reusing a thread, cancelled setup)
+#   apps/server/src/orchestration-v2/Orchestrator.ts (workspace preparation item, interrupt before start)
 Feature: Launching a thread with its first message
   Launching creates a thread in the project root, an existing worktree, or a new
   worktree, and sends its first message. A new worktree is prepared before the
@@ -146,3 +148,65 @@ Feature: Launching a thread with its first message
     When the MC restarts
     Then the run is interrupted
     And no setup progress is reported for that thread
+
+  @backlog @mc
+  Scenario: Reusing an existing thread needs its id
+    When a client launches a thread in "demo" asking to reuse an existing thread without naming one
+    Then it fails with "Reusing an existing thread requires a thread id."
+
+  @backlog @mc
+  Scenario Outline: Only an empty, active thread of the project can be reused by a launch
+    Given thread "t1" <state>
+    When a client launches thread "t1" in "demo" asking to reuse it
+    Then it fails with "Only an empty active thread in the target project can change workspace during launch."
+    And "t1" is unchanged
+
+    Examples:
+      | state                        |
+      | belongs to another project   |
+      | is archived                  |
+      | is deleted                   |
+      | already has a message        |
+      | already has a run            |
+
+  @backlog @mc
+  Scenario Outline: The waiting run shows how its workspace preparation stands
+    Given a launched thread's first run is preparing its worktree
+    When <event>
+    Then the run's workspace preparation item is titled "<title>" and is <status>
+
+    Examples:
+      | event                                  | title                             | status      |
+      | nothing has been reported yet          | Preparing workspace               | running     |
+      | the worktree phase is reported         | Preparing worktree                | running     |
+      | the setup script phase is reported     | Starting setup script             | running     |
+      | the run is released                    | Workspace ready                   | completed   |
+      | the preparation fails                  | Workspace preparation failed      | failed      |
+      | the user stops the run while it waits  | Workspace preparation interrupted | interrupted |
+
+  @backlog @mc
+  Scenario: A failed preparation records why as an error on the run
+    Given a launched thread's first run is preparing its worktree
+    When the preparation fails with "Setup script exited with 1."
+    Then the run records an error titled "Workspace preparation failed" with that message
+    And the failure is marked as not worth retrying
+
+  @backlog @mc
+  Scenario: Progress for a run that is not waiting for its workspace is refused
+    Given thread "t1" has a run that already started
+    When a client reports workspace progress for that run
+    Then it fails saying the run is not awaiting workspace preparation
+
+  @backlog @mc
+  Scenario: Stopping a run before its agent starts says so
+    Given a launched thread's first run is preparing its worktree
+    When the user interrupts the run
+    Then the run is interrupted without the provider being asked
+    And the run records "Run interrupted before provider start"
+
+  @backlog @mc
+  Scenario: Cancelling the setup closes its terminal and forgets what the script printed
+    Given a launched thread's setup script is running in its setup terminal
+    When the user cancels the setup before the agent starts
+    Then the setup terminal is closed and its history is deleted
+    And the thread records no branch and no worktree

@@ -4,7 +4,7 @@
 #include <QString>
 
 // Where the Qt shell keeps its files, resolved the way packages/shared/src/xdgDirs.ts
-// resolves them for the server and the Electron app:
+// resolves them for the host:
 //   1. `--home-dir` is one root for everything (<root>/config, data, state, cache);
 //   2. otherwise HAL_C2_HOME, unless it is relative or names an old home
 //      (~/.hal-c2, ~/.t3), which only the migration reads;

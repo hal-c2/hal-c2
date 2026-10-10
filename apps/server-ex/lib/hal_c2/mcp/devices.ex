@@ -1,13 +1,13 @@
 defmodule HalC2.Mcp.Devices do
   @moduledoc """
   The `device_*` MCP tools: an agent lists, opens, screenshots and closes this
-  MC's simulators and emulators (`HalC2.Devices`), as on the Node server.
+  MC's simulators and emulators (`HalC2.Devices`).
 
   `device_open` shows the device in the user's Device panel and returns the
   agent-device command pinned to it, which is how the agent drives it; a screenshot
   comes back as image content (`{:ok, structured, content}`). Agents get the tools
   only where the user allowed it: `enableAgentDeviceAccess`, or the thread's
-  project override of it, as Node grants its `device` capability.
+  project override of it.
   """
 
   @tools ~w(device_list device_open device_screenshot device_close)

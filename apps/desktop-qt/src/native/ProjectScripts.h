@@ -4,9 +4,8 @@
 #include <QJsonObject>
 #include <QString>
 
-// A project's actions as an environment's settings resolve them
-// (packages/shared projectScripts.ts): the project's own list (its
-// `defaultProjectScripts` override), else the scripts its row carries, else
+// A project's actions as an environment's settings resolve them:
+// the project's own list (its `defaultProjectScripts` override), else the scripts its row carries, else
 // the environment's `defaultProjectScripts`.
 namespace projectScripts {
 

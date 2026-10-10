@@ -5,7 +5,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The pull requests page (PullRequestListController publishes
-// `pullRequestList`): every project's pull requests in the web's groups, the
+// `pullRequestList`): every project's pull requests in groups, the
 // filters, and each row opening the thread that works on it.
 Rectangle {
     id: page

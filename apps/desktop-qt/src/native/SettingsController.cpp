@@ -33,8 +33,8 @@ QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonVal
 }
 
 // The rows of the settings pages: the store a key is in and its default.
-// Device rows are the web's ClientSettings; MC rows
-// its ServerSettings, which the MC's document leaves out while at default.
+// Device rows are this device's;
+// MC rows are the MC document's, which leaves them out while at default.
 struct Row {
   const char* key;
   bool device;

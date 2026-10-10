@@ -586,7 +586,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
     context
   end
 
-  step "the user can remove it with {string}", %{args: ["hal-c2 service " <> cmd]} = context do
+  step "the user can remove it with {string}", %{args: ["hal-c2-mc " <> cmd]} = context do
     context = Storage.service(context, cmd)
     assert context.service_output == "Background service removed."
     refute File.exists?(context.old_unit)

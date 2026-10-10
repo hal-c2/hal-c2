@@ -1,7 +1,6 @@
 defmodule HalC2.Connect.OAuth do
   @moduledoc """
-  The operator's HAL-C2 Connect sign-in on the host (`apps/server/src/cloud/CliTokenManager.ts`),
-  kept as the `cloud-cli-oauth-token` secret the MC links with at startup.
+  The operator's HAL-C2 Connect sign-in on the host, kept as the `cloud-cli-oauth-token` secret the MC links with at startup.
 
     * `loopback/1`: a browser on this machine. The operator opens the hosted app's
       `/connect` page, which sends the authorization code to a one-off listener on
@@ -13,7 +12,7 @@ defmodule HalC2.Connect.OAuth do
   Endpoints come from app env `:connect_oauth` (`token_endpoint`,
   `device_authorization_endpoint`, `client_id`, `hosted_app_url`, `loopback_port`),
   else from `HAL_C2_CLERK_PUBLISHABLE_KEY`, `HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID` and
-  `HAL_C2_HOSTED_APP_URL`, as the Node server reads them.
+  `HAL_C2_HOSTED_APP_URL`.
   """
 
   alias HalC2.Connect.Secrets
@@ -203,7 +202,7 @@ defmodule HalC2.Connect.OAuth do
     end
   end
 
-  # Keeps a token response as the Node server does; the identity comes from the id token.
+  # Keeps a token response; the identity comes from the id token.
   defp store(%{"access_token" => access} = body) do
     identity = identity(body["id_token"])
 

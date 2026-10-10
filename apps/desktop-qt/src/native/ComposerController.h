@@ -96,7 +96,7 @@ class TimelineModel;
 // composer.stash.delete {id}, composer.stash.menu {open?} (toggles without),
 // composer.history.step {direction: "backward" | "forward"}.
 //
-// The stash (the web's promptStashStore) is this machine's, not a thread's:
+// The stash is this machine's, not a thread's:
 // the prompts set aside with composer.stash, newest first, at most 20, kept
 // with the drafts and the same in every window. Stashing an empty draft
 // brings back the only entry, or opens the list. Publishes `composerStash`:
@@ -108,16 +108,15 @@ class TimelineModel;
 // names it in the text and carries it as a `review-comment` context record
 // (packages/contracts/src/composerContext.ts).
 //
-// A terminal excerpt is a chip on the draft (`composer.excerpts`), as
-// the web's terminal context; a send appends an inline context link for each
+// A terminal excerpt is a chip on the draft (`composer.excerpts`); a send appends an inline context link for each
 // to the text and carries the excerpts as the message's `context` records,
 // which the MC hands the provider (HalC2.ComposerContext).
 //
 // A quoted reply is a chip too (`composer.citations`: {id, text, comment}),
-// the web's assistant citation: a selection of one of the thread's replies,
+// an assistant citation: a selection of one of the thread's replies,
 // with the user's comment on it. A send appends its
 // `[Assistant quote](hal-c2-citation://v1/...)` link to the text, which holds
-// the whole citation (packages/shared/src/assistantCitations.ts).
+// the whole citation (AssistantCitation in packages/contracts).
 //
 // Editing a queued message puts its text in the thread's composer
 // (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
@@ -147,9 +146,8 @@ public:
   // The draft's terminal excerpts, with their text: {id, terminalId,
   // terminalLabel, lineStart, lineEnd, text}.
   QVariantList terminalContexts(const QString& target) const;
-  // What the sidebar shows for a draft with something in it (the web app's
-  // SidebarDraftRow): the text's first line, else how many attachments it
-  // carries; nothing for an empty draft (composerDraftHasUserContent).
+  // What the sidebar shows for a draft with something in it: the text's first
+  // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
   // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
   // `source` rides with it to the MC when set (ChatImageAttachment.source).
@@ -210,7 +208,7 @@ private:
   bool attachFolders(const QString& target, const QVariantList& folders);
   // Files for the answer to one question of a pending request.
   bool attachToAnswer(const QString& requestId, QString questionId, const QVariantList& files);
-  // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts),
+  // A terminal selection on the draft,
   // or with `citation` a quoted reply (AssistantCitation in
   // packages/contracts/src/assistantCitations.ts) and nothing else.
   struct Excerpt {
@@ -238,7 +236,7 @@ private:
     QString runtimeMode;
     QString interactionMode;
     // A new thread's prompt goes to each of these instead: one thread per
-    // model, each in its own worktree (the web's multiple models).
+    // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
@@ -355,7 +353,7 @@ private:
   // excerpts' and notes' records as its `context`.
   static void withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts);
   // Up and Down on the editor's edge lines walk the thread's sent prompts,
-  // text only (the web's composerPromptHistory): back from an empty draft,
+  // text only: back from an empty draft,
   // forward past the newest to an empty one. An edited recall is a draft.
   void stepHistory(const QString& target, bool backward);
   // Why the prompt cannot be sent as it is, or nothing: its length.
@@ -413,8 +411,7 @@ private:
   // A thread that has run keeps its provider.
   bool started(const QString& target) const;
   std::optional<composer::Lock> lockOf(const QString& target) const;
-  // The web's resolveComposerInteractionMode: plan mode needs the setting
-  // and a provider that has it.
+  // Plan mode needs the setting and a provider that has it.
   bool planModeOn(const composer::Instance* instance) const;
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
@@ -441,7 +438,7 @@ private:
     // Newest first.
     QList<StashEntry> stash;
     // The model last sent with on each provider instance, and the instance
-    // last sent with: a new thread starts from them (the web's sticky model).
+    // last sent with: a new thread starts from them.
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
     // In the order they were sent.

@@ -61,7 +61,7 @@ QString idOf(const QString& key) { return key.section(QLatin1Char('/'), 1); }
 
 int number(const QString& id) { return id.startsWith(QLatin1String("term-")) ? id.mid(5).toInt() : -1; }
 
-// packages/shared terminalLabels.
+// The label a terminal shows.
 QString labelOf(const QString& id, const QString& label) {
   return label.trimmed().isEmpty() ? QStringLiteral("Terminal %1").arg(number(id)) : label.trimmed();
 }

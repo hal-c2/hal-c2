@@ -1,9 +1,9 @@
 # Updating HAL-C2
 
-The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Connections**. Update the machine named in that
-notice.
+The app you use and the MC running your agents can be on different machines.
+When an MC is behind your app, an update notice names it. In the terminal app it
+appears at the top and under **Updates** in the command palette (`Ctrl+K`).
+Update the machine named in that notice.
 
 ## Before you update
 
@@ -12,10 +12,7 @@ terminal commands. Saved threads, settings, and project files remain.
 
 **Settings → General → Continue threads after restarts** is off by default.
 Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
-update older servers first. If a supported environment was offline or has a
-different value, use **Apply to all** in Settings after it connects.
-HAL-C2 must start again on that machine;
+restart. HAL-C2 must start again on that machine;
 the setting does not enable automatic startup. Terminal commands may still be
 interrupted, and threads without saved provider resume state need a new message.
 An agent that had left a command running in the background is told the restart
@@ -32,48 +29,36 @@ before continuing an important older thread.
 A client and server must speak the same orchestration protocol. If they do not, the connection is
 refused rather than running half-upgraded:
 
-- An app newer than the server is blocked before connecting, with a notice telling you to update
+- An app newer than the MC is blocked before connecting, with a notice telling you to update
   HAL-C2 on the machine named in the notice.
-- A server newer than your app refuses the connection with an update message.
+- An MC newer than your app refuses the connection with an update message.
 
 Update the side the notice names, then reconnect.
 
-## Update a connected server
+## Update a connected MC
 
-The offered action depends on how the server runs:
+Choose **Update server** in the notice and keep the app open while it installs and
+reconnects. The MC downloads the release (from a clustered MC that already has it,
+when one does), checks its checksum, and installs it. A change that only touches
+HAL-C2's own code loads in place without a restart: connections, terminals and
+agent sessions stay up. Anything else restarts the MC, which
+[the background service](./background-service.md) starts again on the new version.
+Update the MC on every machine of a cluster; a clustered MC passes the release
+to the others.
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
+An MC you started by hand in a terminal, without the service, has nothing to start
+it again. Stop it and start it again after the update, or the update is refused.
+An MC running from a source checkout updates with `mix hal_c2.upgrade` instead.
 
-On the host, run:
-
-```sh
-hal-c2 update <client-version>
-```
-
-Replace `<client-version>` with the version shown in the notice. The command
-asks before restarting the background service; if you decline, run
-`hal-c2 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+After the restart the app learns whether the update committed or rolled back.
 
 ## If an update fails
 
-Keep the client open until it reconnects or reports a failure. A failed service
-update can roll back to the previous version. If the update still fails:
+Keep the client open until it reconnects or reports a failure. A release that fails its
+checksum is not installed, and one that cannot boot is replaced by the version that ran
+before. If the update still fails:
 
 1. Retry the offered action once.
-2. Check that you updated the server's machine, not only the device you are using.
-3. For a command-line server, stop it and relaunch the exact version shown in the notice.
-
-## Mobile updates
-
-The mobile app is not yet published to the App Store or Google Play, so install
-new builds the way you installed the first one. A build with over-the-air updates
-configured can also download updates in the background and apply them when you next leave the app.
-It saves drafts and queued messages before restarting. If you keep the app open
-for a long time, it may ask to install immediately; choosing **Later** leaves the
-update queued for the next suitable moment.
+2. Check that you updated the MC's machine, not only the device you are using.
+3. For an MC started by hand, stop it and run the MC file for the version shown in the notice
+   ([Install HAL-C2](./install.md#command-line)).

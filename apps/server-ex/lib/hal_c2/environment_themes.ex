@@ -1,7 +1,6 @@
 defmodule HalC2.EnvironmentThemes do
   @moduledoc """
-  Palettes this machine publishes for clients to follow, as the Node server's
-  EnvironmentThemeService does: a desktop that retints its apps writes
+  Palettes this machine publishes for clients to follow: a desktop that retints its apps writes
   `<home>/themes/<id>.json`, and every client watching this MC's config gets
   the whole set when it changes (`{:hal_c2_themes, mc, themes}` through
   `HalC2.Settings` watchers). The filename is the theme's id.
@@ -162,7 +161,7 @@ defmodule HalC2.EnvironmentThemes do
   @built_in ~w(t3-chat grove ocean ember iris)
 
   @doc """
-  Sets the theme connected web and desktop clients switch to: `defaultTheme`, with
+  Sets the theme connected clients switch to: `defaultTheme`, with
   `defaultThemeSetAt` so setting the same theme again still acts. Clients apply
   each set once, so a theme the user picks afterwards sticks until the next set.
   The id is a built-in theme or one this machine publishes.

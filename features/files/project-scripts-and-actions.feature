@@ -4,6 +4,9 @@
 #   apps/web/src/components/ProjectScriptsControl.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx (actions in the thread's details)
 #   apps/web/src/components/projectScriptEditor.tsx
+#   apps/web/src/components/projectScriptEditor.tsx (save lifecycle, validation)
+#   apps/web/src/projectScripts.ts (action identities, primary and setup action, shortcut commands)
+#   apps/web/src/lib/projectScriptKeybindings.ts (a shortcut that is not a key combination)
 #   apps/web/src/components/useThreadTerminalActions.ts (runProjectScript)
 #   packages/shared/src/projectScripts.ts
 #   apps/tui/src/features.backlog.test.ts (project-scripts)
@@ -11,6 +14,7 @@
 #   packages/contracts/src/rpc.ts (projects.mutate, hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header's action menu, the action run last)
 #   apps/desktop-qt/src/native/TerminalController.cpp (runs an action in the thread's drawer)
+#   apps/web/src/components/ChatView.tsx (deleting an action: the confirmation by name, the failure)
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -59,6 +63,20 @@ Feature: Project actions
       Given terminals cannot be opened for the thread
       When the user runs the action "Dev"
       Then the user is told the action "Dev" failed to run
+
+    @backlog @desktop
+    Scenario: The action offered first is never the setup script
+      Given "shop" has the setup action "Install" and the action "Dev"
+      And the user has not run any action in "shop"
+      When the user looks at the actions of "shop"
+      Then "Dev" is the action offered first
+      And "Install" is listed as the setup script
+
+    @backlog @desktop
+    Scenario: A project with only a setup script still offers it
+      Given "shop" has only the setup action "Install"
+      When the user looks at the actions of "shop"
+      Then "Install" is offered
 
   Rule: The setup script
 
@@ -125,6 +143,18 @@ Feature: Project actions
       When the user confirms
       Then "shop" no longer has the action "Dev"
 
+    @backlog @desktop
+    Scenario: Deleting an action is confirmed by name
+      When the user deletes the action "Dev" and confirms
+      Then the user sees a "success" toast "Deleted action "Dev""
+
+    @backlog @desktop
+    Scenario: An action that could not be deleted is reported and kept
+      Given the environment refuses to save the project's actions
+      When the user deletes the action "Dev" and confirms
+      Then the user sees an "error" toast "Could not delete action" with the reason
+      And "shop" still has the action "Dev"
+
     @desktop
     Scenario: Only one action can be the setup script
       Given "Install" is the setup script of "shop"
@@ -138,6 +168,13 @@ Feature: Project actions
       When the user clears the shortcut of "Dev"
       Then "mod+shift+d" no longer runs "Dev"
 
+    # Legacy: apps/web/src/lib/projectScriptKeybindings.ts (decodeProjectScriptKeybindingRule), projectScriptEditor.tsx
+    @backlog @desktop
+    Scenario: A shortcut that is not a key combination is refused before the action is saved
+      When the user saves a new action named "Test" with the shortcut "mod+shift+"
+      Then the form says "Invalid keybinding."
+      And "shop" has no action named "Test"
+
     @desktop
     Scenario: A shortcut still used by another project's action is kept
       Given the project "docs" also has an action "Dev" with the shortcut "mod+shift+d"
@@ -150,3 +187,62 @@ Feature: Project actions
       Then opening the preview automatically cannot be turned on
       When the user sets the preview address "http://localhost:3000"
       Then opening the preview automatically can be turned on
+
+    @backlog @desktop
+    Scenario: Actions with the same name are both kept
+      When the user adds another action named "Dev" running "bun run dev:api"
+      Then "shop" has two actions named "Dev"
+      And each of them runs its own command
+
+    @backlog @desktop
+    Scenario: Waiting for setup to finish can only be chosen for the setup script
+      When the user edits "Dev" so it does not run on worktree creation
+      Then waiting for it to finish before the agent starts cannot be turned on
+      When the user makes "Dev" run automatically on worktree creation
+      Then waiting for it to finish before the agent starts can be turned on
+
+    @backlog @desktop
+    Scenario: A save that fails keeps the action's form open for another try
+      Given the environment refuses to save actions
+      When the user saves a new action named "Test"
+      Then the form stays open with what the user typed
+      And the form shows why the action could not be saved
+      When the environment accepts saves again and the user saves
+      Then "shop" has the action "Test"
+
+    @backlog @desktop
+    Scenario: An action cannot be saved twice while it is being saved
+      When the user saves a new action named "Test" and presses save again before it finishes
+      Then "shop" has one action named "Test"
+      And the form cannot be edited until the save finishes
+
+    @backlog @desktop
+    Scenario: Closing the form while saving ignores the result
+      Given the user saved a new action and the save is still running
+      When the user cancels the form and opens it again for another action
+      Then the late result does not close or change the new form
+
+    @backlog @desktop
+    Scenario: An action from hal-c2.json that cannot be imported opens the form with its values
+      Given the checkout's hal-c2.json declares the action "Lint" and the environment refuses to save it
+      When the user imports "Lint"
+      Then the form opens filled in with "Lint"
+      And the form shows why it could not be imported
+
+    @backlog @desktop
+    Scenario: An action that was set to wait for setup keeps that when imported
+      Given the checkout's hal-c2.json declares the setup action "Install" that does not run alongside the agent
+      When the user imports "Install"
+      Then "Install" waits for it to finish before the agent starts
+
+    @backlog @desktop
+    Scenario Outline: An action's identity may be too old to carry a shortcut
+      Given "shop" has an action with the identity "<id>" from an earlier version
+      When the user opens the actions of "shop"
+      Then the action can still be run and edited
+      And it shows no shortcut
+
+      Examples:
+        | id                               |
+        | install-javascript-dependencies  |
+        | A.b                              |

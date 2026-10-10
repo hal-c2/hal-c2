@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A switch in the web app's clothes (switch.tsx): the accent track when on,
+// A switch in the theme's colours: the accent track when on,
 // the `input` track when off, and a `canvas` thumb. Replaces the stock Switch,
 // whose colours come from a system palette the theme does not reach.
 Switch {
@@ -27,7 +27,7 @@ Switch {
         y: control.topPadding + (control.availableHeight - height) / 2
         radius: height / 2
         color: control.checked ? control.trackOn : control.trackOff
-        // Keyboard focus draws the web app's ring; pointer focus stays quiet.
+        // Keyboard focus draws the focus ring; pointer focus stays quiet.
         border.color: Theme.palette.color("focus", "#3b82f6")
         border.width: control.visualFocus ? 2 : 0
 

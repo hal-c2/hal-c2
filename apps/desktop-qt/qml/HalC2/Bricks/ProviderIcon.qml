@@ -3,7 +3,7 @@ import QtQuick.Shapes
 import HalC2.Shell
 import "js/providerIcons.js" as ProviderIcons
 
-// A provider instance's mark, as the web's ProviderInstanceIcon draws it: the
+// A provider instance's mark: the
 // driver's glyph (or the ACP registry icon), initials when there is neither,
 // and optionally the initials badge that tells two instances of one driver
 // apart, filled with the instance's accent colour.

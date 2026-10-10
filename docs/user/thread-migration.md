@@ -1,26 +1,25 @@
 # Threads from older versions
 
-On your first V2 launch, HAL-C2 copies the V1 database, `state.sqlite`, into `statev2.sqlite`
-in the same data directory and migrates the copy. Your threads appear automatically, with full
-transcripts imported as needed. You do not need to run an import command.
+Threads from T3 Code or an earlier HAL-C2 come across in two ways, both described in
+[Coming from T3 Code](./install.md#coming-from-t3-code): the first start with no data
+of its own copies them, and `threads import` picks more later. You do not need to
+convert anything by hand.
 
-V1 continues using its original database while V2 uses the copy. The database import can run while
-V1 is open. Opening V2 again resumes your V2 history. The copy happens only once: later conversations
-and changes in either version do not sync to the other. Settings, attachments, and workspace files
-remain shared.
+The old install is only read, never changed. Later conversations and changes in either
+app do not sync to the other. A thread you import twice is not duplicated; HAL-C2 tells
+you it is already there.
 
-The V2 desktop app uses a separate browser profile, so browser cookies and caches do not carry
-over from V1. You may need to sign in again to websites opened inside the app.
+A migrated thread keeps its title, project, provider and model selection, permission and
+interaction modes, branch or worktree, archive state, settlement state, snooze and pin
+state, and linked pull request. HAL-C2 also brings over user and assistant messages,
+their timestamps, and supported attachments. A thread picked with `threads import` also
+brings its subagent threads and terminal scrollback, and joins the project already at
+its folder.
 
-The migrated thread keeps its title, project, provider and model selection, permission and
-interaction modes, branch or worktree, archive state, settlement state, snooze and pin state, and
-linked pull request. HAL-C2 also brings over user and assistant messages, their timestamps, and
-supported attachments. Large histories may appear in stages while the server imports transcripts.
-
-The migration does not recreate the old provider's live session. It also does not convert old run
-records, checkpoints and diffs, tool activity, approval history, or proposed plan history into the
-new format. These items may be absent from a migrated timeline even though the conversation text is
-present.
+The migration does not recreate the old provider's live session. It also does not
+convert old run records, checkpoints and diffs, tool activity, approval history, or
+proposed plan history into the new format. These items may be absent from a migrated
+timeline even though the conversation text is present.
 
 ## Continuing a migrated thread
 
@@ -48,21 +47,19 @@ The file carries the conversation, attachments, terminal scrollback, checkpoints
 provider can carry it, the agent's own session. Exporting leaves the thread where it was. Without
 `--project`, the thread goes into the one project that is a checkout of the same repository; if
 there are several or none, name one. Checkpoints only come along into a checkout of the same
-repository. A file from the previous server imports too, and its next message hands the
-conversation over as a provider switch does. Nothing is imported from a damaged file.
+repository. A thread archive from an earlier install imports too, and its next message hands
+the conversation over as a provider switch does. Nothing is imported from a damaged file.
 
-## Keeping a recovery copy
+## Looking at the old transcript
 
-The previous server does not have a whole-thread export command. Before a major server update, stop
-the server and copy its [data directory](./install.md#where-hal-c2-keeps-its-files) to a safe
-location. The default is `~/.local/share/hal-c2`; a server started with `--base-dir <path>` uses
-`<path>/data`. The V1 database is the `state.sqlite` in it.
-
-If a migrated transcript is missing from the app, keep that copy unchanged. You can inspect the
-old transcript without starting a server against it:
+Your old install's data directory is untouched, so it is already your recovery copy:
+`~/.t3/userdata` for T3 Code, or the [data directory](./install.md#where-hal-c2-keeps-its-files)
+of an earlier HAL-C2. If a migrated transcript is missing from the app, keep that
+directory unchanged. You can inspect the old transcript without starting a server
+against it:
 
 ```sh
-sqlite3 -readonly /path/to/recovery-copy/state.sqlite
+sqlite3 -readonly /path/to/old-data/state.sqlite
 ```
 
 At the SQLite prompt, list recent legacy threads:
@@ -85,6 +82,6 @@ WHERE thread_id = '<thread-id>'
 ORDER BY created_at, message_id;
 ```
 
-Open only the copied database. Do not edit it or point a newer or older server at your recovery
-copy. If the affected environment is remote, make and inspect the copy on the machine that runs
-that environment.
+Open the database read-only and do not edit it. If a server is still running on it,
+make the copy first with `VACUUM INTO` so you read a consistent file. If the affected
+environment is remote, do this on the machine that runs that environment.

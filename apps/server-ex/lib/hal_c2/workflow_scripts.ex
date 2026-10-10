@@ -1,7 +1,7 @@
 defmodule HalC2.WorkflowScripts do
   @moduledoc """
   `orchestration.getWorkflowScript`: the script a Claude workflow ran, for the
-  Agents view's script button, as the Node server serves it. The path comes from
+  Agents view's script button. The path comes from
   the client and is only a hint: the real path must be a `.js` regular file under
   `~/.claude/projects`, where Claude keeps workflow scripts, and reads stop at
   256 KB. Tests can act just before the file is opened with

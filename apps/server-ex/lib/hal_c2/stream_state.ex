@@ -70,7 +70,7 @@ defmodule HalC2.StreamState do
 
     case Patch.apply(Map.get(by_id, id), patch) do
       nil ->
-        # A deleted entity that comes back is appended again, as in the Node projection.
+        # A deleted entity that comes back is appended again.
         forget_old_deletions(%{
           state
           | entities: put_kind(state.entities, kind, Map.delete(by_id, id)),

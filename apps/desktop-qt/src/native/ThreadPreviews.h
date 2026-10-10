@@ -19,7 +19,7 @@ class McClient;
 // the close is in flight; a close that fails brings it back where it was.
 //
 // newTab() is `preview.open` with no address: an empty tab the user fills
-// from `suggestions`, as the web's empty browser tab offers: the web servers
+// from `suggestions`: the web servers
 // listening on the MC's machine (its `localServers` shape, followed only
 // while the list shows), the project's configured preview addresses and the
 // pages this device opened last. navigate(tabId, url) is `preview.navigate`,

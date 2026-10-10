@@ -11,9 +11,15 @@
 #   packages/client-runtime/src/v3/session.ts (unserved methods fail as unsupported)
 #   packages/client-runtime/src/connection/compatibility.ts (protocol negotiation)
 #   packages/contracts/src/rpc.ts (server.upsertKeybinding, server.removeKeybinding)
+#   apps/server/src/ws.ts (protocol refusal on /ws, bounded compatibility projection, debounced provider status, themes)
+#   apps/server/src/rpcInitialItems.memory.test.ts (delivered history is released)
+#   apps/server/src/serverLifecycleEvents.ts (latest welcome and ready replayed, sequence numbers)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
 #   docs/user/updating.md (When versions don't match)
 #   docs/internals/connection-runtime.md (transport health and data freshness)
+#   apps/server/src/orchestration/LiveStreamBudget.ts (1,000 items / 8 MiB per subscription)
+#   apps/server/src/orchestration-v2/ThreadLiveEventCoalescer.ts, ThreadStream.ts (merging the
+#     progress of a running tool call for live subscribers)
 
 Feature: The protocol 3 WebSocket
   Clients speak one JSON protocol over one WebSocket per MC. They subscribe to shapes,
@@ -97,11 +103,61 @@ Feature: The protocol 3 WebSocket
     Then the MC sends a resync for that subscription
     And the client subscribes again from its last offset
 
+  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
+  @mc @backlog
+  Scenario: A client that falls more than 1,000 changes behind is told to resync
+    Given the client subscribed to a busy thread
+    When more than 1,000 small changes wait unsent for that subscription
+    Then the MC sends a resync for that subscription
+    And the client subscribes again from its last offset
+
+  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
+  @mc @backlog
+  Scenario: A long history replayed to a client that keeps up is not a resync
+    Given the client subscribed from an offset far behind a thread with 5,000 changes since
+    When the MC replays them and the client acknowledges each batch
+    Then the client receives every change
+    And the MC does not send a resync for that subscription
+
   @mc
   Scenario: Changes to one entity are merged while the client is busy
     Given the client subscribed to a thread
     When one message changes many times before the socket drains
     Then the client receives the merged change once
+
+  @mc @backlog
+  Scenario Outline: Rapid progress of one running tool call reaches a subscriber as its latest state
+    Given the client subscribed to a thread where <tool> is running
+    When that tool call reports progress many times within 50 milliseconds
+    Then the client receives one update holding its latest state
+    And two tool calls running side by side each keep their own update
+
+    Examples:
+      | tool                     |
+      | a command                |
+      | a file change            |
+      | a file search            |
+      | a web search             |
+      | a provider-defined tool  |
+
+  @mc @backlog
+  Scenario: Merging tool progress never reorders or drops what follows
+    Given the client subscribed to a thread where a command is running
+    When the command reports progress and then finishes, and a message arrives right after
+    Then the client receives the latest progress, then the finished command, then the message
+    And nothing waits for the 50 milliseconds to pass once the command has finished
+
+  @mc @backlog
+  Scenario: Tool progress held for merging is bounded
+    Given the client subscribed to a thread where many tool calls are running
+    When 512 progress updates are waiting to be merged
+    Then they are merged and sent at once, without waiting for the 50 milliseconds to pass
+
+  @backlog @mc
+  Scenario: Long-lived subscriptions do not keep what they already delivered in memory
+    Given clients hold several subscriptions open
+    When each has been sent its snapshot, its replay and its history
+    Then the MC holds none of that delivered history while the subscriptions stay open
 
   @mc
   Scenario: A client subscribes to one stream once per socket
@@ -262,6 +318,44 @@ Feature: The protocol 3 WebSocket
     Given a client speaking a protocol newer than the MC's
     When it opens a socket
     Then the MC refuses with a message naming the MC to update
+
+  @backlog @mc
+  Scenario Outline: A client that does not name a compatible protocol is refused with an update message
+    When a client opens a socket <naming>
+    Then the MC refuses the upgrade as incompatible before checking its credential
+    And the message says to update the client to one that supports the MC's protocol
+    And it names the protocol version the MC speaks
+
+    Examples:
+      | naming                      |
+      | without any protocol version |
+      | naming an older protocol    |
+
+  @backlog @mc
+  Scenario: A client that only knows the compatibility call gets a bounded transcript
+    Given a thread with a very long history
+    When an older client asks for the thread's whole projection in one call
+    Then the MC answers with a bounded window of the thread's most recent rows
+    And the call does not materialise the whole transcript
+
+  @backlog @mc
+  Scenario: Provider status changes reach a client in bursts, not one by one
+    Given the client follows the MC's lifecycle stream
+    When several providers change status within a moment
+    Then the client receives one update that holds the latest statuses
+
+  @backlog @mc
+  Scenario: Environment themes are sent only to clients that ask for them
+    Given one client that asked for environment themes and one that did not
+    When a theme file on the MC changes
+    Then only the client that asked receives the new themes
+
+  @backlog @mc
+  Scenario: A client that follows the lifecycle stream late still gets the latest welcome and ready
+    Given the MC has announced welcome and ready more than once
+    When a client starts following the MC's lifecycle stream
+    Then it first receives the most recent of each kind in announcement order
+    And later announcements follow with rising sequence numbers
 
   @mc
   Scenario: An MC revoking a session closes that session's open sockets

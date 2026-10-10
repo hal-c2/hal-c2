@@ -10,7 +10,7 @@ class ShellBridge;
 // The window's layout the shell keeps itself: whether the thread list is
 // hidden, how wide it is, and the app's zoom. Remembered on this device
 // (`sidebarCollapsed`, `sidebarWidth` and `zoomLevel` in its preferences);
-// every window follows the zoom, as Electron's zoom follows the app's origin.
+// every window follows the zoom.
 //
 // Publishes `layout` for ShellWindow: {sidebarCollapsed, sidebarWidth (what
 // it draws: the width chosen, less when the window leaves it no room, never
@@ -43,7 +43,7 @@ public:
   double zoomLevel() const { return m_zoomLevel; }
   double zoom() const;
   void setZoomLevel(double level);
-  // The thread list's width: the web's default and minimum, and the room the
+  // The thread list's width: the default and minimum, and the room the
   // thread keeps beside it.
   static constexpr int kSidebarWidth = 256;
   static constexpr int kSidebarMinWidth = 208;

@@ -18,11 +18,11 @@ through the shared bricks (`ShellButton`, `ShellComboBox`,
 `ShellSplitButton`, `ShellTabs`, `ShellCard`, `Theme` roles) in
 `apps/desktop-qt/qml/HalC2/Bricks/`, never through one-off restyles.
 
-Reference for intended behaviour: the legacy web app (`apps/web`) is what the
-desktop is catching up to. Where they disagree, the web wins unless there is a
-reason. Read its code to see what a desktop view should do, but do not run it.
-The `features/` ledger says what the desktop claims to do (see
-`references/checklist.md`).
+Reference for intended behaviour: the `features/` ledger says what the desktop
+claims to do (see `references/checklist.md`), and carries what the removed web
+app did as `@backlog` scenarios. Where the two disagree, the web's behaviour
+wins unless there is a reason. Its code is in git history
+(`git show 8212e08f9:apps/web/src/<path>`).
 
 Arguments (free text): scope (the whole desktop by default, or an area such as
 "composer" or "settings"), extra flows, `--issues` to file GitHub issues after
@@ -209,7 +209,7 @@ no work artifacts and no screenshot assets in commits).
 
 Before filing, make each finding something a developer can fix from the
 issue alone: `where` at the root cause on the current `main`, a `desc` with
-steps to reproduce, the expected behaviour (the web's code path when it has
+steps to reproduce, the expected behaviour (the ledger's scenario when it has
 one) and the root cause, and solutions that include a test. Findings that
 `main` already fixes get `"fixed": "<commit>"` and are not filed. Split a
 finding that bundles unrelated causes.

@@ -39,9 +39,8 @@ private:
   Done m_done;
 };
 
-// Snap Shot through xdg-desktop-portal on a Wayland desktop (the Electron
-// app's LinuxSnapShot and PortalCaptureShortcut): the Screenshot portal takes
-// the window in front where it offers that target (version 3 and
+// Snap Shot through xdg-desktop-portal on a Wayland desktop: the Screenshot portal
+// takes the window in front where it offers that target (version 3 and
 // AvailableTargets' window bit), else opens its picker; the GlobalShortcuts
 // portal holds one session with the capture shortcut. Nothing is asked of
 // the bus until `probe()` or `bind()`.

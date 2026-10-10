@@ -12,46 +12,71 @@
 #   Shared domain: connections/ owns pairing and remote access; this file holds the terminal twist.
 
 Feature: Launching and leaving the terminal client
-  The terminal client is started from the command line next to a running HAL-C2 server.
+  The terminal client is started from the command line and connects to an MC.
   It takes over the terminal while open and gives it back intact when it leaves.
 
-  On its own ("mise run tui", or the client's entry with --base-dir) it finds the MC on
-  this machine through the MC's runtime record and signs in with the MC's access token;
-  with --url it pairs with a remote MC instead. "hal-c2 tui" is the Node server's launcher,
-  which hands the client an origin, a bearer and socket tickets.
+  "mise run tui" (or the client's entry with --base-dir) finds the MC on this machine
+  through the MC's runtime record and signs in with the MC's access token; with --url it
+  pairs with a remote MC instead.
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "The terminal client launches against an MC" is the MC start.
+  @dropped @tui
   Scenario: The terminal client opens against the running local server
     Given a HAL-C2 server is running on this machine
     When the user runs "hal-c2 tui"
     Then the terminal client opens in the alternate screen
     And the status line says "Connecting…" until the first snapshot arrives
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "Starting the terminal client with no MC running explains how to start one" replaces it.
+  @dropped @tui
   Scenario: Launching without a running server explains how to start one
     Given no HAL-C2 server is running on this machine
     When the user runs "hal-c2 tui"
     Then the command fails with "No running HAL-C2 server was found. Start one with `hal-c2 serve` (or `hal-c2 start`) first."
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "Starting the terminal client against an MC that has since stopped says so" replaces it.
+  @dropped @tui
   Scenario: Launching against a server that has since stopped says so
     Given the recorded HAL-C2 server is no longer running
     When the user runs "hal-c2 tui"
     Then the command fails and says the recorded server is no longer running
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" runs the bundle with the bun on the PATH.
+  @dropped @tui
   Scenario: Launching without Bun points the user at bun.sh
     Given Bun is not installed
     When the user runs "hal-c2 tui"
     Then the command fails with a hint to install Bun from bun.sh
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" runs the bundle with the bun on the PATH.
+  @dropped @tui
   Scenario: The user chooses which Bun runs the terminal client
     Given the environment variable "HAL_C2_TUI_BUN" names a Bun binary
     When the user runs "hal-c2 tui"
     Then the terminal client runs on that Bun binary
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; it chose the log's place. The client logs to HAL_C2_TUI_LOG, else /tmp/hal-c2-tui.log.
+  @dropped @tui
+  Scenario: The terminal client keeps a diagnostic log beside the server's runtime record
+    Given a HAL-C2 server is running on this machine
+    When the user runs "hal-c2 tui"
+    Then the terminal client writes its diagnostics to a log file next to the server's runtime record
+    And the screen is never used for diagnostics
+
+  @backlog @tui
+  Scenario: The user chooses where the terminal client writes its diagnostic log
+    Given the environment variable "HAL_C2_TUI_LOG" names a file
+    When the user starts the terminal client
+    Then the terminal client appends its diagnostics to that file
+
+  @backlog @tui
+  Scenario: A diagnostic log that cannot be written never breaks the terminal client
+    Given the diagnostic log's folder is not writable
+    When the user starts the terminal client
+    Then the terminal client opens and works as usual
+
+  # The Node server's "hal-c2 tui" launcher is gone; the client signs in with the MC's access token, or a session paired with --url.
+  @dropped @tui
   Scenario: The terminal client gets its own revocable session
     When the user runs "hal-c2 tui"
     Then the server lists a client session labelled "HAL-C2 TUI"
@@ -64,7 +89,8 @@ Feature: Launching and leaving the terminal client
     Given the terminal client is started directly without an origin or bearer credential
     Then it exits with an error naming the missing value
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  @dropped @tui
   Scenario Outline: Known truecolor terminals get full colour even when they do not advertise it
     Given the user's terminal is <terminal>
     And the terminal does not set COLORTERM
@@ -83,26 +109,30 @@ Feature: Launching and leaving the terminal client
       | iTerm     |
       | VS Code   |
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  @dropped @tui
   Scenario: A colour setting the shell already made is left alone
     Given the shell already set COLORTERM
     When the user runs "hal-c2 tui"
     Then the terminal client keeps the shell's COLORTERM
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  @dropped @tui
   Scenario: An unrecognised terminal is not promised truecolor
     Given the user's terminal is not one the client recognises
     And the terminal does not set COLORTERM
     When the user runs "hal-c2 tui"
     Then the client does not claim truecolor support
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" starts the client.
+  @dropped @tui
   Scenario: Starting outside tmux never calls tmux
     Given the user is not inside tmux
     When the user runs "hal-c2 tui"
     Then the client does not run any tmux command
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" starts the client.
+  @dropped @tui
   Scenario: Starting inside a tmux pane in copy mode leaves copy mode first
     Given the user is inside a tmux pane that is in copy mode
     When the user runs "hal-c2 tui"
@@ -137,7 +167,9 @@ Feature: Launching and leaving the terminal client
       | SIGINT  |
       | SIGTERM |
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; the client has no session of its own to revoke on the local MC, and keeps a
+  # paired remote one ("Leaving keeps a paired remote session until the environment revokes it").
+  @dropped @tui
   Scenario: Leaving revokes the client's session on the server
     Given the terminal client is open
     When the user leaves the terminal client
@@ -225,8 +257,8 @@ Feature: Launching and leaving the terminal client
     Then the client says its access was revoked and asks for a new pairing link
     And it forgets the saved credential
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
+  # The TUI reaches only the MC it connected to: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one MC).
   @backlog @tui
   Scenario: The user lists environments and activates a reachable one
     Given local, remote and cloud environments are saved
@@ -240,8 +272,8 @@ Feature: Launching and leaving the terminal client
     When the user checks relay status from the terminal client
     Then the client says the relay is missing and offers to install it
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
+  # The TUI reaches only the MC it connected to: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one MC).
   @backlog @tui
   Scenario: The user reviews and revokes other clients' access
     Given other clients are paired with this environment

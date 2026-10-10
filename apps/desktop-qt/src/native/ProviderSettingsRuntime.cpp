@@ -1,5 +1,5 @@
 // The runtime the MC installs itself (Antigravity) on its Providers card
-// (ProviderSettingsController), as the web's ProviderSetupSection: each such
+// (ProviderSettingsController): each such
 // instance follows its MC-addressed `providerInstall` shape, so every
 // client shows the same download.
 //

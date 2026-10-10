@@ -13,7 +13,7 @@ defmodule HalC2.CheckpointTest do
     %{dir: dir}
   end
 
-  test "ids and refs match the Node server's" do
+  test "ids and refs keep the format earlier installs wrote" do
     scope = Checkpoint.scope_id("thread-1")
     assert scope == "checkpoint-scope:thread:thread-1:name:root"
 

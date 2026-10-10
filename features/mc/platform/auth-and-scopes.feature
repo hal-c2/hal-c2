@@ -8,6 +8,14 @@
 #   apps/server-ex/test/hal_c2/scenarios_test.exs (access scenarios)
 #   packages/contracts/src/auth.ts, environmentHttp.ts (AuthAccessStreamEvent, scope errors)
 #   apps/server/src/auth/SessionStore.ts (WebSocketSessionRevokedError)
+#   apps/server/src/auth/EnvironmentAuth.ts (client ordering, DPoP session lifetime, startup link hidden)
+#   apps/server/src/auth/PairingGrantStore.ts (token alphabet and length, single use, key-bound grants)
+#   apps/server/src/auth/dpop.ts (proof checks and replay)
+#   apps/server/src/auth/http.ts (credential responses are no-store)
+#   apps/server/src/auth/utils.ts (client metadata, per-port cookie name)
+#   apps/server/src/cli/auth.ts, apps/server/src/cliAuthFormat.ts (hal-c2 auth pairing and session
+#     commands: mint, list, revoke, JSON output, while the server is stopped)
+#   apps/server/src/auth/RpcAuthorization.ts (scope each RPC needs)
 #   docs/user/remote-access.md (Manage or revoke access)
 #   docs/internals/environment-auth.md
 #   docs/operations/development.md (Reusable dev credential)
@@ -38,6 +46,26 @@ Feature: MC authentication and scopes
     Given a pairing token minted six minutes ago
     When a client exchanges it
     Then the exchange fails as an invalid grant
+
+  @backlog @mc
+  Scenario: Pairing tokens can be typed by hand
+    When the MC mints a pairing token
+    Then it is 12 characters long
+    And it uses no characters that look alike, such as 0 and O or 1 and I
+
+  @backlog @mc
+  Scenario: Two clients racing for one pairing token leave exactly one session
+    Given a pairing token that has not been exchanged
+    When two clients exchange it at the same moment
+    Then exactly one of them receives a session
+    And the other is refused as an invalid grant
+
+  @backlog @mc
+  Scenario: A pairing link bound to a client key only pairs that client
+    Given a pairing link minted for a client's DPoP key
+    When a client that holds another key exchanges it
+    Then the exchange is refused as an invalid grant
+    And the client that holds the named key can still exchange it
 
   @mc
   Scenario: A pairing token is minted next to a running MC
@@ -214,10 +242,100 @@ Feature: MC authentication and scopes
     When a paired device opens a socket
     Then that client shows as connected with its last connection time
 
+  @backlog @mc
+  Scenario: Paired clients are listed administrators first, then connected, then newest
+    Given three paired clients, one of them an administrator
+    And one of the others has an open socket
+    When an administrator lists the authorized clients
+    Then the administrator comes first
+    And the connected client comes before the one that is not connected
+    And clients that tie are listed newest first
+
+  @backlog @mc
+  Scenario: A client with an open socket stays listed past its expiry
+    Given a paired client whose session has expired
+    And it still has a socket open
+    When an administrator lists the authorized clients
+    Then the client is listed as connected
+    And once its last socket closes it is no longer listed
+
+  @backlog @mc
+  Scenario: The MC's own startup link is not listed with pairing links
+    Given the MC minted a link for the app that started it
+    And an administrator created a pairing link labelled "Tablet"
+    When an administrator lists pairing links
+    Then only the "Tablet" link is listed
+
+  @backlog @mc
+  Scenario: A client's surface and app version are recorded when it connects
+    Given a paired client
+    When it opens a socket reporting its surface and app version
+    Then the authorized clients list shows that surface and version for it
+    And a later connection that reports only a version keeps the surface it reported before
+
+  @backlog @mc
+  Scenario Outline: A pairing link carries only scopes its creator holds
+    Given an administrator creating a pairing link
+    When it names <scopes>
+    Then the MC <outcome>
+
+    Examples:
+      | scopes                                          | outcome                                    |
+      | a scope that the administrator does not hold    | refuses the link as an invalid scope       |
+      | no scopes at all                                | refuses the link as an invalid scope       |
+      | the same scope twice                            | refuses the link as an invalid scope       |
+
+  @backlog @mc
+  Scenario: Responses that carry credentials are never cached
+    When a client exchanges a pairing token or asks for a socket ticket
+    Then the answer is marked as not storable by browsers or proxies
+
+  @backlog @mc
+  Scenario Outline: A call is refused when the session lacks the scope that matches what it changes
+    Given a client whose session lacks <scope>
+    When it <action>
+    Then the MC refuses saying <scope> is required
+
+    Examples:
+      | scope                  | action                                         |
+      | relay:write            | installs the relay client                      |
+      | relay:read             | asks for the relay client's status             |
+      | orchestration:operate  | reports the host's power state                 |
+      | orchestration:read     | reports that the client is in the foreground   |
+      | orchestration:operate  | submits a review on a pull request             |
+      | orchestration:read     | previews a pull request                        |
+      | review:write           | reads a review diff                            |
+      | orchestration:operate  | opens a preview                                |
+      | orchestration:read     | lists previews                                 |
+
   @mc
   Scenario: A client's device type is read from its user agent
     When a phone, a tablet and a desktop browser each pair
     Then the MC records each as mobile, tablet and desktop
+
+  @backlog @mc
+  Scenario: A client's own device description wins over its user agent
+    When a client pairs presenting a device type, an operating system and a label
+    Then the MC records what the client presented
+    And only what it left out is read from the user agent
+
+  @backlog @mc
+  Scenario: The address a client paired from is recorded without IPv6 wrapping
+    When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
+    Then the authorized clients list shows the plain IPv4 address
+
+  @backlog @mc
+  Scenario: A command-line tool is recorded as a bot
+    When curl or wget exchanges a pairing token
+    Then the MC records its device type as bot
+
+  # hosted-web-app: only a browser keeps its session in a cookie, and two servers on one host
+  # share cookies across ports, so the web app named its cookie after its port.
+  @dropped @mc
+  Scenario: Servers on one host keep their browser session cookies apart
+    Given two MCs on one machine on different ports
+    When a browser signs in to both
+    Then each MC reads only the session cookie that it set
 
   @mc
   Scenario: Listed pairing links never reveal their secret
@@ -284,6 +402,34 @@ Feature: MC authentication and scopes
     Then the MC accepts it
     And a token presented with an invalid proof is refused rather than treated as a bearer
 
+  @backlog @mc
+  Scenario: A session bound to a client key lasts one hour and is not a plain bearer
+    Given a client that paired with a DPoP key
+    Then its session expires after one hour, not thirty days
+    And presenting that token as a plain bearer is refused
+    And presenting a token that is not bound to a key under the DPoP scheme is refused
+
+  @backlog @mc
+  Scenario: A DPoP proof works once
+    Given a client that paired with a DPoP key
+    And it presented its token with a proof that the MC accepted
+    When the same proof is presented again
+    Then the MC refuses it as a replay
+
+  @backlog @mc
+  Scenario Outline: A DPoP proof that does not fit the request is refused for a reason
+    Given a client that paired with a DPoP key
+    When it presents a proof that <problem>
+    Then the MC refuses it as <reason>
+
+    Examples:
+      | problem                                          | reason           |
+      | was signed too long ago or in the future         | time_window      |
+      | was signed by a key other than the paired one    | key_mismatch     |
+      | names another method or address than the request | request_mismatch |
+      | was made for a different access token            | token_mismatch   |
+      | is not a well-formed proof                       | invalid_proof    |
+
   @mc
   Scenario: A reusable development credential signs in every worktree on one host
     Given a fixed development auth token is configured
@@ -304,3 +450,80 @@ Feature: MC authentication and scopes
     When an operator lists sessions from the MC's command line
     Then it sees the same clients as Connections settings
     And it can revoke one of them
+
+  @backlog @mc
+  Scenario: A pairing link from the command line can carry a lifetime, a label and a public address
+    When an operator mints a pairing link with a lifetime of one hour, the label "Ana's phone" and the public address "https://mc.example.com"
+    Then the printed link points at "https://mc.example.com" and carries a one-time token
+    And the link expires after one hour
+    And Connections settings lists the link as "Ana's phone"
+
+  @backlog @mc
+  Scenario: An operator can print a minted pairing link as JSON
+    When an operator mints a pairing link from the command line and asks for JSON
+    Then the output is only a JSON document with the link's id, label, token, scopes and expiry
+
+  @backlog @mc
+  Scenario: A session token is issued from the command line for a headless client
+    When an operator issues a session for the subject "ci" from the command line
+    Then the MC prints a bearer token that signs in as a session for "ci"
+    And the session has administrative scopes
+    And the session is listed with the other clients and can be revoked
+
+  @backlog @mc
+  Scenario Outline: A session issued from the command line is printed the way the operator asked
+    When an operator issues a session from the command line asking for <form>
+    Then the output is <result>
+
+    Examples:
+      | form       | result                                                                         |
+      | the token  | only the bearer token, so a script can capture it                              |
+      | JSON       | only a JSON document with the session id, token, scopes, subject and expiry    |
+
+  @backlog @mc
+  Scenario: Pairing links listed from the command line show their details but never their secret
+    Given two pairing links are waiting to be used
+    When an operator lists pairing links from the command line
+    Then each link shows its id, label, scopes and expiry
+    And no link shows its token
+    But the desktop's own bootstrap link is not listed
+
+  @backlog @mc
+  Scenario: Sessions listed from the command line show how each client is used
+    Given a paired client that has never connected to the MC
+    When an operator lists sessions from the command line
+    Then the client shows its scopes, method, subject, issue time and expiry
+    And its last connection reads "never"
+    And a session with no client label reads "unlabeled client"
+    And bearer tokens are never shown
+
+  @backlog @mc
+  Scenario Outline: Listing from the command line with nothing active says so
+    Given there are no <things>
+    When an operator lists <things> from the command line
+    Then the output says "<message>"
+
+    Examples:
+      | things        | message                          |
+      | pairing links | No active pairing credentials.   |
+      | sessions      | No active sessions.              |
+
+  @backlog @mc
+  Scenario Outline: Revoking from the command line says whether anything was revoked
+    Given <state>
+    When an operator revokes it by id from the command line
+    Then the output says <result>
+
+    Examples:
+      | state                                     | result                                       |
+      | a pairing link waiting to be used         | the pairing credential was revoked           |
+      | a pairing link that was already used      | no active pairing credential has that id     |
+      | a paired client's session                 | the session was revoked                      |
+      | a session that is already revoked         | no active session has that id                |
+
+  @backlog @mc
+  Scenario: Access can be managed from the command line while the MC is stopped
+    Given the MC is not running
+    When an operator mints a pairing link and lists sessions from the command line
+    Then both commands work against the MC's stored access records
+    And the minted link works once the MC starts

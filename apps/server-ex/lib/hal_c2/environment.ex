@@ -4,7 +4,7 @@ defmodule HalC2.Environment do
 
   The environment id is generated once and kept in the HAL-C2 home directory, so it
   survives restarts, address changes, and cluster membership. Clients key their
-  caches and settings by it, exactly as they do for Node servers.
+  caches and settings by it.
   """
 
   @protocol 3
@@ -80,12 +80,11 @@ defmodule HalC2.Environment do
 
   @doc """
   `server.refreshProviders`: probes the providers again, for one instance or all,
-  and announces the new list to every client, then returns it. As the Node
-  server's registry refresh does, each ACP agent is started again to read its
+  and announces the new list to every client, then returns it. Each ACP agent is started again to read its
   version, sign-in and models; `refreshModels` also reads Codex's and Claude's model
   lists again.
   Subscription quota is read again too (`HalC2.ProviderUsageLimits`), and an untargeted
-  refresh re-reads the usage-limit sources, as the Node server's status probe does,
+  refresh re-reads the usage-limit sources,
   and a refresh of one ACP instance reads its agent again; a workspace refresh
   (with a `cwd`) leaves quota and probes alone.
   """

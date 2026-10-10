@@ -1,7 +1,7 @@
 defmodule HalC2.Pi.ThreadRuntime do
   @moduledoc """
-  Runs one thread's turns on Pi's RPC mode (`pi --mode rpc`, `HalC2.Pi`), as the
-  Node server's `PiAdapterV2` does, and writes them into the thread's log.
+  Runs one thread's turns on Pi's RPC mode (`pi --mode rpc`, `HalC2.Pi`) and writes
+  them into the thread's log.
 
   One Pi process serves the thread while its access mode stays the same (HAL-C2's Pi
   extension reads the mode when Pi starts). The thread's native conversation is

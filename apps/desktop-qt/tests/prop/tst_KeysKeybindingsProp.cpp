@@ -162,7 +162,7 @@ struct Bound {
   QString when() const { return keybindings::whenText(binding.when); }
 };
 
-// The web's merge, as its settings logic reads: the user's rules that parse
+// The merge: the user's rules that parse
 // and name a command, over the defaults of every command they do not bind.
 QList<Bound> effective(const QJsonArray& rules) {
   QList<Bound> custom;

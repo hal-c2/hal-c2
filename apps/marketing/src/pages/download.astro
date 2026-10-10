@@ -2,7 +2,6 @@
 import type { ComponentProps } from "astro/types";
 import { Image } from "astro:assets";
 import iconStable from "../assets/icon.webp";
-import iconNightly from "../assets/icon-nightly.webp";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 
@@ -15,24 +14,16 @@ const imageProps = {
 } satisfies Partial<ComponentProps<typeof Image>>;
 ---
 
-<Layout title="Download — HAL-C2" description="Download HAL-C2 for macOS, Windows, or Linux.">
-  <div class="download-page" id="download-page" data-channel="stable">
-    <!-- The sky lives behind the header and fades to the page. It only shows on the nightly channel. -->
+<Layout title="Download — HAL-C2" description="Download the HAL-C2 MC for macOS or Linux.">
+  <div class="download-page" id="download-page">
     <header class="download-head">
-      <div class="sky" aria-hidden="true"></div>
       <div class="head-inner" data-rise>
         <span class="head-icon">
-          <Image class="head-icon--stable" src={iconStable} width={64} height={64} loading="eager" {...imageProps} />
-          <Image class="head-icon--nightly" src={iconNightly} width={64} height={64} loading="eager" {...imageProps} />
+          <Image src={iconStable} width={64} height={64} loading="eager" {...imageProps} />
         </span>
         <h1 class="heading">Download HAL-C2</h1>
       </div>
-      <div class="channel-toggle" role="tablist" aria-label="Release channel" data-rise style="--d:90ms">
-        <span class="channel-thumb" aria-hidden="true"></span>
-        <button type="button" role="tab" data-channel="stable" aria-selected="true">Stable</button>
-        <button type="button" role="tab" data-channel="nightly" aria-selected="false">Nightly</button>
-      </div>
-      <p class="head-meta" data-rise style="--d:180ms">
+      <p class="head-meta" data-rise style="--d:90ms">
         <a id="changelog-link" class="changelog-link" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
           <span id="version-label">&nbsp;</span><span aria-hidden="true"> &#8599;</span>
         </a>
@@ -47,37 +38,13 @@ const imageProps = {
           <h2 class="platform-name">macOS</h2>
         </div>
         <div class="download-cards">
-          <a class="download-card" data-asset="arm64.dmg" href={RELEASES_URL}>
+          <a class="download-card" data-asset="darwin-arm64" href={RELEASES_URL}>
             <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
+              <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
             </span>
             <span class="card-text">
               <span class="card-arch">Apple Silicon (arm64)</span>
-              <span class="card-format">.dmg</span>
-            </span>
-          </a>
-        </div>
-        <p class="intel-note">
-          On an Intel Mac? <a data-asset="x64.dmg" href={RELEASES_URL}>Download the x64 build</a>.
-        </p>
-      </section>
-
-      <!-- Windows -->
-      <section class="platform-section" data-rise style="--d:300ms">
-        <div class="platform-header">
-          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" aria-hidden="true"><path fill="currentColor" d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/></svg>
-          <h2 class="platform-name">Windows</h2>
-        </div>
-        <div class="download-cards">
-          <a class="download-card" data-asset="x64.exe" href={RELEASES_URL}>
-            <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
-            </span>
-            <span class="card-text">
-              <span class="card-arch">Windows 10, 11</span>
-              <span class="card-format">.exe</span>
+              <span class="card-format">MC, single file</span>
             </span>
           </a>
         </div>
@@ -90,37 +57,33 @@ const imageProps = {
           <h2 class="platform-name">Linux</h2>
         </div>
         <div class="download-cards">
-          <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
+          <a class="download-card" data-asset="linux-x64" href={RELEASES_URL}>
             <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
+              <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
             </span>
             <span class="card-text">
               <span class="card-arch">x86_64</span>
-              <span class="card-format">AppImage</span>
+              <span class="card-format">MC, single file</span>
+            </span>
+          </a>
+          <a class="download-card" data-asset="linux-arm64" href={RELEASES_URL}>
+            <span class="card-icon">
+              <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
+            </span>
+            <span class="card-text">
+              <span class="card-arch">arm64</span>
+              <span class="card-format">MC, single file</span>
             </span>
           </a>
         </div>
       </section>
 
-      <!-- Mobile. Stable only, there is no nightly mobile build. -->
-      <section class="platform-section platform-section--mobile" data-rise style="--d:420ms">
-        <div class="platform-header">
-          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
-          <h2 class="platform-name">Mobile</h2>
-        </div>
-        <p class="cli-note">Not yet published to the App Store or Google Play.</p>
-      </section>
-
-      <section class="platform-section platform-section--cli" data-rise style="--d:420ms">
-        <div class="platform-header">
-          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
-          <h2 class="platform-name">Terminal</h2>
-        </div>
-        <code class="cli-line cli-line--stable">curl -fsSL https://hal-c2.example/install.sh | sh</code>
-        <code class="cli-line cli-line--stable">irm https://hal-c2.example/install.ps1 | iex</code>
-        <code class="cli-line cli-line--nightly">curl -fsSL https://hal-c2.example/install.sh | HAL_C2_CHANNEL=nightly sh</code>
-        <code class="cli-line cli-line--nightly">$env:HAL_C2_CHANNEL="nightly"; irm https://hal-c2.example/install.ps1 | iex</code>
+      <section class="platform-section" data-rise style="--d:420ms">
+        <p class="cli-note">
+          These are the MC, the server HAL-C2's clients connect to. Make the file executable
+          and run it to start the MC, or run it with <code>install</code> to keep it running as a
+          background service. The desktop, terminal and phone apps are not published yet.
+        </p>
       </section>
     </div>
 
@@ -134,71 +97,29 @@ const imageProps = {
 </Layout>
 
 <script>
-  import { fetchLatestRelease, RELEASES_URL, NIGHTLY_RELEASES_URL, type ReleaseChannel } from "../lib/releases";
+  import { fetchLatestRelease, RELEASES_URL } from "../lib/releases";
 
   const page = document.getElementById("download-page")!;
   const versionLabel = document.getElementById("version-label")!;
   const changelogLink = document.getElementById("changelog-link") as HTMLAnchorElement;
-  const releasesPageLink = document.getElementById("releases-page-link") as HTMLAnchorElement;
-  const tabs = page.querySelectorAll<HTMLButtonElement>(".channel-toggle button");
   // Only release-asset links carry data-asset.
   const cards = page.querySelectorAll<HTMLAnchorElement>("a[data-asset]");
 
-  function readChannel(): ReleaseChannel {
-    return new URLSearchParams(location.search).get("channel") === "nightly" ? "nightly" : "stable";
-  }
-
-  function relativeAge(iso: string): string {
-    const minutes = Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 60_000));
-    if (minutes < 60) return `${minutes} minutes ago`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 48) return `${hours} hours ago`;
-    return `${Math.round(hours / 24)} days ago`;
-  }
-
-  async function load(channel: ReleaseChannel) {
-    const fallback = channel === "nightly" ? NIGHTLY_RELEASES_URL : RELEASES_URL;
-    page.dataset.channel = channel;
-    tabs.forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.channel === channel)));
-    releasesPageLink.href = fallback;
-    changelogLink.href = fallback;
-    versionLabel.textContent = "\u00a0";
-    cards.forEach((card) => {
-      card.href = fallback;
-    });
-
+  async function load() {
     try {
-      const release = await fetchLatestRelease(channel);
-      // A toggle click while the fetch was in flight wins; drop the stale result.
-      if (page.dataset.channel !== channel) return;
-
-      // Stable shows its version. Nightly shows how fresh the build is; the tag is noise.
-      versionLabel.textContent =
-        channel === "nightly"
-          ? `Built ${relativeAge(release.published_at)}`
-          : release.tag_name;
+      const release = await fetchLatestRelease();
+      versionLabel.textContent = release.tag_name.replace(/^mc-v/, "");
       if (release.html_url) changelogLink.href = release.html_url;
       cards.forEach((card) => {
         const match = (release.assets ?? []).find((a) => a.name.endsWith(`-${card.dataset.asset}`));
-        card.href = match?.browser_download_url ?? fallback;
+        card.href = match?.browser_download_url ?? RELEASES_URL;
       });
     } catch {
-      if (page.dataset.channel === channel) versionLabel.textContent = "Releases";
+      versionLabel.textContent = "Releases";
     }
   }
 
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const channel = tab.dataset.channel as ReleaseChannel;
-      const url = new URL(location.href);
-      if (channel === "nightly") url.searchParams.set("channel", "nightly");
-      else url.searchParams.delete("channel");
-      history.replaceState(null, "", url);
-      load(channel);
-    });
-  });
-
-  load(readChannel());
+  load();
 </script>
 
 <style>
@@ -222,30 +143,6 @@ const imageProps = {
     margin-bottom: 2rem;
   }
 
-  /* Sky: the nightly DMG backdrop, masked so it dissolves into the page instead of ending at a line. */
-  .sky {
-    position: absolute;
-    top: -80px;
-    bottom: 0;
-    /* Break out of the page padding so the sky spans the full viewport width. */
-    left: 50%;
-    width: 100vw;
-    margin-left: -50vw;
-    z-index: -1;
-    background: url("/nightly-sky.svg") center / cover no-repeat;
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
-    opacity: 0;
-    transform: scale(1.04);
-    transition: opacity 0.9s ease, transform 1.4s cubic-bezier(0.2, 0.7, 0.2, 1);
-    pointer-events: none;
-  }
-
-  .download-page[data-channel="nightly"] .sky {
-    opacity: 1;
-    transform: none;
-  }
-
   .head-inner {
     display: flex;
     align-items: center;
@@ -259,29 +156,12 @@ const imageProps = {
     flex-shrink: 0;
   }
 
-  /* Both channel icons stay mounted and cross-fade, so the title never moves. */
   .head-icon img,
   .card-icon img {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    transition: opacity 0.45s ease;
-  }
-
-  .head-icon--nightly,
-  .card-icon--nightly {
-    opacity: 0;
-  }
-
-  .download-page[data-channel="nightly"] .head-icon--stable,
-  .download-page[data-channel="nightly"] .card-icon--stable {
-    opacity: 0;
-  }
-
-  .download-page[data-channel="nightly"] .head-icon--nightly,
-  .download-page[data-channel="nightly"] .card-icon--nightly {
-    opacity: 1;
   }
 
   .heading {
@@ -289,64 +169,6 @@ const imageProps = {
     font-size: clamp(1.75rem, 4vw, 2.75rem);
     letter-spacing: -0.035em;
     line-height: 1.15;
-  }
-
-  /* ── Channel toggle ── */
-
-  .channel-toggle {
-    position: relative;
-    display: inline-flex;
-    margin-top: 1.5rem;
-    padding: 3px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.03);
-    transition: border-color 0.45s ease, background 0.45s ease;
-  }
-
-  .download-page[data-channel="nightly"] .channel-toggle {
-    border-color: rgba(255, 255, 255, 0.22);
-    background: rgba(7, 21, 47, 0.5);
-  }
-
-  /* The thumb slides between the two tabs; both tabs are the same width. */
-  .channel-thumb {
-    position: absolute;
-    top: 3px;
-    bottom: 3px;
-    left: 3px;
-    width: calc(50% - 3px);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
-    transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.45s ease;
-  }
-
-  .download-page[data-channel="nightly"] .channel-thumb {
-    transform: translateX(100%);
-    background: rgba(255, 255, 255, 0.16);
-  }
-
-  .channel-toggle button {
-    position: relative;
-    width: 5.5rem;
-    padding: 7px 0;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--fg-muted);
-    font: inherit;
-    font-size: 13px;
-    cursor: pointer;
-    transition: color 0.25s ease;
-  }
-
-  .channel-toggle button:hover,
-  .channel-toggle button[aria-selected="true"] {
-    color: var(--fg);
-  }
-
-  .channel-toggle button[aria-selected="true"] {
-    font-weight: 500;
   }
 
   .head-meta {
@@ -368,10 +190,6 @@ const imageProps = {
     text-decoration-color: var(--fg);
   }
 
-  .download-page[data-channel="nightly"] .changelog-link {
-    color: #b9bdff;
-  }
-
   /* ── Platforms ── */
 
   .platforms {
@@ -386,20 +204,6 @@ const imageProps = {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  .download-page[data-channel="nightly"] .platform-section--mobile {
-    display: none;
-  }
-
-  /* The CLI ships on both trains; only the install command differs. */
-  .cli-line--nightly,
-  .download-page[data-channel="nightly"] .cli-line--stable {
-    display: none;
-  }
-
-  .download-page[data-channel="nightly"] .cli-line--nightly {
-    display: block;
   }
 
   .platform-header {
@@ -429,14 +233,8 @@ const imageProps = {
     margin-top: 0.5rem;
   }
 
-  .cli-line {
-    align-self: flex-start;
+  .cli-note code {
     font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 0.6rem 0.9rem;
-    border-radius: 10px;
-    border: 1px solid rgba(105, 111, 234, 0.35);
-    background: rgba(21, 20, 67, 0.3);
     color: var(--fg);
   }
 
@@ -456,7 +254,7 @@ const imageProps = {
     border-radius: 10px;
     border: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.02);
-    transition: background 0.45s ease, border-color 0.45s ease, transform 0.2s ease;
+    transition: background 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
   }
 
   .download-card:hover {
@@ -467,15 +265,6 @@ const imageProps = {
 
   .download-card:active {
     transform: translateY(0);
-  }
-
-  .download-page[data-channel="nightly"] .download-card[data-asset] {
-    border-color: rgba(105, 111, 234, 0.4);
-    background: linear-gradient(135deg, rgba(81, 101, 216, 0.1), rgba(168, 91, 234, 0.06));
-  }
-
-  .download-page[data-channel="nightly"] .download-card[data-asset]:hover {
-    border-color: rgba(105, 111, 234, 0.7);
   }
 
   .card-icon {
@@ -499,31 +288,6 @@ const imageProps = {
   .card-format {
     font-size: 0.8rem;
     color: var(--fg-dim);
-    transition: color 0.45s ease;
-  }
-
-  .download-page[data-channel="nightly"] .card-format {
-    color: #b6b0ff;
-  }
-
-  .intel-note {
-    font-size: 0.8rem;
-    color: var(--fg-dim);
-  }
-
-  .intel-note a,
-  .releases-link a {
-    color: var(--fg-muted);
-    text-decoration: underline;
-    text-decoration-color: rgba(161, 161, 170, 0.4);
-    text-underline-offset: 3px;
-    transition: color 0.3s ease, text-decoration-color 0.3s ease;
-  }
-
-  .intel-note a:hover,
-  .releases-link a:hover {
-    color: var(--fg);
-    text-decoration-color: var(--fg);
   }
 
   /* ── Releases link ── */
@@ -534,14 +298,22 @@ const imageProps = {
     color: var(--fg-dim);
   }
 
+  .releases-link a {
+    color: var(--fg-muted);
+    text-decoration: underline;
+    text-decoration-color: rgba(161, 161, 170, 0.4);
+    text-underline-offset: 3px;
+    transition: color 0.3s ease, text-decoration-color 0.3s ease;
+  }
+
+  .releases-link a:hover {
+    color: var(--fg);
+    text-decoration-color: var(--fg);
+  }
+
   /* ── Motion ── */
 
   @media (prefers-reduced-motion: reduce) {
-    .sky,
-    .head-icon img,
-    .card-icon img,
-    .channel-thumb,
-    .channel-toggle,
     .download-card {
       transition: none;
     }

@@ -1,6 +1,6 @@
 defmodule HalC2.Connect do
   @moduledoc """
-  HAL-C2 Connect, MC side (`apps/server/src/cloud/http.ts`): linking this MC to a
+  HAL-C2 Connect, MC side: linking this MC to a
   user's cloud account through the relay, and answering the relay afterwards.
 
     * A client links the MC by fetching a signed link proof (`link_proof/2`),
@@ -12,7 +12,7 @@ defmodule HalC2.Connect do
       one-time credentials bound to a device's DPoP key (`mint_credential/1`); it
       never holds a session itself.
 
-  Everything is kept in `HalC2.Connect.Secrets`, under the Node server's names. The
+  Everything is kept in `HalC2.Connect.Secrets`, under the names earlier installs used. The
   relay is `HAL_C2_RELAY_URL` (app env `:connect_relay_url`) until a link names one.
   Failures are `{:error, status, message}`.
   """
@@ -321,7 +321,7 @@ defmodule HalC2.Connect do
   end
 
   @doc """
-  Links the MC as the operator asked (`hal-c2 connect link`), from its own loopback
+  Links the MC as the operator asked (`mix hal_c2.connect link`), from its own loopback
   origin: challenge, proof, link, then `apply_relay_config/1`. `{:ok, result}`, or
   `{:error, :permanent | :transient, message}`: 4xx other than 408 and 429 will
   not get better by retrying.
@@ -378,7 +378,7 @@ defmodule HalC2.Connect do
       end
     else
       {:token, _} ->
-        {:error, :permanent, "Run `hal-c2 connect link` to authorize this environment."}
+        {:error, :permanent, "Run `mix hal_c2.connect link` to authorize this environment."}
 
       {:url, _} ->
         {:error, :permanent, "No HAL-C2 Connect relay is configured."}
@@ -451,7 +451,7 @@ defmodule HalC2.Connect do
     end
   end
 
-  @doc "What a relay failure tells the operator, with the way to recover (`relayResponse.ts`)."
+  @doc "What a relay failure tells the operator, with the way to recover."
   def relay_message(status, body, headers \\ []) do
     case JSON.decode(body) do
       {:ok, %{"_tag" => "Relay" <> _ = tag, "message" => message, "traceId" => trace}}
@@ -474,7 +474,7 @@ defmodule HalC2.Connect do
 
   defp hint("RelayAuthInvalidError"),
     do:
-      "Run `hal-c2 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `hal-c2 connect logout`, then run `hal-c2 connect` again. Restart HAL-C2 after signing in."
+      "Run `mix hal_c2.connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `mix hal_c2.connect logout`, then run `mix hal_c2.connect` again. Restart HAL-C2 after signing in."
 
   defp hint(tag)
        when tag in [

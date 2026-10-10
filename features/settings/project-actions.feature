@@ -82,3 +82,13 @@ Feature: Project actions settings panel
     Given "server" runs a server without project overrides
     When the user picks "shop" in the Actions settings
     Then changes apply only to environments that support project overrides
+
+  # Legacy: apps/web/src/components/settings/ProjectActionsSettings.tsx (importableScripts)
+  @backlog @desktop
+  Scenario: Only actions the project does not have yet can be imported
+    Given the checkout's hal-c2.json declares "Lint" running "bun lint" and "Dev" running "bun dev"
+    And "shop" has an action named "dev" running "bun run start"
+    When the user opens the Actions settings for "shop"
+    Then only "Lint" can be imported from hal-c2.json
+    When "shop" has every action of hal-c2.json
+    Then there is nothing to import from hal-c2.json

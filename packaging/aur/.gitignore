@@ -1,9 +1,0 @@
-src/
-pkg/
-*.AppImage
-*.pkg.tar.zst
-.SRCINFO
-hal-c2-bin-*.png
-hal-c2-bin-*-LICENSE
-hal-c2-nightly-bin-*.png
-hal-c2-nightly-bin-*-LICENSE

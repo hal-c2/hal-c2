@@ -5,13 +5,11 @@
   "name": "HAL-C2",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
-    // nodeGypDependencies (default true) brings python3/make/g++, which Linux
-    // needs for node-pty's node-gyp fallback (its prebuilds are mac/win only).
     "ghcr.io/devcontainers/features/node:2": {
       "version": "24"
     },
-    // native/resource-monitor (edition 2024, needs stable >= 1.85). The server
-    // degrades gracefully without the binary, but CI checks cargo fmt + test.
+    // native/resource-monitor (edition 2024, needs stable >= 1.85):
+    // `vp run build:resource-monitor` and `vp run test:resource-monitor`.
     "ghcr.io/devcontainers/features/rust:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
@@ -39,14 +37,10 @@
   ],
   "onCreateCommand": "bash .devcontainer/on-create.sh",
   "updateContentCommand": "bash .devcontainer/update-content.sh",
-  "forwardPorts": [5733, 13773],
+  "forwardPorts": [3780],
   "portsAttributes": {
-    "5733": {
-      "label": "hal-c2 web (open via the pairing URL, not the bare origin)",
-      "onAutoForward": "notify"
-    },
-    "13773": {
-      "label": "hal-c2 server",
+    "3780": {
+      "label": "hal-c2 MC",
       "onAutoForward": "silent"
     }
   },

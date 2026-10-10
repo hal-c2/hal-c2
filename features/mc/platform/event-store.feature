@@ -7,6 +7,8 @@
 #   apps/server-ex/lib/hal_c2/search.ex (message index backfill)
 #   apps/server-ex/lib/hal_c2/projection.ex
 #   apps/server/src/persistence/Migrations (TypeScript migrations, replaced by the MC's store)
+#   apps/server/src/orchestration-v2/ProjectionMaintenance.ts, ProjectionStore.ts (checking and
+#     rebuilding projections, compacting the log)
 #   docs/internals/overview.md (event sourcing)
 
 Feature: The MC's event store and projections
@@ -128,6 +130,51 @@ Feature: The MC's event store and projections
     Given a store written by a newer MC schema
     When an older MC opens it
     Then it refuses to start and names the version it found
+
+  # The Node server builds these checks but nothing in it runs them yet; see the audit's
+  # "Uncertain" list before implementing.
+  @mc @backlog
+  Scenario Outline: Checking the projections against the log reports what is wrong
+    Given <fault>
+    When the projections are checked against the log
+    Then the check fails and names <report>
+
+    Examples:
+      | fault                                                       | report                                 |
+      | a thread in the log has no projection                       | the missing thread                     |
+      | a projection exists for a thread the log never created      | the unexpected thread                  |
+      | a thread's stored projection can no longer be read          | the unreadable thread                  |
+      | a fork's source thread can no longer be read                | the source and the fork as unreadable  |
+      | the projections stopped at an earlier sequence than the log | the sequence they are at and the log's |
+      | the projections were written by another projection format   | the format version it found            |
+
+  @mc @backlog
+  Scenario: Projections are rebuilt from the log
+    Given the projections of the MC are damaged
+    When the projections are rebuilt
+    Then every thread, run, message and timeline item is derived again from the log
+    And timeline items keep the order they first had
+    And the check against the log passes
+
+  @mc @backlog
+  Scenario: Compacting the log removes only what a replay no longer needs
+    Given a thread was renamed, pinned and visited many times and its messages streamed in many updates
+    When the log is compacted
+    Then only the newest state of the thread and of each message is kept
+    And the thread's creation and every timeline item update stay in the log
+    And rebuilding the projections gives the same threads as before
+
+  @mc @backlog
+  Scenario: Compacting the log reports what it removed and what can be reclaimed
+    When the log is compacted
+    Then it reports how many events and receipts it removed
+    And how many bytes the store can now give back
+
+  @mc @backlog
+  Scenario: Compacting a long log does not hold up other work
+    Given a log with many thousands of events
+    When the log is compacted while clients send commands
+    Then the commands are accepted between the batches of 500 events it works through
 
   # The TypeScript server's numbered projection migrations. The MC stores entity
   # patches, and its state format migrates snapshots in place instead.

@@ -17,8 +17,7 @@
 
 namespace {
 
-// Role names are camelCase in the file, as APP_THEME_VARIABLES in
-// apps/web/src/themePalette.ts names them.
+// Role names are camelCase in the file.
 bool isRoleName(const QString& name) {
   static const QRegularExpression pattern(QStringLiteral("^[a-z][a-zA-Z0-9]*$"));
   return pattern.match(name).hasMatch();

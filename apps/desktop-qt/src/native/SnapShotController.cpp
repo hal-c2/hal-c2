@@ -52,14 +52,14 @@ QJsonObject jsonOf(const keybindings::Shortcut& chord) {
           {QStringLiteral("altKey"), chord.alt},    {QStringLiteral("modKey"), chord.mod}};
 }
 
-// The web's shortcutConflictKey: mod is Command on macOS, Ctrl elsewhere.
+// A shortcut's conflict key: mod is Command on macOS, Ctrl elsewhere.
 QString conflictKey(const keybindings::Shortcut& chord, bool mac) {
   const bool meta = chord.meta || (mac && chord.mod);
   const bool ctrl = chord.ctrl || (!mac && chord.mod);
   return QStringLiteral("%1|%2|%3|%4|%5").arg(chord.key.toLower()).arg(meta).arg(ctrl).arg(chord.shift).arg(chord.alt);
 }
 
-// apps/desktop/src/snapShot/snapShot.ts snapShotShortcutSystemConflict.
+// The system shortcut a chord collides with, if any.
 QString systemConflict(const keybindings::Shortcut& chord) {
   const int modifiers = int(chord.mod) + int(chord.meta) + int(chord.ctrl) + int(chord.alt) + int(chord.shift);
   if (modifiers != 1) return {};
@@ -537,7 +537,7 @@ std::optional<QByteArray> SnapShotController::encode(const QImage& image, qint64
     *mimeType = QStringLiteral("image/png");
     return png;
   }
-  // imageCompression.ts: a data URL's budget, in bytes.
+  // A data URL's budget, in bytes.
   const qint64 budget = maxBytes / 3 * 3;
   const QImage opaque = image.convertToFormat(QImage::Format_RGB32);
   const int base = std::max(opaque.width(), opaque.height());

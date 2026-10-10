@@ -13,7 +13,9 @@ Feature: Reconnecting and stale requests in the terminal client
   Background:
     Given the terminal client is connected and showing a thread
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP
+  # (launch.feature: "Without a launcher a dropped connection reconnects with a fresh ticket").
+  @dropped @tui
   Scenario: A dropped connection reconnects with a fresh socket ticket
     When the connection to the server drops
     Then the client asks its launcher for a new socket ticket
@@ -25,13 +27,15 @@ Feature: Reconnecting and stale requests in the terminal client
     Then the same thread is selected
     And its timeline catches up to the server's state
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP.
+  @dropped @tui
   Scenario: A ticket request that gets no answer fails after ten seconds
     Given the launcher does not answer a socket ticket request
     Then the request fails after 10 seconds
     And the client keeps trying to reconnect
 
-  @tui
+  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP.
+  @dropped @tui
   Scenario: Losing the launcher fails every pending ticket request
     Given ticket requests are waiting on the launcher
     When the launcher process goes away

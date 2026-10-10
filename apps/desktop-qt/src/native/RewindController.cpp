@@ -1,4 +1,4 @@
-// Editing from one of the user's messages (the web's "Edit from here"): the
+// Editing from one of the user's messages ("Edit from here"): the
 // conversation rewinds to before that message, and the message's prompt and
 // attachments return to the composer to be changed and sent again.
 //
@@ -82,8 +82,7 @@ private:
     if (thread.isEmpty() || !timeline) return;
     const QVariantMap point = timeline->rewindPointOf(rowId);
     if (point.isEmpty()) return;
-    // The thread's provider may be unable to forget what came after (the
-    // web's supportsConversationRollback).
+    // The thread's provider may be unable to forget what came after.
     const QString instance = m_store->threadRow(thread).value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString();
     for (const QJsonValue& provider : shell->controller<WorkspaceController>()->environmentConfig().value(QLatin1String("providers")).toArray()) {
       const QJsonObject status = provider.toObject();

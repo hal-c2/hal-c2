@@ -355,7 +355,7 @@ QList<QJsonObject> PullRequestReview::mergeLayers() const {
   return {};
 }
 
-// apps/web PullRequestStackMenu: what the stack is, and what can be done with it.
+// What the stack is, and what can be done with it.
 QVariantMap PullRequestReview::stack() const {
   const QJsonArray all = m_stack.value(QLatin1String("layers")).toArray();
   if (all.isEmpty()) return {};

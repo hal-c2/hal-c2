@@ -273,7 +273,7 @@ const Steps steps([] {
     world.sync();  // and the MC has said none of them has a favicon
   });
   step(QStringLiteral("%1 shows the monogram %1 in a colour derived from its name").arg(q), [](World& world, const Captures& c, const Table&) {
-    // The web's deriveProjectIdentity for these names (apps/web/src/projectIdentity.ts).
+    // The colour each of these names derives.
     static const QHash<QString, QString> colours{{QStringLiteral("Nebula"), QStringLiteral("red")},
                                                  {QStringLiteral("Silver Orchard"), QStringLiteral("sky")},
                                                  {QStringLiteral("M7 Forge"), QStringLiteral("emerald")}};

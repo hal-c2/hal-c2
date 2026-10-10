@@ -125,7 +125,7 @@ defmodule HalC2.AgentSessionsTest do
 
     # These sessions already belong to p1, so they stay there when a second project
     # on the same folder imports. `project.create` refuses a folder another project
-    # owns, so p2 is stored as data, as a database imported from the Node server can hold.
+    # owns, so p2 is stored as data, as a database imported from an earlier install can hold.
     at = HalC2.Orchestration.Entities.now()
 
     p2 = %{

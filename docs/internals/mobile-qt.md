@@ -1,7 +1,6 @@
 # Mobile (Qt) client
 
-`apps/mobile-qt` is the Android client for phones, tablets and laptops, replacing the React Native
-app in `apps/mobile`. How to build and run it is in its
+`apps/mobile-qt` is the Android client for phones, tablets and laptops. How to build and run it is in its
 [README](../../apps/mobile-qt/README.md). This page records why it is shaped the way it is.
 
 ## The desktop's shell with another root

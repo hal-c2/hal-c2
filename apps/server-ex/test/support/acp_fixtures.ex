@@ -31,7 +31,7 @@ defmodule HalC2.Test.AcpFixtures do
     :text_claude_command,
     :provider_update_checks
   ]
-  @os_keys ["HAL_C2_NODE_COMMAND", "HAL_C2_NODE_ELECTRON", "PATH", "FAKE_TEXT_LOG"]
+  @os_keys ["HAL_C2_NODE_COMMAND", "PATH", "FAKE_TEXT_LOG"]
 
   @doc "Starts the provider services with fake Codex and Claude; idempotent."
   def ready(%{acp: _} = ctx), do: ctx
@@ -69,7 +69,6 @@ defmodule HalC2.Test.AcpFixtures do
     Application.put_env(:hal_c2, :text_codex_command, @fake_text)
     Application.put_env(:hal_c2, :text_claude_command, @fake_text)
     System.put_env("FAKE_TEXT_LOG", Path.join(dir, "text.log"))
-    System.delete_env("HAL_C2_NODE_ELECTRON")
 
     HalC2.Test.Mc.ensure(HalC2.Settings)
     HalC2.Test.Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})

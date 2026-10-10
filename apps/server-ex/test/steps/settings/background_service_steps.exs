@@ -120,7 +120,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
     context
   end
 
-  # --- installing, status and repair (`hal-c2 service`, a Linux user's systemd) ----------
+  # --- installing, status and repair (`mix hal_c2.service`, a Linux user's systemd) -------
 
   @problems %{
     "cannot linger after logout on Linux" => {"linger-disabled", "linger", false},
@@ -189,12 +189,12 @@ defmodule HalC2.Steps.Settings.BackgroundService do
     fix =
       case code do
         "linger-disabled" -> ~S|sudo loginctl enable-linger "$(id -un)"|
-        "restart-pending" -> "hal-c2 service restart"
-        _ -> "hal-c2 service install"
+        "restart-pending" -> "hal-c2-mc restart"
+        _ -> "hal-c2-mc install"
       end
 
     assert problem =~ fix
-    assert List.last(lines) == "  Next: Run `hal-c2 service install` to repair it."
+    assert List.last(lines) == "  Next: Run `hal-c2-mc install` to repair it."
     context
   end
 
@@ -225,7 +225,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
   defp service_state?(context, name),
     do: File.exists?(Path.join(Path.dirname(context.service_tools), name))
 
-  # A foreground web client's report on `scopes`, once the policy has it.
+  # A foreground client's report on `scopes`, once the policy has it.
   defp report_activity(context, scopes, extra \\ %{}) do
     policy = HalC2.Test.Mc.ensure(BackgroundPolicy)
     :erlang.trace(policy, true, [:receive])

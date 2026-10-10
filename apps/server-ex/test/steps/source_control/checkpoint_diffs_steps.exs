@@ -217,7 +217,8 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
     scope = HalC2.Checkpoint.scope_id(id)
     project = World.project(context, "shop").id
 
-    # The previous server's hidden refs: a commit of the whole checkout per turn.
+    # Checkpoints from HAL-C2 before the MC: hidden refs, a commit of the whole checkout
+    # per turn.
     refs =
       for ordinal <- 0..3 do
         if ordinal > 0,

@@ -11,7 +11,7 @@
 
 class McClient;
 
-// A setting across the selected environments (the web's scopedSettings.ts):
+// A setting across the selected environments:
 // the settings documents of a few environments, read as one value that may
 // be mixed, and changed on each of them.
 //

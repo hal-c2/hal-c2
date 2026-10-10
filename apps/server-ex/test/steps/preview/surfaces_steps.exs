@@ -359,7 +359,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
   end
 
   step "the MC's own port is not among the suggestions", context do
-    # The MC's own port answers with its web app, so it would be a suggestion.
+    # The MC's own port answers HTTP, so it would be a suggestion.
     refute context.mc.port in Enum.map(context.servers, & &1["port"])
     context
   end

@@ -1,8 +1,7 @@
 name: CI
 
 # The MC (apps/server-ex) and the TUI (apps/tui). The Qt desktop builds and
-# tests in desktop-qt.yml. The legacy Node server, web, Electron and React Native
-# apps have no CI of their own; desktop-qt.yml still builds the web app it hosts.
+# tests in desktop-qt.yml.
 
 on:
   pull_request:

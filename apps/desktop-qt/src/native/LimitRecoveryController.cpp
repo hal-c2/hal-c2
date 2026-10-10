@@ -1,5 +1,5 @@
 // What the user can do about the open thread once its agent stopped on a
-// usage limit (the web's UsageLimitRecoveryBanner): continue on its own when
+// usage limit: continue on its own when
 // the limit resets, or snooze the thread until then. The MC arms both
 // (`thread.metadata.update` with `limitRecovery`, HalC2.Orchestration.
 // LimitRecovery); the row says what is armed.

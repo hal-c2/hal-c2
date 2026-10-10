@@ -168,3 +168,24 @@ Feature: Thread menu and selecting several threads
     Then "A" is deleted
     And the user is told "Failed to delete threads"
     And "C" stays selected
+
+  @backlog @desktop
+  Scenario: Opening a thread clears the selection
+    Given "A" and "C" are selected
+    When the user opens "D" by clicking it
+    Then no thread is selected
+
+  @backlog @desktop
+  Scenario: Extending a range again starts from the same thread
+    Given the threads "A", "B", "C" and "D" are listed in that order
+    And the user selected "A" and extended the range to "C"
+    When the user extends the range to "D"
+    Then "A", "B", "C" and "D" are selected
+
+  @backlog @desktop
+  Scenario: A selected thread that no longer exists is dropped from the selection when deleting
+    Given "A" and "C" are selected
+    And "C" was deleted from another device
+    When the user deletes the selection
+    Then "A" is deleted
+    And no thread is selected

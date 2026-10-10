@@ -354,7 +354,7 @@ defmodule HalC2.Review do
     }
 
   # A thread's worktree counts as its project, wherever it is; so does anything under
-  # the MC's worktrees directory, as on the Node server.
+  # the MC's worktrees directory.
   defp within_projects(cwd, operation) do
     cwd = Path.expand(cwd)
     worktrees = Path.expand(Path.join(HalC2.Paths.data_dir(), "worktrees"))

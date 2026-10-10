@@ -1,5 +1,5 @@
 // Changes one setting through the protocol 3 client adapter (makeV3Session) against a
-// running MC, as the legacy web and mobile clients do.
+// running MC.
 // Usage: bun v3_update_settings.ts <ws url> <environment id> <settings patch as JSON>
 import { ClusterSocket } from "../../../../packages/client-runtime/src/v3/clusterSocket.ts";
 import { makeV3Session } from "../../../../packages/client-runtime/src/v3/session.ts";

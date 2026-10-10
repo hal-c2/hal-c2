@@ -1,24 +1,24 @@
 defmodule HalC2.Import.V2 do
   @moduledoc """
-  Imports the Node server's `orchestration_events` log into a `HalC2.Store`.
+  Imports an earlier install's `orchestration_events` log into a `HalC2.Store`.
 
-  The Node log stores every update as the whole entity, so streaming text is
+  The earlier install's log stores every update as the whole entity, so streaming text is
   re-stored in full on every chunk. Each event is diffed against the previous version
   of its entity and only the `HalC2.Patch` is kept; identical re-emits are dropped.
 
   The source is opened read-only. Streams are imported one at a time, in order of
   their first event, so only one stream's latest entities are held in memory.
 
-  Provider sessions follow the Node projection's binding rules: a session belongs to
+  Provider sessions follow the earlier install's projection rules: a session belongs to
   a thread from `provider-session.attached` until `provider-session.detached`, and
   an update to a session the thread is not bound to changes nothing in that thread.
 
-  Two more Node projection rules are made explicit in the log: a provider thread
+  Two more projection rules of the earlier install are made explicit in the log: a provider thread
   update for this thread (other than a queued placeholder) makes it the thread's
   `activeProviderThreadId`, and visits and mark-unread are quiet patches.
 
-  A thread logged only as version 1 events (before the Node server moved to v2) is
-  folded by `HalC2.Import.V1Thread` into the v2 entities the Node server migrates it to.
+  A thread logged only as version 1 events (before an earlier install moved to v2) is
+  folded by `HalC2.Import.V1Thread` into the v2 entities that install migrated it to.
 
   Options: `:only`, the stream ids to import, and `:rewrite`, a function every event's
   payload goes through first (`HalC2.ThreadArchive.rewriter/4`, to land in another project).
@@ -92,7 +92,7 @@ defmodule HalC2.Import.V2 do
     fn read -> report.(read, total) end
   end
 
-  @doc "Maps a Node event to `{kind, entity_id, entity}`, or `nil` when it carries no entity."
+  @doc "Maps an earlier install's event to `{kind, entity_id, entity}`, or `nil` when it carries no entity."
   @spec entity(String.t(), map) :: {String.t(), String.t(), map} | nil
   def entity(event_type, payload) do
     kind = event_type |> String.split(".", parts: 2) |> hd()
@@ -139,7 +139,7 @@ defmodule HalC2.Import.V2 do
     for [aggregate, id, v2, _] <- rows, do: {aggregate, id, aggregate == "thread" and v2 == 0}
   end
 
-  # A thread with any v2 event was migrated by the Node server; its v1 events are
+  # A thread with any v2 event was migrated by an earlier install; its v1 events are
   # history the v2 ones already carry.
   defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite, progress) do
     {:ok, stmt} =

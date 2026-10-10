@@ -25,16 +25,16 @@ Item {
 
     // What had the keyboard before the drawer took it (usually the composer),
     // and whether the drawer still held it when it last was open: closing
-    // hands focus back, as the web app returns it to its composer.
+    // hands focus back.
     property Item focusBefore: null
     property bool hadFocus: false
     readonly property bool bodyFocused: stack.activeFocus
 
     readonly property color background: Theme.palette.color("canvas", "#09090b")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    // Ink, not the `muted` surface: inactive tabs are the web's text-muted-foreground.
+    // Ink, not the `muted` surface: inactive tabs are muted text.
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    // The toolbar's icons are text-foreground/90 in the web.
+    // The toolbar's icons are the text colour at 90%.
     readonly property color toolbarInk: Qt.alpha(foreground, 0.9)
     readonly property color border: Theme.palette.color("border", "#27272a")
     // Keeps the square Terminal inside a carded drawer's rounded corners.
@@ -86,7 +86,7 @@ Item {
     }
     onBodyFocusedChanged: if (drawer.open) drawer.hadFocus = drawer.bodyFocused
 
-    // The web app clamps the same way: never shorter than a few rows, never
+    // Never shorter than a few rows, never
     // more than three quarters of the window.
     function clampHeight(height) {
         const ceiling = Math.max(minimumHeight, Math.floor(drawer.Window.height * 0.75));
@@ -245,8 +245,7 @@ Item {
         onActivated: Shell.dispatch("terminal.close")
     }
 
-    // The drag edge sits over the top of the drawer, like the web app's own
-    // handle does.
+    // The drag edge sits over the top of the drawer.
     Item {
         id: edge
         anchors.top: parent.top

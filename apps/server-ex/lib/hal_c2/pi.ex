@@ -2,8 +2,7 @@ defmodule HalC2.Pi do
   @moduledoc """
   Pi in its native RPC mode (`pi --mode rpc`): JSON lines of `{type, id?, ...}`
   commands on stdin, and responses and events on stdout (`HalC2.JsonRpc`'s `:pi`
-  dialect). Mirrors the Node server's `PiProvider.ts`, `piHalC2McpInjection.ts` and
-  `PiCommands.ts`; turns run in `HalC2.Pi.ThreadRuntime`.
+  dialect). Turns run in `HalC2.Pi.ThreadRuntime`.
 
   This module holds what the provider entry and the runtime share: the user's
   launch arguments (`providers.pi.launchArgs`) with the ones HAL-C2 owns refused,
@@ -222,8 +221,7 @@ defmodule HalC2.Pi do
   end
 
   @doc """
-  The thinking levels a Pi model offers, as a "thinking" select descriptor
-  (`piThinkingCapabilities.ts`): reasoning models get off through high unless their
+  The thinking levels a Pi model offers, as a "thinking" select descriptor: reasoning models get off through high unless their
   `thinkingLevelMap` rules a level out, and Extra High and Max only when it names
   them. `level`, Pi's configured level, is clamped onto them as the default.
   """
@@ -278,7 +276,7 @@ defmodule HalC2.Pi do
   end
 
   @doc """
-  Pi's `get_commands` as HAL-C2's slash commands and skills (`PiCommands.ts`): a
+  Pi's `get_commands` as HAL-C2's slash commands and skills: a
   `skill`-sourced command is the skill without its `skill:` prefix.
   """
   def parse_commands(data) do

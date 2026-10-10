@@ -27,7 +27,7 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 ## Imports and module namespaces
 
 - Import Effect modules from their subpaths as namespaces: `import * as Effect from "effect/Effect"`, `import * as Layer from "effect/Layer"`. Flag named imports from the bare `"effect"` package.
-- At a service boundary, import the local service module as a namespace and use its public shape: `WorkspacePaths.WorkspacePaths`, `WorkspacePaths.make`, `WorkspacePaths.layer`. Flag aliases such as `import { layer as workspacePathsLayer }` that erase the namespace.
+- At a service boundary, import the local service module as a namespace and use its public shape: `Foo.Foo`, `Foo.make`, `Foo.layer`. Flag aliases such as `import { layer as fooLayer }` that erase the namespace.
 - Named imports stay correct for whole packages such as `@hal-c2/contracts` and for modules used only for a pure helper, error, schema, config value, or type. Do not request `import type * as Contracts`.
 - When a barrel exposes a whole service module, prefer `export * as TokenStore from "./tokenStore.ts"` over individually renamed `make` and `layer` exports.
 
@@ -36,8 +36,8 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - One canonical module per service in this order: imports, error and schema declarations, the `Context.Service` tag with its interface inline, `make`, then `layer`.
 - Define the interface inline in `Context.Service`. Do not add a standalone `FooShape` interface; refer to the inferred type as `Foo["Service"]`.
 - Export a real `make` when the module owns construction. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
-- Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
-- When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
+- Use plain `make` and `layer` in a module named for its implementation. Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
+- When a service moves, delete the old files and update every consumer, including tests and integration harnesses. Do not leave compatibility re-export shims.
 
 ## Dependency acquisition and runtime boundaries
 

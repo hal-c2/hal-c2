@@ -5,6 +5,8 @@
 #   apps/web/src/components/files/fileTreeDragMention.ts
 #   apps/web/src/fileContextMenu.ts
 #   apps/tui/src/components/FilesView.tsx
+#   apps/server/src/workspace/WorkspaceEntries.ts, WorkspaceSearchIndex.ts (listing limits, ignored files, scan timeout)
+#   apps/server/src/workspace/WorkspaceEntries.test.ts (tracked paths under an ignore rule, .convex)
 #   apps/tui/src/components/ChatView.tsx (Browse files)
 #   apps/tui/src/fileTree.ts
 #   apps/mobile/src/features/files/FileTreeBrowser.tsx
@@ -51,12 +53,73 @@ Feature: Exploring project files
     When a client lists every entry of "shop"
     Then nothing under "dist" or "_build" is returned
 
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (excludes tracked paths that match ignore rules)
+  @mc @backlog
+  Scenario: A tracked file that an ignore rule now covers is not listed
+    Given "shop" is a git repository that tracks ".convex/local-storage/data.json" and "src/keep.ts"
+    And ".gitignore" now ignores ".convex/"
+    When a client lists every entry of "shop"
+    Then "src/keep.ts" is returned
+    And nothing under ".convex" is returned
+
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (excludes .convex in non-git workspaces)
+  @mc @backlog
+  Scenario: A local Convex data folder is not listed even without a repository
+    Given "shop" is not a git repository and holds ".convex/local-storage/data.json" and "src/keep.ts"
+    When a client lists every entry of "shop"
+    Then "src/keep.ts" is returned
+    And nothing under ".convex" is returned
+
   @mc
   Scenario: A very large project lists a capped set and says so
     Given "shop" holds more than 25,000 files
     When a client lists every entry of "shop"
     Then 25,000 entries are returned
     And the result is marked as truncated
+
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: directory must be inside the workspace)
+  @mc @backlog
+  Scenario: A folder that is really a link to somewhere outside the project is not listed
+    Given "shop" holds a link "outside" to a folder elsewhere on the machine
+    When a client lists the folder "outside" of "shop"
+    Then the MC answers with a folder listing failure
+    And nothing from the linked folder is returned
+
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: only files and folders)
+  @mc @backlog
+  Scenario: Links and special files are not listed as entries
+    Given "shop" holds a link to a file and a named pipe next to "README.md"
+    When a client lists the folder "" of "shop"
+    Then "README.md" is returned
+    And the link and the named pipe are not
+
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: check-ignore in batches, optional)
+  @mc @backlog
+  Scenario: A folder of thousands of entries still reports which are ignored
+    Given a folder of "shop" holds 5,000 entries and 2,500 of them are ignored
+    When a client lists that folder
+    Then every entry is returned and the 2,500 are marked as ignored
+
+  # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: ignore classification is optional)
+  @mc @backlog
+  Scenario: A folder is listed even when git cannot say what is ignored
+    Given "shop" is not a git repository or git is not installed
+    When a client lists the folder "" of "shop"
+    Then its entries are returned with none marked as ignored
+
+  # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (withDirectoryAncestors)
+  @mc @backlog
+  Scenario: A listing includes the folders that hold the files it returns
+    Given "shop" holds "src/lib/deep/cart.ts"
+    When a client lists every entry of "shop"
+    Then "src", "src/lib" and "src/lib/deep" are returned as folders
+
+  # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (scan timeout), WorkspaceEntries.ts
+  @mc @backlog
+  Scenario: A project too slow to scan answers with an error instead of waiting
+    Given scanning the files of "shop" does not finish within 15 seconds
+    When a client lists every entry of "shop"
+    Then the MC answers that the project's files did not finish scanning in time
 
   @mc
   Scenario: A written file shows up in the next listing
@@ -121,6 +184,38 @@ Feature: Exploring project files
     Given no chat is open for "shop"
     When the user adds "src/app.ts" to the chat
     Then the user is told to open a chat for this project and try again
+
+  @backlog @desktop
+  Scenario: Adding a file to a chat that cannot take input says so
+    Given the chat for "shop" is open but not ready to accept input
+    When the user adds "src/app.ts" to the chat
+    Then the user is told the chat is not ready to accept input right now
+
+  @backlog @desktop
+  Scenario Outline: Copying a mention reports how it went
+    Given the clipboard <state>
+    When the user copies a mention of "src/app.ts"
+    Then the user is told <result>
+
+    Examples:
+      | state             | result                                              |
+      | accepts the text  | the mention was copied, with the path               |
+      | refuses the text  | the mention could not be copied, with the reason    |
+
+  @backlog @desktop
+  Scenario: The tree and the open file can be refreshed by hand
+    Given the tree and the open file were changed on disk outside HAL-C2
+    When the user refreshes the files
+    Then the tree lists the change
+    And the open file shows its new contents
+    And an active filter is applied to the new listing
+
+  @backlog @desktop
+  Scenario: Choosing a file in the tree does not clear the user's filter
+    Given the user filtered the tree by "cart"
+    When the user opens "src/lib/cart.ts" from the filtered tree
+    Then the file opens and the filter stays as typed
+    But opening the same file from a message clears the filter and reveals it
 
   @desktop
   Scenario Outline: File actions available from a file entry

@@ -1,13 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Vite's build plugin runs before an Effect runtime exists.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Standalone build script, deliberately Effect-free.
 
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
 
-import type { Plugin } from "vite-plus";
-
-export const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
 const SPDX_LICENSE_LIST_VERSION = "v3.28.0";
 const SPDX_LICENSE_LIST_REVISION = "c4a7237ec8f4654e867546f9f409749300f1bf4c";
 const GENERATED_NOTICE_CACHE_DIRECTORY = ".generated/third-party-licenses/spdx";
@@ -30,12 +27,6 @@ export interface ThirdPartyLicenseManifest {
 export interface ThirdPartyLicensePackageManifest {
   readonly bundle: string;
   readonly path: string | URL;
-}
-
-export interface ThirdPartyLicensesPluginOptions {
-  readonly configFile?: string | URL;
-  readonly packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>;
-  readonly bundleName: string;
 }
 
 interface GeneratedNoticeConfigEntry {
@@ -554,53 +545,6 @@ async function collectProductionDependencyPackages(
   return collection;
 }
 
-function moduleFilePath(moduleId: string): string | null {
-  if (moduleId.startsWith("\0") || moduleId.includes("\0")) return null;
-  const withoutQuery = moduleId.split(/[?#]/, 1)[0] ?? moduleId;
-  const viteFilePath = withoutQuery.startsWith("/@fs/")
-    ? withoutQuery.slice("/@fs/".length)
-    : withoutQuery;
-  const filePath = withoutQuery.startsWith("file:")
-    ? NodeURL.fileURLToPath(withoutQuery)
-    : /^[A-Za-z]:[\\/]/.test(viteFilePath)
-      ? viteFilePath
-      : NodePath.resolve("/", viteFilePath);
-  const normalized = filePath.replaceAll("\\", "/");
-  return normalized.includes("/node_modules/") ? filePath : null;
-}
-
-async function addBundledModulePackages(
-  collection: PackageCollection,
-  moduleIds: ReadonlyArray<string>,
-  bundle: string,
-): Promise<void> {
-  for (const moduleId of moduleIds) {
-    const filePath = moduleFilePath(moduleId);
-    if (!filePath) continue;
-    let found: Awaited<ReturnType<typeof findPackageRoot>>;
-    try {
-      found = await findPackageRoot(await NodeFSP.realpath(filePath));
-    } catch (error) {
-      const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
-      if (code === "ENOENT" || code === "ENOTDIR") continue;
-      throw error;
-    }
-    if (!found || typeof found.packageJson.name !== "string") continue;
-    if (found.packageJson.name.startsWith(FIRST_PARTY_PACKAGE_PREFIX)) continue;
-    const identity = packageIdentity(found.packageJson, found.packageRoot);
-    const existing = collection.byIdentity.get(identity);
-    if (existing) {
-      existing.bundles.add(bundle);
-    } else {
-      collection.byIdentity.set(identity, {
-        bundles: new Set([bundle]),
-        packageJson: found.packageJson,
-        packageRoot: found.packageRoot,
-      });
-    }
-  }
-}
-
 function normalizeLicense(packageJson: PackageJson): string | null {
   if (typeof packageJson.license === "string" && packageJson.license.trim().length > 0) {
     return packageJson.license.trim();
@@ -899,7 +843,6 @@ function assertUniqueEntries(entries: ReadonlyArray<ThirdPartyLicenseEntry>): vo
 export async function generateThirdPartyLicenseManifest(input: {
   readonly configFile?: string | URL;
   readonly packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>;
-  readonly bundledModuleIds?: ReadonlyArray<string>;
   readonly bundleName?: string;
   readonly allowMissingGeneratedNotices?: boolean;
 }): Promise<ThirdPartyLicenseManifest> {
@@ -909,9 +852,6 @@ export async function generateThirdPartyLicenseManifest(input: {
   ]);
   if (!(input.allowMissingGeneratedNotices ?? false)) {
     await syncConfiguredGeneratedNotices(config, directory);
-  }
-  if (input.bundledModuleIds && input.bundleName) {
-    await addBundledModulePackages(collection, input.bundledModuleIds, input.bundleName);
   }
 
   const packageNotices = new Map<string, Promise<string | null>>();
@@ -955,67 +895,5 @@ export async function generateThirdPartyLicenseManifest(input: {
   return {
     schemaVersion: 1,
     entries,
-  };
-}
-
-function moduleIdsFromBundle(bundle: unknown): ReadonlyArray<string> {
-  const ids = new Set<string>();
-  if (!isRecord(bundle)) return [];
-  for (const output of Object.values(bundle)) {
-    if (!isRecord(output) || output.type !== "chunk" || !isRecord(output.modules)) continue;
-    for (const id of Object.keys(output.modules)) ids.add(id);
-  }
-  return [...ids];
-}
-
-function serializeManifest(manifest: ThirdPartyLicenseManifest): string {
-  return `${JSON.stringify(manifest)}\n`;
-}
-
-export function thirdPartyLicensesPlugin(options: ThirdPartyLicensesPluginOptions): Plugin {
-  return {
-    name: "hal-c2:third-party-licenses",
-    configureServer(server) {
-      let manifestPromise: Promise<ThirdPartyLicenseManifest> | null = null;
-      server.middlewares.use((request, response, next) => {
-        if (request.url?.split("?", 1)[0] !== `/${THIRD_PARTY_LICENSES_FILE_NAME}`) {
-          next();
-          return;
-        }
-        manifestPromise ??= generateThirdPartyLicenseManifest({
-          packageManifests: options.packageManifests,
-          bundleName: options.bundleName,
-          allowMissingGeneratedNotices: true,
-          ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
-        }).catch((error: unknown) => {
-          manifestPromise = null;
-          throw error;
-        });
-        void manifestPromise.then(
-          (manifest) => {
-            response.statusCode = 200;
-            response.setHeader("Content-Type", "application/json; charset=utf-8");
-            response.setHeader("Cache-Control", "no-store");
-            response.end(serializeManifest(manifest));
-          },
-          (error: unknown) => {
-            next(error instanceof Error ? error : new Error(String(error)));
-          },
-        );
-      });
-    },
-    async generateBundle(_outputOptions, bundle) {
-      const manifest = await generateThirdPartyLicenseManifest({
-        packageManifests: options.packageManifests,
-        bundledModuleIds: moduleIdsFromBundle(bundle),
-        bundleName: options.bundleName,
-        ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
-      });
-      this.emitFile({
-        type: "asset",
-        fileName: THIRD_PARTY_LICENSES_FILE_NAME,
-        source: serializeManifest(manifest),
-      });
-    },
   };
 }

@@ -19,8 +19,7 @@
 #include "LocalCache.h"
 
 // One thread's timeline: the MC's `stream` shape folded into its entities
-// (packages/client-runtime/src/v3/threadShape.ts) and projected into rows
-// (apps/tui/src/timeline.ts, apps/web/src/components/chat/MessagesTimeline.logic.ts).
+// and projected into rows (as apps/tui/src/timeline.ts does).
 //
 // Rows are messages, groups of consecutive tool calls (the latest shown, the
 // rest behind "+N previous tool calls"), folds of settled turns ("Worked for
@@ -72,13 +71,13 @@ public:
     ExpandedRole,
     // The files an assistant reply's turn changed: [{path, additions, deletions}].
     FilesRole,
-    // When the row happened, as the web's formatDayAwareTimestamp reads it in
+    // When the row happened, in
     // the device's timestampFormat: "9:41 AM", "yesterday at 9:41 AM",
     // "9/20 9:41 AM". A reply's once it has finished streaming; empty when
     // the MC sent no time.
     TimeRole,
     // The lucide icon of a marker, error or subagent row (a call's is its
-    // entry's `icon`), after the web's workEntryIconName.
+    // entry's `icon`).
     IconRole,
     // A user message's inputIntent: queued_turn, steer,
     // promoted_queued_to_steer or empty.
@@ -88,8 +87,7 @@ public:
     // it), "Sent by another agent", or empty.
     AttributionRole,
     // Whether an assistant reply carries its time and actions: a settled
-    // turn's last reply does, commentary before it does not (the web's
-    // showAssistantMeta).
+    // turn's last reply does, commentary before it does not.
     MetaRole,
     // What a settled turn's group of calls did, in a sentence ("Ran 2 commands
     // and sent messages to 3 threads", TimelineSummary.h): the group collapses
@@ -366,6 +364,6 @@ private:
   QTimer m_flushTimer;
 };
 
-// apps/web/src/timestampFormat.ts formatUpcomingTimestamp: `at` as the rows
-// read a time that may be ahead, in the device's timestampFormat and `locale`.
+// `at` as the rows read a time that may be ahead, in the device's
+// timestampFormat and `locale`.
 QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale);

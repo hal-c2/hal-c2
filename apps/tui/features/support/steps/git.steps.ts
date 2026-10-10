@@ -9,7 +9,6 @@ import { TextAttributes } from "@opentui/core";
 
 import { THEME } from "../../../src/theme.ts";
 import { expectColour, expectRoundedFrame, objectRows, rectOf, textWithin } from "../design.ts";
-import { runLaunch } from "../launchWorld.ts";
 import { runStorageLaunch, type StorageWorld } from "../storageWorld.ts";
 import { runOpentuiQml } from "./qml-runtime.steps.ts";
 import {
@@ -351,8 +350,8 @@ step(
 
 // --- running actions ---
 
-// One "the user runs" for every world: `hal-c2 …` is the real launcher (only
-// `hal-c2 tui` runs here), `opentui-qml …` the runtime's CLI, palette commands
+// One "the user runs" for every world: `hal-c2 tui` is the real client entry
+// (storage-layout.feature), `opentui-qml …` the runtime's CLI, palette commands
 // (T5's add-project entries) go through the palette, everything else is a git
 // action.
 const PALETTE_COMMANDS = new Set(["Add project", "Open WSL folder"]);
@@ -361,12 +360,9 @@ step("the user runs {string}", async (ctx: World, label: string) => {
   const named = (ctx as { runNamed?: (label: string) => Promise<boolean> }).runNamed;
   if (named && (await named(label))) return;
   if (label.startsWith("hal-c2 ")) {
-    if (label !== "hal-c2 tui")
-      throw new Error(`the user runs "${label}": only "hal-c2 tui" launches here`);
-    // storage-layout.feature runs the client entry itself, to see where it reads the shell.
-    if ((ctx as StorageWorld).storage) return runStorageLaunch(ctx);
-    await runLaunch(ctx);
-    return;
+    if (label !== "hal-c2 tui" || !(ctx as StorageWorld).storage)
+      throw new Error(`the user runs "${label}": only storage-layout.feature runs the client here`);
+    return runStorageLaunch(ctx);
   }
   if (/^opentui-qml(?: |$)/.test(label)) return runOpentuiQml(ctx, label);
   return PALETTE_COMMANDS.has(label) ? chooseCommand(ctx, label) : runAction(ctx, label);

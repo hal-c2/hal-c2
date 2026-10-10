@@ -14,8 +14,8 @@ class ShellStore;
 // The pull requests page, which the shell owns (the route `pullRequests`):
 // every reachable environment is asked for its pull requests
 // (`pullRequests.list`, apps/server-ex HalC2.PullRequests) under the chosen
-// filters, and the answers are merged, newest first, into the groups the web
-// shows: Authored, Review requested, Others. While the page shows, each
+// filters, and the answers are merged, newest first, into the groups
+// Authored, Review requested, Others. While the page shows, each
 // environment's `pullRequestRefreshes` shape re-reads the list when a pull
 // request changes from HAL-C2.
 //

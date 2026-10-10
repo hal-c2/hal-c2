@@ -25,10 +25,10 @@ namespace {
 const NativeControllerRegistrar<ProjectCloneController> registrar(QStringLiteral("projectClones"));
 
 const QString kSourceControlSettings = QStringLiteral("/settings/source-control");
-// A finished clone's toast stays this long (the web's).
+// A finished clone's toast stays this long.
 constexpr int kDoneToastMs = 8000;
 
-// The owner/repo shorthand the web treats as a public GitHub repository.
+// The owner/repo shorthand taken as a public GitHub repository.
 const QRegularExpression kGitHubShorthand(QStringLiteral(R"(^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]+(?:\.git)?$)"));
 
 QString normalizePastedCloneUrl(const QString& input) {
@@ -38,7 +38,7 @@ QString normalizePastedCloneUrl(const QString& input) {
          (trimmed.endsWith(QLatin1String(".git")) ? QString() : QStringLiteral(".git"));
 }
 
-// The folder `git clone` would pick (client-runtime's getCloneDirectoryName):
+// The folder `git clone` would pick:
 // the last segment of an owner/repo or any form of remote URL, minus ".git";
 // empty for a URL that stops at its host or port.
 QString cloneDirectoryName(const QString& repositoryOrUrl) {
@@ -66,7 +66,7 @@ QString optionValue(const QJsonValue& option) {
                                                                       : QString();
 }
 
-// The web's projectCloneDisplayName and projectCloneProgressSummary.
+// What a clone is called, and a summary of its progress.
 QString displayName(const QJsonObject& clone) {
   const QString name = clone.value(QLatin1String("repository")).toObject().value(QLatin1String("nameWithOwner")).toString();
   if (!name.isEmpty()) return name;
@@ -166,7 +166,7 @@ QList<CommandRegistry::Choice> ProjectCloneController::sources(const QString& en
   return choices;
 }
 
-// The web's buildAddProjectRemoteSourceReadiness.
+// Whether the remote source can be cloned from.
 ProjectCloneController::Readiness ProjectCloneController::readiness(const QString& environmentId,
                                                                    const QString& kind) const {
   if (kind == QLatin1String("url")) return {true, {}};
@@ -363,7 +363,7 @@ void ProjectCloneController::follow() {
   }
 }
 
-// The web's EnvironmentCloneToasts: a toast per clone, changed in place.
+// A toast per clone, changed in place.
 void ProjectCloneController::reconcile(const QString& environmentId, const QJsonArray& clones) {
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   QHash<QString, Tracked>& tracked = m_toasts[environmentId];
@@ -445,7 +445,7 @@ void ProjectCloneController::cloneAction(const QString& environmentId, const QSt
                  });
 }
 
-// The web's useRemoveClonedProject: not forced, so a project that gained a
+// Not forced, so a project that gained a
 // thread meanwhile is refused rather than lost.
 void ProjectCloneController::removeProject(const QString& environmentId, const QString& projectId) {
   m_client->call(this, environmentId, QStringLiteral("projects.mutate"),

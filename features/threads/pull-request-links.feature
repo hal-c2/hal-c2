@@ -2,6 +2,8 @@
 #   docs/user/thread-sidebar.md (Link a pull request, agent-managed metadata)
 #   apps/web/src/hooks/usePullRequestLinking.ts
 #   apps/web/src/hooks/useSupportsMultiplePullRequests.ts
+#   apps/web/src/components/ChatView.tsx (relinking to the branch's new pull request, the panel that follows it)
+#   apps/web/src/components/chat/ThreadDetailsPrRow.tsx, ThreadDetailsPrRows.tsx (the next step, merge confirmation, Show N more)
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (pull-request link, unlink, sync)
 #   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
@@ -86,3 +88,81 @@ Feature: Linking pull requests to threads
     Given the environment does not look for branch pull requests
     When the user looks at "Cart totals"
     Then the user is told to update the server to see branch pull requests
+
+  @backlog @desktop
+  Scenario Outline: A thread whose pull request is finished follows the new one opened for its branch
+    Given "Cart totals" is linked to pull request 42, which was <ended>
+    And pull request 57 is open for "feature/cart" and the folder is on "feature/cart"
+    When the user opens "Cart totals"
+    Then "Cart totals" becomes linked to pull request 57
+
+    Examples:
+      | ended  |
+      | merged |
+      | closed |
+
+  @backlog @desktop
+  Scenario: A finished pull request is kept while the folder is on another branch
+    Given "Cart totals" is linked to pull request 42, which was merged
+    And the folder is on "main", which has an open pull request of its own
+    When the user opens "Cart totals"
+    Then "Cart totals" stays linked to pull request 42
+
+  @backlog @desktop
+  Scenario: A side panel showing the finished pull request moves to the new one
+    Given "Cart totals" is linked to the merged pull request 42 and the side panel shows it
+    When "Cart totals" follows the new pull request 57 for its branch
+    Then the side panel shows pull request 57
+    But a side panel showing a different pull request is left on it
+
+  @backlog @desktop
+  Scenario: A thread that could not be moved to its new pull request says so
+    Given "Cart totals" is linked to the merged pull request 42 and pull request 57 is open for its branch
+    When the environment refuses to link pull request 57
+    Then the user sees an "error" toast "Unable to update the thread pull request" with the reason
+    And the link is tried again the next time the thread is opened
+
+  @backlog @desktop
+  Scenario Outline: The thread's pull request offers the one step that moves it toward merging
+    Given "Cart totals" is linked to pull request 42, which is <state>
+    When the user looks at the thread's pull request in its details
+    Then <offer>
+
+    Examples:
+      | state                                              | offer                                                    |
+      | open and in conflict with its base                 | it offers "Resolve", which resolves the conflicts in a new thread |
+      | a draft the user may mark ready                    | it offers "Ready", which marks it ready for review       |
+      | a draft the user may not mark ready                | it offers no step                                        |
+      | open with failing checks                           | it offers "Fix", which fixes the failing checks in a new thread |
+      | open with checks still running                     | it offers no step and shows the checks running           |
+      | open, clean and passing, and the user may merge it | it offers "Merge"                                        |
+      | open and passing on a host with no merge method the user may use | it offers no step                          |
+      | merged                                             | it offers no step                                        |
+
+  @backlog @desktop
+  Scenario: Merging from the thread's details asks first and names the method
+    Given "Cart totals" is linked to pull request 42, which may be merged by squash
+    When the user chooses "Merge" for it in the thread's details
+    Then the user is asked "Merge pull request?" and told it merges #42 using squash
+    And nothing is merged unless the user confirms
+
+  @backlog @desktop
+  Scenario: A merge that was being confirmed is withdrawn when the pull request stops being mergeable
+    Given the user is being asked whether to merge pull request 42 from the thread's details
+    When the checks of pull request 42 start running again
+    Then the question goes away
+    And the user is asked again from the start once the checks pass
+
+  @backlog @desktop
+  Scenario: The thread's details show its current pull request and fold the rest away
+    Given "Cart totals" is linked to pull requests 42, 43 and 44 and 42 is the one for its branch
+    When the user looks at the thread's details
+    Then only pull request 42 is listed and the user is offered "Show 2 more"
+    When the user chooses "Show 2 more"
+    Then pull requests 43 and 44 are listed too and the user is offered "Show less"
+
+  @backlog @desktop
+  Scenario: Pointing at the thread's pull request summarises it
+    Given "Cart totals" is linked to the open pull request 42 "Fix cart totals" from "feature/cart" into "main"
+    When the user rests the pointer on it in the thread's details
+    Then the summary names its title, number, state, both branches, its checks and how many files and lines it changes

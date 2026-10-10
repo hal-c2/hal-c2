@@ -21,6 +21,13 @@ Feature: Keybindings settings
       Then each command is listed in order with its shortcut and condition
       And each binding is marked Default, Custom or Project
 
+    # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.test.ts (multi-binding commands)
+    @backlog @desktop
+    Scenario: A command with several default shortcuts lists each one as a default
+      Given "chat.new" has the defaults mod+n and mod+shift+o
+      Then both shortcuts are listed for "chat.new"
+      And each is marked Default
+
     @desktop
     Scenario: The panel shows how many bindings there are
       Then the number of bindings is shown
@@ -99,6 +106,27 @@ Feature: Keybindings settings
         | Linux    | Ctrl    | mod+y   |
         | Linux    | Super   | meta+y  |
 
+    # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.ts (keybindingFromKeyboardEvent)
+    @backlog @desktop
+    Scenario Outline: A recorded shortcut names the key that was pressed, not what Shift made it type
+      Given the user is on macOS
+      And the user is recording a shortcut for "diff.toggle"
+      When the user presses Command and Shift with the key that types <typed> where <place>
+      Then the recorded shortcut is <stored>
+
+      Examples:
+        | typed | place                  | stored        |
+        | @     | the digit 2 key sits   | mod+shift+2   |
+        | "     | the digit 2 key sits   | mod+shift+2   |
+        | @     | the quote key sits     | mod+shift+'   |
+
+    @backlog @desktop
+    Scenario: A recorded letter follows the user's keyboard layout
+      Given the user's layout types "m" on the physical key where QWERTY has ";"
+      And the user is recording a shortcut for "diff.toggle"
+      When the user presses Command with that key
+      Then the recorded shortcut is mod+m
+
   Rule: Conditions and conflicts
 
     @desktop
@@ -120,6 +148,27 @@ Feature: Keybindings settings
     Scenario: An unknown condition variable is flagged
       When the user types the condition "sidebarFocus"
       Then "sidebarFocus" is flagged as unknown
+
+    # Legacy: apps/web/src/components/settings/KeybindingsSettings.tsx (WhenExpressionBuilder, parseError overlay)
+    @backlog @desktop
+    Scenario: The condition builder is paused while the typed condition is broken
+      When the user types the condition "terminalFocus &&"
+      Then the visual condition builder says to fix the expression to continue editing visually
+      And the condition can be edited again once the expression is valid
+
+    # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.ts (whenNodeRemoveLabel)
+    @backlog @desktop
+    Scenario Outline: Removing from the condition builder says how much it removes
+      Given a binding whose condition is "terminalFocus && !previewOpen"
+      When the user looks at the removal choice for <target>
+      Then it reads "<label>"
+
+      Examples:
+        | target                       | label                            |
+        | the whole condition          | Clear all conditions             |
+        | one variable                 | Remove condition                 |
+        | a negated variable           | Remove condition                 |
+        | a group of conditions        | Remove group and its conditions  |
 
     @desktop
     Scenario: Conflicting bindings are called out

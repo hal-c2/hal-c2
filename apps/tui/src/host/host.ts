@@ -101,7 +101,7 @@ export interface TuiConnectionState {
     readonly kind: "local";
     readonly connected: boolean;
   }>;
-  /** How to reach another environment; null while the TUI only knows its launcher's server. */
+  /** How to reach another environment; null while the TUI only knows the MC it connected to. */
   readonly pairingHint: string | null;
 }
 

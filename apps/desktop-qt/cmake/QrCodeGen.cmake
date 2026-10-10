@@ -1,5 +1,4 @@
-# Nayuki's QR Code generator (MIT), the C++ twin of the one packages/shared
-# vendors in TypeScript: one source file, compiled into hal_c2_native for
+# Nayuki's QR Code generator (MIT): one source file, compiled into hal_c2_native for
 # src/native/QrCode.cpp, which is all that includes it.
 #
 # Include once per project, before hal_c2_add_native_library().

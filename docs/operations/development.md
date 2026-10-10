@@ -28,6 +28,8 @@ mise run plugins:install [ID ...]   # this checkout's plugins/ into that MC, loa
 mise run desktop           # build the Qt shell, pair it with the running MC, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run desktop:cua       # the Qt shell in a headless sandbox for cua-driver; desktop:cua:call, desktop:cua:stop
+mise run mobile            # build the phone client for this machine and run it, state in .hal-c2/mobile
+mise run mobile:android    # the phone client's APK; with one device or emulator attached, install and start it
 mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle; tui depends on it
 mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
@@ -53,11 +55,8 @@ whichever checkout started it.
 The TUI finds the MC through the runtime record and access token the MC keeps in the
 XDG `hal-c2-dev` profile, so start `mise run mc` first;
 `mise run tui -- --url <link>` pairs it with another MC from an `mc:pair` link instead and
-keeps that session for the next `--url <origin>`. Pair the MC into a web client from Settings → Connections with the
-URL `mc:pair` prints.
-
-Open the pairing URL printed by the dev runner. The bare origin does not authenticate
-a new browser.
+keeps that session for the next `--url <origin>`. Pair the MC into another client from Settings →
+Connections with the URL `mc:pair` prints.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
 
@@ -87,113 +86,35 @@ wherever the tool takes them:
 - `desktop:cua` also turns off cua-driver's agent cursor. Its overlay window would take the
   clicks meant for the app.
 
-## Choosing a dev process
+## State
 
-Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
-`dev:server` and `dev:web` start those processes separately.
-See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
-
-Flags go directly after the task name, for example `vp run dev --home-dir /tmp/hal-c2-dev`.
-Add `--browser` to open a browser automatically.
-
-### State and ports
-
-A linked worktree keeps everything in its own gitignored `.hal-c2`, as `config`, `data`, `state`,
-and `cache` directories inside it, even when `HAL_C2_HOME` is set. The main checkout uses the
-development profile: `hal-c2-dev` in place of `hal-c2` under each XDG base, so its database is in
-`~/.local/share/hal-c2-dev`. An explicit `--home-dir` is a root that wins in both cases. Worktree
-state from before the XDG layout (a `.t3`, or `.hal-c2/userdata`) is not read and not migrated;
-seed the worktree again instead. Never run a development server against the installed app's
+The MC, the Qt shell and the TUI keep their files in the XDG `hal-c2-dev` profile (`hal-c2-dev` in
+place of `hal-c2` under each base), so the dev MC's database is in
+`~/.local/share/hal-c2-dev/elixir`. The phone app and `desktop:cua` keep theirs in the worktree's
+gitignored `.hal-c2` (`.hal-c2/mobile`, `.hal-c2/cua`). `HAL_C2_MC_HOME` (or `mise run mc --home`)
+gives an MC a root of its own. Never run a development MC against the installed app's
 `~/.local/share/hal-c2` and its sibling directories, or against `~/.t3` and `~/.hal-c2`, which
 only the one-time migration reads ([storage](../internals/storage.md)). See
 [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
-Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
-but occupied ports can shift them. `HAL_C2_PORT_OFFSET` or `HAL_C2_DEV_INSTANCE` can select a
-different preference when needed.
+### Reusable dev credential
 
-### Importing threads from T3 Code or the Node server
+A development MC (the one `mise run mc` runs from source) accepts one
+`HAL_C2_DEV_AUTH_TOKEN` as an administrative bearer token, so one client can sign in to the MC of
+every worktree without pairing each. Set it in the environment `mise run mc` starts in: the MC reads
+its process environment and no `.env` file. Each MC seeds its own session record from the
+value's hash, so revoking it in one worktree does not affect another, and removing or rotating
+the value and restarting invalidates it. Release builds ignore it. Never commit or publish the
+value ([environment auth](../internals/environment-auth.md#reusable-dev-credential)).
 
-`mise run threads:import` lists the threads of the T3 Code and Node HAL-C2 installs on this machine
+### Importing threads from T3 Code or an older HAL-C2
+
+`mise run threads:import` lists the threads of the T3 Code and older HAL-C2 installs on this machine
 and imports the ones you pick into the running MC, each with its subagent threads, attachments and
 terminal scrollback. The install is only read, so its server can stay up. An MC started before this
 command existed needs `mise run mc:reload` first. That is the MC run from the checkout;
 `mise run threads:import --release` imports into the installed MC instead, which also has the picker
 as `hal-c2-service threads import`.
-
-### Moving a thread between data directories
-
-`vp run thread:export --source <dir> --thread-id <id> --output <archive.json>` exports one thread
-with its image attachments, and `vp run thread:import --archive <archive.json> --destination <dir>`
-remaps it onto the destination project after backing up its database. `vp run thread:list --source
-<dir>` finds thread ids. A source or destination can be a workspace containing `.hal-c2`, a root such as that `.hal-c2`, or
-a data directory containing `statev2.sqlite`, such as `~/.local/share/hal-c2-dev` for the main
-checkout's development database. A source can also be a T3 Code data directory holding
-`state.sqlite`, such as `~/.t3/dev`; a destination cannot.
-Stop the destination server before importing. Terminal history can hold credentials, so export
-skips it unless you pass `--include-terminal-logs`.
-
-### Sharing and remote debugging
-
-`vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
-for that origin. Give the tester the complete URL, including its token. The dev runner removes
-its mapping on exit.
-
-Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
-origin so the same build works over localhost and remote connections.
-
-Shared runs enable bundled dev to avoid a network round trip for each import level.
-`HAL_C2_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
-when changing this setup:
-
-- The web entry must dynamically import the app so React refresh initializes before application
-  chunks. Static imports can work on first load and fail after a route split.
-- Bundled dev rebuilds Tailwind through watched files. Its ordinary Vite hot-update hook expects
-  a server/module graph that Rolldown does not provide.
-
-The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
-[Tailwind plugin](../../apps/web/vite/tailwind.ts).
-
-#### Reusable dev credential
-
-Use this only on a hostname where you trust every service. Browsers send cookies to all ports
-on that hostname. Any service you visit there can receive the reusable admin credential,
-including services unrelated to HAL-C2. If you run untrusted services on that hostname, keep
-normal per-environment pairing instead.
-
-To use one browser profile across web dev worktrees on the same hostname, generate one fixed
-value once:
-
-```sh
-openssl rand -hex 32
-```
-
-Put that value in the main checkout's gitignored `.env`:
-
-```dotenv
-HAL_C2_DEV_AUTH_TOKEN=<the value generated above>
-```
-
-The `hal-c2.json` Setup Worktree commands on Unix and Windows link that file to each worktree's
-`.env`. The dev runner reads repository env files at startup. `.env.local` and inherited process
-environment values override `.env`, so no per-worktree export is needed after setup.
-
-For a manual worktree or launcher without that link, export the same fixed value instead:
-
-```sh
-export HAL_C2_DEV_AUTH_TOKEN="<the value generated above>"
-```
-
-Do not generate a new value at startup. Start or restart `vp run dev --share` after configuration,
-then open its printed startup pairing URL once per browser profile on that hostname. Later web dev
-servers on the same hostname accept the shared cookie across ports. The cookie expires after 30
-days. Reload an old tab if its URL now serves a replacement environment.
-
-The token and startup pairing URLs are reusable administrative secrets. Never put them in a
-commit, pull request, or public output. Every server still seeds its own auth database record at
-startup and keeps its own SQLite data, signing key, and revocation state. Desktop and non-dev
-servers ignore the value. See [environment authentication](../internals/environment-auth.md#reusable-dev-credential)
-for the security model.
 
 ## Checks
 
@@ -207,96 +128,27 @@ vp run --filter <package> typecheck
 
 Behaviour scenarios run per surface with `mise run features:mc <globs>`, `features:tui` and
 `features:desktop`; see [running features](../../features/README.md#running).
-Use `vp run lint:mobile` for native mobile changes. CI covers the MC, the TUI and the Qt desktop
-([ci.yml](../../.github/workflows/ci.yml), [desktop-qt.yml](../../.github/workflows/desktop-qt.yml));
-the legacy Node server, web, Electron and React Native apps have no CI, so check what you touch there
-by hand.
+`mise run desktop:lint` runs qmllint over the desktop's QML. CI covers the MC, the TUI and the Qt
+desktop ([ci.yml](../../.github/workflows/ci.yml), [desktop-qt.yml](../../.github/workflows/desktop-qt.yml)).
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
-unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
-`packages/`. CI does not run it.
+`vp run knip:check` checks unused files and dependencies across the repo, then unused runtime
+exports in the TypeScript workspaces. CI does not run it.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
 recognizes schema types, including aliases and schema classes; functions that create or decode
 schemas remain checked. Canonical Effect service construction APIs stay exported with an explicit
 `@public` annotation, which Knip recognizes. Completely unused files remain checked too.
-Named exports in web UI component modules are kept as complete component sets. Knip ignores
-unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
-Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
-or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
-The full export audit still has findings and is not a repo-wide CI gate. Extend the
-export check's workspace selectors as more workspaces become clean. Review callers before
-deleting code; production mode can also report development scripts and test fixtures.
-Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
+Use `vp run knip --workspace <dir>` to audit one workspace, including exports,
+or `vp run knip:production --workspace <dir>` to find code kept alive only by tests.
+Review callers before deleting code; production mode can also report development scripts and test
+fixtures. Runtime-discovered entrypoints and dependency exceptions belong in
+[knip.jsonc](../../knip.jsonc).
 
 ## Desktop artifacts
 
-Local artifact builds are unsigned by default and write to `release/`:
-
-```sh
-vp run dist:desktop:dmg
-vp run dist:desktop:linux
-vp run dist:desktop:win
-```
-
-DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
-to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
-options.
-
-### Linux AppImage prerequisites
-
-Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
-
-Ubuntu and Debian:
-
-```sh
-sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
-```
-
-Fedora:
-
-```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
-```
-
-Arch Linux:
-
-```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
-```
-
-The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.
-
-### macOS DMG prerequisites
-
-Install the Xcode Command Line Tools with `xcode-select --install` and install Rust.
-For a cross-architecture or universal build, add the requested Rust targets:
-
-```sh
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-```
-
-### Windows installer prerequisites
-
-Install Rust, Python 3, and Visual Studio Build Tools with **Desktop development with C++**.
-Include the Windows SDK and the MSVC build tools and Spectre-mitigated libraries for the target
-architecture. Add its Rust target:
-
-```powershell
-rustup target add x86_64-pc-windows-msvc
-# For an ARM64 installer:
-rustup target add aarch64-pc-windows-msvc
-```
-
-NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
-passed as `--wsl-runtime`; see the
-[release runbook](./release.md#windows-payload-topology).
-
-### Signing and passkeys
-
-Add `--signed` after setting the platform credentials in the
-[release runbook](./release.md#signing-local-electron-builds). macOS passkeys need a signed, provisioned app; follow the
-[Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+`mise run release:linux` and `release:macos` build the desktop into `release/` beside the MC
+([release](./release.md#building-one-locally)). They are unsigned: the AppImage tooling
+(linuxdeploy and its Qt plugin) is downloaded on first use, and the macOS app is signed ad hoc.
+Qt, cmake and the other build dependencies are those of `mise run desktop`
+([desktop README](../../apps/desktop-qt/README.md)).

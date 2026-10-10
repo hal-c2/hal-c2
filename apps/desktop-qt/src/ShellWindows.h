@@ -24,7 +24,7 @@ public:
   void start();
   ShellRuntime* runtime(NativeWindow* window) const { return m_runtimes.value(window); }
   // Shows the main window again once the user closed them all (macOS keeps
-  // running without windows, as the Electron desktop did).
+  // running without windows).
   void reopen();
 
 private:

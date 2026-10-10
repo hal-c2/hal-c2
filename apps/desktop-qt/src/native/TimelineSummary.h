@@ -7,8 +7,7 @@
 #include <optional>
 
 // What a group of tool calls did, in a sentence: "Ran 2 commands and sent
-// messages to 3 threads" (packages/client-runtime/src/work-log/presentation.ts
-// summarizeToolGroup and halC2ToolSummary.ts). At most two kinds of work are
+// messages to 3 threads". At most two kinds of work are
 // named, changes before reads; the rest is counted ("performed 2 other
 // actions"). Failed calls are not counted as work done.
 namespace timeline {
@@ -31,7 +30,7 @@ bool callFailed(const QJsonObject& item);
 bool isFileRead(const QJsonObject& item);
 
 // One line of a markdown result: list bullets, code ticks and link targets
-// dropped (apps/web V2LifecycleRow.tsx plainDetail).
+// dropped.
 QString plainDetail(const QString& markdown);
 
 // Whether a subagent has stopped working: anything but pending, running or

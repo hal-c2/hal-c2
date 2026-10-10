@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the Bun entry reads the MC's files before any Effect runtime exists.
 /**
- * How the terminal client finds a HAL-C2 MC without a launcher.
+ * How the terminal client finds a HAL-C2 MC.
  *
  * Local: the MC writes `<state>/server-runtime.json` while it serves
  * (`apps/server-ex/lib/hal_c2/runtime_record.ex`) and keeps its access token in

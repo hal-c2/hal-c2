@@ -160,8 +160,7 @@ defmodule HalC2.Orchestration.Rollback do
 
   # A provider plugin that cannot roll its conversation back starts the next turn in
   # a fresh context, marked as no longer matching the provider's own history. A
-  # provider that fails to drop the turns fails the whole rewind, named as such (the
-  # Node server's ProviderAdapterRollbackThreadError); nothing has changed yet.
+  # provider that fails to drop the turns fails the whole rewind; nothing has changed yet.
   defp rewind(plan) do
     provider = HalC2.Plugins.declared(plan.driver)
 

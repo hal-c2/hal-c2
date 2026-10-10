@@ -9,6 +9,7 @@
 #   apps/server-ex/lib/hal_c2/settings.ex (defaultRuntimeMode is project-scoped)
 #   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (auto -> auto_review), apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/web/src/components/chat/runtimeModeConfig.ts, apps/web/src/components/settings/ProjectDefaultsSettings.tsx (New threads -> Permissions)
+#   apps/server/src/provider/acp/AntigravityAcpSupport.ts (Antigravity approval mode per runtime mode)
 #   apps/tui/src/controls.ts (runtime mode and plan/build toggles)
 #   packages/contracts/src/orchestration.ts (RuntimeMode, ProviderApprovalDecision, InteractionMode)
 
@@ -73,6 +74,19 @@ Feature: Permission modes
     Given a Cursor thread in auto-accept edits
     When the user sends a message
     Then Cursor starts in auto-accept edits
+
+  @backlog
+  Scenario Outline: Each mode reaches Antigravity as its own approval mode
+    Given an Antigravity thread in <mode>
+    When the user sends a message
+    Then Antigravity runs in its <approval mode> mode
+
+    Examples:
+      | mode              | approval mode |
+      | supervised        | default       |
+      | auto              | default       |
+      | auto-accept edits | auto_edit     |
+      | full access       | yolo          |
 
   Scenario: Claude still asks before a command in auto-accept edits
     Given a Claude thread in auto-accept edits

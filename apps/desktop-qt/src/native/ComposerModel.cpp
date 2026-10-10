@@ -17,7 +17,7 @@ QString str(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
-// providerInstances.ts brand labels.
+// The brand label a driver shows as.
 QString brandLabel(const QString& driver) {
   static const QHash<QString, QString> labels{
       {QStringLiteral("antigravity"), QStringLiteral("Antigravity")},
@@ -126,7 +126,7 @@ QList<QJsonObject> modelOptions(const Instance& instance, const ModelPrefs& pref
   return models;
 }
 
-// ModelPickerContent.tsx shouldIncludeModelPickerOption.
+// Whether the picker offers this model.
 bool offered(const Instance& instance, const QJsonObject& model, const QString& activeInstance, const QString& activeModel) {
   const QString slug = str(model, QLatin1String("slug"));
   if (instance.driver == QLatin1String("antigravity") && slug == kAntigravityDefault) return false;
@@ -135,7 +135,7 @@ bool offered(const Instance& instance, const QJsonObject& model, const QString& 
          slug == activeModel && model.value(QLatin1String("isUnavailable")).toBool();
 }
 
-// providerInstances.ts describeUnavailableInstance.
+// Why an instance cannot be used.
 QString unavailableReason(const Instance& instance) {
   if (!instance.enabled || instance.status == QLatin1String("disabled")) {
     return instance.displayName + QStringLiteral(" — Disabled in settings.");
@@ -153,7 +153,7 @@ bool showBadge(const Instance& instance, const QList<Instance>& visible) {
   return std::count_if(visible.begin(), visible.end(), [&](const Instance& other) { return other.driver == instance.driver; }) > 1;
 }
 
-// packages/shared/src/model.ts resolveDescriptorChoiceValue.
+// The value a descriptor's choice stands for.
 QJsonValue choiceValue(const QJsonObject& descriptor, const QString& raw) {
   const QJsonArray choices = descriptor.value(QLatin1String("options")).toArray();
   const auto fallback = [&]() -> QJsonValue {
@@ -252,7 +252,7 @@ QString skillLabel(const QJsonObject& skill) {
   return words.join(u' ');
 }
 
-// providerSkillSearch.ts scoreProviderSkill; `query` is already normalised.
+// How well a skill matches; `query` is already normalised.
 std::optional<int> scoreSkill(const QJsonObject& skill, const QString& query) {
   return best({
       scoreQueryMatch(str(skill, QLatin1String("name")).toLower(), query, 0, 2, 4, 6, 100, QStringLiteral("-_/")),
@@ -392,8 +392,8 @@ QJsonArray toggleFavorite(const QJsonValue& favorites, const QString& instanceId
   return next;
 }
 
-// ChatView.logic.ts getStartedThreadModelChangeBlockReason, for a session
-// that started (no provider handoff on the desktop).
+// Why the model cannot change, for a session that started (no provider
+// handoff on the desktop).
 std::optional<Block> blockReason(const QList<Instance>& list, const QString& currentInstance, const QString& currentModel,
                                  const QString& nextInstance, const QString& nextModel) {
   if (currentInstance == nextInstance && currentModel == nextModel) return std::nullopt;
@@ -597,7 +597,7 @@ QVariantList runtimeModes(const Instance* instance) {
   return result;
 }
 
-// composer-logic.ts composerEnterIntents.
+// What Enter and its modified forms send.
 QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, const QString& sendShortcut, bool draft,
                          bool running) {
   const keybindings::Context context{{QStringLiteral("composerFocus"), true},
@@ -631,7 +631,7 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
   return {{QStringLiteral("singleLine"), table(false)}, {QStringLiteral("multiline"), table(true)}};
 }
 
-// keybindings.ts findEffectiveShortcutForCommand with the picker open.
+// The effective shortcut for a command with the picker open.
 QVariant pickerKey(const QList<keybindings::Binding>& bindings, bool mac, const QString& command) {
   const keybindings::Context context{{QStringLiteral("modelPickerOpen"), true}, {QStringLiteral("isDesktop"), true}};
   QSet<QString> claimed;

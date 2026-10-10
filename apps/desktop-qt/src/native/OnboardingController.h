@@ -22,9 +22,8 @@ class ShellStore;
 class SettingsController;
 class TerminalSession;
 
-// The first-run gate and the welcome wizard (the web's FirstRunGate and
-// WelcomeWizard). Whether setup is done is this device's
-// `onboardingCompletedAt`; a device without it that already has projects or
+// The first-run gate and the welcome wizard. Whether setup is done is this
+// device's `onboardingCompletedAt`; a device without it that already has projects or
 // threads counts as done, which is saved quietly. Until the MC's first
 // snapshot the gate is pending, and after 4 s it offers to reconnect.
 // Preferences that cannot be read stop it before anything else.

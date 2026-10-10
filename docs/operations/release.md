@@ -2,9 +2,7 @@
 
 > For maintainers. Using HAL-C2? See [docs/user](../user/).
 
-HAL-C2 ships the MC, the Qt desktop and the TUI. The release pipeline inherited from T3 Code
-(Electron desktop, the npm CLI, the hosted web app, AUR and the mobile store builds) was removed
-with its workflows; `git log -- .github/workflows/release.yml` has it.
+HAL-C2 ships the MC, the Qt desktop and the TUI.
 
 ## Building one locally
 
@@ -45,7 +43,7 @@ it, in place when the change allows and through a restart when it does not.
 `.github/workflows/release-mc.yml` publishes the bundles MCs update from (`HalC2.Upgrade`):
 `hal-c2-mc-<version>-<platform>.tar.gz` and its `.sha256` for `darwin-arm64`, `linux-x64` and
 `linux-arm64`, on an `mc-v<version>` prerelease. Push a `mc-v<version>` tag, or dispatch it with
-a `version` (defaulting to `apps/server/package.json`). MCs fetch from that release unless
+a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that release unless
 `HAL_C2_UPGRADE_URL` names another host, and pass bundles on to their cluster peers. See the
 [MC README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
 
@@ -105,58 +103,3 @@ Developers deploy personal stages locally:
 ```sh
 vp run --filter hal-c2-relay deploy -- --stage "$USER" --env-file .env.local
 ```
-
-## Signing local Electron builds
-
-`node scripts/build-desktop-artifact.ts --signed` (legacy Electron) signs from the environment.
-
-macOS: `CSC_LINK` (base64 `.p12` of a Developer ID Application certificate and key),
-`CSC_KEY_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_API_KEY` (the `.p8` contents), `APPLE_API_KEY_ID`,
-`APPLE_API_ISSUER`, and `MACOS_PROVISIONING_PROFILE` (base64 provisioning profile for
-`io.github.halc2.app` with Associated Domains; passkeys also need the
-[Connect setup](./connect-setup.md#desktop-passkeys)).
-
-Windows: Azure Trusted Signing through `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
-`AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`,
-`AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME` and `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.
-
-### Windows payload topology
-
-Windows packages the bundled server and only its runtime-external/native
-dependency closure in `resources/server.asar`. Native modules and helper
-executables declared as unpacked by that archive must be present at the matching
-paths below `resources/server.asar.unpacked`. The Windows-native backend reads
-the archive in place through Electron. A build given `--wsl-runtime` also ships
-`resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar: the Linux CLI archive
-(`hal-c2-<version>-linux-<arch>.tar.gz`, the same arch as the Windows host),
-copied in verbatim so WSL runs the exact bytes a Linux user would. WSL verifies
-and extracts that archive into
-`~/.local/state/hal-c2/wsl-runtime/sha256-<archive-digest>` (under the distro's
-`$XDG_STATE_HOME` when it sets one) inside the selected distro, then reuses it
-for later launches of the same update.
-
-Windows keeps JavaScript and package metadata inside `app.asar` and unpacks only
-native libraries and helper executables. Avoid enabling whole-package smart
-unpacking: each loose file adds work to NSIS installation and counts against
-the payload limit.
-
-The artifact builder rejects a Windows package when any of these invariants
-break:
-
-- `resources/server.asar` is absent or does not contain the server entry.
-- Any file marked unpacked in the ASAR header is absent from
-  `resources/server.asar.unpacked`.
-- On same-architecture Windows builds, the packaged primary cannot load the fff
-  native library from inside `server.asar` through its `.unpacked` sibling.
-- The isolated, extracted sidecar cannot load the server entry with plain Node.
-- A Windows build given `--wsl-runtime` omits the WSL archive or SHA-256
-  sidecar, or the sidecar digest does not match the emitted archive.
-- The emitted WSL archive is not a Linux CLI release archive: it must unpack to
-  a single `hal-c2-<version>-linux-<arch>` directory holding `hal-c2`, `client/`, and
-  `node_modules/` with the Linux node-pty binary, and must not carry a loose
-  server bundle (`bin.mjs`).
-- The external Windows resource monitor is absent.
-- The unpacked Windows application contains more than 80 files.
-
-Cross-architecture Windows builds retain every structural and extracted-sidecar
-check, but skip executing the target Electron binary.

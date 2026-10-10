@@ -1,12 +1,12 @@
 defmodule Mix.Tasks.HalC2.Import do
-  @shortdoc "Imports a Node server state.sqlite into this MC's store"
+  @shortdoc "Imports a state.sqlite from an earlier install into this MC's store"
   @moduledoc """
-  Imports the event log of a Node HAL-C2 server into the Elixir MC's store.
+  Imports the event log of an earlier HAL-C2 install into the MC's store.
 
       mix hal_c2.import PATH/TO/state.sqlite
 
-  Threads the Node server never migrated to orchestration v2 are imported from their
-  version 1 events (`HalC2.Import.V1Thread`), as its `LegacyV1ThreadImporter` would.
+  Threads an earlier install never migrated to orchestration v2 are imported from their
+  version 1 events (`HalC2.Import.V1Thread`).
 
   The source is opened read-only, but it must not be a database a running server has
   open for writing: snapshot it first with `VACUUM INTO` (see AGENTS.md, Test data).
