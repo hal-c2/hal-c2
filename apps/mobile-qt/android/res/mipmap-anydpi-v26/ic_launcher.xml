@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The layers are the legacy app's (apps/mobile/assets), copied in by
-     cmake/AndroidPackage.cmake. -->
+<!-- The layers are 432 px, the 108 dp adaptive canvas at xxxhdpi, which Android
+     scales down. scripts/export-android-icons.ts renders the foreground. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
