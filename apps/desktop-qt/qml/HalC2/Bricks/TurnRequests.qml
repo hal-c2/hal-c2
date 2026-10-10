@@ -10,9 +10,9 @@ import HalC2.Shell
 // stacks on top of its prompt: the pending approval (one at a time, with its position), the
 // agent's question, the proposed plan once the turn is over (with its other
 // actions: a new thread, copy, download, save to the workspace), and the queued
-// follow-ups. Rendered from Shell.state.turn (ComposerController) for the
-// thread the composer shows; every answer is a composer.* action the shell
-// sends to the MC.
+// follow-ups with the task results waiting behind them. Rendered from
+// Shell.state.turn (ComposerController) for the thread the composer shows;
+// every answer is a composer.* action the shell sends to the MC.
 Item {
     id: requests
 
@@ -23,6 +23,7 @@ Item {
     readonly property var questions: shown ? turn.questions : []
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
+    readonly property var waiting: shown ? turn.waiting ?? [] : []
     property int approvalIndex: 0
     readonly property var approval: approvals.length > 0 ? approvals[Math.min(approvalIndex, approvals.length - 1)] : null
     readonly property var question: questions.length > 0 ? questions[0] : null
@@ -41,7 +42,7 @@ Item {
 
     // Whether the turn waits on anything. The height follows this and not
     // `visible`, which a host may bind to more than this.
-    readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0
+    readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0 || waiting.length > 0
 
     visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
@@ -479,66 +480,182 @@ Item {
             }
         }
 
-        // Follow-ups waiting behind the running turn, in the order they run.
-        Repeater {
-            model: requests.queue
+        // What waits behind the running turn, stacked as one card: the user's
+        // follow-ups in the order they run, then what the MC queued for the
+        // agent (a delegated task's result), named by what it stands for. It
+        // folds to its header, and scrolls past a few rows, as the web's
+        // QueuedRunsControl does.
+        ShellCard {
+            id: queueCard
 
-            delegate: ShellCard {
-                id: queued
+            property bool expanded: true
+            readonly property int count: requests.queue.length + requests.waiting.length
 
-                required property var modelData
+            objectName: "queueCard"
+            visible: count > 0
+            Layout.fillWidth: true
+            implicitHeight: queueColumn.implicitHeight
 
-                Layout.fillWidth: true
-                implicitHeight: 36
+            ColumnLayout {
+                id: queueColumn
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 6
-                    spacing: 6
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: 0
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: queued.modelData.text
-                        color: requests.foreground
-                        font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
+                ShellButton {
+                    objectName: "queueToggle"
+                    Layout.fillWidth: true
+                    implicitHeight: 32
+                    subtle: true
+                    Accessible.name: queueCard.expanded ? qsTr("Collapse queued messages") : qsTr("Expand queued messages")
+                    onClicked: queueCard.expanded = !queueCard.expanded
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 10
+                        spacing: 6
+
+                        ShellIcon {
+                            name: "clock"
+                            size: 13
+                            color: requests.muted
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("Queued")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+                        Text {
+                            objectName: "queueCount"
+                            text: queueCard.count
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+                        ShellIcon {
+                            name: queueCard.expanded ? "chevron-down" : "chevron-right"
+                            size: 13
+                            color: requests.muted
+                        }
+                    }
+                }
+
+                Flickable {
+                    objectName: "queueList"
+                    visible: queueCard.expanded
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(contentHeight, 128)
+                    contentHeight: queueRows.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
                     }
 
-                    // Editing puts the message in the composer; sending saves it.
-                    ShellButton {
-                        objectName: "queueEdit-" + queued.modelData.runId
-                        implicitHeight: 24
-                        subtle: true
-                        text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
-                        enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
-                        onClicked: Shell.dispatch("composer.queue.edit", {
-                            runId: queued.modelData.runId
-                        })
-                    }
+                    ColumnLayout {
+                        id: queueRows
 
-                    ShellButton {
-                        objectName: "queueSteer-" + queued.modelData.runId
-                        implicitHeight: 24
-                        subtle: true
-                        text: qsTr("Steer")
-                        onClicked: Shell.dispatch("composer.queue.steer", {
-                            runId: queued.modelData.runId
-                        })
-                    }
+                        width: parent.width
+                        spacing: 0
 
-                    ShellButton {
-                        objectName: "queueRemove-" + queued.modelData.runId
-                        implicitHeight: 24
-                        subtle: true
-                        iconName: "x"
-                        implicitWidth: implicitHeight
-                        Accessible.name: qsTr("Remove from the queue")
-                        onClicked: Shell.dispatch("composer.queue.remove", {
-                            runId: queued.modelData.runId
-                        })
+                        Repeater {
+                            model: requests.queue
+
+                            delegate: RowLayout {
+                                id: queued
+
+                                required property var modelData
+
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 32
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 6
+                                spacing: 6
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: queued.modelData.text
+                                    textFormat: Text.PlainText
+                                    color: requests.foreground
+                                    font.family: requests.uiFont
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                }
+
+                                // Editing puts the message in the composer; sending saves it.
+                                ShellButton {
+                                    objectName: "queueEdit-" + queued.modelData.runId
+                                    implicitHeight: 24
+                                    subtle: true
+                                    text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
+                                    enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
+                                    onClicked: Shell.dispatch("composer.queue.edit", {
+                                        runId: queued.modelData.runId
+                                    })
+                                }
+
+                                ShellButton {
+                                    objectName: "queueSteer-" + queued.modelData.runId
+                                    implicitHeight: 24
+                                    subtle: true
+                                    text: qsTr("Steer")
+                                    onClicked: Shell.dispatch("composer.queue.steer", {
+                                        runId: queued.modelData.runId
+                                    })
+                                }
+
+                                ShellButton {
+                                    objectName: "queueRemove-" + queued.modelData.runId
+                                    implicitHeight: 24
+                                    subtle: true
+                                    iconName: "x"
+                                    implicitWidth: implicitHeight
+                                    Accessible.name: qsTr("Remove from the queue")
+                                    onClicked: Shell.dispatch("composer.queue.remove", {
+                                        runId: queued.modelData.runId
+                                    })
+                                }
+                            }
+                        }
+
+                        // The agent's own: nothing to edit, steer with or remove.
+                        Repeater {
+                            model: requests.waiting
+
+                            delegate: RowLayout {
+                                id: notice
+
+                                required property var modelData
+
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 28
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                spacing: 6
+
+                                ShellIcon {
+                                    name: "corner-down-right"
+                                    size: 12
+                                    color: notice.modelData.outcome === "failed" ? requests.warning : requests.muted
+                                }
+                                Text {
+                                    objectName: "queueWaiting-" + notice.modelData.runId
+                                    Layout.fillWidth: true
+                                    text: notice.modelData.summary
+                                    textFormat: Text.PlainText
+                                    color: requests.muted
+                                    font.family: requests.uiFont
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -515,7 +515,9 @@ const Steps steps([] {
                      {{QStringLiteral("delegatedCompletion"), completion},
                       {QStringLiteral("notification"), QJsonObject{{QStringLiteral("outcome"), QStringLiteral("completed")}, {QStringLiteral("summary"), QStringLiteral("Tax tests finished")}}}}));
   step(QStringLiteral("the MC queued a delegated task's result stored before results were notifications for the agent"),
-       queueForAgent(QStringLiteral("<delegated_task_result taskId=\"task:1\">done</delegated_task_result>"), {{QStringLiteral("delegatedCompletion"), completion}}));
+       queueForAgent(QStringLiteral("<delegated_task_result taskId=\"task:1\" title=\"Tax tests\" status=\"completed\" childThreadId=\"thread-9\">\n"
+                                    "done\n</delegated_task_result>"),
+                     {{QStringLiteral("delegatedCompletion"), completion}, {QStringLiteral("createdBy"), QStringLiteral("system")}}));
   step(QStringLiteral("the MC queued the agent's own wake-up for the agent"),
        queueForAgent(QStringLiteral("Background task completed."),
                      {{QStringLiteral("providerWake"), true},
@@ -524,6 +526,11 @@ const Steps steps([] {
     QStringList texts;
     for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
     expect(texts == QStringList{c[0]}, QStringLiteral("the queue lists %1").arg(texts.join(QStringLiteral(" | "))));
+  });
+  step(QStringLiteral("the composer shows %1 waiting behind it").arg(q), [](World& world, const Captures& c, const Table&) {
+    QStringList summaries;
+    for (const QVariant& waiting : listed(world, QStringLiteral("waiting"))) summaries.append(waiting.toMap().value(QStringLiteral("summary")).toString());
+    expect(summaries == QStringList{c[0]}, QStringLiteral("waiting behind the queue: %1").arg(summaries.join(QStringLiteral(" | "))));
   });
   step(QStringLiteral("the composer lists the queued messages %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QStringList texts;

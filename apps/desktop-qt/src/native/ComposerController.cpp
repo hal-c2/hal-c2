@@ -32,6 +32,7 @@
 #include "SidebarModel.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
+#include "TimelineSummary.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
 #include "WorkspaceFiles.h"
@@ -2248,7 +2249,8 @@ QVariantMap ComposerController::turnState() const {
             {QStringLiteral("approvals"), QVariantList()},
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},
-            {QStringLiteral("queue"), QVariantList()}};
+            {QStringLiteral("queue"), QVariantList()},
+            {QStringLiteral("waiting"), QVariantList()}};
   }
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
@@ -2256,7 +2258,8 @@ QVariantMap ComposerController::turnState() const {
                     {QStringLiteral("approvals"), QVariantList()},
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},
-                    {QStringLiteral("queue"), QVariantList()}};
+                    {QStringLiteral("queue"), QVariantList()},
+                    {QStringLiteral("waiting"), QVariantList()}};
   if (!thread || !m_timeline) return state;
 
   const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
@@ -2351,17 +2354,24 @@ QVariantMap ComposerController::turnState() const {
   });
   const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
   QVariantList queue;
+  QVariantList waiting;
   for (const QJsonObject& run : queued) {
     const QJsonObject message = messages.value(str(run, QLatin1String("userMessageId")));
     // What the MC sent the agent for itself (a delegated task's result, the
     // provider's wake-up) waits its turn too, but is not the user's to edit,
     // steer with or remove (apps/web session-logic.ts getUserQueuedThreadRuns).
+    // It is listed apart, by what it stands for.
     if (message.value(QLatin1String("notification")).isObject() || message.value(QLatin1String("delegatedCompletion")).isObject() ||
         message.value(QLatin1String("providerWake")).toBool()) {
+      const std::optional<timeline::Notice> notice = timeline::noticeOf(message);
+      waiting.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))},
+                                 {QStringLiteral("summary"), notice && !notice->summary.isEmpty() ? notice->summary : QStringLiteral("Notification")},
+                                 {QStringLiteral("outcome"), notice ? notice->outcome : QString()}});
       continue;
     }
     queue.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))}, {QStringLiteral("text"), str(message, QLatin1String("text"))}});
   }
+  state.insert(QStringLiteral("waiting"), waiting);
   state.insert(QStringLiteral("queue"), queue);
   return state;
 }

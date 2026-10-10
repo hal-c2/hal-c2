@@ -234,6 +234,24 @@ Item {
             compare(lastAction().payload.runId, "run-3");
         }
 
+        // A delegated task's result waits its turn under its title, with
+        // nothing for the user to act on, in the same folding card.
+        function test_waitingResultsStackUnderTheirTitles() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({
+                queue: [{ runId: "run-2", text: "check the logs" }],
+                waiting: [{ runId: "run-3", summary: "Ledger dedupe: timeline-composer-files failed", outcome: "failed" }]
+            });
+            waitForRendering(root);
+            compare(findChild(requests, "queueCount").text, "2");
+            compare(findChild(requests, "queueWaiting-run-3").text, "Ledger dedupe: timeline-composer-files failed");
+            verify(findChild(requests, "queueEdit-run-3") === null);
+            verify(findChild(requests, "queueList").visible);
+            mouseClick(findChild(requests, "queueToggle"));
+            verify(!findChild(requests, "queueList").visible);
+            verify(requests.pending);
+        }
+
         function test_composerSendsImagesWithoutText() {
             const composer = createTemporaryObject(composerComponent, root);
             Shell.state = Object.assign({}, Shell.state, {

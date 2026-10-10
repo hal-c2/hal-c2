@@ -4,6 +4,8 @@
 #include <QList>
 #include <QString>
 
+#include <optional>
+
 // What a group of tool calls did, in a sentence: "Ran 2 commands and sent
 // messages to 3 threads" (packages/client-runtime/src/work-log/presentation.ts
 // summarizeToolGroup and halC2ToolSummary.ts). At most two kinds of work are
@@ -46,5 +48,17 @@ QString subagentDetail(bool settled, const QString& progress, const QString& res
 // script of a lone `sh -c '<script>'` wrapper, its first line, whitespace
 // collapsed.
 QString commandDisplayText(const QString& command);
+
+// What the MC sent the agent for itself: that a delegated task ended, or that
+// the provider woke up for its background work. The MC records it as a
+// `notification` item (`summary`, `outcome`). Threads written before it did hold
+// the message as the user's instead, a delegated task's result as the envelope
+// the agent reads, and are read here as what they stand for. `item` is a turn
+// item, or a queued run's message (which has no `type`).
+struct Notice {
+  QString summary;
+  QString outcome;
+};
+std::optional<Notice> noticeOf(const QJsonObject& item);
 
 }  // namespace timeline
