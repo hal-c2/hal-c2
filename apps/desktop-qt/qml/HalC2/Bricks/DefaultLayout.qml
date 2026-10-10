@@ -41,16 +41,16 @@ Item {
     readonly property bool sidebarOverlay: Shell.state.layout?.sidebarOverlay === true
     // How the columns give way as the window narrows, the thread keeping
     // `threadMinimumWidth` beside whatever is docked: first the right panel
-    // goes over the thread as a sheet (at the web's 980, apps/web/src/
-    // rightPanelLayout.ts, or sooner when what else is open leaves it no
-    // room), then the thread details do, then the thread list (above).
+    // goes over the thread as a sheet (at 980, or sooner when what else is
+    // open leaves it no room), then the thread details do, then the thread
+    // list (above).
     readonly property int threadMinimumWidth: 360
     readonly property real besideList: width - (navigation.visible && !sidebarOverlay ? navigation.width : 0) - (folderExplorer.visible ? folderExplorer.width : 0)
     readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
     readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth
     readonly property bool panelNarrow: width <= 980 || besidePanel < panelView.minimumWidth
     readonly property bool panelSheet: panelNarrow && !panelView.maximized
-    // The web's sheet: 42% of the window up to 448, 88% up to 384 under 760.
+    // The sheet: 42% of the window up to 448, 88% up to 384 under 760.
     readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
     // A sheet starts under the header, whose toggle puts it away again.
     readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
@@ -356,7 +356,7 @@ Item {
     }
 
     // Beside a thread list shown over the thread: a click there puts the list
-    // away, as the web's off-canvas sidebar does.
+    // away.
     Rectangle {
         id: sidebarScrim
         objectName: "sidebarScrim"
@@ -412,7 +412,7 @@ Item {
     }
 
     // Toasts stack from the top right, under the header strip (or the band
-    // a page without one has), as the web's viewport does: clear of the
+    // a page without one has): clear of the
     // window controls, the composer and the terminal drawer's toolbar. Over
     // a right-hand panel they cover its top, which is the price of a stack
     // that never moves with the panels.

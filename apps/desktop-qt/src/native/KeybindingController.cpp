@@ -357,8 +357,7 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
 
 QString KeybindingController::resolve(const QString& sequence, const QVariantMap& focus) const {
   const QString command = bound(sequence, focus);
-  // The palette is not modal: while it is open every other key stays with it, as
-  // the web's handlers stand down for an open palette (isCommandPaletteOpen).
+  // The palette is not modal: while it is open every other key stays with it.
   if (!command.isEmpty() && !kOverPalette.contains(command)) {
     auto* shell = NativeShell::of(this);
     auto* palette = shell ? shell->controller<CommandPaletteController>() : nullptr;

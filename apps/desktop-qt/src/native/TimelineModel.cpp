@@ -286,7 +286,7 @@ QString markerTitle(const QJsonObject& item) {
   if (type == QLatin1String("handoff")) return QStringLiteral("Context handoff");
   if (type == QLatin1String("compaction")) return QStringLiteral("Context compacted");
   if (type == QLatin1String("thread_created")) return QStringLiteral("Created thread");
-  // The web's work row for a notification is its summary alone (session-logic.ts).
+  // A notification's work row is its summary alone.
   const auto notice = timeline::noticeOf(item);
   return !notice || notice->summary.isEmpty() ? QStringLiteral("Notification") : notice->summary;
 }
@@ -1430,7 +1430,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (row.kind == QLatin1String("error")) {
         const QJsonObject failure = item.value(QLatin1String("failure")).toObject();
         if (text(failure, QLatin1String("class")) == QLatin1String("usage_limit")) {
-          // apps/web MessagesTimeline.tsx: one line, the wait named by when it ends.
+          // One line, the wait named by when it ends.
           const QString reset = upcoming(timeOf(failure.value(QLatin1String("resetAt"))));
           return reset.isEmpty() ? QStringLiteral("Usage limit reached.") : QStringLiteral("Usage limit reached. Retry after %1.").arg(reset);
         }

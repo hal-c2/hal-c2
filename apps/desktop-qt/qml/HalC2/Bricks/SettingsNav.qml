@@ -81,7 +81,7 @@ Rectangle {
         onActivated: search.forceActiveFocus()
     }
 
-    // Escape that nothing inside took leaves Settings, as the web's route does.
+    // Escape that nothing inside took leaves Settings.
     Keys.onEscapePressed: event => {
         Shell.dispatch("settings.back");
         event.accepted = true;

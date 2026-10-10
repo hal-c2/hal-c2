@@ -63,7 +63,7 @@ public:
   // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
   // What still runs while the command palette is open: the palette's own modes and
-  // theme commands (apps/web CommandPalette.tsx) and what belongs to the window.
+  // theme commands, and what belongs to the window.
   static inline const QSet<QString> kOverPalette{
       QStringLiteral("commandPalette.toggle"), QStringLiteral("filePicker.toggle"), QStringLiteral("projectSearch.toggle"),
       QStringLiteral("theme.select"),          QStringLiteral("appearance.cycle"),  QStringLiteral("themeEditor.toggle"),

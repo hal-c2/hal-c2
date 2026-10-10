@@ -1,7 +1,7 @@
 // LayoutController as a state machine over what moves the thread list: the
 // window's width, the list's edge dragged or reset, the toggle, and a restart
-// reading the device's preferences back. The model is the web's rule
-// (apps/web/src/components/threadSidebarWidth.ts and its off-canvas sidebar):
+// reading the device's preferences back. The model is the ledger's
+// rule (features/navigation/layout.feature):
 // the list is never narrower than its minimum, leaves the thread its room
 // while it is beside it, and in a window with no room for both is shown over
 // the thread, hidden until asked for, without that being remembered.

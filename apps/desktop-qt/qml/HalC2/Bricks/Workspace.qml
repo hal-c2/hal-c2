@@ -170,8 +170,7 @@ Rectangle {
                 }
 
                 Layout.fillWidth: true
-                // Room for a few letters of the title beside the chevron, as
-                // the web's header keeps (ChatHeader.tsx: min-w-10).
+                // Room for a few letters of the title beside the chevron (40 px).
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth

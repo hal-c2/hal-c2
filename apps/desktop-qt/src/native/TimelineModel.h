@@ -364,6 +364,6 @@ private:
   QTimer m_flushTimer;
 };
 
-// apps/web/src/timestampFormat.ts formatUpcomingTimestamp: `at` as the rows
-// read a time that may be ahead, in the device's timestampFormat and `locale`.
+// `at` as the rows read a time that may be ahead, in the device's
+// timestampFormat and `locale`.
 QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale);

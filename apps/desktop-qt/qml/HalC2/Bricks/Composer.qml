@@ -929,7 +929,7 @@ Rectangle {
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
                             // A prompt that fits has nothing to page through: the keys
-                            // page the conversation (the web's composer does).
+                            // page the conversation.
                             if ((event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) && event.modifiers === Qt.NoModifier && input.contentHeight <= input.height && !composer.suggesting) {
                                 event.accepted = Keybindings.commands.run(event.key === Qt.Key_PageUp ? "timeline.pageUp" : "timeline.pageDown");
                                 if (event.accepted) return;
@@ -983,7 +983,7 @@ Rectangle {
                                 return;
                             }
                             if (event.key === Qt.Key_Tab && event.modifiers === Qt.NoModifier) {
-                                // As the web: Tab indents a list item, anywhere else it
+                                // Tab indents a list item, anywhere else it
                                 // leaves the editor for the composer's controls.
                                 event.accepted = true;
                                 const lineStart = input.text.lastIndexOf("\n", input.cursorPosition - 1) + 1;
@@ -1497,7 +1497,7 @@ Rectangle {
                         x: parent.width - width
                         y: -height - 4
                         width: 320
-                        // The rows' height up to the web's 23rem; a repo with one branch
+                        // The rows' height up to 368; a repo with one branch
                         // gets a short popup.
                         height: Math.min(368, branchColumn.implicitHeight + padding * 2)
                         padding: 4

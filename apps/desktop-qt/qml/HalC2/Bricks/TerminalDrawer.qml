@@ -32,9 +32,9 @@ Item {
 
     readonly property color background: Theme.palette.color("canvas", "#09090b")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    // Ink, not the `muted` surface: inactive tabs are the web's text-muted-foreground.
+    // Ink, not the `muted` surface: inactive tabs are muted text.
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    // The toolbar's icons are text-foreground/90 in the web.
+    // The toolbar's icons are the text colour at 90%.
     readonly property color toolbarInk: Qt.alpha(foreground, 0.9)
     readonly property color border: Theme.palette.color("border", "#27272a")
     // Keeps the square Terminal inside a carded drawer's rounded corners.

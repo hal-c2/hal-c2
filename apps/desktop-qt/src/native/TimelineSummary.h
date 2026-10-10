@@ -30,7 +30,7 @@ bool callFailed(const QJsonObject& item);
 bool isFileRead(const QJsonObject& item);
 
 // One line of a markdown result: list bullets, code ticks and link targets
-// dropped (apps/web V2LifecycleRow.tsx plainDetail).
+// dropped.
 QString plainDetail(const QString& markdown);
 
 // Whether a subagent has stopped working: anything but pending, running or

@@ -305,7 +305,7 @@ Rectangle {
                 delegate: RelationRow {}
             }
 
-            // Finished subagents fold away, the web's "Previous agents".
+            // Finished subagents fold away.
             ShellButton {
                 objectName: "threadDetailsPrevious"
                 Layout.fillWidth: true

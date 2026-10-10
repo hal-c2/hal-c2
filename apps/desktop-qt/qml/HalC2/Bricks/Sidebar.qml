@@ -183,7 +183,7 @@ Rectangle {
                 open: open
             });
             for (const item of items) {
-                // A folded shelf still shows the open thread, as the web does.
+                // A folded shelf still shows the open thread.
                 if (!open && item.key !== state.activeThreadKey) {
                     continue;
                 }
