@@ -25,7 +25,7 @@ MenuItem {
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
-    Accessible.description: detail
+    Accessible.description: [detail, reason].filter(part => part.length > 0).join(". ")
 
     contentItem: ColumnLayout {
         spacing: 0

@@ -74,6 +74,7 @@ Item {
             const reason = findChild(item, "menuItemReason");
             verify(reason.text.length > 0 && !reason.truncated);
             compare(reason.text, "No uncommitted changes.");
+            compare(item.Accessible.description, "No uncommitted changes.");
         }
         // Scenario: Cancelling the commit leaves everything as it was (features/source-control/commit-and-generated-messages.feature)
         function test_cancellingTheCommitSendsNothing() {
