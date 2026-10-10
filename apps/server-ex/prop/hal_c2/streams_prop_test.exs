@@ -145,7 +145,7 @@ defmodule HalC2.StreamsPropTest do
     text = oneof(["", "a", "bc", "héllo"])
 
     oneof([
-      {:run, oneof(@runs), oneof(["running", "done", "rolled_back"])},
+      {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
       {:item, oneof(@items), text},
       {:append, oneof(@items), oneof(["a", "bc", "é"])},
       {:message, oneof(@messages)},

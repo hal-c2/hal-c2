@@ -10,16 +10,18 @@ defmodule HalC2.Streams.View do
   A client may also hold only the end of a thread, a `window`. Turn items, messages
   and nodes belong to a run; the client holds those of runs whose ordinal is at
   least the window's `floor`, plus the few that belong to no run, and never those of
-  a rolled-back run, which no timeline shows. Every other kind (the thread, its runs,
-  checkpoints, requests) is small and held whole. A `floor` of `nil` is a window
-  that reaches the start of the thread.
+  a rolled-back run, which no timeline shows. A run waiting in the queue has not run
+  yet, so it is held whatever its ordinal: a queue held for long keeps runs older
+  than the window, and the composer lists them by their message. Every other kind
+  (the thread, its runs, checkpoints, requests) is small and held whole. A `floor`
+  of `nil` is a window that reaches the start of the thread.
 
   Whatever is left out here is never sent as an event either, so a client is never
   handed a patch to an entity it does not have. An entity that comes to be held
   (a field its kind is chosen by changed) is sent whole in place of the patch, and
-  one that stops being held is deleted for the client: an item whose run was rolled
-  back goes that way, with every other item of the run. A run is rolled back for
-  good, so that is the one way out of a window and there is no way back in.
+  one that stops being held is deleted for the client. A run that moves in or out
+  of the window (rolled back, or leaving or rejoining the queue below the floor)
+  takes every item of the run with it.
   """
 
   alias HalC2.StreamState
@@ -52,6 +54,7 @@ defmodule HalC2.Streams.View do
     case StreamState.get(stream, "run")[entity["runId"]] do
       nil -> true
       %{"status" => "rolled_back"} -> false
+      %{"status" => "queued"} -> true
       run -> floor == nil or ordinal(run) >= floor
     end
   end
@@ -164,22 +167,36 @@ defmodule HalC2.Streams.View do
     sent ++ rolled(view, stream, before, events, settled)
   end
 
-  # A run that is rolled back takes its items with it without an event to any of
-  # them: the ones the client held go. Nothing brings a run back (`rolled_back` is
-  # where `HalC2.Orchestration.Rollback` leaves it for good), so nothing comes.
+  # A run that moves in or out of the window takes its items with it, without an
+  # event to any of them: the ones the client held go, the ones it comes to hold
+  # are sent whole.
   defp rolled(%{window: nil}, _stream, _before, _events, _settled), do: []
 
   defp rolled(view, stream, before, events, settled) do
-    rolled_back? = &(StreamState.get(&1, "run")[&2]["status"] == "rolled_back")
-
     for %{kind: "run", entity: run} = event <- Enum.uniq_by(Enum.reverse(events), & &1.entity),
-        rolled_back?.(stream, run) and not rolled_back?.(before, run),
         {kind, id, entity} <- of_run(stream, run),
         not MapSet.member?(settled, {kind, id}),
         kind?(view.kinds, kind, entity),
-        in_window?(view.window, before, kind, StreamState.get(before, kind)[id] || entity),
-        do: %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()}
+        move =
+          moving(view.window, before, stream, kind, StreamState.get(before, kind)[id], entity),
+        move != :stays,
+        do: %{event | kind: kind, entity: id, patch: moved(kind, entity, move == :joins)}
   end
+
+  # Whether a commit's change to its run moves an entity into the window or out.
+  # One made by the commit itself was not held before, whatever its run said.
+  defp moving(window, before, stream, kind, was, entity) do
+    held? = was != nil and in_window?(window, before, kind, was)
+
+    case {held?, in_window?(window, stream, kind, entity)} do
+      {false, true} when was != nil -> :joins
+      {true, false} -> :leaves
+      _ -> :stays
+    end
+  end
+
+  defp moved(kind, entity, true), do: replacement(kind, entity)
+  defp moved(_kind, _entity, false), do: HalC2.Patch.delete()
 
   defp of_run(stream, run) do
     for kind <- @windowed,
@@ -192,8 +209,9 @@ defmodule HalC2.Streams.View do
   @doc """
   The log's events since a client's offset as they go to it, merged per entity and
   trimmed. What the client held at its offset is not known here, only what it holds
-  now, so an entity held now is taken to have been held then; the one way out of a
-  view, a run rolled back since, deletes that run's items.
+  now, so an entity held now is taken to have been held then. A run out of the
+  window deletes its items, and one waiting in the queue, which may have rejoined
+  it, sends its message again: all it holds before it runs.
   """
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
@@ -216,13 +234,12 @@ defmodule HalC2.Streams.View do
 
   defp rolled_since(%{window: window} = view, stream, %{kind: "run", entity: run} = event)
        when window != nil do
-    if StreamState.get(stream, "run")[run]["status"] == "rolled_back" do
-      for {kind, id, entity} <- of_run(stream, run), kind?(view.kinds, kind, entity) do
-        %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()}
-      end
-    else
-      []
-    end
+    queued? = StreamState.get(stream, "run")[run]["status"] == "queued"
+
+    for {kind, id, entity} <- of_run(stream, run),
+        kind?(view.kinds, kind, entity),
+        queued? or not in_window?(window, stream, kind, entity),
+        do: %{event | kind: kind, entity: id, patch: moved(kind, entity, queued?)}
   end
 
   defp rolled_since(_view, _stream, _event), do: []
