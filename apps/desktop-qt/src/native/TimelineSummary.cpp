@@ -378,4 +378,87 @@ GroupSummary summarize(const QList<QJsonObject>& all) {
   return {sentence, std::any_of(named.cbegin(), named.cend(), [](const Named& summary) { return summary.failed; })};
 }
 
+QString plainDetail(const QString& markdown) {
+  static const QRegularExpression link(QStringLiteral(R"(\[([^\]]+)\]\([^)]*\))"));
+  static const QRegularExpression bullet(QStringLiteral(R"(^[ \t]*[-*][ \t]+)"), QRegularExpression::MultilineOption);
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  QString plain = markdown;
+  plain.replace(link, QStringLiteral("\\1"));
+  plain.remove(QLatin1Char('`'));
+  plain.remove(bullet);
+  plain.replace(space, QStringLiteral(" "));
+  return plain.trimmed();
+}
+
+bool subagentSettled(const QString& status) {
+  return status != QLatin1String("pending") && status != QLatin1String("running") && status != QLatin1String("waiting");
+}
+
+QString subagentDetail(bool settled, const QString& progress, const QString& result) {
+  static const QRegularExpression placeholder(QStringLiteral(R"(^Child task ended with status\b)"),
+                                              QRegularExpression::CaseInsensitiveOption);
+  const QString first = settled ? result.trimmed() : progress.trimmed();
+  const QString second = settled ? progress.trimmed() : result.trimmed();
+  const QString raw = first.isEmpty() ? second : first;
+  return raw.isEmpty() || placeholder.match(raw).hasMatch() ? QString() : plainDetail(raw);
+}
+
+QString commandDisplayText(const QString& command) {
+  // sh, bash, zsh, dash or ksh, flags such as -lc, then the script alone.
+  static const QRegularExpression wrapper(
+      QStringLiteral(R"re(^(?:\S*/)?(?:ba|z|da|k)?sh(?:\.exe)?(?:\s+-[A-Za-z]+)*?\s+-[A-Za-z]*c\s+)re"
+                     R"re((?:'((?:[^']|'\\'')*)'|"((?:[^"\\]|\\.)*)"|([^\s'"]+))$)re"),
+      QRegularExpression::DotMatchesEverythingOption);
+  static const QRegularExpression escaped(QStringLiteral(R"(\\(.))"));
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  const QString trimmed = command.trimmed();
+  QString shown = trimmed;
+  if (const auto match = wrapper.match(trimmed); match.hasMatch()) {
+    if (match.capturedStart(1) >= 0) {
+      shown = match.captured(1).replace(QStringLiteral("'\\''"), QStringLiteral("'"));
+    } else if (match.capturedStart(2) >= 0) {
+      shown = match.captured(2).replace(escaped, QStringLiteral("\\1"));
+    } else {
+      shown = match.captured(3);
+    }
+  }
+  shown = shown.trimmed();
+  if (shown.isEmpty()) shown = trimmed;
+  return shown.section(QLatin1Char('\n'), 0, 0).replace(space, QStringLiteral(" ")).trimmed();
+}
+
+std::optional<Notice> noticeOf(const QJsonObject& item) {
+  const QString type = text(item, QLatin1String("type"));
+  if (type == QLatin1String("notification")) {
+    return Notice{text(item, QLatin1String("summary")).trimmed(), text(item, QLatin1String("outcome"))};
+  }
+  const QJsonObject notification = item.value(QLatin1String("notification")).toObject();
+  if (type.isEmpty() && !notification.isEmpty()) {
+    return Notice{text(notification, QLatin1String("summary")).trimmed(), text(notification, QLatin1String("outcome"))};
+  }
+  if (!type.isEmpty() && type != QLatin1String("user_message")) return std::nullopt;
+  const QString createdBy = text(item, QLatin1String("createdBy"));
+  if (createdBy == QLatin1String("agent")) {
+    // A message another agent sent names its thread, or came in over MCP.
+    if (text(item, QLatin1String("creationSource")) != QLatin1String("provider") ||
+        !text(item, QLatin1String("senderThreadId")).isEmpty()) {
+      return std::nullopt;
+    }
+    return Notice{QStringLiteral("Background activity updated"), QStringLiteral("updated")};
+  }
+  if (createdBy != QLatin1String("system")) return std::nullopt;
+  // <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
+  static const QRegularExpression envelope(
+      QStringLiteral("\\A<delegated_task_result taskId=\"[^\"]*\" title=\"([^\n]*)\" status=\"(\\w+)\" childThreadId=\"[^\"\n]*\">"));
+  const QRegularExpressionMatch match = envelope.match(text(item, QLatin1String("text")));
+  if (!match.hasMatch()) return std::nullopt;
+  const QString status = match.captured(2);
+  const QString title = match.captured(1).trimmed();
+  const QString outcome = status == QLatin1String("completed") || status == QLatin1String("failed") ? status : QStringLiteral("cancelled");
+  const QString ended = outcome == QLatin1String("completed") ? QStringLiteral("finished")
+                        : outcome == QLatin1String("failed")  ? QStringLiteral("failed")
+                                                               : QStringLiteral("stopped");
+  return Notice{QStringLiteral("%1 %2").arg(title.isEmpty() ? QStringLiteral("Delegated task") : title, ended), outcome};
+}
+
 }  // namespace timeline

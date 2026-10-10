@@ -104,7 +104,9 @@ Dialog {
             clip: true
             contentHeight: (body.item as Item)?.implicitHeight ?? 0
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar {
+                Accessible.name: qsTr("Scroll attachment")
+            }
 
             Loader {
                 id: body

@@ -93,7 +93,7 @@ SettingsPage {
             }
         }
 
-        Switch {
+        ShellSwitch {
             objectName: "enabled"
             enabled: !task.modelData.busy
             checked: task.modelData.enabled

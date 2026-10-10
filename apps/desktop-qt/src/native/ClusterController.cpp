@@ -29,6 +29,8 @@ ClusterController::ClusterController(ShellBridge* bridge, McClient* client, QObj
           {QStringLiteral("busy"), false},
           {QStringLiteral("status"), QVariant::fromValue(nullptr)},
           {QStringLiteral("error"), QVariant::fromValue(nullptr)},
+          // The session lacks the access scopes that manage the cluster.
+          {QStringLiteral("needsAdmin"), false},
           {QStringLiteral("invite"), QVariant::fromValue(nullptr)},
           {QStringLiteral("notice"), QVariant::fromValue(nullptr)},
       } {}
@@ -98,9 +100,12 @@ void ClusterController::refresh() {
     if (error) {
       // What was read before may no longer hold; the page shows why instead.
       m_state.insert(QStringLiteral("status"), QVariant::fromValue(nullptr));
-      set(QStringLiteral("error"), *error);
+      const bool needsAdmin = error->startsWith(QLatin1String("access:")) && error->endsWith(QLatin1String(" is required"));
+      m_state.insert(QStringLiteral("needsAdmin"), needsAdmin);
+      set(QStringLiteral("error"), needsAdmin ? QVariant::fromValue(nullptr) : QVariant(*error));
       return;
     }
+    m_state.insert(QStringLiteral("needsAdmin"), false);
     m_state.insert(QStringLiteral("error"), QVariant::fromValue(nullptr));
     set(QStringLiteral("status"), result.toObject().toVariantMap());
   });

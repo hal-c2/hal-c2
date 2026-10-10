@@ -24,6 +24,8 @@
 namespace {
 
 const QString kLongLine = QString(300, QLatin1Char('x'));
+// Where the MC puts a thread's worktree: under its data directory, outside the project (HalC2.Vcs.worktree_path/2).
+const QString kWorktree = QStringLiteral("/home/hal-c2/elixir/worktrees/shop/feature-tax");
 
 QString patchChanging(const QString& path, const QStringList& added) {
   QString patch = QStringLiteral("diff --git a/%1 b/%1\n--- a/%1\n+++ b/%1\n@@ -1,2 +1,%2 @@\n const cart = [];\n-export const tax = 0;\n").arg(path).arg(added.size() + 1);
@@ -149,6 +151,25 @@ void haveEditor(World& world, const QString& path) {
 
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // A thread in a worktree of its own: the review is of that checkout, not the project's.
+  step(QStringLiteral("the thread works in a new worktree under the HAL-C2 home"), [](World& world, const Captures&, const Table&) {
+    const QString id = world.mc.threads.constBegin().key();
+    QJsonObject row = world.mc.threads.value(id);
+    row.insert(QStringLiteral("worktreePath"), kWorktree);
+    world.mc.threads.insert(id, row);
+    world.mc.sendRow(id, row);
+    world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("worktreePath")) == kWorktree; },
+                  QStringLiteral("the thread to be in its worktree"));
+  });
+  step(QStringLiteral("the user reviews the working tree"), [](World& world, const Captures&, const Table&) {
+    panel(world);
+  });
+  step(QStringLiteral("the worktree's changes are in the diff"), [](World& world, const Captures&, const Table&) {
+    expect(!fake(world).asked.isEmpty() && fake(world).asked.constLast().value(QLatin1String("cwd")) == kWorktree,
+           QStringLiteral("the review asked for %1").arg(fake(world).asked.isEmpty() ? QStringLiteral("nothing") : fake(world).asked.constLast().value(QLatin1String("cwd")).toString()));
+    expect(diff(world).status() == QLatin1String("ready") && diff(world).model()->paths().contains(QStringLiteral("src/tax.ts")), describeDiff(world));
+  });
 
   // Stacked and split.
   step(QStringLiteral("the user switches the diff to the split view"), [](World& world, const Captures&, const Table&) {

@@ -657,6 +657,34 @@ defmodule HalC2.Steps.Orchestration.Projections do
     World.put_client(context, client)
   end
 
+  step ~r/^"(?<thread>[^"]+)" has a message queued before a very long history$/,
+       %{args: [thread]} = context do
+    queued = %{
+      "id" => "run-0",
+      "ordinal" => 0,
+      "status" => "queued",
+      "userMessageId" => "message-0"
+    }
+
+    message = %{
+      "id" => "message-0",
+      "runId" => "run-0",
+      "role" => "user",
+      "text" => "check the logs"
+    }
+
+    changes = [{"run", "run-0", %{"s" => queued}}, {"message", "message-0", %{"s" => message}}]
+    {:ok, _} = HalC2.Streams.commit(thread, :thread, changes ++ Enum.flat_map(1..6, &turn/1))
+    context
+  end
+
+  step "the snapshot holds the queued message", context do
+    {_live, snapshots} = List.pop_at(context.frames, -1)
+    assert List.last(snapshots)["floor"] == 5
+    assert for(frame <- snapshots, ["message", id, _] <- frame["rows"], do: id) == ["message-0"]
+    context
+  end
+
   step ~r/^"(?<thread>[^"]+)" has hidden and visible earlier turns$/,
        %{args: [thread]} = context do
     rolled_back = {"run", "run-2", %{"s" => %{"status" => "rolled_back"}}}

@@ -451,6 +451,8 @@ defmodule HalC2.Acp.Antigravity do
     cond do
       not entry["enabled"] ->
         Map.merge(entry, %{
+          # Disabled is not checked, but the runtime is either on this machine or it is not.
+          "installed" => match?({:ok, _}, resolve(config["binaryPath"])),
           "status" => "disabled",
           "models" => (account || %{})["models"] || [],
           "message" => "Antigravity is disabled in HAL-C2 settings."

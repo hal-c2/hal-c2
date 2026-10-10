@@ -97,7 +97,7 @@ int LayoutController::sidebarRoom() const {
 }
 
 int LayoutController::sidebarWidth() const {
-  return std::min(m_sidebarWidth, sidebarRoom());
+  return std::max(std::min(m_sidebarWidth, sidebarRoom()), kSidebarMinWidth);
 }
 
 void LayoutController::setSidebarWidth(int width) {
@@ -119,13 +119,21 @@ void LayoutController::setWindowWidth(int width) {
   load();
   if (width == m_windowWidth) return;
   const int before = sidebarWidth();
+  const bool overlay = sidebarOverlay();
+  const bool collapsed = sidebarCollapsed();
   m_windowWidth = width;
-  if (sidebarWidth() != before) publish();
+  if (sidebarOverlay() != overlay) m_overlayOpen = false;
+  if (sidebarWidth() != before || sidebarOverlay() != overlay || sidebarCollapsed() != collapsed) publish();
 }
 
 void LayoutController::setSidebarCollapsed(bool collapsed) {
   load();
-  if (collapsed == m_sidebarCollapsed) return;
+  if (collapsed == sidebarCollapsed()) return;
+  if (sidebarOverlay()) {
+    m_overlayOpen = !collapsed;
+    publish();
+    return;
+  }
   m_sidebarCollapsed = collapsed;
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     settings->writeDevice(kSidebarCollapsed, collapsed);
@@ -150,7 +158,8 @@ void LayoutController::setZoomLevel(double level) {
 
 void LayoutController::publish() {
   m_bridge->publish(QStringLiteral("layout"),
-                    QVariantMap{{kSidebarCollapsed, m_sidebarCollapsed},
+                    QVariantMap{{kSidebarCollapsed, sidebarCollapsed()},
                                 {kSidebarWidthKey, sidebarWidth()},
+                                {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
                                 {QStringLiteral("zoom"), zoom()}});
 }

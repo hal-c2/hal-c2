@@ -52,6 +52,13 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
+  # The MC reads its processes with `ps -axo <format>`, which is itself a child of the MC.
+  step "no process is listed for the MC's own process list command", context do
+    {:ok, %{"processes" => processes}} = context.reply
+    refute Enum.find(processes, &String.contains?(&1["command"], " -axo pid="))
+    context
+  end
+
   # A sample from 10 minutes ago with the MC at an impossible 100000% CPU sets
   # the one-hour window apart from the five-minute one.
   step ~r/^the user views the last (?<window>5 minutes|1 hour) of resource history$/,

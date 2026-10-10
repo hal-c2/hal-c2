@@ -17,6 +17,7 @@
 #include "ProjectController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "TimelineSummary.h"
 #include "ToastController.h"
 
 namespace {
@@ -153,7 +154,7 @@ QList<CommandRegistry::Choice> ProjectCloneController::sources(const QString& en
       // the settings; here choosing the row is pressing that button.
       choice.description = tr("Setup Required · %1")
                                .arg(ready.hint.isEmpty() ? tr("Open Settings -> Source Control to configure this provider.")
-                                                         : ready.hint);
+                                                         : timeline::plainDetail(ready.hint));
       choice.terms << QStringLiteral("setup required");
       choice.run = [this] {
         NativeShell::of(this)->controller<NavigationController>()->open(
@@ -254,6 +255,7 @@ void ProjectCloneController::askDestination(const Chosen& chosen) {
                                        chosen.directoryName);
   options.pinned = chosen.directoryName;
   options.emptyText = tr("Choose a destination path and press Enter to clone.");
+  options.submit = tr("Clone");
   options.keepOpen = true;
   m_busy = false;
   NativeShell::of(this)->controller<CommandPaletteController>()->browse(

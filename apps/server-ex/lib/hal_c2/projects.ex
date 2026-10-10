@@ -248,11 +248,13 @@ defmodule HalC2.Projects do
   Brings projects whose settings say `defaultAutoPull` up to date at boot. Only a
   clean checkout on its default branch with an upstream,
   nothing of its own to push, and something new to pull. Each checkout is pulled
-  once however many projects share it; a failure is logged and skipped.
+  once however many projects share it; a failure is logged and skipped. An MC without
+  automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`) pulls nothing.
   """
   def auto_pull do
     roots =
       for {{mc, _id}, {"project", project}} <- HalC2.Shell.rows(),
+          Application.get_env(:hal_c2, :auto_actions, true),
           mc == node(),
           project["deletedAt"] == nil,
           HalC2.Settings.for_project(project["id"])["defaultAutoPull"] == true,

@@ -25,6 +25,7 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "ThreadStore.h"
 
 class LimitRecoveryController : public QObject, public NativeController {
 public:
@@ -39,6 +40,10 @@ public:
       publish();
     });
     connect(m_store, &ShellStore::changed, this, &LimitRecoveryController::publish);
+    // The reset reads in the device's time format.
+    if (auto* threads = NativeShell::of(this)->controller<ThreadStore>()) {
+      connect(threads, &ThreadStore::timesChanged, this, &LimitRecoveryController::publish);
+    }
     publish();
   }
 
@@ -105,6 +110,12 @@ private:
     return reading;
   }
 
+  // The reset as the timeline's usage-limit row reads it.
+  QString upcoming(const QDateTime& at) const {
+    const auto* threads = NativeShell::of(this)->controller<ThreadStore>();
+    return threads ? threads->upcoming(at) : at.toString(Qt::ISODate);
+  }
+
   void publish() {
     if (!m_active) return;
     const Reading now = read();
@@ -117,7 +128,7 @@ private:
                       QVariantMap{{QStringLiteral("threadKey"), now.key},
                                   {QStringLiteral("title"), QStringLiteral("Usage limit reached")},
                                   {QStringLiteral("description"),
-                                   reset ? QStringLiteral("Resets %1").arg(QLocale().toString(QDateTime::fromMSecsSinceEpoch(*reset), QLocale::ShortFormat))
+                                   reset ? QStringLiteral("Resets %1").arg(upcoming(QDateTime::fromMSecsSinceEpoch(*reset)))
                                          : QStringLiteral("Reset time unavailable; retry manually")},
                                   {QStringLiteral("canSchedule"), now.canSchedule},
                                   {QStringLiteral("scheduled"), now.scheduled},

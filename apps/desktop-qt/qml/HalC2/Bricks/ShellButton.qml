@@ -5,7 +5,9 @@ import HalC2.Shell
 
 // A button. Outline by default (the header pills),
 // `subtle` for the ghost buttons, `primary` for the accent one; `iconName` is a
-// lucide id drawn before the text, `chevron` appends the menu chevron.
+// lucide id drawn before the text, `chevron` appends the menu chevron. A
+// button with only an icon or only the chevron names itself on hover from its
+// accessible name; `toolTip` says something else, or names a button that has text.
 Button {
     id: control
 
@@ -13,6 +15,7 @@ Button {
     property bool subtle: false
     property bool chevron: false
     property string iconName: ""
+    property string toolTip: ""
     property real iconSize: 14
     property real chevronSize: 14
     property color tint: primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
@@ -40,6 +43,9 @@ Button {
     hoverEnabled: true
     scale: down ? 0.97 : 1
     opacity: enabled ? 1 : 0.64
+    ToolTip.visible: hovered && ToolTip.text.length > 0
+    ToolTip.text: toolTip.length > 0 ? toolTip : iconOnly || chevronOnly ? Accessible.name : ""
+    ToolTip.delay: 400
 
     Behavior on scale {
         NumberAnimation {

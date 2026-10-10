@@ -99,7 +99,8 @@ QString text(const QJsonValue& value) {
 // getProviderVersionLabel: bare versions get a `v`; Antigravity's release tag
 // shows as its date and candidate.
 QString versionLabel(const QString& version) {
-  if (version.isEmpty()) return {};
+  // An MC that has not launched the agent says "unknown"; that is no version.
+  if (version.isEmpty() || version == QLatin1String("unknown")) return {};
   static const QRegularExpression antigravity(QStringLiteral("^agy_acp_server_(\\d{4})(\\d{2})(\\d{2})_\\d+(?:_(\\w+))?$"));
   if (const auto match = antigravity.match(version); match.hasMatch()) {
     const QString candidate = match.captured(4);
@@ -175,10 +176,12 @@ QVariant advisory(const QJsonObject& provider) {
     return null();
   }
   const QString latest = versionLabel(text(version.value(QLatin1String("latestVersion"))));
+  // The title already says "Update available"; the detail only adds what to install.
   QString detail = text(version.value(QLatin1String("message")));
+  static const QRegularExpression leadingTitle(QStringLiteral("^Update available[.:]?\\s*"), QRegularExpression::CaseInsensitiveOption);
+  detail.remove(leadingTitle);
   if (detail.isEmpty()) {
-    detail = latest.isEmpty() ? QStringLiteral("Update available: install the latest provider version.")
-                              : QStringLiteral("Update available: install %1.").arg(latest);
+    detail = latest.isEmpty() ? QStringLiteral("Install the latest provider version.") : QStringLiteral("Install %1.").arg(latest);
   }
   return QVariantMap{{QStringLiteral("title"), QStringLiteral("Update available")},
                      {QStringLiteral("detail"), detail},

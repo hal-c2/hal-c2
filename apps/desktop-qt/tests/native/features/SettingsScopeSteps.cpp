@@ -375,12 +375,15 @@ const Steps steps([] {
   });
 
   // Sections and their titles (search-and-navigation.feature).
-  step(QStringLiteral("the user opens (the Keybindings section|the Appearance section|the Integrations section|diagnostics|the open source licenses page)"),
+  step(QStringLiteral("the user opens (the Keybindings section|the Appearance section|the Integrations section|the Providers section|the Cluster section|the Archive section|diagnostics|the open source licenses page)"),
        [](World& world, const Captures& c, const Table&) {
          static const QHash<QString, QString> sections{
              {QStringLiteral("the Keybindings section"), QStringLiteral("/settings/keybindings")},
              {QStringLiteral("the Appearance section"), QStringLiteral("/settings/appearance")},
              {QStringLiteral("the Integrations section"), QStringLiteral("/settings/integrations")},
+             {QStringLiteral("the Providers section"), QStringLiteral("/settings/providers")},
+             {QStringLiteral("the Cluster section"), QStringLiteral("/settings/cluster")},
+             {QStringLiteral("the Archive section"), QStringLiteral("/settings/archived")},
              {QStringLiteral("diagnostics"), QStringLiteral("/settings/diagnostics")},
              {QStringLiteral("the open source licenses page"), QStringLiteral("/settings/open-source-licenses")},
          };

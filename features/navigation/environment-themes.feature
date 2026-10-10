@@ -267,3 +267,9 @@ Feature: Environment themes and the desktop shell theme
     Scenario: A shell theme never changes saved preferences
       Given the desktop shell is using a shell theme
       Then the user's saved theme choice is unchanged
+
+    @desktop
+    Scenario: Settings → Appearance says a shell theme file is in charge
+      Given the desktop shell is using a shell theme
+      Then Settings → Appearance names the shell theme file and where it is
+      And says its colors are drawn over the theme chosen there

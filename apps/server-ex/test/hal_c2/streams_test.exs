@@ -459,6 +459,31 @@ defmodule HalC2.StreamsTest do
                     {:events, [%{kind: "run", entity: "run-1"}], ^earlier}}
   end
 
+  test "a run queued before a window's floor is held until it runs" do
+    message = fn run ->
+      {"message", "message-#{run}",
+       %{"s" => %{"id" => "message-#{run}", "role" => "user", "runId" => "run-#{run}"}}}
+    end
+
+    changes =
+      thread("th-23") ++
+        [run(1), run(2, "queued"), message.(2)] ++
+        for(run <- 3..4, change <- [run(run) | run_items(run)], do: change)
+
+    {:ok, seq} = Streams.commit("th-23", :thread, changes)
+    :ok = Streams.subscribe("th-23", self(), nil, %{window: {:items, 4}})
+    {^seq, %{floor: 3}, rows} = client_snapshot("th-23")
+    assert ids(rows, "message") == ["message-2"]
+
+    # Once it runs it is as old as its ordinal, and leaves the window.
+    {:ok, started} =
+      Streams.commit("th-23", :thread, [{"run", "run-2", %{"s" => %{"status" => "running"}}}])
+
+    assert_receive {:hal_c2_stream, "th-23", {:events, events, ^started}}
+    assert %{patch: gone} = Enum.find(events, &(&1.entity == "message-2"))
+    assert gone == HalC2.Patch.delete()
+  end
+
   test "a client that was away while a run was rolled back is told its items are gone" do
     seq = long_thread("th-18")
     rolled = [{"run", "run-3", %{"s" => %{"status" => "rolled_back"}}}]

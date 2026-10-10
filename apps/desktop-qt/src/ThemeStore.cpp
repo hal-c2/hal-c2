@@ -8,6 +8,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QPointer>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStyleHints>
@@ -34,7 +37,64 @@ void mergeColors(QVariantMap& into, const QJsonObject& colors) {
   }
 }
 
+// The font the application started with: the system's.
+const QFont& systemFont() {
+  static const QFont font = QGuiApplication::font();
+  return font;
+}
+
+// Everything that writes text under `object`: Text, TextInput, TextEdit and
+// the controls (a Label is a Text, a TextField a TextInput). Reached through
+// the items drawn and through their owners, so a closed popup's are found too.
+void collectText(QObject* object, QSet<QObject*>& seen, QList<QPointer<QQuickItem>>& found) {
+  if (!object || seen.contains(object)) return;
+  seen.insert(object);
+  auto* item = qobject_cast<QQuickItem*>(object);
+  if (item) {
+    for (const char* type : {"QQuickText", "QQuickTextInput", "QQuickTextEdit", "QQuickControl"}) {
+      if (item->inherits(type)) {
+        found.append(item);
+        break;
+      }
+    }
+    for (QQuickItem* child : item->childItems()) collectText(child, seen, found);
+  }
+  for (QObject* child : object->children()) collectText(child, seen, found);
+}
+
 }  // namespace
+
+ThemeStore::~ThemeStore() {
+  // The font is the application's, not this store's: leave it as it was found.
+  if (!m_interfaceFont.isEmpty() && qobject_cast<QGuiApplication*>(QCoreApplication::instance())) QGuiApplication::setFont(systemFont());
+}
+
+void ThemeStore::applyInterfaceFont() {
+  if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return;
+  systemFont();
+  const QString family = fontUi();
+  if (family == m_interfaceFont) return;
+  m_interfaceFont = family;
+  QFont font = systemFont();
+  if (!family.isEmpty()) font.setFamilies({family});
+  QGuiApplication::setFont(font);
+  // Text made from here on starts in the new font. What is already drawn
+  // took a copy of the old one: give each its family, unless it names its own
+  // (code, the terminal, a brick bound to the theme). The mask is kept, so
+  // the family stays inherited and the next change reaches it as well.
+  QSet<QObject*> seen;
+  QList<QPointer<QQuickItem>> written;
+  for (QWindow* window : QGuiApplication::allWindows()) collectText(window, seen, written);
+  for (const QPointer<QQuickItem>& item : std::as_const(written)) {
+    if (!item) continue;
+    QFont own = item->property("font").value<QFont>();
+    const uint mask = own.resolveMask();
+    if (mask & (QFont::FamilyResolved | QFont::FamiliesResolved)) continue;
+    own.setFamilies(font.families());
+    own.setResolveMask(mask);
+    item->setProperty("font", own);
+  }
+}
 
 ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
     : QObject(parent),
@@ -43,6 +103,7 @@ ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
   m_debounce.setSingleShot(true);
   m_debounce.setInterval(80);
   connect(&m_debounce, &QTimer::timeout, this, &ThemeStore::reload);
+  connect(this, &ThemeStore::themeChanged, this, &ThemeStore::applyInterfaceFont);
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] {
     watch();
     scheduleReload();
@@ -200,12 +261,18 @@ namespace {
 
 // The MC's theme carries CSS font-family lists; QML wants one family and falls
 // back on its own, so take the first installed non-generic entry, or the
-// first non-generic one when nothing in the list is installed.
-QString firstFontFamily(const QString& list) {
+// first non-generic one when nothing in the list is installed. With
+// `orSystem`, a list that ends in the system's font ("Segoe UI", system-ui)
+// and has nothing installed is empty instead: the system's own font, as CSS
+// resolves it, not Qt's stand-in for a family this machine lacks.
+QString firstFontFamily(const QString& list, bool orSystem = false) {
   static const QStringList generic{QStringLiteral("system-ui"), QStringLiteral("sans-serif"),
                                    QStringLiteral("serif"),     QStringLiteral("monospace"),
                                    QStringLiteral("ui-sans-serif"), QStringLiteral("ui-monospace"),
                                    QStringLiteral("-apple-system"), QStringLiteral("BlinkMacSystemFont")};
+  static const QStringList system{QStringLiteral("system-ui"), QStringLiteral("sans-serif"), QStringLiteral("ui-sans-serif"),
+                                  QStringLiteral("-apple-system"), QStringLiteral("BlinkMacSystemFont")};
+  bool endsInSystem = false;
   QStringList candidates;
   for (QString family : list.split(QLatin1Char(','))) {
     family = family.trimmed();
@@ -218,13 +285,14 @@ QString firstFontFamily(const QString& list) {
     if (!family.isEmpty() && !generic.contains(family)) {
       candidates.append(family);
     }
+    endsInSystem = endsInSystem || system.contains(family);
   }
   for (const QString& family : candidates) {
     if (QFontDatabase::hasFamily(family)) {
       return family;
     }
   }
-  return candidates.value(0);
+  return orSystem && endsInSystem ? QString() : candidates.value(0);
 }
 
 // A monospace family that is not installed (a phone has none of a desktop's)
@@ -268,7 +336,7 @@ qreal ThemeStore::radius() const {
 }
 
 QString ThemeStore::fontUi() const {
-  return m_fontUi.isEmpty() ? firstFontFamily(m_baseFontUi) : firstFontFamily(m_fontUi);
+  return firstFontFamily(m_fontUi.isEmpty() ? m_baseFontUi : m_fontUi, true);
 }
 
 QString ThemeStore::fontMono() const {

@@ -174,6 +174,99 @@ Item {
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
         }
 
+        // Scenario: The keyboard pages through the conversation
+        function test_pageKeysScrollTheConversation() {
+            const timeline = longThread();
+            const list = view(timeline);
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000, "the conversation has the keyboard");
+            const end = list.contentY;
+            keyClick(Qt.Key_PageUp);
+            verify(list.contentY < end, "Page Up scrolls up");
+            verify(list.contentY > end - list.height, "by less than a page");
+            verify(!timeline.following, "the view stops following");
+            verify(findChild(timeline, "jumpToLatest").visible);
+            keyClick(Qt.Key_Home);
+            compare(list.contentY, list.originY - list.topMargin, "Home goes to the start");
+            keyClick(Qt.Key_PageDown);
+            verify(list.contentY > list.originY - list.topMargin, "Page Down scrolls down");
+            keyClick(Qt.Key_End);
+            tryVerify(() => atEnd(list) && timeline.following, 5000, "End returns to the end and follows");
+        }
+
+        // The jump pill is a button: named, reached by Tab, pressed with Space.
+        function test_jumpToTheEndIsAKeyboardButton() {
+            const timeline = longThread();
+            const list = view(timeline);
+            scrollUp(timeline);
+            const jump = findChild(timeline, "jumpToLatest");
+            compare(jump.Accessible.role, Accessible.Button);
+            compare(jump.Accessible.name, "Scroll to end");
+            jump.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryVerify(() => atEnd(list) && timeline.following, 5000, "Space returns to the end");
+        }
+
+        // The work log is read by assistive technology: each line by its label.
+        function test_workLinesAreNamed() {
+            rows.clear();
+            rows.append(root.row({
+                rowId: "work:1",
+                kind: "work",
+                entries: [
+                    {
+                        id: "command:1",
+                        label: "git status",
+                        command: "bash -lc 'git status'",
+                        detail: "clean",
+                        statusLabel: ""
+                    },
+                    {
+                        id: "file:1",
+                        label: "src/cart.ts",
+                        path: "/work/src/cart.ts",
+                        detail: "+1 -0",
+                        statusLabel: ""
+                    }
+                ]
+            }));
+            rows.append(root.row({
+                rowId: "limit",
+                kind: "error",
+                title: "Usage limit reached. Retry after tomorrow at 10:00 AM.",
+                icon: "circle-alert",
+                warning: true
+            }));
+            rows.append(root.row({
+                rowId: "crash",
+                kind: "error",
+                title: "Provider error",
+                text: "It broke",
+                icon: "circle-alert",
+                warning: false
+            }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null && list.itemAtIndex(1) !== null && list.itemAtIndex(2) !== null);
+            const calls = [];
+            const collect = item => {
+                for (let i = 0; i < item.children.length; ++i) {
+                    if (item.children[i].objectName === "workCall")
+                        calls.push(item.children[i]);
+                    collect(item.children[i]);
+                }
+            };
+            collect(list.itemAtIndex(0));
+            compare(calls.length, 2);
+            compare(calls[0].Accessible.name, "git status");
+            compare(calls[0].Accessible.role, Accessible.Button);
+            compare(calls[1].Accessible.name, "src/cart.ts");
+            const limit = findText(list.itemAtIndex(1), "Usage limit reached. Retry after tomorrow at 10:00 AM.");
+            verify(limit !== null);
+            compare(limit.color.toString(), timeline.warningColor.toString(), "a usage limit is a wait: the warning colour");
+            compare(findText(list.itemAtIndex(2), "Provider error").color.toString(), timeline.errorColor.toString());
+        }
+
         // Scenario: Scrolling away stops the view from following
         function test_roomMadeForReadingKeepsTheUserAway() {
             const timeline = longThread(roomyTimelineComponent);
@@ -567,6 +660,31 @@ Item {
             verify(visibleIn(findIcon(item, "terminal")), "a command shows the terminal icon");
             verify(visibleIn(findIcon(item, "hammer")), "a call without an icon shows the hammer");
             verify(visibleIn(findText(item, "9:41 AM")), "a call shows its time");
+        }
+
+        // Scenario: A delegated task's result shows as a notification row, not a user message
+        function test_notificationRowIsOneLineInTheColumn() {
+            rows.clear();
+            const title = "Audit every settings page of the desktop client against the web one and list what differs ".repeat(3) + "finished";
+            rows.append(root.row({
+                rowId: "turn-item:user:1",
+                kind: "marker",
+                author: "user",
+                icon: "zap",
+                title: title
+            }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            const label = findNamed(item, "markerTitle");
+            verify(visibleIn(label), "the notification names what ended");
+            compare(label.text, title);
+            verify(visibleIn(findIcon(item, "zap")), "with the notification's icon");
+            verify(label.truncated, "a long title is cut short");
+            verify(label.mapToItem(item, 0, 0).x >= 0 && label.mapToItem(item, label.width, 0).x <= item.width, "and stays inside the row");
+            verify(item.height < 60, "on one line");
+            verify(!findNamed(item, "messageAttribution") || !visibleIn(findNamed(item, "messageAttribution")), "and is nobody's message");
         }
 
         function findWith(item, property) {

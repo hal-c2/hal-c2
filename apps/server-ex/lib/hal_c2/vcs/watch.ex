@@ -7,7 +7,8 @@ defmodule HalC2.Vcs.Watch do
   something changed. Local status is read again when told (`refresh/1`: a turn
   ended, a git action ran); remote status is fetched on the background activity
   settings' `automaticGitFetchInterval` (never at 0) while a client in front shows
-  this checkout (`HalC2.BackgroundPolicy`).
+  this checkout (`HalC2.BackgroundPolicy`). An MC without automatic actions
+  (`HAL_C2_MC_NO_AUTO_ACTIONS`) only fetches when asked (`vcs.refreshStatus`).
   """
 
   use GenServer, restart: :temporary
@@ -100,10 +101,15 @@ defmodule HalC2.Vcs.Watch do
 
   @impl true
   def handle_info(:fetch, state) do
+    scope = %{"type" => "vcs-status", "cwd" => state.cwd}
+
     state =
-      if HalC2.BackgroundPolicy.run_scope_work?(%{"type" => "vcs-status", "cwd" => state.cwd}),
-        do: update(state, state.local, Vcs.remote_status(state.cwd, fetch: true, pr: true)),
-        else: state
+      if Application.get_env(:hal_c2, :auto_actions, true) and
+           HalC2.BackgroundPolicy.run_scope_work?(scope) do
+        update(state, state.local, Vcs.remote_status(state.cwd, fetch: true, pr: true))
+      else
+        state
+      end
 
     {:noreply, %{state | timer: schedule_fetch()}}
   end

@@ -8,10 +8,11 @@
 #   cua-sandbox.sh stop
 #
 # start brings up what is not running and (re)launches the app, so it also picks up a QML
-# change. --seed snapshots an MC database (read-only) into a fresh scratch MC; --url attaches
-# to another MC instead. call fills in the app's pid, a shared session label and foreground
-# delivery where the tool takes them. Files go under HAL_C2_CUA_HOME, default
-# <checkout>/.hal-c2/cua.
+# change. --seed snapshots an MC database (read-only) into a fresh scratch MC, which takes no
+# automatic action (turns nobody sent, scheduled runs, boot pulls, background fetches), since a
+# seeded project is a real checkout; --url attaches to another MC instead. call fills in the
+# app's pid, a shared session label and foreground delivery where the tool takes them. Files go
+# under HAL_C2_CUA_HOME, default <checkout>/.hal-c2/cua.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -35,11 +36,18 @@ pid_of() {
   [[ $(sed 's/.*) //' "/proc/$pid/stat" 2> /dev/null | cut -d' ' -f20) == "$start" ]] && echo "$pid"
 }
 stop_one() {
-  local pid
+  local pid alive
   if pid=$(pid_of "$1"); then
-    kill "$pid"
+    # A setsid'd process leads its own group: the MC's mix wrapper leaves beam.smp behind
+    # otherwise. Wait for the whole group, since beam.smp holds the MC's port until it exits.
+    if kill -- "-$pid" 2> /dev/null; then
+      alive=(kill -0 -- "-$pid")
+    else
+      kill "$pid"
+      alive=(pid_of "$1")
+    fi
     for _ in $(seq 100); do
-      pid_of "$1" > /dev/null || break
+      "${alive[@]}" > /dev/null 2>&1 || break
       sleep 0.1
     done
   fi
@@ -124,7 +132,7 @@ start_mc() {
     rm -rf "$home/mc" && mkdir -p "$home/mc/data"
     sqlite3 -readonly "$seed" "VACUUM INTO '$home/mc/data/hal-c2.sqlite'"
   fi
-  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" exec setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
+  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 exec setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
   track $! mc
   wait_for 300 "the MC on port $port" mc_up
 }

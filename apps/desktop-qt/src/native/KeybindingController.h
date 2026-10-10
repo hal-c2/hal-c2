@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QJsonArray>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
@@ -61,6 +62,14 @@ class KeybindingController : public QObject, public NativeController {
 public:
   // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
+  // What still runs while the command palette is open: the palette's own modes and
+  // theme commands (apps/web CommandPalette.tsx) and what belongs to the window.
+  static inline const QSet<QString> kOverPalette{
+      QStringLiteral("commandPalette.toggle"), QStringLiteral("filePicker.toggle"), QStringLiteral("projectSearch.toggle"),
+      QStringLiteral("theme.select"),          QStringLiteral("appearance.cycle"),  QStringLiteral("themeEditor.toggle"),
+      QStringLiteral("sidebar.toggle"),        QStringLiteral("settings.open"),     QStringLiteral("view.resetZoom"),
+      QStringLiteral("view.zoomIn"),           QStringLiteral("view.zoomOut"),
+  };
 
   KeybindingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -142,6 +151,8 @@ private:
   void refreshShortcuts();
   bool refreshRows();
   keybindings::Context context(const QVariantMap& focus) const;
+  // `resolve` before the open palette has its say.
+  QString bound(const QString& sequence, const QVariantMap& focus) const;
   bool isNative(const QString& command) const { return m_commands.contains(command); }
   void registerCommands();
   void jumpTo(const QString& threadKey);

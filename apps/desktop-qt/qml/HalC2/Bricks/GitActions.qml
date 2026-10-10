@@ -72,6 +72,8 @@ RowLayout {
         enabled: git.ready && !git.model.busy
         actionEnabled: git.ready && git.model.quickAction.disabledReason === null
         compact: git.compact
+        // The label changes with the action and the progress; the menu keeps one name.
+        menuName: qsTr("More Git options")
         iconName: git.quickIcon
         // A running action says its stage and how long it has run.
         text: !git.ready ? "" : git.progress ? qsTr("%1 %2").arg(git.progress.stage).arg(git.progress.elapsed) : git.model.quickAction.label
@@ -95,7 +97,9 @@ RowLayout {
                     required property var modelData
                     required property int index
 
-                    text: modelData.disabledReason ? modelData.label + "  · " + modelData.disabledReason : modelData.label
+                    objectName: "gitMenu-" + modelData.id
+                    text: modelData.label
+                    reason: modelData.disabledReason ?? ""
                     enabled: modelData.disabledReason === null
                     onTriggered: {
                         if (modelData.id === "commit") {
@@ -229,7 +233,7 @@ RowLayout {
                     height: 30
                     spacing: 8
 
-                    CheckBox {
+                    ShellCheckBox {
                         objectName: "fileCheck-" + fileRow.modelData.path
                         checked: !commitDialog.excluded[fileRow.modelData.path]
                         onToggled: {

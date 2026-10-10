@@ -77,7 +77,10 @@ Rectangle {
         contentHeight: column.implicitHeight + 48
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar {}
+        ScrollBar.vertical: ScrollBar {
+            objectName: "scrollBar"
+            Accessible.name: qsTr("Scroll settings")
+        }
         onMovementStarted: page.following = false
 
         ColumnLayout {

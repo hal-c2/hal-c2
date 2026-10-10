@@ -77,7 +77,7 @@ const QList<Row>& rows() {
       {"legacySidebarEnabled", true, false},
       // Appearance.
       {"appearanceContrast", true, 100},
-      {"glassOpacity", true, 80},
+      {"glassOpacity", true, 96},
       {"environmentIdentificationMode", true, QStringLiteral("artwork")},
       {"diffColorScheme", true, QStringLiteral("red-green")},
       {"persistComposerContextStrip", true, false},

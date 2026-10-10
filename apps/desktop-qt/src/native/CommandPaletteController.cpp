@@ -130,6 +130,11 @@ CommandPaletteController::CommandPaletteController(ShellBridge* bridge, McClient
     followTarget();
     rebuild();
   });
+  // What Enter does follows the query, the answer for it and the highlight.
+  connect(this, &CommandPaletteController::queryChanged, this, &CommandPaletteController::submitChanged);
+  connect(this, &CommandPaletteController::highlightedChanged, this, &CommandPaletteController::submitChanged);
+  connect(this, &CommandPaletteController::resultsChanged, this, &CommandPaletteController::submitChanged);
+  connect(this, &CommandPaletteController::modeChanged, this, &CommandPaletteController::submitChanged);
 }
 
 void CommandPaletteController::activate() {
@@ -585,6 +590,35 @@ bool CommandPaletteController::relativeWithoutProject() const {
   const QString query = m_query.trimmed();
   return m_mode == Mode::Browse && !query.isEmpty() && !query.startsWith(QLatin1Char('/')) &&
          !query.startsWith(QLatin1Char('~')) && target().root.isEmpty();
+}
+
+bool CommandPaletteController::folderHighlighted() const {
+  return m_mode == Mode::Browse && m_highlighted >= 0 && m_highlighted < count() && m_rows.at(m_highlighted).item.kind == Kind::Folder;
+}
+
+// "Create & Add" only when the folder's own answer says it is not there; before
+// the answer, or while a folder is highlighted, the plain verb.
+QString CommandPaletteController::submitLabel() const {
+  if (!m_open || m_mode != Mode::Browse || !m_add || relativeWithoutProject() || browsedPath().isEmpty()) return {};
+  const QString verb = m_browseOptions.submit;
+  const QString query = m_query.trimmed();
+  bool missing = false;
+  if (!folderHighlighted() && m_browseQuery == query) {
+    if (query.endsWith(QLatin1Char('/'))) {
+      missing = !m_error.isEmpty();
+    } else {
+      const QString leaf = nameOf(query);
+      missing = std::none_of(m_browseEntries.cbegin(), m_browseEntries.cend(),
+                             [&](const QJsonValue& value) { return value.toObject().value(QLatin1String("name")).toString() == leaf; });
+    }
+  }
+  return missing ? tr("Create & %1").arg(verb) : verb;
+}
+
+QString CommandPaletteController::submitShortcut() const {
+  if (submitLabel().isEmpty()) return {};
+  // The platform's own name for the key: Command on macOS, as CommandPalette.qml reads it.
+  return NativeShell::of(this)->controller<KeybindingController>()->keyLabel(folderHighlighted() ? QStringLiteral("mod+enter") : QStringLiteral("enter"));
 }
 
 bool CommandPaletteController::addBrowsedFolder() {

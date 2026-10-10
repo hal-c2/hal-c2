@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
@@ -159,6 +160,45 @@ Item {
             verify(right >= left);
             verify(Math.abs((left + right + 1) / 2 - button.width / 2) <= 2);
             verify(Math.abs((top + bottom + 1) / 2 - button.height / 2) <= 2);
+        }
+
+        Component {
+            id: namedButtonComponent
+            ShellButton {
+                x: 10
+                y: 10
+                width: 28
+                height: 28
+                hoverEnabled: true
+                readonly property bool tipShown: ToolTip.visible
+                readonly property string tipText: ToolTip.text
+            }
+        }
+
+        function test_iconOnlyButtonNamesItselfOnHover() {
+            let button = createTemporaryObject(namedButtonComponent, root, {
+                iconName: "settings",
+                "Accessible.name": "Open panel"
+            });
+            verify(!!button);
+            mouseMove(button, 14, 14);
+            tryVerify(() => button.tipShown, 2000);
+            compare(button.tipText, "Open panel");
+        }
+
+        function test_labelledButtonShowsNoTooltipUnlessAsked() {
+            let button = createTemporaryObject(namedButtonComponent, root, {
+                iconName: "settings",
+                text: "Settings",
+                width: 100
+            });
+            verify(!!button);
+            mouseMove(button, 14, 14);
+            wait(600);
+            verify(!button.tipShown);
+            button.toolTip = "Open settings";
+            tryVerify(() => button.tipShown, 2000);
+            compare(button.tipText, "Open settings");
         }
     }
 }

@@ -73,7 +73,7 @@ ColumnLayout {
             wrapMode: Text.Wrap
         }
 
-        SpinBox {
+        ShellSpinBox {
             objectName: "fetchSeconds"
             enabled: row.editable
             from: 0
@@ -99,7 +99,7 @@ ColumnLayout {
             wrapMode: Text.Wrap
         }
 
-        Switch {
+        ShellSwitch {
             objectName: "pauseWhenLocked"
             enabled: row.editable
             checked: row.model?.pauseWhenLocked ?? true

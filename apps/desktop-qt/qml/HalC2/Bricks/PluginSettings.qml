@@ -221,7 +221,7 @@ SettingsPage {
                 }
             }
 
-            Switch {
+            ShellSwitch {
                 objectName: "control"
                 visible: field.modelData.type === "boolean"
                 checked: field.value === true

@@ -45,7 +45,7 @@ public:
     if (!m_active || !action.startsWith(QLatin1String("pullRequestThread."))) return false;
     const QVariantMap map = payload.toMap();
     if (action == QLatin1String("pullRequestThread.open")) {
-      open();
+      open(map);
     } else if (action == QLatin1String("pullRequestThread.cancel")) {
       if (m_step != QLatin1String("starting")) close();
     } else if (action == QLatin1String("pullRequestThread.resolve")) {
@@ -57,7 +57,28 @@ public:
   }
 
 private:
-  void open() {
+  // With a `reference` (a link) and the `environmentId` and `projectId` it
+  // belongs to, as the pull requests page sends for a pull request no thread
+  // works on, the dialog goes straight to resolving it in that project.
+  void open(const QVariantMap& named = {}) {
+    const QString reference = named.value(QStringLiteral("reference")).toString();
+    if (!reference.isEmpty()) {
+      const QString environment = named.value(QStringLiteral("environmentId")).toString();
+      const QString project = named.value(QStringLiteral("projectId")).toString();
+      const QString root = m_store->projectRow(environment, project).value(QLatin1String("workspaceRoot")).toString();
+      if (root.isEmpty()) {
+        NativeShell::of(this)->controller<ToastController>()->error(tr("That pull request's project is not open on this device."));
+        return;
+      }
+      m_environment = environment;
+      m_project = project;
+      m_cwd = root;
+      m_step = QStringLiteral("ask");
+      m_error.clear();
+      m_pullRequest = {};
+      resolve(reference);
+      return;
+    }
     const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
     if (!place || place->root.isEmpty()) {
       NativeShell::of(this)->controller<ToastController>()->error(tr("Open a project to start a thread on one of its pull requests."));

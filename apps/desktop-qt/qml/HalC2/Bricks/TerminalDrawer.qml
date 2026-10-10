@@ -32,7 +32,10 @@ Item {
 
     readonly property color background: Theme.palette.color("canvas", "#09090b")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("muted", "#a1a1aa")
+    // Ink, not the `muted` surface: inactive tabs are the web's text-muted-foreground.
+    readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
+    // The toolbar's icons are text-foreground/90 in the web.
+    readonly property color toolbarInk: Qt.alpha(foreground, 0.9)
     readonly property color border: Theme.palette.color("border", "#27272a")
     // Keeps the square Terminal inside a carded drawer's rounded corners.
     readonly property real inset: Math.ceil(radius * 0.3)
@@ -165,7 +168,7 @@ Item {
             implicitHeight: 24
             iconName: "square-split-horizontal"
             iconSize: 13
-            iconTint: drawer.muted
+            iconTint: drawer.toolbarInk
             focusPolicy: Qt.NoFocus
             enabled: drawer.groupSize < 4
             Accessible.name: enabled ? qsTr("Split Terminal Horizontally") : qsTr("Split Terminal Horizontally (max 4 per group)")
@@ -179,7 +182,7 @@ Item {
             implicitHeight: 24
             iconName: "square-split-vertical"
             iconSize: 13
-            iconTint: drawer.muted
+            iconTint: drawer.toolbarInk
             focusPolicy: Qt.NoFocus
             enabled: drawer.groupSize < 4
             Accessible.name: enabled ? qsTr("Split Terminal Vertically") : qsTr("Split Terminal Vertically (max 4 per group)")
@@ -192,7 +195,7 @@ Item {
             implicitWidth: 24
             implicitHeight: 24
             iconName: "plus"
-            iconTint: drawer.muted
+            iconTint: drawer.toolbarInk
             focusPolicy: Qt.NoFocus
             enabled: Terminals.tabs.count < 6
             Accessible.name: qsTr("New terminal")
@@ -205,7 +208,7 @@ Item {
             implicitWidth: 24
             implicitHeight: 24
             iconName: "x"
-            iconTint: drawer.muted
+            iconTint: drawer.toolbarInk
             focusPolicy: Qt.NoFocus
             Accessible.name: qsTr("Close terminal")
             onClicked: Shell.dispatch("terminal.close", { terminalId: Terminals.activeTerminalId })

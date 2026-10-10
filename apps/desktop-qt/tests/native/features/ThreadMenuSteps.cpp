@@ -547,6 +547,14 @@ const Steps steps([] {
     world.sync();
     world.native().controller<ThreadMenuController>()->undo();
   });
+  step(QStringLiteral("one notice reads %1 and names the undo shortcut").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto shown = [&] { return world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList(); };
+    world.waitFor([&] {
+      const QVariantList toasts = shown();
+      return toasts.size() == 1 && toasts.first().toMap().value(QStringLiteral("title")) == c[0] &&
+             toasts.first().toMap().value(QStringLiteral("description")).toString().endsWith(QLatin1String(" to undo"));
+    }, [&] { return QStringLiteral("one notice \"%1\"; the toasts are %2").arg(c[0], show(shown())); });
+  });
   step(QStringLiteral("%1 is back where it was before").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = keyOf(world, c[0]);
     world.waitFor([&] { return sectionOf(world, key) == fake(world).sectionBefore.value(key); },

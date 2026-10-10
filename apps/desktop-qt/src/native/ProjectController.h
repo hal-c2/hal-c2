@@ -75,6 +75,8 @@ private:
   void openFolder(const QString& path, bool newThread = false);
   // Opens the project's latest thread still in play, else its draft.
   void openProject(const QString& environmentId, const QString& projectId);
+  // Moves a scoped sidebar to the project, so what was added is where the user is.
+  void followInSidebar(const QString& environmentId, const QString& projectId);
   void askToRemove(const QString& projectKey);
   void confirmRemoval();
   // Deletes the first of `keys`, then the rest; a failure stops there.

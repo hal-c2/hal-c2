@@ -74,6 +74,11 @@ class CommandPaletteController : public QAbstractListModel, public NativeControl
   Q_PROPERTY(QString emptyText READ emptyText NOTIFY resultsChanged)
   // A line over the content search's results ("3 results in 2 files").
   Q_PROPERTY(QString status READ status NOTIFY resultsChanged)
+  // In browse mode, what Enter does with the path typed ("Add", "Create & Add",
+  // "Clone"...) and the key that does it: "Enter", or "Ctrl+Enter" while a
+  // folder is highlighted, which adds that folder. Empty when nothing can be added.
+  Q_PROPERTY(QString submitLabel READ submitLabel NOTIFY submitChanged)
+  Q_PROPERTY(QString submitShortcut READ submitShortcut NOTIFY submitChanged)
   Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY optionsChanged)
   Q_PROPERTY(bool wholeWord READ wholeWord WRITE setWholeWord NOTIFY optionsChanged)
   Q_PROPERTY(bool useRegex READ useRegex WRITE setUseRegex NOTIFY optionsChanged)
@@ -119,6 +124,8 @@ public:
   int count() const { return static_cast<int>(m_rows.size()); }
   QString emptyText() const;
   QString status() const;
+  QString submitLabel() const;
+  QString submitShortcut() const;
   bool caseSensitive() const { return m_caseSensitive; }
   bool wholeWord() const { return m_wholeWord; }
   bool useRegex() const { return m_useRegex; }
@@ -172,6 +179,8 @@ public:
     QString query = QStringLiteral("~/");
     QString pinned;
     QString emptyText;
+    // The verb of the button that names Enter ("Add", or "Clone").
+    QString submit = QStringLiteral("Add");
     bool keepOpen = false;
   };
   // Browses folders on `environmentId` from the home folder, for a new
@@ -199,6 +208,7 @@ signals:
   void queryChanged();
   void highlightedChanged();
   void resultsChanged();
+  void submitChanged();
   void optionsChanged();
 
 private:
@@ -280,6 +290,7 @@ private:
   void searchMessages(int generation);
   void searchFolders(int generation);
   QString browsedPath() const;
+  bool folderHighlighted() const;
   bool relativeWithoutProject() const;
   void followTarget();
 

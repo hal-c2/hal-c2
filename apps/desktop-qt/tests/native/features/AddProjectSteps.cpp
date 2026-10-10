@@ -177,6 +177,11 @@ const Steps steps([] {
     expect(commands.size() == 1 && commands.first().value(QLatin1String("workspaceRoot")) == QLatin1String("/home/sam/code/shop"),
            QStringLiteral("the MC was asked to create %1; %2").arg(show(QVariant::fromValue(commands)), describe(world)));
   });
+  // The button in the field that names the action and its key.
+  step(QStringLiteral("the palette offers %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return palette(world).submitLabel() == c[0] && palette(world).submitShortcut() == c[1]; },
+                  [&] { return QStringLiteral("the palette to offer \"%1\" with %2; it offers \"%3\" with %4").arg(c[0], c[1], palette(world).submitLabel(), palette(world).submitShortcut()); });
+  });
   step(QStringLiteral("the highlighted folder is added as a project"), [](World& world, const Captures&, const Table&) {
     const QList<QJsonObject> commands = created(world);
     expect(commands.size() == 1 && commands.first().value(QLatin1String("workspaceRoot")) == world.mc.part<AddProject>().highlighted,

@@ -40,12 +40,9 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
 
-                Label {
+                SettingsBreadcrumb {
                     Layout.fillWidth: true
-                    text: qsTr("Archive")
-                    color: page.foreground
-                    font.pixelSize: Math.round(18 * Theme.fontScale)
-                    font.weight: Font.DemiBold
+                    section: qsTr("Archive")
                 }
 
                 ShellButton {
@@ -158,6 +155,8 @@ Rectangle {
                                 ShellButton {
                                     objectName: "delete"
                                     subtle: true
+                                    // Permanent, so it reads as destructive.
+                                    tint: Theme.palette.color("error", "#ef4444")
                                     enabled: !row.modelData.busy
                                     text: qsTr("Delete")
                                     Accessible.name: qsTr("Delete %1").arg(row.modelData.title)

@@ -101,6 +101,7 @@ if(UNIX AND NOT APPLE)
 endif()
 # How the shell resolves its theme: the lookup order, the halves, the fallbacks.
 add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
+target_compile_definitions(tst_ThemeResolution PRIVATE HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

@@ -340,6 +340,14 @@ Feature: Command palette
       And the user can start a thread in it
 
     @desktop
+    Scenario: Adding a project while the list is scoped moves the scope to it
+      Given the thread list is scoped to the project "docs"
+      When the user runs "Add project" from the palette
+      And the user chooses a local folder "~/code/shop"
+      Then "shop" is added as a project
+      And the sidebar is scoped to "shop"
+
+    @desktop
     Scenario: Threads linked to a pull request include archived ones
       Given a pull request is linked to an archived thread
       When the user searches the palette for that pull request

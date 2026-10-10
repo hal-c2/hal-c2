@@ -547,6 +547,13 @@ export interface TuiQueuedMessage {
   readonly held: boolean;
 }
 
+// A thread stored before the MC put the notification on them has only the older marks:
+// the delegated task a result delivers, and `providerWake` on the provider's own wake-up.
+const isConversation = (message: OrchestrationV2ThreadProjection["messages"][number]) =>
+  message.notification == null &&
+  message.delegatedCompletion == null &&
+  message.providerWake !== true;
+
 export function presentTuiThread(projection: OrchestrationV2ThreadProjection): OrchestrationThread {
   const thread = projection.thread;
   const queuedRuns = new Map(
@@ -663,7 +670,9 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
     deletedAt: nullableIso(thread.deletedAt),
-    messages: projection.messages.map((message) => ({
+    // What the MC sent the agent for itself (a delegated task's result, the
+    // provider's own wake-up) is its notification row, not a message of the user's.
+    messages: projection.messages.filter(isConversation).map((message) => ({
       id: message.id,
       role: message.role,
       text: message.text,

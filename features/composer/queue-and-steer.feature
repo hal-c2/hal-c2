@@ -6,6 +6,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (the queue in the turn, cancel, steer and edit)
+#   apps/web/src/session-logic.ts (getUserQueuedThreadRuns: the agent's own queued runs are not the user's)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
@@ -156,6 +157,19 @@ Feature: Follow-ups while the agent is working
   Scenario: Queued messages are listed in the order they run
     Given "check the logs" and "update the docs" are queued
     Then the composer lists the queued messages "check the logs" and "update the docs"
+
+  @desktop
+  Scenario Outline: What the MC queued for the agent itself waits under what it stands for
+    Given "check the logs" is queued
+    And the MC queued <its own> for the agent
+    Then the composer lists only the queued message "check the logs"
+    And the composer shows "<summary>" waiting behind it
+
+    Examples:
+      | its own                                                            | summary                     |
+      | a delegated task's result                                          | Tax tests finished          |
+      | a delegated task's result stored before results were notifications | Tax tests finished          |
+      | the agent's own wake-up                                            | Background activity updated |
 
   @desktop
   Scenario: Removing a queued message cancels its run

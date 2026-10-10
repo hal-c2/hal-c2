@@ -116,18 +116,19 @@ qsizetype messagesSent(World& world) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("the agent's explanation of the limit is shown in the conversation"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the conversation says the thread stopped on a usage limit"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
       if (!stream::store(world)->activeTimeline()) return false;
       TimelineModel& model = stream::timeline(world);
       for (int row = 0; row < model.rowCount(); ++row) {
         if (stream::role(model, row, TimelineModel::KindRole) == QLatin1String("error") &&
-            stream::role(model, row, TimelineModel::TextRole) == QLatin1String("You've hit your usage limit. It resets at 2:00 PM.")) {
+            stream::role(model, row, TimelineModel::TitleRole).toString().startsWith(QLatin1String("Usage limit reached")) &&
+            stream::role(model, row, TimelineModel::WarningRole).toBool()) {
           return true;
         }
       }
       return false;
-    }, [&] { return QStringLiteral("the agent's explanation; %1").arg(stream::store(world)->activeTimeline() ? stream::describe(stream::timeline(world)) : QStringLiteral("no thread is open")); });
+    }, [&] { return QStringLiteral("the usage limit line; %1").arg(stream::store(world)->activeTimeline() ? stream::describe(stream::timeline(world)) : QStringLiteral("no thread is open")); });
   });
 
   step(QStringLiteral("(?:%1|Claude) (?:stopped|stops) (?:%1 )?on a usage limit that resets at (\\d+):(\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {

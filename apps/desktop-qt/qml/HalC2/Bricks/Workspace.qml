@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -35,8 +36,17 @@ Rectangle {
     // carries the window buttons.
     property Window window: null
     readonly property bool framelessChrome: window !== null && Theme.frameless
-    // Narrow strips (a wide right panel) drop the pill labels.
-    readonly property bool compact: width < 720
+    // Whether the strip carries the window buttons. A layout that draws them
+    // once, in the window's corner, turns this off and says with
+    // `trailingInset` how much of the strip's right end they cover.
+    property bool windowControls: true
+    property real trailingInset: 0
+    // What the strip has for its own items. Narrow strips (a wide right
+    // panel) drop the pill labels, and tight ones the run and open pills,
+    // which the thread details also offer, before anything overlaps.
+    readonly property real room: width - Math.max(0, trailingInset - 20)
+    readonly property bool compact: room < 720
+    readonly property bool tight: room < 520
 
     function beginRename() {
         if (strip.ready && !strip.model.isDraft) {
@@ -46,6 +56,8 @@ Rectangle {
 
     implicitHeight: 52
     color: Theme.palette.color("canvas", "#0f0f12")
+    // Never over the panel beside it.
+    clip: true
 
     DragHandler {
         enabled: strip.framelessChrome
@@ -77,13 +89,12 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: strip.sidebarToggle === true ? 52 : 20
-        anchors.rightMargin: 20
+        anchors.rightMargin: Math.max(20, strip.trailingInset)
         spacing: 12
 
         // Breadcrumb: project / title.
         RowLayout {
             Layout.fillWidth: true
-            Layout.minimumWidth: 0
             spacing: 6
 
             ShellIcon {
@@ -110,6 +121,10 @@ Rectangle {
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
+                // The whole name of a project cut short.
+                ToolTip.visible: projectHover.hovered && truncated
+                ToolTip.delay: 500
+                ToolTip.text: text
 
                 Behavior on color {
                     ColorAnimation {
@@ -155,9 +170,15 @@ Rectangle {
                 }
 
                 Layout.fillWidth: true
-                Layout.minimumWidth: 24
+                // Room for a few letters of the title beside the chevron, as
+                // the web's header keeps (ChatHeader.tsx: min-w-10).
+                Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
+                // The whole title, which a narrow header cuts short.
+                ToolTip.visible: titleHover.hovered && threadLabel.truncated
+                ToolTip.delay: 500
+                ToolTip.text: threadLabel.text
 
                 Connections {
                     target: strip
@@ -276,7 +297,7 @@ Rectangle {
             id: scriptsPill
             objectName: "runActionButton"
 
-            visible: strip.ready && strip.model.scripts.length > 0
+            visible: strip.ready && strip.model.scripts.length > 0 && !strip.tight
             compact: strip.compact
             iconName: "play"
             text: strip.preferredScript ? qsTr("Run %1").arg(strip.preferredScript.name) : ""
@@ -319,7 +340,7 @@ Rectangle {
 
         ShellSplitButton {
             objectName: "openEditorButton"
-            visible: strip.ready && strip.model.editors.length > 0
+            visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
             compact: strip.compact
             iconName: "external-link"
             text: qsTr("Open")
@@ -352,6 +373,7 @@ Rectangle {
         }
 
         GitActions {
+            objectName: "gitActions"
             compact: strip.compact
         }
 
@@ -383,6 +405,7 @@ Rectangle {
         }
 
         ShellButton {
+            objectName: "panelToggle"
             visible: strip.panelToggle !== null
             subtle: true
             implicitHeight: 28
@@ -396,7 +419,7 @@ Rectangle {
 
         WindowControls {
             objectName: "windowControls"
-            visible: strip.framelessChrome && Qt.platform.os !== "osx"
+            visible: strip.framelessChrome && strip.windowControls && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32
             buttonHeight: 28

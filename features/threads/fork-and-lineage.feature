@@ -139,6 +139,13 @@ Feature: Forking threads and merging work back
     When the user looks at the relatives of "Plan billing"
     Then both forks are listed with how many are running
 
+  @desktop @mobile @backlog-desktop @backlog-mobile
+  Scenario: Finished subagents fold under Previous agents with a failed count
+    Given "Plan billing" has 8 finished subagents, 2 of which failed
+    When the user looks at its relatives
+    Then they are folded under "Previous agents (8)" marked "2 failed"
+    And only the first 6 rows are shown, with "Show more" for the rest
+
   @desktop @mobile @backlog-mobile
   Scenario: Opening the parent of a fork
     Given the user is viewing "Try Stripe"

@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "TimelineModel.h"
+#include "TimelineSummary.h"
 
 namespace {
 
@@ -250,10 +251,7 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
     }
     case DetailRole: {
       if (!agent) return QString();
-      const QString progress = text(entity, QLatin1String("progress")).trimmed();
-      const QString result = text(entity, QLatin1String("result")).trimmed();
-      if (live) return progress.isEmpty() ? result : progress;
-      return result.isEmpty() ? progress : result;
+      return timeline::subagentDetail(!live, text(entity, QLatin1String("progress")), text(entity, QLatin1String("result")));
     }
     case ModelRole:
       return text(entity, QLatin1String("model"));

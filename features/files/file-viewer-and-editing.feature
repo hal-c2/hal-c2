@@ -210,6 +210,11 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
+    @desktop @backlog-desktop
+    Scenario: An open file gets most of the Files tab
+      When the user opens "src/app.ts"
+      Then the file viewer is taller than the file tree
+
     @desktop
     Scenario: The rendered or source choice is remembered on this device
       Given the user chose to see Markdown source

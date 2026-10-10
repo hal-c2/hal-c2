@@ -43,6 +43,13 @@ Feature: Custom themes
       And the user can filter them by name
 
     @desktop
+    Scenario: The theme editor is as tall as what it shows
+      Given the theme editor is open
+      Then the editor ends just under its last control
+      When the user shows the advanced colors
+      Then the editor grows for the list of colors
+
+    @desktop
     Scenario: Saving an edited theme applies it
       Given the user changed colors in the theme editor
       When the user saves the changes
@@ -59,6 +66,26 @@ Feature: Custom themes
       Given the theme editor is open
       When the user presses the theme editor shortcut
       Then the theme editor is closed
+
+    @desktop
+    Scenario: Opening the theme editor moves the keyboard into it
+      Given the message field has the keyboard
+      When the user opens the theme editor
+      Then what the user types goes into the theme's name, not the message
+      And Escape closes the theme editor and gives the keyboard back
+
+    @desktop
+    Scenario: The theme import dialog takes the keyboard
+      Given the message field has the keyboard
+      When the user opens the theme import dialog
+      Then what the user types goes into the pasted JSON, not the message
+      And Escape closes the theme import dialog
+
+    @desktop
+    Scenario: The theme dialogs are drawn in the current theme
+      Given the appearance is Light
+      When the user opens the theme editor and the import dialog
+      Then both are drawn on the theme's dialog surface with text that can be read
 
     @desktop
     Scenario: Picking a color from the app

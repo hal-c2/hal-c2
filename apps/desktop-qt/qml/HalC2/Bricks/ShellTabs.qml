@@ -17,6 +17,11 @@ Rectangle {
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     property Window window: null
     readonly property bool framelessChrome: window !== null && Theme.frameless
+    // Whether the strip carries the window buttons. A layout that draws them
+    // once, in the window's corner, turns this off and says with
+    // `trailingInset` how much of the strip's right end they cover.
+    property bool windowControls: true
+    property real trailingInset: 0
 
     implicitHeight: 36
     color: Theme.palette.color("canvas", "#0f0f12")
@@ -37,6 +42,7 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 8
+        anchors.rightMargin: strip.trailingInset
         spacing: 2
 
         Repeater {
@@ -96,7 +102,7 @@ Rectangle {
             window: strip.window
             buttonWidth: 32
             buttonHeight: 28
-            visible: strip.framelessChrome && strip.selected !== "threads" && Qt.platform.os !== "osx"
+            visible: strip.framelessChrome && strip.windowControls && strip.selected !== "threads" && Qt.platform.os !== "osx"
             Layout.alignment: Qt.AlignVCenter
         }
     }

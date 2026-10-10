@@ -334,8 +334,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     const sidebar::Nullable snoozedUntil = thread->snoozedUntil;
     park(key, with({{QStringLiteral("type"), QStringLiteral("thread.settle")}}),
          QStringLiteral("Failed to settle thread"), Leave::NextCard, [this, key, target, pinned, pinOrderKey, snoozedUntil] {
-           toasts()->show(QStringLiteral("success"), QStringLiteral("Settled"), QString(),
-                          ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey, snoozedUntil] {
+           toasts()->showUndo(QStringLiteral("Settled"), QStringLiteral("Settled"), [this, key, target, pinned, pinOrderKey, snoozedUntil] {
                             const auto thread = m_store->thread(key);
                             if (!thread) return;
                             QJsonObject unsettle = target;
@@ -356,7 +355,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
                                         command(environmentId, snooze, QStringLiteral("Failed to snooze thread"));
                                       }
                                     });
-                          }, false, QStringLiteral("Settled")});
+                          });
          });
   } else if (action == QLatin1String("thread.unsettle")) {
     command(thread->environmentId,
@@ -511,11 +510,10 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
         {QStringLiteral("snoozedUntil"), snoozedUntil}},
        QStringLiteral("Failed to snooze thread"), Leave::NextCard, [this, key, snoozedUntil] {
          const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
-         toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
-                        ToastController::Action{QStringLiteral("Undo"), [this, key] {
+         toasts()->showUndo(QStringLiteral("Snoozed"), QStringLiteral("Snoozed until ") + when, [this, key] {
                                                   m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
                                                                      QVariantMap{{QStringLiteral("key"), key}});
-                                                }, false, QStringLiteral("Snoozed")});
+                                                });
        });
 }
 

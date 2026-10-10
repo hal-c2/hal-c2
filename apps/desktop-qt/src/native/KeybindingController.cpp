@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "../ShellBridge.h"
+#include "CommandPaletteController.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -134,6 +135,9 @@ void KeybindingController::activate() {
     refreshShortcuts();
   });
   m_terminalOpen = terminals->isOpen();
+  // The palette is not modal: while it is open the thread's keys wait.
+  connect(shell->controller<CommandPaletteController>(), &CommandPaletteController::openChanged, this,
+          &KeybindingController::refreshShortcuts);
   // Conditions on the route and the running turn (draftThreadRoute, turnRunning).
   connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
     if (key == QLatin1String("turn") || key == QLatin1String("route") || key == QLatin1String("panel") ||
@@ -352,6 +356,18 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
 }
 
 QString KeybindingController::resolve(const QString& sequence, const QVariantMap& focus) const {
+  const QString command = bound(sequence, focus);
+  // The palette is not modal: while it is open every other key stays with it, as
+  // the web's handlers stand down for an open palette (isCommandPaletteOpen).
+  if (!command.isEmpty() && !kOverPalette.contains(command)) {
+    auto* shell = NativeShell::of(this);
+    auto* palette = shell ? shell->controller<CommandPaletteController>() : nullptr;
+    if (palette && palette->isOpen()) return {};
+  }
+  return command;
+}
+
+QString KeybindingController::bound(const QString& sequence, const QVariantMap& focus) const {
   const keybindings::Context now = context(focus);
   for (qsizetype index = m_bindings.size() - 1; index >= 0; --index) {
     if (m_sequences.at(index) == sequence && keybindings::evaluate(m_bindings.at(index).when, now)) {

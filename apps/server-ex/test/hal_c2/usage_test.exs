@@ -143,6 +143,21 @@ defmodule HalC2.UsageTest do
     assert path == ctx.claude |> Path.dirname() |> real()
   end
 
+  test "Claude's local error replies are not counted as a model", ctx do
+    # Claude Code labels its own error replies '<synthetic>'; they are not a model.
+    File.write!(
+      Path.join(ctx.claude, "a.jsonl"),
+      claude_line(1, 0, model: "<synthetic>") <> claude_line(2, 5)
+    )
+
+    start(ctx.home, ctx.settings)
+    summary = summary()
+
+    models = for b <- summary["buckets"], b["provider"] == "claude", do: b["model"]
+    assert Enum.uniq(models) == ["claude-fable-5"]
+    assert output_tokens(summary) == 5
+  end
+
   test "days are the requested zone's wall-clock days", ctx do
     File.write!(
       Path.join(ctx.claude, "a.jsonl"),
@@ -214,8 +229,8 @@ defmodule HalC2.UsageTest do
     assert_in_delta fable["cacheSavingsUsd"], 1000 * (0.001 - 0.0001), 1.0e-9
     assert_in_delta buckets["claude-fable-5[1m]"]["costUsd"], 10 * 0.001 + 100 * 0.01, 1.0e-9
 
-    assert %{"costSource" => "unpriced", "costUsd" => 0, "unpricedRecords" => 1} =
-             buckets["<synthetic>"]
+    # Claude Code's error replies are not a model, so they make no bucket.
+    refute Map.has_key?(buckets, "<synthetic>")
 
     assert %{"costSource" => "providerReported", "costUsd" => 0.5} = buckets["claude-reported"]
     assert %{"costSource" => "modelPriced"} = buckets["claude-custom"]

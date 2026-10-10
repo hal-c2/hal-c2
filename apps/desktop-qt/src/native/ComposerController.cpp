@@ -2241,7 +2241,8 @@ QVariantMap ComposerController::turnState() const {
             {QStringLiteral("approvals"), QVariantList()},
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},
-            {QStringLiteral("queue"), QVariantList()}};
+            {QStringLiteral("queue"), QVariantList()},
+            {QStringLiteral("waiting"), QVariantList()}};
   }
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
@@ -2249,7 +2250,8 @@ QVariantMap ComposerController::turnState() const {
                     {QStringLiteral("approvals"), QVariantList()},
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},
-                    {QStringLiteral("queue"), QVariantList()}};
+                    {QStringLiteral("queue"), QVariantList()},
+                    {QStringLiteral("waiting"), QVariantList()}};
   if (!thread || !m_timeline) return state;
 
   const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
@@ -2332,23 +2334,9 @@ QVariantMap ComposerController::turnState() const {
     }
   }
 
-  // Queued messages in the order they run.
-  QList<QJsonObject> queued;
-  for (const QJsonObject& run : runs) {
-    if (str(run, QLatin1String("status")) == QLatin1String("queued")) queued.append(run);
-  }
-  std::sort(queued.begin(), queued.end(), [](const QJsonObject& a, const QJsonObject& b) {
-    const double left = a.value(QLatin1String("queuePosition")).toDouble(a.value(QLatin1String("ordinal")).toDouble());
-    const double right = b.value(QLatin1String("queuePosition")).toDouble(b.value(QLatin1String("ordinal")).toDouble());
-    return left < right;
-  });
-  const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
-  QVariantList queue;
-  for (const QJsonObject& run : queued) {
-    queue.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))},
-                             {QStringLiteral("text"), str(messages.value(str(run, QLatin1String("userMessageId"))), QLatin1String("text"))}});
-  }
-  state.insert(QStringLiteral("queue"), queue);
+  const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
+  state.insert(QStringLiteral("queue"), queued.queue);
+  state.insert(QStringLiteral("waiting"), queued.waiting);
   return state;
 }
 

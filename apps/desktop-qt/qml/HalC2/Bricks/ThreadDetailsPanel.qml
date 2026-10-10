@@ -15,6 +15,8 @@ Rectangle {
     id: root
 
     property var details: null
+    // How much of the header's right end the layout's window buttons cover.
+    property real trailingInset: 0
     // The thread's project's actions (ProjectActionsController).
     readonly property var actions: details !== null ? Shell.state.projectActions ?? null : null
     readonly property string environmentId: details !== null ? Shell.state.workspace?.activeEnvironmentId ?? "" : ""
@@ -31,6 +33,68 @@ Rectangle {
         width: 1
         height: parent.height
         color: root.borderColor
+    }
+
+    readonly property var relations: details?.relations ?? []
+    // The parent and forks, then running subagents, in the order given; the
+    // finished subagents are folded under "Previous agents".
+    readonly property var leading: relations.filter(entry => entry.relation !== "Subagent" || entry.status === "running")
+    readonly property var previous: relations.filter(entry => entry.relation === "Subagent" && entry.status !== "running")
+    readonly property int failedCount: previous.filter(entry => entry.status === "failed").length
+    readonly property int pageSize: 6
+    // A page is 6 rows; "Show more" adds 12, so two pages.
+    property int pages: 1
+    property bool previousOpen: false
+    readonly property int hiddenCount: Math.max(0, leading.length + (previousOpen ? previous.length : 0) - pageSize * pages)
+
+    component RelationRow: ItemDelegate {
+        id: relation
+
+        required property var modelData
+
+        objectName: "threadDetailsRelation"
+        Layout.fillWidth: true
+        implicitHeight: 40
+        hoverEnabled: true
+        Accessible.name: modelData.relation + " " + modelData.title
+        onClicked: Shell.dispatch("rightPanel.openThread", {
+            threadKey: modelData.threadKey
+        })
+        background: Rectangle {
+            radius: 6
+            color: relation.hovered || relation.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+        }
+        contentItem: RowLayout {
+            spacing: 8
+
+            Rectangle {
+                objectName: "threadDetailsRelationStatus"
+                visible: (relation.modelData.status ?? "").length > 0
+                implicitWidth: 8
+                implicitHeight: 8
+                radius: 4
+                color: relation.modelData.status === "running" ? Theme.palette.color("info", "#38bdf8") : relation.modelData.status === "failed" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("success", "#22c55e")
+                Layout.alignment: Qt.AlignVCenter
+            }
+            ColumnLayout {
+                spacing: 1
+                Layout.fillWidth: true
+
+                Text {
+                    Layout.fillWidth: true
+                    text: relation.modelData.relation
+                    color: root.muted
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: relation.modelData.title
+                    elide: Text.ElideRight
+                    color: root.foreground
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
+            }
+        }
     }
 
     component Heading: Text {
@@ -69,7 +133,7 @@ Rectangle {
 
         x: 12
         y: 8
-        width: parent.width - 20
+        width: parent.width - 20 - root.trailingInset
 
         Text {
             Layout.fillWidth: true
@@ -232,47 +296,46 @@ Rectangle {
             }
 
             Heading {
-                visible: (root.details?.relations ?? []).length > 0
+                visible: root.relations.length > 0
                 text: qsTr("Related threads")
             }
             Repeater {
-                model: root.details?.relations ?? []
+                model: root.leading.slice(0, root.pageSize * root.pages)
 
-                delegate: ItemDelegate {
-                    id: relation
+                delegate: RelationRow {}
+            }
 
-                    required property var modelData
+            // Finished subagents fold away, the web's "Previous agents".
+            ShellButton {
+                objectName: "threadDetailsPrevious"
+                Layout.fillWidth: true
+                visible: root.previous.length > 0
+                subtle: true
+                iconName: root.previousOpen ? "chevron-down" : "chevron-right"
+                text: qsTr("Previous agents (%1)").arg(root.previous.length)
+                onClicked: root.previousOpen = !root.previousOpen
+            }
+            Text {
+                objectName: "threadDetailsFailed"
+                visible: root.failedCount > 0
+                text: qsTr("%1 failed").arg(root.failedCount)
+                color: Theme.palette.color("error", "#ef4444")
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                Layout.leftMargin: 8
+            }
+            Repeater {
+                model: root.previousOpen ? root.previous.slice(0, Math.max(0, root.pageSize * root.pages - root.leading.length)) : []
 
-                    objectName: "threadDetailsRelation"
-                    Layout.fillWidth: true
-                    implicitHeight: 40
-                    hoverEnabled: true
-                    Accessible.name: modelData.relation + " " + modelData.title
-                    onClicked: Shell.dispatch("rightPanel.openThread", {
-                        threadKey: modelData.threadKey
-                    })
-                    background: Rectangle {
-                        radius: 6
-                        color: relation.hovered || relation.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
-                    }
-                    contentItem: ColumnLayout {
-                        spacing: 1
+                delegate: RelationRow {}
+            }
 
-                        Text {
-                            Layout.fillWidth: true
-                            text: relation.modelData.relation
-                            color: root.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: relation.modelData.title
-                            elide: Text.ElideRight
-                            color: root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                        }
-                    }
-                }
+            ShellButton {
+                objectName: "threadDetailsShowMore"
+                Layout.fillWidth: true
+                visible: root.hiddenCount > 0
+                subtle: true
+                text: qsTr("Show %1 more").arg(Math.min(root.hiddenCount, 12))
+                onClicked: root.pages += 2
             }
         }
     }

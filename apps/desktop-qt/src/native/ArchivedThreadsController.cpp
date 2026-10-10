@@ -161,7 +161,7 @@ void ArchivedThreadsController::act(const QString& environmentId, const QString&
   m_busy.insert(key);
   publish();
   m_client->dispatchCommand(this, environmentId, {{QStringLiteral("type"), type}, {QStringLiteral("threadId"), threadId}},
-                            [this, key, failure](const QJsonValue&, const std::optional<QString>& error) {
+                            [this, key, failure, environmentId, threadId](const QJsonValue&, const std::optional<QString>& error) {
                               m_busy.remove(key);
                               if (error) {
                                 if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
@@ -169,6 +169,13 @@ void ArchivedThreadsController::act(const QString& environmentId, const QString&
                                 }
                                 publish();
                               } else {
+                                // Unarchived or deleted, it is not archived any more: the row
+                                // goes now, not when the environment has listed them again.
+                                QJsonArray rest;
+                                for (const QJsonValue& thread : m_threads.value(environmentId)) {
+                                  if (thread.toObject().value(QLatin1String("id")).toString() != threadId) rest.append(thread);
+                                }
+                                m_threads.insert(environmentId, rest);
                                 load();
                               }
                             });

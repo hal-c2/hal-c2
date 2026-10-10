@@ -265,5 +265,40 @@ Item {
             compare(Themes.themeId, "grove");
             compare(Settings.setting("timestampFormat"), "24-hour", "the other settings wait for the theme");
         }
+        function test_tabReachesTheSectionListAtTheCurrentSection() {
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance" } };
+            const nav = createTemporaryObject(component, root);
+            tryVerify(() => row(nav, 1) !== null);
+            findChild(nav, "search").forceActiveFocus();
+            keyClick(Qt.Key_Tab);
+            const list = row(nav, 0).ListView.view;
+            verify(list.activeFocus, "the list is a Tab stop after the search field");
+            compare(list.currentIndex, 1, "the cursor starts on the section showing");
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[0].action, "keybindings.open");
+        }
+        function test_downFromTheSearchFieldEntersTheList() {
+            Shell.state = {};
+            const nav = createTemporaryObject(component, root);
+            tryVerify(() => row(nav, 0) !== null);
+            findChild(nav, "search").forceActiveFocus();
+            keyClick(Qt.Key_Down);
+            verify(row(nav, 0).ListView.view.activeFocus);
+        }
+        function test_escapeLeavesSettingsFromAnyRowAndClearsTheSearchFirst() {
+            Shell.state = {};
+            const nav = createTemporaryObject(component, root);
+            tryVerify(() => row(nav, 0) !== null);
+            row(nav, 0).forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchedActions[0].action, "settings.back");
+            const search = type(nav, "theme");
+            keyClick(Qt.Key_Escape);
+            compare(search.text, "");
+            compare(Shell.dispatchedActions.length, 1, "the first Escape only clears the search");
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchedActions.length, 2);
+        }
     }
 }

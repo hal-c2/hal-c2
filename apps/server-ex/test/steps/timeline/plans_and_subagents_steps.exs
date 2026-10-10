@@ -124,6 +124,75 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert_result_runs(context, title, text)
   end
 
+  step "the parent's timeline shows a notification that the task finished, not a message of the user's",
+       context do
+    state = World.stream(context, World.current(context))
+    task_id = context.delegated["taskId"] || context.delegated["id"]
+
+    assert [message] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))
+
+    assert %{
+             "type" => "notification",
+             "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
+             "outcome" => "completed",
+             "summary" => summary
+           } = item = StreamState.get(state, "turn-item")["turn-item:user:#{message["id"]}"]
+
+    assert String.ends_with?(summary, " finished")
+    refute Map.has_key?(item, "text")
+
+    assert [] ==
+             for(
+               %{"type" => "user_message", "text" => text} <- StreamState.list(state, "turn-item"),
+               text =~ "<delegated_task_result",
+               do: text
+             )
+
+    context
+  end
+
+  step "the user tries to {word} the result waiting to wake the parent",
+       %{args: [action]} = context do
+    title = World.current(context)
+    thread_id = World.thread_id(context, title)
+
+    state =
+      World.await_thread(context, title, fn state ->
+        Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "queued"))
+      end)
+
+    [run] = Enum.filter(StreamState.list(state, "run"), &(&1["status"] == "queued"))
+
+    command =
+      case action do
+        "edit" ->
+          %{"type" => "queued-run.edit", "runId" => run["id"], "text" => "something else"}
+
+        "steer" ->
+          [target] = Enum.filter(StreamState.list(state, "run"), &(&1["status"] == "running"))
+
+          %{
+            "type" => "queued-message.promote-to-steer",
+            "queuedRunId" => run["id"],
+            "targetRunId" => target["id"]
+          }
+      end
+
+    reply = HalC2.Orchestration.dispatch(Map.put(command, "threadId", thread_id))
+    Map.merge(context, %{refusal: reply, waiting_run: run})
+  end
+
+  step "the MC refuses, as the result is the agent's own message", context do
+    assert {:error, reason} = context.refusal
+    assert reason =~ "is the agent's own message"
+    state = World.stream(context, World.current(context))
+    run = StreamState.get(state, "run")[context.waiting_run["id"]]
+    assert run["status"] == "queued"
+    assert StreamState.get(state, "message")[run["userMessageId"]]["text"] =~ "12 tests added"
+    context
+  end
+
   step "a subagent sent a message to its parent", context do
     context = World.working_thread(context, World.current(context))
     HalC2.Test.Mc.ensure(HalC2.Mcp)

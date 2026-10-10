@@ -223,10 +223,22 @@ Feature: Archiving and deleting threads
     Then "Old spike" is listed under "shop" and "Try vite" under "docs"
 
   @desktop
+  Scenario: The archived threads page does not ask to reconnect a connected environment
+    Given "Old spike" is archived
+    When the user opens the archived threads
+    Then the archived threads page shows no reconnect notice
+
+  @desktop
   Scenario: Deleting an archived thread takes it out of the archive
     Given "Old spike" is archived
     When the user deletes "Old spike" from the archived threads
     Then "Old spike" is no longer in the archived threads
+
+  @desktop @mobile @backlog-mobile
+  Scenario: An unarchived thread leaves the archived threads at once
+    Given "Old spike" is archived
+    When the user restores "Old spike" before the environment lists the archived threads again
+    Then "Old spike" is not listed in the archived threads
 
   @desktop
   Scenario: Archived threads for one project show only that project's threads

@@ -188,6 +188,8 @@ ShellWindow {
                     // Android frames the window itself: nothing here is its
                     // drag handle or carries its buttons.
                     framesWindow: false
+                    // The notice is above the layouts (this shell's own).
+                    connectionNotice: false
                 }
             }
 

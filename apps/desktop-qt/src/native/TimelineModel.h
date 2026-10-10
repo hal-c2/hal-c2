@@ -109,6 +109,9 @@ public:
     // A user message's images: [{id, name, url}]. `url` is empty until the
     // brick asks for it (loadAttachment) and the MC has signed one.
     AttachmentsRole,
+    // Whether an error row is a wait rather than a failure (a usage limit),
+    // which draws in the warning colour with its title alone.
+    WarningRole,
   };
 
   // Calls shown per collapsed work group.
@@ -139,12 +142,18 @@ public:
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
   void setLocale(const QLocale& locale);
+  // Where the thread works (its worktree, else its project's root), which a
+  // changed file's label is read from; empty when it is not known.
+  void setWorkspaceRoot(std::function<QString()> root) { m_workspaceRoot = std::move(root); }
   // The long form of a row's time, or of one of its calls' (`entryId`), for
   // its tooltip: "9:41 AM, 23rd September 2026".
   Q_INVOKABLE QString timeTitle(const QString& rowId, const QString& entryId = {}) const;
   // A time as the rows show theirs: "9:41 AM", "yesterday at 9:41 AM",
   // "9/20 9:41 AM"; empty for an invalid one.
   QString stamp(const QDateTime& at) const;
+  // A time that may be ahead, as a usage limit's reset reads: "9:41 AM" today,
+  // "tomorrow at 9:41 AM", "10/9 9:41 AM"; a past one reads as stamp().
+  QString upcoming(const QDateTime& at) const;
 
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
@@ -329,11 +338,12 @@ private:
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
-  // The subagents the events being applied touch, and the model each had before them.
-  QHash<QString, QString> m_agentModels;
+  // The subagents the events being applied touch, and each as it was before them.
+  QHash<QString, QJsonObject> m_agentModels;
   bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   std::function<QString(const QString&)> m_threadTitle;
+  std::function<QString()> m_workspaceRoot;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
   cache::Cursor m_cursor;
@@ -353,3 +363,7 @@ private:
   bool m_cursorDirty = false;
   QTimer m_flushTimer;
 };
+
+// apps/web/src/timestampFormat.ts formatUpcomingTimestamp: `at` as the rows
+// read a time that may be ahead, in the device's timestampFormat and `locale`.
+QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale);

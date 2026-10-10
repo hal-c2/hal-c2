@@ -49,6 +49,7 @@ ProjectController::ProjectController(ShellBridge* bridge, McClient* client, Shel
     }
     if (m_created && m_store->project(m_created->first + QLatin1Char(':') + m_created->second)) {
       const auto [environmentId, projectId] = *std::exchange(m_created, std::nullopt);
+      followInSidebar(environmentId, projectId);
       NativeShell::of(this)->controller<DraftController>()->start(environmentId, projectId);
     }
   });
@@ -69,6 +70,7 @@ void ProjectController::activate() {
     folder.run = [this, environmentId] {
       CommandPaletteController::BrowseOptions options;
       options.query = browseStart(environmentId);
+      options.submit = tr("Add");
       NativeShell::of(this)->controller<CommandPaletteController>()->browse(
           environmentId,
           [this, environmentId](const QString& path) { addFolder(environmentId, path, QStringLiteral("Failed to add project")); },
@@ -165,6 +167,16 @@ void ProjectController::openFolder(const QString& path, bool newThread) {
   addFolder(own, folder.canonicalFilePath(), QStringLiteral("Could not open folder"), newThread);
 }
 
+// A scoped list follows the project the user just added or opened, so its
+// threads show and the next "New thread in" names it. An unscoped list stays.
+void ProjectController::followInSidebar(const QString& environmentId, const QString& projectId) {
+  SidebarController* sidebar = NativeShell::of(this)->sidebar();
+  if (!sidebar->scope()) return;
+  const QString key = sidebar->logicalProjectKey(environmentId, projectId).value_or(environmentId + QLatin1Char(':') + projectId);
+  if (*sidebar->scope() == key) return;
+  m_bridge->dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), key}});
+}
+
 void ProjectController::addFolder(const QString& environmentId, const QString& root, const QString& failureTitle, bool newThread) {
   // The environment chosen went away while the folder was being picked.
   if (!m_store->environmentOnline(environmentId)) {
@@ -177,6 +189,7 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
   for (const sidebar::Project& project : m_store->projects()) {
     if (project.environmentId == environmentId && sidebar::normalizePath(project.workspaceRoot) == normalized) {
       if (newThread) {
+        followInSidebar(environmentId, project.id);
         NativeShell::of(this)->controller<DraftController>()->start(environmentId, project.id);
       } else {
         openProject(environmentId, project.id);
@@ -199,6 +212,7 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
                    // A draft for a project the shell has no row for would be dropped
                    // as orphaned, so it waits for the row if the answer came first.
                    if (m_store->project(environmentId + QLatin1Char(':') + projectId)) {
+                     followInSidebar(environmentId, projectId);
                      NativeShell::of(this)->controller<DraftController>()->start(environmentId, projectId);
                    } else {
                      m_created = {environmentId, projectId};
@@ -207,6 +221,7 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
 }
 
 void ProjectController::openProject(const QString& environmentId, const QString& projectId) {
+  followInSidebar(environmentId, projectId);
   std::optional<sidebar::Thread> latest;
   for (const sidebar::Thread& thread : m_store->threads()) {
     if (thread.environmentId != environmentId || thread.projectId != projectId || thread.archivedAt ||

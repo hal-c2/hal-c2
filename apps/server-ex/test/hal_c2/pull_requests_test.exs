@@ -193,6 +193,26 @@ defmodule HalC2.PullRequestsTest do
              PullRequests.list(%{"state" => "open"})
   end
 
+  test "a host that fails is answered in words to act on, with its own text kept apart",
+       %{dir: dir} do
+    rules!(dir, [
+      viewer_rule(),
+      %{
+        "args" => ["pr list", "--repo github.com/acme/widgets"],
+        "exit" => 1,
+        "stderr" => "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n"
+      }
+    ])
+
+    assert {:ok, %{"entries" => [], "errors" => [error]}} =
+             PullRequests.list(%{"state" => "open"})
+
+    assert error["reason"] == "github.com did not answer in time. Try again."
+    assert error["message"] == "acme/widgets could not be read: #{error["reason"]}"
+    assert error["detail"] =~ "https://api.github.com/graphql"
+    refute error["message"] =~ "http"
+  end
+
   test "a project on another host is unsupported", %{dir: dir} do
     project!(dir, "p2", "https://gitlab.com/acme/app.git")
 

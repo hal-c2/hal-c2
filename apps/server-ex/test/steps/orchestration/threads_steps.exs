@@ -487,10 +487,12 @@ defmodule HalC2.Steps.Orchestration.Threads do
     context
   end
 
+  # On a socket of its own: the row is sent before the client that deletes has its
+  # reply, and a socket waiting for a reply drops what arrives first.
   step "a client subscribes to the shell", context do
-    client = HalC2.Test.Mc.sub(World.client(context), 900, %{"type" => "shell"})
+    client = HalC2.Test.Mc.sub(World.client(context, "subscriber"), 900, %{"type" => "shell"})
     {%{"t" => "shell"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
-    World.put_client(context, client)
+    World.put_client(context, "subscriber", client)
   end
 
   step "the subscriber receives a thread-removed event for {string}",
@@ -498,7 +500,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
     assert {:ok, _} = context.reply
 
     {frame, client} =
-      HalC2.Test.Mc.await(World.client(context), fn frame ->
+      HalC2.Test.Mc.await(World.client(context, "subscriber"), fn frame ->
         frame["t"] == "shell.rows" and
           Enum.any?(
             frame["rows"],
@@ -507,7 +509,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
       end)
 
     assert frame["id"] == 900
-    World.put_client(context, client)
+    World.put_client(context, "subscriber", client)
   end
 
   # --- read state -----------------------------------------------------------------

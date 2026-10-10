@@ -181,6 +181,24 @@ const Steps steps([] {
     putThread(world, titleId(c[1]), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), c[1]}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
                                      {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), QStringLiteral("2026-09-23T09:10:00Z")}});
   });
+  step(QStringLiteral("%1 was renamed since").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, titleId(c[0]), [](QJsonObject& row) { row.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:58:00Z")); });
+  });
+  step(QStringLiteral("the rows for %1 and %1 count their ages from when they settled").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    for (const QString& title : {c[0], c[1]}) {
+      const QString settledAt = world.mc.threads.value(titleId(title)).value(QLatin1String("settledAt")).toString();
+      const QVariantList settled = world.state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("settled")).toList();
+      bool listed = false;
+      for (const QVariant& row : settled) {
+        if (row.toMap().value(QStringLiteral("title")) != title) continue;
+        listed = true;
+        expect(row.toMap().value(QStringLiteral("timeAt")) == settledAt,
+               QStringLiteral("%1 settled at %2; its row is %3").arg(title, settledAt, show(row)));
+      }
+      expect(listed, QStringLiteral("%1 is not among the settled rows %2").arg(title, show(settled)));
+    }
+  });
   step(QStringLiteral("the user looks at the settled section"), [](World& world, const Captures&, const Table&) {
     world.sync();
   });

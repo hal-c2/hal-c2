@@ -20,6 +20,9 @@ class ThemeStore : public QObject {
   Q_PROPERTY(QString id READ id NOTIFY themeChanged)
   Q_PROPERTY(QString name READ name NOTIFY themeChanged)
   Q_PROPERTY(QString appearance READ appearance NOTIFY themeChanged)
+  // Whether the file leaves light or dark to the app's choice
+  // (`window.followSystemAppearance`); it keeps its own `appearance` otherwise.
+  Q_PROPERTY(bool followsSystemAppearance READ followsSystemAppearance NOTIFY themeChanged)
   Q_PROPERTY(QVariantMap colors READ colors NOTIFY themeChanged)
   // Reading this notified receiver makes palette.color(...) reactive in QML.
   // A direct call to a C++ invokable does not record a binding dependency.
@@ -49,6 +52,7 @@ class ThemeStore : public QObject {
 
 public:
   explicit ThemeStore(const QString& configDir, QObject* parent = nullptr);
+  ~ThemeStore() override;
 
   bool loaded() const { return m_loaded; }
   QString path() const { return m_path; }
@@ -93,6 +97,10 @@ private:
   void scheduleReload();
   void applyDefaults();
   void resolveColors();
+  // Makes fontUi() the application's font, so text that names no family is
+  // written in it without binding to the theme: a label made later starts in
+  // it, and the ones already drawn are rewritten once, when the family changes.
+  void applyInterfaceFont();
   int fontSize(const char* part, int fallback) const;
 
   QString m_configDir;
@@ -112,6 +120,8 @@ private:
   QString m_radius;
   QString m_fontUi;
   QString m_fontMono;
+  // The family applyInterfaceFont() last gave the application; empty is the system's.
+  QString m_interfaceFont;
   QVariantMap m_baseTheme;
   QVariantMap m_baseColors;
   QString m_baseAppearance;

@@ -1,10 +1,11 @@
 // ToastController as a state machine: toasts shown, dismissed by code or by
 // the user, timing out on a pinned clock, updated and replaced in place, their
 // actions run by a click or by label (the undo shortcut), an action showing a
-// toast of its own on the way, and the stack expanded and collapsed (which
-// holds every toast's time). After every step the published `toasts` is
-// exactly the model's list, and no toast left it but by its time, a dismiss or
-// an action: there is no cap.
+// toast of its own on the way, undo notices joining the newest toast of their
+// group (which then counts the changes its one Undo takes back, newest first),
+// and the stack expanded and collapsed (which holds every toast's time). After
+// every step the published `toasts` is exactly the model's list, and no toast
+// left it but by its time, a dismiss or an action: there is no cap.
 
 #include "Prop.h"
 
@@ -33,11 +34,20 @@ struct ActionSpec {
   QString group;
   // Running it shows a toast titled "after <label>".
   bool follows = false;
+  // The changes showUndo() joined onto it, newest first: it takes them back
+  // before it runs itself.
+  QStringList undoes;
+  // False for the action showUndo() made, which only takes changes back.
+  bool plain = true;
+
+  // The changes its toast stands for.
+  int count() const { return undoes.size() + (plain ? 1 : 0); }
 };
 
 void showValue(const ActionSpec& action, std::ostream& os) {
   os << action.label.toStdString() << (action.keepsToast ? " keeps" : "") << (action.group.isEmpty() ? "" : " ")
-     << action.group.toStdString() << (action.follows ? " follows" : "");
+     << action.group.toStdString() << (action.follows ? " follows" : "") << (action.undoes.isEmpty() ? "" : " ")
+     << action.undoes.join(QLatin1Char(',')).toStdString();
 }
 
 struct ModelToast {
@@ -55,6 +65,7 @@ struct ModelToast {
 struct Model {
   QList<ModelToast> toasts;  // newest first
   int nextId = 1;
+  int undos = 0;  // showUndo() calls so far, which name their changes
   qint64 now = 0;
   bool expanded = false;
   // Every id that left the list, which never comes back.
@@ -97,8 +108,29 @@ struct Model {
     if (at < 0 || index >= toasts.at(at).actions.size()) return;
     const ActionSpec action = toasts.at(at).actions.at(index);
     if (!action.keepsToast) remove(at);
+    for (const QString& change : action.undoes) ran.append(id + QLatin1Char(':') + change);
+    if (!action.plain) return;
     ran.append(id + QLatin1Char(':') + action.label);
     if (action.follows) show(QStringLiteral("info"), QStringLiteral("after ") + action.label, {}, {}, 0);
+  }
+  // The notice of `change`, which the user can take back: onto the newest
+  // toast when that offers Undo for the same group, else a toast of its own.
+  QString showUndo(const QString& group, const QString& title, const QString& change) {
+    ++undos;
+    if (!toasts.isEmpty() && !toasts.first().actions.isEmpty() && toasts.first().actions.first().label == QLatin1String("Undo") &&
+        toasts.first().actions.first().group == group) {
+      ModelToast& newest = toasts.first();
+      ActionSpec joined = newest.actions.first();
+      joined.undoes.prepend(change);
+      joined.keepsToast = false;
+      newest.title = QStringLiteral("%1 %2 threads").arg(group).arg(joined.count());
+      newest.description.clear();
+      newest.actions = {joined};
+      startTime(newest, 5000);
+      ++newest.revision;
+      return newest.id;
+    }
+    return show(QStringLiteral("success"), title, {}, {ActionSpec{QStringLiteral("Undo"), false, group, false, {change}, false}}, 5000);
   }
   void expire() {
     for (qsizetype i = toasts.size() - 1; i >= 0; --i) {
@@ -344,6 +376,26 @@ struct Replace : Command {
   }
 };
 
+// A thread settled, snoozed, archived or unpinned: the notice that offers to
+// take it back.
+struct ShowUndo : Command {
+  QString group = pick(QStringList{QStringLiteral("Settled"), QStringLiteral("Snoozed")});
+  QString title = pick(QStringList{QStringLiteral("a"), QStringLiteral("b")});
+  QString change;
+  explicit ShowUndo(const Model& model) : change(QStringLiteral("undo%1").arg(model.undos + 1)) {}
+
+  void apply(Model& model) const override { model.showUndo(group, title, change); }
+  void run(const Model& model, Sut& sut) const override {
+    Model expected = model;
+    const QString id = expected.showUndo(group, title, change);
+    RC_ASSERT(sut.toasts.showUndo(group, title, [&sut, change = change] { sut.ran.append(change); }) == id);
+    check(expected, sut);
+  }
+  void show(std::ostream& os) const override {
+    os << "ShowUndo(" << group.toStdString() << ", \"" << title.toStdString() << "\", " << change.toStdString() << ")";
+  }
+};
+
 // The undo shortcut: the newest toast offering `label`, and the ones right
 // after it offering it for the same group.
 struct RunAction : Command {
@@ -424,8 +476,8 @@ private slots:
     QVERIFY(rc::check("toasts publish what the model holds", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Show, Show, Show, Dismiss, Click, Update, Replace, RunAction,
-                                                                Expand, Advance, Advance>());
+                       rc::state::gen::execOneOfWithArgs<Show, Show, Show, ShowUndo, ShowUndo, Dismiss, Click, Update,
+                                                                Replace, RunAction, Expand, Advance, Advance>());
     }));
   }
 };

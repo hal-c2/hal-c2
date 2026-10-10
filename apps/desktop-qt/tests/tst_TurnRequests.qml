@@ -234,6 +234,41 @@ Item {
             compare(lastAction().payload.runId, "run-3");
         }
 
+        // A delegated task's result waits its turn under its title, with
+        // nothing for the user to act on, in the same folding card.
+        function test_waitingResultsStackUnderTheirTitles() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({
+                queue: [{ runId: "run-2", text: "check the logs" }],
+                waiting: [{ runId: "run-3", summary: "Ledger dedupe: timeline-composer-files failed", outcome: "failed" }]
+            });
+            waitForRendering(root);
+            compare(findChild(requests, "queueCount").text, "2");
+            compare(findChild(requests, "queueWaiting-run-3").text, "Ledger dedupe: timeline-composer-files failed");
+            verify(findChild(requests, "queueEdit-run-3") === null);
+            verify(findChild(requests, "queueList").visible);
+            mouseClick(findChild(requests, "queueToggle"));
+            verify(!findChild(requests, "queueList").visible);
+            verify(requests.pending);
+        }
+
+        function test_tabbingToAQueuedRowOutOfViewScrollsItIn() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            const queue = [];
+            for (let i = 1; i <= 8; ++i)
+                queue.push({ runId: "run-" + i, text: "follow-up " + i });
+            Shell.publishTurn({ queue: queue });
+            waitForRendering(root);
+            const list = findChild(requests, "queueList");
+            compare(list.contentY, 0);
+            findChild(requests, "queueRemove-run-8").forceActiveFocus(Qt.TabFocusReason);
+            const row = findChild(requests, "queueText-run-8").parent;
+            verify(row.y + row.height <= list.contentY + list.height);
+            verify(row.y >= list.contentY);
+            findChild(requests, "queueEdit-run-1").forceActiveFocus(Qt.BacktabFocusReason);
+            compare(list.contentY, 0);
+        }
+
         function test_composerSendsImagesWithoutText() {
             const composer = createTemporaryObject(composerComponent, root);
             Shell.state = Object.assign({}, Shell.state, {

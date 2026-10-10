@@ -33,6 +33,11 @@ defmodule HalC2.DiagnosticsTest do
              })
   end
 
+  test "the sampler's own ps is not listed as one of the MC's processes" do
+    {:ok, %{"processes" => processes}} = HalC2.Diagnostics.processes()
+    refute Enum.any?(processes, &String.contains?(&1["command"], " -axo pid="))
+  end
+
   test "host memory is read" do
     assert {:ok, %{"totalMemoryBytes" => total, "availableMemoryBytes" => available}} =
              HalC2.Diagnostics.host()

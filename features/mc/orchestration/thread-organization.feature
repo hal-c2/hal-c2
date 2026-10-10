@@ -307,13 +307,13 @@ Feature: Organizing threads in the engine
   Scenario: Archiving an archived thread is refused
     Given thread "t1" is archived
     When a client archives "t1"
-    # Both servers name the thread in the refusal.
-    Then the command fails with "Thread t1 is already archived."
+    # The MC names the thread by its title, which here is "t1"; the Node server by its id.
+    Then the command fails with "t1 is already archived."
 
   @mc
   Scenario: Unarchiving a thread that is not archived is refused
     When a client unarchives "t1"
-    Then the command fails with "Thread t1 is not archived."
+    Then the command fails with "t1 is not archived."
 
   @mc
   Scenario Outline: An archived thread is not organized until it is unarchived

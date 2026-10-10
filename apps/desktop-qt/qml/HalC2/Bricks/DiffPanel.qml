@@ -326,8 +326,12 @@ Rectangle {
                     contentWidth: root.wrap ? width : Math.max(width, rowWidth)
                     readonly property real gutter: glyph.advanceWidth * 10 + 24
                     readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + 24
-                    ScrollBar.vertical: ScrollBar {}
-                    ScrollBar.horizontal: ScrollBar {}
+                    ScrollBar.vertical: ScrollBar {
+                        Accessible.name: qsTr("Scroll diff")
+                    }
+                    ScrollBar.horizontal: ScrollBar {
+                        Accessible.name: qsTr("Scroll diff sideways")
+                    }
 
                     Connections {
                         target: root.source

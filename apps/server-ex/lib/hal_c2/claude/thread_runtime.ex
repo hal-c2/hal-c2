@@ -851,7 +851,14 @@ defmodule HalC2.Claude.ThreadRuntime do
                "dispatchMode" => %{"type" => "queue_after_active"},
                "createdBy" => "agent",
                "creationSource" => "provider",
-               "providerWake" => true
+               "providerWake" => true,
+               # What the timeline shows for it, in place of a message nobody sent
+               # (apps/server ProviderContinuationService.ts).
+               "notification" => %{
+                 "source" => %{"kind" => "background_task"},
+                 "outcome" => "updated",
+                 "summary" => "Background activity updated"
+               }
              }) do
         Logger.warning("claude wake in #{thread_id} has no run: #{inspect(reason)}")
         send(runtime, :wake_refused)

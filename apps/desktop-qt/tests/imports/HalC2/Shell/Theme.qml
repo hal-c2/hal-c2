@@ -7,6 +7,12 @@ QtObject {
     readonly property QtObject palette: theme
     property color link: "#60a5fa"
     property string appearance: "dark"
+    // The shell's theme file: none unless a test says so.
+    property bool loaded: false
+    property string name: ""
+    property string path: "/config/theme.json"
+    property bool followsSystemAppearance: false
+    property string lastError: ""
     property real radius: 8
     readonly property string fontUi: ""
     readonly property string fontMono: ""

@@ -7,7 +7,19 @@ Menu {
     id: control
 
     padding: 4
-    implicitWidth: 200
+    // Wide enough for its longest row, between the usual 200 and 360.
+    implicitWidth: Math.max(200, Math.min(360, widest() + leftPadding + rightPadding))
+
+    function widest() {
+        let widest = 0;
+        for (let i = 0; i < count; ++i) {
+            widest = Math.max(widest, itemAt(i).implicitWidth);
+        }
+        return widest;
+    }
+
+    // The row a submenu is reached through.
+    delegate: ShellMenuItem {}
 
     enter: Transition {
         NumberAnimation {

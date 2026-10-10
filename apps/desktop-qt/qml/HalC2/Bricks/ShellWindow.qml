@@ -17,8 +17,9 @@ Window {
     // sets no machine up (the phone, which shows its pairing screen before
     // there is an MC to wait for) turns it off.
     property bool firstRunGate: true
-    // The window's own ConnectionNotice at its top edge. A layout that places
-    // the notice itself (clear of a phone's status bar) turns it off.
+    // The window's own ConnectionNotice at its top edge. A root that has the
+    // notice elsewhere turns it off: DefaultLayout then shows it in a strip of
+    // its own, and the phone places it clear of the status bar.
     property bool connectionNotice: true
     // The shell's menus (`menu`) as a popup where they were asked for. A
     // layout that draws them itself (the phone's sheet) turns it off.

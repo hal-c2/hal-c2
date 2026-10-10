@@ -15,11 +15,14 @@ TextField {
     placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
     selectionColor: Theme.palette.color("accent", "#2563eb")
     selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
+    opacity: enabled ? 1 : 0.64
 
     background: Rectangle {
         radius: Math.min(Theme.radius, control.height / 2)
-        color: Theme.palette.color("input", "#18181b")
-        border.color: control.activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
+        // `input` is a border colour in the web's palette: the field is
+        // `bg-background`, or `input` at 32% in dark (input.tsx).
+        color: Theme.appearance === "dark" ? Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32) : Theme.palette.color("canvas", "#ffffff")
+        border.color: control.activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("input", "#27272a")
         border.width: 1
     }
 }

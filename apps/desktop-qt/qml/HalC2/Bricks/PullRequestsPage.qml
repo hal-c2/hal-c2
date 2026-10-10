@@ -152,6 +152,14 @@ Rectangle {
             }
         }
 
+        // The rows that did load stay; this reads the failed projects again.
+        ShellButton {
+            objectName: "pullRequestProblemsRetry"
+            visible: page.items.length > 0 && page.model !== null && page.model.problems.length > 0
+            text: qsTr("Retry")
+            onClicked: Shell.dispatch("pullRequestList.refresh")
+        }
+
         Label {
             Layout.fillWidth: true
             visible: page.model !== null && page.model.notice !== null
@@ -196,6 +204,13 @@ Rectangle {
                 text: parent.message && parent.message.action === "project.add" ? qsTr("Add project") : page.model && page.model.error ? qsTr("Retry") : qsTr("Check again")
                 onClicked: parent.message.action === "project.add" ? Shell.dispatch("project.add") : Shell.dispatch("pullRequestList.refresh")
             }
+        }
+
+        // Takes the spare height while there are no rows, as the list does
+        // once there are, so the header and filters stay at the top.
+        Item {
+            Layout.fillHeight: true
+            visible: page.items.length === 0
         }
 
         ListView {

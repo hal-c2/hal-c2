@@ -325,6 +325,41 @@ defmodule HalC2.OrchestrationTest do
     assert {:error, "Only an empty active thread" <> _} = reuse.(thread_id, "project-1")
   end
 
+  test "the archived threads follow an archive, unarchive or delete as soon as it replies" do
+    archived = fn ->
+      {:ok, %{"threads" => threads}} =
+        Orchestration.handle("orchestration.getArchivedShellSnapshot", %{})
+
+      Enum.map(threads, & &1["id"])
+    end
+
+    for id <- ~w(spike vite) do
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.create",
+          "threadId" => id,
+          "projectId" => "project-1",
+          "title" => "Old #{id}"
+        })
+    end
+
+    command = &Orchestration.dispatch(%{"type" => "thread.#{&1}", "threadId" => &2})
+
+    {:ok, _} = command.("archive", "spike")
+    assert archived.() == ["spike"]
+    assert {:error, "Old spike is already archived."} = command.("archive", "spike")
+
+    {:ok, _} = command.("unarchive", "spike")
+    assert archived.() == []
+    # What a second click on Unarchive is told names the thread as the user knows it.
+    assert {:error, "Old spike is not archived."} = command.("unarchive", "spike")
+
+    {:ok, _} = command.("archive", "vite")
+    assert archived.() == ["vite"]
+    {:ok, _} = command.("delete", "vite")
+    assert archived.() == []
+  end
+
   test "a launch retried with its command id after a reconnect starts one thread with one message" do
     thread_id = "thread-retried"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
@@ -741,6 +776,29 @@ defmodule HalC2.OrchestrationTest do
              }
            } =
              call.("task_status", %{"taskId" => task_id})
+
+    # Once the parent is free the result starts a run. The transcript says the task
+    # finished; the envelope is the agent's to read, not a message from the user.
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => parent_id})
+    state = await_statuses(parent_id, ["interrupted", "running"])
+    [_, woken] = runs(state)
+    item = StreamState.get(state, "turn-item")["turn-item:user:#{woken["userMessageId"]}"]
+
+    assert %{
+             "type" => "notification",
+             "runId" => run_id,
+             "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
+             "outcome" => "completed",
+             "summary" => "Say hello finished"
+           } = item
+
+    assert run_id == woken["id"]
+    refute Map.has_key?(item, "text")
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["type"] == "user_message" and &1["text"] =~ "delegated_task_result")
+           )
   end
 
   describe "queued messages" do
@@ -2208,6 +2266,27 @@ defmodule HalC2.OrchestrationTest do
       # It asks once.
       :ok = HalC2.Orchestration.Recovery.continue()
       assert length(runs(current(thread_id))) == 2
+    end
+
+    test "an MC without automatic actions leaves a cut-off turn where it stopped" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => true}, version)
+      Application.put_env(:hal_c2, :auto_actions, false)
+      on_exit(fn -> Application.delete_env(:hal_c2, :auto_actions) end)
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      :ok = HalC2.Shell.subscribe(self())
+      await_shell_row(thread_id, &(&1["activeRunId"] != nil))
+
+      for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+          do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+      assert thread_id in HalC2.Orchestration.Recovery.run()
+      :ok = HalC2.Orchestration.Recovery.continue()
+
+      assert [%{"status" => "interrupted"}] = runs(await_statuses(thread_id, ["interrupted"]))
     end
 
     test "an idle session is stopped, and the next run starts it again" do

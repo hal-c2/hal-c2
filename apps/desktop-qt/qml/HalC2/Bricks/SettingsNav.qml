@@ -81,6 +81,12 @@ Rectangle {
         onActivated: search.forceActiveFocus()
     }
 
+    // Escape that nothing inside took leaves Settings, as the web's route does.
+    Keys.onEscapePressed: event => {
+        Shell.dispatch("settings.back");
+        event.accepted = true;
+    }
+
     function focusRow(index) {
         list.currentIndex = Math.max(0, Math.min(index, list.count - 1));
         if (list.currentItem) list.currentItem.forceActiveFocus();
@@ -121,7 +127,13 @@ Rectangle {
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
             text: nav.route !== null ? (nav.route.search ?? "") : ""
-            Keys.onEscapePressed: text = ""
+            // Clears the query; an empty field leaves Escape to the section list's
+            // owner, which leaves Settings.
+            Keys.onEscapePressed: event => {
+                event.accepted = text.length > 0;
+                text = "";
+            }
+            Keys.onDownPressed: list.forceActiveFocus()
         }
 
         ShellButton {
@@ -145,6 +157,20 @@ Rectangle {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             model: nav.rows
+            // One Tab stop, as the sidebar's thread list is: the list holds focus
+            // and a cursor (currentIndex) that starts on the section showing.
+            activeFocusOnTab: true
+            keyNavigationEnabled: true
+            Accessible.role: Accessible.List
+            Accessible.name: qsTr("Settings sections")
+            onActiveFocusChanged: {
+                if (!activeFocus) return;
+                const shown = nav.rows.findIndex(entry => !entry.result && entry.to === nav.currentSection);
+                currentIndex = Math.max(0, shown);
+            }
+            Keys.onReturnPressed: if (currentItem) currentItem.clicked()
+            Keys.onEnterPressed: if (currentItem) currentItem.clicked()
+            Keys.onSpacePressed: if (currentItem) currentItem.clicked()
 
             delegate: ItemDelegate {
                 id: row
@@ -155,6 +181,8 @@ Rectangle {
 
                 readonly property bool isResult: modelData.result
                 readonly property bool current: !isResult && nav.currentSection === modelData.to
+                // The list's keyboard cursor, drawn while the list holds focus.
+                readonly property bool cursor: ListView.isCurrentItem && ListView.view.activeFocus
 
                 width: ListView.view.width
                 implicitHeight: isResult ? 48 : 36
@@ -175,7 +203,9 @@ Rectangle {
                     anchors.leftMargin: 6
                     anchors.rightMargin: 6
                     radius: 6
-                    color: row.current ? Theme.palette.color("sidebarRowSelected", "#2a2a30") : row.hovered || row.visualFocus ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
+                    color: row.current ? Theme.palette.color("sidebarRowSelected", "#2a2a30") : row.hovered || row.visualFocus || row.cursor ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
+                    border.color: Theme.palette.color("focus", "#3b82f6")
+                    border.width: row.cursor ? 1 : 0
                 }
 
                 contentItem: ColumnLayout {

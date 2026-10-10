@@ -86,6 +86,14 @@ Feature: Unread and status in the thread list
       | 2 days ago     | 2d  |
       | 3 months ago   | 3mo |
 
+  # Pinning, snoozing, waking and renaming also move the thread's update time; the age
+  # does not follow it, as on the web (latestUserMessageAt ?? updatedAt).
+  @desktop @mobile @backlog-mobile @tui @backlog-tui
+  Scenario: Pinning a thread does not change its age
+    Given the last message in "Build search" was 3 hours ago
+    When the environment records that "Build search" was pinned just now
+    Then the row for "Build search" counts its age from that message
+
   @desktop
   Scenario: The age keeps up while nothing changes
     Given the last activity in "Build search" was 5 minutes ago

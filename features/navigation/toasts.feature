@@ -122,3 +122,11 @@ Feature: Toasts
     Then the error toast shows its message in at most four lines
     When the user copies the error from the toast
     Then the clipboard holds the whole 300-character reason
+
+  # Proved by tst_ShellExamples (noticesCoverNothing), not yet by a step (hal-c2/hal-c2#213).
+  @desktop @backlog-desktop
+  Scenario: Toasts appear under the header at the top right
+    Given the terminal drawer and the thread details are open
+    When a toast is shown
+    Then it is below the header, at the right
+    And it covers neither the window controls, the terminal drawer nor the composer

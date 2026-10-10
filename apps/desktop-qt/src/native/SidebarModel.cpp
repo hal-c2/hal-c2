@@ -748,7 +748,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       const qsizetype place = view.orderedKeys.size();
       view.orderedKeys.append(thread.key());
       if (parked) view.parkedKeys.insert(thread.key());
-      if (rows.size() >= limit) continue;
+      // The open thread keeps its row past the cap, so opening one from search shows it.
+      if (rows.size() >= limit && thread.key() != input.activeThreadKey.value_or(QString())) continue;
       const QString physical = thread.environmentId + QLatin1Char(':') + thread.projectId;
       const Capabilities capabilities = capabilitiesFor(thread.environmentId);
       const bool offline = input.offlineEnvironments.contains(thread.environmentId);
@@ -765,6 +766,11 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("createdAt"), thread.createdAt},
           {QStringLiteral("latestUserMessageAt"), nullable(thread.latestUserMessageAt)},
           {QStringLiteral("updatedAt"), thread.updatedAt},
+          // The time the row's age counts from, as the web's rows: a settled row's is the
+          // one that orders its shelf, any other's its last message. Never just `updatedAt`,
+          // which pinning, snoozing and settling also move.
+          {QStringLiteral("timeAt"), parked && !snoozed ? nullable(settledTimestamp(thread))
+                                                        : QVariant(thread.latestUserMessageAt.value_or(thread.updatedAt))},
           {QStringLiteral("pinned"), thread.pinnedAt.has_value()},
           {QStringLiteral("snoozedUntil"), nullable(thread.snoozedUntil)},
           {QStringLiteral("wakeLabel"),

@@ -144,6 +144,7 @@ Feature: Claude
     Given a Claude turn has finished
     When Claude answers a finished background task by itself
     Then the thread shows a running run that Claude started, with Claude's answer
+    And the timeline shows that run began with Claude's background work, not a message someone sent
     When Claude finishes that work
     Then that run completes and the user's run stays completed
 

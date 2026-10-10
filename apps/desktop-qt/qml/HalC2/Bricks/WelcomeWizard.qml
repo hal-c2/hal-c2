@@ -34,7 +34,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.palette.color("background", "#09090b")
+        color: Theme.palette.color("canvas", "#09090b")
 
         // The app underneath is not there yet.
         MouseArea {
@@ -246,7 +246,7 @@ Item {
                         anchors.margins: 12
                         spacing: 12
 
-                        CheckBox {
+                        ShellCheckBox {
                             objectName: "onboardingComputerCheck"
                             checked: computer.modelData.selected
                             Accessible.name: computer.modelData.label
@@ -633,7 +633,7 @@ Item {
         Layout.leftMargin: nested ? 24 : 0
         spacing: 10
 
-        CheckBox {
+        ShellCheckBox {
             objectName: "onboardingProjectCheck"
             checked: !!candidateRow.item.checked
             enabled: !wizard.importing
@@ -824,7 +824,7 @@ Item {
                                     visible: !group.modelData.single
                                     spacing: 10
 
-                                    CheckBox {
+                                    ShellCheckBox {
                                         objectName: "onboardingGroupCheck"
                                         tristate: group.modelData.partial
                                         checkState: group.modelData.checked ? Qt.Checked : group.modelData.partial ? Qt.PartiallyChecked : Qt.Unchecked
@@ -875,7 +875,7 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 10
 
-                                CheckBox {
+                                ShellCheckBox {
                                     objectName: "onboardingOtherCheck"
                                     tristate: scan.modelData.other.partial
                                     checkState: scan.modelData.other.checked ? Qt.Checked : scan.modelData.other.partial ? Qt.PartiallyChecked : Qt.Unchecked

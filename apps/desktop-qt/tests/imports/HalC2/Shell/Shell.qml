@@ -98,7 +98,8 @@ QtObject {
                 approvals: [],
                 questions: [],
                 plan: null,
-                queue: []
+                queue: [],
+                waiting: []
             }, fields)
         });
     }

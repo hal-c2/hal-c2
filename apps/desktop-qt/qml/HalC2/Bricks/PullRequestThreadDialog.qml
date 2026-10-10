@@ -27,7 +27,7 @@ Dialog {
     closePolicy: Popup.CloseOnEscape
     onFlowChanged: flow !== null ? open() : close()
     onOpened: {
-        reference.text = "";
+        reference.text = flow?.reference ?? "";
         reference.forceActiveFocus();
     }
     onRejected: Shell.dispatch("pullRequestThread.cancel", {})

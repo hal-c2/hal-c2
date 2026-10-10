@@ -10,6 +10,7 @@
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
+#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml, CommandPalette.qml (accessible names)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
 #   apps/web/src/components/ChatView.tsx (typing and pasting with nothing focused, focus on returning
 #     to the window, page keys from the composer)
@@ -25,6 +26,32 @@ Feature: Keyboard focus and keyboard-only use
       Given the command palette is open
       When a background update changes the thread list
       Then the command palette search still has keyboard focus
+
+    @desktop
+    Scenario Outline: Thread shortcuts do nothing while the command palette is open
+      Given the command palette is open
+      When the user presses <key>
+      Then "<command>" does not run
+      And the command palette is open
+
+      Examples:
+        | key         | command             |
+        | mod+shift+m | modelPicker.toggle  |
+        | mod+d       | diff.toggle         |
+        | mod+o       | editor.openFavorite |
+        | mod+alt+b   | rightPanel.toggle   |
+
+    # The palette's own modes and what belongs to the window, not the thread.
+    @desktop
+    Scenario Outline: The window's shortcuts still run while the command palette is open
+      Given the command palette is open
+      When the user presses <key>
+      Then "<command>" runs
+
+      Examples:
+        | key   | command           |
+        | mod+b | sidebar.toggle    |
+        | mod+p | filePicker.toggle |
 
     @desktop
     Scenario: Number shortcuts pick entries in an open picker
@@ -221,3 +248,18 @@ Feature: Keyboard focus and keyboard-only use
         | Close    |
         | Minimize |
         | Maximize |
+
+  Rule: The conversation and the palette are announced
+
+    # Proved by tst_CommandPalette.qml (test_rowsAreNamedListItems), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: Command palette entries are announced by their title
+      Given the command palette is open
+      Then each entry is a list item named by its title, then its description and shortcut
+
+    # Proved by tst_Timeline.qml (test_workLinesAreNamed), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: Tool calls and subagents in the timeline are announced
+      Given the timeline shows tool calls and a subagent
+      Then each tool call is announced by its label
+      And a subagent is announced by its title, its status and its latest line, as a link when it has a thread

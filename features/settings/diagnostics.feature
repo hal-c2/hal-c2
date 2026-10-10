@@ -23,6 +23,11 @@ Feature: Diagnostics
     Then each process shows its id, CPU, memory and command
 
   @mc
+  Scenario: Diagnostics do not list the sampler's own process
+    When the user opens diagnostics
+    Then no process is listed for the MC's own process list command
+
+  @mc
   Scenario Outline: The user reads recent resource history
     When the user views the last <window> of resource history
     Then the history shows average and peak CPU for that window

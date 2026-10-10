@@ -31,10 +31,10 @@ Feature: Threads stopped by a usage limit
     Then the row for "Port tests" reads "Limited"
 
   @desktop @mobile @backlog-mobile
-  Scenario: The conversation keeps the agent's explanation of the limit
+  Scenario: The conversation says the thread stopped on a usage limit
     Given "Port tests" stopped on a usage limit
     When the user opens "Port tests"
-    Then the agent's explanation of the limit is shown in the conversation
+    Then the conversation says the thread stopped on a usage limit
 
   @mc
   Scenario: Resuming at the reset time

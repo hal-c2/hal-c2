@@ -56,7 +56,7 @@ SettingsPage {
             }
         }
 
-        SpinBox {
+        ShellSpinBox {
             objectName: "days"
             visible: rule.modelData.days && rule.modelData.value !== null && !rule.modelData.mixed
             enabled: rule.editable
@@ -77,7 +77,7 @@ SettingsPage {
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             enabled: rule.editable
             // A mixed rule is neither: choosing sets it everywhere.
