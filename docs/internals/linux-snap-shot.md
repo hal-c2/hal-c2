@@ -91,7 +91,7 @@ Modifier serialization writes Linux `Ctrl` explicitly, never the cross-platform 
 
 ## GNOME extension
 
-Source in `apps/desktop/gnome-extension`, UUID `snap-shot@hal-c2.example`. GNOME only discovers a newly
+Source in `native/gnome-snap-shot`, UUID `snap-shot@hal-c2.example`. GNOME only discovers a newly
 installed extension at login, so setup distinguishes "installed, needs logout" from "discovered but
 disabled" and compares loaded and installed versions.
 
