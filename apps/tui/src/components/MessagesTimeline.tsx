@@ -37,7 +37,7 @@ import {
   type WorkLogEntry,
 } from "../worklog.ts";
 
-// The conversation pane (mirrors apps/web/src/components/chat/MessagesTimeline.tsx).
+// The conversation pane.
 // A sticky-to-bottom scrollbox interleaving streaming <markdown> messages with the
 // derived work log (tool calls / thinking), each message's changed-files summary,
 // and a live "Working…" indicator while a turn runs.

@@ -37,7 +37,7 @@ const replyKeyBindings: typeof defaultTextareaKeyBindings = [
   { name: "kpenter", action: "submit" },
 ];
 
-// The prompt composer (mirrors apps/web/src/components/chat/ChatComposer.tsx).
+// The prompt composer.
 // New threads use this same always-ready prompt; ChatView swaps the local draft
 // and submit action without introducing a second form or keyboard mode.
 //

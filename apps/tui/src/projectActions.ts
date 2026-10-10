@@ -9,8 +9,7 @@ import {
 import { parseHalC2ProjectFile } from "@hal-c2/shared/halC2ProjectFile";
 
 // A project's actions (named commands) as the terminal edits them, and what
-// its checked-in hal-c2.json offers. The rules are the web app's
-// (apps/web/src/projectScripts.ts, ProjectScriptsControl.tsx).
+// its checked-in hal-c2.json offers.
 
 export const PROJECT_ACTION_ICONS: ReadonlyArray<ProjectScriptIcon> = [
   "play",

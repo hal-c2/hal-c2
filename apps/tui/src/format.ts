@@ -1,5 +1,5 @@
-// Small text-formatting helpers shared across the TUI (mirrors the spirit of
-// apps/web/src/timestampFormat.ts — pure, render-agnostic string utilities).
+// Small text-formatting helpers shared across the TUI: pure, render-agnostic
+// string utilities.
 
 /**
  * Truncate to `width` display columns (not code units — CJK and emoji occupy

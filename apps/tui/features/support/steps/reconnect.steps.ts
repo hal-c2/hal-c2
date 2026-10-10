@@ -1,16 +1,12 @@
-// tui/reconnect.feature: the client's supervisor re-mints a socket ticket from
-// its launcher on every reconnect, and a silent or vanished launcher fails the
-// request instead of hanging the loop (see reconnectWorld.ts). The thread the
-// user is on (T2's thread view) rides through the drop; the fake client's
+// tui/reconnect.feature: the thread the user is on (T2's thread view) rides
+// through a dropped connection (see reconnectWorld.ts); the fake client's
 // detail map stands in for the real client's warm thread cache (`peekThread`).
 import type { OrchestrationThread } from "@hal-c2/contracts";
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
-import { SOCKET_TICKET_TIMEOUT_MS } from "../../../src/socketTicket.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import { shell, thread } from "../fakeClient.ts";
-import type { LaunchWorld } from "../launchWorld.ts";
 import { startConnection, type ConnectionHarness, type ReconnectWorld } from "../reconnectWorld.ts";
 import {
   activity,
@@ -26,9 +22,8 @@ import {
   type ThreadWorld,
 } from "../threadWorld.ts";
 import { pressKey, snapshot } from "../world.ts";
-import { expectMcReconnected } from "./launch.steps.ts";
 
-type World = ReconnectWorld & ThreadWorld & LaunchWorld;
+type World = ReconnectWorld & ThreadWorld;
 
 function connection(ctx: World): ConnectionHarness {
   if (!ctx.connection) throw new Error("the client is not connected");
@@ -48,81 +43,6 @@ step("the terminal client is connected and showing a thread", async (ctx: World)
   await snapshot(ctx);
   expect(shownPage(ctx)).toMatchObject({ kind: "thread", key });
   expect(connectionState(ctx)).toBe("connected");
-});
-
-step("the connection to the server drops", async (ctx: World) => {
-  ctx.pageBeforeDrop = shownPage(ctx);
-  await connection(ctx).drop();
-});
-
-step("the client asks its launcher for a new socket ticket", async (ctx: World) => {
-  const conn = connection(ctx);
-  const outcome = await conn.settled(await conn.requested(2));
-  expect(outcome).toEqual({ url: expect.stringContaining("wsTicket=") });
-  await conn.connected(2);
-  expect(conn.connects[1]).toBe((outcome as { url: string }).url);
-  expect(conn.connects[1]).not.toBe(conn.connects[0]);
-});
-
-step("it reconnects without the user doing anything", async (ctx: World) => {
-  // A client started on its own against an MC (launch.feature).
-  if (ctx.mc) return expectMcReconnected(ctx);
-  const conn = connection(ctx);
-  await conn.connected(2);
-  expect(conn.phases).toEqual(["connecting", "connected", "reconnecting", "connected"]);
-  await snapshot(ctx);
-  expect(connectionState(ctx)).toBe("connected");
-  expect(shownPage(ctx)).toEqual(ctx.pageBeforeDrop!);
-});
-
-step("the launcher does not answer a socket ticket request", async (ctx: World) => {
-  const conn = connection(ctx);
-  conn.silenceLauncher();
-  await conn.drop();
-  expect((await conn.requested(2)).outcome).toBeUndefined();
-});
-
-step("the request fails after {int} seconds", async (ctx: World, seconds: number) => {
-  const conn = connection(ctx);
-  const request = conn.requests[1]!;
-  const timer = conn.timers[1]!;
-  expect(timer.ms).toBe(seconds * 1000);
-  expect(SOCKET_TICKET_TIMEOUT_MS).toBe(seconds * 1000);
-  expect(request.outcome).toBeUndefined();
-  timer.fire();
-  expect(await conn.settled(request)).toEqual({ error: "timed out minting a websocket url" });
-});
-
-step("the client keeps trying to reconnect", async (ctx: World) => {
-  const conn = connection(ctx);
-  await conn.requested(3);
-  expect(connectionState(ctx)).toBe("reconnecting");
-});
-
-step("ticket requests are waiting on the launcher", async (ctx: World) => {
-  const conn = connection(ctx);
-  conn.silenceLauncher();
-  await conn.drop();
-  await conn.requested(2);
-  conn.mint();
-  await conn.requested(3);
-  expect(conn.requests.slice(1).map((request) => request.outcome)).toEqual([undefined, undefined]);
-});
-
-step("the launcher process goes away", (ctx: World) => {
-  connection(ctx).launcherGone();
-});
-
-step("every waiting ticket request fails at once", async (ctx: World) => {
-  const conn = connection(ctx);
-  const waiting = conn.requests.slice(1, 3);
-  const outcomes = await Promise.all(waiting.map((request) => conn.settled(request)));
-  expect(outcomes).toEqual([
-    { error: "hal-c2 parent IPC channel closed" },
-    { error: "hal-c2 parent IPC channel closed" },
-  ]);
-  // Their timeouts are cancelled, not what failed them.
-  expect(conn.timers.slice(1, 3).every((timer) => timer.cleared)).toBe(true);
 });
 
 // --- the thread the user is on ------------------------------------------------------

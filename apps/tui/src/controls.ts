@@ -5,8 +5,7 @@ import type {
   RuntimeMode,
 } from "@hal-c2/contracts";
 
-// Friendly labels for the composer controls, mirroring the web composer's toolbar
-// (apps/web/src/components/chat/ChatComposer.tsx runtimeModeConfig + the plan/build
+// Friendly labels for the composer controls (runtime modes and the plan/build
 // toggle). Kept in one place so the controls row, the pickers, and the footer all
 // read the same names.
 
@@ -54,8 +53,8 @@ export function interactionModeLabel(mode: ProviderInteractionMode): string {
   return mode === "plan" ? "Plan" : "Build";
 }
 
-// The web stores reasoning under a couple of option ids depending on the provider
-// (apps/web TraitsPicker); read any of them.
+// Reasoning is stored under a couple of option ids depending on the provider;
+// read any of them.
 const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning"]);
 
 type ModelSelectionLike = ModelSelection | null | undefined;

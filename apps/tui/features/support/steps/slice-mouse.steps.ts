@@ -12,11 +12,10 @@ import { step } from "../../steps.ts";
 import { shell, thread } from "../fakeClient.ts";
 import {
   baseDir,
-  fakeMc,
   launchSetup,
   leaveDirect,
+  runningMc,
   startDirect,
-  writeMcRecord,
   type LaunchWorld,
 } from "../launchWorld.ts";
 import { chooseCommand, palette } from "../threadUi.ts";
@@ -32,14 +31,7 @@ const select = (ctx: World) => ctx.host!.state.get("select") as TuiSelectState;
 /** Start the real client against a fake MC, let it draw, leave, and return what it wrote. */
 async function clientOutput(ctx: MouseWorld, mouse: string | undefined): Promise<string> {
   launchSetup(ctx).env.HAL_C2_TUI_MOUSE = mouse;
-  if (!ctx.mc) {
-    const running = fakeMc(ctx);
-    writeMcRecord(ctx, {
-      pid: process.pid,
-      origin: running.origin,
-      accessToken: running.accessToken,
-    });
-  }
+  runningMc(ctx);
   await startDirect(ctx, ["--base-dir", baseDir(ctx)]);
   expect(ctx.direct, ctx.client?.stderr).toBeDefined();
   return (await leaveDirect(ctx)).stdout;

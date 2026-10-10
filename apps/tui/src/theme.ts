@@ -2,11 +2,9 @@ import { RGBA, SyntaxStyle } from "@opentui/core";
 import type { TuiThreadShell as OrchestrationThreadShell } from "./orchestrationV2Adapter.ts";
 
 /**
- * Shared visual vocabulary for the TUI, mirroring the web sidebar's status pills
- * (apps/web/src/components/Sidebar.logic.ts `resolveThreadStatusPill`) and
- * relative-time labels (apps/web/src/timestampFormat.ts). Web colours map to the
- * named ANSI colours Ink supports: amber→yellow, indigo/violet→magenta,
- * sky→cyan, emerald→green.
+ * Shared visual vocabulary for the TUI: thread status pills and relative-time
+ * labels. Their colours map to the named ANSI colours Ink supports:
+ * amber→yellow, indigo/violet→magenta, sky→cyan, emerald→green.
  */
 export interface ThreadStatus {
   readonly key: string;

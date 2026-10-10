@@ -14,8 +14,7 @@ import {
 } from "@hal-c2/shared/model";
 
 // Flatten the server config's providers into a flat, selectable model list for the
-// picker. Mirrors the web app's model assembly (apps/web/src/modelSelection.ts) at
-// the level the TUI needs: provider + model slug + display labels. Pure.
+// picker, at the level the TUI needs: provider + model slug + display labels. Pure.
 
 export interface ModelOption {
   readonly instanceId: ServerProvider["instanceId"];

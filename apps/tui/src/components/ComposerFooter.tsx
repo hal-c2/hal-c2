@@ -4,11 +4,10 @@ import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from ".
 import { clip } from "../format.ts";
 import { usePalette } from "../theme.ts";
 
-// The composer footer (mirrors apps/web ChatComposer): a model picker + mode
-// controls on the left, and the primary action on the right. Component names
-// match the web — ProviderModelPicker / ComposerFooterModeControls /
-// ComposerFooterPrimaryActions — so the two share a design vocabulary. Lives
-// inside the persistent composer box, so it carries no own padding.
+// The composer footer: a model picker + mode controls on the left, and the
+// primary action on the right (ProviderModelPicker / ComposerFooterModeControls /
+// ComposerFooterPrimaryActions). Lives inside the persistent composer box, so
+// it carries no own padding.
 
 function Chip({
   keyHint,

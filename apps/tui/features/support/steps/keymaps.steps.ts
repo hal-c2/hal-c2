@@ -211,12 +211,11 @@ step("the TUI starts with that keymap file", async (ctx: KeymapWorld) => {
     if (value !== undefined && !key.startsWith("HAL_C2_TUI_") && key !== "HAL_C2_HOME")
       env[key] = value;
   }
-  const child = Bun.spawn(["bun", "src/index.ts"], {
+  const baseDir = NodePath.join(configDir(ctx), "..", "mc");
+  const child = Bun.spawn(["bun", "src/index.ts", "--base-dir", baseDir], {
     cwd: TUI_DIR,
     env: {
       ...env,
-      HAL_C2_TUI_ORIGIN: "http://127.0.0.1:9",
-      HAL_C2_TUI_BEARER: "unused",
       HAL_C2_TUI_SHELL_DIR: configDir(ctx),
       HAL_C2_TUI_LOG: writeFile(ctx, "tui.log", ""),
     },

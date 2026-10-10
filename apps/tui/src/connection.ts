@@ -152,14 +152,12 @@ function historyToPage(history: ThreadHistoryMeta): TuiThreadPage {
 }
 
 /**
- * Connection inputs the entry provides: from the `hal-c2 tui` launcher (a bearer
- * session and socket URLs over IPC) or from `mcDiscovery.ts` (the MC's access
- * token or a paired session, with socket tickets bought over HTTP). Either way
- * `mintSocketUrl` returns a freshly-ticketed `ws(s)://…/ws?wsTicket=…` URL on
- * every (re)connect.
+ * Connection inputs the entry provides from `mcDiscovery.ts`: the MC's access
+ * token or a paired session, and `mintSocketUrl`, which returns a
+ * freshly-ticketed `ws(s)://…/ws?wsTicket=…` URL on every (re)connect.
  */
 export interface TuiOptions {
-  /** Origin of the already-running local server, e.g. `http://127.0.0.1:5733`. */
+  /** Origin of the MC, e.g. `http://127.0.0.1:5733`. */
   readonly origin: string;
   /** Long-lived bearer token used for HTTP authorization on the connection. */
   readonly bearerToken: string;
@@ -170,13 +168,11 @@ export interface TuiOptions {
   /** Pause between a dropped connection and the next attempt (2 seconds). */
   readonly reconnectDelay?: Duration.Input;
   /** The MC's environment id from its descriptor; a protocol-3 session addresses it. */
-  readonly environmentId?: string;
-  /** The MC's wire protocol from its descriptor; absent is the Node server's. */
+  readonly environmentId: string;
+  /** The MC's wire protocol from its descriptor. */
   readonly orchestrationProtocolVersion?: number | undefined;
 }
 
-/** The id used when the host did not read the MC's descriptor (the Node launcher). */
-const TUI_ENVIRONMENT_ID = EnvironmentId.make("local-tui");
 const TUI_LABEL = "HAL-C2";
 const RECONNECT_DELAY = Duration.seconds(2);
 
@@ -277,18 +273,16 @@ const CONNECTED_STATE: SupervisorConnectionState = {
 
 /**
  * A minimal {@link EnvironmentSupervisor} for the TUI. It maintains a single
- * loopback connection to the already-running local server, re-minting a fresh
- * websocket URL on every (re)connect attempt via the host-provided
- * `mintSocketUrl`. We reuse the heavy `client-runtime` RPC client + reducers but
- * skip its multi-environment relay machinery, which the TUI does not need.
+ * connection to the MC, re-minting a fresh websocket URL on every (re)connect
+ * attempt via the host-provided `mintSocketUrl`. We reuse the heavy
+ * `client-runtime` RPC client + reducers but skip its multi-environment relay
+ * machinery, which the TUI does not need.
  */
 export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
   Effect.gen(function* () {
     const factory = yield* RpcSessionFactory;
     const { origin } = options;
-    const environmentId = options.environmentId
-      ? EnvironmentId.make(options.environmentId)
-      : TUI_ENVIRONMENT_ID;
+    const environmentId = EnvironmentId.make(options.environmentId);
 
     const target = new PrimaryConnectionTarget({
       environmentId,

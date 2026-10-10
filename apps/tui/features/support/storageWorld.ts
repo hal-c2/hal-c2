@@ -1,5 +1,5 @@
 // The real client entry for mc/platform/storage-layout.feature: which directory
-// `hal-c2 tui` reads the user's shell from.
+// the terminal client reads the user's shell from.
 //
 // The scenario's paths ("~/…", "/xdg/config", "/srv/hal-c2") are mapped into a temp
 // sandbox, so nothing outside it is read or written. Every place the Givens could
@@ -61,14 +61,14 @@ export async function runStorageLaunch(ctx: StorageWorld): Promise<void> {
     NodeFS.writeFileSync(NodePath.join(dir, "keymap.json"), "{ not json");
   }
   const log = NodePath.join(setup.root, "tui.log");
-  const child = Bun.spawn(["bun", "src/index.ts"], {
+  // `--base-dir` only places the MC's runtime record, never the shell.
+  const mcRoot = NodePath.join(setup.root, "mc");
+  const child = Bun.spawn(["bun", "src/index.ts", "--base-dir", mcRoot], {
     cwd: TUI_DIR,
     env: {
       ...env,
       ...mapped,
       HOME: home,
-      HAL_C2_TUI_ORIGIN: "http://127.0.0.1:9",
-      HAL_C2_TUI_BEARER: "unused",
       HAL_C2_TUI_LOG: log,
     },
     stdin: "ignore",

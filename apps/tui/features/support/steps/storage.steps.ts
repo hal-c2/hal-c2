@@ -1,6 +1,6 @@
 // Steps for mc/platform/storage-layout.feature: where the terminal client looks
 // for the user's shell. The run itself is `the user runs "hal-c2 tui"` (git.steps.ts),
-// which goes to the real client entry once a storage Given has set things up.
+// which starts the real client entry once a storage Given has set things up.
 import { expect } from "bun:test";
 import * as NodePath from "node:path";
 

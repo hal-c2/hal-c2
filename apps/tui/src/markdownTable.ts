@@ -1,5 +1,5 @@
 // A Markdown pipe table as data: its cells for drawing, and the two forms the
-// clipboard takes (port of apps/web/src/markdown-clipboard.ts).
+// clipboard takes.
 
 export type TableAlignment = "left" | "center" | "right" | null;
 

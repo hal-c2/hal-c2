@@ -14,9 +14,8 @@ import {
 
 // The TUI's source of truth lives in this external store (read by ChatView via
 // useSyncExternalStore), not in React, so it survives re-renders and the
-// imperative subscription plumbing stays out of the component tree. It mirrors
-// the role of the web app's state atoms (apps/web/src/state/*), at a smaller
-// scale that fits a single-environment terminal client.
+// imperative subscription plumbing stays out of the component tree, at a scale
+// that fits a single-environment terminal client.
 
 /** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
 export type StatusKind = "info" | "success" | "error" | "busy";

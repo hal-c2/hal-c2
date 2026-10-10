@@ -3,10 +3,6 @@
  * request as stale/unknown — the only failure class that should CLOSE a pending
  * approval / user-input prompt. Any other failure (network blip, provider
  * hiccup) leaves the request open so the user can retry.
- *
- * Mirrors `isStalePendingRequestFailureDetail` in `apps/web/src/session-logic.ts`
- * — keep the substring list in sync until the derivation moves to a shared
- * package.
  */
 export function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
   const normalized = detail?.toLowerCase();
