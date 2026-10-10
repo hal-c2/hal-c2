@@ -53,6 +53,12 @@ Feature: Streaming the agent's reply
     When the reasoning is finished
     Then the reasoning is labelled "The cart total needs"
 
+  # A picture reads as its description (remarkThoughtPreview).
+  @shared @backlog-mobile @backlog-tui
+  Scenario: Reasoning written in Markdown is labelled by its words alone
+    Given the agent reasoned in Markdown
+    Then the reasoning is labelled "Checking the cart total a chart"
+
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
   @shared @backlog-mobile @backlog-tui
   Scenario: A running turn shows how long the agent has been working

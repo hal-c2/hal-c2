@@ -1,9 +1,12 @@
 #include "TimelineModel.h"
 
+#include <QCache>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QTextBlock>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <cmath>
@@ -87,11 +90,29 @@ QString workspacePath(const QString& path, const QString& root) {
   return path.mid(base.size() + 1);
 }
 
-// A thought as its row labels it (the web's singleToolCallLabel): its text on
-// one line, which the row elides.
+// A thought as its row labels it (the web's remarkThoughtPreview): the words
+// of its Markdown on one line, which the row elides. Only its start is read,
+// and the lines are kept: reading Markdown takes a tenth of a millisecond, and
+// a row asks for its labels again each time it redraws.
 QString thoughtLine(const QString& thought) {
-  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
-  return thought.left(200).replace(space, QStringLiteral(" ")).trimmed();
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"), QRegularExpression::UseUnicodePropertiesOption);
+  static QCache<QString, QString> lines(256);
+  const QString start = thought.left(600);
+  if (const QString* kept = lines.object(start)) return *kept;
+  QTextDocument document;
+  document.setMarkdown(start);
+  QString line;
+  for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+      const QTextCharFormat format = it.fragment().charFormat();
+      // An image reads as its alt text.
+      line += format.isImageFormat() ? format.stringProperty(QTextFormat::ImageAltText) : it.fragment().text();
+    }
+    line += QLatin1Char(' ');
+  }
+  line = line.replace(space, QStringLiteral(" ")).trimmed().left(200);
+  lines.insert(start, new QString(line));
+  return line;
 }
 
 // What the MC sent the agent for itself: that a delegated task ended, or that

@@ -252,6 +252,13 @@ const Steps steps([] {
     set(world, QStringLiteral("turn-item"), lastEntry(world).value(QStringLiteral("id")).toString(),
         {{QStringLiteral("streaming"), false}, {QStringLiteral("status"), QStringLiteral("completed")}});
   });
+  step(QStringLiteral("the agent reasoned in Markdown"), [](World& world, const Captures&, const Table&) {
+    startRun(world);
+    addItem(world, QStringLiteral("reasoning"),
+            {{QStringLiteral("streaming"), false},
+             {QStringLiteral("status"), QStringLiteral("completed")},
+             {QStringLiteral("text"), QStringLiteral("**Checking** the [cart](https://shop.example/cart) `total`\n\n![a chart](chart.png)")}});
+  });
   step(QStringLiteral("the reasoning is labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString label = lastEntry(world).value(QStringLiteral("label")).toString();
     expect(label == c[0], QStringLiteral("the reasoning is labelled \"%1\"").arg(label));
