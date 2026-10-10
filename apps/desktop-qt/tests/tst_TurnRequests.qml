@@ -252,6 +252,23 @@ Item {
             verify(requests.pending);
         }
 
+        function test_tabbingToAQueuedRowOutOfViewScrollsItIn() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            const queue = [];
+            for (let i = 1; i <= 8; ++i)
+                queue.push({ runId: "run-" + i, text: "follow-up " + i });
+            Shell.publishTurn({ queue: queue });
+            waitForRendering(root);
+            const list = findChild(requests, "queueList");
+            compare(list.contentY, 0);
+            findChild(requests, "queueRemove-run-8").forceActiveFocus(Qt.TabFocusReason);
+            const row = findChild(requests, "queueText-run-8").parent;
+            verify(row.y + row.height <= list.contentY + list.height);
+            verify(row.y >= list.contentY);
+            findChild(requests, "queueEdit-run-1").forceActiveFocus(Qt.BacktabFocusReason);
+            compare(list.contentY, 0);
+        }
+
         function test_composerSendsImagesWithoutText() {
             const composer = createTemporaryObject(composerComponent, root);
             Shell.state = Object.assign({}, Shell.state, {

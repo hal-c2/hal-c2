@@ -545,6 +545,11 @@ Item {
                 }
 
                 Flickable {
+                    id: queueList
+
+                    // Tab can reach a row scrolled out of view: it scrolls in.
+                    readonly property Item focusedItem: Window.activeFocusItem
+
                     objectName: "queueList"
                     visible: queueCard.expanded
                     Layout.fillWidth: true
@@ -554,6 +559,17 @@ Item {
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
+                    }
+                    onFocusedItemChanged: {
+                        let row = focusedItem;
+                        while (row && row.parent !== queueRows)
+                            row = row.parent;
+                        if (!row)
+                            return;
+                        if (row.y < contentY)
+                            contentY = row.y;
+                        else if (row.y + row.height > contentY + height)
+                            contentY = row.y + row.height - height;
                     }
 
                     ColumnLayout {
