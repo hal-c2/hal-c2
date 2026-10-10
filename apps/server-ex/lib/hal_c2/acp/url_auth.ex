@@ -1,8 +1,7 @@
 defmodule HalC2.Acp.UrlAuth do
   @moduledoc """
   An ACP agent's request to open a sign-in page outside an explicit sign-in (while
-  it is probed, or in a session), as the Node server's registry coordinator handles
-  it: the agent's `elicitation/create` waits while the provider's `auth.action`
+  it is probed, or in a session): the agent's `elicitation/create` waits while the provider's `auth.action`
   shows the page to every client, and `server.acceptAcpRegistryUrlAuth` answers it
   once a user opens the page. Unanswered after 10 minutes, or replaced by a newer
   request, it is declined. One request per instance is pending at a time.

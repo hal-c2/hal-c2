@@ -2,9 +2,7 @@ defmodule HalC2.Codex.Elicitation do
   @moduledoc """
   Codex's `mcpServer/elicitation/request`: a tool asking for access to another app
   (a ChatGPT connector, say). HAL-C2 shows it as an approval naming the app, with the
-  scopes the request offers, and answers in the form the request asked for
-  (`describeMcpElicitation` and `toMcpElicitationResponse` in the Node server's
-  `CodexSessionRuntime.ts`).
+  scopes the request offers, and answers in the form the request asked for.
   """
 
   @doc "The app asking, and the decisions the request can take: `%{app: name, options: [...]}`."

@@ -7,7 +7,7 @@ defmodule HalC2.ShellProjectionPropTest do
   shell starts again.
 
   The events are patches to the entities the row is built from, with values drawn from
-  the shapes the Node server writes: ISO dates, run and item statuses, nulls.
+  the shapes an earlier install's log holds: ISO dates, run and item statuses, nulls.
   """
 
   use ExUnit.Case, async: false

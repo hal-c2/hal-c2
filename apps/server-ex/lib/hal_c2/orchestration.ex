@@ -21,7 +21,7 @@ defmodule HalC2.Orchestration do
   alias HalC2.Projection.{JS, PullRequests}
 
   @active_statuses ~w(preparing starting running waiting)
-  # The input of a prepared run's workspace preparation item, as the Node server names it.
+  # The input of a prepared run's workspace preparation item.
   @preparing_workspace "Preparing workspace"
 
   @thread_updates ~w(thread.archive thread.unarchive thread.delete thread.settle thread.unsettle
@@ -47,7 +47,7 @@ defmodule HalC2.Orchestration do
   def handle("orchestration.getWorkflowScript", input), do: HalC2.WorkflowScripts.read(input)
 
   def handle("provider.uploadFeedback", %{"threadId" => thread_id} = input) do
-    # The thread's latest provider thread says which provider ran it, as in the Node server.
+    # The thread's latest provider thread says which provider ran it.
     driver =
       case HalC2.Shell.row(node(), thread_id) do
         {"thread", _row} ->
@@ -109,8 +109,7 @@ defmodule HalC2.Orchestration do
   end
 
   # A client's command id is answered once: repeating it, as a client retrying
-  # after a reconnect does, returns the first outcome without deciding again (the
-  # Node server's CommandReceiptStore). Receipts live in the store's meta table.
+  # after a reconnect does, returns the first outcome without deciding again. Receipts live in the store's meta table.
   # A receipt only answers for the thread the command acted on (its `threadId`, or the
   # `parentThreadId` a delegated task or created-thread record belongs to), so the same
   # id aimed at another thread is refused rather than answered with work done elsewhere.
@@ -754,7 +753,7 @@ defmodule HalC2.Orchestration do
   end
 
   # A question's item is named after its node, whatever names them: this MC
-  # (`node:approval:...`) or the Node server a thread was imported from
+  # (`node:approval:...`) or a thread imported from an earlier install
   # (`node:provider:...`).
   defp question_item(request),
     do: String.replace_prefix(request["nodeId"] || "", "node:", "turn-item:")
@@ -806,8 +805,7 @@ defmodule HalC2.Orchestration do
 
   defp response(_thread_id, command), do: {:ok, %{"decision" => command["decision"] || "decline"}}
 
-  # Answers keep their provider's shape; files are named by where they are saved,
-  # as the Node server words it.
+  # Answers keep their provider's shape; files are named by where they are saved.
   defp with_attachment_paths(answers, claimed) do
     Enum.reduce(claimed, answers, fn
       {_question, []}, answers ->
@@ -997,7 +995,7 @@ defmodule HalC2.Orchestration do
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
-  # thread's branch before a turn runs in it, as the Node server's turn start does.
+  # thread's branch before a turn runs in it.
   defp restore_worktree(thread_id) do
     with {"thread", %{"worktreePath" => path, "branch" => branch} = row}
          when is_binary(path) and is_binary(branch) <- HalC2.Shell.row(node(), thread_id),
@@ -1058,8 +1056,7 @@ defmodule HalC2.Orchestration do
           nil ->
             {[{"thread", thread_id, Patch.diff(nil, thread)}], {:ok, :created}}
 
-          # A draft the client already created takes the launch's workspace, as
-          # the Node server's `reuseExistingThread` does, but only while empty.
+          # A draft the client already created takes the launch's workspace, but only while empty.
           existing when reuse? ->
             if reusable?(state, existing, input["projectId"]) do
               fields =
@@ -1160,7 +1157,7 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Titles a thread in the background, as the Node server does: from its first
+  # Titles a thread in the background: from its first
   # message's `text` and `attachments` (tried three times), or, regenerating, from
   # its user and assistant messages and its `previous` title. The thread keeps its
   # title until a new one arrives; generation that fails or keeps the title clears
@@ -1530,8 +1527,7 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A message brings a settled or snoozed thread back to the active list, as in the Node
-  # server: it is neither settled nor held active by hand any more.
+  # A message brings a settled or snoozed thread back to the active list: it is neither settled nor held active by hand any more.
   defp woken(state, thread_id) do
     thread = StreamState.get(state, "thread")[thread_id]
 
@@ -1669,8 +1665,8 @@ defmodule HalC2.Orchestration do
 
   # The provider takes the message first; only then does it join the run. If the turn
   # ended meanwhile, the message is sent like any other (started, or queued behind a
-  # newer run), as the Node server delivers a steer that lost the race with the turn's
-  # end. A provider that refuses while its turn still runs is an error for the sender:
+  # newer run). A steer that lost the race with the turn's
+  # end is handled the same way. A provider that refuses while its turn still runs is an error for the sender:
   # the message was not delivered, so it is neither shown in the turn nor queued.
   defp steer(thread_id, run, command) do
     instance = run["providerInstanceId"] || "codex"
@@ -1764,13 +1760,13 @@ defmodule HalC2.Orchestration do
     ]
   end
 
-  # The thread fields a command sets, as the Node server's projector sets them.
+  # The thread fields a command sets.
   defp thread_fields("thread.archive", _, _, at), do: %{"archivedAt" => at}
   defp thread_fields("thread.unarchive", _, _, _), do: %{"archivedAt" => nil}
   defp thread_fields("thread.delete", _, _, at), do: %{"deletedAt" => at}
 
   # Settling is "I'm done with this": it parks the thread, clears its pinned and active
-  # places and ends its snooze, as the Node server's settle does (thread.unsnoozed).
+  # places and ends its snooze (thread.unsnoozed).
   # Settling a settled thread again keeps the time it was settled.
   defp thread_fields("thread.settle", command, thread, at) do
     kept =
@@ -2055,7 +2051,7 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Commands the thread's state refuses, as the Node server guards them; nil to go ahead.
+  # Commands the thread's state refuses; nil to go ahead.
   defp refusal("thread.archive", command, %{"archivedAt" => archived}, _state)
        when archived != nil,
        do: {:error, "Thread #{command["threadId"]} is already archived."}
@@ -2258,7 +2254,7 @@ defmodule HalC2.Orchestration do
   end
 
   # Visits and mark-unread change read state only, and arranging the active list is not
-  # activity either, as in the TS server: the thread's last activity time stays put.
+  # activity either: the thread's last activity time stays put.
   defp quiet_read_state({kind, id, patch}, type)
        when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
        do: {kind, id, Map.put(patch, "q", true)}
@@ -2352,8 +2348,8 @@ defmodule HalC2.Orchestration do
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.list(state, "run")
 
-    # A deleted thread runs nothing more; an archived one nothing from its queue, as on
-    # the Node server, until it is unarchived and the queue resumed or another turn ends.
+    # A deleted thread runs nothing more; an archived one nothing from its queue until it is
+    # unarchived and the queue resumed or another turn ends.
     with true <- thread != nil and thread["deletedAt"] == nil and thread["archivedAt"] == nil,
          false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
          %{} = next <- Enum.find(queued_runs(state), &(&1["queueHeld"] != true)),
@@ -2416,7 +2412,7 @@ defmodule HalC2.Orchestration do
         mode = get_in(command, ["dispatchMode", "type"])
         steer = intent == "steer" or mode == "steer_active"
 
-        # As the Node server resolves it: steer a running turn that can take it,
+        # Steer a running turn that can take it,
         # else queue; a restart (or a steer that cannot be) interrupts and goes first.
         auto_steer =
           intent in [nil, "auto"] and mode != "queue_after_active" and
@@ -2488,8 +2484,8 @@ defmodule HalC2.Orchestration do
   end
 
   # A provider plugin that cannot switch models in a session keeps the thread's model
-  # once its session exists; a new thread takes the other model (as the Node server
-  # rejects the transition).
+  # once its session exists; a new thread takes the other model (the transition is
+  # refused).
   defp model_locked(thread, command) do
     current = thread["modelSelection"] || %{}
     target = command["modelSelection"] || %{}
@@ -2506,8 +2502,8 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A message whose run waits for its workspace (`release_prepared/2`). As the Node
-  # server shows it: the user's message, then a "Preparing workspace" item that the
+  # A message whose run waits for its workspace (`release_prepared/2`). The thread
+  # shows the user's message, then a "Preparing workspace" item that the
   # preparation's progress, release, or failure updates.
   defp prepare_run(state, thread, runs, command) do
     {changes, {:ok, :queued}} = queue_run(state, thread, runs, command, nil)

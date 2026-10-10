@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.HalC2.Thread.Import do
   @shortdoc "Imports a thread from a file another machine exported"
   @moduledoc """
-  Imports a thread written by `mix hal_c2.thread.export` (or the Node server's
-  `thread-transfer` script) into a project on this machine.
+  Imports a thread written by `mix hal_c2.thread.export` (or a version 1 thread archive
+  from an earlier install) into a project on this machine.
 
       mix hal_c2.thread.import FILE [--project PROJECT]
 

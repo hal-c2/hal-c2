@@ -2,7 +2,7 @@ defmodule HalC2.Connect.RelayClient do
   @moduledoc """
   The relay client (`cloudflared`) a managed HAL-C2 Connect tunnel runs through:
   where it is (`cloud.getRelayClientStatus`) and installing the pinned release
-  into the HAL-C2 home (`cloud.installRelayClient`), as `packages/shared/src/relayClient.ts`.
+  into the HAL-C2 home (`cloud.installRelayClient`).
 
   It is found, in order, at `HAL_C2_CLOUDFLARED_PATH`, at the MC's managed
   install, then on the `PATH`. Installs from several clients, or several MCs on

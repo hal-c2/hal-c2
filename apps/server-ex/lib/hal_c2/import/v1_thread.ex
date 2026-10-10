@@ -1,11 +1,10 @@
 defmodule HalC2.Import.V1Thread do
   @moduledoc """
-  Folds a thread's version 1 event log (the Node server's history before
-  orchestration v2) into v2 entities, the ones the Node server's
-  `LegacyV1ThreadImporter` migrates it to: the thread itself, and each user and
+  Folds a thread's version 1 event log (the history an earlier install kept before
+  orchestration v2) into v2 entities: the thread itself, and each user and
   assistant message with its turn item.
 
-  Each event does what the Node server's v1 projection does to the thread row and
+  Each event does what the earlier install's v1 projection does to the thread row and
   its messages. Plans, activities, sessions, checkpoints and request responses are
   not migrated, so they only move the thread's `updatedAt`. Turn start, interrupt,
   revert and session stop requests change nothing: their results are logged as

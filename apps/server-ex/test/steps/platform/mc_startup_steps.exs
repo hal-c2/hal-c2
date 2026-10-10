@@ -676,27 +676,6 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
-  step "the desktop app names its Electron binary for the MC", context do
-    electron = "/Applications/HAL-C2.app/Contents/MacOS/HAL-C2"
-    World.put_os_env("HAL_C2_NODE_COMMAND", electron)
-    World.put_os_env("HAL_C2_NODE_ELECTRON", "1")
-    Mc.ensure(HalC2.Settings)
-    Map.put(context, :electron, electron)
-  end
-
-  step "the MC starts a JavaScript sidecar", context do
-    Map.put(context, :acp_command, HalC2.Acp.command("cursor"))
-  end
-
-  step "it runs it with that binary in Node mode", context do
-    assert {:ok, [binary | _], env} = context.acp_command
-    assert binary == context.electron
-    assert {"ELECTRON_RUN_AS_NODE", "1"} in env
-    # Only the sidecar runs as Node; the MC's own environment (and its terminals) do not.
-    assert System.get_env("ELECTRON_RUN_AS_NODE") == nil
-    context
-  end
-
   # --- the desktop bootstrap --------------------------------------------------------------
 
   step "the desktop app launches the MC in bootstrap mode", context do
@@ -801,7 +780,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
-  # --- importing a Node server's history --------------------------------------------------
+  # --- importing an earlier install's history ---------------------------------------------
 
   step "a consistent snapshot of a TypeScript server's database", context do
     source = Path.join(Mc.tmp_dir(context.mc, "ts"), "state.sqlite")
@@ -1105,7 +1084,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   defp calls(context),
     do: context.service_tools |> File.read!() |> String.split("\n", trim: true)
 
-  # The TypeScript server's event table (apps/server's orchestration_events).
+  # An earlier install's event table (orchestration_events).
   defp write_ts_log(path, events) do
     {:ok, db} = Sqlite3.open(path)
 

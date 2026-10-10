@@ -12,7 +12,7 @@ the existing client state, so an MC pairs and appears like any other environment
 
 ```sh
 mix deps.get
-mix hal_c2.import ~/path/to/snapshot/state.sqlite   # optional: a VACUUM INTO copy of a Node server's state
+mix hal_c2.import ~/path/to/snapshot/state.sqlite   # optional: a VACUUM INTO copy of an earlier install's state
 mix hal_c2.server                                    # prints ws://127.0.0.1:3780/ws?token=...
 mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
@@ -33,7 +33,7 @@ MIX_ENV=prod mix release        # _build/prod/rel/hal_c2, about 80 MB with ERTS
 _build/prod/rel/hal_c2/bin/hal_c2 start # foreground; data in ~/.local/share/hal-c2/elixir
 ```
 
-A release shares the XDG directories with the Node server
+A release shares the XDG directories with earlier installs
 ([where HAL-C2 keeps its files](../../docs/user/install.md#where-hal-c2-keeps-its-files)) and
 keeps its own files one `elixir` level down in each, such as `~/.local/share/hal-c2/elixir`
 for its database and `~/.local/state/hal-c2/elixir/logs`; `HAL_C2_HOME` moves all four under
@@ -46,8 +46,8 @@ home's `elixir` directory (`T3CODE_HOME` or `T3_HOME`, else `~/.hal-c2`, else `~
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
 dependencies for the build machine's platform), so building one needs `npm` and the JS
 workspace installed (`vp i`, for its esbuild), and running Cursor needs Node 22+ on the
-machine. The desktop app runs it on its own
-Electron binary instead (`HAL_C2_NODE_COMMAND`).
+machine. The desktop app runs it with the desktop host's
+own Node binary instead (`HAL_C2_NODE_COMMAND`).
 
 Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
 is `bin/hal_c2 start`, started again when the MC restarts to finish an update.
@@ -115,8 +115,8 @@ lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...
 ## Test
 
 `mix test` runs the suite. `--include codex` / `--include claude` drive the real
-CLIs; `--include parity` compares sidebar rows with the Node server's
-(see `test/hal_c2/projection/shell_parity_test.exs`).
+CLIs; `--include parity` compares sidebar rows with the shells an earlier
+install's server produced for the same log (see `test/hal_c2/projection/shell_parity_test.exs`).
 
 `mix prop` runs the stateful property tests in `prop/`, kept apart because PropCheck is
 GPL-3.0 ([prop/README.md](prop/README.md)).

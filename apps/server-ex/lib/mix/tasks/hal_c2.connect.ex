@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.HalC2.Connect do
   @shortdoc "Sets up, shows or turns off this MC's HAL-C2 Connect link"
   @moduledoc """
-  The operator's side of HAL-C2 Connect on the host (`hal-c2 connect`, `apps/server/src/cli/connect.ts`):
+  The operator's side of HAL-C2 Connect on the host:
 
       mix hal_c2.connect            # sign in, link on next start, offer the background service
       mix hal_c2.connect login      # sign in only
@@ -180,8 +180,7 @@ defmodule Mix.Tasks.HalC2.Connect do
     end
   end
 
-  # `offerServiceDuringOnboarding` (`apps/server/src/cli/service.ts`): true once the
-  # MC runs as a background service.
+  # Offers to set up the background service; true once the MC runs as one.
   defp offer_service do
     status = HalC2.Service.status()
 
@@ -250,10 +249,10 @@ defmodule Mix.Tasks.HalC2.Connect do
     next =
       cond do
         not signed_in ->
-          "Run `hal-c2 connect link` to authorize and enable HAL-C2 Connect."
+          "Run `mix hal_c2.connect link` to authorize and enable HAL-C2 Connect."
 
         not desired ->
-          "Run `hal-c2 connect link` to enable HAL-C2 Connect."
+          "Run `mix hal_c2.connect link` to enable HAL-C2 Connect."
 
         not linked ->
           "Start HAL-C2 to provision the environment link and launch its managed tunnel."
@@ -274,7 +273,7 @@ defmodule Mix.Tasks.HalC2.Connect do
         relay_client(HalC2.Connect.RelayClient.resolve()) ++
         [
           "",
-          "This is saved setup, not a live connection check. Check the background service with `hal-c2 service status`."
+          "This is saved setup, not a live connection check. Check the background service with `hal-c2-mc status`."
         ] ++ if(next, do: ["", "Next: " <> next], else: []),
       "\n"
     )
@@ -328,7 +327,7 @@ defmodule Mix.Tasks.HalC2.Connect do
 
       {:error, _} ->
         Mix.shell().error(
-          "Could not revoke the relay-side environment record yet.\nRun `hal-c2 connect unlink` again when the relay is reachable."
+          "Could not revoke the relay-side environment record yet.\nRun `mix hal_c2.connect unlink` again when the relay is reachable."
         )
 
       _ ->
@@ -338,7 +337,7 @@ defmodule Mix.Tasks.HalC2.Connect do
     if sign_out?,
       do:
         Mix.shell().info(
-          "Signed out of HAL-C2 Connect locally.\nThe background service is managed separately with `hal-c2 service`."
+          "Signed out of HAL-C2 Connect locally.\nThe background service is managed separately with `hal-c2-mc`."
         )
   end
 

@@ -33,7 +33,7 @@ defmodule HalC2.Web do
 
   @doc """
   The URL clients reach the listener at: its bind host, or `localhost` when it
-  listens on every interface (as the Node server's pairing links do).
+  listens on every interface.
   """
   def base_url(scheme \\ "http") do
     host =

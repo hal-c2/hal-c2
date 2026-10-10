@@ -1,6 +1,6 @@
 defmodule HalC2.Codex.Home do
   @moduledoc """
-  Where a Codex instance keeps its files (`CodexHomeLayout.ts` in the Node server).
+  Where a Codex instance keeps its files.
 
   An instance's `homePath` is its Codex home. With a `shadowHomePath` too, the
   instance is another account on the same home: Codex runs in the shadow home, whose

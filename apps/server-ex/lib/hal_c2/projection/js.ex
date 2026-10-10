@@ -1,11 +1,12 @@
 defmodule HalC2.Projection.JS do
   @moduledoc """
-  The JavaScript value semantics that projections ported from the Node server rely on.
+  The JavaScript value semantics the projections match, so clients see the values a
+  JavaScript encoder would write.
 
   Entities come from `:json.decode`, so JSON `null` is the atom `:null`. Read fields
   with `get/2`, which returns `nil` for both a missing field and `null`, and pass any
   value copied into output through `json/1`. Dates are compared as `epoch_ms/1`
-  (Effect's `DateTime.toEpochMillis`) and written by `iso/1` (`Date#toISOString`).
+  and written by `iso/1` (`Date#toISOString`).
   """
 
   # String.prototype.trim: WhiteSpace and LineTerminator, which differ from
@@ -45,7 +46,7 @@ defmodule HalC2.Projection.JS do
 
   def epoch_ms(_), do: nil
 
-  @doc ~S|Unix milliseconds as the Node encoding writes them: `"2026-09-10T09:13:16.387Z"`.|
+  @doc ~S|Unix milliseconds as `Date#toISOString` writes them: `"2026-09-10T09:13:16.387Z"`.|
   @spec iso(integer) :: String.t()
   def iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
 end

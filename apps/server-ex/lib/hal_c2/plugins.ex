@@ -405,7 +405,7 @@ defmodule HalC2.Plugins do
     end
   end
 
-  # As the TS server shows an instance whose driver this build lacks.
+  # An instance whose driver this build lacks still shows, marked unavailable.
   defp unavailable(id, driver, config) do
     reason = "The provider plugin for \"#{driver}\" is not installed or not enabled on this MC."
 

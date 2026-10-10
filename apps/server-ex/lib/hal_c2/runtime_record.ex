@@ -2,9 +2,9 @@ defmodule HalC2.RuntimeRecord do
   @moduledoc """
   `<state dir>/server-runtime.json`: where local tools (the TUI) find a running MC.
 
-  Written once the listener is bound and removed when the MC stops, with the Node
-  server's field names (`apps/server/src/serverRuntimeState.ts`) so a tool can read
-  either. An MC killed without stopping leaves it behind; readers check `pid`.
+  Written once the listener is bound and removed when the MC stops, with the field
+  names an earlier install wrote, so a tool can read either. An MC killed without
+  stopping leaves it behind; readers check `pid`.
   Starts after `HalC2.Web` so it stops before the listener does.
   """
   use GenServer
@@ -95,7 +95,7 @@ defmodule HalC2.RuntimeRecord do
     :ok
   end
 
-  # A wildcard bind is reached on loopback, as the Node server records it.
+  # A wildcard bind is reached on loopback.
   defp origin_host(host) when host in [nil, "0.0.0.0", "::"], do: "127.0.0.1"
   defp origin_host(host), do: if(String.contains?(host, ":"), do: "[#{host}]", else: host)
 end

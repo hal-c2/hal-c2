@@ -6,7 +6,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   the MC's config receives `config.themes` frames. A client following the
   environment's default theme is modelled by `context.theme_clients` (name →
   `%{theme, applied, published, settings, synced}`) and applies the settings it
-  receives with the web client's rule (`apps/web/src/hooks/useDefaultTheme.ts`).
+  receives under the default-theme rule.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions

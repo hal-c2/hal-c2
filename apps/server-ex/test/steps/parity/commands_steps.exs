@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Parity.Commands do
   @moduledoc """
   Steps for `features/parity/commands.feature`: every aligned command dispatched
   over the socket and seen by a second socket following the thread, and every
-  event of the Node server's log imported with `HalC2.Import.V2` into the running
+  event of an earlier install's log imported with `HalC2.Import.V2` into the running
   MC's store.
   """
   use Cucumber.StepDefinition
@@ -799,7 +799,7 @@ defmodule HalC2.Steps.Parity.Commands do
 
   defp absorb(entities, _frame), do: entities
 
-  # --- Node server logs ----------------------------------------------------------------
+  # --- earlier install logs ------------------------------------------------------------
 
   defp iso(seconds),
     do:

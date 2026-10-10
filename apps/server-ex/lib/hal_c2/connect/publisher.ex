@@ -1,7 +1,7 @@
 defmodule HalC2.Connect.Publisher do
   @moduledoc """
   Publishes what this MC's agents are doing to the HAL-C2 Connect relay, so the
-  user's phone gets alerts and live activity (`AgentAwarenessRelay.ts`).
+  user's phone gets alerts and live activity.
 
   It follows this MC's thread rows in `HalC2.Shell` and turns each into the relay's
   activity state (`projectThreadAwarenessV2`): a phase, headline, project, thread,

@@ -2,7 +2,7 @@ defmodule HalC2.UsageLimitSources do
   @moduledoc """
   Quota from places this MC cannot run turns on: today CLIProxyAPI hubs pooling
   several subscription accounts (`settings.usageLimitSources`, read with
-  `HalC2.UsageLimitSources.Cliproxy`), as the Node server's UsageLimitSources does.
+  `HalC2.UsageLimitSources.Cliproxy`).
 
   Every enabled source is read at boot, when the sources in settings change, on an
   untargeted `server.refreshProviders`, and every `providerHealthRefreshInterval`
@@ -16,8 +16,8 @@ defmodule HalC2.UsageLimitSources do
   set lives in ETS, so `current/0` never waits on a hub.
 
   A hub's management key is a bearer secret. `seal_keys/2` keeps it out of the settings
-  document, in `<home>/secrets`, as the Node server does: settings carry a marker
-  instead, and a client that sends the marker back means "keep the key".
+  document, in `<home>/secrets`: settings carry a marker instead, and a client that
+  sends the marker back means "keep the key".
   """
 
   use GenServer

@@ -1,7 +1,7 @@
 defmodule HalC2.Attachments do
   @moduledoc """
   Chat attachments and file URLs (`attachments.createUploadUrl`, `attachments.delete`,
-  `assets.createUrl`), as the Node server serves them.
+  `assets.createUrl`).
 
   A client asks the thread's MC for a signed upload URL, sends the bytes to it,
   and names the upload in its message; the message's MC then claims it into the
@@ -195,7 +195,7 @@ defmodule HalC2.Attachments do
   @native_image_types ~w(image/gif image/jpeg image/png image/webp)
 
   @doc """
-  A turn's text with where each attachment is saved, as the Node server words it,
+  A turn's text with where each attachment is saved,
   so agents can open files (and images they cannot take natively).
   """
   def prompt_text(text, attachments) do
@@ -235,8 +235,8 @@ defmodule HalC2.Attachments do
 
   @doc """
   `assets.createUrl`: a signed URL that serves an attachment, a file, a project's
-  favicon, an application's icon or GitHub media. The URL ends in the file's name, as
-  the Node server's does; a project without a favicon gets a URL ending in
+  favicon, an application's icon or GitHub media. The URL ends in the file's name; a
+  project without a favicon gets a URL ending in
   `project-favicon-missing`, which answers 404 and tells the client to draw its
   default icon. `now` (epoch ms) is when the URL counts as issued.
   """

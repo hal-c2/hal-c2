@@ -1274,7 +1274,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     ~r/===\s*Task\s+(#{@uuid})\s*===/i
   ]
 
-  # Grok's Task / spawn_subagent tool (XAiAcpExtension.ts `isXAiSpawnOrTaskTool`).
+  # Grok's Task / spawn_subagent tool.
   defp subagent_call?(call, %{turn: %{ids: %{driver: "grok"}}}) do
     title = String.downcase(call["title"] || "")
     input = call["rawInput"] || %{}

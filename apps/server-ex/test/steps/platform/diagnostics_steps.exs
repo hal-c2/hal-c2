@@ -624,7 +624,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     [{_, big}, {_, item}, {_, deep}] = context.records
     assert item["method"] == "item/completed"
     assert item["params"]["threadId"] == "native-1"
-    # `item` is not one of the summary fields TS keeps either.
+    # `item` is not one of the summary fields kept either.
     refute Map.has_key?(item["params"], "item")
     assert big["id"] == 1
     assert big["result"]["threadId"] == "native-1"

@@ -1,6 +1,6 @@
 defmodule HalC2.Projection.ShellParityTest do
   @moduledoc """
-  Compares `thread_shell/1` with shells the Node server produced for the same log.
+  Compares `thread_shell/1` with shells HAL-C2 produced before the MC for the same log.
 
       HAL_C2_PARITY_DB=mc-state.sqlite HAL_C2_PARITY_GOLDEN=shells.json \\
         mix test --include parity test/hal_c2/projection/shell_parity_test.exs
@@ -46,7 +46,7 @@ defmodule HalC2.Projection.ShellParityTest do
     end
   end
 
-  # Dropped byte-identical re-emits can leave our latest event earlier than Node's.
+  # Dropped byte-identical re-emits can leave our latest event earlier than the golden's.
   defp same?("updatedAt", {:ok, expected}, {:ok, actual}),
     do: JS.epoch_ms(actual) <= JS.epoch_ms(expected)
 

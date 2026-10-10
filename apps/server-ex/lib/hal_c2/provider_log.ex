@@ -1,7 +1,6 @@
 defmodule HalC2.ProviderLog do
   @moduledoc """
-  Native provider event logs, for debugging a provider's protocol
-  (`apps/server/src/provider/Layers/EventNdjsonLogger.ts`).
+  Native provider event logs, for debugging a provider's protocol.
 
   While on (`config :hal_c2, provider_event_log: true`, `HAL_C2_PROVIDER_EVENT_LOG=1`),
   every line a provider process sends is appended to

@@ -1,6 +1,6 @@
 defmodule HalC2.ComposerContext do
   @moduledoc """
-  Inline message context, as the Node server hands it to providers
+  Inline message context, as it is handed to providers
   (`@hal-c2/shared/composerContextReferences`).
 
   A message's text holds links like `[label](hal-c2-context://v1/<kind>/<id>)` (or the
@@ -18,7 +18,7 @@ defmodule HalC2.ComposerContext do
   @kind ~r/^[a-z][a-z0-9-]{0,39}$/
   @id ~r/^[a-z0-9_-]{1,128}$/i
   @label_max 200
-  # Quotes sent before the rename use `t3-citation:` links.
+  # Quotes written by an earlier install use `t3-citation:` links.
   @citation ~r/\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/
   @citation_max 8000
   @citation_context_max 32

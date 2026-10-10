@@ -1,7 +1,7 @@
 defmodule HalC2.Mcp.Preview do
   @moduledoc """
   The `preview_*` MCP tools: an agent drives the browser panel of a desktop client
-  through `HalC2.PreviewAutomation`, as it does on the Node server.
+  through `HalC2.PreviewAutomation`.
 
   Snapshots come back as bounded JSON text plus the screenshot as image content
   (`{:ok, structured, content}`), and a stopped recording is claimed into the

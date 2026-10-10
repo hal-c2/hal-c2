@@ -2216,7 +2216,7 @@ defmodule HalC2.Test.Mc.World do
 
   @doc """
   Launches a thread in `project` over the socket (`orchestration.launchThread`) with
-  `text` as its first message, as the web client does: codex, full access, the
+  `text` as its first message: codex, full access, the
   project root. `fields` override the input (`"workspaceStrategy"`, `"generateTitle"`,
   `"threadId"`, `"title"`, ...). The thread is known by its title (default
   "New thread") afterwards. Returns `{reply, context}`.
@@ -3215,7 +3215,7 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc """
-  Writes a Node server database holding only `orchestration_events`, as
+  Writes a database from HAL-C2 before the MC, holding only `orchestration_events`, as
   `HalC2.Import.V2` reads it. Each event is `{aggregate, stream, type, payload, at_ms}`;
   thread events are V2 (`application_event_version` 2), project events carry none.
   """

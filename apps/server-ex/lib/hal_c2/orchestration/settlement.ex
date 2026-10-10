@@ -1,7 +1,6 @@
 defmodule HalC2.Orchestration.Settlement do
   @moduledoc """
-  Settles threads that need nobody any more (`thread.auto-settle`), as the Node
-  server's `ThreadSettlementService` does: one whose pull requests all merged
+  Settles threads that need nobody any more (`thread.auto-settle`): one whose pull requests all merged
   (`sidebarAutoSettleOnMerge`) or closed after the user last spoke in it, or one idle
   for `sidebarAutoSettleAfterDays`, each resolved per project override. Pinned,
   running, waiting-on-you, just-messaged and still-snoozed threads are left alone,

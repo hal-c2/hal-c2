@@ -1,11 +1,11 @@
 defmodule HalC2.Import.PreviousInstall do
   @moduledoc """
-  Picks threads out of a T3 Code or Node HAL-C2 install on this machine and brings
+  Picks threads out of a T3 Code or earlier HAL-C2 install on this machine and brings
   them onto the running MC, for `HalC2.Import.Picker`.
 
-  A source is a data directory holding the Node server's database: `userdata` and
+  A source is a data directory holding an earlier install's database: `userdata` and
   `dev` under an old home (`HalC2.Paths.legacy_candidates/3`, `state.sqlite` or
-  `statev2.sqlite`), and the Node server's own XDG data directories. Only those are
+  `statev2.sqlite`), and the XDG data directories an earlier install used. Only those are
   read, and only read: the database is opened read-only, so a server still running
   on it is undisturbed.
 
@@ -200,7 +200,7 @@ defmodule HalC2.Import.PreviousInstall do
     end
   end
 
-  # The source's threads and projects, from the Node server's read model. Threads it
+  # The source's threads and projects, from the earlier install's read model. Threads it
   # never moved to orchestration v2 are only in the older table.
   defp index(path) do
     if Enum.any?(sources(), &(&1["path"] == path)) do

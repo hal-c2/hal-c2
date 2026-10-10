@@ -1,7 +1,7 @@
 defmodule HalC2.Devices.Actions do
   @moduledoc """
   Device settings and one-shot actions (`device.detail`, `device.action`), run
-  against the host's toolchain the way the Node server does: `xcrun simctl` and the
+  against the host's toolchain: `xcrun simctl` and the
   helpers serve-sim bundles for iOS, `adb` for Android. Nothing goes through
   serve-sim's shell channel, which would hand any session command execution.
 

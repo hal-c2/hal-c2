@@ -103,7 +103,7 @@ defmodule HalC2.Mcp do
   end
 
   # A credential stays alive while its agent calls in or its thread has a run in
-  # progress (the Node server touches it on every provider turn); an idle one lapses.
+  # progress; an idle one lapses.
   defp alive(token, caller, last_alive) do
     now = System.monotonic_time(:millisecond)
 

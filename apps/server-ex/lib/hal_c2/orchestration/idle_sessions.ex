@@ -1,7 +1,7 @@
 defmodule HalC2.Orchestration.IdleSessions do
   @moduledoc """
   Stops provider processes (Codex app-servers, Claude and ACP agents) that have sat
-  idle, as the Node server releases idle sessions: after 30 minutes without a turn,
+  idle: after 30 minutes without a turn,
   or up to 4 hours while the provider still has background tasks running. The
   session is marked stopped and the next run starts it again, resuming the
   provider's thread (`HalC2.Orchestration.release_session/1`).

@@ -4,7 +4,7 @@ defmodule HalC2.Import.V2Test do
   alias Exqlite.Sqlite3
 
   @tag :tmp_dir
-  test "imported streams fold to the same entities as the Node log", %{tmp_dir: dir} do
+  test "imported streams fold to the same entities as their source log", %{tmp_dir: dir} do
     source = Path.join(dir, "node.sqlite")
     events = node_events()
     write_node_log(source, events)

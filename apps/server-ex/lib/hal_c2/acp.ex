@@ -6,7 +6,7 @@ defmodule HalC2.Acp do
   Registry (`HalC2.Acp.Catalog`). Everything is keyed by provider instance id.
 
   Built-in agents are off until enabled in the MC's settings (`providers.<driver>`
-  or a `providerInstances` entry), as on the Node server, so nothing is spawned for
+  or a `providerInstances` entry), so nothing is spawned for
   users who never opted in; a registry instance is on once added. An enabled agent's model list comes from the `model`
   config option of a throwaway session, which lists the models of the providers it
   is connected to; it is read once, at boot or when the agent is first enabled.
@@ -125,10 +125,9 @@ defmodule HalC2.Acp do
 
       {"cursor", _entry} ->
         credentials = cursor_credentials(instance)
-        {node, node_env} = node_command()
 
-        {:ok, [node, cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(instance)]}
+        {:ok, [node_command(), cursor_script(), "--mode", runtime_mode || "approval-required"],
+         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | instance_env(instance)]}
 
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
@@ -150,18 +149,10 @@ defmodule HalC2.Acp do
     if File.exists?(released), do: released, else: @cursor_checkout
   end
 
-  # The desktop app names its own Electron binary, which runs as Node with
-  # ELECTRON_RUN_AS_NODE (set for the sidecar only, never the MC's terminals).
   defp node_command do
     case System.get_env("HAL_C2_NODE_COMMAND") do
-      command when command in [nil, ""] ->
-        {"node", []}
-
-      command ->
-        electron =
-          if System.get_env("HAL_C2_NODE_ELECTRON") == "1", do: [{"ELECTRON_RUN_AS_NODE", "1"}]
-
-        {command, electron || []}
+      command when command in [nil, ""] -> "node"
+      command -> command
     end
   end
 
@@ -287,7 +278,7 @@ defmodule HalC2.Acp do
 
   defp empty_catalog?(_driver, _models), do: false
 
-  # Cursor tells a refused sign-in from a missing one, as the Node server does.
+  # Cursor tells a refused sign-in from a missing one.
   defp signed_out_message(id) do
     case instance(id) do
       {"cursor", _entry} ->
@@ -598,8 +589,8 @@ defmodule HalC2.Acp do
   end
 
   # An OpenCode server run elsewhere (`serverUrl`, with `serverPassword` as the
-  # `opencode` user's basic auth): its connected providers' models, as
-  # `OpenCodeProvider.ts` reads its inventory, and its failures explained.
+  # `opencode` user's basic auth): its connected providers' models and its
+  # failures explained.
   defp read_server(id, url, password) do
     auth = if password, do: {:basic, "opencode", password}
     base = String.trim_trailing(url, "/")
@@ -999,7 +990,7 @@ defmodule HalC2.Acp do
 
   @doc """
   `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
-  Cursor takes it, `/name` (`rewriteCursorSkillMentions` in the Node server). Other
+  Cursor takes it, `/name`. Other
   mentions, and amounts of money, are left as they are.
   """
   def cursor_skill_mentions(text, cwd) do
@@ -1199,8 +1190,8 @@ defmodule HalC2.Acp do
     end)
   end
 
-  # The options a model offers, from the parameters the Cursor agent lists for it
-  # (`buildCursorCapabilitiesFromSdkModel` in the Node server): reasoning first, then
+  # The options a model offers, from the parameters the Cursor agent lists for it:
+  # reasoning first, then
   # context size, fast mode and thinking; a true/false parameter is a switch. The
   # default is the default variant's value.
   defp parameter_capabilities(%{"parameters" => [_ | _] = parameters} = meta) do

@@ -912,7 +912,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc """
   Writes buffered text. `:all` (item ends, prompts, the turn's end) writes
   everything; `:timer` holds assistant and reasoning text back by the project's
-  `responseStreamingMode`, as the Node server does: "paragraph" writes finished
+  `responseStreamingMode`: "paragraph" writes finished
   paragraphs and closed code blocks at most every 400 ms, "turn" writes nothing
   until a boundary. Tool output and plans stream as they come.
   """

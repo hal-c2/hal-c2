@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-/** The relay outputs a client (web, desktop, mobile) needs at build time. */
+/** The relay outputs a client (desktop, mobile) needs at build time. */
 export interface RelayClientConfig {
   /** Alchemy types this as optional for workers reachable at no URL; ours always has one. */
   readonly url: string | undefined;
@@ -110,7 +110,7 @@ const closesQuote = (value: string, quote: string): boolean =>
 
 /**
  * Writes the relay's client configuration into the repo-root `.env` so the
- * web, desktop, and mobile dev servers build against the stage just deployed.
+ * desktop and mobile dev servers build against the stage just deployed.
  * An Action rather than post-deploy scripting: it takes the stack outputs as
  * input, so it runs only when one of them changed and is skipped on a no-op
  * deploy. Set `HAL_C2_RELAY_CLIENT_CONFIG_ENV` to write elsewhere (CI does).

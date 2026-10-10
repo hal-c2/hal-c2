@@ -1,7 +1,6 @@
 defmodule HalC2.Projection.BackgroundWork do
   @moduledoc """
-  Work that outlives a thread's settled turn, for the sidebar's Waiting pill. Ported
-  from the Node server's `orchestrationV2PendingBackgroundWork.ts`.
+  Work that outlives a thread's settled turn, for the sidebar's Waiting pill.
 
   Tasks come from the provider thread roster (Claude background tasks) and from
   still-active command, dynamic tool and subagent turn items, deduplicated by native

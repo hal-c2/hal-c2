@@ -1,9 +1,9 @@
 defmodule HalC2.ProviderSecrets do
   @moduledoc """
   Sensitive provider environment variables (`providerInstances[id].environment` entries
-  with `"sensitive": true`) live in the secret store, not the settings document, as
-  the Node server keeps them (serverSettings.ts, the same `provider-env-<id>-<name>`
-  secret names), so a home either server wrote reads the same.
+  with `"sensitive": true`) live in the secret store, not the settings document. An
+  earlier install kept them under the same `provider-env-<id>-<name>` secret names, so
+  a home it wrote reads the same.
 
   On every write `seal/2` moves a sensitive value out and leaves
   `%{"value" => "", "valueRedacted" => true}` in its place; a client that sends a

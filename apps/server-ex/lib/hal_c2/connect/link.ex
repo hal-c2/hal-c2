@@ -1,6 +1,6 @@
 defmodule HalC2.Connect.Link do
   @moduledoc """
-  The link an operator asked for from the command line (`hal-c2 connect link`),
+  The link an operator asked for from the command line (`mix hal_c2.connect link`),
   carried out when the MC starts, and given back when it stops.
 
   At start, a saved desired link makes the MC link itself through the relay

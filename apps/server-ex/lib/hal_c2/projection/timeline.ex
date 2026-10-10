@@ -1,7 +1,6 @@
 defmodule HalC2.Projection.Timeline do
   @moduledoc """
-  Which turn items a thread's transcript shows, ported from the Node server's
-  `orchestrationV2Timeline.ts` and `ProjectionStore.buildVisibleTurnItems`.
+  Which turn items a thread's transcript shows.
 
   Build an `index/3` once per thread, then ask `visible?/2` of each item. Items of a
   rolled-back run are hidden, as are queued messages whose run was cancelled and the

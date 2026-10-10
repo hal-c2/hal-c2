@@ -5,8 +5,8 @@ defmodule HalC2.Checkpoint do
 
   A thread has one root checkpoint scope. Ordinal 0 of the scope is the workspace
   before the first run; ordinal `n` is the workspace after run `n`. Scope ids,
-  checkpoint ids, and refs are the ones the Node server derives, so threads imported
-  from it keep their diffs.
+  checkpoint ids, and refs are the ones earlier installs derived, so threads imported
+  from them keep their diffs.
 
   Captures stage the whole worktree into a private index next to the repository's
   own, so the user's staging area is never touched.
@@ -15,7 +15,7 @@ defmodule HalC2.Checkpoint do
   alias HalC2.Orchestration.Entities
 
   @refs_prefix "refs/hal-c2/orchestration-v2/checkpoints"
-  # Where checkpoints taken before the rename live; recorded refs name them directly.
+  # Checkpoints written under the earlier `t3` ref prefix; recorded refs name them directly.
   @legacy_refs_prefix "refs/t3/orchestration-v2/checkpoints"
   @diff_max_bytes 10_000_000
   @identity [
@@ -124,7 +124,7 @@ defmodule HalC2.Checkpoint do
 
   @doc """
   The checkpoints of the baselines before run `ordinal` (the workspace before the
-  thread's first run and just before this one), as the Node server records them when
+  thread's first run and just before this one), recorded when
   the run completes: ready when `baseline/3` captured them, missing otherwise. They
   belong to no run; rewinding to before the first run names ordinal 0.
   """

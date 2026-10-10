@@ -447,7 +447,7 @@ defmodule HalC2.Orchestration.Handoff do
     |> Enum.join("\n\n")
   end
 
-  # The Node server's `shouldPrepareLegacyImportHandoff`: a version 1 thread with
+  # A version 1 thread, imported from an earlier install, with
   # migrated messages and no completed run. A provider thread that already exists has
   # been told, and an imported agent session resumes the agent's own history.
   defp legacy_import(state, driver, run_id, at) do
@@ -477,7 +477,7 @@ defmodule HalC2.Orchestration.Handoff do
   end
 
   @doc """
-  The imported history of a version 1 thread's turn items (`makeLegacyImportSummary`):
+  The imported history of a version 1 thread's turn items:
   a header, then the newest messages that fit in 32,000 characters. The newest one
   that does not fit whole keeps its end, cut at a word and marked `... `.
   """

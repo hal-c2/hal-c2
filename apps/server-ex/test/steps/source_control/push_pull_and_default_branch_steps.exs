@@ -194,7 +194,7 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
 
   # --- pulling at start ----------------------------------------------------------------
 
-  # The node refuses a second project for a folder, as the Node server does, but a
+  # The node refuses a second project for a folder, but a
   # database from before that check can hold two; this one is written as stored data.
   defp stored_project(context, title, root) do
     id = String.replace(title, " ", "-")

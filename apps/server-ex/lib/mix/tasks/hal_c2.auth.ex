@@ -2,7 +2,7 @@ defmodule Mix.Tasks.HalC2.Auth do
   @shortdoc "Lists or revokes the clients paired with this MC"
   @moduledoc """
   Manages the sessions of clients paired with this MC, the list Settings →
-  Connections shows, from the command line (the Node server's `hal-c2 auth session`):
+  Connections shows, from the command line:
 
       mix hal_c2.auth session list
       mix hal_c2.auth session revoke SESSION_ID

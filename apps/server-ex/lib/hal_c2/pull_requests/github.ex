@@ -1,9 +1,7 @@
 defmodule HalC2.PullRequests.GitHub do
   @moduledoc """
   GitHub pull requests through the `gh` CLI, for `HalC2.PullRequests`: reads and writes
-  in the shapes of `packages/contracts/src/pullRequest.ts`, ported from the Node
-  server's `GitHubPullRequestCli.ts`, `gitHubPullRequestJson.ts` and
-  `GitHubPullRequestProvider.ts`.
+  in the shapes of `packages/contracts/src/pullRequest.ts`.
 
   Calls take a context `%{cwd:, host:, repository:, number:}`: `owner/name` on
   `host`, read through the checkout at `cwd`. Failures are `{:error, {reason,

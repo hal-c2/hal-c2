@@ -1,8 +1,8 @@
 defmodule HalC2.SourceControl.Cli do
   @moduledoc """
-  Runs a source control host's CLI (`glab`, `az`, `tea`, `fj`, ...) as the Node server's
-  `VcsProcess` does: bounded in time and output, and a failure named for what the host
-  said. `Application.get_env(:hal_c2, :"<exe>_command")` stands in for the CLI.
+  Runs a source control host's CLI (`glab`, `az`, `tea`, `fj`, ...): bounded in time
+  and output, and a failure named for what the host said.
+  `Application.get_env(:hal_c2, :"<exe>_command")` stands in for the CLI.
   """
 
   @timeout 30_000
@@ -84,8 +84,7 @@ defmodule HalC2.SourceControl.Cli do
   end
 
   @doc """
-  What a CLI's non-zero exit means, from what it printed on stderr
-  (`classifyNonZeroExit` in the Node server's `VcsProcess.ts`).
+  What a CLI's non-zero exit means, from what it printed on stderr.
   """
   def classify(exe, stderr) do
     said = String.downcase(stderr)

@@ -1,8 +1,8 @@
 defmodule HalC2.Projection.Shell do
   @moduledoc """
-  A thread's sidebar row, ported from the Node server's `threadShellFromProjection`.
+  A thread's sidebar row.
 
-  `thread_shell/2` returns the row exactly as the Node server sends it: a JSON-shaped
+  `thread_shell/2` returns the row exactly as clients receive it: a JSON-shaped
   map with string keys and `nil` for null, dates as the ISO strings the entities
   carry, and `updatedAt` from the time of the stream's latest event.
 
@@ -18,7 +18,7 @@ defmodule HalC2.Projection.Shell do
 
   @interruptible ~w(preparing starting running)
 
-  # Absent from older payloads; the Node schema omits them rather than sending null.
+  # Absent from older payloads; the schema omits them rather than sending null.
   # `moving` and `movedTo` mark a thread leaving for, or gone to, another machine
   # (`HalC2.ThreadMove`). `plugin` marks a thread a plugin started (`HalC2.Plugins.Host`).
   @optional_fields ~w(linkedPullRequest branchPullRequest activeOrderKey historyOrigin moving movedTo plugin)

@@ -208,7 +208,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     }
   end
 
-  # Posts spans as the web client's OTLP exporter does, with a paired client's token.
+  # Posts spans as a client's OTLP exporter does, with a paired client's token.
   # The MC keeps client spans only while tracing is on (`HalC2.Traces.enabled?/0`).
   defp post_traces(context, spans) do
     World.put_app_env(:trace, true)

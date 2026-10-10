@@ -311,7 +311,7 @@ defmodule HalC2.UsageLimitSourcesTest do
              HalC2.ProviderUsageLimits.consume_reset_credit(%{input | "sourceId" => "gone"})
   end
 
-  test "request ids match the Node server's, so every environment redeems one attempt" do
+  test "request ids match earlier installs, so every environment redeems one attempt" do
     assert Cliproxy.redeem_request_id("acct-1", "credit-1") ==
              "2472b232-eb38-5124-a485-dc9b3151e444"
   end

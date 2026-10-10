@@ -1,7 +1,7 @@
 defmodule HalC2.Orchestration.NativeSubagent do
   @moduledoc """
-  A subagent the provider started itself (Grok's `task` tool, say), written the way
-  the TS adapters project one (`SubagentProjection.ts`).
+  A subagent the provider started itself (Grok's `task` tool, say), projected by the
+  provider adapters.
 
   The parent thread gets a `provider_native` subagent entity with its node (under the
   run's root node) and turn item. Its work goes to a child thread, a subagent of the

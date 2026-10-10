@@ -1,6 +1,6 @@
 defmodule HalC2.Connect.Http do
   @moduledoc """
-  HAL-C2 Connect's HTTP routes (`environmentHttp.ts`), forwarded from `HalC2.Web.Router`:
+  HAL-C2 Connect's HTTP routes, forwarded from `HalC2.Web.Router`:
   a signed-in client's `/api/connect/*` (relay scopes), and the relay's own
   `/api/hal-c2-connect/*`, which carry relay-signed proofs instead of a session.
   Credential responses are never cached.

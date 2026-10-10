@@ -857,8 +857,8 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     end
   end
 
-  # Off macOS a Cursor login that is not in a file is its "memory" store, as the Node
-  # server's own test has it. A file left by an earlier login must not be read.
+  # Off macOS a Cursor login that is not in a file is its "memory" store. A file left by
+  # an earlier login must not be read.
   step "Cursor is signed in through the system keychain", context do
     dir = Path.join(context.mc.home, "vendor-auth")
     write_json(Path.join(dir, "config/cursor/auth.json"), %{"accessToken" => "vendor-token"})

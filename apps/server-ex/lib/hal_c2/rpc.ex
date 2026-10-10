@@ -293,8 +293,8 @@ defmodule HalC2.Rpc do
          "message" => HalC2.Cluster.describe(reason)
        }}
 
-  # Methods a session with `orchestration:read` alone may call, as the Node server's
-  # `RPC_REQUIRED_SCOPES` declares them; every other method changes something.
+  # Methods a session with `orchestration:read` alone may call; every other method
+  # changes something.
   @reads ~w(
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot

@@ -278,7 +278,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
   step "a project was imported from a Node server's history", context do
     root = World.git_repo(context, "imported")
 
-    # The Node server's `project.created` payload: the id is `projectId`.
+    # The `project.created` payload an earlier install wrote: the id is `projectId`.
     payload = %{
       "projectId" => "imported",
       "title" => "Imported",

@@ -151,7 +151,7 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc """
-  Runs `mix hal_c2.pair`, the MC's `hal-c2 pair`, from the other profile than the one
+  Runs `mix hal_c2.pair` from the other profile than the one
   the scenario's server runs in (`context.running_profile`, nil for the installed one
   or `:dev`): a checkout while the installed server runs, and the other way round, so
   finding the server is the command's own doing. The lines it printed are
@@ -436,7 +436,7 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc """
-  Runs `hal-c2 service <command>` as the scenario's user would from an installed
+  Runs the `service` command (`HalC2.Service`) as the scenario's user would from an installed
   release: the unit goes under their home, and the MC resolves its directories
   from the environment. The output is `context.service_output`.
   """

@@ -128,7 +128,7 @@ defmodule HalC2.Projects do
 
   @doc """
   The repository a checkout belongs to, as the contracts' `RepositoryIdentity`: its
-  origin, normalized like the Node server's (`HalC2.AgentSessions.remote_key/1`). Nil
+  origin, normalized as `HalC2.AgentSessions.remote_key/1` does. Nil
   outside a repository or without an origin.
   """
   def repository_identity(root) do
@@ -137,7 +137,7 @@ defmodule HalC2.Projects do
          url when url != "" <- String.trim(url),
          {:ok, top} <- HalC2.Git.ok(root, ~w(rev-parse --show-toplevel)) do
       key = HalC2.AgentSessions.remote_key(url)
-      # `host/owner/.../name`, as the Node server splits it.
+      # Drops the host from `host/owner/.../name`.
       path = key |> String.split("/") |> Enum.drop(1) |> Enum.join("/")
       segments = String.split(path, "/", trim: true)
 
@@ -174,7 +174,7 @@ defmodule HalC2.Projects do
   @doc """
   Gives this MC's projects the repository identity of their checkout when the
   shell starts or loads new code (`HalC2.Shell`): projects added before the MC
-  recorded one, ones imported from the Node server, and checkouts whose origin changed. A folder that is gone or has no origin keeps
+  recorded one, ones imported from an earlier install, and checkouts whose origin changed. A folder that is gone or has no origin keeps
   what it had. Not a user edit, so the update time stays.
   """
   def identify_repositories do
@@ -224,7 +224,7 @@ defmodule HalC2.Projects do
   end
 
   # The contracts' `Project`: stored entities drop null fields, and projects
-  # imported from the Node log name their id `projectId`.
+  # imported from an earlier install's log name their id `projectId`.
   defp contract(project) do
     optional =
       Map.take(
@@ -245,8 +245,8 @@ defmodule HalC2.Projects do
   end
 
   @doc """
-  Brings projects whose settings say `defaultAutoPull` up to date at boot, as the
-  Node server does: only a clean checkout on its default branch with an upstream,
+  Brings projects whose settings say `defaultAutoPull` up to date at boot. Only a
+  clean checkout on its default branch with an upstream,
   nothing of its own to push, and something new to pull. Each checkout is pulled
   once however many projects share it; a failure is logged and skipped.
   """
@@ -348,6 +348,6 @@ defmodule HalC2.Projects do
   defp expand("~/" <> rest), do: Path.join(home(), rest)
   defp expand(path), do: path
 
-  # `$HOME` as the process sees it now, like Node's `os.homedir()`.
+  # `$HOME` as the process sees it now.
   defp home, do: System.get_env("HOME") || System.user_home!()
 end

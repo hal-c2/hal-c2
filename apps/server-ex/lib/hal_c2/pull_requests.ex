@@ -1,8 +1,7 @@
 defmodule HalC2.PullRequests do
   @moduledoc """
-  Pull requests for this MC's projects (`pullRequests.*`), as the Node server's
-  `PullRequestService` serves them. A project's repository is its checkout's primary
-  remote; GitHub repositories are read and changed through `gh`
+  Pull requests for this MC's projects (`pullRequests.*`). A project's repository is
+  its checkout's primary remote; GitHub repositories are read and changed through `gh`
   (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing and
   otherwise answered with `PullRequestUnavailableError` (`provider-unsupported`).
 

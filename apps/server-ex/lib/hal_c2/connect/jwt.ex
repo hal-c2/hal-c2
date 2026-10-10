@@ -2,7 +2,7 @@ defmodule HalC2.Connect.Jwt do
   @moduledoc """
   The signatures HAL-C2 Connect trades in: Ed25519 (`EdDSA`) JWTs between the MC and
   the relay, and the P-256 DPoP proofs (RFC 9449) devices bind credentials with.
-  Keys travel as PEM (SPKI / PKCS8) as the Node server writes them.
+  Keys travel as PEM (SPKI / PKCS8), the format earlier installs stored them in.
   """
 
   @spki_prefix Base.decode16!("302A300506032B6570032100")

@@ -152,7 +152,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     context
   end
 
-  # Node waits 2s and then 4s between attempts.
+  # The retry waits 2s and then 4s between attempts.
   step "the thread is retitled after the third attempt", context do
     World.await_row(World.thread_id(context, "new"), &(&1["title"] == "Parser cleanup"), 15_000)
     assert length(text_calls(context)) == 3

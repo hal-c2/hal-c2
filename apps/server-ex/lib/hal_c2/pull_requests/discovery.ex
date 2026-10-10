@@ -1,9 +1,9 @@
 defmodule HalC2.PullRequests.Discovery do
   @moduledoc """
   Finds the pull request each thread's branch opened and keeps the thread's
-  `branchPullRequest` on it (`thread.pull-request.sync`), as the Node server's
-  `ThreadPullRequestService` does. A thread whose only link is a legacy
-  `linkedPullRequest` that merged or closed moves to its branch's open one.
+  `branchPullRequest` on it (`thread.pull-request.sync`). A thread whose only link is a
+  `linkedPullRequest` from an older payload that merged or closed moves to its branch's
+  open one.
 
   A thread is looked at when it appears, changes branch, worktree or title, or is
   unarchived, and with a fresh answer when it is unsettled or a run ends. Unsettled
@@ -270,7 +270,7 @@ defmodule HalC2.PullRequests.Discovery do
   end
 
   # What a thread in a group would move off, and so needs the host's word on: a
-  # branch pull request its branch no longer finds, and a legacy link an open branch
+  # branch pull request its branch no longer finds, and an older-payload link an open branch
   # pull request would replace. One batch per host.
   defp previous_summaries(placed) do
     refs =

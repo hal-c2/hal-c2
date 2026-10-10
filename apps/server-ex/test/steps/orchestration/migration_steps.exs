@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Orchestration.Migration do
   @moduledoc """
   Steps for `features/mc/orchestration/migration.feature`. The snapshot is a
-  Node server database holding `orchestration_events` (`World.node_log/2`), built
+  database from an earlier install holding `orchestration_events` (`World.node_log/2`), built
   from `context.snapshot` (oldest first) when the operator imports it. The operator
   runs `mix hal_c2.import` (`Mix.Tasks.HalC2.Import`) while the MC is stopped, and the
   MC starts on the result.
@@ -266,7 +266,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
   end
 
   # --- version 1 threads -------------------------------------------------------------
-  # A thread the Node server never moved to v2 has only version 1 events in the log;
+  # A thread an earlier install never moved to v2 has only version 1 events in the log;
   # the import folds them (`HalC2.Import.V1Thread`) into a thread whose messages sit
   # outside any run.
 
@@ -498,7 +498,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
     path
   end
 
-  # Marks a thread's events as logged before the Node server's v2 orchestrator.
+  # Marks a thread's events as logged before an earlier install's v2 orchestrator.
   defp version_1(path, stream) do
     {:ok, db} = Sqlite3.open(path)
     sql = "UPDATE orchestration_events SET application_event_version = 1 WHERE stream_id = ?1"

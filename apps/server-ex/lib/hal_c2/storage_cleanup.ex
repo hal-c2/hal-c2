@@ -1,6 +1,6 @@
 defmodule HalC2.StorageCleanup do
   @moduledoc """
-  Removes what the user's storage settings say may go, as the Node server does:
+  Removes what the user's storage settings say may go:
   thread worktrees under `<home>/worktrees` (after days idle, once merged, once
   their thread is deleted, or when their branch is already in the default
   branch), and browser artifacts and rotated logs (`*.log.N`, `*.ndjson.N` under

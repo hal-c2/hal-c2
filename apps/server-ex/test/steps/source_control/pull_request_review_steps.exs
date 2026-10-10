@@ -237,7 +237,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestReview do
   step "the user saves the title and description of pull request {int} unchanged",
        %{args: [number]} = context do
     assert number == context.pr_number
-    # The editor sends only what changed (`pullRequestEditing.logic.ts`): nothing here.
+    # The editor sends only what changed: nothing here.
     call(context, "pullRequests.update", %{})
   end
 

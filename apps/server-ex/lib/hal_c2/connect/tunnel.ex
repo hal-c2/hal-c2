@@ -1,6 +1,6 @@
 defmodule HalC2.Connect.Tunnel do
   @moduledoc """
-  The managed tunnel's connector (`ManagedEndpointRuntime.ts`): the relay client
+  The managed tunnel's connector: the relay client
   (`HalC2.Connect.RelayClient`) running `tunnel run` with the relay's connector token,
   restarted when it exits.
 

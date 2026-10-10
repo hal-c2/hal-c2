@@ -3,13 +3,13 @@ defmodule HalC2.Desktop do
   Running as the HAL-C2 desktop app's own MC.
 
   The desktop app starts the release with `HAL_C2_BOOTSTRAP_STDIN=1` and writes one
-  JSON line to its stdin: the bootstrap it gives the Node server (`port`, bind
+  JSON line to its stdin: the bootstrap it gives the MC (`port`, bind
   `host`, `halC2Home`, and `desktopBootstrapToken`). Its window exchanges that token at
   `/oauth/token` for a bearer session (`HalC2.Auth`), so the local machine needs no
   pairing. The token never appears in argv or the environment.
 
-  `halC2Home` is the root of the MC's files (`<halC2Home>/data/elixir` and so on,
-  apart from the Node server's); with none, or an old `~/.t3`/`~/.hal-c2` home, the MC
+  `halC2Home` is the root of the MC's files (`<halC2Home>/data/elixir` and so on);
+  with none, or an old `~/.t3`/`~/.hal-c2` home, the MC
   uses the XDG directories.
   """
 

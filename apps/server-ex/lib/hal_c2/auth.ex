@@ -1,6 +1,6 @@
 defmodule HalC2.Auth do
   @moduledoc """
-  Client authentication, wire-compatible with the Node server so existing clients
+  Client authentication, wire-compatible with earlier HAL-C2 installs so existing clients
   pair with an MC exactly as they pair with any environment.
 
     * A pairing token (5 minutes, single use) is exchanged at `/oauth/token` for a
@@ -37,7 +37,7 @@ defmodule HalC2.Auth do
   @pairing_ttl :timer.minutes(5)
   @session_ttl :timer.hours(24 * 30)
   @dpop_session_ttl :timer.hours(1)
-  # The dev credential's session never expires (the Node server's 9999-12-31).
+  # The dev credential's session never expires (9999-12-31, the value earlier installs used).
   @dev_expires_at 253_402_300_799_999
   @ticket_ttl :timer.minutes(5)
   # Expired pairing tokens, sessions, tickets and proofs are dropped this often.
@@ -264,7 +264,7 @@ defmodule HalC2.Auth do
   @doc """
   A WebSocket ticket's session scopes, leaving the ticket usable: `{:ok, scopes}`.
   The device hub proxy (`HalC2.Devices.Proxy`) authenticates every stream and image
-  of a Device panel with one ticket, as the Node server does.
+  of a Device panel with one ticket.
   """
   @spec ticket_scopes(String.t()) :: {:ok, [String.t()]} | :error
   def ticket_scopes(ticket) do
@@ -607,7 +607,7 @@ defmodule HalC2.Auth do
   end
 
   # The reusable development credential, as a session of its own in this MC's store
-  # (created once; a revoked one comes back on the next start, as on the Node server).
+  # (created once; a revoked one comes back on the next start).
   defp dev_credential(path) do
     case Application.get_env(:hal_c2, :dev_auth_token) do
       token when is_binary(token) and token != "" ->

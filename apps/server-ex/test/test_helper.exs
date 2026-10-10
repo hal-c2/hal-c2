@@ -1,6 +1,7 @@
 # Tests tagged :codex or :claude drive the real provider CLIs; run them with
 # `mix test --include codex` / `--include claude`. Tests tagged :parity compare
-# against Node output from real data; see HalC2.Projection.ShellParityTest.
+# against output HAL-C2 produced before the MC, from real data; see
+# HalC2.Projection.ShellParityTest.
 ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
 
 # The Gherkin specification runs only when asked for (`mix features`, or

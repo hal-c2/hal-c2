@@ -1,6 +1,6 @@
 defmodule HalC2.PullRequests.GitHubStack do
   @moduledoc """
-  Actions on a whole GitHub stack of pull requests, as the Node server runs them:
+  Actions on a whole GitHub stack of pull requests:
   merging a layer merges every open layer below it in one request, and updating
   the stack rebases each open layer onto the one below, from the bottom up. Both
   change only GitHub, never the local checkout.
