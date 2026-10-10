@@ -228,7 +228,8 @@ defmodule HalC2.Acp do
           "driver" => driver,
           "enabled" => enabled,
           "installed" => true,
-          "version" => :persistent_term.get({__MODULE__, id, :version}, "unknown"),
+          # Known once the agent has been launched, which a disabled one never is.
+          "version" => :persistent_term.get({__MODULE__, id, :version}, nil),
           "status" =>
             cond do
               not enabled -> "disabled"

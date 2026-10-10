@@ -26,6 +26,22 @@ Feature: Desktop shell scenarios: composer
     Then plan mode is requested
     And the composer keeps the keyboard
 
+  @desktop @backlog-desktop
+  Scenario: Tab leaves the composer for its controls unless the caret is in a list item
+    Given the composer is empty with keyboard focus
+    When the user presses Tab
+    Then the composer text is unchanged
+    And the keyboard moves to the next control
+    When the composer holds the list item "- item" with the caret in it
+    And the user presses Tab
+    Then the item is indented to "  - item"
+    And the composer keeps the keyboard
+
+  @desktop @backlog-desktop
+  Scenario: The composer offers each model option once
+    Given a model with a reasoning effort, a context window and fast mode
+    Then the composer shows one reasoning picker, one context window picker and one fast mode toggle
+
   @desktop
   Scenario: Up in an empty composer recalls the previous prompt
     Given the composer is empty with keyboard focus

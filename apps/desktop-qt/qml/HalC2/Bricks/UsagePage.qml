@@ -120,10 +120,12 @@ Rectangle {
 
             Label {
                 objectName: "usageWindowLabel"
-                // Gives way first where the centre is narrow.
+                // Its own width where there is room for it, and the first to give
+                // way where the centre is narrow.
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                Layout.maximumWidth: implicitWidth
+                // Whole pixels: a width rounded down from the text's would elide it.
+                Layout.maximumWidth: Math.ceil(implicitWidth)
                 visible: !page.limitsShown
                 text: page.model ? page.model.windowLabel : ""
                 color: page.muted
@@ -404,7 +406,7 @@ Rectangle {
                 // Usage: the total, each provider's part, then the breakdowns.
                 ColumnLayout {
                     Layout.fillWidth: true
-                    visible: !page.limitsShown && page.summary !== null
+                    visible: !page.limitsShown && !!page.summary
                     spacing: 4
 
                     Label {

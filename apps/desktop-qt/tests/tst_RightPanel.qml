@@ -21,6 +21,24 @@ Item {
     }
 
     Component {
+        id: menuItemComponent
+        ShellMenuItem {
+            width: 200
+            text: "Commit"
+            enabled: false
+            reason: "No uncommitted changes in this branch at all."
+        }
+    }
+
+    Component {
+        id: detailsComponent
+        ThreadDetailsPanel {
+            width: 280
+            height: 700
+        }
+    }
+
+    Component {
         id: filesComponent
         FilesPanel {
             width: 400
@@ -345,6 +363,109 @@ Item {
             source.wrap = true;
             compare(lines.contentWidth, lines.width);
             compare(lines.flickableDirection, Flickable.VerticalFlick);
+        }
+
+        function test_menuItemShowsItsReasonInFull() {
+            const item = createTemporaryObject(menuItemComponent, root);
+            const reason = findChild(item, "menuItemReason");
+            verify(reason && reason.visible);
+            compare(reason.text, item.reason);
+            verify(reason.lineCount > 1, "the reason wraps instead of eliding");
+            verify(item.implicitHeight >= 28 + reason.contentHeight, "the row grows to hold it");
+            verify(reason.width <= item.width);
+            item.reason = "";
+            verify(!reason.visible);
+            compare(item.implicitHeight, 28);
+        }
+
+        function test_unavailablePullRequestKindsSayWhy() {
+            const state = panelState("diff");
+            state.canAdd = { diff: true, files: true, agents: true, terminal: true, pullRequests: false, pullRequest: false };
+            state.addReasons = { pullRequests: "No linked pull requests are available for this thread.", pullRequest: "This thread's branch has no pull request yet." };
+            Shell.state = Object.assign({}, Shell.state, { panel: state });
+            const panel = createTemporaryObject(panelComponent, root);
+            mouseClick(findChild(panel, "panelAdd"));
+            const list = findChild(panel, "panelAddPullRequests");
+            const review = findChild(panel, "panelAddPullRequest");
+            verify(list && review);
+            verify(!list.enabled && !review.enabled);
+            compare(findChild(list, "menuItemReason").text, state.addReasons.pullRequests);
+            compare(findChild(review, "menuItemReason").text, state.addReasons.pullRequest);
+            verify(list.iconName !== review.iconName, "the two kinds have their own icons");
+        }
+
+        function test_panelHasALeadingBorderUnlessMaximized() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root);
+            const border = findChild(panel, "panelBorder");
+            verify(border && border.visible);
+            compare(border.x, 0);
+            compare(border.width, 1);
+            compare(border.color, Theme.palette.color("border", "#27272a"));
+            const maximized = panelState("diff");
+            maximized.maximized = true;
+            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
+            tryVerify(() => !border.visible);
+        }
+
+        function test_tabsThatDoNotFitScrollAndKeepTheActiveOneInView() {
+            const state = panelState("diff");
+            state.tabs = ["Diff", "Files", "Agents", "Previews", "Terminal with a long name", "Device"].map((title, i) => ({ id: "t" + i, kind: "diff", title: title }));
+            state.activeId = "t0";
+            Shell.state = Object.assign({}, Shell.state, { panel: state });
+            const panel = createTemporaryObject(panelComponent, root, { width: 420 });
+            const scroll = findChild(panel, "panelScrollTabs");
+            tryVerify(() => scroll.visible, 1000, "overflowing tabs get scroll buttons");
+            compare(findChild(panel, "panelScrollLeft").enabled, false);
+            verify(findChild(panel, "panelScrollRight").enabled);
+
+            const next = panelState("t5");
+            next.tabs = state.tabs;
+            Shell.state = Object.assign({}, Shell.state, { panel: next });
+            const close = findChild(panel, "panelClose-t5");
+            verify(close);
+            const strip = findChild(panel, "panelTab-t5").parent.parent;
+            tryVerify(() => {
+                const p = close.mapToItem(strip.parent, close.width, 0).x;
+                return p <= scroll.x + 1 && close.mapToItem(strip.parent, 0, 0).x >= strip.x;
+            }, 1000, "the active tab and its close button are in view");
+            verify(findChild(panel, "panelScrollLeft").enabled);
+            const title = findChild(panel, "panelTab-t4");
+            verify(title.width <= 112 + 13 + 20 + 12 + 16, "a long title is capped");
+        }
+
+        function test_finishedSubagentsFoldUnderPreviousAgentsWithAFailedCount() {
+            const relations = [{ threadKey: "e:fork", title: "A fork", relation: "Fork", status: "finished" },
+                               { threadKey: "e:run", title: "Running one", relation: "Subagent", status: "running" }];
+            for (let i = 0; i < 8; ++i)
+                relations.push({ threadKey: "e:done" + i, title: "Done " + i, relation: "Subagent", status: i < 2 ? "failed" : "finished" });
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "", relations: relations } });
+            compare(details.leading.length, 2);
+            compare(details.previous.length, 8);
+            compare(details.failedCount, 2);
+            const previous = findChild(details, "threadDetailsPrevious");
+            verify(previous.visible);
+            verify(previous.text.indexOf("(8)") >= 0);
+            compare(findChild(details, "threadDetailsFailed").text, "2 failed");
+            verify(!findChild(details, "threadDetailsShowMore").visible, "closed, the two rows fit the first page");
+            mouseClick(previous);
+            compare(details.previousOpen, true);
+            verify(findChild(details, "threadDetailsShowMore").visible, "6 rows, the rest behind Show more");
+            compare(details.hiddenCount, 4);
+            mouseClick(findChild(details, "threadDetailsShowMore"));
+            compare(details.hiddenCount, 0);
+            verify(!findChild(details, "threadDetailsShowMore").visible);
+        }
+
+        function test_openFileGetsMostOfThePanel() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const lines = findChild(files, "fileLines");
+            verify(viewer);
+            tryVerify(() => viewer.visible);
+            verify(viewer.height >= files.height / 2, "viewer " + viewer.height + " of " + files.height);
+            verify(lines.height > 100, "lines " + lines.height);
         }
 
         function test_revertAsksFirstAndCanKeepOrRestoreTheFiles() {

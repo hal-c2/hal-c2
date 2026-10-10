@@ -2352,8 +2352,15 @@ QVariantMap ComposerController::turnState() const {
   const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
   QVariantList queue;
   for (const QJsonObject& run : queued) {
-    queue.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))},
-                             {QStringLiteral("text"), str(messages.value(str(run, QLatin1String("userMessageId"))), QLatin1String("text"))}});
+    const QJsonObject message = messages.value(str(run, QLatin1String("userMessageId")));
+    // What the MC sent the agent for itself (a delegated task's result, the
+    // provider's wake-up) waits its turn too, but is not the user's to edit,
+    // steer with or remove (apps/web session-logic.ts getUserQueuedThreadRuns).
+    if (message.value(QLatin1String("notification")).isObject() || message.value(QLatin1String("delegatedCompletion")).isObject() ||
+        message.value(QLatin1String("providerWake")).toBool()) {
+      continue;
+    }
+    queue.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))}, {QStringLiteral("text"), str(message, QLatin1String("text"))}});
   }
   state.insert(QStringLiteral("queue"), queue);
   return state;

@@ -570,8 +570,19 @@ defmodule HalC2.Orchestration.Delegation do
 
   # The parent hears the result as a message that runs once it is free. The
   # message carries which task it delivers (`delegatedCompletion`), so the
-  # provider's acceptance and a later dispose can find it.
+  # provider's acceptance and a later dispose can find it, and what the user is
+  # shown in place of its text (`notification`): that the task ended, and how.
   defp wake(parent_id, task, status, result) do
+    {outcome, ended} =
+      case status do
+        "completed" -> {"completed", "finished"}
+        "failed" -> {"failed", "failed"}
+        _ -> {"cancelled", "stopped"}
+      end
+
+    label = String.trim(task["title"] || "")
+    label = if label == "", do: "Delegated task", else: label
+
     text = """
     <delegated_task_result taskId="#{task["id"]}" title="#{task["title"]}" status="#{status}" childThreadId="#{task["childThreadId"]}">
     #{result || "(no answer)"}
@@ -588,6 +599,11 @@ defmodule HalC2.Orchestration.Delegation do
       "createdBy" => "system",
       "creationSource" => "server",
       "dispatchMode" => %{"type" => "queue_after_active"},
+      "notification" => %{
+        "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
+        "outcome" => outcome,
+        "summary" => "#{label} #{ended}"
+      },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
         "taskIds" => [task["id"]],

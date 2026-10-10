@@ -16,6 +16,9 @@ Rectangle {
     readonly property var invite: model ? model.invite : null
     readonly property var notice: model ? model.notice : null
     readonly property bool busy: model !== null && model.busy
+    // The session cannot manage the cluster: the page explains and locks what it would do.
+    readonly property bool needsAdmin: model !== null && model.needsAdmin === true
+    readonly property bool canChange: !busy && !needsAdmin
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
 
@@ -86,12 +89,9 @@ Rectangle {
             width: Math.min(640, parent.width - 48)
             spacing: 8
 
-            Label {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-                text: qsTr("Cluster")
-                color: page.foreground
-                font.pixelSize: Math.round(18 * Theme.fontScale)
-                font.weight: Font.DemiBold
+                section: qsTr("Cluster")
             }
 
             Note {
@@ -114,7 +114,13 @@ Rectangle {
             }
 
             Note {
-                visible: page.status === null
+                objectName: "clusterNeedsAdmin"
+                visible: page.needsAdmin
+                text: qsTr("Managing the cluster needs an administrator session. Pair this desktop with a link that grants Manage access.")
+            }
+
+            Note {
+                visible: page.status === null && !page.needsAdmin
                 text: page.model && page.model.error ? page.model.error : qsTr("Reading…")
             }
 
@@ -159,13 +165,14 @@ Rectangle {
                 ShellButton {
                     objectName: "clusterInvite"
                     primary: true
-                    enabled: !page.busy
+                    enabled: page.canChange
                     text: qsTr("Make an invite")
                     onClicked: Shell.dispatch("cluster.invite")
                 }
 
                 ShellButton {
-                    enabled: !page.busy
+                    objectName: "clusterInviteTailscale"
+                    enabled: page.canChange
                     text: qsTr("Invite over Tailscale")
                     onClicked: Shell.dispatch("cluster.invite", {
                         tailscale: true
@@ -204,13 +211,15 @@ Rectangle {
                     id: joinLink
                     objectName: "clusterJoinLink"
                     Layout.fillWidth: true
+                    enabled: !page.needsAdmin
                     placeholderText: qsTr("Invite link from the other machine…")
                     onAccepted: join.clicked()
                 }
 
                 ShellButton {
                     id: join
-                    enabled: !page.busy
+                    objectName: "clusterJoin"
+                    enabled: page.canChange
                     text: qsTr("Join")
                     onClicked: {
                         Shell.dispatch("cluster.join", {

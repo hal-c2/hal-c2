@@ -167,7 +167,8 @@ SettingsPage {
         Note {
             visible: page.model !== null && page.model.accessError !== null
             text: page.model && page.model.accessError ? page.model.accessError : ""
-            color: page.danger
+            // Lacking administrative access is a state to explain; a failed read is an error.
+            color: page.model && page.model.accessNeedsAdmin ? page.muted : page.danger
         }
 
         Note {
@@ -223,7 +224,7 @@ SettingsPage {
                 Repeater {
                     model: page.scopeOptions
 
-                    delegate: CheckBox {
+                    delegate: ShellCheckBox {
                         required property var modelData
 
                         text: modelData.title

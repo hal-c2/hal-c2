@@ -13,6 +13,8 @@ Item {
     property bool actionEnabled: true
     property bool menuEnabled: true
     property string toolTip: ""
+    // What the chevron half is called to assistive technology; the default names the action.
+    property string menuName: text.length > 0 ? qsTr("More %1 options").arg(text) : qsTr("More options")
     property real maximumTextWidth: 200
     // Icon only, for narrow header strips.
     property bool compact: false
@@ -53,9 +55,7 @@ Item {
             enabled: split.actionEnabled
             text: split.compact ? "" : split.text
             Accessible.name: split.text
-            ToolTip.visible: hovered && (split.toolTip.length > 0 || split.compact)
-            ToolTip.text: split.toolTip.length > 0 ? split.toolTip : split.text
-            ToolTip.delay: 400
+            toolTip: split.toolTip
             onClicked: split.clicked()
         }
 
@@ -68,6 +68,7 @@ Item {
         }
 
         ShellButton {
+            objectName: "menu"
             Layout.fillHeight: true
             Layout.preferredWidth: 24
             subtle: true
@@ -75,7 +76,8 @@ Item {
             chevron: true
             chevronSize: 16
             enabled: split.menuEnabled
-            Accessible.name: qsTr("More options")
+            // Two split buttons in one header must not both be "More options".
+            Accessible.name: split.menuName
             onClicked: split.menuRequested()
         }
     }

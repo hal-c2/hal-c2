@@ -200,6 +200,8 @@ bool SettingsScopeController::editable() const {
 QString SettingsScopeController::disabledReason() const {
   const Resolved resolved = resolve();
   if (resolved.kind == QLatin1String("unavailable")) return resolved.message;
+  // A page that edits no settings (Archive only narrows a list) has nothing to reconnect.
+  if (!m_open) return {};
   if (targets().isEmpty()) return QStringLiteral("Reconnect the selected environment to change this setting.");
   return {};
 }

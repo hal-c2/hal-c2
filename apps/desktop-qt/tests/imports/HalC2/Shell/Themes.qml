@@ -10,6 +10,7 @@ QtObject {
     property var halves: ({})
     property string resolvedId: "hal-c2"
     property var available: []
+    property var standardSwatch: []
     property var roles: ["canvas", "accent"]
     property var families: [{ title: "Foundation", roles: ["canvas"] }, { title: "Brand & content", roles: ["accent"] }]
     // The editor's draft, and what an import waits on.
@@ -32,6 +33,7 @@ QtObject {
     }
     function choose(id) {
         themeId = id;
+        resolvedId = id || "hal-c2";
         return record("choose", [id]);
     }
     function chooseHalf(appearance, id) {

@@ -592,7 +592,7 @@ Rectangle {
                     onClicked: card.configuring = !card.configuring
                 }
 
-                Switch {
+                ShellSwitch {
                     objectName: "enabled"
                     checked: card.provider.enabled
                     Accessible.name: qsTr("Use %1 for new threads").arg(card.provider.name)
@@ -670,21 +670,15 @@ Rectangle {
                         onClicked: page.act(install ? "install" : "update", card.provider)
                     }
 
-                    Label {
-                        Layout.fillWidth: true
-                        visible: !!(card.advisory && card.advisory.updateCommand)
-                        text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
-                        color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.family: "monospace"
-                        elide: Text.ElideMiddle
-                    }
-
+                    // The command is a filesystem path on most installs: copy it, show it only on hover.
                     ShellButton {
+                        objectName: "copyUpdateCommand"
                         visible: !!(card.advisory && card.advisory.updateCommand)
                         subtle: true
-                        text: qsTr("Copy")
+                        iconName: "copy"
                         Accessible.name: qsTr("Copy the update command")
+                        ToolTip.visible: hovered
+                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
                         onClicked: page.act("copyUpdateCommand", card.provider)
                     }
                 }
@@ -1190,12 +1184,9 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
 
-                Label {
+                SettingsBreadcrumb {
                     Layout.fillWidth: true
-                    text: qsTr("Providers")
-                    color: page.foreground
-                    font.pixelSize: Math.round(18 * Theme.fontScale)
-                    font.weight: Font.DemiBold
+                    section: qsTr("Providers")
                 }
 
                 ShellButton {
@@ -1324,7 +1315,7 @@ Rectangle {
                     }
                 }
 
-                SpinBox {
+                ShellSpinBox {
                     objectName: "seconds"
                     from: 0
                     to: 86400

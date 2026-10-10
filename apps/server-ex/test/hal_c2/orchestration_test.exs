@@ -325,6 +325,41 @@ defmodule HalC2.OrchestrationTest do
     assert {:error, "Only an empty active thread" <> _} = reuse.(thread_id, "project-1")
   end
 
+  test "the archived threads follow an archive, unarchive or delete as soon as it replies" do
+    archived = fn ->
+      {:ok, %{"threads" => threads}} =
+        Orchestration.handle("orchestration.getArchivedShellSnapshot", %{})
+
+      Enum.map(threads, & &1["id"])
+    end
+
+    for id <- ~w(spike vite) do
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.create",
+          "threadId" => id,
+          "projectId" => "project-1",
+          "title" => "Old #{id}"
+        })
+    end
+
+    command = &Orchestration.dispatch(%{"type" => "thread.#{&1}", "threadId" => &2})
+
+    {:ok, _} = command.("archive", "spike")
+    assert archived.() == ["spike"]
+    assert {:error, "Old spike is already archived."} = command.("archive", "spike")
+
+    {:ok, _} = command.("unarchive", "spike")
+    assert archived.() == []
+    # What a second click on Unarchive is told names the thread as the user knows it.
+    assert {:error, "Old spike is not archived."} = command.("unarchive", "spike")
+
+    {:ok, _} = command.("archive", "vite")
+    assert archived.() == ["vite"]
+    {:ok, _} = command.("delete", "vite")
+    assert archived.() == []
+  end
+
   test "a launch retried with its command id after a reconnect starts one thread with one message" do
     thread_id = "thread-retried"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
@@ -741,6 +776,29 @@ defmodule HalC2.OrchestrationTest do
              }
            } =
              call.("task_status", %{"taskId" => task_id})
+
+    # Once the parent is free the result starts a run. The transcript says the task
+    # finished; the envelope is the agent's to read, not a message from the user.
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => parent_id})
+    state = await_statuses(parent_id, ["interrupted", "running"])
+    [_, woken] = runs(state)
+    item = StreamState.get(state, "turn-item")["turn-item:user:#{woken["userMessageId"]}"]
+
+    assert %{
+             "type" => "notification",
+             "runId" => run_id,
+             "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
+             "outcome" => "completed",
+             "summary" => "Say hello finished"
+           } = item
+
+    assert run_id == woken["id"]
+    refute Map.has_key?(item, "text")
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["type"] == "user_message" and &1["text"] =~ "delegated_task_result")
+           )
   end
 
   describe "queued messages" do

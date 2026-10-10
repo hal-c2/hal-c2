@@ -297,12 +297,15 @@ defmodule HalC2.Streams.Server do
 
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
 
-  def handle_call(:flush_shell, _from, %{shell_scheduled: true} = state) do
-    {:noreply, state, _} = handle_info(:shell, state)
+  def handle_call(:flush_shell, _from, state) do
+    {:noreply, state, _} =
+      if state.shell_scheduled, do: handle_info(:shell, state), else: {:noreply, state, nil}
+
+    # The row went to the shell from this process, so this call is handled after it:
+    # the caller can read the row back.
+    HalC2.Shell.sync()
     {:reply, :ok, state, timeout(state)}
   end
-
-  def handle_call(:flush_shell, _from, state), do: {:reply, :ok, state, timeout(state)}
 
   @impl true
   def handle_cast({:unsubscribe, pid}, state) do

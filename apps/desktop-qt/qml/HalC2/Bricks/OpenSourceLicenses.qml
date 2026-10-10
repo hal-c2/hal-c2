@@ -36,7 +36,9 @@ Rectangle {
         anchors.bottomMargin: 24
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar {}
+        ScrollBar.vertical: ScrollBar {
+            Accessible.name: qsTr("Scroll licences")
+        }
         model: page.status === "ready" ? page.entries : []
 
         header: ColumnLayout {

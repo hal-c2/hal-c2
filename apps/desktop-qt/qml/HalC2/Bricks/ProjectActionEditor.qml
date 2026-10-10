@@ -141,7 +141,7 @@ Dialog {
             Layout.fillWidth: true
             spacing: 8
 
-            Switch {
+            ShellSwitch {
                 objectName: "projectActionAutoOpenPreview"
                 enabled: dialog.editor?.canAutoOpenPreview ?? false
                 checked: dialog.editor?.autoOpenPreview ?? false
@@ -156,7 +156,7 @@ Dialog {
             Layout.fillWidth: true
             spacing: 8
 
-            Switch {
+            ShellSwitch {
                 objectName: "projectActionSetup"
                 checked: dialog.editor?.runOnWorktreeCreate ?? false
                 onToggled: dialog.set("runOnWorktreeCreate", checked)
@@ -170,7 +170,7 @@ Dialog {
             Layout.fillWidth: true
             spacing: 8
 
-            Switch {
+            ShellSwitch {
                 objectName: "projectActionWait"
                 enabled: dialog.editor?.runOnWorktreeCreate ?? false
                 checked: dialog.editor?.waitForSetup ?? false

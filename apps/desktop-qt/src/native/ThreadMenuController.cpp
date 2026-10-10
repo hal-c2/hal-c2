@@ -86,6 +86,10 @@ bool ThreadMenuController::handle(const QString& action, const QVariant& payload
   if (action == QLatin1String("thread.menu")) {
     return open(map.value(QStringLiteral("key")).toString(), x, y, false);
   }
+  if (action == QLatin1String("thread.unpin")) {
+    unpin(map.value(QStringLiteral("key")).toString());
+    return true;
+  }
   if (action == QLatin1String("workspace.titleMenu")) {
     const auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
     if (!workspace || !workspace->place()) return true;
@@ -499,8 +503,7 @@ void ThreadMenuController::archive(const QString& key) {
   QJsonObject archive = target;
   archive.insert(QStringLiteral("type"), QStringLiteral("thread.archive"));
   NativeShell::of(this)->sidebar()->park(key, archive, QStringLiteral("Failed to archive thread"), SidebarController::Leave::ProjectDraft, [this, key, target, viewing] {
-    toasts()->show(QStringLiteral("success"), QStringLiteral("Archived"), QString(),
-                   ToastController::Action{QStringLiteral("Undo"), [this, key, target, viewing] {
+    toasts()->showUndo(QStringLiteral("Archived"), QStringLiteral("Archived"), [this, key, target, viewing] {
                      QJsonObject unarchive = target;
                      unarchive.insert(QStringLiteral("type"), QStringLiteral("thread.unarchive"));
                      const QString environmentId = key.left(key.indexOf(QLatin1Char(':')));
@@ -515,7 +518,7 @@ void ThreadMenuController::archive(const QString& key) {
                                                        NavigationController::Route::thread(key));
                                                  }
                                                });
-                   }, false, QStringLiteral("Archived")});
+                   });
   });
 }
 
@@ -582,13 +585,11 @@ void ThreadMenuController::unpin(const QString& key) {
   const auto run = [this, key, threadId = thread->id, orderKey = thread->pinOrderKey] {
     command(key, {{QStringLiteral("type"), QStringLiteral("thread.unpin")}, {QStringLiteral("threadId"), threadId}},
             QStringLiteral("Failed to unpin thread"), [this, key, threadId, orderKey] {
-              toasts()->show(QStringLiteral("success"), QStringLiteral("Unpinned"), QString(),
-                             ToastController::Action{QStringLiteral("Undo"), [this, key, threadId, orderKey] {
-                               QJsonObject pin{{QStringLiteral("type"), QStringLiteral("thread.pin")},
-                                               {QStringLiteral("threadId"), threadId}};
-                               if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
-                               command(key, pin, QStringLiteral("Failed to undo unpin"));
-                             }, false, QStringLiteral("Unpinned")});
+              toasts()->showUndo(QStringLiteral("Unpinned"), QStringLiteral("Unpinned"), [this, key, threadId, orderKey] {
+                QJsonObject pin{{QStringLiteral("type"), QStringLiteral("thread.pin")}, {QStringLiteral("threadId"), threadId}};
+                if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
+                command(key, pin, QStringLiteral("Failed to undo unpin"));
+              });
             });
   };
   if (setting(this, "confirmThreadUnpin")) {

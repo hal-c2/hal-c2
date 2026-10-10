@@ -45,7 +45,7 @@ var general = [
     { key: "inAppNotificationsEnabled", kind: "switch", title: "In-app notifications",
       description: "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus." },
     { key: "timestampFormat", kind: "select", title: "Time format",
-      description: "System default follows your browser or OS clock preference.",
+      description: "System default follows your system's clock and region settings.",
       options: [option("locale", "System default"), option("12-hour", "12-hour"), option("24-hour", "24-hour")] },
     { key: "responseStreamingMode", kind: "select", title: "Response streaming",
       mixedDescription: "The selected targets use different streaming modes.",

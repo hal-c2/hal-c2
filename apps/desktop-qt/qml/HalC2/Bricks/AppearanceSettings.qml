@@ -42,23 +42,167 @@ SettingsPage {
 
     component Heading: ColumnLayout {
         property alias text: label.text
+        // What acts on the whole section, at the heading's right.
+        default property alias actions: actions.data
 
         Layout.fillWidth: true
         spacing: 6
 
-        Label {
-            id: label
-
+        RowLayout {
+            Layout.fillWidth: true
             Layout.topMargin: 12
-            color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(14 * Theme.fontScale)
-            font.weight: Font.DemiBold
+            spacing: 8
+
+            Label {
+                id: label
+
+                Layout.fillWidth: true
+                color: Theme.palette.color("text", "#e4e4e7")
+                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.weight: Font.DemiBold
+            }
+
+            RowLayout {
+                id: actions
+
+                spacing: 8
+            }
         }
 
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: 1
             color: Theme.palette.color("border", "#27272a")
+        }
+    }
+
+    // A theme to draw with: its colors, its name, and a mark on the one in use (`checked`).
+    component ThemeChoice: AbstractButton {
+        id: choice
+
+        // The theme's canvas, accent and text.
+        property var swatch: []
+        readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
+
+        Layout.fillWidth: true
+        implicitHeight: 32
+        leftPadding: 8
+        rightPadding: 8
+        hoverEnabled: true
+        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.weight: Font.Medium
+
+        background: Rectangle {
+            radius: Math.min(Theme.radius, 8)
+            color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
+            border.width: choice.checked || choice.visualFocus ? 1 : 0
+            border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
+        }
+
+        contentItem: RowLayout {
+            spacing: 8
+
+            Row {
+                spacing: 3
+
+                Repeater {
+                    model: choice.swatch
+
+                    delegate: Rectangle {
+                        required property string modelData
+
+                        objectName: "swatch"
+                        width: 14
+                        height: 14
+                        radius: 7
+                        color: modelData
+                        border.color: Theme.palette.color("border", "#27272a")
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: choice.text
+                font: choice.font
+                color: page.foreground
+                elide: Text.ElideRight
+            }
+
+            ShellIcon {
+                visible: choice.checked
+                name: "check"
+                size: 14
+                color: page.foreground
+            }
+        }
+    }
+
+    // The shell's theme file (Theme.path) is drawn over whatever is chosen
+    // below, so the page says so: the choices are still saved, and show again
+    // once the file is gone.
+    Rectangle {
+        id: shellTheme
+
+        readonly property string name: Theme.name.length > 0 ? Theme.name : qsTr("theme.json")
+
+        objectName: "shellTheme"
+        Layout.fillWidth: true
+        visible: Theme.loaded || Theme.lastError.length > 0
+        implicitHeight: shellThemeText.implicitHeight + 20
+        radius: Math.min(Theme.radius, 8)
+        color: Theme.palette.color("surfaceRaised", "#18181b")
+        border.color: Theme.palette.color("info", "#3b82f6")
+
+        ColumnLayout {
+            id: shellThemeText
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: 12
+            spacing: 4
+
+            Label {
+                objectName: "shellThemeTitle"
+                Layout.fillWidth: true
+                visible: Theme.loaded
+                text: qsTr("The shell theme file “%1” is in use").arg(shellTheme.name)
+                color: page.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemeEffect"
+                Layout.fillWidth: true
+                visible: Theme.loaded
+                text: (Theme.followsSystemAppearance ? qsTr("Its colors are drawn over the theme chosen below, and it follows the color scheme chosen here.") : qsTr("Its colors are drawn over the theme chosen below, and it keeps the app %1 whatever the color scheme.").arg(Theme.appearance === "dark" ? qsTr("dark") : qsTr("light"))) + " " + qsTr("Your choices are still saved, and show in full once the file is removed.")
+                color: page.foreground
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemeError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: Theme.lastError
+                color: Theme.palette.color("error", "#f87171")
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "shellThemePath"
+                Layout.fillWidth: true
+                text: Theme.path
+                color: page.muted
+                font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                wrapMode: Text.WrapAnywhere
+            }
         }
     }
 
@@ -89,6 +233,38 @@ SettingsPage {
     Heading {
         objectName: "themes"
         text: qsTr("Themes")
+
+        ShellButton {
+            objectName: "newTheme"
+            iconName: "plus"
+            text: qsTr("New theme")
+            onClicked: {
+                // A new theme starts from the active one, saved as a theme of its own.
+                const draft = Themes.draft("");
+                draft.id = "";
+                draft.label = qsTr("%1 copy").arg(draft.label);
+                Themes.edit(draft);
+            }
+        }
+
+        ShellButton {
+            objectName: "importTheme"
+            text: qsTr("Import theme")
+            onClicked: {
+                Themes.clearImport();
+                importer.open();
+            }
+        }
+    }
+
+    // The standard look: no theme chosen, and the way back from one.
+    ThemeChoice {
+        objectName: "theme:hal-c2"
+        text: qsTr("HAL-C2")
+        swatch: Themes.standardSwatch
+        checked: Themes.resolvedId === "hal-c2"
+        Accessible.name: qsTr("Use %1").arg(text)
+        onClicked: Themes.choose("")
     }
 
     Repeater {
@@ -106,7 +282,7 @@ SettingsPage {
             spacing: 6
 
             // A collection's variants are picked to remove several at once.
-            CheckBox {
+            ShellCheckBox {
                 objectName: "select:" + themeRow.modelData.id
                 visible: themeRow.custom && themeRow.modelData.collection.length > 0
                 checked: page.selected.indexOf(themeRow.modelData.id) >= 0
@@ -114,11 +290,11 @@ SettingsPage {
                 onToggled: page.selected = checked ? page.selected.concat([themeRow.modelData.id]) : page.selected.filter(id => id !== themeRow.modelData.id)
             }
 
-            ShellButton {
-                Layout.fillWidth: true
-                subtle: !themeRow.active
+            ThemeChoice {
+                objectName: "use:" + themeRow.modelData.id
                 text: themeRow.modelData.label
-                iconName: themeRow.active ? "check" : ""
+                swatch: themeRow.modelData.swatch ?? []
+                checked: themeRow.active
                 Accessible.name: qsTr("Use %1").arg(themeRow.modelData.label)
                 onClicked: Themes.choose(themeRow.modelData.id)
             }
@@ -157,8 +333,9 @@ SettingsPage {
             }
 
             ShellButton {
+                objectName: "export:" + themeRow.modelData.id
                 subtle: true
-                text: qsTr("Export")
+                iconName: "download"
                 Accessible.name: qsTr("Export %1").arg(themeRow.modelData.label)
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Export")
@@ -189,28 +366,6 @@ SettingsPage {
         onClicked: {
             Themes.requestRemoveMany(page.selected);
             page.selected = [];
-        }
-    }
-
-    ShellButton {
-        objectName: "newTheme"
-        iconName: "plus"
-        text: qsTr("New theme")
-        onClicked: {
-            // A new theme starts from the active one, saved as a theme of its own.
-            const draft = Themes.draft("");
-            draft.id = "";
-            draft.label = qsTr("%1 copy").arg(draft.label);
-            Themes.edit(draft);
-        }
-    }
-
-    ShellButton {
-        objectName: "importTheme"
-        text: qsTr("Import theme")
-        onClicked: {
-            Themes.clearImport();
-            importer.open();
         }
     }
 

@@ -79,7 +79,7 @@ SettingsPage {
         status: model?.status ?? ""
         objectName: "snapShot:" + key
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             enabled: toggle.model?.enabled ?? false
             checked: toggle.model?.checked ?? false
@@ -150,7 +150,7 @@ SettingsPage {
             onClicked: Shell.dispatch("snapShot.setup.open", { step: "resume" })
         }
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false)
             checked: snap.settings?.switchOn ?? false

@@ -163,7 +163,7 @@ ColumnLayout {
             }
         }
 
-        SpinBox {
+        ShellSpinBox {
             objectName: "days"
             enabled: row.ready
             from: row.spec.min ?? 1
@@ -181,7 +181,7 @@ ColumnLayout {
     Component {
         id: switchControl
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             // Mixed reads as off: a click turns it on everywhere.
             checked: !row.mixed && row.value === true
@@ -193,7 +193,7 @@ ColumnLayout {
     Component {
         id: groupingControl
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             checked: Rows.groupingOn(row.value)
             Accessible.name: row.spec.title
@@ -207,7 +207,7 @@ ColumnLayout {
     Component {
         id: settleControl
 
-        Switch {
+        ShellSwitch {
             objectName: "control"
             checked: Rows.settleOn(row.value)
             Accessible.name: row.spec.title
@@ -234,7 +234,7 @@ ColumnLayout {
     Component {
         id: numberControl
 
-        SpinBox {
+        ShellSpinBox {
             objectName: "control"
             from: row.spec.min ?? 0
             to: row.spec.max ?? 100

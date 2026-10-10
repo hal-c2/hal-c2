@@ -52,6 +52,36 @@ Feature: Windows, zoom and quitting
         | Linux    | right | minimize, maximize, close |
         | Windows  | right | minimize, maximize, close |
 
+    # The window's, not one page's header: where the old Electron window's
+    # titleBarOverlay had them (apps/desktop/src/window/DesktopWindow.ts).
+    # Proved by tst_ShellExamples.cpp (defaultShellKeepsTheWindowButtonsInTheCorner), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The window controls stay in the window's corner
+      Given the user is on Linux
+      And the right panel and the thread details are open
+      Then the window controls end at the window's right edge
+      When the user closes the thread details
+      Then the window controls have not moved
+      And nothing of the right panel is under them
+
+    # Proved by tst_ShellExamples.cpp (defaultShellHasTheWindowButtonsOnEveryPage), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario Outline: The window controls are on every page
+      Given the user is on Linux
+      When the user opens <page>
+      Then the window controls are in the window's top right corner
+      And the window can be dragged by the band they are in
+
+      Examples:
+        | page                        |
+        | a thread                    |
+        | the home page               |
+        | Pull requests               |
+        | Usage                       |
+        | Settings                    |
+        | a maximized right panel     |
+        | a plugin's page             |
+
     @desktop
     Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS

@@ -20,10 +20,11 @@ const QString kLongTitle = QStringLiteral("Move the checkout of every thread ont
 // The width the header is laid out at, set by the "When" steps.
 int headerWidth = 0;
 
-// The header's thread title laid out at `headerWidth`: {text, truncated}.
+// The header's thread title laid out at `headerWidth`: {text, truncated, width}.
 struct Title {
   QString text;
   bool truncated = false;
+  qreal width = 0;
 };
 
 Title layOutTitle(World& world) {
@@ -34,7 +35,7 @@ Title layOutTitle(World& world) {
                 QStringLiteral("the header to lay out the thread title"));
   header.window().contentItem()->polish();
   QCoreApplication::processEvents();
-  return {label->property("text").toString(), label->property("truncated").toBool()};
+  return {label->property("text").toString(), label->property("truncated").toBool(), label->width()};
 }
 
 const Steps steps([] {
@@ -57,6 +58,11 @@ const Steps steps([] {
   step(QStringLiteral("the title is shortened with an ellipsis"), [](World& world, const Captures&, const Table&) {
     const Title title = layOutTitle(world);
     expect(title.text == kLongTitle && title.truncated, QStringLiteral("the header shows \"%1\" (shortened: %2)").arg(title.text).arg(title.truncated));
+  });
+  step(QStringLiteral("the start of the title still shows"), [](World& world, const Captures&, const Table&) {
+    // Room for a few letters, not a bare ellipsis (the web's header keeps 40 px).
+    const Title title = layOutTitle(world);
+    expect(title.width >= 40, QStringLiteral("the title has %1 px").arg(title.width));
   });
 });
 

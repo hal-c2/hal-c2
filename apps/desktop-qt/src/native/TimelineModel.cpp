@@ -1,9 +1,12 @@
 #include "TimelineModel.h"
 
+#include <QCache>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QTextBlock>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <cmath>
@@ -68,6 +71,90 @@ QString numericDate(const QDate& date, bool withYear, const QLocale& locale) {
   return locale.toString(date, format);
 }
 
+// formatDayAwareTimestamp for a time that has happened: "9:41 AM",
+// "yesterday at 9:41 AM", "9/20 9:41 AM".
+QString dayAware(const QDateTime& local, const QDate& today, const QString& timestampFormat, const QLocale& locale) {
+  const QString time = sidebar::timeOfDay(local, timestampFormat, locale);
+  const qint64 days = local.date().daysTo(today);
+  if (days <= 0) return time;
+  if (days == 1) return QStringLiteral("yesterday at ") + time;
+  return numericDate(local.date(), local.date().year() != today.year(), locale) + QLatin1Char(' ') + time;
+}
+
+// A changed file as the row labels it: relative to the workspace, when it is
+// inside it (apps/web filePathDisplay.ts formatWorkspaceRelativePath).
+QString workspacePath(const QString& path, const QString& root) {
+  QString base = root;
+  while (base.size() > 1 && base.endsWith(QLatin1Char('/'))) base.chop(1);
+  if (base.isEmpty() || base == QLatin1String("/") || !path.startsWith(base + QLatin1Char('/'))) return path;
+  return path.mid(base.size() + 1);
+}
+
+// A thought as its row labels it (the web's remarkThoughtPreview): the words
+// of its Markdown on one line, which the row elides. Only its start is read,
+// and the lines are kept: reading Markdown takes a tenth of a millisecond, and
+// a row asks for its labels again each time it redraws.
+QString thoughtLine(const QString& thought) {
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"), QRegularExpression::UseUnicodePropertiesOption);
+  static QCache<QString, QString> lines(256);
+  const QString start = thought.left(600);
+  if (const QString* kept = lines.object(start)) return *kept;
+  QTextDocument document;
+  document.setMarkdown(start);
+  QString line;
+  for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+      const QTextCharFormat format = it.fragment().charFormat();
+      // An image reads as its alt text.
+      line += format.isImageFormat() ? format.stringProperty(QTextFormat::ImageAltText) : it.fragment().text();
+    }
+    line += QLatin1Char(' ');
+  }
+  line = line.replace(space, QStringLiteral(" ")).trimmed().left(200);
+  lines.insert(start, new QString(line));
+  return line;
+}
+
+// What the MC sent the agent for itself: that a delegated task ended, or that
+// the provider woke up for its background work. The MC records it as a
+// `notification` item (`summary`, `outcome`). Threads written before it did hold
+// the message as the user's instead, a delegated task's result as the envelope
+// the agent reads, and are read here as what they stand for.
+struct Notice {
+  QString summary;
+  QString outcome;
+};
+
+std::optional<Notice> noticeOf(const QJsonObject& item) {
+  const QString type = text(item, QLatin1String("type"));
+  if (type == QLatin1String("notification")) {
+    return Notice{text(item, QLatin1String("summary")).trimmed(), text(item, QLatin1String("outcome"))};
+  }
+  if (type != QLatin1String("user_message")) return std::nullopt;
+  const QString createdBy = text(item, QLatin1String("createdBy"));
+  if (createdBy == QLatin1String("agent")) {
+    // A message another agent sent names its thread, or came in over MCP.
+    if (text(item, QLatin1String("creationSource")) != QLatin1String("provider") ||
+        !text(item, QLatin1String("senderThreadId")).isEmpty()) {
+      return std::nullopt;
+    }
+    return Notice{QStringLiteral("Background activity updated"), QStringLiteral("updated")};
+  }
+  if (createdBy != QLatin1String("system")) return std::nullopt;
+  // <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
+  static const QRegularExpression envelope(
+      QStringLiteral("\\A<delegated_task_result taskId=\"[^\"]*\" title=\"([^\n]*)\" status=\"(\\w+)\" childThreadId=\"[^\"\n]*\">"));
+  const QRegularExpressionMatch match = envelope.match(text(item, QLatin1String("text")));
+  if (!match.hasMatch()) return std::nullopt;
+  const QString status = match.captured(2);
+  const QString title = match.captured(1).trimmed();
+  const QString outcome = status == QLatin1String("completed") || status == QLatin1String("failed") ? status : QStringLiteral("cancelled");
+  const QString ended = outcome == QLatin1String("completed") ? QStringLiteral("finished")
+                        : outcome == QLatin1String("failed")  ? QStringLiteral("failed")
+                                                               : QStringLiteral("stopped");
+  return Notice{QStringLiteral("%1 %2").arg(title.isEmpty() ? QStringLiteral("Delegated task") : title, ended), outcome};
+}
+
 // apps/web/src/components/chat/MessagesTimeline.tsx workEntryIconName, for
 // the turn items the native timeline shows as calls and rows.
 QString iconOf(const QJsonObject& item) {
@@ -84,9 +171,8 @@ QString iconOf(const QJsonObject& item) {
   }
   if (type == QLatin1String("subagent")) return QStringLiteral("bot");
   if (type == QLatin1String("error")) return QStringLiteral("circle-alert");
-  if (type == QLatin1String("notification")) {
-    return text(item, QLatin1String("outcome")) == QLatin1String("failed") ? QStringLiteral("circle-alert")
-                                                                            : QStringLiteral("zap");
+  if (const auto notice = noticeOf(item)) {
+    return notice->outcome == QLatin1String("failed") ? QStringLiteral("circle-alert") : QStringLiteral("zap");
   }
   // V2LifecycleRow's dividers and interrupt request.
   if (type == QLatin1String("compaction")) return QStringLiteral("minus");
@@ -148,14 +234,16 @@ QString formatDuration(qint64 ms) {
 
 enum class Kind { Message, Work, Plan, Subagent, Error, Marker, Checkpoint };
 
-Kind classify(const QString& type) {
+Kind classify(const QJsonObject& item) {
+  const QString type = text(item, QLatin1String("type"));
+  if (noticeOf(item)) return Kind::Marker;
   if (type == QLatin1String("user_message") || type == QLatin1String("assistant_message")) return Kind::Message;
   if (type == QLatin1String("proposed_plan")) return Kind::Plan;
   if (type == QLatin1String("subagent")) return Kind::Subagent;
   if (type == QLatin1String("error")) return Kind::Error;
   if (type == QLatin1String("checkpoint")) return Kind::Checkpoint;
   if (type == QLatin1String("fork") || type == QLatin1String("handoff") || type == QLatin1String("compaction") ||
-      type == QLatin1String("thread_created") || type == QLatin1String("notification")) {
+      type == QLatin1String("thread_created")) {
     return Kind::Marker;
   }
   return Kind::Work;
@@ -241,15 +329,16 @@ QString markerTitle(const QJsonObject& item) {
   if (type == QLatin1String("handoff")) return QStringLiteral("Context handoff");
   if (type == QLatin1String("compaction")) return QStringLiteral("Context compacted");
   if (type == QLatin1String("thread_created")) return QStringLiteral("Created thread");
-  const QString title = text(item, QLatin1String("title")).trimmed();
-  return title.isEmpty() ? QStringLiteral("Notification") : title;
+  // The web's work row for a notification is its summary alone (session-logic.ts).
+  const auto notice = noticeOf(item);
+  return !notice || notice->summary.isEmpty() ? QStringLiteral("Notification") : notice->summary;
 }
 
 QString markerDetail(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("fork")) return QStringLiteral("Continues in %1").arg(text(item, QLatin1String("targetThreadId")));
   if (type == QLatin1String("thread_created")) return text(item, QLatin1String("title"));
-  return text(item, QLatin1String("summary"));
+  return {};
 }
 
 }  // namespace
@@ -310,13 +399,23 @@ QDateTime TimelineModel::rowTime(const Row& row) const {
 // apps/web/src/timestampFormat.ts formatDayAwareTimestamp: local calendar days.
 QString TimelineModel::stamp(const QDateTime& at) const {
   if (!at.isValid()) return {};
+  return dayAware(at.toLocalTime(), m_now().toLocalTime().date(), m_timestampFormat, m_locale);
+}
+
+QString TimelineModel::upcoming(const QDateTime& at) const {
+  return upcomingStamp(at, m_now(), m_timestampFormat, m_locale);
+}
+
+QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale) {
+  if (!at.isValid()) return {};
   const QDateTime local = at.toLocalTime();
-  const QDate today = m_now().toLocalTime().date();
-  const QString time = sidebar::timeOfDay(local, m_timestampFormat, m_locale);
-  const qint64 days = local.date().daysTo(today);
-  if (days <= 0) return time;
-  if (days == 1) return QStringLiteral("yesterday at ") + time;
-  return numericDate(local.date(), local.date().year() != today.year(), m_locale) + QLatin1Char(' ') + time;
+  const QDate today = now.toLocalTime().date();
+  const qint64 days = today.daysTo(local.date());
+  if (days < 0) return dayAware(local, today, timestampFormat, locale);
+  const QString time = sidebar::timeOfDay(local, timestampFormat, locale);
+  if (days == 0) return time;
+  if (days == 1) return QStringLiteral("tomorrow at ") + time;
+  return numericDate(local.date(), local.date().year() != today.year(), locale) + QLatin1Char(' ') + time;
 }
 
 // apps/web/src/timestampFormat.ts formatChatTimestampTooltip, English as the web's is.
@@ -617,16 +716,20 @@ void TimelineModel::events(const QJsonArray& events) {
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
   if (m_agentsTouched) emit agentsChanged();
-  // A subagent's row shows its entity's model.
+  // A subagent's row shows its entity's model, status and latest words.
   if (!m_agentModels.isEmpty()) {
     const QHash<QString, QJsonObject>& items = m_entities[QStringLiteral("turn-item")];
     for (int row = 0; row < m_rows.size(); ++row) {
       if (m_rows.at(row).kind != QLatin1String("subagent")) continue;
       const QString agent = text(items.value(m_rows.at(row).items.value(0)), QLatin1String("subagentId"));
       const auto was = m_agentModels.constFind(agent);
-      if (was != m_agentModels.cend() && *was != text(entity(QStringLiteral("subagent"), agent), QLatin1String("model"))) {
-        emit dataChanged(index(row), index(row), {ModelRole});
+      if (was == m_agentModels.cend()) continue;
+      const QJsonObject now = entity(QStringLiteral("subagent"), agent);
+      bool moved = false;
+      for (const auto field : {QLatin1String("model"), QLatin1String("status"), QLatin1String("progress"), QLatin1String("result")}) {
+        moved |= was->value(field) != now.value(field);
       }
+      if (moved) emit dataChanged(index(row), index(row), {ModelRole, StatusRole, StatusLabelRole, TextRole});
     }
   }
   if (m_workspaceTouched) emit workspaceChanged();
@@ -673,7 +776,7 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   if (kind == QLatin1String("checkpoint") || kind == QLatin1String("subagent")) {
     (kind == QLatin1String("subagent") ? m_agentsTouched : m_checkpointsTouched) = true;
     if (kind == QLatin1String("checkpoint")) m_workspaceTouched = true;
-    if (kind == QLatin1String("subagent") && !m_agentModels.contains(id)) m_agentModels.insert(id, existed ? text(*current, QLatin1String("model")) : QString());
+    if (kind == QLatin1String("subagent") && !m_agentModels.contains(id)) m_agentModels.insert(id, existed ? *current : QJsonObject());
     if (next) {
       byKind.insert(id, *next);
     } else {
@@ -831,18 +934,23 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   QList<QJsonObject> shown;
   QHash<QString, Turn> turns;
   QList<QString> turnOrder;
+  QSet<QString> asked;  // runs whose opening message came by
   QDateTime boundary;
   for (const QString& id : m_order) {
     const QJsonObject item = items.value(id);
     if (!visible(item)) continue;
     shown.append(item);
     const QString type = text(item, QLatin1String("type"));
-    if (type == QLatin1String("user_message")) {
+    const QString runId = text(item, QLatin1String("runId"));
+    // A run begins at the user's message, or at what the MC sent in its place:
+    // a notification ahead of everything else of its run.
+    if (type == QLatin1String("user_message") ||
+        (type == QLatin1String("notification") && !runId.isEmpty() && !asked.contains(runId) && !turns.contains(runId))) {
+      asked.insert(runId);
       boundary = timeOf(item.value(QLatin1String("startedAt")));
       if (!boundary.isValid()) boundary = timeOf(item.value(QLatin1String("updatedAt")));
       continue;
     }
-    const QString runId = text(item, QLatin1String("runId"));
     if (runId.isEmpty()) continue;
     if (!turns.contains(runId)) {
       turns[runId].boundary = std::exchange(boundary, QDateTime());
@@ -877,7 +985,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     QStringList hidden;
     for (const QString& id : turn.items) {
       if (id == turn.terminal) continue;
-      const Kind kind = classify(text(items.value(id), QLatin1String("type")));
+      const Kind kind = classify(items.value(id));
       // Work a turn left running (a background command) stays in view.
       if (kind == Kind::Work && text(items.value(id), QLatin1String("status")) == QLatin1String("running")) continue;
       if (kind == Kind::Work || kind == Kind::Message) hidden.append(id);
@@ -922,7 +1030,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       rows.append({QStringLiteral("fold:") + fold->runId, QStringLiteral("fold"), {}, {}, fold->label, fold->hidden,
                    fold->open, fold->at});
     }
-    const Kind kind = classify(text(item, QLatin1String("type")));
+    const Kind kind = classify(item);
     if (folded.contains(id) || kind == Kind::Checkpoint) {
       ++i;
       continue;
@@ -936,7 +1044,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
         const QJsonObject& call = shown.at(next);
         const QString callId = text(call, QLatin1String("id"));
         if (next > i && foldAt.contains(callId)) break;
-        const Kind callKind = classify(text(call, QLatin1String("type")));
+        const Kind callKind = classify(call);
         if (callKind == Kind::Checkpoint) continue;
         if (callKind != Kind::Work || folded.contains(callId) || text(call, QLatin1String("runId")) != runId) break;
         row.items.append(callId);
@@ -1174,6 +1282,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {ModelRole, "agentModel"}, {PullRequestUrlRole, "pullRequestUrl"},
       {MessageIdRole, "messageId"},
       {AttachmentsRole, "attachments"},
+      {WarningRole, "warning"},
   };
 }
 
@@ -1194,16 +1303,19 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
   QString detail;
   if (type == QLatin1String("reasoning")) {
     const bool thinking = item.value(QLatin1String("streaming")).toBool() || status == QLatin1String("running");
-    label = thinking ? QStringLiteral("Thinking") : QStringLiteral("Thought");
     detail = text(item, QLatin1String("text"));
+    const QString line = thinking ? QString() : thoughtLine(detail);
+    label = thinking ? QStringLiteral("Thinking") : line.isEmpty() ? QStringLiteral("Thought") : line;
   } else if (type == QLatin1String("command_execution")) {
-    label = QStringLiteral("Ran command");
+    const QString command = timeline::commandDisplayText(text(item, QLatin1String("input")));
+    label = command.isEmpty() ? QStringLiteral("Ran command") : command;
     detail = text(item, QLatin1String("output"));
     entry.insert(QStringLiteral("command"), text(item, QLatin1String("input")));
     const QJsonValue exitCode = item.value(QLatin1String("exitCode"));
     if (exitCode.isDouble()) entry.insert(QStringLiteral("exitCode"), exitCode.toInt());
   } else if (type == QLatin1String("file_change")) {
-    label = QStringLiteral("Changed %1").arg(text(item, QLatin1String("fileName")));
+    const QString root = m_workspaceRoot ? m_workspaceRoot() : QString();
+    label = workspacePath(text(item, QLatin1String("fileName")), root);
     entry.insert(QStringLiteral("path"), text(item, QLatin1String("fileName")));
     detail = QStringLiteral("+%1 -%2").arg(item.value(QLatin1String("additions")).toInt()).arg(item.value(QLatin1String("deletions")).toInt());
   } else if (type == QLatin1String("file_search")) {
@@ -1302,7 +1414,9 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
 
   const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.value(0));
   const QString type = text(item, QLatin1String("type"));
-  const QString status = text(item, QLatin1String("status"));
+  // A subagent's row follows its entity, which moves on after the turn item.
+  const QJsonObject agent = row.kind == QLatin1String("subagent") ? entity(QStringLiteral("subagent"), text(item, QLatin1String("subagentId"))) : QJsonObject();
+  const QString status = text(agent.contains(QLatin1String("status")) ? agent : item, QLatin1String("status"));
   switch (role) {
     case AuthorRole:
       return type == QLatin1String("user_message") ? QStringLiteral("user") : QStringLiteral("assistant");
@@ -1316,7 +1430,8 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       return text(item, QLatin1String("inputIntent"));
     case AttributionRole:
       // apps/web/src/components/chat/MessagesTimeline.tsx UserMessageTimelineRow.
-      if (type != QLatin1String("user_message")) return QString();
+      // Nor is what the agent was sent for itself anyone's message (noticeOf).
+      if (type != QLatin1String("user_message") || row.kind != QLatin1String("message")) return QString();
       if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
       if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
         const QString sender = text(item, QLatin1String("senderThreadId"));
@@ -1355,7 +1470,15 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (row.kind == QLatin1String("plan")) return planTitle(text(item, QLatin1String("markdown")));
       if (row.kind == QLatin1String("marker")) return markerTitle(item);
       // The MC names what it recorded ("Provider retry"); a plain failure is an error.
-      if (row.kind == QLatin1String("error")) return text(item, QLatin1String("title")).isEmpty() ? QStringLiteral("Error") : text(item, QLatin1String("title"));
+      if (row.kind == QLatin1String("error")) {
+        const QJsonObject failure = item.value(QLatin1String("failure")).toObject();
+        if (text(failure, QLatin1String("class")) == QLatin1String("usage_limit")) {
+          // apps/web MessagesTimeline.tsx: one line, the wait named by when it ends.
+          const QString reset = upcoming(timeOf(failure.value(QLatin1String("resetAt"))));
+          return reset.isEmpty() ? QStringLiteral("Usage limit reached.") : QStringLiteral("Usage limit reached. Retry after %1.").arg(reset);
+        }
+        return text(item, QLatin1String("title")).isEmpty() ? QStringLiteral("Error") : text(item, QLatin1String("title"));
+      }
       if (row.kind == QLatin1String("subagent")) {
         const QString title = text(item, QLatin1String("title")).trimmed();
         return title.isEmpty() ? QStringLiteral("Subagent") : title;
@@ -1365,15 +1488,20 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (row.kind == QLatin1String("plan")) return planBody(text(item, QLatin1String("markdown")));
       if (row.kind == QLatin1String("marker")) return markerDetail(item);
       if (row.kind == QLatin1String("error")) {
-        return text(item.value(QLatin1String("failure")).toObject(), QLatin1String("message"));
+        const QJsonObject failure = item.value(QLatin1String("failure")).toObject();
+        // The agent's own sentence stays in the conversation.
+        return text(failure, QLatin1String("class")) == QLatin1String("usage_limit") ? QString() : text(failure, QLatin1String("message"));
       }
       if (row.kind == QLatin1String("subagent")) {
-        for (const auto field : {QLatin1String("progress"), QLatin1String("result"), QLatin1String("prompt")}) {
-          if (!text(item, field).isEmpty()) return text(item, field);
-        }
-        return QString();
+        const auto field = [&](QLatin1StringView name) { return agent.contains(name) ? text(agent, name) : text(item, name); };
+        const QString detail = timeline::subagentDetail(timeline::subagentSettled(status), field(QLatin1String("progress")),
+                                                       field(QLatin1String("result")));
+        return detail.isEmpty() ? timeline::plainDetail(text(item, QLatin1String("prompt"))) : detail;
       }
       return text(item, QLatin1String("text"));
+    case WarningRole:
+      return row.kind == QLatin1String("error") &&
+             text(item.value(QLatin1String("failure")).toObject(), QLatin1String("class")) == QLatin1String("usage_limit");
     case AttachmentsRole: {
       QVariantList images;
       if (type != QLatin1String("user_message")) return images;

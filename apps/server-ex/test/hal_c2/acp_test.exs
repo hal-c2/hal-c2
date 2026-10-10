@@ -90,4 +90,51 @@ defmodule HalC2.AcpTest do
 
     assert message == "Grok is disabled in HAL-C2 settings."
   end
+
+  test "a disabled agent has no version, since it has never been launched", %{tmp_dir: dir} do
+    grok = Path.join(dir, "grok")
+    File.write!(grok, "#!/bin/sh\n")
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => false,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    assert %{"version" => nil} = HalC2.Acp.entry("grok")
+  end
+
+  test "a disabled Antigravity is installed only when its runtime is on this machine", %{
+    tmp_dir: dir
+  } do
+    put = fn path ->
+      {:ok, _} =
+        HalC2.Settings.put(
+          %{
+            "providerInstances" => %{
+              "antigravity" => %{
+                "driver" => "antigravity",
+                "enabled" => false,
+                "config" => %{"binaryPath" => path}
+              }
+            }
+          },
+          0
+        )
+    end
+
+    put.(Path.join(dir, "missing"))
+
+    assert %{"status" => "disabled", "installed" => false, "version" => nil} =
+             HalC2.Acp.entry("antigravity")
+  end
 end

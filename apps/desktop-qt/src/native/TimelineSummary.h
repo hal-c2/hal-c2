@@ -28,4 +28,23 @@ bool callFailed(const QJsonObject& item);
 // search with the file as its one result.
 bool isFileRead(const QJsonObject& item);
 
+// One line of a markdown result: list bullets, code ticks and link targets
+// dropped (apps/web V2LifecycleRow.tsx plainDetail).
+QString plainDetail(const QString& markdown);
+
+// Whether a subagent has stopped working: anything but pending, running or
+// waiting (an idle one has said its piece and waits to be resumed).
+bool subagentSettled(const QString& status);
+
+// What a subagent's row says it did: a settled one its result, else its last
+// progress; a live one the reverse. The server's "Child task ended with
+// status ..." placeholder is dropped, the status already says it. Empty when
+// there is nothing to say.
+QString subagentDetail(bool settled, const QString& progress, const QString& result);
+
+// A command as its row labels it (client-runtime commandDisplayText): the
+// script of a lone `sh -c '<script>'` wrapper, its first line, whitespace
+// collapsed.
+QString commandDisplayText(const QString& command);
+
 }  // namespace timeline

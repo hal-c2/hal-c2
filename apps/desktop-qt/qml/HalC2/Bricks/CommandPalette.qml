@@ -79,6 +79,7 @@ Popup {
             Layout.fillWidth: true
             implicitHeight: 36
             placeholderText: PaletteModel.placeholder
+            rightPadding: submit.visible ? submit.width + 12 : 8
             onTextEdited: PaletteModel.query = text
 
             // mod+1..9 are the window's thread jumps otherwise.
@@ -105,6 +106,22 @@ Popup {
                 }
                 event.accepted = true;
             }
+        }
+
+        // Names what Enter does with the typed path, and the key for the highlighted folder.
+        // Parented to the field's right end, so the list does not move.
+        ShellButton {
+            id: submit
+
+            objectName: "commandPaletteSubmit"
+            parent: field
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            visible: PaletteModel.mode === "browse" && PaletteModel.submitLabel.length > 0
+            focusPolicy: Qt.NoFocus
+            text: PaletteModel.submitLabel + "  " + PaletteModel.submitShortcut
+            onClicked: PaletteModel.addBrowsedFolder()
         }
 
         // A thread search names the environments it could not reach.
@@ -161,6 +178,8 @@ Popup {
             id: list
 
             objectName: "commandPaletteList"
+            Accessible.role: Accessible.List
+            Accessible.name: qsTr("Commands")
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -209,6 +228,12 @@ Popup {
                 required property bool runnable
                 required property bool current
 
+                // Read by title, then what the row adds; pressed to run.
+                Accessible.role: Accessible.ListItem
+                Accessible.name: row.title + (row.description.length > 0 ? ", " + row.description : "") + (row.shortcut.length > 0 ? ", " + row.shortcut : "")
+                Accessible.selected: row.index === PaletteModel.highlighted
+                Accessible.onPressAction: PaletteModel.run(row.index)
+
                 width: ListView.view.width
                 implicitHeight: 34
                 opacity: row.runnable ? 1 : 0.5
@@ -229,6 +254,8 @@ Popup {
                         Layout.maximumWidth: row.width * 0.6
                     }
                     Text {
+                        id: describing
+
                         Layout.fillWidth: true
                         text: row.description
                         color: Theme.palette.color("textMuted", "#a1a1aa")
@@ -251,7 +278,13 @@ Popup {
 
                 MouseArea {
                     anchors.fill: parent
+                    hoverEnabled: true
                     onClicked: PaletteModel.run(row.index)
+
+                    // What the row's edge cut off (a setup hint) can be read whole.
+                    ToolTip.visible: containsMouse && describing.truncated
+                    ToolTip.text: row.description
+                    ToolTip.delay: 500
                 }
             }
 

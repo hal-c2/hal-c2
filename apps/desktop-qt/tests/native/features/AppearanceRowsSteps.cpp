@@ -103,8 +103,11 @@ const Steps steps([] {
     world.waitFor([&] { return world.theme().fontUi() == c[0]; }, QStringLiteral("the interface font"));
     expect(world.theme().fontScale() == c[1].toInt() / 16.0, QStringLiteral("the interface is scaled by %1").arg(world.theme().fontScale()));
     // A control and a message's prose, as the bricks draw them: their own size, scaled.
+    // And a label that names no font, as most of the app's text is.
     Brick brick(world, "import QtQuick\nimport HalC2.Bricks\nItem { ShellTextField { objectName: \"field\" }\n"
-                       "Markdown { objectName: \"message\"; y: 60; width: 400; text: \"Hello\" } }\n", QSize(400, 200));
+                       "Markdown { objectName: \"message\"; y: 60; width: 400; text: \"Hello\" }\n"
+                       "Text { objectName: \"label\"; y: 120; text: \"Threads\" } }\n", QSize(400, 200));
+    expect(fontOf(brick, QStringLiteral("label")).family() == c[0], QStringLiteral("a label writes in %1").arg(fontOf(brick, QStringLiteral("label")).family()));
     const QFont field = fontOf(brick, QStringLiteral("field"));
     expect(field.family() == c[0] && field.pixelSize() == qRound(13 * c[1].toInt() / 16.0),
            QStringLiteral("a field writes in %1 at %2").arg(field.family()).arg(field.pixelSize()));
@@ -113,6 +116,14 @@ const Steps steps([] {
     expect(prose.family() == c[0] && prose.pixelSize() == qRound(14 * c[1].toInt() / 16.0),
            QStringLiteral("prose is in %1 at %2").arg(prose.family()).arg(prose.pixelSize()));
     untouched(world, {QStringLiteral("code"), QStringLiteral("terminal")});
+  });
+  // The interface font is the application's, so text drawn before it changed is rewritten.
+  step(QStringLiteral("a label that names no font is on screen"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nItem { Text { objectName: \"label\"; text: \"Threads\" } }\n", QSize(200, 60));
+  });
+  step(QStringLiteral("the label is written in %1").arg(kQuoted), [fontOf](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fontOf(*world.brick, QStringLiteral("label")).family() == c[0]; },
+                  [&] { return QStringLiteral("the label's font; it is %1").arg(fontOf(*world.brick, QStringLiteral("label")).family()); });
   });
   step(QStringLiteral("the composer uses %1 at (\\d+)").arg(kQuoted), [fontOf, untouched](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return world.theme().fontPrompt() == c[0] && world.theme().fontSizePrompt() == c[1].toInt(); }, QStringLiteral("the prompt font"));

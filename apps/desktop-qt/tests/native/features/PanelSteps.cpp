@@ -873,6 +873,9 @@ const Steps steps([] {
                at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.diff")).toBool(),
            describePanel(world));
   });
+  step(QStringLiteral("the Add menu says %1 for pull request").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("addReasons.pullRequest")).toString() == c[0], describePanel(world));
+  });
   // A visit to settings: the panel steps aside and comes back as it was, its
   // diff not asked for again, so the kept body (RightPanel's native tabs,
   // tst_RightPanel) keeps its scroll.

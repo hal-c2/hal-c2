@@ -84,6 +84,18 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
+    # The web's off-canvas sidebar (AppSidebarLayout.tsx): showing it over the thread is not
+    # remembered, so a window with room again has the sidebar it had.
+    @desktop
+    Scenario: A window too narrow for the sidebar and the thread shows the sidebar over the thread
+      Given the sidebar is shown
+      When the window becomes too narrow for the sidebar beside the thread
+      Then the sidebar is hidden
+      When the user asks to show the sidebar
+      Then the sidebar opens over the thread at its minimum width
+      When the window becomes wide again
+      Then the sidebar is back beside the thread
+
     @desktop
     Scenario: Resetting the sidebar width
       Given the user resized the sidebar
@@ -117,11 +129,33 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the whole title is shown
       When the header is narrow
       Then the title is shortened with an ellipsis
+      And the start of the title still shows
+
+    # Proved by tst_Workspace.qml (test_tightHeaderKeepsTheTitleReadable), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The full thread title is a hover away
+      Given a shortened thread title
+      When the user hovers it
+      Then the whole title is shown
+      And a shortened project name shows whole on hover too
 
     @desktop
     Scenario: A narrow header drops action labels
       When the window is narrower than 720 pixels
       Then the header actions show without their labels
+
+    # Run and Open are also in the thread details; the panel toggles and the
+    # breadcrumb are what the header cannot lose.
+    # Proved by tst_Workspace.qml (test_tightHeaderNeverOverlaps), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A tight header drops actions before anything overlaps
+      Given the thread's project has an action and an editor to open it in
+      When the header has under 520 pixels for its items
+      Then the run and open actions are not in the header
+      And the breadcrumb, the git action and the panel toggles do not overlap
+      And nothing of the header is drawn over the panel beside it
+      When the header has room again
+      Then the run and open actions are back
 
     @desktop
     Scenario: The header runs the project's action the user ran last
@@ -214,6 +248,21 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the thread has no pull request
       When the user looks at what can be added to the right panel
       Then pull request cannot be added
+      And the Add menu says "This thread's branch has no pull request yet." for pull request
+
+    @desktop @backlog-desktop
+    Scenario: The right panel is set apart from the thread by a border
+      Given the right panel is open
+      Then a 1 px border in the theme's border colour marks its leading edge
+      When the user maximizes the right panel
+      Then the border is not drawn
+
+    @desktop @backlog-desktop
+    Scenario: Tabs that do not fit scroll and keep the active one in view
+      Given the right panel has more tabs than fit
+      When the user adds a Device tab
+      Then the Device tab and its close button are in view
+      And scroll buttons are offered
 
     @desktop
     Scenario: Right panel contents survive closing the panel
@@ -237,6 +286,44 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the right panel is open
       When the user drags the right panel's edge
       Then the right panel takes the new width
+
+    # The web's inline floor (apps/web/src/hooks/usePreviewPanelInlineSize.ts).
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A docked right panel leaves the thread its room
+      Given the window is 1400 pixels wide
+      And the right panel and the thread details are open
+      Then the thread is at least 360 pixels wide
+      And the right panel is narrower than the width it was given
+
+    # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
+    # under, or wherever the panel's minimum does not fit beside the thread.
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: In a narrow window the right panel opens over the thread
+      Given the window is 960 pixels wide
+      When the user opens the right panel
+      Then it is shown as a sheet over the thread, under the header
+      And the thread keeps the full width
+      And the right panel can be neither resized nor maximized
+      When the user presses Escape
+      Then the right panel is closed
+
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A click beside the right panel's sheet closes it
+      Given the window is 960 pixels wide
+      And the right panel is open
+      When the user clicks the thread beside the right panel
+      Then the right panel is closed
+
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: In a narrow window the thread details open over the thread
+      Given the thread would be under 360 pixels wide beside the thread details
+      When the user opens the thread details
+      Then they are shown over the thread, under the header
+      And the thread keeps the full width
 
     @desktop
     Scenario: Maximizing the right panel

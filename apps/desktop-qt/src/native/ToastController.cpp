@@ -1,5 +1,7 @@
 #include "ToastController.h"
 
+#include "KeybindingController.h"
+#include "NativeShell.h"
 #include "ShellBridge.h"
 
 #include <algorithm>
@@ -65,6 +67,38 @@ QString ToastController::showActions(const QString& type, const QString& title, 
   return m_toasts.first().id;
 }
 
+QString ToastController::showUndo(const QString& group, const QString& title, std::function<void()> undo) {
+  QString hint;
+  if (const NativeWindow* window = NativeShell::of(this)) {
+    if (auto* keys = window->controller<KeybindingController>()) hint = keys->shortcutLabel(QStringLiteral("thread.undo"));
+  }
+  const QString description = hint.isEmpty() ? QString() : tr("%1 to undo").arg(hint);
+  const auto reading = [&](int count) {
+    return count == 1 ? title : tr("%1 %2 threads").arg(group).arg(count);
+  };
+  // The action as the sidebar and the menu build it, over the earlier one it joins.
+  const auto joined = [&](std::function<void()> earlier) {
+    return Action{QStringLiteral("Undo"),
+                  [undo, earlier] {
+                    undo();
+                    if (earlier) earlier();
+                  },
+                  false, group};
+  };
+  if (!m_toasts.isEmpty()) {
+    Toast& newest = m_toasts.first();
+    if (!newest.actions.isEmpty() && newest.actions.first().label == QLatin1String("Undo") && newest.actions.first().group == group) {
+      const int count = newest.count + 1;
+      const QString id = newest.id;
+      replace(id, newest.type, reading(count), description, {joined(newest.actions.first().run)}, 5000);
+      newest.count = count;
+      return id;
+    }
+  }
+  const QString id = show(QStringLiteral("success"), reading(1), description, joined({}));
+  return id;
+}
+
 QString ToastController::error(const QString& title, const QString& description) {
   return show(QStringLiteral("error"), title,
               description.isEmpty() ? QStringLiteral("An error occurred.") : description);
@@ -125,6 +159,7 @@ bool ToastController::replace(const QString& id, const QString& type, const QStr
     toast.title = title;
     toast.description = description;
     toast.actions = std::move(actions);
+    toast.count = 1;
     startTime(toast, timeoutMs);
     ++toast.revision;
     publish();

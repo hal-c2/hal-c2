@@ -177,7 +177,9 @@ defmodule HalC2.Usage.Transcripts do
   """
   def claude(%{"type" => "assistant", "message" => %{"usage" => %{} = usage} = message} = line) do
     with ts when is_integer(ts) <- timestamp(line["timestamp"]),
-         model when is_binary(model) and model != "" <- message["model"] do
+         # Claude Code's own error replies carry no model.
+         model when is_binary(model) and model != "" and model != "<synthetic>" <-
+           message["model"] do
       id = string(message["id"])
       request = string(line["requestId"])
       cost = line["costUSD"]

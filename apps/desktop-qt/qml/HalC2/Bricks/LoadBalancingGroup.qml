@@ -82,7 +82,7 @@ ShellCard {
                 }
             }
 
-            Switch {
+            ShellSwitch {
                 objectName: "loadBalancingEnabled"
                 enabled: group.ready
                 checked: group.balancing

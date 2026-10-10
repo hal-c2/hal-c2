@@ -100,7 +100,7 @@ SettingsPage {
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
-            Switch {
+            ShellSwitch {
                 objectName: "control"
                 enabled: toggle.entry?.enabled ?? false
                 checked: toggle.entry?.on ?? false

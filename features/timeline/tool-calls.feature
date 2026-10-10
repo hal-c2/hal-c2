@@ -63,6 +63,12 @@ Feature: Tool calls and file changes
     When the user closes the group
     Then the calls collapse back into the summary
 
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A call is labelled by what it did
+    Given the agent ran "git status" through a shell and changed a file in the workspace
+    When the user opens the activity group
+    Then the command is labelled "git status" and the file change "src/cart.ts"
+
   # TUI: implemented in apps/tui/src/worklog.ts
   @shared @backlog-mobile
   Scenario Outline: A tool call shows how it ended

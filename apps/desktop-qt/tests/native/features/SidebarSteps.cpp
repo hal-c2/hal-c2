@@ -99,6 +99,10 @@ const Steps steps([] {
     const QString titles = sectionTitles(world, c[0]);
     expect(titles.isEmpty(), QStringLiteral("%1 lists \"%2\"").arg(c[0], titles));
   });
+  step(QStringLiteral("the sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return at(world.state(QStringLiteral("sidebar")), QStringLiteral("scopeProjectKey")).toString() == world.projectKey(c[0]); },
+                  [&] { return QStringLiteral("the sidebar is scoped to %1").arg(at(world.state(QStringLiteral("sidebar")), QStringLiteral("scopeProjectKey")).toString()); });
+  });
   step(QStringLiteral("the sidebar is not scoped"), [](World& world, const Captures&, const Table&) {
     const QVariant scope = at(world.state(QStringLiteral("sidebar")), QStringLiteral("scopeProjectKey"));
     expect(scope.isNull(), QStringLiteral("the sidebar is scoped to %1").arg(scope.toString()));

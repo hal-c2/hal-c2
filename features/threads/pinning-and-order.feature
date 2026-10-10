@@ -34,6 +34,13 @@ Feature: Pinning and arranging threads
     When the user unpins "Beta"
     Then "Beta" returns to its place among the active threads
 
+  @desktop @backlog-desktop @mobile @backlog-mobile
+  Scenario: A pinned thread shows a pin that unpins it
+    Given "Beta" is pinned
+    Then the row of "Beta" shows a pin labelled "Unpin thread"
+    When the user clicks the pin on the row of "Beta"
+    Then "Beta" is unpinned, asking first when the user wants confirmation
+
   @desktop @mobile @backlog-mobile
   Scenario: Unpinning asks first when the user wants confirmation
     Given "Beta" is pinned
@@ -54,6 +61,20 @@ Feature: Pinning and arranging threads
       | settled  |
       | snoozed  |
       | archived |
+
+  @desktop
+  Scenario Outline: The undo offer counts the threads it will restore and names the shortcut
+    Given the user just <changed> "Alpha"
+    And the user just <changed> "Beta"
+    Then one notice reads "<notice>" and names the undo shortcut
+    When the user undoes the change
+    Then "Alpha" is back where it was before
+    And "Beta" is back where it was before
+
+    Examples:
+      | changed  | notice             |
+      | settled  | Settled 2 threads  |
+      | unpinned | Unpinned 2 threads |
 
   @desktop
   Scenario: Undo reopens an archived thread the user was viewing

@@ -37,6 +37,19 @@ Item {
         name: "SidebarThreadRowTests"
         when: windowShown
 
+        // Scenario: Pinning a thread does not change its age (features/threads/unread-and-status.feature)
+        function test_ageCountsFromTheRowsTimeNotItsUpdate() {
+            let row = createTemporaryObject(rowComponent, root);
+            verify(!!row, "Component exists");
+            const now = Date.now();
+            row.item = Object.assign({}, row.item, {
+                updatedAt: new Date(now).toISOString(),
+                timeAt: new Date(now - 3 * 3600 * 1000).toISOString()
+            });
+            row.ageNow = now;
+            compare(row.ageLabel, qsTr("%1h").arg(3));
+        }
+
         // Scenario: The age keeps up while nothing changes (features/threads/unread-and-status.feature)
         function test_relativeAgeRefreshesWhileIdle() {
             let row = createTemporaryObject(rowComponent, root);
@@ -96,6 +109,56 @@ Item {
             compare(spy.count, 1);
             mouseRelease(row, 100, 30, Qt.RightButton);
             compare(spy.count, 1);
+        }
+
+        // Scenario: A pinned thread shows a pin that unpins it (features/threads/pinning-and-order.feature)
+        function test_pinnedRowOffersUnpin() {
+            let row = createTemporaryObject(rowComponent, root);
+            verify(!findChild(row, "unpinAction"), "no pin on an unpinned row");
+            row.item = Object.assign({}, row.item, {
+                pinned: true
+            });
+            let unpin = findChild(row, "unpinAction");
+            verify(!!unpin, "a pinned row has the pin button");
+            compare(unpin.Accessible.name, "Unpin thread");
+            let spy = createTemporaryObject(spyComponent, root, {
+                target: row,
+                signalName: "unpinRequested"
+            });
+            mouseClick(unpin);
+            compare(spy.count, 1);
+        }
+
+        // Scenario: A thread row shows its project's icon (features/threads/sidebar-list.feature)
+        function test_rowDrawsTheProjectIcon_data() {
+            return [
+                { tag: "slim", slim: true, mark: "projectMark" },
+                { tag: "card", slim: false, mark: "cardProjectMark" }
+            ];
+        }
+
+        function test_rowDrawsTheProjectIcon(data) {
+            let row = createTemporaryObject(rowComponent, root, {
+                slim: data.slim,
+                projectName: "Hal"
+            });
+            let mark = findChild(row, data.mark);
+            verify(!!mark);
+            verify(!findChild(mark, "projectIconMonogram"), "a folder without an icon");
+            row.projectIcon = { kind: "monogram", text: "HC" };
+            const monogram = findChild(mark, "projectIconMonogram");
+            verify(!!monogram, "the monogram replaces the folder");
+            compare(monogram.visible, true);
+            row.projectIcon = null;
+            tryVerify(() => !findChild(mark, "projectIconMonogram"));
+        }
+
+        // Scenario: The thread list announces only the threads it shows (features/threads/sidebar-list.feature)
+        function test_hiddenRowIsNotAnnounced() {
+            let row = createTemporaryObject(rowComponent, root);
+            compare(row.Accessible.ignored, false);
+            row.visible = false;
+            compare(row.Accessible.ignored, true);
         }
     }
 }

@@ -1330,7 +1330,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is told an update is available with the latest version"), [](World& world, const Captures&, const Table&) {
     const QVariantMap advisory = entry(world, QStringLiteral("Codex")).value(QStringLiteral("advisory")).toMap();
     expect(advisory.value(QStringLiteral("title")) == QLatin1String("Update available") &&
-               advisory.value(QStringLiteral("detail")) == QLatin1String("Update available: install v0.51.0."),
+               advisory.value(QStringLiteral("detail")) == QLatin1String("Install v0.51.0."),
            QStringLiteral("the advisory is %1").arg(show(advisory)));
   });
   step(QStringLiteral("the user can update now or copy the update command"), [](World& world, const Captures&, const Table&) {

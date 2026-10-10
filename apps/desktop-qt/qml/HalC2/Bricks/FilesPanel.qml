@@ -100,7 +100,7 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: root.fileOpen ? 2 : 1
+            Layout.verticalStretchFactor: 1
             Layout.minimumHeight: 80
 
             ColumnLayout {
@@ -139,7 +139,9 @@ Rectangle {
                 model: root.tree
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: ScrollBar {
+                    Accessible.name: qsTr("Scroll file tree")
+                }
 
                 Connections {
                     target: root.tree
@@ -219,7 +221,7 @@ Rectangle {
             objectName: "fileViewer"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: 3
+            Layout.verticalStretchFactor: 3
             visible: root.fileOpen
             spacing: 0
 
@@ -327,7 +329,9 @@ Rectangle {
                     clip: true
                     contentHeight: (renderedBody.item as Item)?.implicitHeight ?? 0
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.vertical: ScrollBar {
+                        Accessible.name: qsTr("Scroll rendered file")
+                    }
 
                     Loader {
                         id: renderedBody
@@ -445,8 +449,12 @@ Rectangle {
                     readonly property real gutter: glyph.advanceWidth * 6 + 12
                     flickableDirection: wrap ? Flickable.VerticalFlick : Flickable.HorizontalAndVerticalFlick
                     contentWidth: wrap ? width : Math.max(width, gutter + glyph.advanceWidth * Math.min(model?.maxColumns ?? 0, root.maxLineColumns) + 16)
-                    ScrollBar.vertical: ScrollBar {}
-                    ScrollBar.horizontal: ScrollBar {}
+                    ScrollBar.vertical: ScrollBar {
+                        Accessible.name: qsTr("Scroll file")
+                    }
+                    ScrollBar.horizontal: ScrollBar {
+                        Accessible.name: qsTr("Scroll file sideways")
+                    }
 
                     Connections {
                         target: root.source

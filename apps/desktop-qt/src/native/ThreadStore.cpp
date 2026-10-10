@@ -123,6 +123,11 @@ void ThreadStore::setLocale(const QLocale& locale) {
   for (const Followed& followed : std::as_const(m_threads)) {
     if (followed.model) configure(followed.model);
   }
+  emit timesChanged();
+}
+
+QString ThreadStore::upcoming(const QDateTime& at) const {
+  return upcomingStamp(at, now(), m_timestampFormat, m_locale);
 }
 
 void ThreadStore::readSettings() {
@@ -132,6 +137,7 @@ void ThreadStore::readSettings() {
   for (const Followed& followed : std::as_const(m_threads)) {
     if (followed.model) configure(followed.model);
   }
+  emit timesChanged();
 }
 
 void ThreadStore::configure(TimelineModel* model) const {
@@ -140,6 +146,14 @@ void ThreadStore::configure(TimelineModel* model) const {
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);
+  // Where it works: its worktree, else its project's root (WorkspaceController::Place::cwd).
+  model->setWorkspaceRoot([store = m_store, key]() -> QString {
+    const QJsonObject row = store->threadRow(key);
+    const QString worktree = row.value(QLatin1String("worktreePath")).toString();
+    if (!worktree.isEmpty()) return worktree;
+    const QString owner = key.left(key.indexOf(QLatin1Char(':')));
+    return store->projectRow(owner, row.value(QLatin1String("projectId")).toString()).value(QLatin1String("workspaceRoot")).toString();
+  });
   model->setThreadTitles([store = m_store, environment](const QString& threadId) {
     return store->threadRow(environment + threadId).value(QLatin1String("title")).toString();
   });

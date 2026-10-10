@@ -94,6 +94,37 @@ private slots:
     QCOMPARE(order({peer, own}), expected);
   }
 
+  // A row's age counts from its last message, or on the settled shelf from when it
+  // settled, not from the update time that pinning and settling also move.
+  void aRowsAgeIsNotItsLastTidyUp() {
+    const QString message = QStringLiteral("2026-09-23T06:00:00Z");
+    const QString settledAt = QStringLiteral("2026-09-23T07:00:00Z");
+    QJsonObject pinned = threadRow(QStringLiteral("t1"));
+    pinned.insert(QStringLiteral("latestUserMessageAt"), message);
+    pinned.insert(QStringLiteral("pinnedAt"), kAt);
+    QJsonObject settled = threadRow(QStringLiteral("t2"));
+    settled.insert(QStringLiteral("latestUserMessageAt"), message);
+    settled.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
+    settled.insert(QStringLiteral("settledAt"), settledAt);
+    QJsonObject quiet = threadRow(QStringLiteral("t3"));
+    sidebar::Capabilities capabilities;
+    capabilities.snooze = true;
+    capabilities.settlement = true;
+    const sidebar::View view = sidebar::build({sidebar::threadFromRow(QStringLiteral("env-a"), pinned),
+                                               sidebar::threadFromRow(QStringLiteral("env-a"), settled),
+                                               sidebar::threadFromRow(QStringLiteral("env-a"), quiet)},
+                                              sidebar::Input{}, std::nullopt, [capabilities](const QString&) { return capabilities; },
+                                              *sidebar::parseIso(kAt));
+    const auto timeAt = [&view](const char* section) {
+      const QVariantList rows = view.state.value(QLatin1String(section)).toList();
+      return rows.size() == 1 ? rows.first().toMap().value(QStringLiteral("timeAt")).toString() : QStringLiteral("not one row");
+    };
+    QCOMPARE(timeAt("pinned"), message);
+    QCOMPARE(timeAt("settled"), settledAt);
+    // A thread nobody has written in yet has only its update time.
+    QCOMPARE(timeAt("active"), kAt);
+  }
+
   // A thread selected while archived, or archived while selected, is not
   // selected once it is back in the list.
   void anArchivedThreadComesBackUnselected() {

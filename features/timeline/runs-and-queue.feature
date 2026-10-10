@@ -148,6 +148,11 @@ Feature: Runs, interruptions and the queue
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A usage limit is one warning line naming when to retry
+    Given the provider stopped the turn at its usage limit, resetting at the top of an hour
+    Then the timeline shows one warning line naming when to retry
+
   @shared @backlog
   Scenario Outline: A usage limit can resume the thread when it resets
     Given the thread stopped because the provider's usage limit was reached

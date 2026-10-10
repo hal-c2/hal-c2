@@ -80,3 +80,21 @@ Feature: The thread's header on the desktop
     And the header shows the thread "Deploy" in "ops" on "main"
     When "env-c" is reachable again
     Then the header no longer says the thread is offline
+
+  @desktop @backlog-desktop
+  Scenario Outline: Icon-only buttons name themselves on hover
+    When the user hovers the <button> button
+    Then a tooltip reads <name>
+
+    Examples:
+      | button               | name                    |
+      | new thread in project | "New thread in project" |
+      | terminal toggle      | "Show terminal"         |
+      | thread details       | "Show thread details"   |
+      | panel                | "Open panel"            |
+      | sidebar settings     | "Settings"              |
+      | sidebar pull requests | "Pull requests"        |
+      | sidebar usage        | "Usage"                 |
+      | row snooze           | "Snooze"                |
+      | row settle           | "Settle"                |
+      | Open menu            | "More Open options"     |

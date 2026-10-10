@@ -49,6 +49,21 @@ Item {
             compare(Shell.dispatchedActions[1].action, "composer.suggest.dismiss");
             compare(Shell.dispatchCount, 2);
         }
+        function test_tabLeavesTheEditorUnlessInAList() {
+            Shell.state = { composer: Shell.defaultComposer(), workspace: null };
+            let composer = createTemporaryObject(component, root);
+            let input = findChild(composer, "input");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Tab);
+            compare(input.text, "");
+            verify(!input.activeFocus, "focus moved to the next control");
+            input.forceActiveFocus();
+            input.text = "- item";
+            input.cursorPosition = 6;
+            keyClick(Qt.Key_Tab);
+            compare(input.text, "  - item");
+            verify(input.activeFocus);
+        }
         function test_shiftEnterDoesNotChooseSuggestion() {
             let composer = createTemporaryObject(component, root);
             verify(!!composer, "Component exists");
