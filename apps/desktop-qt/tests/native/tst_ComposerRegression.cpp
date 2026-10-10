@@ -185,6 +185,24 @@ private slots:
     QCOMPARE(slash->end, 3);
   }
 
+  // A queued run that arrived before its message was listed as a blank row;
+  // it now waits off the list until the message is here.
+  void aQueuedRunWithoutItsMessageIsNotListed() {
+    const QJsonObject run{{QStringLiteral("id"), QStringLiteral("run-a")},
+                          {QStringLiteral("status"), QStringLiteral("queued")},
+                          {QStringLiteral("queuePosition"), 0},
+                          {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const composer::Queued early = composer::queued({run}, {});
+    QVERIFY(early.queue.isEmpty());
+    QVERIFY(early.waiting.isEmpty());
+
+    const composer::Queued later = composer::queued(
+        {run}, {{QStringLiteral("message:a"),
+                 {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("text"), QStringLiteral("also update docs")}}}});
+    QCOMPARE(later.queue.size(), 1);
+    QCOMPARE(later.queue.first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("also update docs"));
+  }
+
   // A send the MC refused came back only into an empty draft: when the user
   // had typed something newer meanwhile, the refused prompt was gone. It is
   // now kept behind the toast's "Restore prompt".

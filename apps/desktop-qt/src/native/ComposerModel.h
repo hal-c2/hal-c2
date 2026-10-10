@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -139,5 +140,18 @@ QString emptyText(const QString& kind);
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,
                                    std::optional<int> boundaryBase, std::optional<int> includesBase,
                                    std::optional<int> fuzzyBase, const QString& boundaryMarkers = QStringLiteral(" -_/"));
+
+// What waits behind the running turn, from the thread's runs and the messages
+// the timeline holds, each in the order it runs: the user's queued follow-ups
+// (`runId`, `text`), and what the MC queued for the agent itself, a delegated
+// task's result or the provider's wake-up (`runId`, `summary`, `outcome`), which
+// is not the user's to edit, steer with or remove (apps/web session-logic.ts
+// getUserQueuedThreadRuns). A run whose message has not arrived yet is in
+// neither: which it is, and what it says, comes with the message.
+struct Queued {
+  QVariantList queue;
+  QVariantList waiting;
+};
+Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages);
 
 }  // namespace composer

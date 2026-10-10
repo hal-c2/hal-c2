@@ -577,6 +577,7 @@ Item {
                                 spacing: 6
 
                                 Text {
+                                    objectName: "queueText-" + queued.modelData.runId
                                     Layout.fillWidth: true
                                     text: queued.modelData.text
                                     textFormat: Text.PlainText

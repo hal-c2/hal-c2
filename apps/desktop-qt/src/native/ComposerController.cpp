@@ -32,7 +32,6 @@
 #include "SidebarModel.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
-#include "TimelineSummary.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
 #include "WorkspaceFiles.h"
@@ -2342,37 +2341,9 @@ QVariantMap ComposerController::turnState() const {
     }
   }
 
-  // Queued messages in the order they run.
-  QList<QJsonObject> queued;
-  for (const QJsonObject& run : runs) {
-    if (str(run, QLatin1String("status")) == QLatin1String("queued")) queued.append(run);
-  }
-  std::sort(queued.begin(), queued.end(), [](const QJsonObject& a, const QJsonObject& b) {
-    const double left = a.value(QLatin1String("queuePosition")).toDouble(a.value(QLatin1String("ordinal")).toDouble());
-    const double right = b.value(QLatin1String("queuePosition")).toDouble(b.value(QLatin1String("ordinal")).toDouble());
-    return left < right;
-  });
-  const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
-  QVariantList queue;
-  QVariantList waiting;
-  for (const QJsonObject& run : queued) {
-    const QJsonObject message = messages.value(str(run, QLatin1String("userMessageId")));
-    // What the MC sent the agent for itself (a delegated task's result, the
-    // provider's wake-up) waits its turn too, but is not the user's to edit,
-    // steer with or remove (apps/web session-logic.ts getUserQueuedThreadRuns).
-    // It is listed apart, by what it stands for.
-    if (message.value(QLatin1String("notification")).isObject() || message.value(QLatin1String("delegatedCompletion")).isObject() ||
-        message.value(QLatin1String("providerWake")).toBool()) {
-      const std::optional<timeline::Notice> notice = timeline::noticeOf(message);
-      waiting.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))},
-                                 {QStringLiteral("summary"), notice && !notice->summary.isEmpty() ? notice->summary : QStringLiteral("Notification")},
-                                 {QStringLiteral("outcome"), notice ? notice->outcome : QString()}});
-      continue;
-    }
-    queue.append(QVariantMap{{QStringLiteral("runId"), str(run, QLatin1String("id"))}, {QStringLiteral("text"), str(message, QLatin1String("text"))}});
-  }
-  state.insert(QStringLiteral("waiting"), waiting);
-  state.insert(QStringLiteral("queue"), queue);
+  const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
+  state.insert(QStringLiteral("queue"), queued.queue);
+  state.insert(QStringLiteral("waiting"), queued.waiting);
   return state;
 }
 
