@@ -156,10 +156,10 @@ defmodule HalC2.Slack do
   end
 
   def call("replies", %{"channel" => channel, "ts" => ts}) do
+    # A later page can start with the parent again; each message is kept once.
     with {:ok, id} <- channel_id(channel),
-         {:ok, %{"messages" => messages}} <-
-           api(:get, "conversations.replies", %{channel: id, ts: ts}) do
-      {:ok, %{"messages" => Enum.map(messages, &message(id, &1))}}
+         {:ok, messages} <- pages("conversations.replies", %{channel: id, ts: ts}, "messages") do
+      {:ok, %{"messages" => messages |> Enum.uniq_by(& &1["ts"]) |> Enum.map(&message(id, &1))}}
     end
   end
 
@@ -322,21 +322,31 @@ defmodule HalC2.Slack do
   end
 
   defp fetch_channels do
-    with {:ok, token} <- token() do
-      try do
-        channels =
-          "users.conversations"
-          |> Slack.API.stream(token, "channels",
-            types: "public_channel,private_channel",
-            exclude_archived: true
-          )
-          |> Enum.map(
-            &%{"id" => &1["id"], "name" => &1["name"], "private" => &1["is_private"] == true}
-          )
+    args = %{types: "public_channel,private_channel", exclude_archived: true}
 
-        {:ok, channels}
-      rescue
-        e -> {:error, "Slack refused it: #{Exception.message(e)}"}
+    with {:ok, channels} <- pages("users.conversations", args, "channels") do
+      {:ok,
+       Enum.map(
+         channels,
+         &%{"id" => &1["id"], "name" => &1["name"], "private" => &1["is_private"] == true}
+       )}
+    end
+  end
+
+  # Every page of a cursor-paginated Web API method's `key` list, in order. Not
+  # `Slack.API.stream/4`: it sends the cursor as `next_cursor`, which Slack ignores, so
+  # past one page it asks for the first page forever.
+  defp pages(endpoint, args, key) do
+    with {:ok, token} <- token(), do: pages(endpoint, token, Map.put(args, :limit, 200), key, [])
+  end
+
+  defp pages(endpoint, token, args, key, acc) do
+    with {:ok, body} <- request(:get, endpoint, token, args) do
+      acc = [Map.get(body, key, []) | acc]
+
+      case get_in(body, ["response_metadata", "next_cursor"]) do
+        cursor when cursor in [nil, ""] -> {:ok, acc |> Enum.reverse() |> Enum.concat()}
+        cursor -> pages(endpoint, token, Map.put(args, :cursor, cursor), key, acc)
       end
     end
   end

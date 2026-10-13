@@ -216,6 +216,32 @@ defmodule HalC2.SlackTest do
                Slack.call("user", %{"user" => "UDANA"})
     end
 
+    test "replies and channels follow every page Slack hands out" do
+      FakeSlack.page_size(2)
+      FakeSlack.join("CDOCS", "docs")
+      FakeSlack.join("CSHIP", "ship")
+
+      assert {:ok, %{"channels" => channels}} = Slack.call("channels", %{})
+      assert Enum.map(channels, & &1["id"]) == ~w(CDOCS CPLAN CSHIP)
+
+      {:ok, %{"ts" => ts}} = Slack.call("post", %{"channel" => "CPLAN", "text" => "Plan"})
+
+      for n <- 1..4 do
+        FakeSlack.add_message(%{
+          "channel" => "CPLAN",
+          "thread_ts" => ts,
+          "user" => "UDANA",
+          "text" => "Reply #{n}"
+        })
+      end
+
+      assert {:ok, %{"messages" => messages}} =
+               Slack.call("replies", %{"channel" => "CPLAN", "ts" => ts})
+
+      assert Enum.map(messages, & &1["text"]) == ["Plan" | for(n <- 1..4, do: "Reply #{n}")]
+      assert length(FakeSlack.calls("conversations.replies")) == 4
+    end
+
     test "respond answers a slash command only its author sees" do
       url = FakeSlack.response_url()
 

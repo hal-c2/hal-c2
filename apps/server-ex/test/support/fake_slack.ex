@@ -10,9 +10,10 @@ defmodule HalC2.Test.FakeSlack do
   "dana" (`UDANA`), the channel "#planning" (`CPLAN`) the bot is in and "#random"
   (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and `app_token/0`; any other
   is `invalid_auth`. `available(false)` answers every request with a 503 until it is
-  `true` again; `drop/0` closes the socket. `calls/1` lists the requests made to a
-  method, `responses/0` the slash command answers. Tests that use it are not async:
-  it is one named process and Req's defaults are global.
+  `true` again; `drop/0` closes the socket. Paginated methods follow Slack's `cursor`, in
+  pages of `page_size/1` at most; `join/2` adds a channel the bot is in. `calls/1` lists
+  the requests made to a method, `responses/0` the slash command answers. Tests that use
+  it are not async: it is one named process and Req's defaults are global.
   """
   @behaviour Plug
 
@@ -95,6 +96,8 @@ defmodule HalC2.Test.FakeSlack do
           "UHAL" => %{"name" => "HAL", "real_name" => "HAL"}
         },
         messages: [],
+        # The most a page of a paginated method holds, whatever `limit` asks.
+        page_size: 1000,
         calls: [],
         responses: [],
         socket: nil,
@@ -108,6 +111,17 @@ defmodule HalC2.Test.FakeSlack do
 
   @doc "Whether Slack answers at all."
   def available(on?), do: Agent.update(__MODULE__, &%{&1 | available: on?})
+
+  @doc "Pages of paginated methods hold at most `size` items from now on."
+  def page_size(size), do: Agent.update(__MODULE__, &%{&1 | page_size: size})
+
+  @doc "Puts the bot in the channel `id`, named `name`."
+  def join(id, name) do
+    Agent.update(__MODULE__, fn state ->
+      channel = %{"name" => name, "member" => true, "private" => false}
+      %{state | channels: Map.put(state.channels, id, channel)}
+    end)
+  end
 
   @doc "Closes the Socket Mode connection, as Slack or the network does."
   def drop, do: to_socket(:drop)
@@ -229,13 +243,14 @@ defmodule HalC2.Test.FakeSlack do
      }), state}
   end
 
-  defp answer("users.conversations", _token, _params, state) do
+  defp answer("users.conversations", _token, params, state) do
     channels =
       for {id, %{"member" => true} = channel} <- Enum.sort(state.channels) do
         %{"id" => id, "name" => channel["name"], "is_private" => channel["private"]}
       end
 
-    {ok(%{"channels" => channels, "response_metadata" => %{"next_cursor" => ""}}), state}
+    {channels, cursor} = page(channels, params, page_size(params, state))
+    {ok(%{"channels" => channels, "response_metadata" => %{"next_cursor" => cursor}}), state}
   end
 
   defp answer("users.info", _token, %{"user" => id}, state) do
@@ -245,16 +260,31 @@ defmodule HalC2.Test.FakeSlack do
     end
   end
 
-  defp answer("conversations.replies", _token, %{"channel" => channel, "ts" => ts}, state) do
+  defp answer(
+         "conversations.replies",
+         _token,
+         %{"channel" => channel, "ts" => ts} = params,
+         state
+       ) do
     with :ok <- member(state, channel) do
       messages =
         for m <- Enum.reverse(state.messages),
             m["channel"] == channel and (m["ts"] == ts or m["thread_ts"] == ts),
             do: m
 
-      if messages == [],
-        do: {refuse("thread_not_found"), state},
-        else: {ok(%{"messages" => messages}), state}
+      case messages do
+        [] ->
+          {refuse("thread_not_found"), state}
+
+        # Every page starts with the parent, the replies paged after it.
+        [parent | replies] ->
+          {replies, cursor} = page(replies, params, max(page_size(params, state) - 1, 1))
+
+          {ok(%{
+             "messages" => [parent | replies],
+             "response_metadata" => %{"next_cursor" => cursor}
+           }), state}
+      end
     else
       error -> {refuse(error), state}
     end
@@ -295,6 +325,17 @@ defmodule HalC2.Test.FakeSlack do
   end
 
   defp answer(_method, _token, _params, state), do: {refuse("unknown_method"), state}
+
+  # One page of `items` from `cursor` (an offset here) and the next cursor, "" after the
+  # last. Slack's `cursor` is the parameter; a `next_cursor` one is ignored, as Slack does.
+  defp page(items, params, size) do
+    offset = String.to_integer(params["cursor"] || "0")
+    next = if offset + size < length(items), do: Integer.to_string(offset + size), else: ""
+    {Enum.slice(items, offset, size), next}
+  end
+
+  defp page_size(params, state),
+    do: min(String.to_integer(params["limit"] || "1000"), state.page_size)
 
   # Slack takes a channel's name where it takes its id.
   defp channel_id("#" <> name) do

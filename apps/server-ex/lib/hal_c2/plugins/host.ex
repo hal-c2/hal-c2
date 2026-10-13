@@ -142,7 +142,7 @@ defmodule HalC2.Plugins.Host do
   The MC's Slack connection (`HalC2.Slack`), as the bot. Reads need `slack:read`:
   `"status"` → `%{"connected", "team", "bot", "botUserId"}`, `"channels"` →
   `%{"channels" => [%{"id", "name", "private"}]}` (the bot's), `"replies"`
-  `%{channel, ts}` → `%{"messages" => [message]}`, `"user"` `%{user}` →
+  `%{channel, ts}` → `%{"messages" => [message]}` (the parent and every reply), `"user"` `%{user}` →
   `%{"id", "name", "realName"}`. Writes need `slack:write`: `"post"` `%{channel, text,
   threadTs?, blocks?}` and `"update"` `%{channel, ts, text, blocks?}` →
   `%{"channel", "ts"}`, `"respond"` `%{responseUrl, text}` (seen only by who ran the
