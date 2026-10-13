@@ -2,13 +2,19 @@ defmodule HalC2.PlannerPropTest do
   @moduledoc """
   A state machine model of the planner plugin's MC process (`plugins/planner/mc`),
   loaded and enabled through `HalC2.Plugins` as a user installs it, with the fake
-  Codex, whose turns stay open until the model ends them.
+  Codex, whose turns stay open until the model ends them, and the fake GitHub
+  (`test/support/fake_gh.py`), which holds each rename of a linked task until the
+  model answers it.
 
   Three tasks (`a`, `b`, `c`) are added, nested, made to wait for each other and
   removed. Two actions on the whole plan run: one whose changes wait for the user and
-  one that applies them itself; a third runs on one task. The commands start runs, report through the agent
-  tool (nothing, a task's new due date, the plan's health), end turns, retry, dismiss,
-  apply and discard runs, and restart the plugin. After every step:
+  one that applies them itself; a third, like the first, runs on one task. The commands
+  start runs, report through the agent tool (nothing, a task's new due date, the plan's
+  health), end turns, retry, dismiss, apply and discard runs, and restart the plugin. One task at a time is linked to an
+  issue of a repository the plan syncs both ways, and unlinked again; renaming it
+  pushes to GitHub from a caller of its own, and GitHub takes or refuses those pushes
+  in any order. Work on a task starts on a project the MC does not have, so its thread
+  never launches. After every step:
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
@@ -20,6 +26,12 @@ defmodule HalC2.PlannerPropTest do
     stale rather than applied;
   - a run is failed when its turn ends without a report or the plugin restarts under
     it, and only a failed run is tried again;
+  - a linked task's sync error is what its latest push answered: an older push that
+    finishes after it leaves it alone, a change GitHub takes without being asked
+    anything clears it, and a push in flight when the task was unlinked or the plugin
+    restarted says nothing;
+  - work that could not start leaves its task as it was, not started and linked to no
+    thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
     follow match what it answers.
   """
@@ -34,6 +46,8 @@ defmodule HalC2.PlannerPropTest do
   @package Path.expand("../../../../plugins/planner", __DIR__)
   @support Path.expand("../../test/support", __DIR__)
   @slots ~w(a b c)
+  @repository "acme/api"
+  @issues %{"a" => 1, "b" => 2, "c" => 3}
   @due "2026-10-30"
   @moved "2026-11-06"
   @concurrency 2
@@ -58,17 +72,35 @@ defmodule HalC2.PlannerPropTest do
       "kind" => "action",
       "apply" => "propose",
       "prompt" => "Check {{item.title}}. answer from gate"
+    },
+    "work" => %{
+      "label" => "Work",
+      "scope" => "item",
+      "kind" => "work",
+      "apply" => "apply",
+      "prompt" => "Work on {{item.title}}."
     }
   }
 
   setup_all do
-    vars = ~w(FAKE_CODEX_GATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+    vars =
+      ~w(PATH FAKE_GH_RULES FAKE_GH_LOG FAKE_CODEX_GATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0
+         GIT_CONFIG_VALUE_0)
+
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
-    apps = ~w(codex_command settings_check_ms home planner_today)a
+    apps = ~w(gh_command codex_command settings_check_ms home planner_today)a
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
 
     for var <- ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0),
         do: System.delete_env(var)
+
+    # Every gh the MC runs is the fake, answering from the rules of the case.
+    bin = Path.expand("../../tmp/prop/planner-gh-#{System.pid()}", __DIR__)
+    File.rm_rf!(bin)
+    File.mkdir_p!(bin)
+    File.ln_s!(Path.join(@support, "fake_gh.py"), Path.join(bin, "gh"))
+    System.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
+    Application.put_env(:hal_c2, :gh_command, "gh")
 
     Application.put_env(:hal_c2, :codex_command, [
       "python3",
@@ -89,6 +121,8 @@ defmodule HalC2.PlannerPropTest do
           :error -> Application.delete_env(:hal_c2, key)
         end
       end
+
+      File.rm_rf!(bin)
     end)
 
     :ok
@@ -112,14 +146,29 @@ defmodule HalC2.PlannerPropTest do
 
   # --- model ----------------------------------------------------------------------------
 
-  # `items`: slot → %{parent, after (slots, in order), due}. `runs`: k (the order it
-  # was asked for, from 1) → %{action, on ({slot, gen} of the task it runs on, or nil),
-  # status, seq (order queued), started (it got a thread at least once), changes
-  # ([{slot, gen, dismissed, outcome}]), health}; a
-  # discarded run is gone from it. `gens`: slot → how many times a task was added in it,
-  # so a change to a removed task is not taken for one to the task added in its place.
-  # `updates`: how many status updates the plan has.
-  def initial_state, do: %{items: %{}, gens: %{}, runs: %{}, asked: 0, seq: 0, updates: 0}
+  # `items`: slot → %{parent, after (slots, in order), due, linked (to its issue), sync
+  # (its sync error: nil or {:refused, push})}. `runs`: k (the order it was asked for,
+  # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
+  # without a thread since its task was removed while it waited), status, seq
+  # (order queued), started (its thread started at least once), changes ([{slot, gen, dismissed, outcome}]), health}; a discarded run is gone
+  # from it. `gens`: slot → how many times a task was added in it, so a change to a
+  # removed task is not taken for one to the task added in its place. `updates`: how
+  # many status updates the plan has. `pushes`: the last push a rename made (renames
+  # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
+  # whether the task synced, `:now` for one that took at once; `held`: push → {slot,
+  # gen, :ok | :refused} for the renames GitHub has not answered, and how it will.
+  def initial_state,
+    do: %{
+      items: %{},
+      gens: %{},
+      runs: %{},
+      asked: 0,
+      seq: 0,
+      updates: 0,
+      pushes: 0,
+      latest: %{},
+      held: %{}
+    }
 
   def command(m) do
     slot = elements(@slots)
@@ -128,6 +177,7 @@ defmodule HalC2.PlannerPropTest do
     parent = oneof([nil | if(present == [], do: [], else: [elements(present)])])
     started = for {k, %{started: true}} <- m.runs, do: k
     asked = Enum.to_list(1..max(m.asked, 1))
+    linked = for {slot, %{linked: true}} <- m.items, do: slot
 
     ([
        {4, {:call, __MODULE__, :add, [slot, parent]}},
@@ -135,8 +185,21 @@ defmodule HalC2.PlannerPropTest do
        {2, {:call, __MODULE__, :remove, [item]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
+       {2, {:call, __MODULE__, :work, [item]}},
        {1, {:call, __MODULE__, :restart, []}}
      ] ++
+       if(linked == [],
+         do: [{4, {:call, __MODULE__, :link, [item]}}],
+         else: [
+           {8,
+            {:call, __MODULE__, :rename, [elements(linked), oneof([:ok, :refused]), m.pushes + 1]}},
+           {1, {:call, __MODULE__, :unlink, [elements(linked)]}}
+         ]
+       ) ++
+       if(m.held != %{},
+         do: [{10, {:call, __MODULE__, :answer, [elements(Map.keys(m.held))]}}],
+         else: []
+       ) ++
        if(m.asked > 0,
          do: [
            {2, {:call, __MODULE__, :retry, [elements(asked)]}},
@@ -163,11 +226,23 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, :add, [slot, parent]}),
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
 
-  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait],
+  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait, :work],
     do: Map.has_key?(m.items, slot)
 
   def precondition(m, {:call, _, :run, [_action, slot]}),
     do: slot == nil or Map.has_key?(m.items, slot)
+
+  # One task is linked at a time, so no push asks GitHub to relate two issues.
+  def precondition(m, {:call, _, :link, [slot]}),
+    do: Map.has_key?(m.items, slot) and not Enum.any?(m.items, fn {_, item} -> item.linked end)
+
+  def precondition(m, {:call, _, :unlink, [slot]}), do: match?(%{linked: true}, m.items[slot])
+
+  # A rename names its push, so the push's gate and name stay its own when shrinking.
+  def precondition(m, {:call, _, :rename, [slot, _outcome, push]}),
+    do: match?(%{linked: true}, m.items[slot]) and push > m.pushes
+
+  def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
 
   def precondition(m, {:call, _, cmd, [k | _]}) when cmd in [:report, :turn_finished],
     do: match?(%{started: true}, m.runs[k])
@@ -198,7 +273,8 @@ defmodule HalC2.PlannerPropTest do
   # `{model after call, the reply it expects}`: :ok or :error.
   defp step(m, {:call, _, :add, [slot, parent]}) do
     m = %{m | gens: Map.update(m.gens, slot, 1, &(&1 + 1))}
-    {put_in(m.items[slot], %{parent: parent, after: [], due: @due}), :ok}
+    item = %{parent: parent, after: [], due: @due, linked: false, sync: nil}
+    {put_in(m.items[slot], item), :ok}
   end
 
   defp step(m, {:call, _, :wait, [slot, other]}) do
@@ -207,12 +283,16 @@ defmodule HalC2.PlannerPropTest do
     cond do
       not Map.has_key?(m.items, other) -> {m, :error}
       other == slot or reaches?(m.items, [other], slot) -> {m, :error}
-      true -> {put_in(m.items[slot].after, after_slots), :ok}
+      after_slots == m.items[slot].after -> {m, :ok}
+      true -> {m |> put_in([:items, slot, :after], after_slots) |> pushed(slot), :ok}
     end
   end
 
   defp step(m, {:call, _, :remove, [slot]}) do
     {removed, items} = Map.pop(m.items, slot)
+
+    changed =
+      for {key, item} <- items, item.parent == slot or slot in item.after, do: key
 
     items =
       Map.new(items, fn {key, item} ->
@@ -220,25 +300,42 @@ defmodule HalC2.PlannerPropTest do
         {key, %{item | parent: parent, after: List.delete(item.after, slot)}}
       end)
 
-    {%{m | items: items}, :ok}
+    {Enum.reduce(changed, %{m | items: items}, &pushed(&2, &1)), :ok}
   end
 
-  defp step(m, {:call, _, :run, [action, slot]}) do
-    k = m.asked + 1
-    on = if slot, do: {slot, m.gens[slot]}
+  defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
+  defp step(m, {:call, _, :work, [slot]}), do: {ask(m, "work", slot), :ok}
 
-    run = %{
-      action: action,
-      on: on,
-      status: :queued,
-      seq: nil,
-      started: false,
-      changes: [],
-      health: nil
-    }
+  defp step(m, {:call, _, :link, [slot]}),
+    do: {m |> put_in([:items, slot, :linked], true) |> pushed(slot), :ok}
 
-    m = %{m | asked: k, runs: Map.put(m.runs, k, run)}
-    {m |> queue(k) |> pump(), :ok}
+  # Nothing in flight speaks for a task no longer linked.
+  defp step(m, {:call, _, :unlink, [slot]}) do
+    item = %{m.items[slot] | linked: false, sync: nil}
+    {%{put_in(m.items[slot], item) | latest: Map.delete(m.latest, slot)}, :ok}
+  end
+
+  # The rename waits for GitHub, which will answer `outcome`; until then the task's sync
+  # error stays as it was.
+  defp step(m, {:call, _, :rename, [slot, outcome, push]}) do
+    gen = m.gens[slot]
+
+    {%{
+       m
+       | pushes: push,
+         latest: Map.put(m.latest, slot, {gen, push}),
+         held: Map.put(m.held, push, {slot, gen, outcome})
+     }, :ok}
+  end
+
+  # Only the task's latest push says whether it synced.
+  defp step(m, {:call, _, :answer, [push]}) do
+    {{slot, gen, outcome}, held} = Map.pop(m.held, push)
+    m = %{m | held: held}
+
+    if Map.has_key?(m.items, slot) and m.latest[slot] == {gen, push},
+      do: {put_in(m.items[slot].sync, if(outcome == :refused, do: {:refused, push})), :ok},
+      else: {m, :ok}
   end
 
   defp step(m, {:call, _, :retry, [k]}) do
@@ -310,25 +407,59 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
-  # Starts again from what it saved: what ran is failed, and what waits starts.
+  # Starts again from what it saved: what ran is failed, and what waits starts. It does
+  # not know the pushes in flight, so their answers no longer say whether a task synced.
   defp step(m, {:call, _, :restart, []}) do
     runs =
       Map.new(m.runs, fn {k, run} ->
         {k, if(run.status == :running, do: %{run | status: :failed}, else: run)}
       end)
 
-    {pump(%{m | runs: runs}), :ok}
+    {pump(%{m | runs: runs, latest: %{}}), :ok}
   end
 
   defp put_run(m, k, run), do: %{m | runs: Map.put(m.runs, k, run)}
 
+  # Queues a run of `action`, on the task in `slot` when it is given.
+  defp ask(m, action, slot) do
+    k = m.asked + 1
+    on = if slot, do: {slot, m.gens[slot]}
+
+    run = %{
+      action: action,
+      on: on,
+      gone: false,
+      status: :queued,
+      seq: nil,
+      started: false,
+      changes: [],
+      health: nil
+    }
+
+    m = %{m | asked: k, runs: Map.put(m.runs, k, run)}
+    m |> queue(k) |> pump()
+  end
+
+  # A change to a linked task that asks GitHub nothing: its push takes at once.
+  defp pushed(m, slot) do
+    case m.items[slot] do
+      %{linked: true} ->
+        m = %{m | latest: Map.put(m.latest, slot, {m.gens[slot], :now})}
+        put_in(m.items[slot].sync, nil)
+
+      _ ->
+        m
+    end
+  end
+
   defp queue(m, k) do
-    run = %{m.runs[k] | status: :queued, seq: m.seq + 1, changes: [], health: nil}
+    run = %{m.runs[k] | status: :queued, gone: false, seq: m.seq + 1, changes: [], health: nil}
     %{put_run(m, k, run) | seq: m.seq + 1}
   end
 
   # Fails queued runs whose task is gone, then starts the others, oldest first, while
-  # fewer than `@concurrency` run.
+  # fewer than `@concurrency` run. Work never starts its thread, so it fails at once and
+  # the next run starts in its place.
   defp pump(m) do
     gone? = fn
       %{on: {slot, gen}} -> not Map.has_key?(m.items, slot) or m.gens[slot] != gen
@@ -338,19 +469,25 @@ defmodule HalC2.PlannerPropTest do
     m =
       Enum.reduce(m.runs, m, fn {k, run}, m ->
         if run.status == :queued and gone?.(run),
-          do: put_run(m, k, %{run | status: :failed}),
+          do: put_run(m, k, %{run | status: :failed, gone: true}),
           else: m
       end)
 
     running = Enum.count(m.runs, fn {_, run} -> run.status == :running end)
 
-    m.runs
-    |> Enum.filter(fn {_, run} -> run.status == :queued end)
-    |> Enum.sort_by(fn {_, run} -> run.seq end)
-    |> Enum.take(max(@concurrency - running, 0))
-    |> Enum.reduce(m, fn {k, run}, m ->
-      put_run(m, k, %{run | status: :running, started: true})
-    end)
+    starting =
+      m.runs
+      |> Enum.filter(fn {_, run} -> run.status == :queued end)
+      |> Enum.sort_by(fn {_, run} -> run.seq end)
+      |> Enum.take(max(@concurrency - running, 0))
+
+    m =
+      Enum.reduce(starting, m, fn
+        {k, %{action: "work"} = run}, m -> put_run(m, k, %{run | status: :failed})
+        {k, run}, m -> put_run(m, k, %{run | status: :running, started: true})
+      end)
+
+    if Enum.any?(starting, fn {_, run} -> run.action == "work" end), do: pump(m), else: m
   end
 
   # The changes the user kept, in order: a task still there gets its new due date, one
@@ -370,7 +507,9 @@ defmodule HalC2.PlannerPropTest do
       end)
       |> then(fn {changes, items} -> {items, changes} end)
 
-    m = put_run(%{m | items: items}, k, %{run | status: :applied, changes: changes})
+    moved = for {slot, item} <- items, m.items[slot].due != item.due, do: slot
+    m = Enum.reduce(moved, %{m | items: items}, &pushed(&2, &1))
+    m = put_run(m, k, %{run | status: :applied, changes: changes})
     if run.health, do: %{m | updates: m.updates + 1}, else: m
   end
 
@@ -390,7 +529,7 @@ defmodule HalC2.PlannerPropTest do
       changes =
         for {slot, _gen, dismissed, outcome} <- run.changes, do: {slot, dismissed, outcome}
 
-      {k, {run.action, run.status, run.status != :queued, changes}}
+      {k, {run.action, run.status, run.status != :queued and not run.gone, changes}}
     end)
   end
 
@@ -428,6 +567,73 @@ defmodule HalC2.PlannerPropTest do
     {reply, value} = call("run", %{"action" => action, "itemIds" => ids})
     if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
     observe(reply)
+  end
+
+  # Work on a project the MC does not have, whose thread cannot launch.
+  def work(slot) do
+    input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "nowhere"}
+    {reply, value} = call("run", input)
+    if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+    observe(reply)
+  end
+
+  def link(slot) do
+    issue = %{"repository" => @repository, "number" => @issues[slot]}
+    observe(elem(call("link", %{"itemId" => item_id(slot), "issue" => issue}), 0))
+  end
+
+  def unlink(slot),
+    do: observe(elem(call("unlink", %{"itemId" => item_id(slot), "kind" => "issue"}), 0))
+
+  # Renames the task to a name of the push's own, from a caller of its own as another
+  # client's would be. GitHub holds the push until `answer/1` lets it answer `outcome`.
+  def rename(slot, outcome, push) do
+    title = "#{slot}#{push}"
+    gate = gate(push)
+
+    gh_rule(%{
+      "args" => ["--method PATCH", "repos/#{@repository}/issues/#{@issues[slot]} "],
+      "stdin" => [JSON.encode!(%{"title" => title})],
+      "run" => "while [ ! -e '#{gate}' ] && [ -d '#{Path.dirname(gate)}' ]; do sleep 0.01; done",
+      "stdout" => "{}",
+      "exit" => if(outcome == :ok, do: 0, else: 1),
+      "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
+    })
+
+    input = %{"id" => item_id(slot), "fields" => %{"title" => title}}
+
+    caller =
+      spawn_monitor(fn ->
+        try do
+          call("updateItem", input)
+        catch
+          # The plugin stopped with the case.
+          :exit, _ -> :ok
+        end
+      end)
+
+    Process.put({:pl_push, push}, caller)
+    await_plan(&Enum.any?(&1["items"], fn item -> item["title"] == title end))
+    observe(:ok)
+  end
+
+  # GitHub answers the push, and its caller tells the planner.
+  def answer(push) do
+    {pid, ref} = Process.get({:pl_push, push})
+
+    if Process.alive?(pid) do
+      File.write!(gate(push), "")
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      after
+        15_000 -> problem("the push #{push} never finished")
+      end
+    else
+      problem("the push #{push} did not wait for GitHub")
+    end
+
+    observe(:ok)
   end
 
   def retry(k), do: observe(elem(call("retry", %{"runId" => run_id(k)}), 0))
@@ -543,9 +749,17 @@ defmodule HalC2.PlannerPropTest do
          %{
            parent: slots[item["parent"]],
            after: Enum.map(item["after"], &slots[&1]),
-           due: item["due"]
+           due: item["due"],
+           linked: item["issue"] != nil,
+           sync: sync_error(item["syncError"])
          }}
       end
+
+    # Work never starts in the model, so no task is in progress or linked to a thread.
+    for {id, slot} <- slots,
+        item = by_id[id],
+        item["status"] != "todo" or (item["threads"] || []) != [],
+        do: problem("#{slot} is #{item["status"]} with the threads #{inspect(item["threads"])}")
 
     missing = for {id, slot} <- slots, not Map.has_key?(by_id, id), do: slot
     if missing != [], do: problem("tasks went missing: #{inspect(missing)}")
@@ -556,7 +770,9 @@ defmodule HalC2.PlannerPropTest do
       for run <- runs, into: %{} do
         k = Enum.find_index(order, &(&1 == run["id"])) + 1
         thread = run["threadId"]
-        if thread && not thread?(thread), do: problem("the run #{k} has no thread #{thread}")
+
+        if thread && run["kind"] != "work" && not thread?(thread),
+          do: problem("the run #{k} has no thread #{thread}")
 
         changes =
           for c <- run["changes"] || [] do
@@ -576,6 +792,16 @@ defmodule HalC2.PlannerPropTest do
     }
   end
 
+  # Which push GitHub refused, by the reason the fake gave.
+  defp sync_error(nil), do: nil
+
+  defp sync_error(error) do
+    case Regex.run(~r/refused push (\d+)/, error) do
+      [_, push] -> {:refused, String.to_integer(push)}
+      nil -> {:other, error}
+    end
+  end
+
   defp thread?(tid) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
     HalC2.StreamState.get(state, "thread")[tid] != nil
@@ -587,11 +813,34 @@ defmodule HalC2.PlannerPropTest do
         Process.put({:pl_topic, topic}, value)
         take_messages()
 
-      _ ->
+      # A push's caller ending is left for `answer/1`.
+      message when elem(message, 0) != :DOWN ->
         take_messages()
     after
       0 -> :ok
     end
+  end
+
+  # Takes the plan topic's news until `fun` holds for it.
+  defp await_plan(fun) do
+    receive do
+      {:hal_c2_plugin_topic, _, @id, topic, value} ->
+        Process.put({:pl_topic, topic}, value)
+        if topic == "plan" and fun.(value), do: :ok, else: await_plan(fun)
+    after
+      15_000 -> problem("the plan never showed the change")
+    end
+  end
+
+  defp gate(push), do: Path.join(Process.get(:pl_gh), "go-#{push}")
+
+  # Puts `rule` first in the fake gh's rules, in one step so a gh starting meanwhile
+  # reads either the old rules or the new.
+  defp gh_rule(rule) do
+    path = System.get_env("FAKE_GH_RULES")
+    rules = [rule | path |> File.read!() |> JSON.decode!()]
+    File.write!(path <> ".tmp", JSON.encode!(rules))
+    File.rename!(path <> ".tmp", path)
   end
 
   defp problem(text), do: Process.put(:pl_problems, [text | Process.get(:pl_problems, [])])
@@ -668,6 +917,27 @@ defmodule HalC2.PlannerPropTest do
       "start"
     ])
 
+    # The project is on GitHub as `@repository`; gh answers the reads after a push that
+    # took, and a push the model holds waits for its gate.
+    git!(root, ["remote", "add", "origin", "git@github.com:#{@repository}.git"])
+    gh = Path.join(home, "gh")
+    File.mkdir_p!(gh)
+    Process.put(:pl_gh, gh)
+    System.put_env("FAKE_GH_LOG", Path.join(gh, "calls.jsonl"))
+    System.put_env("FAKE_GH_RULES", Path.join(gh, "rules.json"))
+    issue = %{"number" => 1, "state" => "OPEN", "repository" => %{"nameWithOwner" => @repository}}
+
+    File.write!(
+      Path.join(gh, "rules.json"),
+      JSON.encode!([
+        %{
+          "args" => ["api graphql"],
+          "stdout" => %{"data" => %{"repository" => %{"issue" => issue}}}
+        }
+      ])
+    )
+
+    for {{:pl_push, _} = key, _} <- Process.get(), do: Process.delete(key)
     Process.put(:pl_items, %{})
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])
@@ -723,6 +993,7 @@ defmodule HalC2.PlannerPropTest do
           "pollMinutes" => 60,
           "concurrency" => @concurrency,
           "defaultProject" => "api",
+          "sync" => "twoWay",
           "actions" => @actions
         }
       })
@@ -742,6 +1013,8 @@ defmodule HalC2.PlannerPropTest do
     HalC2.Prop.stop_services()
     # The fake Codex turns still open end, and their processes with them.
     File.write(Path.join(System.get_env("FAKE_CODEX_GATE"), "answer"), "")
+    # So do the pushes GitHub still holds, whose callers find the plugin gone.
+    for {{:pl_push, push}, _} <- Process.get(), do: File.write(gate(push), "")
     take_messages()
   end
 
