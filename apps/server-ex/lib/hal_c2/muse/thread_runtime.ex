@@ -121,6 +121,8 @@ defmodule HalC2.Muse.ThreadRuntime do
        flush_timer: nil,
        interrupted: false,
        usage: %{},
+       # The provider turn of the run that ended last, for usage Muse reports after it.
+       last_turn: nil,
        # Open prompts: request id -> {:approval, approval} | {:question, user input}.
        requests: %{}
      }}
@@ -347,8 +349,12 @@ defmodule HalC2.Muse.ThreadRuntime do
     params = Map.merge(%{"sessionId" => id, "excludeItems" => true}, config(state, turn))
 
     case command(state, "session/resume", params) do
-      {:ok, %{"session" => session}} ->
+      {:ok, %{"session" => %{"sessionId" => ^id} = session}} ->
         set_mode(%{state | session: id, model: session["modelId"]}, turn)
+
+      # The host is out of step with the thread: it stops, and the next turn starts another.
+      {:ok, _} ->
+        {:error, "Muse resumed another session", close_host(state)}
 
       {:error, %{"data" => %{"kind" => kind}}} when kind in ["sessionNotFound", "notFound"] ->
         start_session(state, turn)
@@ -380,7 +386,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         {:ok, %{state | session: id, model: session["modelId"]}}
 
       {:ok, _} ->
-        {:error, "Muse started a session under another id", state}
+        {:error, "Muse started a session under another id", close_host(state)}
 
       {:error, reason} ->
         {:error, reason, state}
@@ -526,9 +532,15 @@ defmodule HalC2.Muse.ThreadRuntime do
       |> then(&if(Muse.effort?(effort), do: Map.put(&1, "reasoningEffort", effort), else: &1))
 
     case command(state, "turn/start", params) do
-      {:ok, %{"turnId" => id}} when id == state.native -> state
-      {:ok, _} -> end_turn(state, "failed", "Muse started the turn under another id")
-      {:error, reason} -> end_turn(state, "failed", format(reason))
+      {:ok, %{"turnId" => id}} when id == state.native ->
+        state
+
+      # A turn this run does not own may still be running there: the host stops.
+      {:ok, _} ->
+        state |> end_turn("failed", "Muse started the turn under another id") |> close_host()
+
+      {:error, reason} ->
+        end_turn(state, "failed", format(reason))
     end
   end
 
@@ -555,6 +567,19 @@ defmodule HalC2.Muse.ThreadRuntime do
       if state.turn, do: end_turn(state, "failed", "Muse Code lost session events."), else: state
 
     close_host(state)
+  end
+
+  # Muse may report the context after `turn/completed`; it goes to the turn just ended.
+  defp notification("session/contextUsage", %{"usedTokens" => used} = params, state)
+       when is_integer(used) do
+    usage = %{"usedTokens" => used}
+
+    usage =
+      if is_integer(params["windowTokens"]),
+        do: Map.put(usage, "maxTokens", params["windowTokens"]),
+        else: usage
+
+    token_usage(state, usage)
   end
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
@@ -608,18 +633,6 @@ defmodule HalC2.Muse.ThreadRuntime do
         do: get_in(params, ["error", "message"]) || params["reason"] || "Muse Code turn failed"
 
     end_turn(state, status, failure)
-  end
-
-  defp notification("session/contextUsage", %{"usedTokens" => used} = params, state)
-       when is_integer(used) do
-    usage = %{"usedTokens" => used}
-
-    usage =
-      if is_integer(params["windowTokens"]),
-        do: Map.put(usage, "maxTokens", params["windowTokens"]),
-        else: usage
-
-    token_usage(state, usage)
   end
 
   defp notification("session/tokenUsage", %{"turnId" => id, "usage" => usage}, state)
@@ -973,13 +986,15 @@ defmodule HalC2.Muse.ThreadRuntime do
     usage = Map.merge(state.usage, Map.reject(usage, fn {_k, v} -> v == nil end))
     state = %{state | usage: usage}
 
-    if is_integer(usage["usedTokens"]) do
+    provider_turn = if state.turn, do: state.turn.ids.provider_turn, else: state.last_turn
+
+    if is_integer(usage["usedTokens"]) and provider_turn do
       commit(state, fn stream ->
         [
           Orchestration.upsert(
             stream,
             "provider-turn",
-            state.turn.ids.provider_turn,
+            provider_turn,
             &Map.put(&1, "tokenUsage", Map.put(usage, "updatedAt", Entities.now()))
           )
         ]
@@ -1041,9 +1056,10 @@ defmodule HalC2.Muse.ThreadRuntime do
       not child? and not owns?(state, approval["turnId"]) ->
         state
 
-      # Muse does not give a workflow's children the session's allowAll mode.
-      child? and elem(state.host, 1) == "full-access" ->
-        decide_now(state, approval, "accept")
+      # Muse does not give a workflow's children the session's allowAll mode. One Muse
+      # will not take an accept for goes to the user instead.
+      child? and elem(state.host, 1) == "full-access" and accepted?(state, approval) ->
+        state
 
       true ->
         native = "#{state.turn.ids.run}:approval:#{id}"
@@ -1060,20 +1076,21 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp approval(state, _method, _params), do: state
 
-  defp decide_now(state, approval, decision) do
-    case choices(approval)[decision] do
+  defp accepted?(state, approval) do
+    case choices(approval)["accept"] do
       %{"choiceId" => choice} ->
-        command(state, "approval/decide", %{
-          "approvalId" => approval["approvalId"],
-          "requirementId" => approval["currentRequirementId"],
-          "choiceId" => choice
-        })
+        match?(
+          {:ok, _},
+          command(state, "approval/decide", %{
+            "approvalId" => approval["approvalId"],
+            "requirementId" => approval["currentRequirementId"],
+            "choiceId" => choice
+          })
+        )
 
       nil ->
-        :ok
+        false
     end
-
-    state
   end
 
   @doc false
@@ -1168,7 +1185,8 @@ defmodule HalC2.Muse.ThreadRuntime do
         free == "" and selected == [] ->
           {:halt, {:error, "Muse needs an answer to every question."}}
 
-        String.length(free) > @max_free_text ->
+        # Muse counts UTF-16 code units, as JavaScript does.
+        HalC2.Acp.Auth.utf16_length(free) > @max_free_text ->
           {:halt, {:error, "Muse takes at most #{@max_free_text} characters of free text."}}
 
         (single? and length(selected) > 1) or
@@ -1213,7 +1231,16 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp end_turn(state, status, failure) do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, muse: %{}, joined: MapSet.new(), compact: false}
+
+    %{
+      state
+      | turn: nil,
+        last_turn: state.turn.ids.provider_turn,
+        items: %{},
+        muse: %{},
+        joined: MapSet.new(),
+        compact: false
+    }
   end
 
   defp put_present(map, _key, nil), do: map

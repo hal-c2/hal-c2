@@ -9,11 +9,14 @@
 #   version   `muse --version` (default "1.4.7")
 #   models    model/list's models (default one Meta model, fake/one)
 #   turns     [{"match": substring, "steps": [...]}], first match wins
+#   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
 #
 # Turn steps: {"text": s}, {"shell": command} and {"edit": path} (asked first unless
 # the session allows all; a decline skips the tool), {"question": {"header",
 # "question", "options"}} (waits for the answer, then says it), {"usage": {...}}
-# (session/tokenUsage), {"waitInterrupt": true} (until turn/interrupt, or a
+# (session/tokenUsage), {"contextAfter": {"usedTokens", "windowTokens"}} (session/contextUsage
+# once the turn has completed), {"childShell": command} (a workflow child asks, offering
+# no way to approve), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
@@ -108,12 +111,15 @@ def wait(kinds):
             return event
 
 
-def ask(sid, turn, subject, choices):
+def ask(sid, turn, subject, choices, origin=None):
     approval = "approval-" + uuid.uuid4().hex[:8]
-    notify("approval/requested", {
+    request = {
         "sessionId": sid, "turnId": turn, "approvalId": approval,
         "currentRequirementId": "req-1", "subject": subject, "availableChoices": choices,
-    })
+    }
+    if origin:
+        request["subagentOrigin"] = origin
+    notify("approval/requested", request)
     event = wait(("decide", "interrupt"))
     if event[0] == "interrupt":
         return None
@@ -141,6 +147,7 @@ def run_turn(sid, turn, text, params):
     if steps is None:
         steps = [{"text": "Reply to %s after [%s]" % (text, " | ".join(history))}]
     terminal = "completed"
+    after = []
     for step in steps:
         if "text" in step:
             say(sid, turn, step["text"])
@@ -180,6 +187,16 @@ def run_turn(sid, turn, text, params):
             answer = event[1]["answers"][0]
             notify("userInput/settled", {"sessionId": sid, "userInputId": "input-1"})
             say(sid, turn, "Picked %s." % (answer.get("selectedLabel") or answer.get("freeText")))
+        elif "childShell" in step:
+            approved = ask(sid, turn, {"kind": "shell", "command": step["childShell"]},
+                           [{"choiceId": "reject", "decision": "abort", "scope": "once"}],
+                           {"agentId": "child-1"})
+            if approved is None:
+                terminal = "cancelled"
+                break
+            log({"tool": {"name": "shell", "approved": approved, "asked": True}})
+        elif "contextAfter" in step:
+            after.append(step["contextAfter"])
         elif "usage" in step:
             notify("session/tokenUsage", {"sessionId": sid, "turnId": turn, "usage": step["usage"]})
         elif "waitInterrupt" in step:
@@ -189,6 +206,8 @@ def run_turn(sid, turn, text, params):
                 break
             say(sid, turn, "steered: " + event[1])
     notify("turn/completed", {"sessionId": sid, "turnId": turn, "terminal": terminal})
+    for usage in after:
+        notify("session/contextUsage", dict(usage, sessionId=sid))
     state["turn"] = None
 
 
@@ -210,6 +229,10 @@ def handle(msg):
     if mid is None:
         return
     sid = state["session"]
+
+    def answered(id):
+        return "other-" + id if config().get("mismatch") == method else id
+
     if method == "initialize":
         requested = params.get("capabilities", {}).get("requestedCapabilities", [])
         reply({"schema": {"version": 1}, "grantedCapabilities": requested})
@@ -222,13 +245,13 @@ def handle(msg):
         state["session"] = sid
         save_session(sid, {"history": [], "approvalMode": params.get("approvalMode"),
                            "modelId": params.get("modelId") or "fake/one"})
-        reply({"session": {"sessionId": sid, "modelId": params.get("modelId") or "fake/one"}})
+        reply({"session": {"sessionId": answered(sid), "modelId": params.get("modelId") or "fake/one"}})
     elif method == "session/resume":
         session = load_session(params["sessionId"])
         if session is None:
             return error(-32004, "session not found", {"kind": "sessionNotFound"})
         state["session"] = params["sessionId"]
-        reply({"session": {"sessionId": params["sessionId"], "modelId": session.get("modelId")}})
+        reply({"session": {"sessionId": answered(params["sessionId"]), "modelId": session.get("modelId")}})
     elif method == "session/setApprovalMode":
         session = load_session(sid)
         session["approvalMode"] = params["mode"]
@@ -245,7 +268,7 @@ def handle(msg):
         while not events.empty():
             events.get()
         text = "".join(p.get("text", "") for p in params["input"] if p["type"] == "text")
-        reply({"commandId": turn, "turnId": turn, "status": "accepted", "disposition": "started"})
+        reply({"commandId": turn, "turnId": answered(turn), "status": "accepted", "disposition": "started"})
         threading.Thread(target=run_turn, args=(sid, turn, text, params), daemon=True).start()
     elif method == "turn/steer":
         if state["turn"] != params.get("expectedTurnId"):

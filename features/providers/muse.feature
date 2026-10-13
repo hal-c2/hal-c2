@@ -58,6 +58,18 @@ Feature: Muse Code
     When Muse Code exits and the user sends another message
     Then Muse Code continues the same session
 
+  Scenario Outline: A Muse Code host that answers <command> for another id is replaced
+    Given a Muse Code thread whose host answers <command> for another id
+    When the user sends a message that Muse Code takes under that other id
+    Then the turn fails and that Muse Code host is stopped
+    And the next message runs on a new Muse Code host
+
+    Examples:
+      | command        |
+      | session/start  |
+      | session/resume |
+      | turn/start     |
+
   Scenario: Muse Code with no models tells the user to sign in
     Given Muse Code reports no models
     When the user refreshes provider status
@@ -92,6 +104,11 @@ Feature: Muse Code
     When the user sends a message to Muse Code
     Then Muse Code runs the turn at max reasoning
 
+  Scenario: Context usage Muse Code reports after a turn reaches the context meter
+    Given Muse Code is installed and enabled
+    When Muse Code reports its context usage after the turn has ended
+    Then the turn's context usage is shown
+
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread
     Then supervised and full access are offered
@@ -106,6 +123,11 @@ Feature: Muse Code
       | mode        | outcome                |
       | supervised  | asked for approval     |
       | full access | allowed without asking |
+
+  Scenario: A Muse Code workflow's request that cannot be approved for it asks the user
+    Given the thread runs Muse Code in full access
+    When a Muse Code workflow asks to run a command it offers no way to approve
+    Then the request is shown to the user
 
   Scenario: Approving a Muse Code request lets the turn continue
     Given Muse Code asked to edit a file

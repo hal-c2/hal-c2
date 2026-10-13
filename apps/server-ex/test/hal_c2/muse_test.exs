@@ -1,5 +1,6 @@
 defmodule HalC2.MuseTest do
-  use ExUnit.Case, async: true
+  # One test sets META_API_KEY for the whole VM.
+  use ExUnit.Case, async: false
 
   alias HalC2.Muse
   alias HalC2.Muse.ThreadRuntime
@@ -168,6 +169,9 @@ defmodule HalC2.MuseTest do
       assert {:error, _} = ThreadRuntime.answers([@single], %{"q" => ["red", "green"]})
       assert {:error, _} = ThreadRuntime.answers([@multiple], %{"m" => ["a", "b", "c"]})
       assert {:error, _} = ThreadRuntime.answers([@single], %{"q" => String.duplicate("x", 501)})
+      # Muse counts UTF-16 code units: each of these emoji is two.
+      assert {:error, _} = ThreadRuntime.answers([@single], %{"q" => String.duplicate("😀", 251)})
+      assert {:ok, _} = ThreadRuntime.answers([@single], %{"q" => String.duplicate("😀", 250)})
     end
   end
 

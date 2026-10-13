@@ -21,6 +21,17 @@ defmodule HalC2.Steps.Providers.Muse do
       "steps" => [%{"edit" => "src/app.ts"}, %{"text" => "Edited it."}]
     },
     %{
+      "match" => "a workflow command",
+      "steps" => [%{"childShell" => "rm -rf build"}, %{"text" => "Done."}]
+    },
+    %{
+      "match" => "count the context",
+      "steps" => [
+        %{"text" => "Counted."},
+        %{"contextAfter" => %{"usedTokens" => 1234, "windowTokens" => 200_000}}
+      ]
+    },
+    %{
       "match" => "a long task",
       "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
     },
@@ -88,6 +99,9 @@ defmodule HalC2.Steps.Providers.Muse do
     assert run["status"] == status, "run ended #{run["status"]}: #{inspect(run)}"
     context
   end
+
+  defp alive?(pid),
+    do: match?({_, 0}, System.cmd("kill", ["-0", "#{pid}"], stderr_to_stdout: true))
 
   defp session_id(context) do
     state = state(context)
@@ -234,6 +248,52 @@ defmodule HalC2.Steps.Providers.Muse do
     context
   end
 
+  # A session/resume only goes to a host that does not have the session yet: the
+  # thread's first host exits after a turn.
+  step ~r/^a Muse Code thread whose host answers (?<method>session\/start|session\/resume|turn\/start) for another id$/,
+       %{args: [method]} = context do
+    context = context |> install() |> FakeAcp.thread()
+
+    context =
+      if method == "session/resume" do
+        context = turn(context, "hello Muse")
+
+        [{runtime, _}] =
+          Registry.lookup(HalC2.Muse.Registry, World.thread_id(context, context.thread))
+
+        %{conn: conn} = :sys.get_state(runtime)
+        ref = Process.monitor(conn)
+        [%{"pid" => pid}] = thread_starts(context)
+        {_, 0} = System.cmd("kill", ["-9", "#{pid}"])
+        assert_receive {:DOWN, ^ref, _, _, _}, 10_000
+        assert %{conn: nil} = :sys.get_state(runtime)
+        context
+      else
+        context
+      end
+
+    FakeAcp.configure(context, &Map.put(&1, "mismatch", method))
+  end
+
+  step "the user sends a message that Muse Code takes under that other id", context do
+    turn(context, "out of step", "failed")
+  end
+
+  # The run's failure stopped the host it ran on, before anything else reached it.
+  step "the turn fails and that Muse Code host is stopped", context do
+    %{"pid" => pid} = List.last(thread_starts(context))
+    refute alive?(pid)
+    context
+  end
+
+  step "the next message runs on a new Muse Code host", context do
+    before = length(thread_starts(context))
+    context = context |> FakeAcp.configure(&Map.delete(&1, "mismatch")) |> turn("back in step")
+    assert length(thread_starts(context)) == before + 1
+    assert List.last(replies(context)) =~ "back in step"
+    context
+  end
+
   step "Muse Code reports no models", context do
     install(context, %{"models" => []})
   end
@@ -354,6 +414,36 @@ defmodule HalC2.Steps.Providers.Muse do
        %{args: [mode]} = context do
     mode = if mode == "supervised", do: "approval-required", else: "full-access"
     context |> install() |> FakeAcp.thread("Work", mode) |> Map.put(:mode, mode)
+  end
+
+  step "a Muse Code workflow asks to run a command it offers no way to approve", context do
+    FakeAcp.send_message(context, "please run a workflow command")
+  end
+
+  step "the request is shown to the user", context do
+    assert %{"status" => "pending", "kind" => "command"} =
+             request = FakeAcp.await_request(context)
+
+    assert received(context, "approval/decide") == []
+    FakeAcp.respond(context, request["id"], %{"decision" => "decline"})
+    FakeAcp.await_run(context, "completed")
+    assert [%{"choiceId" => "reject"}] = received(context, "approval/decide")
+    context
+  end
+
+  step "Muse Code reports its context usage after the turn has ended", context do
+    context |> FakeAcp.thread() |> turn("count the context")
+  end
+
+  # The usage arrives after the run ended, so it is waited for, not read once.
+  step "the turn's context usage is shown", context do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.find_value(StreamState.list(state, "provider-turn"), fn turn ->
+        match?(%{"usedTokens" => 1234, "maxTokens" => 200_000}, turn["tokenUsage"])
+      end)
+    end)
+
+    context
   end
 
   step "Muse Code wants to run a command", context do
