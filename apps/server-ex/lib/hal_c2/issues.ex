@@ -229,19 +229,21 @@ defmodule HalC2.Issues do
 
   @doc false
   def list(input) do
-    with {:ok, ctx} <- repository(input) do
+    with {:ok, ctx} <- repository(input),
+         {:ok, state} <- choice(input["state"], ~w(open closed all), "open"),
+         {:ok, milestone} <- scalar(input["milestone"], "milestone") do
       {owner, name} = split(ctx.repository)
       limit = input["limit"] |> integer(200) |> min(1000) |> max(1)
 
       filter =
         %{}
-        |> put_present("milestoneNumber", input["milestone"] && to_string(input["milestone"]))
+        |> put_present("milestoneNumber", milestone)
         |> put_present("since", input["since"])
 
       variables = %{
         "owner" => owner,
         "name" => name,
-        "states" => states(input["state"]),
+        "states" => states(state),
         "labels" => non_empty(input["labels"]),
         "filter" => filter
       }
@@ -603,7 +605,9 @@ defmodule HalC2.Issues do
 
   # The value in the shape GitHub's `ProjectV2FieldValue` takes for the field's type:
   # a single-select option by its name, an iteration by its title.
-  defp field_value(%{"type" => "text"}, value), do: {:ok, %{"text" => to_string(value)}}
+  defp field_value(%{"type" => "text"} = field, value) do
+    with {:ok, text} <- scalar(value, field["name"]), do: {:ok, %{"text" => text}}
+  end
 
   defp field_value(%{"type" => "number"} = field, value) when is_binary(value) do
     case Float.parse(value) do
@@ -812,7 +816,7 @@ defmodule HalC2.Issues do
 
   defp states("closed"), do: ["CLOSED"]
   defp states("all"), do: nil
-  defp states(_), do: ["OPEN"]
+  defp states("open"), do: ["OPEN"]
 
   defp number(n) when is_integer(n) and n > 0, do: {:ok, n}
   defp number(_), do: {:error, "number must be a positive whole number."}
@@ -833,6 +837,11 @@ defmodule HalC2.Issues do
   end
 
   defp date(value), do: {:error, "#{inspect(value)} is not a date (YYYY-MM-DD)."}
+
+  # A JSON string or number as GitHub's text; nil when absent.
+  defp scalar(nil, _key), do: {:ok, nil}
+  defp scalar(value, _key) when is_binary(value) or is_number(value), do: {:ok, to_string(value)}
+  defp scalar(value, key), do: {:error, "#{key} takes text or a number, not #{inspect(value)}."}
 
   defp choice(nil, _choices, default), do: {:ok, default}
 

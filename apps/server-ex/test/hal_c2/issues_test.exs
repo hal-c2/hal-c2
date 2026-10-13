@@ -155,6 +155,18 @@ defmodule HalC2.IssuesTest do
              Issues.handle("create", Map.put(@input, "title", "Add limits"))
   end
 
+  test "a listing refuses a state or milestone it cannot ask for", %{dir: dir} do
+    rules!(dir, [])
+
+    assert {:error, ~s("clsoed" is not one of open, closed, all.)} =
+             Issues.handle("list", Map.put(@input, "state", "clsoed"))
+
+    assert {:error, ~s(milestone takes text or a number, not %{"number" => 4}.)} =
+             Issues.handle("list", Map.put(@input, "milestone", %{"number" => 4}))
+
+    assert graphql_calls(dir) == []
+  end
+
   test "a comment is posted as written, its indentation kept", %{dir: dir} do
     rules!(dir, [
       %{
@@ -327,9 +339,12 @@ defmodule HalC2.IssuesTest do
   test "a board field is set by its name, an option by name and an iteration by title", %{
     dir: dir
   } do
+    notes = %{"id" => "F_notes", "name" => "Notes", "dataType" => "TEXT"}
+    project = update_in(project()["fields"]["nodes"], &(&1 ++ [notes]))
+
     rules!(dir, [
       graphql(["{ id fields(first: 50)"], %{
-        "repositoryOwner" => %{"projectV2" => Map.take(project(), ["id", "fields"])}
+        "repositoryOwner" => %{"projectV2" => Map.take(project, ["id", "fields"])}
       }),
       graphql(["updateProjectV2ItemFieldValue"], %{"updateProjectV2ItemFieldValue" => %{}}),
       graphql(["clearProjectV2ItemFieldValue"], %{"clearProjectV2ItemFieldValue" => %{}})
@@ -350,6 +365,8 @@ defmodule HalC2.IssuesTest do
     assert {:ok, %{"ok" => true}} = set.("Status", "done")
     assert {:ok, %{"ok" => true}} = set.("Sprint", "Sprint 0")
     assert {:ok, %{"ok" => true}} = set.("Status", nil)
+    assert {:ok, %{"ok" => true}} = set.("Notes", 3)
+    assert {:error, "Notes takes text or a number, not [\"a\"]."} = set.("Notes", ["a"])
     assert {:error, "Status has no option \"Later\"."} = set.("Status", "Later")
     assert {:error, "Title cannot be set here."} = set.("Title", "x")
 
@@ -361,7 +378,8 @@ defmodule HalC2.IssuesTest do
              %{"project" => "PVT_3", "field" => "F_target", "value" => %{"date" => "2026-11-09"}},
              %{"field" => "F_status", "value" => %{"singleSelectOptionId" => "O_done"}},
              %{"field" => "F_sprint", "value" => %{"iterationId" => "IT_0"}},
-             %{"field" => "F_status"} = clear
+             %{"field" => "F_status"} = clear,
+             %{"field" => "F_notes", "value" => %{"text" => "3"}}
            ] = changes
 
     refute Map.has_key?(clear, "value")
