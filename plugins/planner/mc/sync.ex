@@ -333,6 +333,7 @@ defmodule HalC2Plugins.Planner.Sync do
         fields =
           Map.merge(status, %{
             "title" => issue["title"],
+            "notes" => issue["body"] || "",
             "owner" => List.first(issue["assignees"] || []),
             "labels" => issue["labels"] || []
           })

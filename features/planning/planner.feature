@@ -434,6 +434,14 @@ Feature: Planner
       Then #7's task is done
 
     @mc
+    Scenario: An issue edited on GitHub updates its task's title and notes
+      Given "planner" follows the issues of "acme/api"
+      And #7's task was imported as "Rate limits"
+      When #7 is renamed on GitHub to "Rate limiting" with the description "Per token, not per IP"
+      And the plugin looks at GitHub
+      Then #7's task is named "Rate limiting" with the notes "Per token, not per IP"
+
+    @mc
     Scenario: Dates come from the board's fields
       Given "planner" follows the board "acme/3" with "Start date" and "Target date" as its dates
       And #7 is on "acme/3" from "2026-10-20" to "2026-11-02"

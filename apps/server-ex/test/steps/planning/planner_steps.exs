@@ -1081,6 +1081,29 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "\#{int}'s task was imported as {string}", %{args: [number, title]} = context do
+    repository = context.repository
+    issue = GitHubIssues.issue(repository, number, %{"title" => title, "body" => "First notes"})
+    context = context |> GitHubIssues.answers(repository, [issue]) |> sync!()
+    assert %{"title" => ^title, "notes" => "First notes"} = task_of(plan!(context), number)
+    context
+  end
+
+  step "\#{int} is renamed on GitHub to {string} with the description {string}",
+       %{args: [number, title, body]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"title" => title, "body" => body})
+    ])
+  end
+
+  step "\#{int}'s task is named {string} with the notes {string}",
+       %{args: [number, title, notes]} = context do
+    assert %{"title" => ^title, "notes" => ^notes} = task_of(plan!(context), number)
+    context
+  end
+
   step "{string} follows the board {string} with {string} and {string} as its dates",
        %{args: [@id, board, start, target]} = context do
     save(context, %{
