@@ -116,14 +116,13 @@ defmodule HalC2Plugins.Planner.Sync do
          [_ | _] <- github do
       case read_board(github, owner, number, 500) do
         {:ok, %{"items" => board_items}} ->
+          # Only the dates the settings name; one empty on the board is cleared.
+          named = for {date, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}], is_binary(field) and field != "", do: {date, field}
+
           board =
             for %{"content" => %{"kind" => "issue"} = content} = item <- board_items, into: %{} do
-              {key(content),
-               %{
-                 "itemId" => item["id"],
-                 "start" => day(item["fields"][settings["startField"]]),
-                 "due" => day(item["fields"][settings["targetField"]])
-               }}
+              dates = for {date, field} <- named, into: %{}, do: {date, day(item["fields"][field])}
+              {key(content), Map.put(dates, "itemId", item["id"])}
             end
 
           %{found | board: board}
@@ -480,7 +479,7 @@ defmodule HalC2Plugins.Planner.Sync do
           dates =
             if item["syncError"],
               do: %{},
-              else: Map.reject(Map.take(on_board, ~w(start due)), fn {_, v} -> is_nil(v) end)
+              else: Map.take(on_board, ~w(start due))
 
           items =
             case Plan.update(items, id, dates, now) do

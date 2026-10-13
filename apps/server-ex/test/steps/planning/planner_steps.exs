@@ -1251,18 +1251,28 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "\#{int} is on {string} from {string} to {string}",
        %{args: [number, board, start, due]} = context do
-    repository = context.repository
-    {start_field, target_field} = context.board_fields
+    board_item(context, number, board, start, due)
+  end
 
+  step "\#{int} was imported from {string} with the dates {string} to {string}",
+       %{args: [number, board, start, due]} = context do
     context
-    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, number)])
-    |> GitHubIssues.board(board, [start_field, target_field], [
-      %{
-        "number" => number,
-        "repository" => repository,
-        "fields" => %{start_field => start, target_field => due}
-      }
-    ])
+    |> board_item(number, board, start, due)
+    |> sync!()
+    |> Map.put(:board_dates, {start, due})
+  end
+
+  step "the {string} of \#{int} is cleared on {string}",
+       %{args: [field, number, board]} = context do
+    {start, _due} = context.board_dates
+    assert {_, ^field} = context.board_fields
+    board_item(context, number, board, start, nil)
+  end
+
+  step "\#{int}'s task starts on {string} and has no due date",
+       %{args: [number, start]} = context do
+    assert %{"start" => ^start, "due" => nil} = task_of(plan!(context), number)
+    context
   end
 
   step "\#{int}'s task is from {string} to {string}", %{args: [number, start, due]} = context do
@@ -1689,6 +1699,19 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  # Issue `number` on `board` with its dates; a nil one is empty there.
+  defp board_item(context, number, board, start, due) do
+    repository = context.repository
+    {start_field, target_field} = context.board_fields
+    fields = Map.reject(%{start_field => start, target_field => due}, fn {_, v} -> is_nil(v) end)
+
+    context
+    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, number)])
+    |> GitHubIssues.board(board, [start_field, target_field], [
+      %{"number" => number, "repository" => repository, "fields" => fields}
+    ])
+  end
 
   defp board_number(board), do: board |> String.split("/") |> List.last() |> String.to_integer()
 

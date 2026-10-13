@@ -519,6 +519,14 @@ Feature: Planner
       Then #7's task is from "2026-10-20" to "2026-11-02"
 
     @mc
+    Scenario: A date cleared on the board is cleared from the task
+      Given "planner" follows the board "acme/3" with "Start date" and "Target date" as its dates
+      And #7 was imported from "acme/3" with the dates "2026-10-20" to "2026-11-02"
+      When the "Target date" of #7 is cleared on "acme/3"
+      And the plugin looks at GitHub
+      Then #7's task starts on "2026-10-20" and has no due date
+
+    @mc
     Scenario: The settings offer the open boards of the projects' owners
       Given "acme" has the boards "acme/3" "Roadmap" and "acme/4" "Old roadmap", which is closed
       When the settings of "planner" list the boards
