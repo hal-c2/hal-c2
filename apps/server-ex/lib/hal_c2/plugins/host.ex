@@ -75,6 +75,15 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, permission), do: HalC2.PullRequests.handle(method, input)
   end
 
+  @doc """
+  A repository's issues, milestones, sub-issues and dependencies, and the boards
+  they sit on (`HalC2.Issues.handle/2`). Changes need `issues:write`.
+  """
+  def issues(id, method, input) do
+    permission = if HalC2.Issues.write?(method), do: "issues:write", else: "issues:read"
+    with :ok <- permit(id, permission), do: HalC2.Issues.handle(method, input)
+  end
+
   @doc "A thread's sidebar row (`OrchestrationV2ThreadShell`), or nil."
   def thread(id, thread_id) do
     with :ok <- permit(id, "threads:read") do

@@ -1085,6 +1085,9 @@ defmodule HalC2.PullRequests do
          "message" => "Pull request operation #{operation} failed: #{detail}"
        }}
 
+  @doc "What to do when `gh` is `:missing` or `:unauthenticated`, as the user is told."
+  def requirement(reason), do: @requirements[reason]
+
   defp login_of({:ok, %{"login" => login}}), do: login
   defp login_of(_), do: nil
 
