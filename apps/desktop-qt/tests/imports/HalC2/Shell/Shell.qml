@@ -12,6 +12,7 @@ QtObject {
         })
     property var dispatchedActions: []
     property int dispatchCount: 0
+    property var openedExternally: []
     property bool echoTextEdits: true
     property bool localFolderImportEnabled: false
 
@@ -71,6 +72,7 @@ QtObject {
         localFolderImportEnabled = false;
         dispatchedActions = [];
         dispatchCount = 0;
+        openedExternally = [];
         state = {
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
@@ -129,6 +131,10 @@ QtObject {
             publishComposerText(payload.text, state.composer.cursor, payload.edit);
         }
         actionRequested(action, payload);
+    }
+
+    function openExternal(url) {
+        openedExternally = openedExternally.concat([String(url)]);
     }
 
     function localDirectoryPath(url) {

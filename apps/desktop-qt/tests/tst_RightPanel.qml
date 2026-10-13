@@ -99,6 +99,8 @@ Item {
             property bool wrap: false
             // WorkspaceFiles notifies both through renderedChanged.
             property bool rendered: false
+            property string renderKind: ""
+            property string renderedText: ""
             property bool editing: false
             property var tree: null
             property ListModel lines: ListModel {
@@ -455,6 +457,32 @@ Item {
             mouseClick(findChild(details, "threadDetailsShowMore"));
             compare(details.hiddenCount, 0);
             verify(!findChild(details, "threadDetailsShowMore").visible);
+        }
+
+        function test_renderedPageLinksOpenOnCtrlClickAndOfferTheirMenu() {
+            Shell.reset();
+            const source = createTemporaryObject(fakeFiles, root, {
+                rendered: true,
+                renderKind: "html",
+                renderedText: "<p>See <a href=\"https://example.com/docs\">the pricing docs</a> now.</p>"
+            });
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const page = findChild(files, "fileRenderedPage");
+            verify(page);
+            tryVerify(() => page.visible && page.width > 0);
+            let x = 0;
+            const y = page.contentHeight / 2;
+            while (x < page.width && page.linkAt(x, y) === "")
+                x += 2;
+            compare(page.linkAt(x + 4, y), "https://example.com/docs");
+            mouseClick(page, x + 4, y);
+            compare(Shell.openedExternally, [], "a plain click opens nothing");
+            mouseClick(page, x + 4, y, Qt.LeftButton, Qt.ControlModifier);
+            compare(Shell.openedExternally, ["https://example.com/docs"]);
+            mouseClick(page, x + 4, y, Qt.RightButton);
+            const menu = Shell.dispatchedActions.filter(a => a.action === "link.menu");
+            compare(menu.length, 1);
+            compare(menu[0].payload.url, "https://example.com/docs");
         }
 
         function test_openFileGetsMostOfThePanel() {
