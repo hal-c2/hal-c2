@@ -119,16 +119,20 @@ Feature: Links and rendering inside terminals
     @desktop
     Scenario Outline: The terminal's menu opens or copies the link under the pointer
       Given the shell prints "<link>"
+      And the user's links open in the system browser
       When the user opens the terminal's menu on "<link>"
       Then the menu offers "<open>" and "<copy>"
       When the user chooses "<copy>" from the link's menu
       Then "<link>" is on the clipboard
       And nothing is opened
+      When the user opens the terminal's menu on "<link>"
+      And the user chooses "<open>" from the link's menu
+      Then <opened>
 
       Examples:
-        | link                  | open      | copy      |
-        | http://localhost:5173 | Open link | Copy link |
-        | src/app.ts:12:4       | Open file | Copy path |
+        | link                  | open      | copy      | opened                                                  |
+        | http://localhost:5173 | Open link | Copy link | the address opens in the system browser                 |
+        | src/app.ts:12:4       | Open file | Copy path | "src/app.ts" opens in the user's editor at line 12, column 4 |
 
     @backlog @desktop
     Scenario: Holding Ctrl over a link underlines all of it and shows it can be followed
