@@ -93,6 +93,17 @@ Feature: Queueing, steering and restarting
     And a run for "Over to Claude" starts when the interrupted run ends
     And "Over to Claude" runs on "claudeAgent"
 
+  # A client that sends behind its own sends still in flight compares against a thread
+  # those sends have not moved yet, so its provider.switch can be missing.
+  @mc
+  Scenario: A message for another provider moves the thread over when its run starts
+    Given "t1" has a running turn on "codex"
+    And the user sent "Over to Claude" for "claudeAgent" to "t1" with automatic delivery
+    And thread "t1" is on "codex"
+    When the running turn completes
+    Then the run for "Over to Claude" starts with ordinal 2
+    And thread "t1" is on "claudeAgent"
+
   @mc
   Scenario Outline: A restart interrupts the active turn and goes first
     Given "t1" has a running turn and a queued message "Old"

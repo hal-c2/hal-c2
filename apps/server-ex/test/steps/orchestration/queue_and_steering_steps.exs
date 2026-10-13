@@ -119,7 +119,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     Map.put(context, :sent, text)
   end
 
-  step ~r/^the user sends "(?<text>[^"]+)" for "(?<provider>[^"]+)" to "(?<thread>[^"]+)" (?<how>with automatic delivery|as a steer)$/,
+  step ~r/^the user (?:sends|sent) "(?<text>[^"]+)" for "(?<provider>[^"]+)" to "(?<thread>[^"]+)" (?<how>with automatic delivery|as a steer)$/,
        %{args: [text, provider, thread, how]} = context do
     intent = if how == "as a steer", do: "steer", else: "auto"
 
@@ -135,6 +135,13 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
   step "{string} runs on {string}", %{args: [text, provider]} = context do
     assert %{"providerInstanceId" => ^provider} = run_for(context, text)
+    context
+  end
+
+  step "thread {string} is on {string}", %{args: [thread, provider]} = context do
+    assert %{"providerInstanceId" => ^provider, "modelSelection" => %{"instanceId" => ^provider}} =
+             World.thread(context, thread)
+
     context
   end
 
@@ -548,7 +555,10 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       context
       |> World.providers()
       |> Map.put(:thread, thread)
-      |> World.patch_thread(thread, %{"modelSelection" => selection(provider)})
+      |> World.patch_thread(thread, %{
+        "modelSelection" => selection(provider),
+        "providerInstanceId" => provider
+      })
 
     World.running_turn(context, thread)
   end

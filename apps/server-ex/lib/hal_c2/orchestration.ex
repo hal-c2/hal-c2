@@ -2771,10 +2771,25 @@ defmodule HalC2.Orchestration do
         ]
       end
 
+    # A run on another provider takes the thread over, as `provider.switch` would: a
+    # client's switch can be missing or stale when it sent behind sends still in flight.
+    switch_change =
+      if instance != message_instance(thread, %{}),
+        do:
+          upsert(
+            state,
+            "thread",
+            thread_id,
+            &Map.merge(
+              &1,
+              thread_fields("provider.switch", %{"modelSelection" => selection}, &1, at)
+            )
+          )
+
     text = command["text"] || ""
 
     changes =
-      Enum.reject(provider_changes ++ [scope_change], &is_nil/1)
+      Enum.reject(provider_changes ++ [scope_change, switch_change], &is_nil/1)
       |> Kernel.++(
         [
           if(queued,

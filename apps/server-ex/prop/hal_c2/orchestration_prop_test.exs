@@ -11,7 +11,8 @@ defmodule HalC2.OrchestrationPropTest do
   IdleSessions does; and restart the MC mid-turn (boot recovery).
 
   Each message names one of two Codex instances (`codex`, and `codex-work` from the
-  settings); a message for the instance the running turn is not on never joins it.
+  settings); a message for the instance the running turn is not on never joins it, and
+  the thread is on the instance of the run that started last.
 
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`. Every
   message says "wait", so its turn runs until it is interrupted or steered, and the
@@ -91,7 +92,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # threads: id -> %{status: :live | :archived | :deleted, title, runs, queue, messages}
+  # threads: id -> %{status: :live | :archived | :deleted, title, instance, runs, queue,
+  #   messages}
+  #   instance: the instance of the run that started last, else the one it was created on;
   #   runs: [%{msg, status, held, instance}] in the order they were made (their ordinals);
   #   queue: queued messages, first to start first;
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
@@ -190,6 +193,7 @@ defmodule HalC2.OrchestrationPropTest do
         put_in(state.threads[tid], %{
           status: :live,
           title: "Thread #{tid}",
+          instance: "codex",
           runs: [],
           queue: [],
           messages: %{}
@@ -484,6 +488,7 @@ defmodule HalC2.OrchestrationPropTest do
          next when next != nil <- Enum.find(thread.queue, &(not MapSet.member?(held, &1))) do
       %{thread | queue: List.delete(thread.queue, next)}
       |> set_runs(&if(&1.msg == next, do: %{&1 | status: :running}, else: &1))
+      |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == next)).instance)
       |> put_in([:messages, next, :shown], true)
     else
       _ -> thread
@@ -497,7 +502,7 @@ defmodule HalC2.OrchestrationPropTest do
 
     cond do
       active == nil ->
-        %{thread | runs: thread.runs ++ [%{run | status: :running}]}
+        %{thread | runs: thread.runs ++ [%{run | status: :running}], instance: instance}
         |> put_in([:messages, msg], %{message | shown: true})
 
       mode == :auto and active.instance == instance ->
@@ -551,6 +556,7 @@ defmodule HalC2.OrchestrationPropTest do
     %{
       status: thread.status,
       title: thread.title,
+      instance: thread.instance,
       runs:
         for(
           run <- thread.runs,
@@ -870,6 +876,7 @@ defmodule HalC2.OrchestrationPropTest do
               true -> :live
             end,
           title: thread["title"],
+          instance: thread["modelSelection"]["instanceId"],
           runs:
             for(
               run <- runs,
