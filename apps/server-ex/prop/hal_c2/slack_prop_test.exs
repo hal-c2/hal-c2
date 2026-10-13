@@ -5,8 +5,9 @@ defmodule HalC2.SlackPropTest do
   what the plugins hear. Slack is `HalC2.Test.FakeSlack`.
 
   Commands connect with good tokens and with a bot or app token Slack refuses,
-  disconnect, take Slack away and bring it back, drop the Socket Mode connection,
-  restart the service and mention the bot in Slack. After every step the status must
+  disconnect, take Slack away and bring it back, drop the Socket Mode connection (and
+  drop it with a long backoff, where the lost connection must be stopped before the
+  retry, then connect again), restart the service and mention the bot in Slack. After every step the status must
   match the model and never carry a token, and the secret store must hold tokens
   exactly when the model keeps them. At the end of a case the plugin granted
   `slack:read` must have heard every connect and every stop (`slack.status`) and every
@@ -141,6 +142,7 @@ defmodule HalC2.SlackPropTest do
         if state.phase == :connected do
           [
             {6, {:call, __MODULE__, :drop, [state.up]}},
+            {2, {:call, __MODULE__, :drop_held, []}},
             {4, {:call, __MODULE__, :mention, []}}
           ]
         else
@@ -150,6 +152,7 @@ defmodule HalC2.SlackPropTest do
   end
 
   def precondition(state, {:call, _, :drop, _}), do: state.phase == :connected
+  def precondition(state, {:call, _, :drop_held, _}), do: state.phase == :connected
   def precondition(state, {:call, _, :mention, _}), do: state.phase == :connected
   def precondition(_state, _call), do: true
 
@@ -175,6 +178,12 @@ defmodule HalC2.SlackPropTest do
   def next_state(state, _result, {:call, _, :drop, _}) do
     state = walk(state, [:reconnecting])
     if state.up, do: walk(state, [:connected]), else: state
+  end
+
+  # Held in reconnecting by the backoff, then connected afresh.
+  def next_state(state, _result, {:call, _, :drop_held, []}) do
+    state = walk(state, [:reconnecting])
+    next_state(state, nil, {:call, __MODULE__, :connect, [:good]})
   end
 
   # A service that stops says nothing; the one that starts connects when it keeps tokens.
@@ -232,6 +241,12 @@ defmodule HalC2.SlackPropTest do
     do: match?({:ok, %{"state" => "off", "tokensSet" => false}}, result)
 
   defp replied?(_state, {:call, _, :mention, []}, result), do: result == :heard
+
+  defp replied?(state, {:call, _, :drop_held, []}, result) do
+    match?({:held, _}, result) and
+      replied?(state, {:call, __MODULE__, :connect, [:good]}, elem(result, 1))
+  end
+
   defp replied?(_state, _call, _result), do: true
 
   defp leaks?(payloads) do
@@ -267,6 +282,38 @@ defmodule HalC2.SlackPropTest do
     receive_state("reconnecting")
     if up, do: receive_state("connected")
     :ok
+  end
+
+  # Drops the socket while the backoff is far off: by the time the status says
+  # reconnecting, the connection that was lost must be gone, not restarted by slack_elixir
+  # to take events nobody can answer. Then connects again, the retry being far off.
+  def drop_held do
+    for key <- [:slack_backoff_ms, :slack_backoff_max_ms],
+        do: Application.put_env(:hal_c2, key, 600_000)
+
+    live =
+      for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Slack.Connections),
+          do: {pid, Process.monitor(pid)}
+
+    watch()
+    FakeSlack.drop()
+    receive_state("reconnecting")
+
+    stopped =
+      Enum.all?(live, fn {pid, ref} ->
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} -> true
+        after
+          @wait -> false
+        end
+      end)
+
+    held =
+      live != [] and stopped and DynamicSupervisor.which_children(HalC2.Slack.Connections) == []
+
+    Application.put_env(:hal_c2, :slack_backoff_ms, 1)
+    Application.put_env(:hal_c2, :slack_backoff_max_ms, 20)
+    {if(held, do: :held, else: {:still_running, live}), connect(:good)}
   end
 
   def restart(stored, up) do

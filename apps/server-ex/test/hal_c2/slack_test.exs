@@ -110,6 +110,22 @@ defmodule HalC2.SlackTest do
     assert {:ok, %{"channels" => [%{"id" => "CPLAN"}]}} = Slack.call("channels", %{})
   end
 
+  # slack_elixir restarts the socket it lost at once; that one must not live on to take
+  # events while the MC says it is reconnecting and has no token for plugins.
+  test "a dropped socket's connection stops at once, not when the backoff ends" do
+    Application.put_env(:hal_c2, :slack_backoff_ms, 600_000)
+    {:ok, _} = Slack.connect(tokens())
+    [{_, sup, _, _}] = DynamicSupervisor.which_children(HalC2.Slack.Connections)
+    ref = Process.monitor(sup)
+    {:ok, _} = Slack.subscribe(self())
+
+    FakeSlack.drop()
+    await_state("reconnecting")
+    assert_receive {:DOWN, ^ref, :process, ^sup, _}, 10_000
+    assert DynamicSupervisor.which_children(HalC2.Slack.Connections) == []
+    assert %{"state" => "reconnecting", "tokensSet" => true} = Slack.status()
+  end
+
   test "stored tokens connect again when the MC starts" do
     {:ok, _} = Slack.connect(tokens())
     stop_supervised!(Slack)

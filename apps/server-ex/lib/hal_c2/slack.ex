@@ -10,7 +10,7 @@ defmodule HalC2.Slack do
   (`auth.test`, `apps.connections.open`) and it runs under a `DynamicSupervisor` of this
   module's own as a temporary child. Every attempt runs in a task, one at a time, so the
   server always answers; each begins by stopping what the last one started. A connection
-  that drops (the socket or its supervisor exits) is torn down and made again with
+  that drops (the socket or its supervisor exits) is torn down at once and made again with
   backoff (`:slack_backoff_ms`, doubling to a minute) while the status is `reconnecting`;
   Slack refusing the tokens ends in `failed`, an unreachable Slack keeps retrying.
 
@@ -436,11 +436,14 @@ defmodule HalC2.Slack do
     {:noreply, state |> settle(job, result) |> drive() |> publish()}
   end
 
+  # slack_elixir's supervisor restarts a lost socket at once, which would take and ack
+  # events while this says reconnecting, so the old connection is stopped now; the
+  # retry makes a new one after the backoff.
   def handle_info({:DOWN, ref, :process, _, reason}, %{conn: %{refs: refs}} = state)
       when is_map_key(refs, ref) do
     Logger.info("Slack connection dropped: #{short(reason)}")
     state = %{lose(state) | dirty: true}
-    {:noreply, state |> phase(:reconnecting) |> retry_later() |> publish()}
+    {:noreply, state |> phase(:reconnecting) |> retry_later() |> drive() |> publish()}
   end
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
