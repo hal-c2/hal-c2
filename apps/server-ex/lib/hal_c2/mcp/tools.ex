@@ -672,7 +672,7 @@ defmodule HalC2.Mcp.Tools do
     run =
       if run_id,
         do: Enum.find(runs, &(&1["id"] == run_id)),
-        else: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+        else: HalC2.Projection.Shell.latest_run(runs)
 
     left = deadline - System.monotonic_time(:millisecond)
 

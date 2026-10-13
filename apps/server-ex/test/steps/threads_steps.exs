@@ -1505,6 +1505,92 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # The message is queued while a turn works; stopping that turn starts the limited
+  # message, and the stop holds the queue behind it.
+  step ~r/^"(?<thread>[^"]+)" stopped on a usage limit that resets at (?<time>\d{1,2}:\d{2}) with "(?<text>[^"]+)" queued behind it$/,
+       %{args: [thread, time, text]} = context do
+    reset = next_clock(time)
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.send_message(context, thread, "wait for it")
+
+    World.await_thread(
+      context,
+      thread,
+      &Enum.any?(HalC2.StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
+    )
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    {{:ok, _}, context} = World.send_message(context, thread, text)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => id
+      })
+
+    World.await_runs(context, thread, ["interrupted", "failed", "queued"])
+    assert [{^text, %{"queueHeld" => true}}] = World.queued(context, thread)
+    World.await_row(id, &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, held: text})
+  end
+
+  step "the user chooses to snooze {string} until the reset", %{args: [thread]} = context do
+    row = World.row(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => row["id"],
+        "limitRecovery" => %{
+          "runId" => row["latestRunId"],
+          "resetAt" => row["usageLimitResetAt"],
+          "snooze" => true
+        }
+      })
+
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" is snoozed until the reset at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    row = World.await_row(World.thread_id(context, thread), &(&1["snoozedUntil"] != nil))
+    assert JS.epoch_ms(row["snoozedUntil"]) == next_clock(time)
+    assert row["limitRecovery"]["snooze"] == true
+    context
+  end
+
+  step ~r/^at (?<time>\d{1,2}:\d{2}) "(?<thread>[^"]+)" starts "(?<text>[^"]+)" without writing a message of its own$/,
+       %{args: [time, thread, text]} = context do
+    at = next_clock(time)
+    assert recoveries(context, thread, at - 1) == []
+    assert [%{"type" => "queue.resume"}] = recoveries(context, thread, at)
+    World.await_runs(context, thread, ["interrupted", "failed", "completed"])
+    [_, _, run] = World.runs(context, thread)
+    assert World.stream(context, thread).entities["message"][run["userMessageId"]]["text"] == text
+    refute continued?(context, thread)
+    # A second sweep does nothing more.
+    assert recoveries(context, thread, at) == []
+    context
+  end
+
+  step ~r/^"(?<text>[^"]+)" stays queued until the user resumes the queue$/,
+       %{args: [text]} = context do
+    thread = World.current(context)
+    assert recoveries(context, thread, context.limit_reset + 60_000) == []
+    assert [{^text, %{"queueHeld" => true}}] = World.queued(context, thread)
+    refute continued?(context, thread)
+    context
+  end
+
+  # Every command a sweep at `at` dispatches for the thread.
+  defp recoveries(context, thread, at) do
+    id = World.thread_id(context, thread)
+    for %{"threadId" => ^id} = command <- LimitRecovery.sweep(at), do: command
+  end
+
   # The fake Claude stops on a limit resetting at the epoch its message names.
   defp limit_stop(context, thread, time) do
     reset = next_clock(time)

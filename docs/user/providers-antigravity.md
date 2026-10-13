@@ -134,9 +134,11 @@ To check access and reload models, use **Refresh provider status** in the deskto
 provider settings, or **Refresh models** in mobile thread settings. If asked to
 sign in again, use provider settings on desktop, or **Provider accounts** on mobile.
 
-If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,
-follow the provider's message and any retry time. See [Google's account plans][plans]
-for eligibility.
+If Google reports `SUBSCRIPTION_REQUIRED` or an account restriction, follow the
+provider's message and any retry time. See [Google's account plans][plans] for
+eligibility. When the quota for the period is spent, the thread is marked limited
+until the reset Google names, and can resume or snooze until then like any limited
+thread.
 
 [registry]: https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
 [plans]: https://antigravity.google/docs/plans

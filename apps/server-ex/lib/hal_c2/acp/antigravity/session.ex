@@ -31,6 +31,52 @@ defmodule HalC2.Acp.Antigravity.Session do
     end
   end
 
+  # Antigravity reports a spent quota as the turn's whole reply, not as an error.
+  @reply_limit 1024
+  @quota ~r/\A\s*Usage Limit Reached\s+(You have reached your current quota\b.*?)\s*\z/s
+  @reset_in ~r/(\d+)\s+(day|hour|minute|second)s?\b/
+  @unit_ms %{"day" => 86_400_000, "hour" => 3_600_000, "minute" => 60_000, "second" => 1000}
+
+  @doc "Keeps the start of an Antigravity turn's reply, where `usage_limit/2` looks."
+  def reply(turn, text) do
+    if antigravity?(turn.ids.driver) do
+      reply = Map.get(turn, :reply, "")
+      if byte_size(reply) > @reply_limit, do: turn, else: Map.put(turn, :reply, reply <> text)
+    else
+      turn
+    end
+  end
+
+  @doc """
+  The `usage_limit` failure of a turn whose whole reply was Antigravity's quota notice,
+  resetting after the time it names from `now_ms`; nil for any other reply.
+  """
+  def usage_limit(turn, now_ms) do
+    with reply when is_binary(reply) and byte_size(reply) <= @reply_limit <- turn[:reply],
+         [_, message] <- Regex.run(@quota, reply) do
+      reset_ms =
+        case Regex.run(~r/reset in ([^.]*)/, message) do
+          [_, after_] ->
+            for [_, n, unit] <- Regex.scan(@reset_in, after_),
+                reduce: 0,
+                do: (ms -> ms + String.to_integer(n) * @unit_ms[unit])
+
+          nil ->
+            0
+        end
+
+      %{
+        "class" => "usage_limit",
+        "message" => message,
+        "code" => "quota_exhausted",
+        "retryable" => nil,
+        "resetAt" => if(reset_ms > 0, do: HalC2.Projection.JS.iso(now_ms + reset_ms))
+      }
+    else
+      _ -> nil
+    end
+  end
+
   @doc "The stderr lines a thread's agent connection passes on: Antigravity's sign-in link."
   def stderr_prefix(instance), do: if(antigravity?(instance), do: Antigravity.auth_prefix())
 

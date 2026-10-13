@@ -449,6 +449,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, reason} -> {"failed", format(reason)}
       end
 
+    {status, failure} =
+      with "completed" <- status,
+           %{} = limit <- Antigravity.usage_limit(state.turn, System.system_time(:millisecond)),
+           do: {"failed", limit},
+           else: (_ -> {status, failure})
+
     state = record_turn(%{state | prompt: nil})
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
@@ -1602,6 +1608,10 @@ defmodule HalC2.Acp.ThreadRuntime do
     # Message ids are optional and need only be unique within a turn, so each turn
     # gets its own messages rather than overwriting an earlier turn's.
     key = "#{kind}:#{state.turn.ids.run}:#{u["messageId"] || "current"}"
+
+    state =
+      if kind == :assistant, do: %{state | turn: Antigravity.reply(state.turn, text)}, else: state
+
     state |> ensure_item(key, kind) |> buffer(key, "text", text)
   end
 
