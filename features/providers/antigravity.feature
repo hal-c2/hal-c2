@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
 #   docs/user/providers-antigravity.md
 #   docs/internals/providers.md (isolated profiles, installer leases, sign-in owned by the initiating session, reject revert before touching files)
 #   apps/server/src/provider/Layers/AntigravityProvider.ts, apps/server/src/provider/AntigravityAuth.ts
@@ -263,6 +264,12 @@ Feature: Antigravity
   Scenario: Antigravity subagents are grouped into batches
     When Antigravity starts subagents
     Then their activity is shown as a subagent batch
+
+  Scenario: A thread whose Google login expired asks for sign-in and stops its agent
+    Given the saved Google login of the Antigravity instance expired
+    When the user sends a message in an Antigravity thread
+    Then the turn fails asking the user to sign in from Settings
+    And the thread's Antigravity agent is stopped and the instance shows as signed out
 
   Scenario: A model the account lost is explained on resume
     Given an Antigravity thread uses a model the account can no longer use
