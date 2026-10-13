@@ -142,6 +142,25 @@ defmodule HalC2.IssuesTest do
     refute Map.has_key?(patch, "title")
   end
 
+  test "a comment is posted as written, its indentation kept", %{dir: dir} do
+    rules!(dir, [
+      %{
+        "args" => ["--method POST", "repos/acme/widgets/issues/9/comments"],
+        "stdout" => %{"html_url" => "https://github.com/acme/widgets/issues/9#c1"}
+      }
+    ])
+
+    body = "    mix test\n"
+
+    assert {:ok, %{"url" => "https://github.com/acme/widgets/issues/9#c1"}} =
+             Issues.handle("comment", Map.merge(@input, %{"number" => 9, "body" => body}))
+
+    assert [%{"body" => ^body}] = rest_inputs(dir, "POST")
+
+    assert {:error, "body is required."} =
+             Issues.handle("comment", Map.merge(@input, %{"number" => 9, "body" => "  "}))
+  end
+
   test "a milestone's due date is a day, kept at noon UTC on GitHub", %{dir: dir} do
     answer = %{
       "number" => 2,
@@ -474,6 +493,7 @@ defmodule HalC2.IssuesTest do
     assert {:error, "issues.merge is not served by this MC."} = Issues.handle("merge", @input)
 
     assert {:error, _} = Issues.handle("detail", Map.put(@input, "repository", "not a repo"))
+    assert {:error, _} = Issues.handle("detail", Map.put(@input, "repository", 42))
     assert File.read!(Path.join(dir, "gh.log")) == ""
 
     assert Issues.write?("setBoardField") and Issues.write?("comment")

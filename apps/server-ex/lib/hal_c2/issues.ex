@@ -421,8 +421,9 @@ defmodule HalC2.Issues do
   def comment(input) do
     with {:ok, ctx} <- repository(input),
          {:ok, number} <- number(input["number"]),
-         {:ok, body} <- text(input["body"], "body"),
-         {:ok, raw} <- post(ctx, "issues/#{number}/comments", "POST", %{"body" => body}),
+         {:ok, _} <- text(input["body"], "body"),
+         {:ok, raw} <-
+           post(ctx, "issues/#{number}/comments", "POST", %{"body" => input["body"]}),
          do: {:ok, %{"url" => raw["html_url"]}}
   end
 
@@ -752,9 +753,10 @@ defmodule HalC2.Issues do
 
   defp repository(input) do
     with {:ok, ctx} <- project(input) do
-      repository = String.trim(input["repository"] || ctx.repository)
+      repository = input["repository"] || ctx.repository
+      repository = if is_binary(repository), do: String.trim(repository), else: repository
 
-      if Regex.match?(@repository, repository),
+      if is_binary(repository) and Regex.match?(@repository, repository),
         do: {:ok, %{ctx | repository: repository}},
         else: {:error, "#{inspect(repository)} is not a repository on GitHub (owner/name)."}
     end
