@@ -19,7 +19,6 @@ AbstractButton {
 
     readonly property var catalogue: Shell.state.modelPicker ?? null
     readonly property var instances: catalogue ? catalogue.instances : []
-    readonly property bool locked: catalogue ? catalogue.locked : false
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
@@ -281,7 +280,7 @@ AbstractButton {
             control.expandedLegacy = control.activeModel && control.activeModel.isLegacy ? {
                 [control.selectedInstanceId]: true
             } : {};
-            control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.locked);
+            control.view = Picker.initialView(control.instances, control.selectedInstanceId);
         }
         // The keymap's modelPickerOpen.
         onVisibleChanged: Keybindings.modelPickerOpen = visible
@@ -627,7 +626,7 @@ AbstractButton {
             opacity: disabledReason.length > 0 ? 0.64 : 1
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
-            Accessible.name: model ? Picker.displayName(model, !control.locked) : ""
+            Accessible.name: model ? Picker.displayName(model, true) : ""
 
             HoverHandler {
                 id: rowHover
@@ -671,7 +670,7 @@ AbstractButton {
                             Layout.fillWidth: implicitWidth > width
                             Layout.maximumWidth: implicitWidth
                             Layout.fillHeight: false
-                            text: row.model ? Picker.displayName(row.model, !control.locked) : ""
+                            text: row.model ? Picker.displayName(row.model, true) : ""
                             color: control.foreground
                             font.family: control.fontFamily
                             font.pixelSize: Math.round(12 * Theme.fontScale)

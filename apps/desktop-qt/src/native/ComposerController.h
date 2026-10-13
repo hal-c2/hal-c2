@@ -408,9 +408,6 @@ private:
   // The draft's model: chosen, the thread's (or project default's), else the
   // first ready instance's default.
   QJsonObject selection(const QString& target) const;
-  // A thread that has run keeps its provider.
-  bool started(const QString& target) const;
-  std::optional<composer::Lock> lockOf(const QString& target) const;
   // Plan mode needs the setting and a provider that has it.
   bool planModeOn(const composer::Instance* instance) const;
   QString runtimeModeOf(const QString& target) const;

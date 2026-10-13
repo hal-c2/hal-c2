@@ -8,6 +8,14 @@ defmodule HalC2.Orchestration.HandoffTest do
   defp user(text), do: %{"type" => "user_message", "text" => text}
   defp assistant(text), do: %{"type" => "assistant_message", "text" => text}
 
+  # Clients let a started thread change provider when its session says so.
+  test "every provider's session says it takes a handoff from another provider" do
+    for driver <- ["codex", "claudeAgent", "opencode", "cursor"] do
+      session = HalC2.Orchestration.Entities.provider_session("s", "/w", "m", "t", driver, driver)
+      assert session["capabilities"]["sessions"]["supportsProviderSwitchingViaHandoff"]
+    end
+  end
+
   test "a short imported conversation is kept whole, oldest first" do
     items = [user("hi"), %{"type" => "command_execution", "input" => "ls"}, assistant("hello")]
     assert Handoff.legacy_summary(items) == "#{@header}\n\nUser:\nhi\n\nAssistant:\nhello"

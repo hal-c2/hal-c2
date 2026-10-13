@@ -700,6 +700,17 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         {QStringLiteral("createdAt"), createdAt},
     });
   }
+  // Another provider takes the thread over, handed its conversation by the MC.
+  const QJsonObject modelSelection = selection(target);
+  const QString instanceId = str(modelSelection, QLatin1String("instanceId"));
+  if (!instanceId.isEmpty() && instanceId != str(thread->modelSelection, QLatin1String("instanceId"))) {
+    commands.append({
+        {QStringLiteral("type"), QStringLiteral("provider.switch")},
+        {QStringLiteral("threadId"), thread->id},
+        {QStringLiteral("modelSelection"), modelSelection},
+        {QStringLiteral("createdAt"), createdAt},
+    });
+  }
   QJsonObject message{
       {QStringLiteral("type"), QStringLiteral("message.dispatch")},
       {QStringLiteral("createdBy"), QStringLiteral("user")},
@@ -710,7 +721,6 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
       {QStringLiteral("attachments"), QJsonArray()},
       {QStringLiteral("titleSeed"), planFollowUp || trimmed.isEmpty() ? thread->title : trimmed},
   };
-  const QJsonObject modelSelection = selection(target);
   if (!modelSelection.isEmpty()) message.insert(QStringLiteral("modelSelection"), modelSelection);
   rememberModel(modelSelection);
   if (implement) {
@@ -2497,15 +2507,13 @@ void ComposerController::rememberModel(const QJsonObject& selection) {
   m_kept.lastModels.insert(instanceId, selection);
 }
 
-// A started thread keeps its provider, and a
-// model its session cannot switch to says why instead.
+// A model its session cannot switch to says why instead; another provider
+// takes the thread over on the next send.
 bool ComposerController::selectModel(const QString& target, const QString& instanceId, const QString& model) {
   if (instanceId.isEmpty() || model.isEmpty()) return false;
   // Only what the picker offers: a ready provider's own models.
   const composer::Instance* next = composer::find(m_catalogue, instanceId);
   if (!next || !next->ready() || composer::findModel(*next, model).isEmpty()) return false;
-  const std::optional<composer::Lock> lock = lockOf(target);
-  if (lock && next->driver != lock->driver) return false;
   const auto thread = m_store->thread(target);
   if (thread && thread->runtime) {
     const QJsonObject current = thread->modelSelection;
@@ -2648,18 +2656,6 @@ QJsonObject ComposerController::selection(const QString& target) const {
     }
   }
   return chosen;
-}
-
-bool ComposerController::started(const QString& target) const {
-  const auto thread = m_store->thread(target);
-  return thread && (thread->latestRunId || thread->latestUserMessageAt || thread->runtime);
-}
-
-std::optional<composer::Lock> ComposerController::lockOf(const QString& target) const {
-  if (!started(target)) return std::nullopt;
-  const composer::Instance* instance = instanceOf(m_store->thread(target)->modelSelection);
-  if (!instance) return std::nullopt;
-  return composer::Lock{instance->driver, instance->groupKey};
 }
 
 bool ComposerController::planModeOn(const composer::Instance* instance) const {
@@ -2866,7 +2862,6 @@ QVariantMap ComposerController::pickerState() const {
       settings ? composer::modelPrefs(QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("favorites"))),
                                       QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("providerModelPreferences"))))
                : composer::ModelPrefs();
-  const std::optional<composer::Lock> lock = lockOf(target);
   auto* keys = NativeShell::of(this)->controller<KeybindingController>();
   const auto key = [keys](const QString& command) { return composer::pickerKey(keys->resolved(), keys->mac(), command); };
   QVariantList jump;
@@ -2875,10 +2870,9 @@ QVariantMap ComposerController::pickerState() const {
   return {
       {QStringLiteral("instances"),
        composer::pickerInstances(m_catalogue, prefs, chosen.value(QLatin1String("instanceId")).toString(),
-                                 chosen.value(QLatin1String("model")).toString(), lock, thread && thread->runtime,
+                                 chosen.value(QLatin1String("model")).toString(), thread && thread->runtime,
                                  current.value(QLatin1String("instanceId")).toString(),
                                  current.value(QLatin1String("model")).toString())},
-      {QStringLiteral("locked"), lock.has_value()},
       // A new thread may go to several models: [{instanceId, model}] once
       // more than one is chosen.
       {QStringLiteral("supportsMultiple"), !m_draftId.isEmpty() && target == m_draftId},

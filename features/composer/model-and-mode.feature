@@ -168,10 +168,10 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it is no longer listed among the favourites
 
   @desktop @mobile @backlog-mobile
-  Scenario: A thread's provider is locked once it has started
+  Scenario: A started thread can move to another provider
     Given the thread has already run a turn on Codex
-    When the user looks through the models
-    Then only Codex models can be chosen
+    When the user chooses the model "claude-opus"
+    Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
   @desktop @tui @mobile @backlog-mobile
   Scenario: The last model used with each provider is remembered
@@ -359,7 +359,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses it
     Then the picker closes and the setup for Cursor opens
 
-  @backlog @desktop
+  # Every provider on the MC takes a handoff (features/mc/orchestration/provider-handoff.feature),
+  # so no started thread is held to its provider.
+  @dropped @desktop
   Scenario: Another provider says why it cannot be chosen once the thread has started
     Given Claude is enabled
     And the thread has already run a turn on Codex

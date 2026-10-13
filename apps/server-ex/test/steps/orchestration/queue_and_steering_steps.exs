@@ -44,6 +44,20 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     Enum.reduce(quoted(texts), context, &World.queue_message(&2, thread, &1))
   end
 
+  step "{string} has a running turn on {string} and a message {string} queued for {string}",
+       %{args: [thread, provider, text, other]} = context do
+    context =
+      context
+      |> provider_turn(thread, provider)
+      |> World.dispatch_message(thread, text, %{
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "modelSelection" => selection(other)
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    Map.delete(context, :reply)
+  end
+
   step "{string} has a queued message {string}", %{args: [thread, text]} = context do
     context |> World.running_turn(thread) |> World.queue_message(thread, text)
   end
@@ -103,6 +117,32 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     Map.put(context, :sent, text)
+  end
+
+  step ~r/^the user (?:sends|sent) "(?<text>[^"]+)" for "(?<provider>[^"]+)" to "(?<thread>[^"]+)" (?<how>with automatic delivery|as a steer)$/,
+       %{args: [text, provider, thread, how]} = context do
+    intent = if how == "as a steer", do: "steer", else: "auto"
+
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "deliveryIntent" => intent,
+        "modelSelection" => selection(provider)
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    Map.put(context, :sent, text)
+  end
+
+  step "{string} runs on {string}", %{args: [text, provider]} = context do
+    assert %{"providerInstanceId" => ^provider} = run_for(context, text)
+    context
+  end
+
+  step "thread {string} is on {string}", %{args: [thread, provider]} = context do
+    assert %{"providerInstanceId" => ^provider, "modelSelection" => %{"instanceId" => ^provider}} =
+             World.thread(context, thread)
+
+    context
   end
 
   step "the message joins the active run as a steer", context do
@@ -515,7 +555,10 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       context
       |> World.providers()
       |> Map.put(:thread, thread)
-      |> World.patch_thread(thread, %{"modelSelection" => selection(provider)})
+      |> World.patch_thread(thread, %{
+        "modelSelection" => selection(provider),
+        "providerInstanceId" => provider
+      })
 
     World.running_turn(context, thread)
   end
