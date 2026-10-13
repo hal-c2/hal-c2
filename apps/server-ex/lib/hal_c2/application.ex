@@ -64,6 +64,7 @@ defmodule HalC2.Application do
           Supervisor.child_spec({Task, &HalC2.ModelManifest.refresh/0}, id: :model_manifest),
           {Registry, keys: :unique, name: HalC2.Acp.Registry},
           {Registry, keys: :unique, name: HalC2.Pi.Registry},
+          {Registry, keys: :unique, name: HalC2.Muse.Registry},
           HalC2.Acp.UrlAuth,
           HalC2.Acp.Antigravity.Installation,
           Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),

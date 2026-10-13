@@ -1,0 +1,539 @@
+defmodule HalC2.Steps.Providers.Muse do
+  @moduledoc """
+  Steps for `features/providers/muse.feature`. The MC runs Muse Code over the Muse
+  Session Protocol (`HalC2.Muse`, `HalC2.Muse.ThreadRuntime`); the scripted fake
+  host (`fake_muse_msp.py`, through `HalC2.Test.FakeAcp.install_muse/3`) is the
+  user's `muse`, sessions and all.
+  """
+  use Cucumber.StepDefinition
+
+  import ExUnit.Assertions
+
+  alias HalC2.StreamState
+  alias HalC2.Test.FakeAcp
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
+
+  @turns [
+    %{"match" => "run a command", "steps" => [%{"shell" => "npm test"}, %{"text" => "Ran it."}]},
+    %{
+      "match" => "edit a file",
+      "steps" => [%{"edit" => "src/app.ts"}, %{"text" => "Edited it."}]
+    },
+    %{
+      "match" => "a long task",
+      "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
+    },
+    %{
+      "match" => "pick a color",
+      "steps" => [
+        %{
+          "question" => %{
+            "header" => "Color",
+            "question" => "Pick a color",
+            "options" => ~w(red green blue)
+          }
+        }
+      ]
+    }
+  ]
+
+  # HAL-C2's MCP server is up, so a thread's session is offered its tools.
+  defp install(context, config \\ %{}, opts \\ []) do
+    Mc.ensure(HalC2.Mcp)
+    FakeAcp.install_muse(context, config, Keyword.merge([enabled: true, turns: @turns], opts))
+  end
+
+  defp muse(context), do: FakeAcp.find(context.providers, "muse")
+
+  # The hosts that served the thread: `muse serve` in the project, not the read-only
+  # ones that read the catalog.
+  defp thread_starts(context) do
+    cwd = World.project(context).root
+
+    Enum.filter(
+      FakeAcp.starts(context),
+      &(&1["cwd"] == cwd and "serve" in &1["argv"] and "--disable-write" not in &1["argv"])
+    )
+  end
+
+  defp state(context, title \\ nil) do
+    id = World.thread_id(context, title || context.thread)
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+  end
+
+  defp replies(context, title \\ nil) do
+    for m <-
+          context
+          |> state(title)
+          |> StreamState.list("message")
+          |> Enum.sort_by(& &1["createdAt"]),
+        m["role"] == "assistant",
+        do: m["text"]
+  end
+
+  # Sends `text` and waits for its (new) run to finish as `status`.
+  defp turn(context, text, status \\ "completed", title \\ nil) do
+    before = for run <- StreamState.list(state(context, title), "run"), do: run["id"]
+    context = FakeAcp.send_message(context, text, title)
+
+    run =
+      World.await_stream(World.thread_id(context, title || context.thread), fn state ->
+        Enum.find(
+          StreamState.list(state, "run"),
+          &(&1["id"] not in before and &1["status"] in ~w(completed failed interrupted))
+        )
+      end)
+
+    assert run["status"] == status, "run ended #{run["status"]}: #{inspect(run)}"
+    context
+  end
+
+  defp session_id(context) do
+    state = state(context)
+    thread = StreamState.get(state, "thread")[World.thread_id(context, context.thread)]
+    provider_thread = StreamState.get(state, "provider-thread")[thread["activeProviderThreadId"]]
+    get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+  end
+
+  defp received(context, method), do: for(m <- FakeAcp.received(context, method), do: m["params"])
+
+  defp items(context, type),
+    do: context |> state() |> StreamState.list("turn-item") |> Enum.filter(&(&1["type"] == type))
+
+  # --- enabling and status ---
+
+  step "Muse Code is installed but not enabled", context do
+    install(context, %{}, enabled: false)
+  end
+
+  step "no Muse Code process is started", context do
+    HalC2.Acp.load()
+    assert %{"enabled" => false} = FakeAcp.entry("muse")
+    assert FakeAcp.starts(context, "muse") == []
+    context
+  end
+
+  step "the muse command is not installed on the MC", context do
+    FakeAcp.services()
+    HalC2.Acp.forget("muse")
+    missing = Path.join(Mc.tmp_dir(context.mc, "no-muse"), "muse")
+    FakeAcp.settings(&put_in(&1, ["providers"], %{"muse" => %{"binaryPath" => missing}}))
+    Map.put(context, :provider, "muse")
+  end
+
+  step "Muse Code is not offered", context do
+    assert context.providers != nil
+    assert FakeAcp.find(context.providers, "muse") == nil
+    context
+  end
+
+  step "the user enables Muse Code", context do
+    {_, context} = FakeAcp.open_config(context)
+    FakeAcp.enable(context, "muse")
+  end
+
+  step "Muse Code is listed with the models from Muse's catalog", context do
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"enabled" => true, "models" => [_ | _]}, FakeAcp.find(providers, "muse"))
+      end)
+
+    muse = FakeAcp.find(providers, "muse")
+    assert [%{"slug" => "fake/one", "name" => "Fake One"}] = muse["models"]
+
+    # The catalog came from a host that can neither run commands nor write.
+    assert [%{"argv" => argv} | _] = FakeAcp.starts(context)
+    assert ["serve", "--disable-shell", "--disable-write", "--no-session-log"] = argv
+    context
+  end
+
+  step "Muse Code is installed and enabled", context do
+    install(context)
+  end
+
+  step "Muse Code's binary path is set to {string}", %{args: [path]} = context do
+    install(context, %{}, path: HalC2.Test.Mc.Host.path(context, path))
+  end
+
+  step "the user sends a message to Muse Code", context do
+    context = if context[:thread], do: context, else: FakeAcp.thread(context)
+    turn(context, "hello Muse")
+  end
+
+  step "the turn runs on the user's own Muse Code installation", context do
+    assert_runs_on(context, FakeAcp.fake(context).bin)
+  end
+
+  step "that Muse Code binary runs the turn", context do
+    assert_runs_on(context, HalC2.Test.Mc.Host.path(context, "/opt/muse/bin/muse"))
+  end
+
+  # That binary served the thread from the project, without updating itself, and Muse
+  # got the message as a turn in the session HAL-C2 started.
+  defp assert_runs_on(context, bin) do
+    assert [%{"argv" => argv, "env" => env}] = thread_starts(context)
+    assert env["FAKE_BIN"] == bin
+    assert env["MUSE_NO_AUTO_UPDATE"] == "1"
+    assert ["serve", "--trust-workspace" | _] = argv
+    assert [%{"sessionId" => session}] = received(context, "session/start")
+
+    assert [%{"sessionId" => ^session, "input" => [%{"text" => "hello Muse"}]}] =
+             received(context, "turn/start")
+
+    assert replies(context) == ["Reply to hello Muse after []"]
+    context
+  end
+
+  step "a Muse Code thread with history", context do
+    context |> install() |> FakeAcp.thread() |> turn("hello Muse")
+  end
+
+  step "the MC restarts and the user sends another message", context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    FakeAcp.services()
+    turn(context, "hello again")
+  end
+
+  # A new host resumed the session the thread recorded.
+  step "Muse Code continues the same session", context do
+    assert [_, _] = thread_starts(context)
+    assert [%{"sessionId" => session}] = received(context, "session/start")
+    assert [%{"sessionId" => ^session}] = received(context, "session/resume")
+    assert session_id(context) == session
+    assert List.last(replies(context)) == "Reply to hello again after [hello Muse]"
+    context
+  end
+
+  step "Muse Code reports no models", context do
+    install(context, %{"models" => []})
+  end
+
+  step "Muse Code is shown with a warning to run \"muse login\" on the environment", context do
+    assert %{"status" => "warning", "message" => message} = muse(context)
+    assert message =~ "muse login"
+    context
+  end
+
+  step "Muse Code is shown as ready without claiming the user is signed in or out", context do
+    assert %{"status" => "ready", "auth" => %{"status" => "unknown"}} = muse(context)
+    context
+  end
+
+  # --- reasoning ---
+
+  step "the Muse Code model reports the reasoning levels low, medium, high and max with high as its default",
+       context do
+    install(context, %{
+      "models" => [
+        %{
+          "modelId" => "fake/one",
+          "providerId" => "meta",
+          "displayLabel" => "Fake One",
+          "variants" => ~w(low medium high max),
+          "defaultReasoningEffort" => "high"
+        }
+      ]
+    })
+  end
+
+  step "the Muse Code model does not report its reasoning levels", context do
+    install(context)
+  end
+
+  step "the user opens the options for the Muse Code model", context do
+    FakeAcp.probe("muse")
+    {providers, context} = FakeAcp.open_config(context)
+    [model] = FakeAcp.find(providers, "muse")["models"]
+
+    assert [%{"id" => "reasoningEffort", "type" => "select", "label" => "Reasoning"} = effort] =
+             model["capabilities"]["optionDescriptors"]
+
+    Map.put(context, :effort, effort)
+  end
+
+  step "low, medium, high and max are offered under \"Reasoning\"", context do
+    assert Enum.map(context.effort["options"], & &1["label"]) == ~w(Low Medium High Max)
+    context
+  end
+
+  step "low, medium, high, extra high and max are offered under \"Reasoning\"", context do
+    assert Enum.map(context.effort["options"], & &1["label"]) ==
+             ["Low", "Medium", "High", "Extra High", "Max"]
+
+    context
+  end
+
+  step "high is marked as the default", context do
+    assert [%{"id" => "high"}] = Enum.filter(context.effort["options"], & &1["isDefault"])
+    context
+  end
+
+  step "a Muse Code thread with reasoning set to max", context do
+    context
+    |> install()
+    |> FakeAcp.thread("Work", "full-access", %{
+      "modelSelection" => %{
+        "instanceId" => "muse",
+        "model" => "fake/one",
+        "options" => [%{"id" => "reasoningEffort", "value" => "max"}]
+      }
+    })
+  end
+
+  step "Muse Code runs the turn at max reasoning", context do
+    assert [%{"reasoningEffort" => "max"}] = received(context, "turn/start")
+    context
+  end
+
+  # --- access modes ---
+
+  step "the user opens the permission mode choices in a Muse Code thread", context do
+    context = context |> install() |> FakeAcp.thread("Work", "approval-required")
+    {_, context} = FakeAcp.open_config(context)
+    Map.put(context, :permission_modes, muse(context)["supportedRuntimeModes"])
+  end
+
+  step "supervised and full access are offered", context do
+    assert context.permission_modes == ~w(approval-required full-access)
+    context
+  end
+
+  step "auto-accept edits and auto are not offered", context do
+    refute "auto-accept-edits" in context.permission_modes
+    refute "auto" in context.permission_modes
+    context
+  end
+
+  step ~r/^the thread runs Muse Code in (?<mode>supervised|full access)$/,
+       %{args: [mode]} = context do
+    mode = if mode == "supervised", do: "approval-required", else: "full-access"
+    context |> install() |> FakeAcp.thread("Work", mode) |> Map.put(:mode, mode)
+  end
+
+  step "Muse Code wants to run a command", context do
+    FakeAcp.send_message(context, "please run a command")
+  end
+
+  step "the command is asked for approval", context do
+    assert %{"status" => "pending", "kind" => "command"} =
+             request = FakeAcp.await_request(context)
+
+    assert [%{"approvalMode" => "promptUnmatched"}] = received(context, "session/start")
+    # A supervised host keeps Muse's sandbox.
+    assert [%{"argv" => argv}] = thread_starts(context)
+    refute "--disable-sandbox" in argv
+    FakeAcp.respond(context, request["id"], %{"decision" => "accept"})
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the command is allowed without asking", context do
+    state = FakeAcp.await_run(context, "completed")
+    assert StreamState.list(state, "runtime-request") == []
+    assert [%{"approvalMode" => "allowAll"}] = received(context, "session/start")
+    assert [%{"argv" => argv}] = thread_starts(context)
+    assert "--disable-sandbox" in argv
+
+    assert [%{"asked" => false, "approved" => true}] =
+             for(%{"tool" => t} <- FakeAcp.log(context), do: t)
+
+    context
+  end
+
+  # --- approvals and questions ---
+
+  step "Muse Code asked to edit a file", context do
+    context =
+      context
+      |> install()
+      |> FakeAcp.thread("Work", "approval-required")
+      |> FakeAcp.send_message("please edit a file")
+
+    Map.put(context, :request, FakeAcp.await_request(context))
+  end
+
+  step "Muse Code asked to run a command", context do
+    context =
+      context
+      |> install()
+      |> FakeAcp.thread("Work", "approval-required")
+      |> FakeAcp.send_message("please run a command")
+
+    Map.put(context, :request, FakeAcp.await_request(context))
+  end
+
+  step "the user approves the Muse Code request", context do
+    assert context.request["kind"] == "file-change"
+    FakeAcp.respond(context, context.request["id"], %{"decision" => "accept"})
+  end
+
+  step "the user declines the Muse Code request", context do
+    FakeAcp.respond(context, context.request["id"], %{"decision" => "decline"})
+  end
+
+  step "Muse Code edits the file and the turn continues", context do
+    FakeAcp.await_run(context, "completed")
+    assert [%{"choiceId" => "allow"}] = received(context, "approval/decide")
+
+    assert [%{"name" => "edit", "approved" => true}] =
+             for(%{"tool" => t} <- FakeAcp.log(context), do: t)
+
+    assert [%{"status" => "completed", "fileName" => "src/app.ts"}] =
+             items(context, "file_change")
+
+    assert List.last(replies(context)) == "Edited it."
+    context
+  end
+
+  # Shell approvals offer no plain "deny", so declining is Muse's "abort" choice.
+  step "Muse Code is told the command was declined and the turn continues without it", context do
+    FakeAcp.await_run(context, "completed")
+    assert [%{"choiceId" => "reject"}] = received(context, "approval/decide")
+
+    assert [%{"name" => "shell", "approved" => false}] =
+             for(%{"tool" => t} <- FakeAcp.log(context), do: t)
+
+    assert List.last(replies(context)) == "Ran it."
+
+    assert [%{"status" => "resolved", "decision" => "decline"}] =
+             context |> state() |> StreamState.list("runtime-request")
+
+    context
+  end
+
+  step "Muse Code asks the user a question with choices", context do
+    context |> install() |> FakeAcp.thread() |> FakeAcp.send_message("pick a color")
+  end
+
+  step "the choices appear in the composer and the answer goes back to Muse Code", context do
+    request = FakeAcp.await_request(context)
+    assert request["kind"] == "user_input"
+
+    [item] =
+      World.await_stream(World.thread_id(context, context.thread), fn state ->
+        case Enum.filter(
+               StreamState.list(state, "turn-item"),
+               &(&1["type"] == "user_input_request")
+             ) do
+          [] -> nil
+          items -> items
+        end
+      end)
+
+    assert [%{"id" => "q1", "header" => "Color", "options" => options}] = item["questions"]
+    assert Enum.map(options, & &1["label"]) == ~w(red green blue)
+
+    context = FakeAcp.respond(context, request["id"], %{"answers" => %{"q1" => "green"}})
+    FakeAcp.await_run(context, "completed")
+
+    assert [
+             %{
+               "userInputId" => "input-1",
+               "answers" => [%{"questionId" => "q1", "selectedLabel" => "green"}]
+             }
+           ] =
+             received(context, "userInput/answer")
+
+    assert List.last(replies(context)) == "Picked green."
+    context
+  end
+
+  # --- interrupt and compaction ---
+
+  step "a Muse Code turn is running", context do
+    context = context |> install() |> FakeAcp.thread() |> FakeAcp.send_message("a long task")
+    FakeAcp.await_run(context, "running")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "message"), &(&1["text"] == "Working on it."))
+    end)
+
+    context
+  end
+
+  step "Muse Code stops working and the turn is shown as interrupted", context do
+    FakeAcp.await_run(context, "interrupted")
+
+    [%{"turnId" => turn}] =
+      received(context, "turn/start") |> Enum.map(&%{"turnId" => &1["commandId"]})
+
+    assert [%{"turnId" => ^turn}] = received(context, "turn/interrupt")
+    context
+  end
+
+  step "the user sends {string} to Muse Code", %{args: [text]} = context do
+    turn(context, text)
+  end
+
+  step "Muse Code compacts its conversation", context do
+    assert [%{"sessionId" => session}] = received(context, "session/compact")
+    assert session == session_id(context)
+    # Only the first message was a turn.
+    assert [_] = received(context, "turn/start")
+    context
+  end
+
+  step "the compaction is shown in the thread", context do
+    assert [%{"status" => "completed", "title" => "Context compacted"}] =
+             items(context, "compaction")
+
+    context
+  end
+
+  # --- forks ---
+
+  step "a Muse Code thread with three turns", context do
+    context = context |> install() |> FakeAcp.thread()
+    context = Enum.reduce(~w(first second third), context, &turn(&2, &1))
+    Map.put(context, :current_thread, context.thread)
+  end
+
+  step "the user forks the Muse Code thread after the second turn", context do
+    context = World.fork(context, context.thread, 2, "fork")
+    assert {:ok, _} = context.reply
+    turn(context, "where are we", "completed", "fork")
+  end
+
+  # The fork is a new Muse session whose first message carries the earlier turns.
+  step "the fork's first Muse Code turn starts from a summary of the first two turns", context do
+    assert [_, _] = received(context, "session/start")
+    %{"input" => [%{"text" => text} | _]} = List.last(received(context, "turn/start"))
+    assert text =~ "first"
+    assert text =~ "second"
+    refute text =~ "third"
+    assert text =~ "where are we"
+    context
+  end
+
+  # --- HAL-C2's tools ---
+
+  step "HAL-C2's orchestration tools are attached as an optional MCP server", context do
+    assert [%{"capabilities" => %{"requestedCapabilities" => ["sessionMcp"]}}] =
+             for(
+               p <- received(context, "initialize"),
+               p["capabilities"]["requestedCapabilities"] != [],
+               do: p
+             )
+
+    assert [%{"config" => %{"mcpServers" => %{"hal-c2" => server}}}] =
+             received(context, "session/start")
+
+    assert %{"transport" => "streamableHttp", "mode" => "optional", "url" => "http" <> _} = server
+    assert %{"Authorization" => "Bearer " <> _} = server["headers"]
+    context
+  end
+
+  # --- generated text ---
+
+  step "the user opens the model choices for generated text", context do
+    FakeAcp.probe("muse")
+    {_, context} = FakeAcp.open_config(context)
+    context
+  end
+
+  step "no Muse Code model is offered", context do
+    assert %{"enabled" => true, "supportsTextGeneration" => false} = muse(context)
+    context
+  end
+end

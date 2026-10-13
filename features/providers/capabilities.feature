@@ -9,7 +9,7 @@
 #   apps/server/src/orchestration-v2/Adapters/*AdapterV2.ts (per-provider capabilities), packages/contracts/src/server.ts
 #   apps/web/src/components/chat/ChatComposer.tsx (capability-gated controls)
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
-#   docs/user/providers-pi.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
+#   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
 
 @mc
 Feature: Provider capabilities
@@ -26,13 +26,14 @@ Feature: Provider capabilities
     Then <outcome>
 
     Examples:
-      | provider | outcome                                          |
-      | Codex    | the message joins the running turn               |
-      | Claude   | the message joins the running turn               |
-      | Grok     | the message waits until the running turn ends    |
-      | OpenCode | the message joins the running turn               |
-      | Cursor   | the message waits until the running turn ends    |
-      | Pi       | the message joins the running turn               |
+      | provider  | outcome                                       |
+      | Codex     | the message joins the running turn            |
+      | Claude    | the message joins the running turn            |
+      | Grok      | the message waits until the running turn ends |
+      | OpenCode  | the message joins the running turn            |
+      | Cursor    | the message waits until the running turn ends |
+      | Pi        | the message joins the running turn            |
+      | Muse Code | the message joins the running turn            |
 
   Scenario: A steer that arrives after the turn ended is sent as a normal message
     Given a Codex thread whose turn is finishing
@@ -113,6 +114,8 @@ Feature: Provider capabilities
       | Grok        | forking the thread          |
       | Antigravity | forking the thread          |
       | Grok        | rewinding the thread        |
+      | Muse Code   | the plan/build toggle       |
+      | Muse Code   | rewinding the thread        |
 
   Scenario Outline: Providers that cannot steer interrupt and restart instead
     Given a <provider> thread with a running turn

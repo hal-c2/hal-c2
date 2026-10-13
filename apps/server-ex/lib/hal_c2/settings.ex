@@ -408,6 +408,9 @@ defmodule HalC2.Settings do
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
     if pi.(settings) != pi.(state.settings), do: HalC2.Acp.forget("pi")
 
+    muse = &get_in(&1, ["providers", "muse", "binaryPath"])
+    if muse.(settings) != muse.(state.settings), do: HalC2.Acp.forget("muse")
+
     for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
 
     %{

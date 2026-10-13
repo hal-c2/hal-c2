@@ -203,7 +203,13 @@ defmodule HalC2.StorageCleanup do
 
   defp session?(thread_id) do
     Enum.any?(
-      [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Pi.Registry],
+      [
+        HalC2.Codex.Registry,
+        HalC2.Claude.Registry,
+        HalC2.Acp.Registry,
+        HalC2.Pi.Registry,
+        HalC2.Muse.Registry
+      ],
       &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
     )
   end
