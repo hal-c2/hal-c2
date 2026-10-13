@@ -40,6 +40,9 @@ struct FakePlanner {
   QJsonArray views;
   QList<QJsonObject> runs;
   bool slack = false;
+  // The GitHub boards `boards` lists, and each one's date fields by `owner/number`.
+  QJsonArray boards;
+  QHash<QString, QJsonArray> dateFields;
   int next = 0;
 };
 
@@ -350,6 +353,12 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
                                            {QStringLiteral("repositories"), QJsonArray{QStringLiteral("acme/api")}},
                                            {QStringLiteral("slackChannels"), channels},
                                            {QStringLiteral("slackConnected"), fake.slack}});
+  }
+  if (method == QLatin1String("boards")) return world.mc.reply(rpc, QJsonObject{{QStringLiteral("boards"), fake.boards}, {QStringLiteral("problems"), QJsonArray()}});
+  if (method == QLatin1String("boardFields")) {
+    const QString board = input.value(QLatin1String("board")).toString();
+    if (!fake.dateFields.contains(board)) return world.mc.refuse(rpc, QStringLiteral("%1 was not found.").arg(board));
+    return world.mc.reply(rpc, QJsonObject{{QStringLiteral("dateFields"), fake.dateFields.value(board)}});
   }
   QJsonValue result = QJsonValue::Null;
   const QString id = input.value(QLatin1String("id")).toString();
@@ -805,6 +814,45 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("settings.navigate"), QVariantMap{{QStringLiteral("to"), QStringLiteral("/settings/plugin/%1/%2").arg(world.mc.environmentId, kId)}});
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
     world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
+  });
+  step(QStringLiteral("%1 has the board %1 %1 with the date fields %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakePlanner& fake = state(world);
+    fake.boards.append(QJsonObject{{QStringLiteral("id"), c[1]}, {QStringLiteral("owner"), c[0]}, {QStringLiteral("number"), c[1].section(QLatin1Char('/'), 1).toInt()}, {QStringLiteral("title"), c[2]}});
+    fake.dateFields.insert(c[1], QJsonArray{c[3], c[4]});
+  });
+  step(QStringLiteral("the user picks the board %1 with %1 and %1 as its dates").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Picks entry `text` of the combo named `name` once it is offered.
+    const auto pick = [&](const QString& name, const QString& text) {
+      QQuickItem* combo = waitShownNamed(world, name);
+      int index = -1;
+      world.waitFor([&] {
+        for (int i = 0; i < combo->property("count").toInt() && index < 0; ++i) {
+          QString each;
+          QMetaObject::invokeMethod(combo, "textAt", Q_RETURN_ARG(QString, each), Q_ARG(int, i));
+          if (each.startsWith(text)) index = i;
+        }
+        return index >= 0;
+      }, QStringLiteral("%1 to be offered").arg(text));
+      expect(QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, index)), QStringLiteral("%1 cannot be picked").arg(text));
+    };
+    pick(QStringLiteral("plannerBoard"), c[0]);
+    pick(QStringLiteral("plannerDateField:startField"), c[1]);
+    pick(QStringLiteral("plannerDateField:targetField"), c[2]);
+    QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
+    world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
+    expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
+  });
+  step(QStringLiteral("%1 is saved following %1 with %1 and %1 as its dates").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
+    QJsonObject sent;
+    world.waitFor([&] {
+      for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+        if (rpc.method == QLatin1String("plugins.saveSettings")) sent = rpc.payload.value(QLatin1String("settings")).toObject();
+      }
+      return !sent.isEmpty();
+    }, QStringLiteral("the settings to be saved"));
+    const QJsonObject wanted{{QStringLiteral("board"), c[1]}, {QStringLiteral("startField"), c[2]}, {QStringLiteral("targetField"), c[3]}};
+    expect(sent == wanted, QStringLiteral("the MC was sent %1").arg(dump(sent)));
   });
   step(QStringLiteral("the channels the bot is in are offered for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* channel = waitShownNamed(world, QStringLiteral("plannerSlackChannel"));

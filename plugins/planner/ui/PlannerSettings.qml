@@ -7,8 +7,9 @@ import HalC2.Bricks
 // planner's settings: the agent that runs actions and where, each action with its
 // prompt, following GitHub, and the Slack channel. The agents, the MC's projects
 // and repositories, the plugin's own actions and the Slack channels come from the
-// plugin's `settings` call; everything is saved together, and what the plugin
-// refuses stays unsaved with its reason.
+// plugin's `settings` call; the GitHub boards and their date fields come later from
+// `boards` and `boardFields`, which wait on gh. Everything is saved together, and
+// what the plugin refuses stays unsaved with its reason.
 ColumnLayout {
     id: settings
 
@@ -24,12 +25,18 @@ ColumnLayout {
     property var defaultActions: ({})
     property var slackChannels: []
     property bool slackConnected: false
+    // The open GitHub boards of the projects' owners, why some could not be listed,
+    // and the date fields of the chosen board.
+    property var boards: []
+    property string boardProblem: ""
+    property var dateFields: []
     property bool loaded: false
     property bool dirty: false
     property bool saving: false
     property string refusal: ""
     property string problem: ""
     readonly property var watched: values.repositories ?? []
+    readonly property string board: values.board ?? ""
     readonly property var provider: providers.find(each => each.instanceId === values.provider) ?? null
     readonly property var actions: values.actions ?? {}
     // Built-in actions in the plugin's order, then the user's own.
@@ -71,6 +78,28 @@ ColumnLayout {
                 settings.set(key, edits[key]);
         });
     }
+
+    function listBoards() {
+        settings.plugin.call("boards", {}, (result, error) => {
+            settings.boards = result?.boards ?? [];
+            settings.boardProblem = error ? String(error) : (result?.problems ?? []).join(" ");
+        });
+    }
+
+    // The chosen board's date fields; none, so they are typed in, until they are read.
+    function readDateFields() {
+        const board = settings.board;
+        settings.dateFields = [];
+        if (!/^[^/\s]+\/\d+$/.test(board.trim()))
+            return;
+        settings.plugin.call("boardFields", { board: board }, (result, error) => {
+            if (board === settings.board)
+                settings.dateFields = error ? [] : (result?.dateFields ?? []);
+        });
+    }
+
+    // Typing a board reads its fields once the typing stops.
+    onBoardChanged: boardFieldsTimer.restart()
 
     function reset() {
         settings.values = Object.assign({}, settings.saved);
@@ -146,7 +175,17 @@ ColumnLayout {
     objectName: "plannerSettings"
     width: parent ? parent.width : implicitWidth
     spacing: 22
-    Component.onCompleted: load()
+    Component.onCompleted: {
+        load();
+        listBoards();
+    }
+
+    Timer {
+        id: boardFieldsTimer
+
+        interval: 400
+        onTriggered: settings.readDateFields()
+    }
 
     component Heading: Label {
         Layout.fillWidth: true
@@ -312,6 +351,32 @@ ColumnLayout {
         implicitWidth: 240
         text: settings.values[line.key] ?? ""
         onTextEdited: settings.set(line.key, text)
+    }
+
+    // A board field holding dates: picked from the board's date fields once they are
+    // read, typed in otherwise.
+    component DateField: RowLayout {
+        id: dateField
+
+        property string key
+        readonly property string value: settings.values[key] ?? ""
+
+        ShellComboBox {
+            objectName: "plannerDateField:" + dateField.key
+            visible: settings.dateFields.length > 0
+            outline: true
+            implicitWidth: 180
+            model: settings.dateFields
+            currentIndex: settings.dateFields.indexOf(dateField.value)
+            displayText: currentIndex >= 0 ? currentText : dateField.value
+            onActivated: index => settings.set(dateField.key, settings.dateFields[index])
+        }
+
+        Line {
+            key: dateField.key
+            visible: settings.dateFields.length === 0
+            implicitWidth: 180
+        }
     }
 
     component Area: TextArea {
@@ -688,10 +753,44 @@ ColumnLayout {
 
         Field {
             label: qsTr("GitHub Project")
-            hint: qsTr("owner/number of a GitHub Project whose date fields are the tasks' dates. Needs gh's project scope.")
+            hint: qsTr("A GitHub Project whose date fields are the tasks' dates, or one typed as owner/number. Needs gh's project scope.")
 
-            Line {
-                key: "board"
+            RowLayout {
+                spacing: 8
+
+                ShellComboBox {
+                    // The board's place in the list, or -1 for one typed in.
+                    readonly property int chosen: {
+                        if (settings.board === "")
+                            return 0;
+                        const index = settings.boards.findIndex(each => each.id.toLowerCase() === settings.board.trim().toLowerCase());
+                        return index >= 0 ? index + 1 : -1;
+                    }
+
+                    objectName: "plannerBoard"
+                    outline: true
+                    implicitWidth: 260
+                    model: [qsTr("None")].concat(settings.boards.map(each => each.title + " (" + each.id + ")"))
+                    currentIndex: chosen
+                    displayText: chosen >= 0 ? currentText : settings.board
+                    Accessible.name: qsTr("GitHub Project")
+                    onActivated: index => settings.set("board", index === 0 ? "" : settings.boards[index - 1].id)
+                }
+
+                ShellTextField {
+                    objectName: "plannerBoardText"
+                    implicitWidth: 140
+                    placeholderText: qsTr("owner/number")
+                    text: settings.board
+                    Accessible.name: qsTr("GitHub Project as owner/number")
+                    onTextEdited: settings.set("board", text.trim())
+                }
+            }
+
+            Hint {
+                objectName: "plannerBoardProblem"
+                text: settings.boardProblem
+                color: settings.warningColor
             }
         }
 
@@ -703,9 +802,8 @@ ColumnLayout {
                 Layout.fillWidth: false
                 label: qsTr("Start date field")
 
-                Line {
+                DateField {
                     key: "startField"
-                    implicitWidth: 180
                 }
             }
 
@@ -713,9 +811,8 @@ ColumnLayout {
                 Layout.fillWidth: false
                 label: qsTr("Target date field")
 
-                Line {
+                DateField {
                     key: "targetField"
-                    implicitWidth: 180
                 }
             }
         }

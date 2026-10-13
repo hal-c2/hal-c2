@@ -207,19 +207,46 @@ defmodule HalC2.Steps.Support.GitHubIssues do
     ])
   end
 
+  @doc """
+  `owner`'s boards, as `%{"number", "title", "closed"}` maps, listed in one page.
+  """
+  def boards(context, owner, boards) do
+    nodes =
+      for board <- boards do
+        Map.merge(
+          %{"url" => "https://github.com/orgs/#{owner}/projects/#{board["number"]}"},
+          board
+        )
+      end
+
+    World.cli_rules(context, [
+      graphql(["projectsV2(first: 100", ~s("owner":"#{owner}")], %{
+        "repositoryOwner" => %{
+          "projectsV2" => %{
+            "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+            "nodes" => nodes
+          }
+        }
+      })
+    ])
+  end
+
   @doc "gh's login lacks the `project` scope: every board query is refused as GitHub refuses it."
   def without_project_scope(context) do
-    World.cli_rules(context, [
-      %{
-        "args" => ["api graphql"],
-        "stdin" => ["projectV2"],
-        "exit" => 1,
-        "stderr" =>
-          "gh: Your token has not been granted the required scopes to execute this query. " <>
-            "The 'projectV2' field requires one of the following scopes: ['read:project'], " <>
-            "but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.\n"
-      }
-    ])
+    World.cli_rules(
+      context,
+      for field <- ~w(projectV2 projectsV2) do
+        %{
+          "args" => ["api graphql"],
+          "stdin" => [field],
+          "exit" => 1,
+          "stderr" =>
+            "gh: Your token has not been granted the required scopes to execute this query. " <>
+              "The '#{field}' field requires one of the following scopes: ['read:project'], " <>
+              "but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.\n"
+        }
+      end
+    )
   end
 
   @doc "The REST calls with `method` to a path ending in `suffix`, with their decoded input."

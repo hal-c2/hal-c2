@@ -112,15 +112,9 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   defp board(found, settings, github) do
-    with [owner, number] <- String.split(String.trim(settings["board"] || ""), "/"),
+    with {:ok, owner, number} <- board_name(settings["board"]),
          [_ | _] <- github do
-      project = Enum.find(github, &owner?(&1["repository"], owner)) || hd(github)
-
-      case Host.issues(@id, "board", %{
-             "projectId" => project["id"],
-             "owner" => owner,
-             "number" => String.to_integer(number)
-           }) do
+      case read_board(github, owner, number, 500) do
         {:ok, %{"items" => board_items}} ->
           board =
             for %{"content" => %{"kind" => "issue"} = content} = item <- board_items, into: %{} do
@@ -141,6 +135,82 @@ defmodule HalC2Plugins.Planner.Sync do
       _ -> found
     end
   end
+
+  @doc """
+  The open GitHub Projects boards the settings offer: those of the owners of the MC's
+  GitHub projects (and so of every repository the plan can follow), each named
+  `owner/number`, and the `problems` owners failed with, such as gh lacking the
+  project scope.
+  """
+  def boards do
+    with {:ok, github} <- github_projects() do
+      read =
+        for project <- Enum.uniq_by(github, &owner_key/1) do
+          owner = hd(String.split(project["repository"], "/"))
+          Host.issues(@id, "boards", %{"projectId" => project["id"], "owner" => owner})
+        end
+
+      boards =
+        for {:ok, %{"boards" => boards}} <- read, board <- boards, !board["closed"] do
+          %{
+            "id" => "#{board["owner"]}/#{board["number"]}",
+            "owner" => board["owner"],
+            "number" => board["number"],
+            "title" => board["title"]
+          }
+        end
+
+      problems = for {:error, error} <- read, uniq: true, do: message(error)
+      {:ok, %{"boards" => boards, "problems" => problems}}
+    end
+  end
+
+  @doc """
+  The names of the date fields of `board` (`owner/number`), for the settings' start
+  and target date fields.
+  """
+  def board_fields(board) do
+    with {:ok, owner, number} <- board_name(board),
+         {:ok, github} <- github_projects(),
+         {:ok, %{"fields" => fields}} <- read_board(github, owner, number, 1) do
+      {:ok, %{"dateFields" => for(%{"type" => "date", "name" => name} <- fields, do: name)}}
+    else
+      :error -> {:error, "Name a board as owner/number."}
+      {:error, error} -> {:error, message(error)}
+    end
+  end
+
+  defp owner_key(project), do: String.downcase(hd(String.split(project["repository"], "/")))
+
+  defp github_projects do
+    with {:ok, projects} <- Host.projects(@id),
+         do:
+           {:ok, Enum.filter(projects, &(&1["kind"] == "github" and is_binary(&1["repository"])))}
+  end
+
+  defp read_board([], _owner, _number, _limit),
+    do: {:error, "No project on this MC has a GitHub remote to read boards through."}
+
+  defp read_board(github, owner, number, limit) do
+    project = Enum.find(github, &owner?(&1["repository"], owner)) || hd(github)
+
+    Host.issues(@id, "board", %{
+      "projectId" => project["id"],
+      "owner" => owner,
+      "number" => number,
+      "limit" => limit
+    })
+  end
+
+  defp board_name(board) when is_binary(board) do
+    with [owner, number] <- String.split(String.trim(board), "/"),
+         true <- owner != "",
+         {number, ""} <- Integer.parse(number),
+         do: {:ok, owner, number},
+         else: (_ -> :error)
+  end
+
+  defp board_name(_), do: :error
 
   defp prs(found, items, github) do
     linked =

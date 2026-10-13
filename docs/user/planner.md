@@ -98,9 +98,10 @@ The planner reads GitHub through the `gh` login on the MC's machine.
   "blocked by" become milestones, subtasks and dependencies, and the pull requests
   that close an issue are linked to its task. A repository is followed only if a
   project on that MC has it as its remote.
-- **Boards:** name a **GitHub Project** as `owner/number` and the fields that hold
-  start and target dates (**Start date** and **Target date** by default). Reading
-  a board needs `gh auth refresh -s project`.
+- **Boards:** pick a **GitHub Project** from those of your projects' owners, or type
+  one as `owner/number`, then pick which of its date fields hold the start and
+  target dates (**Start date** and **Target date** by default). Listing and reading
+  boards needs `gh auth refresh -s project`; until then the settings say so.
 - **Sync:** **Import from GitHub** only reads GitHub. **Both ways** also sends your changes
   back: closing, renaming, labels, assignees, dependencies, sub-issues and board
   dates. A change GitHub refuses is kept and marked as not synced, with GitHub's

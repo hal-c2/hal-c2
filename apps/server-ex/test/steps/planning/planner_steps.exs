@@ -1114,6 +1114,45 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "{string} has the boards {string} {string} and {string} {string}, which is closed",
+       %{args: [owner, open, open_title, closed, closed_title]} = context do
+    GitHubIssues.boards(context, owner, [
+      %{"number" => board_number(open), "title" => open_title, "closed" => false},
+      %{"number" => board_number(closed), "title" => closed_title, "closed" => true}
+    ])
+  end
+
+  step "the settings of {string} list the boards", %{args: [@id]} = context do
+    {reply, context} = plugin(context, "boards", %{})
+    assert {:ok, offer} = reply
+    Map.put(context, :offer, offer)
+  end
+
+  step "they offer {string} {string} and not {string}",
+       %{args: [board, title, other]} = context do
+    offered = for board <- context.offer["boards"], into: %{}, do: {board["id"], board["title"]}
+    assert offered[board] == title
+    refute Map.has_key?(offered, other)
+    context
+  end
+
+  step "they say gh needs the {string} scope", %{args: [scope]} = context do
+    assert context.offer["boards"] == []
+    assert Enum.any?(context.offer["problems"], &(&1 =~ "-s #{scope}"))
+    context
+  end
+
+  step "the settings of {string} read the fields of {string}", %{args: [@id, board]} = context do
+    {reply, context} = plugin(context, "boardFields", %{"board" => board})
+    assert {:ok, offer} = reply
+    Map.put(context, :offer, offer)
+  end
+
+  step "they offer {string} and {string} as its dates", %{args: dates} = context do
+    assert context.offer["dateFields"] == dates
+    context
+  end
+
   step "{string} syncs {string} both ways with the board {string}",
        %{args: [@id, repository, board]} = context do
     item = fn n, start, due ->
@@ -1433,6 +1472,8 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  defp board_number(board), do: board |> String.split("/") |> List.last() |> String.to_integer()
 
   defp save(context, patch) do
     {_, context} =

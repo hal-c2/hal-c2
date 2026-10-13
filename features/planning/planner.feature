@@ -441,6 +441,31 @@ Feature: Planner
       Then #7's task is from "2026-10-20" to "2026-11-02"
 
     @mc
+    Scenario: The settings offer the open boards of the projects' owners
+      Given "acme" has the boards "acme/3" "Roadmap" and "acme/4" "Old roadmap", which is closed
+      When the settings of "planner" list the boards
+      Then they offer "acme/3" "Roadmap" and not "acme/4"
+
+    @mc
+    Scenario: The settings offer the date fields of the chosen board
+      Given the board "acme/3" has the fields "Status", "Start date" and "Target date"
+      When the settings of "planner" read the fields of "acme/3"
+      Then they offer "Start date" and "Target date" as its dates
+
+    @mc
+    Scenario: Boards gh may not list say how to let it
+      Given gh is signed in without the "project" scope
+      When the settings of "planner" list the boards
+      Then they say gh needs the "project" scope
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user picks the board and its date fields from lists in the settings
+      Given "acme" has the board "acme/3" "Roadmap" with the date fields "Begins" and "Ends"
+      When the user opens the planner's settings
+      And the user picks the board "Roadmap" with "Begins" and "Ends" as its dates
+      Then "planner" is saved following "acme/3" with "Begins" and "Ends" as its dates
+
+    @mc
     Scenario Outline: With two-way sync a change to a task reaches GitHub
       Given "planner" syncs "acme/api" both ways with the board "acme/3"
       When the user <change> #7's task

@@ -178,6 +178,10 @@ defmodule HalC2Plugins.Planner do
      }}
   end
 
+  def call("boards", _input, _context), do: Sync.boards()
+
+  def call("boardFields", %{"board" => board}, _context), do: Sync.board_fields(board)
+
   def call("addItem", %{"fields" => fields}, context),
     do: change({:add, fields}, context.settings)
 
