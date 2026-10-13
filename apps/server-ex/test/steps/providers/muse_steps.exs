@@ -161,6 +161,22 @@ defmodule HalC2.Steps.Providers.Muse do
     context
   end
 
+  step "Muse Code is installed but its version check fails", context do
+    install(context, %{"versionExit" => 2}, enabled: false)
+  end
+
+  step "Muse Code is listed as unavailable, saying it could not be run", context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        &match?(%{"enabled" => true, "message" => _}, FakeAcp.find(&1, "muse"))
+      )
+
+    assert %{"status" => "error", "message" => message} = FakeAcp.find(providers, "muse")
+    assert message =~ "could not be run"
+    context
+  end
+
   step "Muse Code is listed with the models from Muse's catalog", context do
     {providers, context} =
       FakeAcp.await_providers(context, fn providers ->

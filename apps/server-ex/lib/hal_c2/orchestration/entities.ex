@@ -113,9 +113,13 @@ defmodule HalC2.Orchestration.Entities do
   @doc """
   Whether a built-in driver takes a message mid-turn: Codex (`turn/steer`), Claude (a
   "now" message), OpenCode (another `session/prompt`, which its running loop picks up)
-  Pi (a `steer` prompt) and Muse (`turn/steer`).
+  Pi (a `steer` prompt) and Muse (`turn/steer`). An instance added for an ACP-family
+  agent has its own id as its driver and steers as that agent does.
   """
-  def steers?(driver), do: driver in ["codex", "claudeAgent", "opencode", "pi", "muse"]
+  def steers?(driver),
+    do:
+      driver in ["codex", "claudeAgent"] or
+        (HalC2.Acp.driver(driver) || driver) in ["opencode", "pi", "muse"]
 
   # Codex, Claude and OpenCode fork their own threads; other agents fork through a
   # transcript. An ACP agent's driver is its instance's id.

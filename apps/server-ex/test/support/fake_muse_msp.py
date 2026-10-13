@@ -7,6 +7,7 @@
 #
 # config.json:
 #   version   `muse --version` (default "1.4.7")
+#   versionExit  `muse --version`'s exit status (default 0)
 #   models    model/list's models (default one Meta model, fake/one)
 #   turns     [{"match": substring, "steps": [...]}], first match wins
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
@@ -74,7 +75,7 @@ def save_session(sid, session):
 
 if "--version" in sys.argv:
     print("muse " + config().get("version", "1.4.7"))
-    sys.exit(0)
+    sys.exit(config().get("versionExit", 0))
 
 log({"start": {
     "argv": sys.argv[1:],

@@ -33,6 +33,11 @@ Feature: Muse Code
     When the user enables Muse Code
     Then Muse Code is listed as not installed, saying it was not found
 
+  Scenario: A Muse Code whose version check fails says it could not be run
+    Given Muse Code is installed but its version check fails
+    When the user enables Muse Code
+    Then Muse Code is listed as unavailable, saying it could not be run
+
   Scenario: Enabling Muse Code lists it with its models
     Given Muse Code is installed but not enabled
     When the user enables Muse Code

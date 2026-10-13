@@ -34,6 +34,7 @@ Feature: Provider capabilities
       | Cursor    | the message waits until the running turn ends |
       | Pi        | the message joins the running turn            |
       | Muse Code | the message joins the running turn            |
+      | custom Muse Code | the message joins the running turn     |
 
   Scenario: A steer that arrives after the turn ended is sent as a normal message
     Given a Codex thread whose turn is finishing

@@ -708,7 +708,7 @@ defmodule HalC2.Acp do
       end
 
     case result do
-      {:ok, out} ->
+      {:ok, out} when is_binary(out) ->
         version =
           case Regex.run(~r/\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?/, out) do
             [version] -> version
