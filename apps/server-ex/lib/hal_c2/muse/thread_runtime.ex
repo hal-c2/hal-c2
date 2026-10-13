@@ -26,7 +26,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 1
+  @state_version 2
   @registry HalC2.Muse.Registry
   # Muse's "overloaded" and "backpressured": the command may be sent again.
   @retryable [-32001, -32031]
@@ -122,7 +122,7 @@ defmodule HalC2.Muse.ThreadRuntime do
        interrupted: false,
        usage: %{},
        # The provider turn of the run that ended last, for usage Muse reports after it.
-       last_turn: nil,
+       last_ids: nil,
        # Open prompts: request id -> {:approval, approval} | {:question, user input}.
        requests: %{}
      }}
@@ -284,6 +284,10 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  # v2 keeps the last turn's ids, not only its provider turn.
+  defp migrate(%{v: 1} = state),
+    do: state |> Map.delete(:last_turn) |> Map.merge(%{v: 2, last_ids: nil}) |> migrate()
 
   # --- session -------------------------------------------------------------------
 
@@ -981,21 +985,29 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp completed_usage(state, _usage), do: state
 
-  # The meter needs Muse's context usage; the turn's totals ride along with it.
+  # The meter needs Muse's context usage, which the provider thread keeps (the meter
+  # reads it there) and the turn records; the turn's totals ride along with it.
   defp token_usage(state, usage) do
     usage = Map.merge(state.usage, Map.reject(usage, fn {_k, v} -> v == nil end))
     state = %{state | usage: usage}
+    ids = if state.turn, do: state.turn.ids, else: state.last_ids
 
-    provider_turn = if state.turn, do: state.turn.ids.provider_turn, else: state.last_turn
+    if is_integer(usage["usedTokens"]) and ids do
+      usage = Map.put(usage, "updatedAt", Entities.now())
 
-    if is_integer(usage["usedTokens"]) and provider_turn do
       commit(state, fn stream ->
         [
           Orchestration.upsert(
             stream,
+            "provider-thread",
+            ids.provider_thread,
+            &Map.put(&1, "contextUsage", usage)
+          ),
+          Orchestration.upsert(
+            stream,
             "provider-turn",
-            provider_turn,
-            &Map.put(&1, "tokenUsage", Map.put(usage, "updatedAt", Entities.now()))
+            ids.provider_turn,
+            &Map.put(&1, "tokenUsage", usage)
           )
         ]
       end)
@@ -1235,7 +1247,7 @@ defmodule HalC2.Muse.ThreadRuntime do
     %{
       state
       | turn: nil,
-        last_turn: state.turn.ids.provider_turn,
+        last_ids: state.turn.ids,
         items: %{},
         muse: %{},
         joined: MapSet.new(),

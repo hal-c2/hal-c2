@@ -85,6 +85,13 @@ defmodule HalC2.MuseTest do
     end
   end
 
+  test "a v1 runtime state keeps working after a hot update" do
+    assert {:ok, %{v: 2, last_ids: nil} = state} =
+             ThreadRuntime.code_change(1, %{v: 1, last_turn: "provider-turn:x", turn: nil}, nil)
+
+    refute Map.has_key?(state, :last_turn)
+  end
+
   describe "approvals" do
     @choices [
       %{

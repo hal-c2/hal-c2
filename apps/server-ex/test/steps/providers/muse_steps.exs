@@ -452,11 +452,13 @@ defmodule HalC2.Steps.Providers.Muse do
   end
 
   # The usage arrives after the run ended, so it is waited for, not read once.
+  # The meter reads the provider thread; the turn keeps its own record.
   step "the turn's context usage is shown", context do
+    usage? = &match?(%{"usedTokens" => 1234, "maxTokens" => 200_000}, &1)
+
     World.await_stream(World.thread_id(context, context.thread), fn state ->
-      Enum.find_value(StreamState.list(state, "provider-turn"), fn turn ->
-        match?(%{"usedTokens" => 1234, "maxTokens" => 200_000}, turn["tokenUsage"])
-      end)
+      Enum.any?(StreamState.list(state, "provider-thread"), &usage?.(&1["contextUsage"])) and
+        Enum.any?(StreamState.list(state, "provider-turn"), &usage?.(&1["tokenUsage"]))
     end)
 
     context
