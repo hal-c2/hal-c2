@@ -74,8 +74,8 @@ access setting, **Accept edits** by default.
 What an agent wants to change waits as a proposal: on the **Planner** tab, in the
 run's thread header, and as dashed bars in the Gantt chart. Dismiss the changes
 you do not want, then **Apply** the rest, or **Discard** the whole proposal. A
-change to a task that was removed or edited since is marked as no longer
-applicable. Set an action to **Applies changes** to skip the proposal.
+change to a task that was removed since, or that no longer fits the plan, is
+marked as no longer applicable; the rest overwrite edits made in the meantime. Set an action to **Applies changes** to skip the proposal.
 
 Feedback shows on its task or on the plan until you dismiss it. Applied status
 updates, and those you post yourself, form the plan's history.
