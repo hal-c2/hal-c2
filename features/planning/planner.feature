@@ -705,6 +705,13 @@ Feature: Planner
       Then only "dana" is told no task is called "Nothing"
 
     @mc
+    Scenario: The slash command asks which action a word shared by two means
+      Given the user added the actions "Check API" and "Check docs" on the whole plan
+      When "dana" runs "/planner check" in Slack
+      Then only "dana" is asked to run "Check API" or "Check docs" by its id
+      And no run starts
+
+    @mc
     Scenario: Without a Slack connection updates stay in the plan
       Given the MC is not connected to Slack
       When the user posts the update "Docs slip a week" saying the plan is at risk

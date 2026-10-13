@@ -449,5 +449,17 @@ defmodule HalC2.PlannerTest do
 
       assert {:unknown, "dance"} = Slack.command("dance", actions)
     end
+
+    test "a word that begins more than one label names no action, but an id still does" do
+      actions = [
+        %{"id" => "check-api", "label" => "Check API"},
+        %{"id" => "check-docs", "label" => "Check docs"}
+      ]
+
+      assert {:ambiguous, "check", [%{"id" => "check-api"}, %{"id" => "check-docs"}]} =
+               Slack.command("Check API", actions)
+
+      assert {:run, %{"id" => "check-docs"}, "Docs"} = Slack.command("check-docs Docs", actions)
+    end
   end
 end

@@ -56,7 +56,8 @@ defmodule HalC2Plugins.Planner.Slack do
   @doc """
   What the text after the slash command asks for: `:status` (nothing, or "status"),
   `{:run, action, rest}` when its first word is an action's id or the first word of
-  its label, or `{:unknown, word}`. `actions` are `%{"id", "label", ...}`.
+  only one action's label, `{:ambiguous, word, actions}` when it begins several labels,
+  or `{:unknown, word}`. `actions` are `%{"id", "label", ...}`.
   """
   def command(text, actions) do
     case String.split(String.trim(text || ""), ~r/\s+/, parts: 2) do
@@ -65,21 +66,30 @@ defmodule HalC2Plugins.Planner.Slack do
 
       [word | rest] ->
         word = String.downcase(word)
+        rest = String.trim(Enum.join(rest, " "))
+        labelled = Enum.filter(actions, &(first_word(&1["label"]) == word))
 
-        named =
-          Enum.find(actions, &(String.downcase(&1["id"]) == word)) ||
-            Enum.find(actions, &(first_word(&1["label"]) == word))
-
-        if named, do: {:run, named, String.trim(Enum.join(rest, " "))}, else: {:unknown, word}
+        case {Enum.find(actions, &(String.downcase(&1["id"]) == word)), labelled} do
+          {%{} = named, _} -> {:run, named, rest}
+          {nil, [named]} -> {:run, named, rest}
+          {nil, []} -> {:unknown, word}
+          {nil, several} -> {:ambiguous, word, several}
+        end
     end
   end
 
   @doc "The answer to a command naming no action: what can be run."
   def actions(word, actions, command) do
-    listed = Enum.map_join(actions, "\n", &"#{command} #{&1["id"]} — #{&1["label"]}")
-
-    "There is no action #{word}. #{command} status shows how the plan stands; the actions are:\n#{listed}"
+    "There is no action #{word}. #{command} status shows how the plan stands; the actions are:\n#{listed(actions, command)}"
   end
+
+  @doc "The answer to a command whose word begins more than one action's label."
+  def ambiguous(word, actions, command) do
+    "#{word} could be more than one action; run one by its id:\n#{listed(actions, command)}"
+  end
+
+  defp listed(actions, command),
+    do: Enum.map_join(actions, "\n", &"#{command} #{&1["id"]} — #{&1["label"]}")
 
   defp first_word(label),
     do: label |> String.split(~r/\s+/, parts: 2) |> hd() |> String.downcase()

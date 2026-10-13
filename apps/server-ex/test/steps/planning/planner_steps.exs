@@ -1715,6 +1715,44 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user added the actions {string} and {string} on the whole plan",
+       %{args: labels} = context do
+    actions =
+      for label <- labels, into: context.actions do
+        action = %{
+          "label" => label,
+          "scope" => "plan",
+          "kind" => "action",
+          "apply" => "propose",
+          "prompt" => label <> @gate
+        }
+
+        {label |> String.downcase() |> String.replace(" ", "-"), action}
+      end
+
+    save_actions(context, actions)
+  end
+
+  step "only {string} is asked to run {string} or {string} by its id",
+       %{args: ["dana" | labels]} = context do
+    assert %{"response_type" => "ephemeral", "text" => text} = context.answer
+    assert text =~ "check could be more than one action"
+
+    for label <- labels,
+        do:
+          assert(
+            text =~
+              "/planner #{label |> String.downcase() |> String.replace(" ", "-")} — #{label}"
+          )
+
+    context
+  end
+
+  step "no run starts", context do
+    assert runs!(context) == []
+    context
+  end
+
   step "the plan has the update {string}", %{args: [text]} = context do
     assert Enum.any?(plan!(context)["updates"], &(&1["text"] == text))
     context

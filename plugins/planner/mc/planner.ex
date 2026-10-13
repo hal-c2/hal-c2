@@ -578,6 +578,9 @@ defmodule HalC2Plugins.Planner do
             {:error, error} -> error
           end
 
+        {:ambiguous, word, several} ->
+          Slack.ambiguous(word, several, settings["slackCommand"])
+
         {:unknown, word} ->
           Slack.actions(word, actions, settings["slackCommand"])
       end
