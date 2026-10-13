@@ -2,8 +2,8 @@ import QtQuick
 import Ghostty
 import HalC2.Shell
 
-// A terminal's right-click menu: the
-// selection's actions, off until something is selected, and Paste. Adding to
+// A terminal's right-click menu: opening or copying the link under the
+// pointer, the selection's actions, off until something is selected, and Paste. Adding to
 // chat is only offered where there is a draft to add to (`addToChat` set).
 //
 //   TapHandler { acceptedButtons: Qt.RightButton; onTapped: point => menu.popup(point.position.x, point.position.y) }
@@ -20,6 +20,10 @@ ShellMenu {
     required property Terminal terminal
     // Adds the selection to the draft; null where there is none.
     property var addToChat: null
+    // The link under the pointer ({kind: "url"|"path", text}), set before
+    // the menu opens; null for none. `follow` opens one.
+    property var link: null
+    property var follow: link => {}
 
     function keyPressed(event) {
         event.accepted = false;
@@ -37,6 +41,20 @@ ShellMenu {
         }
     }
 
+    ShellMenuItem {
+        objectName: "terminalOpenLink"
+        text: menu.link?.kind === "path" ? qsTr("Open file") : qsTr("Open link")
+        visible: menu.link !== null
+        height: visible ? implicitHeight : 0
+        onTriggered: menu.follow(menu.link)
+    }
+    ShellMenuItem {
+        objectName: "terminalCopyLink"
+        text: menu.link?.kind === "path" ? qsTr("Copy path") : qsTr("Copy link")
+        visible: menu.link !== null
+        height: visible ? implicitHeight : 0
+        onTriggered: Shell.setClipboardText(menu.link.text)
+    }
     ShellMenuItem {
         objectName: "terminalAddToChat"
         text: qsTr("Add to chat")

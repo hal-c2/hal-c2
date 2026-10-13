@@ -237,23 +237,27 @@ const Steps steps([] {
     });
   });
 
-  // Links in the output (TerminalSplits follows the one under a click).
-  const auto follow = [](World& world, const QString& printed, const QString& link, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-    QQuickItem* terminal = drawnTerminal(world);
-    print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
-    world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
+  // Links in the output (TerminalSplits follows the one under a Ctrl-click).
+  // Where `link` is drawn, on the last line that shows it.
+  const auto pointOn = [](World& world, QQuickItem* terminal, const QString& link) {
     const QStringList lines = call(terminal, "text").split(QLatin1Char('\n'));
     int row = -1;
     for (int at = 0; at < lines.size(); ++at) {
       if (lines.at(at).contains(link)) row = at;
     }
+    expect(row >= 0, QStringLiteral("the terminal draws \"%1\"").arg(link));
     const int column = int(lines.at(row).indexOf(link)) + int(link.size()) / 2;
     const double cell = terminal->property("cellWidth").toDouble();
     const double height = terminal->property("cellHeight").toDouble();
     const double padding = terminal->property("padding").toDouble();
     const QPoint origin = world.brick->at(terminal, 0, 0);
-    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers,
-                      QPoint(origin.x() + int(padding + cell * (column + 0.5)), origin.y() + int(padding + height * (row + 0.5))));
+    return QPoint(origin.x() + int(padding + cell * (column + 0.5)), origin.y() + int(padding + height * (row + 0.5)));
+  };
+  const auto follow = [pointOn](World& world, const QString& printed, const QString& link, Qt::KeyboardModifiers modifiers) {
+    QQuickItem* terminal = drawnTerminal(world);
+    print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
+    world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers, pointOn(world, terminal, link));
     world.sync();
   };
   step(QStringLiteral("the user's links open in the system browser"), [](World& world, const Captures&, const Table&) {
@@ -264,7 +268,10 @@ const Steps steps([] {
            QStringLiteral("links open in %1").arg(settings.value(QLatin1String("browserLinkTarget")).toString()));
   });
   step(QStringLiteral("the user follows %1 in the terminal").arg(q), [follow](World& world, const Captures& c, const Table&) {
-    follow(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0]);
+    follow(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0], Qt::ControlModifier);
+  });
+  step(QStringLiteral("the user clicks %1 in the terminal without holding Ctrl").arg(q), [follow](World& world, const Captures& c, const Table&) {
+    follow(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0], Qt::NoModifier);
   });
   step(QStringLiteral("the address opens in the system browser"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("http://localhost:5173"))}; },
@@ -274,15 +281,20 @@ const Steps steps([] {
     expect(terminalWrites(world, QStringLiteral("term-1")).isEmpty() && !terminal->property("hasSelection").toBool(),
            QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
   });
-  step(QStringLiteral("the shell prints \"src/app.ts:12:4\""), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the shell prints %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // An environment with an editor, and a thread in /work/p1.
     fakeConfig(world.mc).config.insert(QStringLiteral("availableEditors"), QJsonArray{QStringLiteral("zed")});
     QQuickItem* terminal = drawnTerminal(world);
-    print(world.mc, shownThread(world), QStringLiteral("term-1"), QStringLiteral("error TS2322 at src/app.ts:12:4.\r\n"));
-    world.waitFor([&] { return call(terminal, "text").contains(QLatin1String("src/app.ts:12:4")); }, QStringLiteral("the terminal to draw the path"));
+    print(world.mc, shownThread(world), QStringLiteral("term-1"), QStringLiteral("error TS2322 at %1.\r\n").arg(c[0]));
+    world.waitFor([&] { return call(terminal, "text").contains(c[0]); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(c[0]); });
   });
   step(QStringLiteral("the user follows that path"), [follow](World& world, const Captures&, const Table&) {
-    follow(world, QStringLiteral("(1 error)"), QStringLiteral("src/app.ts:12:4"));
+    follow(world, QStringLiteral("(1 error)"), QStringLiteral("src/app.ts:12:4"), Qt::ControlModifier);
+  });
+  step(QStringLiteral("the user opens the terminal's menu on %1").arg(q), [pointOn](World& world, const Captures& c, const Table&) {
+    QQuickItem* terminal = drawnTerminal(world);
+    QTest::mouseClick(&world.brick->window(), Qt::RightButton, Qt::NoModifier, pointOn(world, terminal, c[0]));
+    world.waitFor([&] { return world.brick->item(QStringLiteral("terminalPaste"))->isVisible(); }, QStringLiteral("the terminal's menu to open"));
   });
   const auto editorCall = [](World& world) -> QJsonObject {
     for (const FakeMc::Rpc& rpc : world.mc.calls) {

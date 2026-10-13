@@ -31,6 +31,7 @@ const QString kSentence = QStringLiteral("Cache keys include the tenant.");
 
 // What a step saw, for a later step to compare with.
 struct Seen {
+  QString link;
   QPointer<QQuickItem> item;
   std::shared_ptr<QSignalSpy> redraws;
   int segments = 0;
@@ -409,9 +410,38 @@ const Steps steps([] {
     QPoint point;
     const QString link = linkAt(edit, c[0], &point);
     expect(link == c[0], QStringLiteral("\"%1\" links to \"%2\"").arg(c[0], link));
-    QTest::mouseClick(&timelineBrick(world).window(), Qt::LeftButton, Qt::NoModifier, point);
+    // Ctrl (Cmd on macOS) opens it; a plain click selects.
+    QTest::mouseClick(&timelineBrick(world).window(), Qt::LeftButton, Qt::ControlModifier, point);
     const QVariantList activated = world.brick->root()->property("activated").toList();
     expect(activated == QVariantList{c[0]}, QStringLiteral("the click opened %1").arg(show(activated)));
+  });
+
+  // A link in a reply, followed with the mouse or from its menu.
+  step(QStringLiteral("the agent's reply links to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    answer(world, QStringLiteral("See [%1](%1) for the details.").arg(c[0]));
+    world.mc.part<Seen>().link = c[0];
+  });
+  const auto linkPoint = [](World& world) {
+    const QString link = world.mc.part<Seen>().link;
+    QPoint point;
+    const QString found = linkAt(one(reply(world), QStringLiteral("markdownProse")), link, &point);
+    expect(found == link, QStringLiteral("\"%1\" links to \"%2\"").arg(link, found));
+    return point;
+  };
+  step(QStringLiteral("the user clicks the link (without holding Ctrl|holding Ctrl \\(Cmd on macOS\\))"), [linkPoint](World& world, const Captures& c, const Table&) {
+    const QPoint point = linkPoint(world);
+    QTest::mouseClick(&timelineBrick(world).window(), Qt::LeftButton, c[0].startsWith(QLatin1String("without")) ? Qt::NoModifier : Qt::ControlModifier, point);
+    world.sync();
+  });
+  step(QStringLiteral("%1 is opened").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList activated = world.brick->root()->property("activated").toList();
+    expect(activated == QVariantList{c[0]}, QStringLiteral("the click opened %1").arg(show(activated)));
+  });
+  step(QStringLiteral("the user opens the menu on the link"), [linkPoint](World& world, const Captures&, const Table&) {
+    const QPoint point = linkPoint(world);
+    QTest::mouseClick(&timelineBrick(world).window(), Qt::RightButton, Qt::NoModifier, point);
+    world.waitFor([&] { return !at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList().isEmpty(); },
+                  QStringLiteral("the link's menu to open"));
   });
   // The same address in inline code and in a code block, in the next reply.
   step(QStringLiteral("web addresses inside code are left as text"), [](World& world, const Captures&, const Table&) {

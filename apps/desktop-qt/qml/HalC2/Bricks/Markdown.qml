@@ -239,8 +239,19 @@ Item {
     }
 
     // Rich text the reader can select, with links that open through the
-    // brick and show where they go.
+    // brick and show where they go. A plain click selects, so copying a
+    // link never opens it: a link opens on a click with Ctrl (Cmd on macOS)
+    // held, a finger's tap, or its menu. A task's box is a control, and
+    // toggles on any click.
     component RichText: TextEdit {
+        id: richText
+
+        function follow(eventPoint) {
+            const link = linkAt(eventPoint.position.x, eventPoint.position.y);
+            if (link.length > 0 && !link.startsWith("task:"))
+                root.linkActivated(link);
+        }
+
         textFormat: TextEdit.RichText
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         readOnly: true
@@ -249,14 +260,29 @@ Item {
         color: root.textColor
         font.family: root.uiFamily
         font.pixelSize: Math.round(14 * Theme.fontScale)
-        onLinkActivated: link => root.linkActivated(link)
+        onLinkActivated: link => {
+            if (link.startsWith("task:"))
+                root.linkActivated(link);
+        }
         onSelectedTextChanged: root.track(this)
         function texts() {
             return [this];
         }
-        ToolTip.visible: hoveredLink.length > 0
-        ToolTip.text: hoveredLink
+        // Shown off its own text: bound to the link instead, it could open
+        // with the previous link's text.
+        ToolTip.visible: ToolTip.text.length > 0
+        ToolTip.text: hoveredLink.length > 0 && !hoveredLink.startsWith("task:") ? qsTr("%1\n%2-click to open").arg(hoveredLink).arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl") : ""
         ToolTip.delay: 600
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            acceptedModifiers: Qt.ControlModifier
+            onTapped: eventPoint => richText.follow(eventPoint)
+        }
+        TapHandler {
+            acceptedDevices: PointerDevice.TouchScreen
+            onTapped: eventPoint => richText.follow(eventPoint)
+        }
         // The secondary button on a link offers what can be done with it
         // (a finger has no buttons, and would count as it).
         TapHandler {
@@ -274,7 +300,7 @@ Item {
             }
         }
         HoverHandler {
-            cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+            cursorShape: parent.hoveredLink.startsWith("task:") ? Qt.PointingHandCursor : Qt.IBeamCursor
         }
     }
 

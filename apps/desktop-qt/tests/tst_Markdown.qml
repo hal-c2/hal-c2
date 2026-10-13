@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
@@ -85,17 +86,36 @@ Item {
             verify(md.implicitHeight > 0);
         }
 
-        function test_linkActivates() {
-            const md = make("See the [pricing docs](https://example.com/docs/pricing) now.");
+        // Clicks the middle of `word` in the first segment's prose.
+        function clickWord(md, word, link, modifiers) {
             linkSpy.target = md;
             linkSpy.clear();
             const edit = prose(segmentsOf(md)[0]);
-            const at = plain(edit).indexOf("pricing");
-            const rect = edit.positionToRectangle(at + 2);
-            compare(edit.linkAt(rect.x + 1, rect.y + rect.height / 2), "https://example.com/docs/pricing");
-            mouseClick(edit, rect.x + 1, rect.y + rect.height / 2);
+            const at = plain(edit).indexOf(word);
+            const rect = edit.positionToRectangle(at + Math.floor(word.length / 2));
+            compare(edit.linkAt(rect.x + 1, rect.y + rect.height / 2), link);
+            mouseClick(edit, rect.x + 1, rect.y + rect.height / 2, Qt.LeftButton, modifiers);
+        }
+
+        function test_hoveredLinkTipNamesTheLink() {
+            const md = make("See the [pricing docs](https://example.com/docs/pricing) now.");
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("pricing") + 3);
+            mouseMove(edit, rect.x + 1, rect.y + rect.height / 2);
+            tryCompare(edit.ToolTip.toolTip, "visible", true);
+            compare(edit.ToolTip.toolTip.text.split("\n")[0], "https://example.com/docs/pricing");
+        }
+
+        function test_linkActivatesOnCtrlClick() {
+            clickWord(make("See the [pricing docs](https://example.com/docs/pricing) now."), "pricing", "https://example.com/docs/pricing", Qt.ControlModifier);
             compare(linkSpy.count, 1);
             compare(linkSpy.signalArguments[0][0], "https://example.com/docs/pricing");
+        }
+
+        // Copying a link starts with a click on it, which must not open it.
+        function test_plainClickLeavesLinkAlone() {
+            clickWord(make("See the [pricing docs](https://example.com/docs/pricing) now."), "pricing", "https://example.com/docs/pricing", Qt.NoModifier);
+            compare(linkSpy.count, 0);
         }
 
         function test_codeCopiesItsSource() {

@@ -162,9 +162,9 @@ Feature: Integrations settings
       And 30 fps is the built-in default
 
     @backlog @desktop
-    Scenario: Holding a modifier key sends a link to the default browser
+    Scenario: A link's menu sends it to the default browser
       Given links are set to open in HAL-C2
-      When the user clicks a link while holding Cmd or Ctrl
+      When the user chooses to open a link in the default browser from its menu
       Then it opens in the default browser anyway
 
     @backlog @desktop
