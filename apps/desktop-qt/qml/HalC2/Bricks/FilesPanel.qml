@@ -385,6 +385,21 @@ Rectangle {
                                 acceptedDevices: PointerDevice.TouchScreen
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
+                            // The secondary button offers opening or copying the link.
+                            TapHandler {
+                                acceptedButtons: Qt.RightButton
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onTapped: eventPoint => {
+                                    const link = renderedPageText.linkAt(eventPoint.position.x, eventPoint.position.y);
+                                    if (link.length > 0) {
+                                        Shell.dispatch("link.menu", {
+                                            url: link,
+                                            x: eventPoint.scenePosition.x,
+                                            y: eventPoint.scenePosition.y
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
                 }
