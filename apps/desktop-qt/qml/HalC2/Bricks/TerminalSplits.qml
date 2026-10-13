@@ -143,42 +143,67 @@ FocusScope {
                     };
                 }
 
-                // A click on a web address or a file path follows it
-                // (terminal.followLink): the address in the browser, the
-                // path in the editor, from the folder the shell says it is
-                // in. A drag still selects, and a program that tracks the
-                // mouse keeps its clicks.
+                // The web address or file path under a point, or null.
+                function linkUnder(position) {
+                    const column = Math.floor((position.x - terminal.padding) / terminal.cellWidth);
+                    const row = Math.floor((position.y - terminal.padding) / terminal.cellHeight);
+                    if (column < 0 || column >= terminal.columns || row < 0 || row >= terminal.rows)
+                        return null;
+                    return TerminalLinks.linkAt(terminal.text(), terminal.columns, Math.round(terminal.scrollOffset) + row, column);
+                }
+
+                // Follows a link (terminal.followLink): the address in the
+                // browser, the path in the editor, from the folder the shell
+                // says it is in.
+                function followLink(link) {
+                    Shell.dispatch("terminal.followLink", {
+                        terminalId: cell.terminalId,
+                        kind: link.kind,
+                        text: link.text,
+                        cwd: terminal.workingDirectory
+                    });
+                }
+
+                // A link is followed on a click with Ctrl held (Cmd on
+                // macOS), as in other terminals, or a finger's tap: a plain
+                // click only places the pointer, so selecting an address to
+                // copy it never opens it. A drag still selects, and a program
+                // that tracks the mouse keeps its clicks.
                 TapHandler {
                     acceptedButtons: Qt.LeftButton
-                    acceptedModifiers: Qt.KeyboardModifierMask
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    acceptedModifiers: Qt.ControlModifier
                     onTapped: eventPoint => {
-                        const column = Math.floor((eventPoint.position.x - terminal.padding) / terminal.cellWidth);
-                        const row = Math.floor((eventPoint.position.y - terminal.padding) / terminal.cellHeight);
-                        if (column < 0 || column >= terminal.columns || row < 0 || row >= terminal.rows)
-                            return;
-                        const link = TerminalLinks.linkAt(terminal.text(), terminal.columns, Math.round(terminal.scrollOffset) + row, column);
+                        const link = terminal.linkUnder(eventPoint.position);
                         if (link !== null)
-                            Shell.dispatch("terminal.followLink", {
-                                terminalId: cell.terminalId,
-                                kind: link.kind,
-                                text: link.text,
-                                cwd: terminal.workingDirectory
-                            });
+                            terminal.followLink(link);
+                    }
+                }
+                TapHandler {
+                    acceptedDevices: PointerDevice.TouchScreen
+                    onTapped: eventPoint => {
+                        const link = terminal.linkUnder(eventPoint.position);
+                        if (link !== null)
+                            terminal.followLink(link);
                     }
                 }
 
-                // Right-click: the terminal's menu (TerminalMenu).
-                // A handler, not a MouseArea, so wheel and left-button
-                // selection still reach the Terminal.
+                // Right-click: the terminal's menu (TerminalMenu), with the
+                // link under the pointer. A handler, not a MouseArea, so
+                // wheel and left-button selection still reach the Terminal.
                 TapHandler {
                     acceptedButtons: Qt.RightButton
-                    onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
+                    onTapped: eventPoint => {
+                        menu.link = terminal.linkUnder(eventPoint.position);
+                        menu.popup(eventPoint.position.x, eventPoint.position.y);
+                    }
                 }
 
                 TerminalMenu {
                     id: menu
 
                     terminal: terminal
+                    follow: link => terminal.followLink(link)
                     addToChat: (Shell.state.composer?.target ?? null) === null ? null : () => {
                         Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
                         terminal.clearSelection();

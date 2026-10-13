@@ -137,6 +137,14 @@ QString ShellBridge::clipboardText() const {
   return QGuiApplication::clipboard()->text();
 }
 
+void ShellBridge::setClipboardText(const QString& text) const {
+  if (m_writeClipboard) {
+    m_writeClipboard(text);
+    return;
+  }
+  QGuiApplication::clipboard()->setText(text);
+}
+
 QVariantList ShellBridge::clipboardFiles() const {
   constexpr qsizetype kMaxBytes = 10 * 1024 * 1024;
   const QMimeData* data = QGuiApplication::clipboard()->mimeData();

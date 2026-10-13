@@ -7,13 +7,14 @@
 #   apps/web/src/components/preview/openTerminalLinkInPreview.ts
 #   apps/web/src/components/preview/openTerminalLinkInPreview.test.ts
 #   apps/web/src/terminal/ghostty/surface.ts (libghostty-vt renderer, Kitty keyboard reporting)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
 #   navigation/appearance.feature owns terminal fonts.
 
 Feature: Links and rendering inside terminals
   A terminal shows the program's colours faithfully and turns web addresses and file paths in
-  its output into links the user can follow.
+  its output into links the user can follow with Ctrl-click (Cmd-click on macOS) or its menu.
 
   Rule: The terminal client draws the shell's screen faithfully
 
@@ -68,6 +69,15 @@ Feature: Links and rendering inside terminals
         | a web address longer than 4 KiB                     |
         | a single line longer than 64 KiB with an address   |
 
+    # A plain click on a link only places the pointer, so copying an address never opens it by
+    # accident: links are followed with Ctrl held (Cmd on macOS), as other terminals do, or from
+    # the terminal's menu.
+    @desktop
+    Scenario: A plain click on a link does not follow it
+      Given the user's links open in the system browser
+      When the user clicks "http://localhost:5173" in the terminal without holding Ctrl
+      Then nothing is opened
+
     @backlog @desktop
     Scenario: Following a web address opens it in the in-app browser
       Given the user's links open in the in-app browser
@@ -87,9 +97,9 @@ Feature: Links and rendering inside terminals
       Then the address opens in the system browser
 
     @backlog @desktop
-    Scenario: Holding the command key sends a link to the system browser
+    Scenario: The link's menu sends a link to the system browser
       Given the user's links open in the in-app browser
-      When the user follows a link while holding Command or Control
+      When the user chooses to open a link in the system browser from the terminal's menu
       Then the address opens in the system browser
 
     @backlog @desktop
@@ -106,10 +116,24 @@ Feature: Links and rendering inside terminals
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
 
+    @desktop
+    Scenario Outline: The terminal's menu opens or copies the link under the pointer
+      Given the shell prints "<link>"
+      When the user opens the terminal's menu on "<link>"
+      Then the menu offers "<open>" and "<copy>"
+      When the user chooses "<copy>" from the link's menu
+      Then "<link>" is on the clipboard
+      And nothing is opened
+
+      Examples:
+        | link                  | open      | copy      |
+        | http://localhost:5173 | Open link | Copy link |
+        | src/app.ts:12:4       | Open file | Copy path |
+
     @backlog @desktop
-    Scenario: Hovering a link underlines all of it and shows it can be followed
+    Scenario: Holding Ctrl over a link underlines all of it and shows it can be followed
       Given the shell prints a web address that wraps across two lines
-      When the user moves the pointer over one piece of it
+      When the user holds Ctrl (Cmd on macOS) and moves the pointer over one piece of it
       Then every piece of the address is underlined
       And the pointer shows that it can be followed
       When the pointer moves off the address
@@ -123,9 +147,9 @@ Feature: Links and rendering inside terminals
       And pressing on it goes to the program
 
     @backlog @desktop
-    Scenario: A click that moves a little still follows the link
+    Scenario: A Ctrl-click that moves a little still follows the link
       Given the shell prints a web address
-      When the user presses on the address and releases a few pixels away
+      When the user holds Ctrl, presses on the address and releases a few pixels away
       Then the address is followed
 
     @backlog @desktop

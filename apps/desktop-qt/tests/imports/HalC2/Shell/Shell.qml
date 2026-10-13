@@ -155,6 +155,9 @@ QtObject {
         return "";
     }
 
+    function setClipboardText(text) {
+    }
+
     function pasteAttaches(text, promptLength) {
         return false;
     }
