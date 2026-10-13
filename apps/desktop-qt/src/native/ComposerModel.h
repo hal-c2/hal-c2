@@ -27,7 +27,6 @@ struct Instance {
   QString displayName;
   QString accentColor;  // "#rrggbb" or empty
   QString iconUrl;  // an ACP registry icon, or empty
-  QString groupKey;  // continuation.groupKey
   QString status;
   QString message;
   bool enabled = false;
@@ -69,17 +68,11 @@ struct Block {
 std::optional<Block> blockReason(const QList<Instance>& list, const QString& currentInstance, const QString& currentModel,
                                  const QString& nextInstance, const QString& nextModel);
 
-// The thread's lock: the driver (and continuation group) a started thread keeps.
-struct Lock {
-  QString driver;
-  QString groupKey;
-};
-
 // `modelPicker.instances`: the rail with each instance's offered models.
 // `started` says whether the thread's session started (models it cannot
 // switch to say why); `current*` is the thread's own selection.
 QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& prefs, const QString& selectedInstance,
-                             const QString& selectedModel, const std::optional<Lock>& lock, bool started,
+                             const QString& selectedModel, bool started,
                              const QString& currentInstance, const QString& currentModel);
 
 // The selected model's option descriptors with their current values.

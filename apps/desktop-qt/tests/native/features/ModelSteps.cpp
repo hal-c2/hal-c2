@@ -193,8 +193,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the thread has already run a turn on Codex"), [](World& world, const Captures&, const Table&) {
     updateThread(world, {{QStringLiteral("latestRunId"), QStringLiteral("run-0")}});
-    world.waitFor([&] { return world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("locked")).toBool(); },
-                  QStringLiteral("the picker to lock the provider"));
+    world.sync();
   });
 
   // providers/permission-modes.feature: the composer's own permission picker.
@@ -285,23 +284,21 @@ const Steps steps([] {
     const QString slug = world.mc.part<Catalogue>().favourite;
     world.waitFor([&] { return !favourite(world, slug); }, [&] { return QStringLiteral("no favourite; the picker lists %1").arg(show(instances(world))); });
   });
-  step(QStringLiteral("only Codex models can be chosen"), [](World& world, const Captures&, const Table&) {
-    for (const QVariant& entry : instances(world)) {
-      const QVariantMap listed = entry.toMap();
-      const bool codex = listed.value(QStringLiteral("driverKind")) == QLatin1String("codex");
-      expect(codex == listed.value(QStringLiteral("isAvailable")).toBool() && codex == !slugs(listed).isEmpty(),
-             QStringLiteral("the picker lists %1").arg(show(instances(world))));
-    }
-    world.bridge().dispatch(QStringLiteral("composer.model.select"),
-                            QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), QStringLiteral("claude-opus")}});
-    expect(composer(world).value(QStringLiteral("selectedInstanceId")) == QLatin1String("codex"),
-           QStringLiteral("the composer chose %1").arg(show(composer(world))));
-  });
 
   // What the next turn runs with.
   step(QStringLiteral("the next turn runs on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject selection = sendTurn(world).last().value(QLatin1String("modelSelection")).toObject();
     expect(selection.value(QLatin1String("model")) == c[0], QStringLiteral("the message runs on %1").arg(show(selection.toVariantMap())));
+  });
+  step(QStringLiteral("the next turn moves the thread to Claude before it runs on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<QJsonObject> commands = sendTurn(world);
+    QVariantList made;
+    for (const QJsonObject& command : commands) made.append(command.toVariantMap());
+    const QJsonObject before = commands.size() > 1 ? commands.at(commands.size() - 2) : QJsonObject();
+    expect(before.value(QLatin1String("type")) == QLatin1String("provider.switch") &&
+               before.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")) == QLatin1String("claudeAgent") &&
+               commands.last().value(QLatin1String("modelSelection")).toObject().value(QLatin1String("model")) == c[0],
+           QStringLiteral("the send made %1").arg(show(made)));
   });
   step(QStringLiteral("the next turn runs with (low|medium|high) effort"), [](World& world, const Captures& c, const Table&) {
     const QJsonObject selection = sendTurn(world).last().value(QLatin1String("modelSelection")).toObject();

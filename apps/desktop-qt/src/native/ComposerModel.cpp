@@ -309,7 +309,6 @@ QList<Instance> instances(const QJsonArray& providers) {
     const QString accent = str(provider, QLatin1String("accentColor"));
     if (hex.match(accent).hasMatch()) instance.accentColor = accent;
     instance.iconUrl = registryIcon(instance.driver, str(provider, QLatin1String("iconUrl")));
-    instance.groupKey = str(provider.value(QLatin1String("continuation")).toObject(), QLatin1String("groupKey"));
     instance.status = str(provider, QLatin1String("status"));
     instance.message = str(provider, QLatin1String("message"));
     instance.enabled = provider.value(QLatin1String("enabled")).toBool();
@@ -392,50 +391,30 @@ QJsonArray toggleFavorite(const QJsonValue& favorites, const QString& instanceId
   return next;
 }
 
-// Why the model cannot change, for a session that started (no provider
-// handoff on the desktop).
+// Why the model cannot change, for a session that started. Another provider
+// takes the thread over with its conversation handed across.
 std::optional<Block> blockReason(const QList<Instance>& list, const QString& currentInstance, const QString& currentModel,
                                  const QString& nextInstance, const QString& nextModel) {
-  if (currentInstance == nextInstance && currentModel == nextModel) return std::nullopt;
-  if (currentInstance != nextInstance) {
-    return Block{QStringLiteral("Start a new chat to switch providers"),
-                 QStringLiteral("This thread does not support switching providers after it has started.")};
-  }
+  if (currentInstance != nextInstance || currentModel == nextModel) return std::nullopt;
   const Instance* current = find(list, currentInstance);
-  const Instance* next = find(list, nextInstance);
-  if (!(current && current->requiresNewThreadForModelChange) && !(next && next->requiresNewThreadForModelChange)) {
-    return std::nullopt;
-  }
+  if (!current || !current->requiresNewThreadForModelChange) return std::nullopt;
   return Block{QStringLiteral("Start a new chat to change models"),
                QStringLiteral("This provider does not allow switching models after a conversation has started.")};
 }
 
 QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& prefs, const QString& selectedInstance,
-                             const QString& selectedModel, const std::optional<Lock>& lock, bool started,
+                             const QString& selectedModel, bool started,
                              const QString& currentInstance, const QString& currentModel) {
-  const auto matchesLock = [&lock](const Instance& instance) {
-    return !lock || (instance.driver == lock->driver && (lock->groupKey.isEmpty() || instance.groupKey == lock->groupKey));
-  };
   QList<Instance> visible;
   for (const Instance& instance : list) {
     if (instance.enabled) visible.append(instance);
   }
-  QList<Instance> rail;
-  for (const Instance& instance : visible) {
-    if (matchesLock(instance)) rail.append(instance);
-  }
-  for (const Instance& instance : visible) {
-    if (!matchesLock(instance)) rail.append(instance);
-  }
 
   QVariantList result;
-  for (const Instance& instance : rail) {
-    const bool lockedOut = !matchesLock(instance);
+  for (const Instance& instance : visible) {
     QList<QJsonObject> models;
-    if (!lockedOut) {
-      for (const QJsonObject& model : modelOptions(instance, prefs, selectedInstance, selectedModel)) {
-        if (offered(instance, model, selectedInstance, selectedModel)) models.append(model);
-      }
+    for (const QJsonObject& model : modelOptions(instance, prefs, selectedInstance, selectedModel)) {
+      if (offered(instance, model, selectedInstance, selectedModel)) models.append(model);
     }
     const auto favorite = [&](const QJsonObject& model) {
       return prefs.favorites.contains(instance.instanceId + u'\n' + str(model, QLatin1String("slug")));
@@ -468,12 +447,7 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
           {QStringLiteral("disabledReason"), disabledReason.isValid() ? disabledReason : QVariant::fromValue(nullptr)},
       });
     }
-    QVariant reason = QVariant::fromValue(nullptr);
-    if (!instance.ready()) {
-      reason = unavailableReason(instance);
-    } else if (lockedOut) {
-      reason = instance.displayName + QStringLiteral(" is unavailable in this thread. Start a new thread to switch providers.");
-    }
+    const QVariant reason = instance.ready() ? QVariant::fromValue(nullptr) : QVariant(unavailableReason(instance));
     const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
     result.append(QVariantMap{
         {QStringLiteral("instanceId"), instance.instanceId},
@@ -484,7 +458,7 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
         {QStringLiteral("initials"), initialsOf(instance.displayName)},
         {QStringLiteral("showBadge"), showBadge(instance, visible)},
         {QStringLiteral("status"), instance.status},
-        {QStringLiteral("isAvailable"), !lockedOut && (instance.ready() || !shown.isEmpty())},
+        {QStringLiteral("isAvailable"), instance.ready() || !shown.isEmpty()},
         {QStringLiteral("unavailableReason"), reason},
         {QStringLiteral("models"), shown},
     });

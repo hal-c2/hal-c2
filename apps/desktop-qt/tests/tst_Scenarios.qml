@@ -418,7 +418,6 @@ Item {
         function codexAndClaude(overrides) {
             return {
                 instances: [pickerInstance("codex", "codex", "Codex", [pickerModel("gpt-5.5", "GPT-5.5", overrides?.gpt55), pickerModel("gpt-5.4", "GPT-5.4")]), pickerInstance("claudeAgent", "claudeAgent", "Claude", [pickerModel("opus", "Claude Opus", overrides?.opus), pickerModel("sonnet", "Claude Sonnet"), pickerModel("haiku", "Claude Haiku")])].concat(overrides?.extra ?? []),
-                locked: false,
                 shortcut: "Ctrl+Shift+M",
                 previousProvider: chord("arrowup", true),
                 nextProvider: chord("arrowdown", true),

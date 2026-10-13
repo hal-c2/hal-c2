@@ -159,12 +159,12 @@ function hasFavorites(instances) {
 }
 
 // The rail entry the picker opens on: favourites when there are any, unless
-// the thread is locked or its instance is only reachable through its
-// current model; otherwise the thread's instance.
-function initialView(instances, selectedInstanceId, locked) {
+// the thread's instance is only reachable through its current model;
+// otherwise the thread's instance.
+function initialView(instances, selectedInstanceId) {
     var active = findInstance(instances, selectedInstanceId);
     var activeNeedsFocus = active !== null && active.isAvailable && active.unavailableReason !== null;
-    if (!locked && !activeNeedsFocus && hasFavorites(instances))
+    if (!activeNeedsFocus && hasFavorites(instances))
         return FAVORITES;
     if (active !== null)
         return active.instanceId;

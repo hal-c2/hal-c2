@@ -155,7 +155,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:The user sets what the agent may do*"),
     QStringLiteral("composer/model-and-mode.feature:Unavailable providers stay listed*"),
     QStringLiteral("composer/model-and-mode.feature:Favourite models are listed first*"),
-    QStringLiteral("composer/model-and-mode.feature:A thread's provider is locked*"),
+    QStringLiteral("composer/model-and-mode.feature:A started thread can move*"),
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("preview/remote.feature"),

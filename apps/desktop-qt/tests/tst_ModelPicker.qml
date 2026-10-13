@@ -102,7 +102,6 @@ Item {
                 }),
                 modelPicker: {
                     instances: instances,
-                    locked: false,
                     shortcut: "Ctrl+Shift+M",
                     previousProvider: chord("arrowup", true),
                     nextProvider: chord("arrowdown", true),

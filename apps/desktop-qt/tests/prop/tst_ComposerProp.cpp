@@ -4,7 +4,8 @@
 // permissions picked, sends and follow-ups while a turn runs, the stash, the
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
-// unless a newer user message is in the thread by then.
+// unless a newer user message is in the thread by then. A model of another
+// provider moves the thread to it before its message.
 
 #include <QBuffer>
 #include <QImage>
@@ -30,13 +31,18 @@ const QStringList kThreads{QStringLiteral("t1"), QStringLiteral("t2"), QStringLi
 // How the model names the new thread's draft.
 const QString kDraft = QStringLiteral("draft");
 const QStringList kTexts{QString(), QStringLiteral("hello"), QStringLiteral("fix the bug"), QStringLiteral("  ")};
-const QStringList kModels{QStringLiteral("gpt-a"), QStringLiteral("gpt-b")};
+// Codex's two models, then Claude's.
+const QStringList kModels{QStringLiteral("gpt-a"), QStringLiteral("gpt-b"), QStringLiteral("claude-a")};
 const QStringList kRuntimeModes{QStringLiteral("approval-required"), QStringLiteral("auto"), QStringLiteral("full-access")};
 
 // rc::gen::elementOf finds begin() by ADL alone, which a QList lacks.
 QString pick(const QStringList& pool) { return *rc::gen::elementOf(std::vector<QString>(pool.cbegin(), pool.cend())); }
 
 QString keyOf(const QString& thread) { return QStringLiteral("env-a:") + thread; }
+
+QString instanceOf(const QString& model) {
+  return model.startsWith(QLatin1String("claude")) ? QStringLiteral("claudeAgent") : QStringLiteral("codex");
+}
 
 // What a target's composer holds.
 struct Target {
@@ -107,6 +113,10 @@ struct Model {
 QStringList commandsOf(const Send& send) {
   QStringList list;
   if (!send.runtime.isEmpty()) list.append(QStringLiteral("runtime|") + send.runtime);
+  // The threads stay on Codex at the MC, so each send to Claude moves its thread.
+  if (const QString instance = instanceOf(send.model); instance != QLatin1String("codex")) {
+    list.append(QStringLiteral("provider|") + instance);
+  }
   list.append(QStringList{QStringLiteral("message"), send.prompt.trimmed(), QString::number(send.images),
                           send.model.isEmpty() ? kModels.first() : send.model, send.delivery}
                   .join(u'|'));
@@ -183,7 +193,7 @@ void cutOff(Model& m, bool received) {
   for (const QString& thread : std::exchange(m.held, {})) {
     QList<Send> cut = m.queues.take(thread);
     const Send& first = cut.first();
-    // The held command is the send's message, unless a runtime change goes first.
+    // The held command is the send's message, unless a runtime or provider change goes first.
     const bool message = commandsOf(first).size() == 1;
     if (!received) {
       m.commands[thread].removeLast();
@@ -252,8 +262,8 @@ QString png() {
   return encoded;
 }
 
-// The app as main.cpp wires it, on a fake MC with one project of three
-// threads whose provider offers two models; stores in a home of its own.
+// The app as main.cpp wires it, on a fake MC with one project of three Codex
+// threads, Codex offering two models and Claude one; stores in a home of its own.
 struct Sut {
   QTemporaryDir home{QDir::tempPath() + QStringLiteral("/composer-XXXXXX")};
   FakeMc mc;
@@ -282,20 +292,26 @@ struct Sut {
                                                  {QStringLiteral("scripts"), QJsonArray()},
                                              });
     for (const QString& id : kThreads) mc.threads.insert(id, row(id, false));
-    const QJsonObject provider{
-        {QStringLiteral("instanceId"), QStringLiteral("codex")},
-        {QStringLiteral("driver"), QStringLiteral("codex")},
-        {QStringLiteral("enabled"), true},
-        {QStringLiteral("status"), QStringLiteral("ready")},
-        {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), kModels.at(0)}},
-                                              QJsonObject{{QStringLiteral("slug"), kModels.at(1)}}}},
-    };
-    mc.onShape(QStringLiteral("config"), [this, provider](int id, const QJsonObject& shape) {
+    QJsonArray providers;
+    for (const QString& instance : {QStringLiteral("codex"), QStringLiteral("claudeAgent")}) {
+      QJsonArray models;
+      for (const QString& model : kModels) {
+        if (instanceOf(model) == instance) models.append(QJsonObject{{QStringLiteral("slug"), model}});
+      }
+      providers.append(QJsonObject{
+          {QStringLiteral("instanceId"), instance},
+          {QStringLiteral("driver"), instance},
+          {QStringLiteral("enabled"), true},
+          {QStringLiteral("status"), QStringLiteral("ready")},
+          {QStringLiteral("models"), models},
+      });
+    }
+    mc.onShape(QStringLiteral("config"), [this, providers](int id, const QJsonObject& shape) {
       if (shape.value(QLatin1String("environment")).toString() != mc.environmentId) return;
       mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                {QStringLiteral("id"), id},
                {QStringLiteral("mc"), mc.name},
-               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), providers},
                                                      {QStringLiteral("settings"), QJsonObject()}}}});
     });
     // The images the MC stores for a message.
@@ -462,6 +478,9 @@ struct Sut {
       const QString thread = command.value(QLatin1String("threadId")).toString();
       if (type == QLatin1String("thread.runtime-mode.set")) {
         byThread[thread].append(QStringLiteral("runtime|") + command.value(QLatin1String("runtimeMode")).toString());
+      } else if (type == QLatin1String("provider.switch")) {
+        byThread[thread].append(QStringLiteral("provider|") +
+                                command.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString());
       } else if (type == QLatin1String("message.dispatch")) {
         const QJsonObject mode = command.value(QLatin1String("dispatchMode")).toObject();
         const QString delivery = mode.value(QLatin1String("type")) == QLatin1String("queue_after_active")
@@ -601,7 +620,7 @@ struct PickModel : Command {
   void apply(Model& m) const override { m.targets[m.open].model = model; }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.model.select"),
-                         QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), model}});
+                         QVariantMap{{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}});
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
@@ -755,7 +774,7 @@ struct Refuse : Command {
   bool on = *rc::gen::arbitrary<bool>();
   void apply(Model& m) const override { m.refusing = on; }
   void run(const Model& m0, Sut& sut) const override {
-    for (const QString type : {QStringLiteral("message.dispatch"), QStringLiteral("thread.runtime-mode.set")}) {
+    for (const QString type : {QStringLiteral("message.dispatch"), QStringLiteral("thread.runtime-mode.set"), QStringLiteral("provider.switch")}) {
       if (on) {
         sut.mc.refusals.insert(type, QStringLiteral("The thread is busy."));
       } else {

@@ -10,7 +10,7 @@ defmodule HalC2.Orchestration.Entities do
     "sessions" => %{
       "supportsMultipleProviderThreadsPerSession" => true,
       "supportsModelSwitchInSession" => true,
-      "supportsProviderSwitchingViaHandoff" => false,
+      "supportsProviderSwitchingViaHandoff" => true,
       "supportsRuntimeModeSwitchInSession" => true,
       "pendingRequestsSurviveRestart" => false
     },
