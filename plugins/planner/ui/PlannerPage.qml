@@ -2699,7 +2699,7 @@ Item {
                 if (view === null)
                     return [];
                 const sorted = page.shown.slice().sort((a, b) => page.compare(a, b, view.sortBy));
-                if (groupBy === "owner" || groupBy === "label" || groupBy === "project") {
+                if (groupBy !== "status" && groupBy !== "none") {
                     const groups = new Map();
                     for (const item of sorted) {
                         for (const group of page.groupsOf(item, groupBy)) {
@@ -2710,7 +2710,8 @@ Item {
                     }
                     return Array.from(groups.values()).sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
                 }
-                const statuses = view.filter.statuses.includes("dropped") ? page.statuses : page.statuses.slice(0, 4);
+                // Dropped work has a column whenever the filter lets it through.
+                const statuses = view.filter.statuses.length === 0 || view.filter.statuses.includes("dropped") ? page.statuses : page.statuses.slice(0, 4);
                 return statuses.map(status => ({ value: status, label: page.statusLabel(status), items: sorted.filter(item => item.status === status) }));
             }
             // The card being dragged, its column, and where the pointer is.
@@ -2728,7 +2729,19 @@ Item {
                     page.update(item, { projectId: to.value || null });
                 else if (groupBy === "label")
                     page.update(item, { labels: (item.labels ?? []).filter(label => label !== from.value).concat(to.value && !(item.labels ?? []).includes(to.value) ? [to.value] : []) });
-                else
+                else if (groupBy === "parent")
+                    page.update(item, { parent: to.value || null });
+                else if (groupBy === "milestone") {
+                    // A milestone is its own column; a task moves from waiting on one to the other.
+                    if (item.kind === "milestone")
+                        return;
+                    const left = page.byId[from.value];
+                    const joined = page.byId[to.value];
+                    if (left)
+                        page.update(left, { after: (left.after ?? []).filter(id => id !== item.id) });
+                    if (joined)
+                        page.update(joined, { after: (joined.after ?? []).concat([item.id]) });
+                } else
                     page.update(item, { status: to.value });
             }
 

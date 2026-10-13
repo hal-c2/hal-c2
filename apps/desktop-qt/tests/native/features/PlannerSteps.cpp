@@ -595,6 +595,48 @@ const Steps steps([] {
                   QStringLiteral("%1 to be under In progress").arg(c[0]));
   });
 
+  step(QStringLiteral("the plan has %1 dropped").arg(q), [](World& world, const Captures& c, const Table&) {
+    item(world, c[0]).insert(QStringLiteral("status"), QStringLiteral("dropped"));
+    publish(world);
+  });
+  step(QStringLiteral("%1 is under %1 on the board").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + c[1]), QStringLiteral("plannerCard:") + c[0]) != nullptr; },
+                  QStringLiteral("%1 to be under %2").arg(c[0], c[1]));
+  });
+  step(QStringLiteral("the plan has %1 under %1 and %1 under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (int i = 0; i < 4; i += 2) {
+      const QString parent = item(world, c[i + 1]).value(QLatin1String("id")).toString();
+      item(world, c[i]).insert(QStringLiteral("parent"), parent);
+    }
+    publish(world);
+  });
+  step(QStringLiteral("the %1 is grouped by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (QJsonValueRef each : state(world).views) {
+      QJsonObject shown = each.toObject();
+      if (shown.value(QLatin1String("name")) == c[0]) shown.insert(QStringLiteral("groupBy"), c[1]);
+      each = shown;
+    }
+    publish(world);
+  });
+  step(QStringLiteral("%1 is moved under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitAsked(world, QStringLiteral("updateItem"), {{QStringLiteral("id"), idOf(world, c[0])}, {QStringLiteral("fields"), QJsonObject{{QStringLiteral("parent"), idOf(world, c[1])}}}});
+    world.waitFor([&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + c[1]), QStringLiteral("plannerCard:") + c[0]) != nullptr; },
+                  QStringLiteral("%1 to be under %2").arg(c[0], c[1]));
+  });
+  step(QStringLiteral("the milestones %1 and %1, with %1 waiting for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString task = item(world, c[3]).value(QLatin1String("id")).toString();
+    for (const QString& name : {c[0], c[1]}) item(world, name).insert(QStringLiteral("kind"), QStringLiteral("milestone"));
+    item(world, c[2]).insert(QStringLiteral("after"), QJsonArray{task});
+    publish(world);
+  });
+  step(QStringLiteral("%1 waits for %1 and %1 no longer does").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString task = idOf(world, c[1]);
+    waitAsked(world, QStringLiteral("updateItem"), {{QStringLiteral("id"), idOf(world, c[0])}, {QStringLiteral("fields"), QJsonObject{{QStringLiteral("after"), QJsonArray{task}}}}});
+    waitAsked(world, QStringLiteral("updateItem"), {{QStringLiteral("id"), idOf(world, c[2])}, {QStringLiteral("fields"), QJsonObject{{QStringLiteral("after"), QJsonArray()}}}});
+    world.waitFor([&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + c[0]), QStringLiteral("plannerCard:") + c[1]) != nullptr; },
+                  QStringLiteral("%1 to be under %2").arg(c[1], c[0]));
+  });
+
   step(QStringLiteral("the view %1 shows the owner and the due date").arg(q), [](World& world, const Captures& c, const Table&) {
     seedWhenEmpty(world);
     for (QJsonValueRef each : state(world).views) {

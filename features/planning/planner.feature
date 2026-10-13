@@ -142,6 +142,26 @@ Feature: Planner
       Then "API" is in progress
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The board shows dropped work
+      Given the plan has "Docs" dropped
+      When the user switches to the "Planner" tab with the view "Board"
+      Then "Docs" is under "Dropped" on the board
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The board grouped by parent moves a subtask to another parent
+      Given the plan has "Routes" under "API" and "Pages" under "Web"
+      And the "Board" is grouped by "parent"
+      When the user drags "Routes" to "Web" on the "Board"
+      Then "Routes" is moved under "Web"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The board grouped by milestone moves a task to another milestone
+      Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
+      And the "Board" is grouped by "milestone"
+      When the user drags "API" to "Launch" on the "Board"
+      Then "Launch" waits for "API" and "Beta" no longer does
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The list shows the fields the view picks
       Given the view "All tasks" shows the owner and the due date
       When the user opens "All tasks"
