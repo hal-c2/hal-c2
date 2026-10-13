@@ -77,11 +77,25 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   A repository's issues, milestones, sub-issues and dependencies, and the boards
-  they sit on (`HalC2.Issues.handle/2`). Changes need `issues:write`.
+  they sit on (`HalC2.Issues.handle/2`). Changes need `issues:write`, and answer
+  with the whole issue or milestone only when `issues:read` is granted too.
   """
   def issues(id, method, input) do
-    permission = if HalC2.Issues.write?(method), do: "issues:write", else: "issues:read"
-    with :ok <- permit(id, permission), do: HalC2.Issues.handle(method, input)
+    if HalC2.Issues.write?(method) do
+      with :ok <- permit(id, "issues:write"),
+           {:ok, result} <- HalC2.Issues.handle(method, input),
+           do: {:ok, written(id, result)}
+    else
+      with :ok <- permit(id, "issues:read"), do: HalC2.Issues.handle(method, input)
+    end
+  end
+
+  # A change answers with what it changed only to a plugin that may also read it;
+  # otherwise `issues:write` would read any issue through an empty update.
+  defp written(id, result) do
+    if granted?(id, "issues:read"),
+      do: result,
+      else: Map.take(result, ~w(ok repository number url itemId))
   end
 
   @doc "A thread's sidebar row (`OrchestrationV2ThreadShell`), or nil."

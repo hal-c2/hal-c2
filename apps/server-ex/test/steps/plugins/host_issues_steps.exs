@@ -226,6 +226,13 @@ defmodule HalC2.Steps.Plugins.HostIssues do
     })
   end
 
+  step "the MC answers with \#{int} and its link but not its title or body",
+       %{args: [number]} = context do
+    assert {:ok, %{"number" => ^number, "url" => "https://" <> _} = answer} = context.reply
+    refute Map.has_key?(answer, "title") or Map.has_key?(answer, "body")
+    context
+  end
+
   step "GitHub is asked to rename \#{int} to {string}", %{args: [number, title]} = context do
     GitHubIssues.assert_patched(context, number, %{"title" => title})
   end

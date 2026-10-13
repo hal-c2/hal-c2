@@ -74,6 +74,12 @@ Feature: Issues, milestones and boards for MC plugins
     And the refusal is recorded on the plugin
 
   @mc
+  Scenario: A change made without issues:read answers only with what it changed
+    Given a plugin granted only "issues:write"
+    When it closes #7 of "acme/api"
+    Then the MC answers with #7 and its link but not its title or body
+
+  @mc
   Scenario: Issues on a host the MC cannot read yet are refused
     Given the project "web" whose remote is "acme/web" on GitLab
     When a plugin granted "issues:read" lists the open issues of "acme/web"
