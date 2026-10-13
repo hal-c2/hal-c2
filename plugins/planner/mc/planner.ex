@@ -1560,6 +1560,7 @@ defmodule HalC2Plugins.Planner do
          "status" => run["status"],
          "items" => for(id <- run["itemIds"], item = state.items[id], do: item["title"]),
          "changes" => Enum.count(run["changes"], &(not &1["dismissed"])),
+         "health" => run["health"],
          "itemId" => if(run["kind"] == "work", do: List.first(run["itemIds"]))
        }}
     end

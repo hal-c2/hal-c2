@@ -188,6 +188,7 @@ QJsonObject threadOf(World& world, const QJsonObject& run) {
           {QStringLiteral("status"), run.value(QLatin1String("status"))},
           {QStringLiteral("items"), titles},
           {QStringLiteral("changes"), qint64(kept)},
+          {QStringLiteral("health"), run.value(QLatin1String("health"))},
           {QStringLiteral("itemId"), work && !itemIds.isEmpty() ? itemIds.first() : QJsonValue()}};
 }
 
@@ -759,6 +760,27 @@ const Steps steps([] {
     expect(status.contains(QLatin1String("Proposes 1 change")), QStringLiteral("the header says %1").arg(status));
     QQuickItem* apply = findNamed(header, QStringLiteral("plannerHeaderApply"));
     expect(apply->isVisible() && apply->isEnabled(), QStringLiteral("the run cannot be applied from its thread"));
+  });
+
+  step(QStringLiteral("the run of %1 proposes only that the plan is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& run = addRun(world, c[0], {}, QStringLiteral("proposed"));
+    run.insert(QStringLiteral("summary"), QStringLiteral("Schema slipped three days."));
+    run.insert(QStringLiteral("health"), c[1]);
+    listThread(world, run);
+    publish(world);
+  });
+  step(QStringLiteral("the run can be applied from its thread and from the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* header = waitShownNamed(world, QStringLiteral("plannerHeader"));
+    world.waitFor([&] { return findNamed(header, QStringLiteral("plannerHeaderStatus"))->property("text") == QStringLiteral("Proposes a status update"); },
+                  [&] { return findNamed(header, QStringLiteral("plannerHeaderStatus"))->property("text").toString(); });
+    QQuickItem* apply = findNamed(header, QStringLiteral("plannerHeaderApply"));
+    expect(apply->isVisible() && apply->isEnabled(), QStringLiteral("the status update cannot be applied from its thread"));
+
+    expect(c[0] == QLatin1String("Planner"), QStringLiteral("planner has no tab %1").arg(c[0]));
+    showPlanner(world);
+    click(world, waitShownNamed(world, QStringLiteral("plannerRunsToggle")));
+    click(world, waitShownNamed(world, QStringLiteral("plannerRun:") + state(world).runs.last().value(QLatin1String("label")).toString()));
+    expect(waitShownNamed(world, QStringLiteral("plannerApply"))->isEnabled(), QStringLiteral("the status update cannot be applied from the Planner tab"));
   });
 
   step(QStringLiteral("%1 shows its threads in the thread list").arg(q), [](World& world, const Captures& c, const Table&) {

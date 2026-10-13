@@ -2094,7 +2094,7 @@ Item {
                                 objectName: "plannerApply"
                                 visible: runsColumn.open
                                 primary: true
-                                enabled: page.busy === 0 && (runsColumn.run?.changes ?? []).some(change => !change.dismissed)
+                                enabled: page.busy === 0
                                 text: qsTr("Apply")
                                 onClicked: page.ask("apply", { runId: runsColumn.run.id }, runsColumn.run.environment)
                             }

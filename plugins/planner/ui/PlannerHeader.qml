@@ -69,6 +69,8 @@ Rectangle {
         case "failed":
             return qsTr("Failed");
         case "proposed":
+            if (header.run.changes === 0 && header.run.health)
+                return qsTr("Proposes a status update");
             return header.run.changes === 1 ? qsTr("Proposes 1 change") : qsTr("Proposes %1 changes").arg(header.run.changes);
         case "applied":
             return qsTr("Applied");
@@ -152,7 +154,8 @@ Rectangle {
                 objectName: "plannerHeaderApply"
                 visible: header.status === "proposed"
                 primary: true
-                enabled: !header.applying && (header.run?.changes ?? 0) > 0
+                // Every proposed run has changes or a status update to apply.
+                enabled: !header.applying
                 text: header.applying ? qsTr("Applying…") : qsTr("Apply")
                 onClicked: header.apply()
             }

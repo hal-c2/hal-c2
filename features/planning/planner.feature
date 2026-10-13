@@ -352,6 +352,12 @@ Feature: Planner
       Then its thread is listed with the planner mark and the state of its run
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A proposal of only a status update can be applied
+      Given the run of "Write status update" proposes only that the plan is "at-risk"
+      When the user opens the run's thread
+      Then the run can be applied from its thread and from the "Planner" tab
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings edit each action's prompt and reset it
       Given the user opens the settings of "planner"
       When the user changes the prompt of "Reschedule" and resets "Give feedback"
