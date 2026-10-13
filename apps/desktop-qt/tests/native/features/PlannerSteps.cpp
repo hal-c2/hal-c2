@@ -167,7 +167,8 @@ QJsonArray derived(World& world) {
     task.insert(QStringLiteral("late"), !due.isEmpty() && due < kToday && status != QLatin1String("done") && status != QLatin1String("dropped"));
     task.insert(QStringLiteral("early"), early);
     task.insert(QStringLiteral("derivedProgress"), progress.isDouble() ? progress.toInt() : status == QLatin1String("done") ? 100 : 0);
-    task.insert(QStringLiteral("slip"), QJsonValue::Null);
+    const QString baseline = task.value(QLatin1String("baseline")).toObject().value(QLatin1String("due")).toString();
+    task.insert(QStringLiteral("slip"), baseline.isEmpty() || due.isEmpty() ? QJsonValue() : QJsonValue(QDate::fromString(baseline, Qt::ISODate).daysTo(QDate::fromString(due, Qt::ISODate))));
     task.insert(QStringLiteral("children"), children);
     items.append(task);
   }
@@ -724,6 +725,22 @@ const Steps steps([] {
     world.waitFor([&] { return viewName() == c[0]; }, [&] { return QStringLiteral("the view %1 to be shown, not %2").arg(c[0], viewName()); });
   });
 
+  step(QStringLiteral("the plan has %1 ending (\\d+) days before its baseline").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& task = dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));
+    task.insert(QStringLiteral("baseline"), QJsonObject{{QStringLiteral("start"), QStringLiteral("2026-10-21")}, {QStringLiteral("due"), iso(date(QStringLiteral("2026-10-30")).addDays(c[1].toInt()))}});
+    publish(world);
+  });
+  step(QStringLiteral("the user opens the task %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    showPlanner(world);
+    click(world, waitShownNamed(world, QStringLiteral("plannerTask:") + c[0]));
+    waitText(world, QStringLiteral("plannerItemTitle"), c[0]);
+  });
+  step(QStringLiteral("its panel says it ends (\\d+) days before its baseline"), [](World& world, const Captures& c, const Table&) {
+    // Untranslated, %n's plural reads "day(s)".
+    const auto says = [&] { return textOf(world, QStringLiteral("plannerItemNotices")); };
+    world.waitFor([&] { return says().startsWith(QStringLiteral("Ends %1 day").arg(c[0])) && says().endsWith(QLatin1String(" before its baseline")); },
+                  [&] { return QStringLiteral("the panel says %1").arg(says()); });
+  });
   step(QStringLiteral("the plan has the milestone %1 without a due date").arg(q), [](World& world, const Captures& c, const Table&) {
     seedWhenEmpty(world);
     item(world, c[0]).insert(QStringLiteral("kind"), QStringLiteral("milestone"));

@@ -1396,6 +1396,7 @@ Item {
                     }
 
                     Text {
+                        objectName: "plannerItemNotices"
                         Layout.fillWidth: true
                         visible: text.length > 0
                         text: {
@@ -1407,8 +1408,10 @@ Item {
                                 parts.push(qsTr("Late"));
                             for (const id of item.early ?? [])
                                 parts.push(qsTr("Starts before %1 ends").arg(page.byId[id]?.title ?? id));
-                            if (item.slip)
+                            if (item.slip > 0)
                                 parts.push(qsTr("Ends %n day(s) after its baseline", "", item.slip));
+                            else if (item.slip < 0)
+                                parts.push(qsTr("Ends %n day(s) before its baseline", "", -item.slip));
                             return parts.join(" · ");
                         }
                         color: page.warningColor

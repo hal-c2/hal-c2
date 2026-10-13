@@ -74,6 +74,12 @@ Feature: Planner
       When the user sets "Rate limits" to 80% done
       Then "Rate limits" is 80% done
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A task that ends before its baseline says how many days early
+      Given the plan has "API" ending 3 days before its baseline
+      When the user opens the task "API"
+      Then its panel says it ends 3 days before its baseline
+
     @mc
     Scenario: A baseline keeps the dates to compare against
       Given the plan has "API" from "2026-10-21" to "2026-10-30"
