@@ -133,6 +133,20 @@ defmodule HalC2.Steps.Providers.Muse do
     FakeAcp.enable(context, "muse")
   end
 
+  step "Muse Code is listed as not installed, saying it was not found", context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        &match?(%{"enabled" => true, "message" => _}, FakeAcp.find(&1, "muse"))
+      )
+
+    assert %{"installed" => false, "status" => "error", "message" => message} =
+             FakeAcp.find(providers, "muse")
+
+    assert message =~ "not found"
+    context
+  end
+
   step "Muse Code is listed with the models from Muse's catalog", context do
     {providers, context} =
       FakeAcp.await_providers(context, fn providers ->

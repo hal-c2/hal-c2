@@ -28,6 +28,11 @@ Feature: Muse Code
     When the user opens the list of agents to enable
     Then Muse Code is not offered
 
+  Scenario: An enabled Muse Code that cannot be found says so
+    Given the muse command is not installed on the MC
+    When the user enables Muse Code
+    Then Muse Code is listed as not installed, saying it was not found
+
   Scenario: Enabling Muse Code lists it with its models
     Given Muse Code is installed but not enabled
     When the user enables Muse Code

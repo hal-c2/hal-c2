@@ -360,9 +360,25 @@ defmodule HalC2.Acp do
     if System.find_executable(binary("pi", instance, "pi")), do: {:ok, %{}}, else: :error
   end
 
-  # Muse is offered where Muse is installed.
-  defp base_entry(_id, "muse", instance) do
-    if System.find_executable(binary("muse", instance, "muse")), do: {:ok, %{}}, else: :error
+  # Muse is offered where Muse is installed. One the user enabled stays listed, and its
+  # load says it is missing, so the client never waits on an entry that will not come.
+  defp base_entry(id, "muse", instance) do
+    cond do
+      System.find_executable(binary("muse", instance, "muse")) ->
+        {:ok, %{}}
+
+      enabled?(id, "muse", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
   end
 
   # Antigravity is always listed: its entry says how to install or sign in.
@@ -678,7 +694,8 @@ defmodule HalC2.Acp do
   # Any Muse that answers `muse --version` ("Muse Code 1.4.7 (...)") is tried.
   defp check_version(id, "muse", entry) do
     result =
-      with path when is_binary(path) <- System.find_executable(binary("muse", entry, "muse")),
+      with path when is_binary(path) <-
+             System.find_executable(binary("muse", entry, "muse")) || :missing,
            task =
              Task.async(fn ->
                System.cmd(path, ["--version"],
@@ -700,6 +717,9 @@ defmodule HalC2.Acp do
 
         :persistent_term.put({__MODULE__, id, :version}, version)
         :ok
+
+      :missing ->
+        {:error, "Muse Code was not found on this machine. Install it, or set its binary path."}
 
       _ ->
         {:error, "Muse Code CLI could not be run. Check the binary path in provider settings."}
