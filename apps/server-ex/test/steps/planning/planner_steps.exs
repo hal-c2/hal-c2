@@ -906,6 +906,36 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "{string} runs one action at a time", %{args: [@id]} = context do
+    save(context, %{"concurrency" => 1})
+  end
+
+  step "the user starts work on {string}, which waits its turn", %{args: [title]} = context do
+    context = ensure(context, title)
+
+    {reply, context} =
+      plugin(context, "run", %{
+        "action" => action_id(context, "Start work"),
+        "itemIds" => [item!(context, title)["id"]]
+      })
+
+    assert {:ok, %{"run" => %{"status" => "queued"} = run}} = reply
+    Map.put(context, :queued, run)
+  end
+
+  step "{string} is removed and the work on {string} ends", %{args: [title, _]} = context do
+    {reply, context} = plugin(context, "removeItem", %{"id" => item!(context, title)["id"]})
+    assert {:ok, _} = reply
+    end_turns(context)
+  end
+
+  step "the work on {string} is failed saying its task was removed", context do
+    {run, context} = await_run(%{context | run: context.queued}, &(&1["status"] == "failed"))
+    assert run["error"] =~ "task was removed"
+    assert run["threadId"] == nil
+    context
+  end
+
   step "the user started work on {string}", %{args: [title]} = context do
     start_run(context, "Start work", title)
   end

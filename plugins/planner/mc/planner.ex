@@ -1221,13 +1221,24 @@ defmodule HalC2Plugins.Planner do
     })
   end
 
-  # Starts queued runs, oldest first, while fewer than `concurrency` run.
+  # Starts queued runs, oldest first, while fewer than `concurrency` run. A run whose
+  # task was removed while it waited fails instead.
   defp pump(state) do
+    {gone, queued} =
+      state.runs
+      |> Map.values()
+      |> Enum.filter(&(&1["status"] == "queued"))
+      |> Enum.split_with(fn run -> Enum.any?(run["itemIds"], &(state.items[&1] == nil)) end)
+
+    state =
+      Enum.reduce(gone, state, fn run, state ->
+        error = "Its task was removed before it started."
+        put_run(state, Map.merge(run, %{"status" => "failed", "error" => error, "finishedAt" => now()}))
+      end)
+
     running = Enum.count(state.runs, fn {_, run} -> run["status"] == "running" end)
 
-    state.runs
-    |> Map.values()
-    |> Enum.filter(&(&1["status"] == "queued"))
+    queued
     |> Enum.sort_by(& &1["queuedAt"])
     |> Enum.take(max(trunc(state.settings["concurrency"] || 2) - running, 0))
     |> Enum.reduce(state, fn run, state ->

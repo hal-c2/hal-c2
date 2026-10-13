@@ -400,6 +400,14 @@ Feature: Planner
       And "API" is not started and no thread is linked to it
 
     @mc
+    Scenario: Work waiting its turn fails if its task is removed first
+      Given "planner" runs one action at a time
+      And the user started work on "API"
+      And the user starts work on "Docs", which waits its turn
+      When "Docs" is removed and the work on "API" ends
+      Then the work on "Docs" is failed saying its task was removed
+
+    @mc
     Scenario: The agent working on a task reports its progress
       Given the user started work on "API"
       When its agent reports "API" is 40% done with the note "Endpoints done, tests next"

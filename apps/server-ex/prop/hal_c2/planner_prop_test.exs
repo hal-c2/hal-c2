@@ -6,14 +6,15 @@ defmodule HalC2.PlannerPropTest do
 
   Three tasks (`a`, `b`, `c`) are added, nested, made to wait for each other and
   removed. Two actions on the whole plan run: one whose changes wait for the user and
-  one that applies them itself. The commands start runs, report through the agent
+  one that applies them itself; a third runs on one task. The commands start runs, report through the agent
   tool (nothing, a task's new due date, the plan's health), end turns, retry, dismiss,
   apply and discard runs, and restart the plugin. After every step:
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
   - at most two runs run at once, the oldest queued starts first, and each run that
-    started has a thread of its own;
+    started has a thread of its own; a run whose task was removed while it waited
+    fails instead of starting;
   - a report goes to an action that can still take one, changes wait for the user or
     apply at once as the action says, and a change to a task removed since is marked
     stale rather than applied;
@@ -50,6 +51,13 @@ defmodule HalC2.PlannerPropTest do
       "kind" => "action",
       "apply" => "apply",
       "prompt" => "Fix {{plan}}. answer from gate"
+    },
+    "check" => %{
+      "label" => "Check",
+      "scope" => "item",
+      "kind" => "action",
+      "apply" => "propose",
+      "prompt" => "Check {{item.title}}. answer from gate"
     }
   }
 
@@ -105,8 +113,9 @@ defmodule HalC2.PlannerPropTest do
   # --- model ----------------------------------------------------------------------------
 
   # `items`: slot → %{parent, after (slots, in order), due}. `runs`: k (the order it
-  # was asked for, from 1) → %{action, status, seq (order queued), started (it got a
-  # thread at least once), changes ([{slot, gen, dismissed, outcome}]), health}; a
+  # was asked for, from 1) → %{action, on ({slot, gen} of the task it runs on, or nil),
+  # status, seq (order queued), started (it got a thread at least once), changes
+  # ([{slot, gen, dismissed, outcome}]), health}; a
   # discarded run is gone from it. `gens`: slot → how many times a task was added in it,
   # so a change to a removed task is not taken for one to the task added in its place.
   # `updates`: how many status updates the plan has.
@@ -124,7 +133,8 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :add, [slot, parent]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :remove, [item]}},
-       {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"])]}},
+       {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
+       {2, {:call, __MODULE__, :run, ["check", item]}},
        {1, {:call, __MODULE__, :restart, []}}
      ] ++
        if(m.asked > 0,
@@ -155,6 +165,9 @@ defmodule HalC2.PlannerPropTest do
 
   def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait],
     do: Map.has_key?(m.items, slot)
+
+  def precondition(m, {:call, _, :run, [_action, slot]}),
+    do: slot == nil or Map.has_key?(m.items, slot)
 
   def precondition(m, {:call, _, cmd, [k | _]}) when cmd in [:report, :turn_finished],
     do: match?(%{started: true}, m.runs[k])
@@ -210,9 +223,20 @@ defmodule HalC2.PlannerPropTest do
     {%{m | items: items}, :ok}
   end
 
-  defp step(m, {:call, _, :run, [action]}) do
+  defp step(m, {:call, _, :run, [action, slot]}) do
     k = m.asked + 1
-    run = %{action: action, status: :queued, seq: nil, started: false, changes: [], health: nil}
+    on = if slot, do: {slot, m.gens[slot]}
+
+    run = %{
+      action: action,
+      on: on,
+      status: :queued,
+      seq: nil,
+      started: false,
+      changes: [],
+      health: nil
+    }
+
     m = %{m | asked: k, runs: Map.put(m.runs, k, run)}
     {m |> queue(k) |> pump(), :ok}
   end
@@ -303,8 +327,21 @@ defmodule HalC2.PlannerPropTest do
     %{put_run(m, k, run) | seq: m.seq + 1}
   end
 
-  # Starts queued runs, oldest first, while fewer than `@concurrency` run.
+  # Fails queued runs whose task is gone, then starts the others, oldest first, while
+  # fewer than `@concurrency` run.
   defp pump(m) do
+    gone? = fn
+      %{on: {slot, gen}} -> not Map.has_key?(m.items, slot) or m.gens[slot] != gen
+      _ -> false
+    end
+
+    m =
+      Enum.reduce(m.runs, m, fn {k, run}, m ->
+        if run.status == :queued and gone?.(run),
+          do: put_run(m, k, %{run | status: :failed}),
+          else: m
+      end)
+
     running = Enum.count(m.runs, fn {_, run} -> run.status == :running end)
 
     m.runs
@@ -386,8 +423,9 @@ defmodule HalC2.PlannerPropTest do
     observe(reply)
   end
 
-  def run(action) do
-    {reply, value} = call("run", %{"action" => action, "itemIds" => []})
+  def run(action, slot) do
+    ids = if slot, do: [item_id(slot)], else: []
+    {reply, value} = call("run", %{"action" => action, "itemIds" => ids})
     if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
     observe(reply)
   end
