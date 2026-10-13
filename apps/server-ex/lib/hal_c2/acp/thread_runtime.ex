@@ -559,9 +559,6 @@ defmodule HalC2.Acp.ThreadRuntime do
         if session_id != turn.native_thread_id, do: record_session(state, session_id)
         Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
         {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
-      else
-        {:error, reason} -> {:error, reason, state}
-        {:error, reason, state} -> {:error, reason, state}
       end
     end
   end
