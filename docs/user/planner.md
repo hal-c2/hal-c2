@@ -83,9 +83,9 @@ updates, and those you post yourself, form the plan's history.
 ## Work on a task
 
 **Start work** links a new thread to the task and marks it in progress. Its agent
-reports progress and notes, and links the pull requests it opens. Any thread can
-be linked to a task from the task's panel. With **Let every thread read the
-plan**, every agent can read it, but only linked threads can change it.
+reports progress and notes, and links the pull requests it opens. With **Let
+every thread read the plan**, every agent can read it, but only linked threads can
+change it.
 
 ## GitHub
 
