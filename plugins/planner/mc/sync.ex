@@ -374,8 +374,16 @@ defmodule HalC2Plugins.Planner.Sync do
         # Dependencies on tasks with no issue are the plan's own and stay.
         own = Enum.reject(item["after"], &get_in(items, [&1, "issue"]))
 
-        fields = %{"after" => Enum.uniq(own ++ blockers)}
-        fields = if parent, do: Map.put(fields, "parent", parent["id"]), else: fields
+        # GitHub names the parent of a task with an issue; one with no issue is the plan's.
+        parent =
+          cond do
+            parent -> parent["id"]
+            issue["parent"] -> item["parent"]
+            get_in(items, [item["parent"], "issue"]) -> nil
+            true -> item["parent"]
+          end
+
+        fields = %{"after" => Enum.uniq(own ++ blockers), "parent" => parent}
 
         case Plan.update(items, item["id"], fields, now) do
           {:ok, items, _old, _new} -> items
@@ -388,7 +396,20 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # A milestone of the plan for each issue milestone, waiting for the tasks it holds.
+  # A task whose listed issue left the milestone stops holding it up.
   defp milestones(items, issues, projects, now, new_id) do
+    listed =
+      Map.new(issues, fn issue ->
+        {key(issue), issue["milestone"] && Map.put(issue["milestone"], "repository", issue["repository"])}
+      end)
+
+    left? = fn milestone, id ->
+      issue = get_in(items, [id, "issue"])
+
+      issue != nil and Map.has_key?(listed, key(issue)) and
+        not Plan.same_ref?(listed[key(issue)], milestone)
+    end
+
     issues
     |> Enum.filter(&is_map(&1["milestone"]))
     |> Enum.group_by(&{String.downcase(&1["repository"]), &1["milestone"]["number"]})
@@ -422,7 +443,8 @@ defmodule HalC2Plugins.Planner.Sync do
           fields = %{
             "title" => ref["title"],
             "due" => ref["dueOn"],
-            "after" => Enum.uniq(milestone["after"] ++ tasks)
+            "after" =>
+              Enum.uniq(Enum.reject(milestone["after"], &left?.(milestone["milestone"], &1)) ++ tasks)
           }
 
           case Plan.update(items, milestone["id"], fields, now) do

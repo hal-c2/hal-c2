@@ -440,6 +440,22 @@ Feature: Planner
       Then #9's task is a subtask of #7's, and #7's task waits for #5's
 
     @mc
+    Scenario: A sub-issue taken out of its parent on GitHub leaves its parent in the plan
+      Given "planner" follows the issues of "acme/api"
+      And #9's task was imported as a subtask of #7's
+      When #9 is taken out of #7 on GitHub
+      And the plugin looks at GitHub
+      Then #9's task is not a subtask
+
+    @mc
+    Scenario: An issue moved out of a milestone on GitHub stops holding it up
+      Given "planner" follows the issues of "acme/api"
+      And the tasks of #7 and #8 were imported in the milestone "Beta"
+      When #7 is moved out of "Beta" on GitHub, leaving #8 in it
+      And the plugin looks at GitHub
+      Then the milestone "Beta" waits for #8's task and not #7's
+
+    @mc
     Scenario: The pull requests that close an issue are linked to its task
       Given "planner" follows the issues of "acme/api"
       And #7 is closed by the pull request #12

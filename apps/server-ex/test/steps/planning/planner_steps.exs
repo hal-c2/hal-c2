@@ -1080,6 +1080,70 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "\#{int}'s task was imported as a subtask of \#{int}'s",
+       %{args: [sub, number]} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, [
+        GitHubIssues.issue(repository, number, %{"subIssues" => [sub]}),
+        GitHubIssues.issue(repository, sub, %{"parent" => number})
+      ])
+      |> sync!()
+
+    plan = plan!(context)
+    assert task_of(plan, sub)["parent"] == task_of(plan, number)["id"]
+    context
+  end
+
+  step "\#{int} is taken out of \#{int} on GitHub", %{args: [sub, number]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number),
+      GitHubIssues.issue(repository, sub)
+    ])
+  end
+
+  step "\#{int}'s task is not a subtask", %{args: [number]} = context do
+    assert task_of(plan!(context), number)["parent"] == nil
+    context
+  end
+
+  step "the tasks of \#{int} and \#{int} were imported in the milestone {string}",
+       %{args: [one, two, title]} = context do
+    repository = context.repository
+    milestone = %{"number" => 1, "title" => title, "dueOn" => "2026-11-30T00:00:00Z"}
+
+    context
+    |> GitHubIssues.answers(repository, [
+      GitHubIssues.issue(repository, one, %{"milestone" => milestone}),
+      GitHubIssues.issue(repository, two, %{"milestone" => milestone})
+    ])
+    |> sync!()
+    |> Map.put(:milestone, milestone)
+  end
+
+  step "\#{int} is moved out of {string} on GitHub, leaving \#{int} in it",
+       %{args: [moved, _title, kept]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, moved),
+      GitHubIssues.issue(repository, kept, %{"milestone" => context.milestone})
+    ])
+  end
+
+  step "the milestone {string} waits for \#{int}'s task and not \#{int}'s",
+       %{args: [title, kept, moved]} = context do
+    plan = plan!(context)
+    assert %{"kind" => "milestone", "after" => after_ids} = item(plan, title)
+    assert task_of(plan, kept)["id"] in after_ids
+    refute task_of(plan, moved)["id"] in after_ids
+    context
+  end
+
   step "\#{int} is closed by the pull request \#{int}", %{args: [number, pr]} = context do
     repository = context.repository
 
