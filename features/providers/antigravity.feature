@@ -3,7 +3,7 @@
 #   docs/user/providers-antigravity.md
 #   docs/internals/providers.md (isolated profiles, installer leases, sign-in owned by the initiating session, reject revert before touching files)
 #   apps/server/src/provider/Layers/AntigravityProvider.ts, apps/server/src/provider/AntigravityAuth.ts
-#   apps/server/src/provider/antigravityAuthSupport.ts, apps/server/src/provider/antigravityCallback.ts
+#   apps/server/src/provider/antigravityAuthSupport.ts (the sign-in link on stderr from 1.1.1, stdout before), apps/server/src/provider/antigravityCallback.ts
 #   apps/server/src/provider/AntigravityInstallation.ts, apps/server/src/provider/antigravityRelease.ts
 #   apps/server/src/provider/acp/AntigravityAcpSupport.ts, apps/server/src/provider/acp/AntigravityProtocol.ts
 #   apps/server/src/provider/acp/AntigravityClientFiles.ts, apps/server/src/provider/acp/AntigravitySessionFiles.ts
@@ -140,6 +140,11 @@ Feature: Antigravity
 
   Scenario: Signing in with a Google account in the browser
     Given the Antigravity runtime is installed
+    When the user signs in with a Google account and finishes in the browser
+    Then Antigravity confirms access and loads the account's models
+
+  Scenario: Signing in with a runtime older than 1.1.1
+    Given the Antigravity runtime is an older release that prints its sign-in link on standard output
     When the user signs in with a Google account and finishes in the browser
     Then Antigravity confirms access and loads the account's models
 

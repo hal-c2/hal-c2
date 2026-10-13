@@ -77,7 +77,7 @@ defmodule HalC2.Acp.Antigravity do
     AGY_ACP_ENABLE_OAUTH GEMINI_HOME AGY_ACP_FORCE_FILE_STORAGE ANTIGRAVITY_HARNESS_PATH
     BROWSER PYTHONUNBUFFERED ELECTRON_RUN_AS_NODE)
 
-  @doc "The line the agent prints when it wants a browser sign-in."
+  @doc "The line the agent prints when it wants a browser sign-in: on stderr from 1.1.1, stdout before."
   def auth_prefix, do: "Open the following link to authenticate the ACP server: "
 
   @doc "Why a normal launch stopped: the agent wants a sign-in only Settings runs."

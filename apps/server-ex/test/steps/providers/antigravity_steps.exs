@@ -396,6 +396,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  step "the Antigravity runtime is an older release that prints its sign-in link on standard output",
+       context do
+    assert {:ok, %{source: "managed"}} = Antigravity.resolve(nil)
+    FakeAcp.configure(context, &Map.put(&1, "authOnStdout", true))
+    context
+  end
+
   step "the user signs in with a Google account and finishes in the browser", context do
     context = start_sign_in(context)
     assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"

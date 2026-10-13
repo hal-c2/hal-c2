@@ -4,15 +4,17 @@
 # The instance's profile is $GEMINI_HOME/antigravity-acp: `settings.json` names the
 # sign-in method (auth.type), `acp_token.json` is the saved Google login.
 #   oauth-personal / oauth-business  authenticate without a login prints Google's
-#       sign-in link and serves its loopback redirect until a response with the
-#       link's state arrives: a code saves the login, an error fails.
+#       sign-in link on stderr, as agy_acp_server 1.1.1 does (on stdout with
+#       "authOnStdout", as earlier versions did), and serves its loopback redirect
+#       until a response with the link's state arrives: a code saves the login, an
+#       error fails.
 #   gemini-api-key   needs GEMINI_API_KEY; agent-platform needs GOOGLE_API_KEY, or a
 #       GCP project and location in settings.json.
 # Sessions need the method's credentials (else -32000); `logout` removes the login.
 #
 # config.json keys: account (the login's account), authError (authenticate fails
-# with this error object).
-import json, os, secrets, urllib.parse
+# with this error object), authOnStdout.
+import json, os, secrets, sys, urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PREFIX = "Open the following link to authenticate the ACP server: "
@@ -79,7 +81,9 @@ def browser_sign_in(cfg, send, mid):
     params = urllib.parse.urlencode({
         "client_id": "fake", "response_type": "code", "scope": "openid",
         "redirect_uri": "http://127.0.0.1:%d/oauth2callback" % port, "state": state})
-    print(PREFIX + "https://accounts.google.com/o/oauth2/v2/auth?" + params, flush=True)
+    out = sys.stdout if cfg.get("authOnStdout") else sys.stderr
+    print("Starting the ACP server sign-in", file=sys.stderr, flush=True)
+    print(PREFIX + "https://accounts.google.com/o/oauth2/v2/auth?" + params, file=out, flush=True)
     while not outcome:
         server.handle_request()
     server.server_close()

@@ -580,7 +580,8 @@ defmodule HalC2.Acp.ThreadRuntime do
              cd: cwd,
              env: env,
              dialect: :v2,
-             log: state.thread_id
+             log: state.thread_id,
+             stderr_prefix: Antigravity.stderr_prefix(instance)
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
