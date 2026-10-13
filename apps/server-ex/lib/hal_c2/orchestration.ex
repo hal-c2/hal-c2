@@ -544,7 +544,8 @@ defmodule HalC2.Orchestration do
       agent_message?(message) ->
         users_run(state, queued["id"])
 
-      message && target && target["status"] in @active_statuses && steerable?(target) &&
+      message && target && target["status"] in @active_statuses &&
+        steerable?(target, queued["providerInstanceId"]) &&
           runtime(target["providerInstanceId"]).steer(
             thread_id,
             target["id"],
@@ -1665,6 +1666,16 @@ defmodule HalC2.Orchestration do
     )
   end
 
+  # A message for another provider cannot join the old provider's turn: it waits for
+  # that turn, or interrupts it, and the provider it names takes the thread over.
+  defp steerable?(run, instance),
+    do: (run["providerInstanceId"] || "codex") == (instance || "codex") and steerable?(run)
+
+  defp message_instance(thread, command) do
+    (command["modelSelection"] || thread["modelSelection"] || %{})["instanceId"] ||
+      thread["providerInstanceId"] || "codex"
+  end
+
   defp steerable?(run) do
     driver = driver_for(run["providerInstanceId"] || "codex")
 
@@ -2476,7 +2487,7 @@ defmodule HalC2.Orchestration do
           intent == "restart" or mode == "restart_active" ->
             queue_run(state, thread, runs, command, active["id"])
 
-          (steer or auto_steer) and steerable?(active) ->
+          (steer or auto_steer) and steerable?(active, message_instance(thread, command)) ->
             {[], {:ok, {:steer, active}}}
 
           steer ->

@@ -75,6 +75,24 @@ Feature: Queueing, steering and restarting
     And the running turn is interrupted
     And a run for "Now" starts when the interrupted run ends
 
+  # The provider a message names takes the thread over (provider-handoff.feature), so it
+  # never joins a turn the previous provider runs.
+  @mc
+  Scenario: A message for another provider waits for the running turn instead of steering it
+    Given "t1" has a running turn on "codex"
+    When the user sends "Over to Claude" for "claudeAgent" to "t1" with automatic delivery
+    Then "Over to Claude" waits at the end of the queue
+    And "Over to Claude" runs on "claudeAgent"
+
+  @mc
+  Scenario: An explicit steer for another provider interrupts the running turn and goes first
+    Given "t1" has a running turn on "codex"
+    When the user sends "Over to Claude" for "claudeAgent" to "t1" as a steer
+    Then "Over to Claude" is first in the queue
+    And the running turn is interrupted
+    And a run for "Over to Claude" starts when the interrupted run ends
+    And "Over to Claude" runs on "claudeAgent"
+
   @mc
   Scenario Outline: A restart interrupts the active turn and goes first
     Given "t1" has a running turn and a queued message "Old"
@@ -177,6 +195,14 @@ Feature: Queueing, steering and restarting
     When the user promotes "Hurry" to a steer
     Then "Hurry" is first in the queue
     And the running turn is interrupted
+
+  @mc
+  Scenario: Promoting a queued message for another provider interrupts the running turn and goes first
+    Given "t1" has a running turn on "codex" and a message "Hurry" queued for "claudeAgent"
+    When the user promotes "Hurry" to a steer
+    Then "Hurry" is first in the queue
+    And the running turn is interrupted
+    And "Hurry" runs on "claudeAgent"
 
   @mc
   Scenario: Queued messages wait after an MC restart until the user resumes the queue

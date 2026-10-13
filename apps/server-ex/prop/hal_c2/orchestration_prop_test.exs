@@ -10,6 +10,9 @@ defmodule HalC2.OrchestrationPropTest do
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery).
 
+  Each message names one of two Codex instances (`codex`, and `codex-work` from the
+  settings); a message for the instance the running turn is not on never joins it.
+
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`. Every
   message says "wait", so its turn runs until it is interrupted or steered, and the
   model knows exactly which turn runs. After each command the test waits on the
@@ -30,6 +33,7 @@ defmodule HalC2.OrchestrationPropTest do
   @moduletag timeout: :infinity
 
   @threads ~w(t1 t2)
+  @instances ~w(codex codex-work)
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
@@ -61,8 +65,17 @@ defmodule HalC2.OrchestrationPropTest do
           Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Pi.Registry},
             id: :pi_registry
           ),
-          {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}
+          {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+          HalC2.Settings
         ])
+
+        {:ok, _} =
+          HalC2.Settings.put(
+            %{
+              "providerInstances" => %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+            },
+            0
+          )
 
         subscribe()
         {history, state, result} = run_commands(__MODULE__, cmds)
@@ -79,7 +92,7 @@ defmodule HalC2.OrchestrationPropTest do
   # --- model ----------------------------------------------------------------------
 
   # threads: id -> %{status: :live | :archived | :deleted, title, runs, queue, messages}
-  #   runs: [%{msg, status, held}] in the order they were made (their ordinals);
+  #   runs: [%{msg, status, held, instance}] in the order they were made (their ordinals);
   #   queue: queued messages, first to start first;
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
   #     notice: the MC's own message to the agent}
@@ -92,7 +105,8 @@ defmodule HalC2.OrchestrationPropTest do
     always = [
       {3, {:call, __MODULE__, :create, [tid]}},
       {8,
-       {:call, __MODULE__, :send, [tid, msg, oneof([:queue, :queue, :auto, :restart, :notice])]}},
+       {:call, __MODULE__, :send,
+        [tid, msg, oneof([:queue, :queue, :auto, :restart, :notice]), oneof(@instances)]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {1, {:call, __MODULE__, :archive, [tid]}},
       {1, {:call, __MODULE__, :unarchive, [tid]}},
@@ -156,11 +170,11 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :send, [tid, msg, mode]}) do
+  def next_state(state, _result, {:call, _, :send, [tid, msg, mode, instance]}) do
     state = %{state | next: state.next + 1}
 
     case refusal(state, tid, :send) do
-      nil -> update(state, tid, &sent(&1, msg, mode))
+      nil -> update(state, tid, &sent(&1, msg, mode, instance))
       _ -> state
     end
   end
@@ -476,16 +490,17 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  defp sent(thread, msg, mode) do
+  defp sent(thread, msg, mode, instance) do
     active = running(thread)
     message = %{text: "wait #{msg}", run: msg, shown: false, notice: mode == :notice}
+    run = %{msg: msg, status: :queued, held: false, instance: instance}
 
     cond do
       active == nil ->
-        %{thread | runs: thread.runs ++ [%{msg: msg, status: :running, held: false}]}
+        %{thread | runs: thread.runs ++ [%{run | status: :running}]}
         |> put_in([:messages, msg], %{message | shown: true})
 
-      mode == :auto ->
+      mode == :auto and active.instance == instance ->
         # The fake ends a turn it is steered into.
         thread
         |> put_in([:messages, msg], %{message | run: active.msg, shown: true})
@@ -493,31 +508,30 @@ defmodule HalC2.OrchestrationPropTest do
         |> start_next()
 
       mode == :restart ->
-        %{
-          thread
-          | runs: thread.runs ++ [%{msg: msg, status: :queued, held: false}],
-            queue: [msg | thread.queue]
-        }
+        %{thread | runs: thread.runs ++ [run], queue: [msg | thread.queue]}
         |> put_in([:messages, msg], message)
         |> end_running(:interrupted)
         |> start_next()
 
       true ->
-        %{
-          thread
-          | runs: thread.runs ++ [%{msg: msg, status: :queued, held: false}],
-            queue: thread.queue ++ [msg]
-        }
+        %{thread | runs: thread.runs ++ [run], queue: thread.queue ++ [msg]}
         |> put_in([:messages, msg], message)
     end
   end
 
   # A queued message steers the running turn, or goes first in the queue when no turn
-  # runs.
+  # runs. One for another instance interrupts the running turn and goes first.
   defp promoted(thread, msg) do
+    instance = Enum.find(thread.runs, &(&1.msg == msg)).instance
+
     case running(thread) do
       nil ->
         %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+
+      %{instance: other} when other != instance ->
+        %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+        |> end_running(:interrupted)
+        |> start_next()
 
       active ->
         %{thread | queue: List.delete(thread.queue, msg)}
@@ -537,7 +551,11 @@ defmodule HalC2.OrchestrationPropTest do
     %{
       status: thread.status,
       title: thread.title,
-      runs: for(run <- thread.runs, do: {run.msg, Atom.to_string(run.status), run.held}),
+      runs:
+        for(
+          run <- thread.runs,
+          do: {run.msg, Atom.to_string(run.status), run.held, run.instance}
+        ),
       queue: thread.queue,
       messages:
         Map.new(thread.messages, fn {id, m} ->
@@ -565,20 +583,27 @@ defmodule HalC2.OrchestrationPropTest do
     )
   end
 
-  def send(tid, msg, mode) do
+  def send(tid, msg, mode, instance) do
     ending = active_runs(tid)
-    result = Orchestration.dispatch(message(tid, msg, mode))
+    steers = active_runs(tid, instance)
+    result = Orchestration.dispatch(message(tid, msg, mode, instance))
     # Only a run the message steered or restarted ends.
     reply(
       result,
-      if(match?({:ok, _}, result) and mode in [:auto, :restart], do: ending, else: [])
+      cond do
+        not match?({:ok, _}, result) -> []
+        mode == :restart -> ending
+        mode == :auto -> steers
+        true -> []
+      end
     )
   end
 
   # The same message again, as first sent; a message the thread has ends no run.
-  def resend(tid, msg, mode), do: reply(Orchestration.dispatch(message(tid, msg, mode)), [])
+  def resend(tid, msg, mode),
+    do: reply(Orchestration.dispatch(message(tid, msg, mode, "codex")), [])
 
-  defp message(tid, msg, mode) do
+  defp message(tid, msg, mode, instance) do
     extra =
       case mode do
         :queue ->
@@ -610,7 +635,8 @@ defmodule HalC2.OrchestrationPropTest do
         "threadId" => tid,
         "messageId" => msg,
         "text" => "wait #{msg}",
-        "attachments" => []
+        "attachments" => [],
+        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
       },
       extra
     )
@@ -725,8 +751,13 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp runs(state), do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
 
-  defp active_runs(tid),
-    do: for(run <- runs(current(tid)), run["status"] in @active, do: run["id"])
+  defp active_runs(tid, instance \\ nil),
+    do:
+      for(
+        run <- runs(current(tid)),
+        run["status"] in @active and instance in [nil, run["providerInstanceId"]],
+        do: run["id"]
+      )
 
   defp run_of(tid, msg) do
     case Enum.find(runs(current(tid)), &(&1["userMessageId"] == msg)) do
@@ -840,7 +871,12 @@ defmodule HalC2.OrchestrationPropTest do
             end,
           title: thread["title"],
           runs:
-            for(run <- runs, do: {run["userMessageId"], run["status"], run["queueHeld"] == true}),
+            for(
+              run <- runs,
+              do:
+                {run["userMessageId"], run["status"], run["queueHeld"] == true,
+                 run["providerInstanceId"]}
+            ),
           queue: queue,
           messages: messages
         }

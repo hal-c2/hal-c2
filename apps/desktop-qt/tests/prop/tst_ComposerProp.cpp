@@ -5,7 +5,7 @@
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
 // unless a newer user message is in the thread by then. A model of another
-// provider moves the thread to it before its message.
+// provider than the thread's moves the thread to it before its message.
 
 #include <QBuffer>
 #include <QImage>
@@ -59,6 +59,7 @@ struct Send {
   QString model;
   QString runtime;
   QString delivery;  // auto, steer or queue
+  bool switches = false;  // its model is another provider's than the thread's when sent
   bool refusedAtMc = false;  // what the MC holding it will answer
   bool superseded = false;   // a newer user message reached the thread since
   bool measured = false;     // the thread's messages were known while it was on its way
@@ -88,6 +89,8 @@ struct Model {
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
+  // Each thread's provider at the MC, Codex until a provider change reaches it.
+  QMap<QString, QString> providers;
   // The sends a restart or a drop cut off that the MC never got, by thread,
   // until the thread is open again.
   QMap<QString, QList<Send>> limbo;
@@ -102,6 +105,7 @@ struct Model {
     return count;
   }
   bool isThread(const QString& target) const { return kThreads.contains(target); }
+  QString provider(const QString& thread) const { return providers.value(thread, QStringLiteral("codex")); }
   QString selected(const QString& target) const {
     const QString picked = targets.value(target).model;
     if (!picked.isEmpty()) return picked;
@@ -113,10 +117,7 @@ struct Model {
 QStringList commandsOf(const Send& send) {
   QStringList list;
   if (!send.runtime.isEmpty()) list.append(QStringLiteral("runtime|") + send.runtime);
-  // The threads stay on Codex at the MC, so each send to Claude moves its thread.
-  if (const QString instance = instanceOf(send.model); instance != QLatin1String("codex")) {
-    list.append(QStringLiteral("provider|") + instance);
-  }
+  if (send.switches) list.append(QStringLiteral("provider|") + instanceOf(send.model));
   list.append(QStringList{QStringLiteral("message"), send.prompt.trimmed(), QString::number(send.images),
                           send.model.isEmpty() ? kModels.first() : send.model, send.delivery}
                   .join(u'|'));
@@ -124,6 +125,13 @@ QStringList commandsOf(const Send& send) {
 }
 
 void dispatchFirst(Model& m, const QString& thread);
+
+// The MC carried out `commands` for the thread: a provider change moves it.
+void took(Model& m, const QString& thread, const QStringList& commands) {
+  for (const QString& command : commands) {
+    if (command.startsWith(QLatin1String("provider|"))) m.providers[thread] = command.section(u'|', 1);
+  }
+}
 
 void accept(Model& m, const QString& thread) {
   QList<Send>& queue = m.queues[thread];
@@ -199,6 +207,7 @@ void cutOff(Model& m, bool received) {
       m.commands[thread].removeLast();
       if (m.commands.value(thread).isEmpty()) m.commands.remove(thread);
     }
+    if (received && !first.refusedAtMc) took(m, thread, commandsOf(first).mid(0, 1));
     if (received && message && !first.refusedAtMc) cut.removeFirst();
     m.limbo[thread].append(cut);
     if (m.limbo.value(thread).isEmpty()) m.limbo.remove(thread);
@@ -216,6 +225,7 @@ void dispatchFirst(Model& m, const QString& thread) {
     fail(m, thread);
   } else {
     m.commands[thread].append(commands.mid(1));
+    took(m, thread, commands);
     accept(m, thread);
   }
 }
@@ -231,6 +241,7 @@ void answerHeld(Model& m) {
       fail(m, thread);
       continue;
     }
+    took(m, thread, commandsOf(send).mid(0, 1));
     const QStringList rest = commandsOf(send).mid(1);
     if (!rest.isEmpty() && m.refusing) {
       m.commands[thread].append(rest.first());
@@ -238,6 +249,7 @@ void answerHeld(Model& m) {
       continue;
     }
     m.commands[thread].append(rest);
+    took(m, thread, rest);
     if (m.refusing && m.queues[thread].size() > 1) {
       m.queues[thread].removeFirst();
       m.commands[thread].append(commandsOf(m.queues[thread].first()).first());
@@ -332,6 +344,15 @@ struct Sut {
         return;
       }
       sendThread(id, shape);
+    });
+    // A provider change moves the thread, as the MC's projection does.
+    mc.effects.append([this](const QJsonObject& command) {
+      if (losing || command.value(QLatin1String("type")) != QLatin1String("provider.switch")) return;
+      const QString thread = command.value(QLatin1String("threadId")).toString();
+      QJsonObject row = mc.threads.value(thread);
+      row.insert(QStringLiteral("modelSelection"), command.value(QLatin1String("modelSelection")));
+      mc.threads.insert(thread, row);
+      mc.sendRow(thread, row);
     });
     mc.effects.append([this](const QJsonObject& command) {
       if (losing || command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
@@ -653,7 +674,8 @@ struct Submit : Command {
                              : alternate                  ? QStringLiteral("queue")
                                                           : QStringLiteral("steer");
     QList<Send>& queue = m.queues[m.open];
-    queue.append({target.text, target.images, target.model, target.runtime, delivery});
+    const QString model = target.model.isEmpty() ? kModels.first() : target.model;
+    queue.append({target.text, target.images, target.model, target.runtime, delivery, instanceOf(model) != m.provider(m.open)});
     if (m.loaded.contains(m.open)) measure(m, m.open);
     m.lastModel = target.model.isEmpty() ? kModels.first() : target.model;
     // Newer than what a restart cut off.
@@ -749,8 +771,11 @@ struct SetRunning : Command {
     }
   }
   void run(const Model& m0, Sut& sut) const override {
-    sut.mc.threads.insert(thread, Sut::row(thread, on));
-    sut.mc.sendRow(thread, sut.mc.threads.value(thread));
+    // Only the run changes: the thread keeps the provider it moved to.
+    QJsonObject row = Sut::row(thread, on);
+    row.insert(QStringLiteral("modelSelection"), sut.mc.threads.value(thread).value(QLatin1String("modelSelection")));
+    sut.mc.threads.insert(thread, row);
+    sut.mc.sendRow(thread, row);
     RC_ASSERT(prop::until([&] {
       const auto row = sut.native->store()->thread(keyOf(thread));
       return row && row->activeRunId.has_value() == on;
@@ -971,6 +996,22 @@ private slots:
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Prompt, Prompt, Hold, AnswerHeld, Elsewhere, Elsewhere, Restart,
                                                    Restart, Slow, Load, Load>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // The same, picking models and sending often: a thread moves to another
+  // provider only when it is not already on it, and only a provider change
+  // the MC carried out counts, refused, held or cut off as the send was.
+  void providerChanges() {
+    QVERIFY(rc::check("a send moves its thread to the model's provider only when the thread is on another", [] {
+      Sut sut;
+      Model model;
+      verify(model, sut);
+      const auto commands = *rc::gen::scale(
+          0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, PickModel, PickModel, PickModel, Prompt, Prompt, Prompt, SetRunning,
+                                                   Hold, AnswerHeld, Refuse, Restart, Drop>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
