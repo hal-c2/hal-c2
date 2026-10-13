@@ -1449,20 +1449,29 @@ defmodule HalC2.Steps.Planning.Planner do
   step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
        %{args: [number, first, second]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
-    %{mc: mc} = context
-    call = %{"id" => @id, "method" => "updateItem"}
-    input = %{"id" => task["id"], "fields" => %{"title" => first}}
-
-    # The first rename waits on GitHub in a client of its own, as another window's would.
-    renaming =
-      Task.async(fn ->
-        Mc.call(Mc.connect(mc), mc.environment, "plugins.call", Map.put(call, "input", input))
-      end)
-
-    {_, context} = await_topic(context, "plan", &item(&1, first))
+    {renaming, context} = rename_late(context, task, first)
     context = update_task(context, number, %{"title" => second})
-    File.write!(context.gh_gate, "answer")
+    answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then unlinks it before GitHub answers",
+       %{args: [number, title]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {reply, context} = plugin(context, "unlink", %{"itemId" => task["id"], "kind" => "issue"})
+    assert {:ok, _} = reply
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "{string} is linked to no issue and not marked as not synced",
+       %{args: [title]} = context do
+    task = item!(context, title)
+    refute task["issue"]
+    refute task["syncError"], "#{title} is marked as not synced: #{task["syncError"]}"
     context
   end
 
@@ -1813,6 +1822,27 @@ defmodule HalC2.Steps.Planning.Planner do
 
     assert {:ok, %{"item" => _}} = reply
     context
+  end
+
+  # Lets the late rename's gh answer, once it is waiting. The fifo is opened raw: through
+  # the file server, the open would hold every other file call until gh reads it, the
+  # rename's own on its way to gh included.
+  defp answer_late(context), do: File.write!(context.gh_gate, "answer", [:raw])
+
+  # Renames `task` to `title` in a client of its own, as another window's would, so the
+  # rename can wait on GitHub while the scenario goes on; returns once the plan has it.
+  defp rename_late(context, task, title) do
+    %{mc: mc} = context
+    call = %{"id" => @id, "method" => "updateItem"}
+    input = %{"id" => task["id"], "fields" => %{"title" => title}}
+
+    renaming =
+      Task.async(fn ->
+        Mc.call(Mc.connect(mc), mc.environment, "plugins.call", Map.put(call, "input", input))
+      end)
+
+    {_, context} = await_topic(context, "plan", &item(&1, title))
+    {renaming, context}
   end
 
   defp update_task(context, number, fields) do

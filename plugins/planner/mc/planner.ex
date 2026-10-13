@@ -940,6 +940,9 @@ defmodule HalC2Plugins.Planner do
           {:error, "unlink takes the kind pullRequest, issue or thread."}
       end
 
+    # A task unlinked from its issue no longer hears from the pushes to it in flight.
+    state = if kind == "issue", do: %{state | pushing: Map.delete(state.pushing, id)}, else: state
+
     case unlinked do
       {:ok, item} -> edit(state, Map.put(state.items, id, item), %{"item" => item})
       error -> {:reply, error, state}

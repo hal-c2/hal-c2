@@ -620,6 +620,13 @@ Feature: Planner
       Then #7's task is named "Rate limits" and marked as synced
 
     @mc
+    Scenario: A change GitHub answers after its task was unlinked does not mark the task
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, refusing it
+      When the user renames #7's task to "Rate limiting", then unlinks it before GitHub answers
+      Then "Rate limiting" is linked to no issue and not marked as not synced
+
+    @mc
     Scenario: The user makes a task into an issue
       Given the plan has "Docs" in "api"
       When the user creates an issue for "Docs" in "acme/api"
