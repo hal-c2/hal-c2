@@ -354,7 +354,9 @@ defmodule HalC2.IssuesTest do
     refute Map.has_key?(clear, "value")
   end
 
-  test "an issue is added to a board by its node id", %{dir: dir} do
+  test "an issue is added to a board by its node id, in the project's repository by default", %{
+    dir: dir
+  } do
     rules!(dir, [
       graphql(["issueOrPullRequest(number: $content)"], %{
         "repositoryOwner" => %{"projectV2" => %{"id" => "PVT_3"}},
@@ -370,10 +372,12 @@ defmodule HalC2.IssuesTest do
                "projectId" => "p1",
                "owner" => "acme",
                "number" => 3,
-               "item" => %{"repository" => "acme/widgets", "number" => 7}
+               "item" => %{"number" => 7}
              })
 
-    assert [_, %{"project" => "PVT_3", "content" => "I_7"}] = graphql_calls(dir)
+    # An item with no repository is the project's.
+    assert [lookup, %{"project" => "PVT_3", "content" => "I_7"}] = graphql_calls(dir)
+    assert %{"contentOwner" => "acme", "contentName" => "widgets", "content" => 7} = lookup
   end
 
   test "an issue asks for every sub-issue a parent may have and a board item for every field's value",

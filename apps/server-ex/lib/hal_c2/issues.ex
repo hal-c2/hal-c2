@@ -507,7 +507,7 @@ defmodule HalC2.Issues do
     with {:ok, ctx} <- project(input),
          {:ok, owner} <- text(input["owner"], "owner"),
          {:ok, number} <- number(input["number"]),
-         {:ok, item} <- ref(input["item"], input["repository"], "item"),
+         {:ok, item} <- ref(input["item"], input["repository"] || ctx.repository, "item"),
          {content_owner, content_name} = split(item["repository"]),
          variables = %{
            "owner" => owner,
