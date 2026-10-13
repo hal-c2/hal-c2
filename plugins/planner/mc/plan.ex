@@ -411,6 +411,7 @@ defmodule HalC2Plugins.Planner.Plan do
       |> Enum.with_index(1)
       |> Enum.reduce({items, [], %{}}, fn
         {%{"dismissed" => true} = change, _i}, {items, acc, refs} ->
+          refs = if change["op"] == "add", do: Map.put(refs, change["ref"], nil), else: refs
           {items, [change | acc], refs}
 
         {change, i}, {items, acc, refs} ->
@@ -429,20 +430,13 @@ defmodule HalC2Plugins.Planner.Plan do
   end
 
   defp apply_change(items, %{"op" => "add"} = change, refs, now, project_id, id) do
-    parent = change["fields"]["parent"]
-    fields = resolve(change["fields"], refs, items)
+    fields = resolve(change["fields"], refs)
     # A subtask is in its parent's project unless the agent says otherwise.
     project = get_in(items, [fields["parent"], "projectId"]) || project_id
     fields = Map.put(fields, "projectId", project)
 
-    cond do
-      parent != nil and fields["parent"] == nil ->
-        {:error, "There is no task #{parent}."}
-
-      true ->
-        with {:ok, items, _item} <- add(items, id, fields, now),
-             do: {:ok, items, Map.put(refs, change["ref"], id)}
-    end
+    with {:ok, items, _item} <- add(items, id, fields, now),
+         do: {:ok, items, Map.put(refs, change["ref"], id)}
   end
 
   defp apply_change(
@@ -468,7 +462,7 @@ defmodule HalC2Plugins.Planner.Plan do
 
             "update" ->
               with {:ok, items, _, _} <-
-                     update(items, id, resolve(change["fields"], refs, items), now),
+                     update(items, id, resolve(change["fields"], refs), now),
                    do: {:ok, items}
           end
 
@@ -476,25 +470,19 @@ defmodule HalC2Plugins.Planner.Plan do
     end
   end
 
-  # The fields with an added task's ref replaced by the id it got; a ref that names
-  # nothing (its change dismissed) is left out of `after`.
-  defp resolve(fields, refs, items) do
-    known = fn id -> refs[id] || if(items[id], do: id) end
-
+  # The fields with an added task's ref replaced by the id it got. `after` leaves out
+  # the ref of an add the user dismissed (nil in `refs`); any other name that is no
+  # task is kept, for `check/2` to refuse.
+  defp resolve(fields, refs) do
     fields
-    |> then(
-      &if(Map.has_key?(&1, "parent") and &1["parent"] != nil,
-        do: Map.put(&1, "parent", known.(&1["parent"])),
-        else: &1
-      )
-    )
+    |> then(&if(is_binary(&1["parent"]), do: Map.put(&1, "parent", refs[&1["parent"]] || &1["parent"]), else: &1))
     |> then(
       &if(is_list(&1["after"]),
         do:
           Map.put(
             &1,
             "after",
-            &1["after"] |> Enum.map(known) |> Enum.reject(fn id -> id == nil end)
+            for(id <- &1["after"], Map.fetch(refs, id) != {:ok, nil}, do: refs[id] || id)
           ),
         else: &1
       )

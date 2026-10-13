@@ -286,6 +286,13 @@ Feature: Planner
       And the run is still running
 
     @mc
+    Scenario: A proposal that names a task not in the plan goes back to the agent
+      Given the run of "Reschedule" is running
+      When its agent reports making "API" wait for the task "routes"
+      Then the agent is told there is no task "routes"
+      And the run is still running
+
+    @mc
     Scenario: An action set to apply its changes applies them as it reports
       Given "Validate progress" applies its changes without asking
       And the run of "Validate progress" on "API" is running

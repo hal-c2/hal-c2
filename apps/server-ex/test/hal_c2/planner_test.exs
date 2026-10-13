@@ -225,6 +225,16 @@ defmodule HalC2.PlannerTest do
                  %{"op" => "update", "itemId" => "schema", "fields" => %{"after" => ["api"]}}
                ])
 
+      assert {:error, "Change 1: There is no task routes."} =
+               Plan.check_changes(items, [
+                 %{"op" => "update", "itemId" => "api", "fields" => %{"after" => ["routes"]}}
+               ])
+
+      assert {:error, "Change 1: There is no task routes."} =
+               Plan.check_changes(items, [
+                 %{"op" => "add", "fields" => %{"title" => "Handlers", "parent" => "routes"}}
+               ])
+
       assert {:error, "Change 1: projectId is not a field a change can set."} =
                Plan.check_changes(items, [
                  %{"op" => "update", "itemId" => "api", "fields" => %{"projectId" => "web"}}

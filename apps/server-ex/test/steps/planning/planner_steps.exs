@@ -716,6 +716,27 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "its agent reports making {string} wait for the task {string}",
+       %{args: [title, id]} = context do
+    change = %{
+      "op" => "update",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{"after" => [id]}
+    }
+
+    Map.put(
+      context,
+      :tool_result,
+      tool(context, "planner_report", %{"summary" => "Reordered.", "changes" => [change]})
+    )
+  end
+
+  step "the agent is told there is no task {string}", %{args: [id]} = context do
+    assert %{"isError" => true} = context.tool_result
+    assert inspect(context.tool_result) =~ "There is no task #{id}."
+    context
+  end
+
   step "the run is still running", context do
     assert %{"status" => "running", "changes" => []} = run!(context)
     context
