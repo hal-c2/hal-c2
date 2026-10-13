@@ -60,6 +60,7 @@ defmodule HalC2.MuseTest do
   end
 
   test "the host never inherits META_API_KEY and never updates itself" do
+    previous = System.get_env("META_API_KEY")
     System.put_env("META_API_KEY", "secret")
 
     try do
@@ -78,7 +79,9 @@ defmodule HalC2.MuseTest do
       assert {"MUSE_NO_AUTO_UPDATE", "1"} in env
       refute Enum.any?(env, fn {key, _} -> String.upcase(key) == "META_API_KEY" end)
     after
-      System.delete_env("META_API_KEY")
+      if previous,
+        do: System.put_env("META_API_KEY", previous),
+        else: System.delete_env("META_API_KEY")
     end
   end
 
