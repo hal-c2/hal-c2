@@ -580,9 +580,15 @@ Item {
         });
     }
 
-    // What a proposed change does, in a line.
+    // A task of `environment`'s plan; the runs panel lists runs from every MC.
+    function itemIn(environment, id) {
+        return environment === page.environment ? page.byId[id] : (page.plans[environment]?.items ?? []).find(item => item.id === id);
+    }
+
+    // What a change the picked run proposes does, in a line.
     function changeText(change) {
-        const item = page.byId[change.itemId];
+        const environment = page.run?.environment;
+        const item = page.itemIn(environment, change.itemId);
         const title = item?.title ?? change.itemId ?? "";
         const fields = change.fields ?? {};
         switch (change.op) {
@@ -600,7 +606,7 @@ Item {
                 const parts = [];
                 for (const key of Object.keys(fields)) {
                     const was = item ? item[key] : undefined;
-                    const show = value => Array.isArray(value) ? value.map(id => page.byId[id]?.title ?? id).join(", ") : String(value ?? "—");
+                    const show = value => Array.isArray(value) ? value.map(id => page.itemIn(environment, id)?.title ?? id).join(", ") : String(value ?? "—");
                     parts.push(qsTr("%1 %2 → %3").arg(key).arg(show(was)).arg(show(fields[key])));
                 }
                 return title + ": " + parts.join(", ");
@@ -1938,10 +1944,12 @@ Item {
                                 spacing: 6
 
                                 Text {
+                                    objectName: "plannerRunTitle"
                                     Layout.fillWidth: true
                                     text: {
-                                        const titles = (entry.modelData.itemIds ?? []).map(id => page.byId[id]?.title).filter(title => title);
-                                        return entry.modelData.label + (titles.length > 0 ? " · " + titles.join(", ") : "");
+                                        const titles = (entry.modelData.itemIds ?? []).map(id => page.itemIn(entry.modelData.environment, id)?.title).filter(title => title);
+                                        const where = page.several ? " (" + page.environmentLabel(entry.modelData.environment) + ")" : "";
+                                        return entry.modelData.label + where + (titles.length > 0 ? " · " + titles.join(", ") : "");
                                     }
                                     color: page.foreground
                                     elide: Text.ElideRight
@@ -2046,6 +2054,7 @@ Item {
                                         spacing: 6
 
                                         Text {
+                                            objectName: "plannerChangeText"
                                             Layout.fillWidth: true
                                             text: page.changeText(change.modelData)
                                             color: page.foreground
@@ -2082,7 +2091,7 @@ Item {
                             delegate: Line {
                                 required property var modelData
 
-                                text: (modelData.itemId ? (page.byId[modelData.itemId]?.title ?? modelData.itemId) + ": " : "") + modelData.text
+                                text: (modelData.itemId ? (page.itemIn(runsColumn.run.environment, modelData.itemId)?.title ?? modelData.itemId) + ": " : "") + modelData.text
                             }
                         }
 

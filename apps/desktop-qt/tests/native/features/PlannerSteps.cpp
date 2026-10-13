@@ -784,6 +784,58 @@ const Steps steps([] {
     waitHidden(world, QStringLiteral("plannerApply"));
   });
 
+  step(QStringLiteral("a second MC also runs %1, whose run of %1 proposes moving its own %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
+    seedWhenEmpty(world);
+    publish(world);
+    FakePluginPart& part = fakePluginPart(world, kId);
+    // Its task has the id of this MC's first one, as another MC's plan may well have.
+    QJsonObject task = part.topics.value(QStringLiteral("plan")).toObject().value(QLatin1String("items")).toArray().first().toObject();
+    task.insert(QStringLiteral("title"), c[2]);
+    const QString id = task.value(QLatin1String("id")).toString();
+    QJsonObject plan = part.topics.value(QStringLiteral("plan")).toObject();
+    plan.insert(QStringLiteral("items"), QJsonArray{task});
+    plan.insert(QStringLiteral("views"), QJsonArray());
+    const QJsonObject run{{QStringLiteral("id"), QStringLiteral("r-work")},
+                          {QStringLiteral("action"), actionId(world, c[1])},
+                          {QStringLiteral("label"), c[1]},
+                          {QStringLiteral("kind"), QStringLiteral("action")},
+                          {QStringLiteral("status"), QStringLiteral("proposed")},
+                          {QStringLiteral("itemIds"), QJsonArray{id}},
+                          {QStringLiteral("projectId"), kProject},
+                          {QStringLiteral("threadId"), QJsonValue::Null},
+                          {QStringLiteral("startedAt"), QStringLiteral("2026-10-20T09:00:00Z")},
+                          {QStringLiteral("summary"), QString()},
+                          {QStringLiteral("feedback"), QJsonArray()},
+                          {QStringLiteral("changes"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("c1")},
+                                                                             {QStringLiteral("op"), QStringLiteral("update")},
+                                                                             {QStringLiteral("itemId"), id},
+                                                                             {QStringLiteral("fields"), QJsonObject{{QStringLiteral("due"), QStringLiteral("2026-11-06")}}},
+                                                                             {QStringLiteral("reason"), QString()}}}}};
+    part.topicsOn.insert(QStringLiteral("work"), {{QStringLiteral("plan"), plan},
+                                                  {QStringLiteral("runs"), QJsonObject{{QStringLiteral("runs"), QJsonArray{run}}}},
+                                                  {QStringLiteral("threads"), QJsonObject()}});
+    runFakePluginOn(world, QStringLiteral("work"), entry(manifest(), state(world).settings));
+  });
+  step(QStringLiteral("the user opens that MC's run on the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("Planner"), QStringLiteral("planner has no tab %1").arg(c[0]));
+    showPlanner(world);
+    click(world, waitShownNamed(world, QStringLiteral("plannerRunsToggle")));
+    click(world, waitShownNamed(world, QStringLiteral("plannerRun:Validate progress")));
+    waitShownNamed(world, QStringLiteral("plannerRunDetail"));
+  });
+  step(QStringLiteral("the run is listed with that MC's name and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* title = nullptr;
+    world.waitFor([&] { return (title = findNamed(waitShownNamed(world, QStringLiteral("plannerRun:Validate progress")), QStringLiteral("plannerRunTitle"))) != nullptr; },
+                  QStringLiteral("the run's title"));
+    const QString text = title->property("text").toString();
+    expect(text == QStringLiteral("Validate progress (work) · ") + c[0], QStringLiteral("the run is listed as %1").arg(text));
+  });
+  step(QStringLiteral("its change names %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString text = findNamed(waitShownNamed(world, QStringLiteral("plannerChange:c1")), QStringLiteral("plannerChangeText"))->property("text").toString();
+    expect(text.startsWith(c[0] + QStringLiteral(": ")), QStringLiteral("the change says %1").arg(text));
+  });
+
   step(QStringLiteral("the run of %1 proposes moving %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject run = propose(world, c[0], c[1], QStringLiteral("2026-11-06"));
     listThread(world, run);

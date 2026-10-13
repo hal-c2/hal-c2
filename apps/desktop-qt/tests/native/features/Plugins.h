@@ -39,11 +39,15 @@ void switchMcPlugin(World& world, const QString& id);
 struct FakePluginPart {
   QString package;
   QHash<QString, QJsonValue> topics;
+  // What the topics hold on another environment that runs the plugin, by environment.
+  QHash<QString, QHash<QString, QJsonValue>> topicsOn;
   std::function<void(const FakeMc::Rpc& rpc)> call;
 };
 // McPluginSteps.cpp: the scenario's MC runs the plugin `entry` (as `plugins`
 // lists it) with `part` as its MC part, and the client lists it running.
 void runFakePlugin(World& world, const QJsonObject& entry, const FakePluginPart& part);
+// The environment `environment` joins the cluster running the faked plugin `entry` too.
+void runFakePluginOn(World& world, const QString& environment, const QJsonObject& entry);
 FakePluginPart& fakePluginPart(World& world, const QString& id);
 // Sends what the plugin's topic holds now to each client watching it.
 void publishTopic(World& world, const QString& id, const QString& topic);

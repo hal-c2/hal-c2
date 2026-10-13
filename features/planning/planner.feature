@@ -372,6 +372,13 @@ Feature: Planner
       Then the run can be applied from its thread and from the "Planner" tab
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A run on another MC names that MC's task
+      Given a second MC also runs "planner", whose run of "Validate progress" proposes moving its own "Rollout"
+      When the user opens that MC's run on the "Planner" tab
+      Then the run is listed with that MC's name and "Rollout"
+      And its change names "Rollout"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: An action's thread is marked in the thread list
       Given "planner" shows its threads in the thread list
       When the user runs "Reschedule"
