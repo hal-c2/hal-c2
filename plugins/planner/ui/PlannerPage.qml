@@ -714,7 +714,7 @@ Item {
                         Repeater {
                             model: page.views
 
-                            delegate: Rectangle {
+                            delegate: AbstractButton {
                                 id: tab
 
                                 required property var modelData
@@ -723,12 +723,21 @@ Item {
                                 objectName: "plannerView:" + modelData.name
                                 implicitWidth: tabText.implicitWidth + 24
                                 implicitHeight: 28
-                                radius: Math.min(Theme.radius, 8)
-                                color: current ? Theme.palette.color("accentSurface", "#27272a") : tabMouse.containsMouse ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
-                                border.color: current ? Theme.palette.color("focus", "#3b82f6") : "transparent"
+                                hoverEnabled: true
                                 Accessible.role: Accessible.PageTab
                                 Accessible.name: tabText.text
-                                Accessible.onPressAction: page.viewKey = modelData.key
+                                Keys.onReturnPressed: clicked()
+                                Keys.onEnterPressed: clicked()
+                                onClicked: page.viewKey = tab.modelData.key
+                                background: Rectangle {
+                                    radius: Math.min(Theme.radius, 8)
+                                    color: tab.current ? Theme.palette.color("accentSurface", "#27272a") : tab.hovered || tab.visualFocus ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
+                                    border.color: tab.current || tab.visualFocus ? Theme.palette.color("focus", "#3b82f6") : "transparent"
+                                }
+
+                                HoverHandler {
+                                    cursorShape: Qt.PointingHandCursor
+                                }
 
                                 Text {
                                     id: tabText
@@ -738,15 +747,6 @@ Item {
                                     color: page.foreground
                                     font.pixelSize: Math.round(12 * Theme.fontScale)
                                     font.weight: tab.current ? Font.DemiBold : Font.Normal
-                                }
-
-                                MouseArea {
-                                    id: tabMouse
-
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: page.viewKey = tab.modelData.key
                                 }
                             }
                         }

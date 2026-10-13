@@ -161,6 +161,12 @@ Feature: Planner
       And "All tasks" is marked as changed until it is saved or reverted
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user picks a view with the keyboard
+      Given the user is on the view "Timeline"
+      When the user tabs from the view "Timeline" to "Board" and presses Enter
+      Then the planner shows the view "Board"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user edits a task from any view
       Given the plan has "API"
       When the user opens "API" and sets its owner to "dana" and its due date to "2026-11-06"

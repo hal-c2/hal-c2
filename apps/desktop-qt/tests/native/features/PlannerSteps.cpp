@@ -667,6 +667,20 @@ const Steps steps([] {
     expect(asked(world, QStringLiteral("saveView")).isEmpty(), QStringLiteral("the filter was saved"));
   });
 
+  step(QStringLiteral("the user tabs from the view %1 to %1 and presses Enter").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerView:") + c[0])->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(pluginShell(world), Qt::Key_Tab);
+    QQuickItem* next = waitShownNamed(world, QStringLiteral("plannerView:") + c[1]);
+    world.waitFor([&] { return next->hasActiveFocus(); }, QStringLiteral("the tab of %1 to have the keyboard").arg(c[1]));
+    QTest::keyClick(pluginShell(world), Qt::Key_Return);
+    world.sync();
+  });
+  step(QStringLiteral("the planner shows the view %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* page = waitShownNamed(world, QStringLiteral("plannerPage"));
+    const auto viewName = [&] { return page->property("working").toMap().value(QStringLiteral("name")).toString(); };
+    world.waitFor([&] { return viewName() == c[0]; }, [&] { return QStringLiteral("the view %1 to be shown, not %2").arg(c[0], viewName()); });
+  });
+
   step(QStringLiteral("the plan has %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));
     publish(world);
