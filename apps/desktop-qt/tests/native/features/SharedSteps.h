@@ -17,3 +17,13 @@ void expectCommandNotOffered(World& world, const QString& command);
 // (ProviderListSteps.cpp): waits for the picker to offer it and returns true.
 // False when the scenario hid none.
 bool expectModelOffered(World& world, const QString& name);
+
+// "the user runs <action>", when the scenario's MC runs the planner plugin
+// (PlannerSteps.cpp): runs its action of that label from the Planner tab and
+// returns true. False when the MC runs no planner.
+bool runPluginAction(World& world, const QString& label);
+
+// "the user opens <name>", when the scenario's MC runs the planner plugin and its
+// plan has a view of that name (PlannerSteps.cpp): shows that view on the
+// Planner tab and returns true. False otherwise.
+bool openPlannerView(World& world, const QString& name);

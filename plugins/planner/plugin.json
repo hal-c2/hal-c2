@@ -1,0 +1,274 @@
+{
+  "id": "planner",
+  "name": "Planner",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "A plan of tasks and milestones for your projects as a Gantt chart, a board or a list. Agents validate, reschedule and give feedback through actions whose prompts you edit, and tasks can follow GitHub issues, boards and pull requests.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/planner",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "projects:read",
+      "reason": "To run actions in the project a task belongs to and find the project of a repository."
+    },
+    {
+      "id": "pullRequests:read",
+      "reason": "To follow the pull requests linked to a task and mark it done when they merge."
+    },
+    {
+      "id": "issues:read",
+      "reason": "To turn the issues, milestones and board of the repositories you follow into tasks."
+    },
+    {
+      "id": "issues:write",
+      "reason": "With two-way sync, to send changes to a task back to its issue and board, and to create issues for tasks."
+    },
+    {
+      "id": "threads:read",
+      "reason": "To know the project of a thread whose agent works on a task."
+    },
+    {
+      "id": "threads:create",
+      "reason": "Each action, and each piece of work on a task, is a thread of the agent you chose."
+    },
+    {
+      "id": "agentTools",
+      "reason": "Agents read the plan and report their proposals and progress through tools of this plugin."
+    },
+    {
+      "id": "slack:read",
+      "reason": "To hear replies to the status updates it posts and the slash command."
+    },
+    {
+      "id": "slack:write",
+      "reason": "To post status updates and waiting proposals to the plan's channel, and answer the slash command."
+    }
+  ],
+  "settings": [
+    {
+      "key": "provider",
+      "label": "Agent",
+      "type": "text",
+      "default": "claudeAgent",
+      "description": "The provider instance that runs actions, such as claudeAgent or codex."
+    },
+    {
+      "key": "model",
+      "label": "Model",
+      "type": "text",
+      "default": "",
+      "description": "Empty for the agent's default model."
+    },
+    {
+      "key": "runtimeMode",
+      "label": "Access for actions",
+      "type": "choice",
+      "options": [
+        { "value": "approval-required", "label": "Ask before acting" },
+        { "value": "auto-accept-edits", "label": "Accept edits" },
+        { "value": "auto", "label": "Auto" },
+        { "value": "full-access", "label": "Full access" }
+      ],
+      "default": "approval-required",
+      "description": "Actions read the plan and the project and report back; they rarely need more."
+    },
+    {
+      "key": "workRuntimeMode",
+      "label": "Access for work on a task",
+      "type": "choice",
+      "options": [
+        { "value": "approval-required", "label": "Ask before acting" },
+        { "value": "auto-accept-edits", "label": "Accept edits" },
+        { "value": "auto", "label": "Auto" },
+        { "value": "full-access", "label": "Full access" }
+      ],
+      "default": "auto-accept-edits",
+      "description": "Work on a task happens in a worktree of its own."
+    },
+    {
+      "key": "defaultProject",
+      "label": "Default project",
+      "type": "text",
+      "default": "",
+      "description": "Where actions on tasks with no project, and actions on the whole plan, run."
+    },
+    {
+      "key": "display",
+      "label": "Show planner threads",
+      "type": "choice",
+      "options": [
+        { "value": "page", "label": "On the Planner page" },
+        { "value": "threads", "label": "As threads" },
+        { "value": "both", "label": "Both" }
+      ],
+      "default": "both",
+      "description": "On the Planner page only, its threads stay out of the thread list."
+    },
+    {
+      "key": "actions",
+      "label": "Actions",
+      "type": "object",
+      "default": {
+        "validate": {
+          "label": "Validate progress",
+          "scope": "item",
+          "kind": "action",
+          "apply": "propose",
+          "builtin": true,
+          "prompt": "Check how \"{{item.title}}\" in {{project}} is really going. It is {{item.status}} and {{item.progress}}% done, planned from {{item.start}} to {{item.due}}, owned by {{item.owner}}.\n\nNotes:\n{{item.notes}}\n\nIssue: {{item.issue}}\nPull requests:\n{{item.pullRequests}}\nSubtasks:\n{{item.subtasks}}\n\nLook at the code, the commits and the pull requests to see what is actually done. Propose the progress and status that match, and say what is missing. Today is {{today}}."
+        },
+        "reschedule": {
+          "label": "Reschedule",
+          "scope": "plan",
+          "kind": "action",
+          "apply": "propose",
+          "builtin": true,
+          "prompt": "Today is {{today}}. The plan:\n{{plan}}\n\nSome tasks are late or start before what they wait for ends. Propose new start and due dates so every task starts after what it waits for, late work is moved to a date it can make, and milestones move only when they have to. Give a reason for each move."
+        },
+        "feedback": {
+          "label": "Give feedback",
+          "scope": "plan",
+          "kind": "action",
+          "apply": "propose",
+          "builtin": true,
+          "prompt": "Today is {{today}}. The plan:\n{{plan}}\n\nThe tasks to look at:\n{{items}}\n\nGive feedback on them as a project lead would: missing owners or dates, tasks too big to estimate, dependencies that are missing or wrong, risks nobody tracks. Put feedback about one task on that task and feedback about the whole plan on the plan. Propose changes only where the fix is clear."
+        },
+        "breakdown": {
+          "label": "Break down",
+          "scope": "item",
+          "kind": "action",
+          "apply": "propose",
+          "builtin": true,
+          "prompt": "Break \"{{item.title}}\" in {{project}} into subtasks of a day or two each, planned between {{item.start}} and {{item.due}}.\n\nNotes:\n{{item.notes}}\n\nSubtasks it already has:\n{{item.subtasks}}\n\nRead the code it touches first. Add each subtask under {{item.id}}, with dates, and make a subtask wait for another where it has to."
+        },
+        "status": {
+          "label": "Write status update",
+          "scope": "plan",
+          "kind": "action",
+          "apply": "propose",
+          "builtin": true,
+          "prompt": "Today is {{today}}. The plan:\n{{plan}}\n\nWrite a short status update for the people following this plan: whether it is on track, at risk or off track, what moved since the last update, and what needs a decision. Report it as the summary with its health."
+        },
+        "work": {
+          "label": "Start work",
+          "scope": "item",
+          "kind": "work",
+          "apply": "apply",
+          "builtin": true,
+          "prompt": "Work on \"{{item.title}}\" in {{project}}.\n\n{{item.notes}}\n\nIssue: {{item.issue}}\nSubtasks:\n{{item.subtasks}}\n\nWhen it is ready, open a pull request that closes the issue if there is one."
+        }
+      },
+      "description": "Each action's label, whether it acts on one task or the whole plan, and its prompt. {{today}}, {{plan}}, {{items}}, {{project}} and {{item.title}}, {{item.notes}}, {{item.status}}, {{item.start}}, {{item.due}}, {{item.progress}}, {{item.owner}}, {{item.labels}}, {{item.issue}}, {{item.pullRequests}}, {{item.subtasks}} and {{item.after}} are filled in. How to report is added after it."
+    },
+    {
+      "key": "offerToAllThreads",
+      "label": "Let every thread read the plan",
+      "type": "boolean",
+      "default": false,
+      "description": "Agents in any thread can read the plan. Only planner threads can change it."
+    },
+    {
+      "key": "repositories",
+      "label": "Repositories",
+      "type": "list",
+      "default": [],
+      "description": "owner/name of each repository whose issues become tasks. Each needs a project on this MC."
+    },
+    {
+      "key": "issueLabel",
+      "label": "Only issues labelled",
+      "type": "text",
+      "default": "",
+      "description": "Empty to follow every open issue."
+    },
+    {
+      "key": "sync",
+      "label": "GitHub sync",
+      "type": "choice",
+      "options": [
+        { "value": "off", "label": "Off" },
+        { "value": "import", "label": "Import from GitHub" },
+        { "value": "twoWay", "label": "Both ways" }
+      ],
+      "default": "import",
+      "description": "Both ways sends changes to a task back to its issue and board."
+    },
+    {
+      "key": "board",
+      "label": "GitHub Project",
+      "type": "text",
+      "default": "",
+      "description": "owner/number of a GitHub Project whose date fields are the tasks' dates. Needs gh's project scope."
+    },
+    {
+      "key": "startField",
+      "label": "Start date field",
+      "type": "text",
+      "default": "Start date"
+    },
+    {
+      "key": "targetField",
+      "label": "Target date field",
+      "type": "text",
+      "default": "Target date"
+    },
+    {
+      "key": "doneWhenMerged",
+      "label": "Done when its pull requests merge",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "pollMinutes",
+      "label": "Look at GitHub every (minutes)",
+      "type": "number",
+      "default": 10
+    },
+    {
+      "key": "concurrency",
+      "label": "Actions at once",
+      "type": "number",
+      "default": 2
+    },
+    {
+      "key": "slackChannel",
+      "label": "Post to Slack channel",
+      "type": "text",
+      "default": "",
+      "description": "A channel the MC's Slack bot is in, as #name or its id. Empty for no Slack."
+    },
+    {
+      "key": "slackAnnounce",
+      "label": "Announce proposals in Slack",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "slackCommand",
+      "label": "Slash command",
+      "type": "text",
+      "default": "/planner",
+      "description": "Add it to your Slack app to ask for the plan's status or run an action from Slack."
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "planner", "title": "Planner", "qml": "ui/PlannerPage.qml" }],
+    "threadKinds": [
+      {
+        "kind": "action",
+        "label": "Planner",
+        "rowMark": "ui/PlannerRowMark.qml",
+        "header": "ui/PlannerHeader.qml"
+      },
+      {
+        "kind": "work",
+        "label": "Task",
+        "rowMark": "ui/PlannerRowMark.qml",
+        "header": "ui/PlannerHeader.qml"
+      }
+    ],
+    "settingsPage": "ui/PlannerSettings.qml"
+  }
+}

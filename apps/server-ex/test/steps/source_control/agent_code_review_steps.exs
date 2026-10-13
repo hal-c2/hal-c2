@@ -586,8 +586,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "{string} is restarted", %{args: [@id]} = context do
-    {_, context} = World.call!(context, "plugins.restart", %{"id" => @id})
+  step "{string} is restarted", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     context
   end
 

@@ -1,0 +1,1741 @@
+defmodule HalC2.Steps.Planning.Planner do
+  @moduledoc """
+  Steps for `features/planning/planner.feature`, run against the real package in the
+  repository's `plugins/planner`, copied into the MC's plugins directory as a user
+  would install it.
+
+  Every action's prompt ends in "answer from gate", so the fake Codex holds its turn
+  open until the scenario writes the gate file (`end_turns/1`). The plan's today is
+  held on `@today` unless a step moves it. The plugin's `plan` and `runs` topics are
+  watched from the start, each on a client of its own; `await_topic/3` waits on them
+  for what changes outside a call (a turn ending, a Slack reply). Agents call the
+  plugin's tools through the MC's MCP endpoint as the thread's agent would.
+
+  The sample tasks (`@samples`) are added on first mention, in the project "api";
+  actions on the whole plan run on Schema, API (waiting for Schema) and Docs.
+  """
+  use Cucumber.StepDefinition
+  import ExUnit.Assertions
+
+  alias HalC2.Steps.Plugins.Fixtures
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Steps.Support.GitHubIssues
+  alias HalC2.Steps.Support.Slack, as: SlackSupport
+  alias HalC2.Test.{FakeSlack, Mc}
+  alias HalC2.Test.Mc.World
+
+  @id "planner"
+  @package Path.expand("../../../../../plugins/planner", __DIR__)
+  @gate " answer from gate"
+  @today "2026-10-15"
+  @defaults @package
+            |> Path.join("plugin.json")
+            |> File.read!()
+            |> JSON.decode!()
+            |> Map.fetch!("settings")
+            |> Enum.find(&(&1["key"] == "actions"))
+            |> Map.fetch!("default")
+  @samples %{
+    "Schema" => {"2026-10-19", "2026-10-23"},
+    "API" => {"2026-10-21", "2026-10-30"},
+    "Docs" => {"2026-10-26", "2026-11-02"}
+  }
+  @healths %{"on track" => "on-track", "at risk" => "at-risk", "off track" => "off-track"}
+
+  # --- background ------------------------------------------------------------------------
+
+  step "an MC running the plugin {string}", %{args: [@id]} = context do
+    dir = Path.join([context.mc.home, "plugins", @id])
+    File.mkdir_p!(Path.dirname(dir))
+    File.cp_r!(@package, dir)
+    World.put_app_env(:planner_today, @today)
+
+    context =
+      context
+      |> World.agents()
+      |> Fixtures.ensure()
+      |> Fixtures.rescan()
+
+    World.worktree_services()
+    Mc.ensure(HalC2.Mcp)
+    accepted = Enum.map(Fixtures.entry(@id)["permissions"], & &1["id"])
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => @id, "acceptPermissions" => accepted})
+
+    assert %{"status" => "running"} = Fixtures.entry(@id)
+    actions = Map.new(@defaults, fn {id, action} -> {id, gated(action, action["prompt"])} end)
+
+    context
+    |> Map.merge(%{planner: true, actions: actions, prs: %{}, watched: %{}})
+    |> save(%{
+      "provider" => "codex",
+      "model" => "fake/one",
+      "pollMinutes" => 60,
+      "actions" => actions
+    })
+    |> watch("plan", "plan")
+    |> watch("runs", "runs")
+  end
+
+  # --- tasks, milestones and dependencies ------------------------------------------------
+
+  step "the user adds the task {string} in {string} from {string} to {string}",
+       %{args: [title, project, start, due]} = context do
+    add!(context, %{
+      "title" => title,
+      "projectId" => World.project(context, project).id,
+      "start" => start,
+      "due" => due
+    })
+  end
+
+  step "the plan has {string} from {string} to {string}, not started",
+       %{args: [title, start, due]} = context do
+    assert %{"start" => ^start, "due" => ^due, "status" => "todo", "derivedProgress" => 0} =
+             item!(context, title)
+
+    context
+  end
+
+  step "the user adds the milestone {string} on {string}", %{args: [title, due]} = context do
+    add!(context, %{"title" => title, "kind" => "milestone", "due" => due})
+  end
+
+  step "the plan has the milestone {string} on {string}", %{args: [title, due]} = context do
+    assert %{"kind" => "milestone", "due" => ^due, "start" => nil} = item!(context, title)
+    context
+  end
+
+  step "the plan has the task {string}", %{args: [title]} = context do
+    if then?(context) do
+      assert %{"kind" => "task"} = item!(context, title)
+      context
+    else
+      ensure(context, title)
+    end
+  end
+
+  step "the user adds the task {string} under {string}", %{args: [title, parent]} = context do
+    add!(context, %{"title" => title, "parent" => item!(context, parent)["id"]})
+  end
+
+  step "{string} is a subtask of {string}", %{args: [title, parent]} = context do
+    if then?(context) do
+      assert item!(context, title)["parent"] == item!(context, parent)["id"]
+      context
+    else
+      context = ensure(context, parent)
+      ensure(context, title, %{"parent" => item!(context, parent)["id"]})
+    end
+  end
+
+  step "the plan has {string} from {string} to {string}",
+       %{args: [title, start, due]} = context do
+    ensure(context, title, %{"start" => start, "due" => due})
+  end
+
+  step "the user makes {string} wait for {string}", %{args: [title, other]} = context do
+    context = context |> ensure(title) |> ensure(other)
+    item = item!(context, title)
+    after_ids = item["after"] ++ [item!(context, other)["id"]]
+
+    {reply, context} =
+      plugin(context, "updateItem", %{"id" => item["id"], "fields" => %{"after" => after_ids}})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} is marked as starting before {string} ends", %{args: [title, other]} = context do
+    assert item!(context, other)["id"] in item!(context, title)["early"]
+    context
+  end
+
+  step "{string} waits for {string}", %{args: [title, other]} = context do
+    context = context |> ensure(title) |> ensure(other)
+    item = item!(context, title)
+
+    update!(context, title, %{
+      "after" => Enum.uniq(item["after"] ++ [item!(context, other)["id"]])
+    })
+  end
+
+  step "the user is told that would make {string} wait for itself", %{args: [title]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "That would make #{title} wait for itself."
+    context
+  end
+
+  step "{string} waits for nothing", %{args: [title]} = context do
+    assert item!(context, title)["after"] == []
+    context
+  end
+
+  step "today is {string}", %{args: [day]} = context do
+    World.put_app_env(:planner_today, day)
+    context
+  end
+
+  step "the plan has {string} due {string} and in progress", %{args: [title, due]} = context do
+    ensure(context, title, %{"due" => due, "status" => "doing"})
+  end
+
+  step "{string} is marked late", %{args: [title]} = context do
+    assert item!(context, title)["late"] == true
+    context
+  end
+
+  step "the user removes {string}", %{args: [name]} = context do
+    {reply, context} =
+      case Enum.find(plan!(context)["views"], &(&1["name"] == name)) do
+        nil -> plugin(context, "removeItem", %{"id" => item!(context, name)["id"]})
+        view -> plugin(context, "removeView", %{"id" => view["id"]})
+      end
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the user has removed {string}", %{args: [title]} = context do
+    {reply, context} = plugin(context, "removeItem", %{"id" => item!(context, title)["id"]})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} has no parent", %{args: [title]} = context do
+    assert item!(context, title)["parent"] == nil
+    context
+  end
+
+  step "{string} has the subtasks {string}, done, and {string}, not started",
+       %{args: [parent, done, todo]} = context do
+    context = ensure(context, parent)
+    id = item!(context, parent)["id"]
+
+    context
+    |> ensure(done, %{"parent" => id, "status" => "done"})
+    |> ensure(todo, %{"parent" => id, "status" => "todo"})
+  end
+
+  step "{string} is {int}% done", %{args: [title, progress]} = context do
+    assert item!(context, title)["derivedProgress"] == progress
+    context
+  end
+
+  step "the user sets {string} to {int}% done", %{args: [title, progress]} = context do
+    update!(context, title, %{"progress" => progress})
+  end
+
+  step "the user saves a baseline", context do
+    {reply, context} = plugin(context, "setBaseline", %{})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} moves to end on {string}", %{args: [title, due]} = context do
+    context |> ensure(title) |> update!(title, %{"due" => due})
+  end
+
+  step "{string} shows it ends {int} days after its baseline", %{args: [title, days]} = context do
+    assert item!(context, title)["slip"] == days
+    context
+  end
+
+  step "two clients watch the plan", context do
+    context |> watch("a", "plan") |> watch("b", "plan")
+  end
+
+  step "the user moves {string} to start on {string}", %{args: [title, start]} = context do
+    context |> ensure(title) |> update!(title, %{"start" => start})
+  end
+
+  step "both clients see {string} start on {string}", %{args: [title, start]} = context do
+    starts = fn plan ->
+      Enum.find(plan["items"], &(&1["title"] == title and &1["start"] == start))
+    end
+
+    {_, context} = await_topic(context, "a", starts)
+    {_, context} = await_topic(context, "b", starts)
+    context
+  end
+
+  # --- views -----------------------------------------------------------------------------
+
+  step "the user opens the plan for the first time", context do
+    Map.put(context, :opened, plan!(context))
+  end
+
+  step "it has the views {string}, {string} and {string}", %{args: names} = context do
+    assert Enum.map(context.opened["views"], & &1["name"]) == names
+    context
+  end
+
+  step "the user saves the view {string} as a Gantt chart of {string} grouped by owner, zoomed to weeks, without done tasks",
+       %{args: [name, project]} = context do
+    view = %{
+      "name" => name,
+      "layout" => "gantt",
+      "filter" => %{"projects" => [World.project(context, project).id], "hideDone" => true},
+      "groupBy" => "owner",
+      "zoom" => "week"
+    }
+
+    {reply, context} = plugin(context, "saveView", %{"view" => view})
+    assert {:ok, %{"view" => _}} = reply
+    Map.put(context, :view, view)
+  end
+
+  step "every client has the view {string} with that layout, filter, grouping and zoom",
+       %{args: [name]} = context do
+    expected = context.view
+
+    laid_out = fn plan ->
+      Enum.find(plan["views"], fn view ->
+        view["name"] == name and
+          Map.take(view, ~w(layout groupBy zoom)) == Map.take(expected, ~w(layout groupBy zoom)) and
+          Map.take(view["filter"], ~w(projects hideDone)) == expected["filter"]
+      end)
+    end
+
+    {_, context} = await_topic(context, "plan", laid_out)
+    # A client that starts watching now gets it with the plan.
+    context = watch(context, "late", "plan")
+    {_, context} = await_topic(context, "late", laid_out)
+    context
+  end
+
+  step "the user saves a view grouped by {string}", %{args: [group]} = context do
+    {reply, context} =
+      plugin(context, "saveView", %{"view" => %{"name" => "Mine", "groupBy" => group}})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told {string} is not something a view can group by",
+       %{args: [group]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "#{group} is not something a view can group by."
+    context
+  end
+
+  step "the view {string}", %{args: [name]} = context do
+    {reply, context} =
+      plugin(context, "saveView", %{"view" => %{"name" => name, "layout" => "gantt"}})
+
+    assert {:ok, _} = reply
+
+    {_, context} =
+      await_topic(context, "plan", fn plan -> Enum.find(plan["views"], &(&1["name"] == name)) end)
+
+    context
+  end
+
+  step "no client has the view {string}", %{args: [name]} = context do
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        not Enum.any?(plan["views"], &(&1["name"] == name))
+      end)
+
+    refute Enum.any?(plan!(context)["views"], &(&1["name"] == name))
+    context
+  end
+
+  # --- actions ---------------------------------------------------------------------------
+
+  step "the user opens the settings of {string}", %{args: [@id]} = context do
+    {reply, context} = plugin(context, "settings", %{})
+    assert {:ok, settings} = reply
+    Map.put(context, :settings, settings)
+  end
+
+  step "the actions {string}, {string}, {string}, {string}, {string} and {string} are there, each with its prompt",
+       %{args: labels} = context do
+    actions = Map.values(context.settings["settings"]["actions"])
+    assert Enum.sort(Enum.map(actions, & &1["label"])) == Enum.sort(labels)
+    assert Enum.all?(actions, &(String.trim(&1["prompt"]) != ""))
+
+    assert Enum.sort(Enum.map(Map.values(context.settings["defaultActions"]), & &1["label"])) ==
+             Enum.sort(labels)
+
+    context
+  end
+
+  step "the action {string} has the prompt {string}", %{args: [label, prompt]} = context do
+    set_prompt(context, label, String.replace(prompt, "\\n", "\n") <> @gate)
+  end
+
+  step "the user runs {string} on {string}, due {string}",
+       %{args: [label, title, due]} = context do
+    context |> ensure(title, %{"due" => due}) |> start_run(label, title)
+  end
+
+  step "a thread in {string} starts with the configured agent and {string}",
+       %{args: [project, text]} = context do
+    thread = thread(context.thread)
+    assert thread["projectId"] == World.project(context, project).id
+    assert %{"instanceId" => "codex", "model" => "fake/one"} = thread["modelSelection"]
+    assert String.starts_with?(prompt(context.thread), text)
+    context
+  end
+
+  step "the run of {string} on {string} is running", %{args: [label, title]} = context do
+    if then?(context) do
+      run = run!(context)
+      assert %{"status" => "running", "label" => ^label} = run
+      assert run["itemIds"] == [item!(context, title)["id"]]
+      context
+    else
+      start_run(context, label, title)
+    end
+  end
+
+  step "its thread starts with today's date and every task with its dates, state and dependencies",
+       context do
+    text = prompt(context.thread)
+    items = plan!(context)["items"]
+    assert String.starts_with?(text, "Today is #{@today}. The plan:\n")
+
+    for item <- items do
+      assert text =~
+               "- [#{item["id"]}] #{item["title"]} (task, #{item["status"]}, 0% done): #{item["start"]} to #{item["due"]}"
+    end
+
+    schema = Enum.find(items, &(&1["title"] == "Schema"))
+    assert text =~ "waits for Schema [#{schema["id"]}]"
+    context
+  end
+
+  step "the user adds the action {string} on the whole plan with the prompt {string}",
+       %{args: [label, prompt]} = context do
+    id = label |> String.downcase() |> String.replace(" ", "-")
+
+    action = %{
+      "label" => label,
+      "scope" => "plan",
+      "kind" => "action",
+      "apply" => "propose",
+      "prompt" => prompt <> @gate
+    }
+
+    save_actions(context, Map.put(context.actions, id, action))
+  end
+
+  step "{string} can be run on the plan", %{args: [label]} = context do
+    assert Enum.any?(plan!(context)["actions"], &(&1["label"] == label and &1["scope"] == "plan"))
+    context = start_run(context, label)
+    prompt = Enum.find_value(context.actions, fn {_, a} -> a["label"] == label && a["prompt"] end)
+    lead = prompt |> String.split("{{") |> hd()
+    assert String.starts_with?(prompt(context.thread), lead <> "- [")
+    context
+  end
+
+  step "the user changed the prompt of {string}", %{args: [label]} = context do
+    set_prompt(context, label, "Something of my own about {{plan}}." <> @gate)
+  end
+
+  step "the user resets the prompt of {string}", %{args: [label]} = context do
+    {reply, context} = plugin(context, "settings", %{})
+    assert {:ok, %{"defaultActions" => defaults}} = reply
+    set_prompt(context, label, defaults[action_id(context, label)]["prompt"])
+  end
+
+  step "the next run of {string} uses the plugin's prompt", %{args: [label]} = context do
+    context = start_run(context, label)
+    text = prompt(context.thread)
+    [lead, rest] = String.split(@defaults[action_id(context, label)]["prompt"], "{{plan}}")
+    assert String.starts_with?(text, String.replace(lead, "{{today}}", @today))
+    assert text =~ String.trim(rest)
+    context
+  end
+
+  step "the user saves the action {string} with an empty prompt", %{args: [label]} = context do
+    id = action_id(context, label)
+    actions = put_in(context.actions, [id, "prompt"], "")
+
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"actions" => actions}
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the save is refused saying the prompt of {string} cannot be empty",
+       %{args: [label]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "the prompt of #{label} cannot be empty"
+
+    assert String.trim(plan_settings(context)["actions"][action_id(context, label)]["prompt"]) !=
+             ""
+
+    context
+  end
+
+  step "the default project of {string} is {string}", %{args: [@id, project]} = context do
+    save(context, %{"defaultProject" => World.project(context, project).id})
+  end
+
+  step "{string} has no default project", %{args: [@id]} = context do
+    save(context, %{"defaultProject" => ""})
+  end
+
+  step "the plan has {string} in no project", %{args: [title]} = context do
+    ensure(context, title, %{"projectId" => nil})
+  end
+
+  step "the user runs {string} on {string}", %{args: [label, title]} = context do
+    context = ensure(context, title)
+    ids = [item!(context, title)["id"]]
+
+    {reply, context} =
+      plugin(context, "run", %{"action" => action_id(context, label), "itemIds" => ids})
+
+    case reply do
+      {:ok, %{"run" => run}} -> started(context, run)
+      _ -> Map.put(context, :reply, reply)
+    end
+  end
+
+  step "its thread starts in {string}", %{args: [project]} = context do
+    assert thread(context.thread)["projectId"] == World.project(context, project).id
+    context
+  end
+
+  step "the user is told to give {string} a project or set a default project",
+       %{args: [title]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "Give #{title} a project or set a default project"
+    context
+  end
+
+  step "the run of {string} is running", %{args: [label]} = context do
+    start_run(context, label)
+  end
+
+  step "its agent reads the plan", context do
+    Map.put(context, :read, tool!(context, "planner_read", %{}))
+  end
+
+  step "it gets every task with its dates, state, progress, dependencies and links", context do
+    items = context.read["items"]
+    assert context.read["today"] == @today
+
+    assert Enum.map(items, & &1["id"]) |> Enum.sort() ==
+             plan!(context)["items"] |> Enum.map(& &1["id"]) |> Enum.sort()
+
+    for item <- items do
+      assert Enum.all?(
+               ~w(start due status derivedProgress after pullRequests issue),
+               &Map.has_key?(item, &1)
+             )
+    end
+
+    schema = Enum.find(items, &(&1["title"] == "Schema"))
+
+    assert %{"start" => "2026-10-21", "due" => "2026-10-30", "after" => [id]} =
+             Enum.find(items, &(&1["title"] == "API"))
+
+    assert id == schema["id"]
+    context
+  end
+
+  step "the run is failed saying the agent reported nothing", context do
+    {run, context} = await_run(context, &(&1["status"] == "failed"))
+    assert run["error"] =~ "finished without reporting"
+    context
+  end
+
+  step "the run of {string} on {string} failed", %{args: [label, title]} = context do
+    context = context |> start_run(label, title) |> end_turns()
+    {_, context} = await_run(context, &(&1["status"] == "failed"))
+    context
+  end
+
+  step "a new thread starts for {string} on {string}", %{args: [label, title]} = context do
+    run = context.retried
+    assert run["id"] == context.run["id"]
+    assert run["threadId"] not in [nil, context.thread]
+    assert %{"label" => ^label, "status" => "running"} = run
+    assert run["itemIds"] == [item!(context, title)["id"]]
+    World.await_row(run["threadId"], & &1, 10_000)
+    context
+  end
+
+  step "the run is failed saying the plugin stopped while it ran", context do
+    run = run!(context)
+    assert %{"status" => "failed"} = run
+    assert run["error"] =~ "planner restarted"
+    assert run["threadId"] == context.thread
+    context
+  end
+
+  step "its agent can still report", context do
+    assert %{"reported" => true, "status" => "done"} =
+             report!(context, %{"summary" => "Nothing to change."})
+
+    assert %{"status" => "done", "summary" => "Nothing to change."} = run!(context)
+    context
+  end
+
+  # --- proposals -------------------------------------------------------------------------
+
+  step "its agent reports moving {string} to end on {string} because {string}",
+       %{args: [title, due, reason]} = context do
+    report!(context, %{"summary" => "Moved.", "changes" => [move(context, title, due, reason)]})
+    context
+  end
+
+  step "the run proposes moving {string} to end on {string} with the reason",
+       %{args: [title, due]} = context do
+    run = run!(context)
+    id = item!(context, title)["id"]
+    assert %{"status" => "proposed", "changes" => [change]} = run
+
+    assert %{"op" => "update", "itemId" => ^id, "fields" => %{"due" => ^due}, "reason" => reason} =
+             change
+
+    assert reason not in [nil, ""]
+    context
+  end
+
+  step "{string} still ends on {string}", %{args: [title, due]} = context do
+    assert item!(context, title)["due"] == due
+    context
+  end
+
+  step "the run of {string} proposes moving {string} and {string}",
+       %{args: [label, one, two]} = context do
+    propose(context, label, [one, two])
+  end
+
+  step "the run of {string} proposes moving {string}", %{args: [label, title]} = context do
+    propose(context, label, [title])
+  end
+
+  step "the user dismisses the change to {string} and applies the run",
+       %{args: [title]} = context do
+    id = item!(context, title)["id"]
+    change = Enum.find(run!(context)["changes"], &(&1["itemId"] == id))
+
+    {reply, context} =
+      plugin(context, "dismissChange", %{"runId" => context.run["id"], "changeId" => change["id"]})
+
+    assert {:ok, _} = reply
+    apply_run(context)
+  end
+
+  step "{string} is moved and {string} is not", %{args: [moved, kept]} = context do
+    assert item!(context, moved)["due"] == context.moves[moved]
+    assert item!(context, kept)["due"] == elem(@samples[kept], 1)
+    context
+  end
+
+  step "the run is applied", context do
+    assert %{"status" => "applied"} = run!(context)
+    context
+  end
+
+  step "its agent reports the subtasks {string} and {string}, the second waiting for the first",
+       %{args: [first, second]} = context do
+    parent = hd(context.run["itemIds"])
+
+    changes = [
+      %{
+        "op" => "add",
+        "ref" => "a",
+        "fields" => %{
+          "title" => first,
+          "parent" => parent,
+          "start" => "2026-10-19",
+          "due" => "2026-10-22"
+        }
+      },
+      %{
+        "op" => "add",
+        "ref" => "b",
+        "fields" => %{
+          "title" => second,
+          "parent" => parent,
+          "after" => ["a"],
+          "start" => "2026-10-23",
+          "due" => "2026-10-27"
+        }
+      }
+    ]
+
+    assert %{"status" => "proposed"} =
+             report!(context, %{"summary" => "Two parts.", "changes" => changes})
+
+    context
+  end
+
+  step "the user applies the run", context do
+    apply_run(context)
+  end
+
+  step "the user applies it", context do
+    apply_run(context)
+  end
+
+  step "{string} has the subtasks {string} and {string}, the second waiting for the first",
+       %{args: [parent, first, second]} = context do
+    plan = plan!(context)
+    id = item(plan, parent)["id"]
+    first = item(plan, first)
+    assert %{"parent" => ^id} = first
+    assert %{"parent" => ^id, "after" => [after_id]} = item(plan, second)
+    assert after_id == first["id"]
+    context
+  end
+
+  step "the change to {string} is marked as no longer applicable", %{args: [title]} = context do
+    change = Enum.find(run!(context)["changes"], &(&1["itemId"] == context.moved_ids[title]))
+    assert %{"outcome" => "stale", "staleReason" => reason} = change
+    assert reason =~ "no longer in the plan"
+    context
+  end
+
+  step "its agent reports making {string} wait for {string}", %{args: [title, other]} = context do
+    change = %{
+      "op" => "update",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{"after" => [item!(context, other)["id"]]}
+    }
+
+    Map.put(
+      context,
+      :tool_result,
+      tool(context, "planner_report", %{"summary" => "Reordered.", "changes" => [change]})
+    )
+  end
+
+  step "the agent is told that would make {string} wait for itself", %{args: [title]} = context do
+    assert %{"isError" => true} = context.tool_result
+    assert inspect(context.tool_result) =~ "That would make #{title} wait for itself."
+    context
+  end
+
+  step "the run is still running", context do
+    assert %{"status" => "running", "changes" => []} = run!(context)
+    context
+  end
+
+  step "{string} applies its changes without asking", %{args: [label]} = context do
+    id = action_id(context, label)
+    save_actions(context, put_in(context.actions, [id, "apply"], "apply"))
+  end
+
+  step "its agent reports {string} is {int}% done", %{args: [title, progress]} = context do
+    change = %{
+      "op" => "update",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{"progress" => progress}
+    }
+
+    report!(context, %{"summary" => "Checked.", "changes" => [change]})
+    context
+  end
+
+  step "the user discards the run", context do
+    {reply, context} = plugin(context, "discard", %{"runId" => context.run["id"]})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} is not moved and the run is gone", %{args: [title]} = context do
+    assert item!(context, title)["due"] == elem(@samples[title], 1)
+    refute Enum.any?(runs!(context), &(&1["id"] == context.run["id"]))
+    context
+  end
+
+  step "its agent reports the feedback {string} on {string} and {string} on the plan",
+       %{args: [text, title, on_plan]} = context do
+    feedback = [%{"itemId" => item!(context, title)["id"], "text" => text}, %{"text" => on_plan}]
+    report!(context, %{"summary" => "Looked at it.", "feedback" => feedback})
+    context
+  end
+
+  step "{string} has the feedback {string}", %{args: [title, text]} = context do
+    if then?(context) do
+      assert text in Enum.map(item!(context, title)["feedback"], & &1["text"])
+      context
+    else
+      context = context |> ensure(title) |> start_run("Give feedback")
+
+      report!(context, %{
+        "summary" => "Looked.",
+        "feedback" => [%{"itemId" => item!(context, title)["id"], "text" => text}]
+      })
+
+      Map.put(context, :feedback, {title, text})
+    end
+  end
+
+  step "the run's summary has {string}", %{args: [text]} = context do
+    assert run!(context)["summary"] =~ text
+    context
+  end
+
+  step "the user dismisses that feedback", context do
+    {title, text} = context.feedback
+    item = item!(context, title)
+    feedback = Enum.find(item["feedback"], &(&1["text"] == text))
+
+    {reply, context} =
+      plugin(context, "dismissFeedback", %{"itemId" => item["id"], "feedbackId" => feedback["id"]})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} has no feedback", %{args: [title]} = context do
+    assert item!(context, title)["feedback"] == []
+    context
+  end
+
+  step "its agent reports the plan is {string} with {string}",
+       %{args: [health, text]} = context do
+    # An update from before the run, which the run's must not replace.
+    {earlier, context} = post_update(context, "on track", "Earlier, all on track.")
+    report!(context, %{"summary" => text, "health" => @healths[health]})
+    Map.put(context, :earlier, earlier)
+  end
+
+  step "the plan's latest update is {string} with {string}", %{args: [health, text]} = context do
+    health = @healths[health]
+    assert %{"health" => ^health, "text" => ^text} = hd(plan!(context)["updates"])
+    context
+  end
+
+  step "the earlier updates are kept", context do
+    updates = plan!(context)["updates"]
+    assert length(updates) == 2
+    assert List.last(updates)["id"] == context.earlier["id"]
+    context
+  end
+
+  step "the user posts the update {string} with {string}", %{args: [health, text]} = context do
+    {_, context} = post_update(context, health, text)
+    context
+  end
+
+  # --- work on a task --------------------------------------------------------------------
+
+  step "a thread in a new worktree of {string} starts working on {string}",
+       %{args: [project, title]} = context do
+    id = context.thread
+
+    thread =
+      World.await_stream(
+        id,
+        fn state ->
+          thread = HalC2.StreamState.get(state, "thread")[id]
+          thread && thread["worktreePath"] && thread
+        end,
+        15_000
+      )
+
+    assert thread["projectId"] == World.project(context, project).id
+    assert thread["worktreePath"] != World.project(context, project).root
+    assert String.starts_with?(prompt(id), ~s(Work on "#{title}"))
+    context
+  end
+
+  step "the thread is linked to {string}", %{args: [title]} = context do
+    assert context.thread in item!(context, title)["threads"]
+    context
+  end
+
+  step "{string} is in progress", %{args: [title]} = context do
+    assert item!(context, title)["status"] == "doing"
+    context
+  end
+
+  step "the user started work on {string}", %{args: [title]} = context do
+    start_run(context, "Start work", title)
+  end
+
+  step "its agent reports {string} is {int}% done with the note {string}",
+       %{args: [title, progress, note]} = context do
+    tool!(context, "planner_progress", %{
+      "itemId" => item!(context, title)["id"],
+      "progress" => progress,
+      "note" => note
+    })
+
+    Map.put(context, :note, note)
+  end
+
+  step "{string} is {int}% done with that note", %{args: [title, progress]} = context do
+    assert %{"derivedProgress" => ^progress, "note" => note} = item!(context, title)
+    assert note == context.note
+    context
+  end
+
+  step "its agent links the pull request \#{int} of {string}",
+       %{args: [number, repository]} = context do
+    tool!(context, "planner_progress", %{
+      "pullRequest" => %{"repository" => repository, "number" => number}
+    })
+
+    context
+  end
+
+  step "{string} is linked to \#{int}", %{args: [title, number]} = context do
+    assert number in Enum.map(item!(context, title)["pullRequests"], & &1["number"])
+    context
+  end
+
+  step "an agent in a thread {string} did not start lists its tools", %{args: [@id]} = context do
+    context = World.create_thread(context, "Not the planner's", "api")
+    Map.put(context, :tools, tools(context.threads["Not the planner's"]))
+  end
+
+  step "no planner tool is offered", context do
+    refute Enum.any?(context.tools, &String.starts_with?(&1, "planner_"))
+    context
+  end
+
+  step "{string} offers the plan to every thread", %{args: [@id]} = context do
+    save(context, %{"offerToAllThreads" => true})
+  end
+
+  step "an agent in any thread lists its tools", context do
+    context = World.create_thread(context, "Any thread", "api")
+    thread = context.threads["Any thread"]
+    Map.merge(context, %{tools: tools(thread), thread: thread})
+  end
+
+  step "it can read the plan but not change it", context do
+    assert "planner_read" in context.tools
+    refute "planner_report" in context.tools
+    refute "planner_progress" in context.tools
+    assert %{"today" => @today, "items" => _} = tool!(context, "planner_read", %{})
+    assert %{"isError" => true} = tool(context, "planner_report", %{"summary" => "Mine now."})
+    context
+  end
+
+  # --- pull requests and GitHub issues ---------------------------------------------------
+
+  step "{string} is linked to \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    context |> ensure(title) |> link_prs(title, repository, [number])
+  end
+
+  step "{string} is linked to \#{int} and \#{int} of {string}, and \#{int} is merged",
+       %{args: [title, one, two, repository, merged]} = context do
+    context
+    |> ensure(title)
+    |> link_prs(title, repository, [one, two])
+    |> merge(merged)
+  end
+
+  step "\#{int} is merged", %{args: [number]} = context do
+    merge(context, number)
+  end
+
+  step "the plugin looks at GitHub", context do
+    {reply, context} = plugin(context, "sync", %{})
+    assert {:ok, %{"items" => _}} = reply
+    context
+  end
+
+  step "{string} is done", %{args: [title]} = context do
+    assert item!(context, title)["status"] == "done"
+    context
+  end
+
+  step "{string} follows the issues of {string}", %{args: [@id, repository]} = context do
+    save(context, %{"repositories" => [repository], "sync" => "import"})
+  end
+
+  step "{string} follows the issues of {string} labelled {string}",
+       %{args: [@id, repository, label]} = context do
+    save(context, %{"repositories" => [repository], "sync" => "import", "issueLabel" => label})
+  end
+
+  step "{string} has the open issue \#{int} {string} assigned to {string} with the label {string}",
+       %{args: [repository, number, title, owner, label]} = context do
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{
+        "title" => title,
+        "assignees" => %{"nodes" => [%{"login" => owner}]},
+        "labels" => %{"nodes" => [%{"name" => label}]}
+      })
+    ])
+  end
+
+  step "the plan has {string} linked to \#{int}, owned by {string} with the label {string}",
+       %{args: [title, number, owner, label]} = context do
+    assert %{"issue" => %{"number" => ^number}, "owner" => ^owner, "labels" => [^label]} =
+             item!(context, title)
+
+    context
+  end
+
+  step "{string} has the open issues \#{int} labelled {string} and \#{int} without it",
+       %{args: [repository, labelled, label, other]} = context do
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, labelled, %{"labels" => %{"nodes" => [%{"name" => label}]}}),
+      GitHubIssues.issue(repository, other)
+    ])
+  end
+
+  step "the plan has \#{int} and not \#{int}", %{args: [present, absent]} = context do
+    plan = plan!(context)
+    assert task_of(plan, present)
+    refute task_of(plan, absent)
+    context
+  end
+
+  step "{string} has the milestone {string} due {string} holding \#{int}",
+       %{args: [repository, title, due, number]} = context do
+    milestone = %{"number" => 1, "title" => title, "dueOn" => due <> "T00:00:00Z"}
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"milestone" => milestone})
+    ])
+  end
+
+  step "the plan has the milestone {string} on {string} waiting for \#{int}'s task",
+       %{args: [title, due, number]} = context do
+    plan = plan!(context)
+    assert %{"kind" => "milestone", "due" => ^due, "after" => after_ids} = item(plan, title)
+    assert task_of(plan, number)["id"] in after_ids
+    context
+  end
+
+  step "\#{int} is a sub-issue of \#{int}, and \#{int} is blocked by \#{int}",
+       %{args: [sub, number, number, blocker]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"subIssues" => [sub], "blockedBy" => [blocker]}),
+      GitHubIssues.issue(repository, sub, %{"parent" => number}),
+      GitHubIssues.issue(repository, blocker, %{"blocking" => [number]})
+    ])
+  end
+
+  step "\#{int}'s task is a subtask of \#{int}'s, and \#{int}'s task waits for \#{int}'s",
+       %{args: [sub, number, number, blocker]} = context do
+    plan = plan!(context)
+    task = task_of(plan, number)
+    assert task_of(plan, sub)["parent"] == task["id"]
+    assert task["after"] == [task_of(plan, blocker)["id"]]
+    context
+  end
+
+  step "\#{int} is closed by the pull request \#{int}", %{args: [number, pr]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"pullRequests" => [pr]})
+    ])
+  end
+
+  step "\#{int}'s task is linked to \#{int}", %{args: [number, pr]} = context do
+    assert pr in Enum.map(task_of(plan!(context), number)["pullRequests"], & &1["number"])
+    context
+  end
+
+  step "\#{int}'s task is in progress", %{args: [number]} = context do
+    context =
+      context
+      |> save(%{"repositories" => [context.repository], "sync" => "import"})
+      |> GitHubIssues.answers(context.repository, [GitHubIssues.issue(context.repository, number)])
+      |> sync!()
+
+    update_task(context, number, %{"status" => "doing"})
+  end
+
+  step "\#{int} is closed on GitHub", %{args: [number]} = context do
+    repository = context.repository
+
+    closed =
+      GitHubIssues.issue(repository, number, %{"state" => "CLOSED", "stateReason" => "COMPLETED"})
+
+    context
+    |> GitHubIssues.answers(repository, [closed])
+    # The listing only has open issues, so a closed one is read alone.
+    |> World.cli_rules([
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["issues(first: $first"],
+        "stdout" => %{
+          "data" => %{
+            "repository" => %{
+              "issues" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => []
+              }
+            }
+          }
+        }
+      }
+    ])
+  end
+
+  step "\#{int}'s task is done", %{args: [number]} = context do
+    assert task_of(plan!(context), number)["status"] == "done"
+    context
+  end
+
+  step "{string} follows the board {string} with {string} and {string} as its dates",
+       %{args: [@id, board, start, target]} = context do
+    save(context, %{
+      "repositories" => [context.repository],
+      "sync" => "import",
+      "board" => board,
+      "startField" => start,
+      "targetField" => target
+    })
+    |> Map.put(:board_fields, {start, target})
+  end
+
+  step "\#{int} is on {string} from {string} to {string}",
+       %{args: [number, board, start, due]} = context do
+    repository = context.repository
+    {start_field, target_field} = context.board_fields
+
+    context
+    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, number)])
+    |> GitHubIssues.board(board, [start_field, target_field], [
+      %{
+        "number" => number,
+        "repository" => repository,
+        "fields" => %{start_field => start, target_field => due}
+      }
+    ])
+  end
+
+  step "\#{int}'s task is from {string} to {string}", %{args: [number, start, due]} = context do
+    assert %{"start" => ^start, "due" => ^due} = task_of(plan!(context), number)
+    context
+  end
+
+  step "{string} syncs {string} both ways with the board {string}",
+       %{args: [@id, repository, board]} = context do
+    item = fn n, start, due ->
+      %{
+        "number" => n,
+        "repository" => repository,
+        "fields" => %{"Start date" => start, "Target date" => due}
+      }
+    end
+
+    context
+    |> save(%{"repositories" => [repository], "sync" => "twoWay", "board" => board})
+    |> GitHubIssues.answers(repository, [
+      GitHubIssues.issue(repository, 7),
+      GitHubIssues.issue(repository, 5)
+    ])
+    |> GitHubIssues.board(board, ["Start date", "Target date"], [
+      item.(5, "2026-10-12", "2026-10-16"),
+      item.(7, "2026-10-20", "2026-11-02")
+    ])
+    |> sync!()
+  end
+
+  step "{string} syncs {string} both ways", %{args: [@id, repository]} = context do
+    context
+    |> save(%{"repositories" => [repository], "sync" => "twoWay"})
+    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, 7)])
+    |> sync!()
+  end
+
+  step "{string} follows the issues of {string} without syncing back",
+       %{args: [@id, repository]} = context do
+    context
+    |> save(%{"repositories" => [repository], "sync" => "import"})
+    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, 7)])
+    |> sync!()
+  end
+
+  # The outline's changes, each as "the user <change> #n's task".
+  step "the user marks as done \#{int}'s task", %{args: [number]} = context do
+    update_task(context, number, %{"status" => "done"})
+  end
+
+  step "the user marks \#{int}'s task as done", %{args: [number]} = context do
+    update_task(context, number, %{"status" => "done"})
+  end
+
+  step "the user renames to {string} \#{int}'s task", %{args: [title, number]} = context do
+    update_task(context, number, %{"title" => title})
+  end
+
+  step "the user renames \#{int}'s task to {string}", %{args: [number, title]} = context do
+    update_task(context, number, %{"title" => title})
+  end
+
+  step "the user moves to end on {string} \#{int}'s task", %{args: [due, number]} = context do
+    update_task(context, number, %{"due" => due})
+  end
+
+  step "the user makes wait for \#{int}'s task \#{int}'s task",
+       %{args: [other, number]} = context do
+    update_task(context, number, %{"after" => [task_of(plan!(context), other)["id"]]})
+  end
+
+  step "GitHub is not asked to change \#{int}", %{args: [number]} = context do
+    assert GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}") == []
+    assert GitHubIssues.graphql_calls(context, "addBlockedBy(input") == []
+    assert GitHubIssues.graphql_calls(context, "updateProjectV2ItemFieldValue") == []
+    context
+  end
+
+  step "GitHub refuses changes to \#{int}", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "exit" => 1,
+        "stderr" =>
+          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/issues#update-an-issue)\n"
+      }
+    ])
+  end
+
+  step "\#{int}'s task is named {string} and marked as not synced, with GitHub's reason",
+       %{args: [number, title]} = context do
+    assert %{"title" => ^title, "syncError" => error} = task_of(plan!(context), number)
+    assert is_binary(error) and error != ""
+    assert error =~ "422" or error =~ "Validation Failed"
+    context
+  end
+
+  step "the plan has {string} in {string}", %{args: [title, project]} = context do
+    ensure(context, title, %{"projectId" => World.project(context, project).id})
+  end
+
+  step "the user creates an issue for {string} in {string}",
+       %{args: [title, repository]} = context do
+    context = GitHubIssues.answers(context, repository, [])
+
+    {reply, context} =
+      plugin(context, "createIssue", %{
+        "itemId" => item!(context, title)["id"],
+        "repository" => repository
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} is linked to the new issue", %{args: [title]} = context do
+    assert %{"issue" => %{"number" => 13}} = item!(context, title)
+    context
+  end
+
+  step "the plugin reports that no project has {string}", %{args: [repository]} = context do
+    assert repository in plan!(context)["sync"]["unwatched"]
+    context
+  end
+
+  step "{string} follows the board {string}", %{args: [@id, board]} = context do
+    context |> ensure("API") |> save(%{"board" => board})
+  end
+
+  step "the plugin reports that gh needs the {string} scope", %{args: [scope]} = context do
+    assert plan!(context)["sync"]["problem"] =~ "-s #{scope}"
+    context
+  end
+
+  step "the tasks it has are kept", context do
+    assert item!(context, "API")
+    context
+  end
+
+  # --- Slack -----------------------------------------------------------------------------
+
+  step "the MC is connected to Slack as the bot {string}", %{args: [bot]} = context do
+    context = SlackSupport.connect(context, %{bot: bot})
+    # Slash command answers go out after the event is handled; this tells the scenario
+    # each request as it reaches the fake workspace. FakeSlack puts Req back at the end.
+    test = self()
+
+    Req.default_options(
+      plug: fn conn ->
+        conn = FakeSlack.call(conn, [])
+        send(test, {:slack_request, conn.host, conn.request_path})
+        conn
+      end,
+      retry: false
+    )
+
+    context
+  end
+
+  step "{string} posts to the Slack channel {string}", %{args: [@id, channel]} = context do
+    save(context, %{"slackChannel" => channel})
+  end
+
+  step "the user posts the update {string} saying the plan is at risk",
+       %{args: [text]} = context do
+    {_, context} = post_update(context, "at risk", text)
+    context
+  end
+
+  step "{string} gets {string} marked at risk", %{args: [channel, text]} = context do
+    assert_posted(channel, ":large_yellow_circle: *At risk*: #{text}")
+    context
+  end
+
+  step "{string} gets {string} marked on track", %{args: [channel, text]} = context do
+    assert_posted(channel, ":large_green_circle: *On track*: #{text}")
+    context
+  end
+
+  step "{string} proposed the update {string} saying the plan is on track",
+       %{args: [label, text]} = context do
+    context = start_run(context, label)
+
+    assert %{"status" => "proposed"} =
+             report!(context, %{"summary" => text, "health" => "on-track"})
+
+    context
+  end
+
+  step "{string} proposes {int} changes", %{args: [label, 3]} = context do
+    propose(context, label, ["Schema", "API", "Docs"])
+  end
+
+  step "{string} is told {string} has {int} changes waiting in HAL-C2",
+       %{args: [channel, label, count]} = context do
+    texts = posted(channel)
+
+    assert Enum.any?(
+             texts,
+             &String.starts_with?(&1, "#{label} has #{count} changes waiting in HAL-C2")
+           ),
+           inspect(texts)
+
+    context
+  end
+
+  step "{string} does not announce proposals in Slack", %{args: [@id]} = context do
+    save(context, %{"slackAnnounce" => false})
+  end
+
+  step "nothing is posted to {string}", %{args: [channel]} = context do
+    assert posted(channel) == []
+    context
+  end
+
+  step "the update {string} was posted to {string}", %{args: [text, channel]} = context do
+    {update, context} = post_update(context, "at risk", text)
+    assert_posted(channel, ":large_yellow_circle: *At risk*: #{text}")
+    Map.put(context, :update, update)
+  end
+
+  step "{string} replies {string} in its thread", %{args: ["dana", text]} = context do
+    update = Enum.find(plan!(context)["updates"], &(&1["id"] == context.update["id"]))
+    assert %{"slack" => %{"ts" => ts}} = update
+
+    FakeSlack.event(%{
+      "type" => "message",
+      "channel" => "CPLAN",
+      "user" => "UDANA",
+      "text" => text,
+      "ts" => "1700000100.000009",
+      "thread_ts" => ts,
+      "parent_user_id" => "UHAL"
+    })
+
+    context
+  end
+
+  step "the plan has the feedback {string} from {string} in Slack",
+       %{args: [text, person]} = context do
+    by = "slack:#{person}"
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        Enum.find(plan["planFeedback"], &(&1["text"] == text and &1["by"] == by))
+      end)
+
+    context
+  end
+
+  step "{string} is late and {string} is in progress", %{args: [late, doing]} = context do
+    World.put_app_env(:planner_today, "2026-10-31")
+
+    context
+    |> ensure(late, %{"status" => "doing"})
+    |> ensure(doing, %{"status" => "doing"})
+  end
+
+  step "{string} runs {string} in Slack", %{args: ["dana", "/planner " <> text]} = context do
+    context = seed(context)
+
+    FakeSlack.command(%{
+      "command" => "/planner",
+      "text" => text,
+      "user_id" => "UDANA",
+      "user_name" => "dana",
+      "channel_id" => "CPLAN",
+      "response_url" => FakeSlack.response_url()
+    })
+
+    assert_receive {:slack_request, "hooks.slack.com", _}, 10_000
+    Map.put(context, :answer, List.last(FakeSlack.responses())["body"])
+  end
+
+  step "only {string} is shown that {string} is late, {string} is in progress, and the latest health",
+       %{args: ["dana", late, doing]} = context do
+    assert %{"response_type" => "ephemeral", "text" => text} = context.answer
+    assert text =~ "Late: #{late} (due "
+    assert text =~ "In progress: #{doing} ("
+    assert text =~ "Health: "
+    context
+  end
+
+  step "a {string} run of {string} starts", %{args: [label, title]} = context do
+    id = item!(context, title)["id"]
+    run = Enum.find(runs!(context), &(&1["label"] == label and &1["itemIds"] == [id]))
+    assert %{"status" => "running", "threadId" => thread} = run
+    World.await_row(thread, & &1, 10_000)
+    Map.merge(context, %{run: run, thread: thread})
+  end
+
+  step "only {string} is told it started", %{args: ["dana"]} = context do
+    assert %{"response_type" => "ephemeral", "text" => text} = context.answer
+    assert text == "Started #{context.run["label"]} on #{item!(context, "API")["title"]}."
+    context
+  end
+
+  step "only {string} is told no task is called {string}", %{args: ["dana", title]} = context do
+    assert %{"response_type" => "ephemeral", "text" => text} = context.answer
+    assert text == ~s(No task is called "#{title}".)
+    context
+  end
+
+  step "the plan has the update {string}", %{args: [text]} = context do
+    assert Enum.any?(plan!(context)["updates"], &(&1["text"] == text))
+    context
+  end
+
+  step "the plugin reports that Slack is not connected", context do
+    assert plan!(context)["sync"]["slack"]["problem"] =~ "Slack is not connected"
+    context
+  end
+
+  # --- what other step files dispatch here -------------------------------------------------
+
+  @doc "\"the user runs {string}\" for an action on the whole plan."
+  def run(context, label), do: start_run(context, label)
+
+  @doc "\"the user retries it\": the failed run of `context.run` again."
+  def retry(context) do
+    {reply, context} = plugin(context, "retry", %{"runId" => context.run["id"]})
+    assert {:ok, %{"run" => run}} = reply
+    Map.put(context, :retried, run)
+  end
+
+  # --- helpers ---------------------------------------------------------------------------
+
+  defp save(context, patch) do
+    {_, context} =
+      World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
+
+    context
+  end
+
+  defp save_actions(context, actions),
+    do: context |> save(%{"actions" => actions}) |> Map.put(:actions, actions)
+
+  defp set_prompt(context, label, prompt),
+    do:
+      save_actions(
+        context,
+        put_in(context.actions, [action_id(context, label), "prompt"], prompt)
+      )
+
+  defp gated(action, prompt), do: Map.put(action, "prompt", prompt <> @gate)
+
+  defp plan_settings(context) do
+    {reply, _} = plugin(context, "settings", %{})
+    assert {:ok, %{"settings" => settings}} = reply
+    settings
+  end
+
+  defp action_id(context, label),
+    do:
+      Enum.find_value(context.actions, fn {id, a} -> a["label"] == label && id end) ||
+        flunk("no action #{label}")
+
+  defp plugin(context, method, input),
+    do: World.call(context, "plugins.call", %{"id" => @id, "method" => method, "input" => input})
+
+  # Reads go through the default client without keeping what it skipped; no step
+  # waits for frames on it.
+  defp plan!(context) do
+    {reply, _} = plugin(context, "plan", %{})
+    assert {:ok, plan} = reply
+    plan
+  end
+
+  defp runs!(context) do
+    {reply, _} = plugin(context, "runs", %{})
+    assert {:ok, %{"runs" => runs}} = reply
+    runs
+  end
+
+  defp run!(context),
+    do: Enum.find(runs!(context), &(&1["id"] == context.run["id"])) || flunk("the run is gone")
+
+  defp item(plan, title), do: Enum.find(plan["items"], &(&1["title"] == title))
+  defp item!(context, title), do: item(plan!(context), title) || flunk("the plan has no #{title}")
+
+  defp task_of(plan, number),
+    do: Enum.find(plan["items"], &match?(%{"issue" => %{"number" => ^number}}, &1))
+
+  defp add!(context, fields) do
+    {reply, context} = plugin(context, "addItem", %{"fields" => fields})
+    assert {:ok, %{"item" => _}} = reply
+    context
+  end
+
+  defp update!(context, title, fields) do
+    {reply, context} =
+      plugin(context, "updateItem", %{"id" => item!(context, title)["id"], "fields" => fields})
+
+    assert {:ok, %{"item" => _}} = reply
+    context
+  end
+
+  defp update_task(context, number, fields) do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {reply, context} = plugin(context, "updateItem", %{"id" => task["id"], "fields" => fields})
+    assert {:ok, _} = reply
+    context
+  end
+
+  # `title` in the plan, added from its sample when it is not; `fields` set on it.
+  defp ensure(context, title, fields \\ %{}) do
+    case item(plan!(context), title) do
+      nil -> add!(context, Map.merge(sample(context, title), fields))
+      _ when fields == %{} -> context
+      _ -> update!(context, title, fields)
+    end
+  end
+
+  defp sample(context, title) do
+    {start, due} = @samples[title] || {"2026-10-19", "2026-10-30"}
+
+    %{
+      "title" => title,
+      "start" => start,
+      "due" => due,
+      "projectId" => World.project(context, "api").id
+    }
+  end
+
+  # Schema, API waiting for it, and Docs, for actions on the whole plan.
+  defp seed(context) do
+    context = context |> ensure("Schema") |> ensure("API") |> ensure("Docs")
+    schema = item!(context, "Schema")["id"]
+
+    if schema in item!(context, "API")["after"],
+      do: context,
+      else: update!(context, "API", %{"after" => [schema]})
+  end
+
+  defp start_run(context, label, title \\ nil) do
+    context = if title, do: ensure(context, title), else: seed(context)
+    ids = if title, do: [item!(context, title)["id"]], else: []
+
+    {reply, context} =
+      plugin(context, "run", %{"action" => action_id(context, label), "itemIds" => ids})
+
+    assert {:ok, %{"run" => run}} = reply
+    started(context, run)
+  end
+
+  defp started(context, run) do
+    assert %{"status" => "running", "threadId" => thread} = run
+    World.await_row(thread, & &1, 10_000)
+    Map.merge(context, %{run: run, thread: thread})
+  end
+
+  # The run of `label` proposing to move each of `titles` a week later.
+  defp propose(context, label, titles) do
+    context = start_run(context, label)
+    plan = plan!(context)
+    moves = Map.new(titles, &{&1, &1 |> then(fn t -> item(plan, t)["due"] end) |> later(7)})
+    changes = for title <- titles, do: move(context, title, moves[title], "Schema slipped")
+
+    assert %{"status" => "proposed"} =
+             report!(context, %{"summary" => "Moved.", "changes" => changes})
+
+    Map.merge(context, %{moves: moves, moved_ids: Map.new(titles, &{&1, item(plan, &1)["id"]})})
+  end
+
+  defp move(context, title, due, reason),
+    do: %{
+      "op" => "update",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{"due" => due},
+      "reason" => reason
+    }
+
+  defp later(day, days), do: day |> Date.from_iso8601!() |> Date.add(days) |> Date.to_iso8601()
+
+  defp apply_run(context) do
+    {reply, context} = plugin(context, "apply", %{"runId" => context.run["id"]})
+    assert {:ok, %{"run" => %{"status" => "applied"}}} = reply
+    context
+  end
+
+  defp post_update(context, health, text) do
+    {reply, context} =
+      plugin(context, "postUpdate", %{"health" => @healths[health], "text" => text})
+
+    assert {:ok, %{"update" => update}} = reply
+    {update, context}
+  end
+
+  defp link_prs(context, title, repository, numbers) do
+    id = item!(context, title)["id"]
+
+    context =
+      Enum.reduce(numbers, context, fn number, context ->
+        pr = %{"repository" => repository, "number" => number}
+        {reply, context} = plugin(context, "link", %{"itemId" => id, "pullRequest" => pr})
+        assert {:ok, _} = reply
+        context
+      end)
+
+    prs = Map.merge(context.prs, Map.new(numbers, &{&1, "OPEN"}))
+    pr_list(%{context | prs: prs})
+  end
+
+  defp merge(context, number), do: pr_list(put_in(context.prs[number], "MERGED"))
+
+  # The fake GitHub lists the linked pull requests in the states of `context.prs`.
+  defp pr_list(context) do
+    prs =
+      for {number, state} <- Enum.sort(context.prs),
+          do: Shared.gh_pr(context.repository, number, %{"state" => state})
+
+    World.cli_rules(context, [%{"args" => ["pr list"], "stdout" => prs}])
+  end
+
+  defp sync!(context) do
+    {reply, context} = plugin(context, "sync", %{})
+    assert {:ok, _} = reply
+    context
+  end
+
+  defp posted(channel) do
+    id = if channel == "#planning", do: "CPLAN", else: channel
+    for %{"channel" => ^id, "text" => text} <- FakeSlack.calls("chat.postMessage"), do: text
+  end
+
+  defp assert_posted(channel, text) do
+    texts = posted(channel)
+    assert text in texts, "#{channel} did not get #{inspect(text)}: #{inspect(texts)}"
+  end
+
+  # Watches the plugin's `topic` on the client `name`; `await_topic/3` waits on it.
+  defp watch(context, name, topic) do
+    sub = System.unique_integer([:positive])
+
+    shape = %{
+      "type" => "plugin",
+      "environment" => context.mc.environment,
+      "id" => @id,
+      "topic" => topic
+    }
+
+    client = context |> World.client(name) |> Mc.sub(sub, shape)
+
+    context
+    |> World.put_client(name, client)
+    |> put_in([:watched, name], {sub, nil})
+  end
+
+  # `{found, context}` once `fun` answers something truthy for the value of the topic
+  # watched as `name`; the last value seen is kept, as a topic only moves forward.
+  defp await_topic(context, name, fun) do
+    {sub, last} = context.watched[name]
+
+    if found = last && fun.(last) do
+      {found, context}
+    else
+      {frame, client} =
+        Mc.await(
+          World.client(context, name),
+          &(&1["t"] == "plugin" and &1["id"] == sub and !!fun.(&1["value"])),
+          10_000
+        )
+
+      context =
+        context
+        |> World.put_client(name, client)
+        |> put_in([:watched, name], {sub, frame["value"]})
+
+      {fun.(frame["value"]), context}
+    end
+  end
+
+  defp await_run(context, fun) do
+    id = context.run["id"]
+
+    await_topic(context, "runs", fn value ->
+      Enum.find(value["runs"], &(&1["id"] == id and fun.(&1)))
+    end)
+  end
+
+  # Lets the fake Codex finish every turn held at the gate.
+  defp end_turns(context) do
+    gate = Path.join(context.mc.home, "gate")
+    File.mkdir_p!(gate)
+    File.write!(Path.join(gate, "answer"), "I looked at it.")
+    context
+  end
+
+  defp mcp(thread, method, params) do
+    %{authorization: auth} = HalC2.Mcp.server(thread, "codex")
+    body = JSON.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params})
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, body)
+    result
+  end
+
+  defp tools(thread), do: Enum.map(mcp(thread, "tools/list", %{})["tools"], & &1["name"])
+
+  defp tool(context, name, arguments),
+    do: mcp(context.thread, "tools/call", %{"name" => name, "arguments" => arguments})
+
+  defp tool!(context, name, arguments) do
+    result = tool(context, name, arguments)
+    assert result["isError"] != true, inspect(result)
+    result["structuredContent"]
+  end
+
+  defp report!(context, arguments), do: tool!(context, "planner_report", arguments)
+
+  defp prompt(thread_id) do
+    World.await_stream(thread_id, fn state ->
+      state
+      |> HalC2.StreamState.list("message")
+      |> Enum.find_value(&(&1["role"] == "user" and &1["text"]))
+    end)
+  end
+
+  defp thread(thread_id) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    HalC2.StreamState.get(state, "thread")[thread_id]
+  end
+
+  # Whether the running step is a Then (or an And/But following one), for the texts
+  # that set something up as a Given and check it as a Then.
+  defp then?(context) do
+    context
+    |> Map.get(:step_history, [])
+    |> Enum.reverse()
+    |> Enum.map(&String.trim(&1.keyword))
+    |> Enum.find(&(&1 not in ["And", "But", "*"]))
+    |> Kernel.==("Then")
+  end
+end

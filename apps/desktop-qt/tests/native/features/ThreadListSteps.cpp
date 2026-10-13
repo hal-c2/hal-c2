@@ -12,6 +12,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "SharedSteps.h"
 #include "Stream.h"
 #include "ThreadList.h"
 #include "World.h"
@@ -205,6 +206,8 @@ const Steps steps([] {
 
   // Opening and scoping.
   step(QStringLiteral("the user opens \"([^\"./:]*)\""), [](World& world, const Captures& c, const Table&) {
+    // A view of the planner plugin, when the MC runs it.
+    if (openPlannerView(world, c[0])) return;
     const QString key = ensureThread(world, c[0]);
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
   });

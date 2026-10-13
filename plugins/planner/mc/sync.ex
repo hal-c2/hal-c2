@@ -1,0 +1,621 @@
+defmodule HalC2Plugins.Planner.Sync do
+  @moduledoc """
+  The plan and GitHub: what a look at the followed repositories, the board and the
+  linked pull requests finds (`look/2`), how it changes the plan (`apply/5`), and
+  what a change to a linked task asks of GitHub when the plan syncs both ways
+  (`pushes/4`, run by `run/1`).
+
+  GitHub wins over the plan for what it holds, except for a task whose last change
+  GitHub refused (`syncError`): that one keeps the user's until a push takes. A task's
+  state follows its issue only when the issue opens or closes, so a task the user
+  marked doing stays doing while its issue stays open.
+  """
+
+  alias HalC2.Plugins.Host
+  alias HalC2Plugins.Planner.Plan
+
+  @id "planner"
+
+  @doc """
+  What GitHub holds for the plan: `issues` of the followed repositories (open, with
+  the planner's label if one is set), `details` of linked issues not among them,
+  the `board`'s items by issue, the `prs` linked tasks name by state, the
+  repositories no project has (`unwatched`), the `problem` a part failed with and
+  the MC's `projects`. `at` orders looks that overlap.
+  """
+  def look(settings, items) do
+    at = System.monotonic_time()
+
+    case Host.projects(@id) do
+      {:ok, projects} ->
+        github = Enum.filter(projects, &(&1["kind"] == "github" and is_binary(&1["repository"])))
+
+        found = %{
+          at: at,
+          problem: nil,
+          unwatched: [],
+          projects: projects,
+          issues: [],
+          details: [],
+          board: nil,
+          prs: %{}
+        }
+
+        found =
+          if settings["sync"] in ~w(import twoWay),
+            do: found |> issues(settings, items, github) |> board(settings, github),
+            else: found
+
+        prs(found, items, github)
+
+      {:error, error} ->
+        %{
+          at: at,
+          problem: message(error),
+          unwatched: [],
+          projects: nil,
+          issues: [],
+          details: [],
+          board: nil,
+          prs: %{}
+        }
+    end
+  end
+
+  defp issues(found, settings, items, github) do
+    label = String.trim(settings["issueLabel"] || "")
+    repos = settings["repositories"] || []
+    unwatched = Enum.reject(repos, &project_of(github, &1))
+
+    {listed, problems} =
+      for repo <- repos, project = project_of(github, repo), reduce: {[], []} do
+        {listed, problems} ->
+          input = %{
+            "projectId" => project["id"],
+            "repository" => repo,
+            "state" => "open",
+            "limit" => 500
+          }
+
+          input = if label != "", do: Map.put(input, "labels", [label]), else: input
+
+          case Host.issues(@id, "list", input) do
+            {:ok, %{"issues" => issues}} ->
+              {listed ++ Enum.filter(issues, &(label == "" or label in (&1["labels"] || []))),
+               problems}
+
+            {:error, error} ->
+              {listed, problems ++ ["#{repo}: #{message(error)}"]}
+          end
+      end
+
+    # A linked issue of a followed repository that left the list (closed, or its label
+    # taken off) is read alone.
+    {details, problems} =
+      for {_, %{"issue" => %{"repository" => repo, "number" => number}}} <- items,
+          Enum.any?(repos, &same?(&1, repo)),
+          not Enum.any?(listed, &Plan.same_ref?(&1, %{"repository" => repo, "number" => number})),
+          project = project_of(github, repo),
+          reduce: {[], problems} do
+        {details, problems} ->
+          case Host.issues(@id, "detail", %{
+                 "projectId" => project["id"],
+                 "repository" => repo,
+                 "number" => number
+               }) do
+            {:ok, issue} -> {[issue | details], problems}
+            {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+          end
+      end
+
+    problem(%{found | issues: listed, details: details, unwatched: unwatched}, problems)
+  end
+
+  defp board(found, settings, github) do
+    with [owner, number] <- String.split(String.trim(settings["board"] || ""), "/"),
+         [_ | _] <- github do
+      project = Enum.find(github, &owner?(&1["repository"], owner)) || hd(github)
+
+      case Host.issues(@id, "board", %{
+             "projectId" => project["id"],
+             "owner" => owner,
+             "number" => String.to_integer(number)
+           }) do
+        {:ok, %{"items" => board_items}} ->
+          board =
+            for %{"content" => %{"kind" => "issue"} = content} = item <- board_items, into: %{} do
+              {key(content),
+               %{
+                 "itemId" => item["id"],
+                 "start" => day(item["fields"][settings["startField"]]),
+                 "due" => day(item["fields"][settings["targetField"]])
+               }}
+            end
+
+          %{found | board: board}
+
+        {:error, error} ->
+          problem(found, ["#{settings["board"]}: #{message(error)}"])
+      end
+    else
+      _ -> found
+    end
+  end
+
+  defp prs(found, items, github) do
+    linked =
+      for {_, item} <- items,
+          pr <- item["pullRequests"] || [],
+          uniq: true,
+          do: String.downcase(pr["repository"] || "")
+
+    ids =
+      for project <- github,
+          String.downcase(project["repository"]) in linked,
+          uniq: true,
+          do: project["id"]
+
+    if ids == [] do
+      found
+    else
+      case Host.pull_requests(@id, "list", %{
+             "projectIds" => ids,
+             "state" => "all",
+             "limit" => 500
+           }) do
+        {:ok, list} ->
+          prs = for entry <- list["entries"] || [], into: %{}, do: {key(entry), entry["state"]}
+          problem(%{found | prs: prs}, Enum.map(list["errors"] || [], & &1["message"]))
+
+        {:error, error} ->
+          problem(found, [message(error)])
+      end
+    end
+  end
+
+  defp problem(found, []), do: found
+
+  defp problem(found, more),
+    do: %{found | problem: Enum.join(Enum.reject([found.problem | more], &is_nil/1), " ")}
+
+  @doc """
+  `items` with what `found` (`look/2`) holds: tasks for issues the plan does not
+  have, linked tasks brought up to date, their subtasks and dependencies, a milestone
+  for each issue milestone, board dates, and the pull requests' states. New items
+  get ids from `new_id`.
+  """
+  def apply(items, found, settings, now, new_id) do
+    items =
+      if settings["sync"] in ~w(import twoWay) do
+        listed = found.issues
+        issues = Enum.uniq_by(listed ++ found.details, &key/1)
+        projects = found.projects || []
+
+        items
+        |> then(
+          &Enum.reduce(issues, &1, fn issue, items ->
+            issue(items, issue, issue in listed, projects, now, new_id)
+          end)
+        )
+        |> relations(issues, now)
+        |> milestones(issues, projects, now, new_id)
+        |> dates(found.board, now)
+      else
+        items
+      end
+
+    pull_requests(items, found.prs, settings, now)
+  end
+
+  # A task for an open issue the plan does not have, or the linked task brought up to date.
+  defp issue(items, issue, listed, projects, now, new_id) do
+    link = %{"issue" => Map.take(issue, ~w(repository number url state stateReason title))}
+    new? = listed and issue["state"] == "open"
+
+    case linked(items, issue) do
+      nil when new? ->
+        project = project_of(projects, issue["repository"])
+
+        fields = %{
+          "title" => issue["title"],
+          "notes" => issue["body"] || "",
+          "owner" => List.first(issue["assignees"] || []),
+          "labels" => issue["labels"] || [],
+          "projectId" => project && project["id"]
+        }
+
+        case Plan.add(items, new_id.(), fields, now) do
+          {:ok, items, item} ->
+            item = item |> Map.put("issue", link["issue"]) |> prs_of(issue, now)
+            Map.put(items, item["id"], item)
+
+          {:error, _} ->
+            items
+        end
+
+      nil ->
+        items
+
+      %{"syncError" => error} = item when is_binary(error) ->
+        Map.put(items, item["id"], prs_of(item, issue, now))
+
+      item ->
+        was = item["issue"]["state"]
+
+        status =
+          cond do
+            issue["state"] == was ->
+              %{}
+
+            issue["state"] == "closed" and issue["stateReason"] == "not_planned" ->
+              %{"status" => "dropped"}
+
+            issue["state"] == "closed" ->
+              %{"status" => "done"}
+
+            item["status"] in ~w(done dropped) ->
+              %{"status" => "todo"}
+
+            true ->
+              %{}
+          end
+
+        fields =
+          Map.merge(status, %{
+            "title" => issue["title"],
+            "owner" => List.first(issue["assignees"] || []),
+            "labels" => issue["labels"] || []
+          })
+
+        items =
+          case Plan.update(items, item["id"], fields, now) do
+            {:ok, items, _old, _new} -> items
+            {:error, _} -> items
+          end
+
+        item = items[item["id"]]
+        issue_ref = Map.merge(item["issue"], link["issue"])
+
+        item =
+          if issue_ref == item["issue"],
+            do: item,
+            else: %{item | "issue" => issue_ref, "updatedAt" => now}
+
+        Map.put(items, item["id"], prs_of(item, issue, now))
+    end
+  end
+
+  defp prs_of(item, issue, now),
+    do:
+      Enum.reduce(issue["pullRequests"] || [], item, &Plan.link(&2, %{"pullRequest" => &1}, now))
+
+  # Sub-issues and blocking issues as subtasks and dependencies, once every issue has
+  # its task. One that would make a task its own subtask or wait for itself is left out.
+  defp relations(items, issues, now) do
+    Enum.reduce(issues, items, fn issue, items ->
+      with %{} = item <- linked(items, issue),
+           nil <- item["syncError"] do
+        parent = issue["parent"] && linked(items, issue["parent"])
+
+        blockers =
+          for ref <- issue["blockedBy"] || [], blocker = linked(items, ref), do: blocker["id"]
+
+        # Dependencies on tasks with no issue are the plan's own and stay.
+        own = Enum.reject(item["after"], &get_in(items, [&1, "issue"]))
+
+        fields = %{"after" => Enum.uniq(own ++ blockers)}
+        fields = if parent, do: Map.put(fields, "parent", parent["id"]), else: fields
+
+        case Plan.update(items, item["id"], fields, now) do
+          {:ok, items, _old, _new} -> items
+          {:error, _} -> items
+        end
+      else
+        _ -> items
+      end
+    end)
+  end
+
+  # A milestone of the plan for each issue milestone, waiting for the tasks it holds.
+  defp milestones(items, issues, projects, now, new_id) do
+    issues
+    |> Enum.filter(&is_map(&1["milestone"]))
+    |> Enum.group_by(&{String.downcase(&1["repository"]), &1["milestone"]["number"]})
+    |> Enum.reduce(items, fn {_, [first | _] = held}, items ->
+      ref = Map.put(first["milestone"], "repository", first["repository"])
+      tasks = for issue <- held, task = linked(items, issue), do: task["id"]
+
+      case Enum.find_value(items, fn {_, item} ->
+             if Plan.same_ref?(item["milestone"], ref), do: item
+           end) do
+        nil ->
+          project = project_of(projects, first["repository"])
+
+          fields = %{
+            "kind" => "milestone",
+            "title" => ref["title"],
+            "due" => ref["dueOn"],
+            "after" => tasks,
+            "projectId" => project && project["id"]
+          }
+
+          case Plan.add(items, new_id.(), fields, now) do
+            {:ok, items, item} -> Map.put(items, item["id"], Map.put(item, "milestone", ref))
+            {:error, _} -> items
+          end
+
+        %{"syncError" => error} when is_binary(error) ->
+          items
+
+        milestone ->
+          fields = %{
+            "title" => ref["title"],
+            "due" => ref["dueOn"],
+            "after" => Enum.uniq(milestone["after"] ++ tasks)
+          }
+
+          case Plan.update(items, milestone["id"], fields, now) do
+            {:ok, items, _old, new} -> Map.put(items, new["id"], Map.put(new, "milestone", ref))
+            {:error, _} -> items
+          end
+      end
+    end)
+  end
+
+  defp dates(items, nil, _now), do: items
+
+  defp dates(items, board, now) do
+    Enum.reduce(items, items, fn {id, item}, items ->
+      case item["issue"] && board[key(item["issue"])] do
+        nil ->
+          items
+
+        on_board ->
+          dates =
+            if item["syncError"],
+              do: %{},
+              else: Map.reject(Map.take(on_board, ~w(start due)), fn {_, v} -> is_nil(v) end)
+
+          items =
+            case Plan.update(items, id, dates, now) do
+              {:ok, items, _old, _new} -> items
+              {:error, _} -> items
+            end
+
+          put_in(items[id]["boardItemId"], on_board["itemId"])
+      end
+    end)
+  end
+
+  # The pull requests' states; a task whose last open one merged is done, when the
+  # planner is set to.
+  defp pull_requests(items, prs, _settings, _now) when prs == %{}, do: items
+
+  defp pull_requests(items, prs, settings, now) do
+    Map.new(items, fn {id, item} ->
+      old = item["pullRequests"] || []
+      new = Enum.map(old, &Map.put(&1, "state", prs[key(&1)] || &1["state"]))
+      merged = new != [] and Enum.all?(new, &(&1["state"] == "merged"))
+      newly = merged and not Enum.all?(old, &(&1["state"] == "merged"))
+
+      item = if new == old, do: item, else: %{item | "pullRequests" => new, "updatedAt" => now}
+
+      item =
+        if newly and settings["doneWhenMerged"] != false and
+             item["status"] not in ~w(done dropped),
+           do: %{item | "status" => "done", "updatedAt" => now},
+           else: item
+
+      {id, item}
+    end)
+  end
+
+  # --- pushing ------------------------------------------------------------------------------
+
+  @doc """
+  What GitHub is asked when `old` becomes `new` (in `items`) and the plan syncs both
+  ways: the issue's title, body, state, assignee and labels, its blocking issues and
+  sub-issues, its dates on the board, and a milestone's title and date. Each op is
+  `{method, input}` for `HalC2.Plugins.Host.issues/3`, or `{:board, input}` to put the
+  issue on the board before its dates are set.
+  """
+  def pushes(%{"sync" => "twoWay"} = settings, old, new, items) do
+    with %{"repository" => repo, "number" => number} <- new["issue"] || new["milestone"],
+         project when is_binary(project) <- project_id(new) do
+      base = %{"projectId" => project, "repository" => repo, "number" => number}
+
+      if new["issue"],
+        do: issue_pushes(settings, base, old, new, items),
+        else: milestone_pushes(base, old, new)
+    else
+      _ -> []
+    end
+  end
+
+  def pushes(_settings, _old, _new, _items), do: []
+
+  defp issue_pushes(settings, base, old, new, items) do
+    changed = fn key -> old[key] != new[key] end
+
+    patch =
+      %{}
+      |> put_if(changed.("title"), "title", new["title"])
+      |> put_if(changed.("notes"), "body", new["notes"])
+      |> put_if(changed.("owner"), "assignees", List.wrap(new["owner"]))
+      |> put_if(changed.("labels"), "labels", new["labels"])
+      |> Map.merge(state(old["status"], new["status"]))
+
+    ref = fn id ->
+      with %{"issue" => %{} = issue} <- items[id], do: Map.take(issue, ~w(repository number))
+    end
+
+    blocked =
+      for(
+        id <- new["after"] -- old["after"],
+        r = ref.(id),
+        do: {"addBlockedBy", Map.put(base, "blockedBy", r)}
+      ) ++
+        for id <- old["after"] -- new["after"],
+            r = ref.(id),
+            do: {"removeBlockedBy", Map.put(base, "blockedBy", r)}
+
+    me = Map.take(base, ~w(repository number))
+
+    parent =
+      if changed.("parent") do
+        for {method, id} <- [{"removeSubIssue", old["parent"]}, {"addSubIssue", new["parent"]}],
+            r = id && ref.(id),
+            project = project_id(items[id]),
+            do:
+              {method,
+               %{
+                 "projectId" => project,
+                 "repository" => r["repository"],
+                 "number" => r["number"],
+                 "subIssue" => me
+               }}
+      else
+        []
+      end
+
+    [if(patch != %{}, do: {"update", Map.merge(base, patch)})] ++
+      blocked ++ parent ++ board_pushes(settings, base, old, new)
+  end
+
+  defp board_pushes(settings, base, old, new) do
+    with [owner, number] <- String.split(String.trim(settings["board"] || ""), "/") do
+      board = %{
+        "projectId" => base["projectId"],
+        "owner" => owner,
+        "number" => String.to_integer(number)
+      }
+
+      sets =
+        for {key, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}],
+            old[key] != new[key],
+            is_binary(field) and field != "",
+            do: {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]})}
+
+      cond do
+        sets == [] ->
+          []
+
+        new["boardItemId"] ->
+          Enum.map(sets, fn {m, input} -> {m, Map.put(input, "itemId", new["boardItemId"])} end)
+
+        true ->
+          [{:board, Map.put(board, "item", Map.take(base, ~w(repository number)))} | sets]
+      end
+    else
+      _ -> []
+    end
+  end
+
+  defp milestone_pushes(base, old, new) do
+    patch =
+      %{}
+      |> put_if(old["title"] != new["title"], "title", new["title"])
+      |> put_if(old["due"] != new["due"], "dueOn", new["due"])
+
+    if patch == %{}, do: [], else: [{"updateMilestone", Map.merge(base, patch)}]
+  end
+
+  defp state(old, new) when old == new, do: %{}
+  defp state(_old, "done"), do: %{"state" => "closed", "stateReason" => "completed"}
+  defp state(_old, "dropped"), do: %{"state" => "closed", "stateReason" => "not_planned"}
+  defp state(old, _new) when old in ~w(done dropped), do: %{"state" => "open"}
+  defp state(_old, _new), do: %{}
+
+  @doc """
+  Asks GitHub for `ops` in order until one is refused: `{nil, extra}` when all took,
+  `{message, extra}` when one did not. `extra` holds what the task learnt, such as its
+  board item.
+  """
+  def run(ops) do
+    Enum.reduce_while(Enum.reject(ops, &is_nil/1), {nil, %{}}, fn
+      {:board, input}, {nil, extra} ->
+        case Host.issues(@id, "addBoardItem", input) do
+          {:ok, %{"itemId" => item}} -> {:cont, {nil, Map.put(extra, "boardItemId", item)}}
+          {:error, error} -> {:halt, {message(error), extra}}
+        end
+
+      {"setBoardField", input}, {nil, extra} ->
+        input = Map.put_new(input, "itemId", extra["boardItemId"])
+        result(Host.issues(@id, "setBoardField", input), extra)
+
+      {method, input}, {nil, extra} ->
+        result(Host.issues(@id, method, input), extra)
+    end)
+  end
+
+  defp result({:ok, _}, extra), do: {:cont, {nil, extra}}
+  defp result({:error, error}, extra), do: {:halt, {message(error), extra}}
+
+  @doc "`{:ok, issue}`, a new issue in `repository` made of `item`, as a link to it."
+  def create_issue(item, repository) do
+    with {:ok, projects} <- Host.projects(@id),
+         %{} = project <-
+           project_of(projects, repository) ||
+             {:error, "No project on this MC has the repository #{repository}."},
+         input = %{
+           "projectId" => project["id"],
+           "repository" => repository,
+           "title" => item["title"],
+           "body" => item["notes"] || ""
+         },
+         input = if(item["owner"], do: Map.put(input, "assignees", [item["owner"]]), else: input),
+         {:ok, issue} <- Host.issues(@id, "create", input) do
+      {:ok, Map.take(issue, ~w(repository number url state title))}
+    else
+      {:error, error} -> {:error, message(error)}
+    end
+  end
+
+  # --- helpers -----------------------------------------------------------------------------
+
+  defp linked(items, ref),
+    do:
+      Enum.find_value(items, fn {_, item} -> if Plan.same_ref?(item["issue"], ref), do: item end)
+
+  # The project to ask GitHub through: the task's own when it has the repository, or
+  # any project that has it.
+  defp project_id(item) do
+    repo = (item["issue"] || item["milestone"] || %{})["repository"]
+
+    case Host.projects(@id) do
+      {:ok, projects} ->
+        own =
+          Enum.find(projects, &(&1["id"] == item["projectId"] and same?(&1["repository"], repo)))
+
+        (own || project_of(projects, repo) || %{})["id"]
+
+      _ ->
+        nil
+    end
+  end
+
+  defp project_of(projects, repo),
+    do: Enum.find(projects, &(&1["kind"] == "github" and same?(&1["repository"], repo)))
+
+  defp owner?(repository, owner),
+    do:
+      is_binary(repository) and
+        String.downcase(hd(String.split(repository, "/"))) == String.downcase(owner)
+
+  defp same?(a, b) when is_binary(a) and is_binary(b),
+    do: String.downcase(a) == String.downcase(b)
+
+  defp same?(_, _), do: false
+
+  defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
+
+  defp day(value) when is_binary(value) and byte_size(value) >= 10, do: binary_part(value, 0, 10)
+  defp day(_), do: nil
+
+  defp put_if(map, true, key, value), do: Map.put(map, key, value)
+  defp put_if(map, false, _key, _value), do: map
+
+  defp message(%{"message" => message}) when is_binary(message), do: message
+  defp message(message) when is_binary(message), do: message
+  defp message(other), do: inspect(other)
+end
