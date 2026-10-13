@@ -239,9 +239,11 @@ Feature: MC self-update and hot upgrades
 
   @mc
   Scenario: A reload starts the services the MC's new code adds
-    Given MCs started from a checkout whose new code adds a service
+    Given MCs started from a checkout whose new code adds services
     When a developer reloads them after editing code
     Then the new service runs without a restart
+    And a boot task that already ran does not run again
+    And a new service that fails to start is reported as needing a restart
 
   @mc
   Scenario: A developer reloads the MC their checkout runs without naming it

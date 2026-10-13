@@ -469,7 +469,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "MCs started from a checkout whose new code adds a service", context do
+  step "MCs started from a checkout whose new code adds services", context do
     System.delete_env("RELEASE_ROOT")
     ebin = Path.join([Mc.tmp_dir(context.mc, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
     File.mkdir_p!(ebin)
@@ -482,7 +482,14 @@ defmodule HalC2.Steps.Platform.Upgrades do
     [{HalC2.Application, beam}] =
       Code.compile_string("""
       defmodule HalC2.Application do
-        def children, do: [{Registry, keys: :unique, name: HalC2.Test.NewService}]
+        def children,
+          do: [
+            Supervisor.child_spec({Task, fn -> Process.sleep(:infinity) end},
+              id: :search_backfill
+            ),
+            {Registry, keys: :unique, name: HalC2.Test.NewService},
+            %{id: :broken_service, start: {:erlang, :apply, [fn -> {:error, :boom} end, []]}}
+          ]
       end
       """)
 
@@ -493,6 +500,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
     ExUnit.Callbacks.on_exit(fn ->
       :code.del_path(String.to_charlist(ebin))
+      Supervisor.terminate_child(HalC2.Supervisor, :search_backfill)
       Supervisor.terminate_child(HalC2.Supervisor, HalC2.Test.NewService)
       Supervisor.delete_child(HalC2.Supervisor, HalC2.Test.NewService)
     end)
@@ -501,9 +509,26 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "the new service runs without a restart", context do
-    assert {:ok, %{changed: changed, needs_restart: []}} = context.report
+    assert {:ok, %{changed: changed, needs_restart: needs_restart}} = context.report
     assert HalC2.Application in changed
+    refute HalC2.Test.NewService in needs_restart
     assert Process.whereis(HalC2.Test.NewService)
+    context
+  end
+
+  # Its id was in the old application, so the reload never started it; started, it
+  # would still be running.
+  step "a boot task that already ran does not run again", context do
+    refute Enum.any?(
+             Supervisor.which_children(HalC2.Supervisor),
+             &(elem(&1, 0) == :search_backfill)
+           )
+
+    context
+  end
+
+  step "a new service that fails to start is reported as needing a restart", context do
+    assert {:ok, %{needs_restart: [:broken_service]}} = context.report
     context
   end
 
