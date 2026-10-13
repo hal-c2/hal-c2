@@ -49,6 +49,8 @@ defmodule HalC2.Application do
           HalC2.Usage,
           HalC2.Mcp,
           HalC2.Plugins,
+          # The Slack connection plugins borrow, made again from the stored tokens.
+          HalC2.Slack,
           HalC2.Upgrade,
           HalC2.BackgroundPolicy,
           HalC2.EnvironmentThemes,

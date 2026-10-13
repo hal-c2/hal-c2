@@ -347,6 +347,16 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  def handle_info({:hal_c2_slack, mc, status}, state) do
+    case state.by_terminal do
+      %{{:slack, ^mc} => id} ->
+        {:push, Protocol.encode(%{"t" => "slack", "id" => id, "status" => status}), state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:hal_c2_project_clones, mc, clones}, state) do
     case state.by_terminal do
       %{{:project_clones, ^mc} => id} ->
@@ -887,6 +897,21 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  defp subscribe(state, id, {:slack, mc} = shape, _offset) do
+    case remote(mc, HalC2.Slack, :subscribe, [self()]) do
+      {:ok, {:ok, status}} ->
+        {:push, Protocol.encode(%{"t" => "slack", "id" => id, "status" => status}),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, shape, id)
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
   defp subscribe(state, id, {:project_clones, mc} = shape, _offset) do
     case remote(mc, HalC2.ProjectClones, :subscribe, [self()]) do
       {:ok, {:ok, clones}} ->
@@ -1368,6 +1393,10 @@ defmodule HalC2.Web.Socket do
 
       {{:devices, mc} = shape, subs} ->
         :erpc.cast(mc, HalC2.Devices, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+      {{:slack, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.Slack, :unsubscribe, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:project_clones, mc}, subs} ->

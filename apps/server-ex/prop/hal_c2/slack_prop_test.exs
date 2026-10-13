@@ -1,0 +1,370 @@
+defmodule HalC2.SlackPropTest do
+  @moduledoc """
+  `HalC2.Slack`, the MC's one Slack connection, against a model of what it promises: its
+  state (off, connecting, connected, reconnecting, failed), whether it keeps tokens, and
+  what the plugins hear. Slack is `HalC2.Test.FakeSlack`.
+
+  Commands connect with good tokens and with a bot or app token Slack refuses,
+  disconnect, take Slack away and bring it back, drop the Socket Mode connection,
+  restart the service and mention the bot in Slack. After every step the status must
+  match the model and never carry a token, and the secret store must hold tokens
+  exactly when the model keeps them. At the end of a case the plugin granted
+  `slack:read` must have heard every connect and every stop (`slack.status`) and every
+  mention, and the plugin without it nothing.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.Test.FakeSlack
+
+  @moduletag timeout: :infinity
+  @moduletag capture_log: true
+
+  @probe :hal_c2_slack_prop
+  @wait 10_000
+
+  setup do
+    keys = [:bundled_plugins, :settings_check_ms, :slack_backoff_ms, :slack_backoff_max_ms]
+    saved = for key <- keys, do: {key, Application.fetch_env(:hal_c2, key)}
+
+    on_exit(fn ->
+      for {key, value} <- saved do
+        case value do
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
+        end
+      end
+    end)
+  end
+
+  property "the Slack connection connects, fails, drops, comes back and restarts as the model says",
+    numtests: HalC2.Prop.numtests(60),
+    max_size: 30 do
+    forall cmds <- commands(__MODULE__) do
+      trap_exit do
+        start()
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        heard = if result == :ok, do: heard(state), else: :skipped
+        stop()
+
+        (result == :ok and heard == :ok)
+        |> when_fail(
+          IO.puts("""
+          #{HalC2.Prop.report(cmds, history, state, result)}
+          Plugins heard: #{inspect(heard, pretty: true)}
+          """)
+        )
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  defp start do
+    Application.put_env(:hal_c2, :settings_check_ms, nil)
+    Application.put_env(:hal_c2, :bundled_plugins, [])
+    Application.put_env(:hal_c2, :slack_backoff_ms, 1)
+    Application.put_env(:hal_c2, :slack_backoff_max_ms, 20)
+    HalC2.Prop.scratch_home("slack")
+    nonce = System.unique_integer([:positive])
+    Process.put({__MODULE__, :nonce}, nonce)
+    Process.register(self(), @probe)
+    Process.put({__MODULE__, :fake}, FakeSlack.start_unsupervised())
+    write_listener("heard", ["slack:read"], nonce)
+    write_listener("deaf", [], nonce)
+    HalC2.Prop.start_services([HalC2.Settings, HalC2.Plugins, HalC2.Slack])
+
+    for {id, permissions} <- [{"heard", ["slack:read"]}, {"deaf", []}] do
+      {:ok, _} =
+        HalC2.Plugins.handle("enable", %{"id" => id, "acceptPermissions" => permissions})
+    end
+  end
+
+  defp stop do
+    HalC2.Prop.stop_services()
+    if stop = Process.delete({__MODULE__, :fake}), do: stop.()
+    Process.unregister(@probe)
+  end
+
+  # A plugin that tells the case every event it is handed, marked with the case's nonce
+  # so a late event of an earlier case is not counted.
+  defp write_listener(id, permissions, nonce) do
+    dir = Path.join([HalC2.Paths.data_dir(), "plugins", id])
+    File.mkdir_p!(Path.join(dir, "mc"))
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{
+        "id" => id,
+        "name" => id,
+        "version" => "1.0.0",
+        "apiVersion" => 1,
+        "description" => "Hears Slack.",
+        "permissions" => for(p <- permissions, do: %{"id" => p, "reason" => "The property."})
+      })
+    )
+
+    File.write!(Path.join(dir, "mc/listener.ex"), """
+    defmodule HalC2PropSlackListener#{Macro.camelize(id)} do
+      @behaviour HalC2.Plugins.Extension
+
+      @impl true
+      def call(method, _input, _context), do: {:error, "no method " <> method}
+
+      @impl true
+      def handle_event(event, context),
+        do: send(#{inspect(@probe)}, {:slack_event, #{nonce}, context.id, event})
+    end
+    """)
+  end
+
+  # --- model ------------------------------------------------------------------------
+
+  # phase: what the status says. stored: whether it keeps tokens. up: whether Slack
+  # answers. ups and downs: the slack.status events the granted plugin is owed.
+  # mentions: the mentions it is owed.
+  def initial_state,
+    do: %{phase: :off, stored: false, up: true, ups: 0, downs: 0, mentions: 0}
+
+  def command(state) do
+    frequency(
+      [
+        {4, {:call, __MODULE__, :connect, [:good]}},
+        {1, {:call, __MODULE__, :connect, [:bad_bot]}},
+        {1, {:call, __MODULE__, :connect, [:bad_app]}},
+        {2, {:call, __MODULE__, :disconnect, []}},
+        {2, {:call, __MODULE__, :outage, []}},
+        {2, {:call, __MODULE__, :restore, [state.phase]}},
+        {2, {:call, __MODULE__, :restart, [state.stored, state.up]}}
+      ] ++
+        if state.phase == :connected do
+          [
+            {6, {:call, __MODULE__, :drop, [state.up]}},
+            {4, {:call, __MODULE__, :mention, []}}
+          ]
+        else
+          []
+        end
+    )
+  end
+
+  def precondition(state, {:call, _, :drop, _}), do: state.phase == :connected
+  def precondition(state, {:call, _, :mention, _}), do: state.phase == :connected
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :connect, [:good]}) do
+    if state.up,
+      do: state |> walk([:connecting, :connected]) |> Map.put(:stored, true),
+      else: state |> walk([:connecting, :failed]) |> Map.put(:stored, false)
+  end
+
+  def next_state(state, _result, {:call, _, :connect, [_bad]}),
+    do: state |> walk([:connecting, :failed]) |> Map.put(:stored, false)
+
+  def next_state(state, _result, {:call, _, :disconnect, []}),
+    do: state |> walk([:off]) |> Map.put(:stored, false)
+
+  def next_state(state, _result, {:call, _, :outage, []}), do: %{state | up: false}
+
+  def next_state(state, _result, {:call, _, :restore, _}) do
+    state = %{state | up: true}
+    if state.phase in [:connecting, :reconnecting], do: walk(state, [:connected]), else: state
+  end
+
+  def next_state(state, _result, {:call, _, :drop, _}) do
+    state = walk(state, [:reconnecting])
+    if state.up, do: walk(state, [:connected]), else: state
+  end
+
+  # A service that stops says nothing; the one that starts connects when it keeps tokens.
+  def next_state(state, _result, {:call, _, :restart, _}) do
+    state = %{state | phase: if(state.stored, do: :connecting, else: :off)}
+    if state.stored and state.up, do: walk(state, [:connected]), else: state
+  end
+
+  def next_state(state, _result, {:call, _, :mention, []}),
+    do: %{state | mentions: state.mentions + 1}
+
+  # Moves through `phases`, owing the plugins an event for every connect and every stop.
+  defp walk(state, phases) do
+    Enum.reduce(phases, state, fn phase, state ->
+      cond do
+        state.phase != :connected and phase == :connected ->
+          %{state | phase: phase, ups: state.ups + 1}
+
+        state.phase == :connected and phase != :connected ->
+          %{state | phase: phase, downs: state.downs + 1}
+
+        true ->
+          %{state | phase: phase}
+      end
+    end)
+  end
+
+  def postcondition(state, call, result) do
+    model = next_state(state, result, call)
+    status = HalC2.Slack.status()
+
+    replied?(state, call, result) and
+      status["state"] == Atom.to_string(model.phase) and
+      status["tokensSet"] == model.stored and
+      status["team"] == "acme" == (model.phase == :connected) and
+      File.exists?(secret()) == model.stored and
+      not leaks?([status, result])
+  end
+
+  defp replied?(state, {:call, _, :connect, [:good]}, result) do
+    if state.up,
+      do: match?({:ok, %{"state" => "connected", "team" => "acme", "bot" => "HAL"}}, result),
+      else: result == {:error, "Could not reach Slack: HTTP 503"}
+  end
+
+  defp replied?(state, {:call, _, :connect, [bad]}, result) do
+    token = if bad == :bad_bot, do: "bot", else: "app"
+
+    if state.up,
+      do: result == {:error, "Slack refused the #{token} token: invalid_auth"},
+      else: result == {:error, "Could not reach Slack: HTTP 503"}
+  end
+
+  defp replied?(_state, {:call, _, :disconnect, []}, result),
+    do: match?({:ok, %{"state" => "off", "tokensSet" => false}}, result)
+
+  defp replied?(_state, {:call, _, :mention, []}, result), do: result == :heard
+  defp replied?(_state, _call, _result), do: true
+
+  defp leaks?(payloads) do
+    text = inspect(payloads)
+    Enum.any?([FakeSlack.bot_token(), FakeSlack.app_token(), "xoxb-", "xapp-"], &(text =~ &1))
+  end
+
+  defp secret, do: Path.join([HalC2.Paths.data_dir(), "secrets", "slack.bin"])
+
+  # --- commands ---------------------------------------------------------------------
+
+  def connect(:good),
+    do: HalC2.Slack.connect(tokens(FakeSlack.bot_token(), FakeSlack.app_token()))
+
+  def connect(:bad_bot), do: HalC2.Slack.connect(tokens("xoxb-revoked", FakeSlack.app_token()))
+  def connect(:bad_app), do: HalC2.Slack.connect(tokens(FakeSlack.bot_token(), "xapp-revoked"))
+
+  defp tokens(bot, app), do: %{"botToken" => bot, "appToken" => app}
+
+  def disconnect, do: HalC2.Slack.disconnect()
+
+  def outage, do: FakeSlack.available(false)
+
+  def restore(phase) do
+    FakeSlack.available(true)
+    if phase in [:connecting, :reconnecting], do: await("connected")
+    :ok
+  end
+
+  def drop(up) do
+    watch()
+    FakeSlack.drop()
+    receive_state("reconnecting")
+    if up, do: receive_state("connected")
+    :ok
+  end
+
+  def restart(stored, up) do
+    HalC2.Prop.restart_service(HalC2.Slack)
+    if stored and up, do: await("connected")
+    :ok
+  end
+
+  def mention do
+    ts = "1800000000.#{System.unique_integer([:positive])}"
+
+    FakeSlack.event(%{
+      "type" => "app_mention",
+      "channel" => "CPLAN",
+      "user" => "UDANA",
+      "text" => "<@UHAL> what is late?",
+      "ts" => ts
+    })
+
+    nonce = Process.get({__MODULE__, :nonce})
+
+    receive do
+      {:slack_event, ^nonce, "heard", %{"type" => "slack.mention", "ts" => ^ts}} -> :heard
+    after
+      @wait -> :not_heard
+    end
+  end
+
+  # Waits until the status is `state`: now, or in a later push to this watcher.
+  defp await(state) do
+    case watch() do
+      %{"state" => ^state} -> :ok
+      _ -> receive_state(state)
+    end
+  end
+
+  # Watches afresh, dropping what an earlier watch was told; answers the status now.
+  defp watch do
+    HalC2.Slack.unsubscribe(self())
+    flush()
+    {:ok, status} = HalC2.Slack.subscribe(self())
+    status
+  end
+
+  defp flush do
+    receive do
+      {:hal_c2_slack, _, _} -> flush()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp receive_state(state) do
+    receive do
+      {:hal_c2_slack, _, %{"state" => ^state}} -> :ok
+      {:hal_c2_slack, _, _} -> receive_state(state)
+    after
+      @wait -> exit({:slack_never_became, state})
+    end
+  end
+
+  # --- what the plugins heard -------------------------------------------------------
+
+  # The granted plugin's slack.status events, once every one the model owes has come; the
+  # mentions were waited on as they happened. Nothing may reach the other plugin.
+  defp heard(model) do
+    nonce = Process.get({__MODULE__, :nonce})
+    owed = %{true => model.ups, false => model.downs}
+    got = gather(nonce, owed, %{true => 0, false => 0, deaf: 0})
+
+    if got == Map.put(owed, :deaf, 0), do: :ok, else: %{owed: owed, got: got}
+  end
+
+  defp gather(nonce, owed, got) do
+    if Map.take(got, [true, false]) == owed do
+      drain(nonce, got)
+    else
+      receive do
+        {:slack_event, ^nonce, id, event} -> gather(nonce, owed, count(got, id, event))
+      after
+        @wait -> drain(nonce, got)
+      end
+    end
+  end
+
+  # What has already arrived beyond what was owed.
+  defp drain(nonce, got) do
+    receive do
+      {:slack_event, ^nonce, id, event} -> drain(nonce, count(got, id, event))
+    after
+      0 -> got
+    end
+  end
+
+  defp count(got, "deaf", _event), do: Map.update!(got, :deaf, &(&1 + 1))
+
+  defp count(got, "heard", %{"type" => "slack.status", "connected" => connected}),
+    do: Map.update!(got, connected, &(&1 + 1))
+
+  defp count(got, "heard", _mention), do: got
+end

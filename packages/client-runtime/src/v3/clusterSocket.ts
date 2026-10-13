@@ -48,6 +48,8 @@ export type ResourceTelemetryShape = { readonly type: "resourceTelemetry"; reado
 export type LocalServersShape = { readonly type: "localServers"; readonly mc: string };
 /** An MC's simulators, emulators and open device sessions, whole on every change. */
 export type DevicesShape = { readonly type: "devices"; readonly mc: string };
+/** An MC's Slack connection (`SlackStatus`), at once and on every change. */
+export type SlackShape = { readonly type: "slack"; readonly mc: string };
 /** This client as an MC's browser automation host; the MC ends it when it drops the host. */
 export type PreviewAutomationShape = {
   readonly type: "previewAutomation";
@@ -83,6 +85,7 @@ export type Shape =
   | ResourceTelemetryShape
   | LocalServersShape
   | DevicesShape
+  | SlackShape
   | PreviewAutomationShape
   | PullRequestRefreshesShape
   | GitActionShape

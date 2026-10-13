@@ -471,6 +471,24 @@ defmodule HalC2.Plugins do
     :ok
   end
 
+  @doc """
+  Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension
+  granted `slack:read`, each in a process of its own; answers the ids it went to.
+  """
+  def slack_event(%{"type" => type} = event) do
+    for {id, module, settings} <- running("extension"),
+        "slack:read" in granted(id),
+        function_exported?(module, :handle_event, 2) do
+      Task.start(fn ->
+        with {:error, message} <-
+               safely(fn -> module.handle_event(event, %{id: id, settings: settings}) end),
+             do: Logger.warning("plugin #{id} failed handling #{type}: #{text(message)}")
+      end)
+
+      id
+    end
+  end
+
   defp thread(thread_id) do
     state = HalC2.Streams.state(thread_id)
     HalC2.StreamState.get(state, "thread")[thread_id] || %{}

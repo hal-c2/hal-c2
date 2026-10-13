@@ -88,3 +88,25 @@ What a running plugin adds reaches every app connected to that machine:
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
+
+## Connect Slack for plugins
+
+Plugins on an MC reach Slack through that MC's one Slack connection, and only
+those you allowed to read or write Slack when you turned them on. To connect it:
+
+1. In **Settings → Integrations → Slack**, choose the environment and click
+   **Copy app manifest**.
+2. At [api.slack.com/apps](https://api.slack.com/apps), create an app from that
+   manifest and install it to your workspace. It uses Socket Mode, so the MC
+   needs no public address.
+3. Under the app's **Basic Information**, add an app-level token with the
+   `connections:write` scope.
+4. Paste the bot token (`xoxb-…`) and the app token (`xapp-…`) into
+   **Settings → Integrations → Slack** and click **Connect**.
+
+The MC keeps the tokens in its secret store and does not show them again;
+**Disconnect** forgets them. The connection comes back on its own after a
+network drop or a restart. Invite the bot to the channels a plugin should post
+in. Each environment needs a Slack app of its own: two MCs on one app would
+split its events. A plugin that answers a slash command names it in its
+settings; add that command to your Slack app yourself.

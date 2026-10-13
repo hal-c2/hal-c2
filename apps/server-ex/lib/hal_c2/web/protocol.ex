@@ -38,6 +38,8 @@ defmodule HalC2.Web.Protocol do
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
       open device sessions (`DeviceServiceState`), then the whole state on every change
+    * `{"type": "slack", "mc": n}`: that MC's Slack connection (`SlackStatus`), then
+      again on every change
     * `{"type": "projectClones", "mc": n}`: that MC's project clones in
       progress (`ProjectCloneSnapshot[]`), then the whole list on every change
     * `{"type": "scheduledTasks", "mc": n}`: that MC's scheduled tasks, then
@@ -127,6 +129,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "authAccess", "id", "event"} (AuthAccessStreamEvent)
       {"t": "localServers", "id", "list"} (DiscoveredLocalServerList)
       {"t": "devices", "id", "state"} (DeviceServiceState)
+      {"t": "slack", "id", "status"} (SlackStatus)
       {"t": "pullRequestRefreshes", "id", "revision"} (non-negative integer)
       {"t": "plugins", "id", "plugins"} (PluginEntry[])
       {"t": "plugin", "id", "topic", "value"} (what the plugin published)
@@ -180,7 +183,7 @@ defmodule HalC2.Web.Protocol do
 
   # The shapes a client may name by environment. The rest are about the MC a client
   # talks to (shell, authAccess) or administer one MC's host (serverUpdate,
-  # relayClientInstall, resourceTelemetry, localServers, devices, preview,
+  # relayClientInstall, resourceTelemetry, localServers, devices, slack, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
   # and are asked of that MC by name. projectClones is routed because a client
   # starts a clone on any environment with a routed rpc and follows it there. A
@@ -310,6 +313,10 @@ defmodule HalC2.Web.Protocol do
 
   defp decode_shape(%{"type" => "devices", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:devices, mc}}
+  end
+
+  defp decode_shape(%{"type" => "slack", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:slack, mc}}
   end
 
   defp decode_shape(%{"type" => "projectClones", "mc" => mc}, mcs) do
