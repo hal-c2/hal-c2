@@ -197,23 +197,23 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      failed = after_hot_update(hot, services)
-      {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ failed)}
+      pending = after_hot_update(hot, services)
+      {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
     end
   end
 
   # A hot update stands in for a restart, so it takes in what the MC otherwise looks
   # at only at boot: services new in the application, plugins put in or changed in
   # the plugins directory, and the GitHub CLI's sign-in.
-  # `services` are the ids the application listed before the update; it returns the
-  # ones new in it that failed to start.
+  # `services` are the specs the application listed before the update; it returns
+  # what still needs a restart (`start_new_services/1`).
   defp after_hot_update(beams, services) do
-    failed =
+    pending =
       if List.keymember?(beams, HalC2.Application, 0), do: start_new_services(services), else: []
 
     if Process.whereis(HalC2.Plugins), do: HalC2.Plugins.rescan()
     if Application.get_env(:hal_c2, :start_mc), do: HalC2.Git.use_gh_for_github()
-    failed
+    pending
   end
 
   @doc "The outcome of the last update this MC finished, for `ready` events."
@@ -526,7 +526,7 @@ defmodule HalC2.Upgrade do
     with {:ok, _report} <- HalC2.Hot.reload(beams) do
       case after_hot_update(beams, services) do
         [] -> :ok
-        failed -> {:error, {:services_not_started, failed}}
+        pending -> {:error, {:restart_for, pending}}
       end
     end
   end
@@ -580,25 +580,38 @@ defmodule HalC2.Upgrade do
     for {mod, bin} = beam <- beams(bundle), loaded_md5(mod) != beam_md5(bin), do: beam
   end
 
-  # The ids of the services the loaded application lists, or nil when it predates
-  # `children/0`.
+  # The specs of the services the loaded application lists, or nil when it predates
+  # `children/0`. Its tasks name functions (`&Mod.fun/0`), which compare equal across
+  # versions, so an unchanged spec stays equal.
   defp services do
     if function_exported?(HalC2.Application, :children, 0),
-      do: for(child <- HalC2.Application.children(), do: Supervisor.child_spec(child, []).id)
+      do: for(child <- HalC2.Application.children(), do: Supervisor.child_spec(child, []))
   end
 
   # Services the new application lists and the old one did not start, after the ones
   # already there; the boot tasks that ran and ended are not new, so they do not run
-  # again. Services it no longer lists, and changes to ones it runs, wait for a
-  # restart, as does everything when the old application did not say what it ran.
-  defp start_new_services(nil), do: []
+  # again. Returns what needs a restart: services that failed to start, ones whose
+  # spec changed or that are no longer listed, or the application itself when the old
+  # one did not say what it ran.
+  defp start_new_services(nil), do: [HalC2.Application]
 
-  defp start_new_services(services) do
-    for child <- HalC2.Application.children(),
-        spec = Supervisor.child_spec(child, []),
-        spec.id not in services,
-        not started?(Supervisor.start_child(HalC2.Supervisor, spec)),
-        do: spec.id
+  defp start_new_services(old) do
+    new = for child <- HalC2.Application.children(), do: Supervisor.child_spec(child, [])
+    old_by_id = Map.new(old, &{&1.id, &1})
+    new_ids = MapSet.new(new, & &1.id)
+
+    changed =
+      for spec <- new, Map.has_key?(old_by_id, spec.id), old_by_id[spec.id] != spec, do: spec.id
+
+    removed = for spec <- old, spec.id not in new_ids, do: spec.id
+
+    failed =
+      for spec <- new,
+          not Map.has_key?(old_by_id, spec.id),
+          not started?(Supervisor.start_child(HalC2.Supervisor, spec)),
+          do: spec.id
+
+    changed ++ removed ++ failed
   end
 
   defp started?({:ok, _pid}), do: true

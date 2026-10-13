@@ -516,8 +516,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  # Its id was in the old application, so the reload never started it; started, it
-  # would still be running.
+  # Its id was in the old application, so the reload never started it, though its spec
+  # changed; started, it would still be running.
   step "a boot task that already ran does not run again", context do
     refute Enum.any?(
              Supervisor.which_children(HalC2.Supervisor),
@@ -528,7 +528,16 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a new service that fails to start is reported as needing a restart", context do
-    assert {:ok, %{needs_restart: [:broken_service]}} = context.report
+    assert {:ok, %{needs_restart: needs_restart}} = context.report
+    assert :broken_service in needs_restart
+    context
+  end
+
+  # The new code's backfill task is another function, and it lists no store.
+  step "services it changed or no longer lists are reported as needing a restart", context do
+    assert {:ok, %{needs_restart: needs_restart}} = context.report
+    assert :search_backfill in needs_restart
+    assert HalC2.Store in needs_restart
     context
   end
 
