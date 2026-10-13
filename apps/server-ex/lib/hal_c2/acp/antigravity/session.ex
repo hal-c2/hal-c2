@@ -31,6 +31,9 @@ defmodule HalC2.Acp.Antigravity.Session do
     end
   end
 
+  @doc "The stderr lines a thread's agent connection passes on: Antigravity's sign-in link."
+  def stderr_prefix(instance), do: if(antigravity?(instance), do: Antigravity.auth_prefix())
+
   @doc "Authenticates a new connection with the instance's method: `:ok` or `{:error, message}`."
   def authenticate(conn, instance) do
     if antigravity?(instance) do

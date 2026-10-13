@@ -396,6 +396,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  step "the Antigravity runtime is an older release that prints its sign-in link on standard output",
+       context do
+    assert {:ok, %{source: "managed"}} = Antigravity.resolve(nil)
+    FakeAcp.configure(context, &Map.put(&1, "authOnStdout", true))
+    context
+  end
+
   step "the user signs in with a Google account and finishes in the browser", context do
     context = start_sign_in(context)
     assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"
@@ -1012,6 +1019,31 @@ defmodule HalC2.Steps.Providers.Antigravity do
     assert inspect(item) =~ "provider_native"
     assert inspect(item) =~ "Check the tests"
     refute Enum.any?(items, &(&1["type"] == "dynamic_tool"))
+    context
+  end
+
+  step "the saved Google login of the Antigravity instance expired", context do
+    context = signed_in(context)
+    File.rm!(Antigravity.token_path(@instance))
+    context
+  end
+
+  step "the user sends a message in an Antigravity thread", context do
+    context |> FakeAcp.thread("Work") |> FakeAcp.send_message("hello")
+  end
+
+  step "the turn fails asking the user to sign in from Settings", context do
+    state = FakeAcp.await_run(context, "failed")
+    assert last_error(state) =~ Antigravity.sign_in_required()
+    assert FakeAcp.received(context, "session/prompt") == []
+    context
+  end
+
+  step "the thread's Antigravity agent is stopped and the instance shows as signed out",
+       context do
+    assert %{conn: nil, session_id: nil} = :sys.get_state(runtime(context))
+    assert Antigravity.sessions(@instance) == []
+    assert Antigravity.account(@instance) == nil
     context
   end
 

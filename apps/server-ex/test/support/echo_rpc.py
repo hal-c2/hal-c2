@@ -1,5 +1,6 @@
 # Fake JSON-RPC peer for tests. Echoes requests; "ask" round-trips a server->client
-# request first; "notify_me" emits a notification before replying.
+# request first; "notify_me" emits a notification before replying; "stderr" writes
+# params["lines"] to stderr before replying.
 import json, sys
 
 def send(msg):
@@ -15,6 +16,9 @@ for line in sys.stdin:
         continue
     if method == "notify_me":
         send({"method": "progress", "params": params})
+    if method == "stderr":
+        sys.stderr.write("".join(l + "\n" for l in params["lines"]))
+        sys.stderr.flush()
     if method == "ask":
         send({"id": "srv-1", "method": "approve", "params": params})
         answer = json.loads(sys.stdin.readline())

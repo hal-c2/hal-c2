@@ -35,4 +35,18 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     System.cmd("kill", [to_string(Connection.os_pid(conn))])
     assert_receive {:DOWN, ^ref, :process, ^conn, _}, 2_000
   end
+
+  test "passes on only the stderr lines that start with the prefix" do
+    conn =
+      start_supervised!(
+        {Connection, cmd: ["python3", "-u", @peer], handler: self(), stderr_prefix: "Open: "},
+        id: :stderr
+      )
+
+    lines = ["token=secret", "Open: https://one\r", "Open:no-space", "Open: https://two"]
+    assert {:ok, _} = Connection.call(conn, "stderr", %{"lines" => lines})
+    assert_receive {:json_rpc, ^conn, {:invalid, "Open: https://one"}}, 2_000
+    assert_receive {:json_rpc, ^conn, {:invalid, "Open: https://two"}}, 2_000
+    refute_received {:json_rpc, ^conn, {:invalid, _}}
+  end
 end

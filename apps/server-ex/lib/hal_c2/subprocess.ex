@@ -9,6 +9,11 @@ defmodule HalC2.Subprocess do
   stdout closes the owner receives `{:subprocess_eof, reader}`; the exit status then
   arrives through Exile as `{exit_ref, {:ok, status}}`.
 
+  Stderr is discarded unless `:stderr_prefix` is given: then another reader drains
+  it and sends the owner only the lines that start with the prefix, as
+  `{:subprocess_stderr, reader, lines}`. The rest never leaves the reader, since an
+  agent's stderr can carry credentials.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
@@ -21,14 +26,28 @@ defmodule HalC2.Subprocess do
   @type t :: %__MODULE__{proc: Proc.t(), reader: pid}
 
   @read_size 65_535
+  # A stderr line longer than this is dropped unread; prefixed lines are short.
+  @max_stderr_line 65_536
 
   @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
   def start(cmd, opts \\ []) do
-    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, :disable)) do
+    {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
+    stderr = if prefix, do: :consume, else: :disable
+
+    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
       send(reader, :owned)
+
+      if prefix do
+        # Unlinked: stderr closing on its own must not stop the owner. The reader
+        # dies with the program, when its read fails.
+        errors = spawn(fn -> stderr_init(proc, owner, prefix) end)
+        :ok = Proc.change_pipe_owner(proc, :stderr, errors)
+        send(errors, :owned)
+      end
+
       {:ok, %__MODULE__{proc: proc, reader: reader}}
     end
   end
@@ -78,6 +97,61 @@ defmodule HalC2.Subprocess do
         if partial != "", do: send(owner, {:subprocess_lines, self(), [partial]})
         send(owner, {:subprocess_eof, self()})
     end
+  end
+
+  @doc false
+  def stderr_init(proc, owner, prefix) do
+    receive do: (:owned -> :ok)
+    __MODULE__.stderr_loop(proc, owner, prefix, "")
+  end
+
+  @doc false
+  def stderr_loop(proc, owner, prefix, partial) do
+    case Proc.read_stderr(proc, @read_size) do
+      {:ok, data} ->
+        {lines, rest} = prefixed_lines(partial, IO.iodata_to_binary(data), prefix)
+        if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
+        __MODULE__.stderr_loop(proc, owner, prefix, rest)
+
+      _eof_or_error ->
+        {lines, _} = prefixed_lines(partial, "\n", prefix)
+        if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
+    end
+  catch
+    :exit, _ -> :ok
+  end
+
+  @doc """
+  Splits `partial <> data` into whole lines and keeps those that start with
+  `prefix`, without a trailing `\\r`: `{lines, rest}`. A line that outgrows the
+  limit is dropped, and so is the rest of it as it arrives (`rest` is then `:skip`
+  until the next newline).
+  """
+  def prefixed_lines(partial, data, prefix) do
+    case :binary.split(data, "\n", [:global]) do
+      [tail] ->
+        {[], grow(partial, tail)}
+
+      [head | parts] ->
+        {middle, [tail]} = Enum.split(parts, -1)
+        first = if partial == :skip, do: [], else: [partial <> head]
+
+        lines =
+          for line <- first ++ middle,
+              byte_size(line) <= @max_stderr_line,
+              String.starts_with?(line, prefix),
+              do: line |> String.trim_trailing("\r") |> :binary.copy()
+
+        {lines, grow("", tail)}
+    end
+  end
+
+  defp grow(:skip, _data), do: :skip
+
+  defp grow(partial, data) do
+    if byte_size(partial) + byte_size(data) > @max_stderr_line,
+      do: :skip,
+      else: :binary.copy(partial <> data)
   end
 
   # Lines are copied so a retained line never pins the whole read chunk.
