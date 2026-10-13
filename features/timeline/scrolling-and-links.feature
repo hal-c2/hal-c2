@@ -244,16 +244,20 @@ Feature: Moving through a thread and following links
 
   @desktop
   Scenario Outline: A link's menu in a reply opens or copies it
-    Given the agent's reply links to "<link>"
+    Given "src/cart.ts" has 40 lines
+    And the agent's reply links to "<link>"
     When the user opens the menu on the link
     Then the menu offers "<open>" and "<copy>"
     When the user chooses "<copy>" from the link's menu
-    Then "<link>" is on the clipboard
+    Then "<copied>" is on the clipboard
+    When the user opens the menu on the link
+    And the user chooses "<open>" from the link's menu
+    Then <opened>
 
     Examples:
-      | link                     | open      | copy      |
-      | https://example.com/docs | Open link | Copy link |
-      | src/cart.ts              | Open file | Copy path |
+      | link                     | open      | copy      | copied                   | opened                                                  |
+      | https://example.com/docs | Open link | Copy link | https://example.com/docs | "https://example.com/docs" opens in the system browser  |
+      | src/cart.ts:12:3         | Open file | Copy path | src/cart.ts              | the Files tab shows "src/cart.ts" at line 12            |
 
   @desktop @backlog
   Scenario Outline: The user chooses where a web link opens

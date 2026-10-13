@@ -6,6 +6,8 @@
 
 #include "Brick.h"
 #include "Harness.h"
+#include "RightPanelController.h"
+#include "WorkspaceFiles.h"
 #include "World.h"
 
 namespace {
@@ -52,6 +54,16 @@ const Steps steps([] {
       }
     }
     fail(QStringLiteral("the menu offers %1").arg(offered(world).join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("%1 opens in the system browser").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(show(QVariant::fromValue(world.openedUrls))));
+  });
+  step(QStringLiteral("the Files tab shows %1 at line (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    RightPanelController* panel = world.native().controller<RightPanelController>();
+    const WorkspaceFiles* files = panel->files();
+    world.waitFor([&] { return files->fileStatus() != QLatin1String("loading"); }, QStringLiteral("the file to be read"));
+    expect(panel->activeTab() == QLatin1String("files") && files->openPath() == c[0] && files->revealLine() == c[1].toInt(),
+           QStringLiteral("the %1 tab shows \"%2\" at line %3").arg(panel->activeTab(), files->openPath()).arg(files->revealLine()));
   });
   step(QStringLiteral("nothing is opened"), [](World& world, const Captures&, const Table&) {
     QStringList opened;
