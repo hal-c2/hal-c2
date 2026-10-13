@@ -532,9 +532,9 @@ defmodule HalC2Plugins.Planner do
   end
 
   defp effects(effects, settings) do
-    for {id, ops} <- Map.get(effects, :pushes, []) do
+    for {id, push, ops} <- Map.get(effects, :pushes, []) do
       {error, extra} = Sync.run(ops)
-      server({:pushed, id, error, extra})
+      server({:pushed, id, push, error, extra})
     end
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
@@ -620,7 +620,8 @@ defmodule HalC2Plugins.Planner do
        slack: nil,
        slack_at: nil,
        polling: nil,
-       published: %{}
+       published: %{},
+       pushing: %{}
      }), {:continue, :announce}}
   end
 
@@ -830,7 +831,7 @@ defmodule HalC2Plugins.Planner do
       %{"status" => "proposed"} = run ->
         before = state.items
         {state, posts} = apply_run(state, run)
-        pushes = pushes(state.settings, before, state.items)
+        {pushes, state} = pushes(state, before, state.items)
         state = changed(state)
         {:reply, {:ok, %{"run" => state.runs[id]}, %{pushes: pushes, posts: posts}}, state}
 
@@ -874,15 +875,21 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  # How a push to GitHub went; a task removed since is left alone.
-  def handle_call({:pushed, id, error, extra}, _from, state) do
+  # How a push to GitHub went; a task removed since is left alone. Pushes run in their
+  # callers, so they can finish out of order: only the task's latest push says whether
+  # it synced.
+  def handle_call({:pushed, id, push, error, extra}, _from, state) do
+    latest? = state.pushing[id] == push
+    state = if latest?, do: %{state | pushing: Map.delete(state.pushing, id)}, else: state
+
     case state.items[id] do
       nil ->
         {:reply, :ok, state}
 
       item ->
-        {:reply, :ok,
-         changed(put_in(state.items[id], item |> Map.merge(extra) |> Map.put("syncError", error)))}
+        item = Map.merge(item, extra)
+        item = if latest?, do: Map.put(item, "syncError", error), else: item
+        {:reply, :ok, changed(put_in(state.items[id], item))}
     end
   end
 
@@ -1007,7 +1014,7 @@ defmodule HalC2Plugins.Planner do
                 else: item
 
             items = Map.put(items, id, item)
-            pushes = pushes(state.settings, state.items, items)
+            {pushes, state} = pushes(state, state.items, items)
             {:reply, {:ok, item, %{pushes: pushes}}, changed(%{state | items: items})}
 
           error ->
@@ -1391,7 +1398,7 @@ defmodule HalC2Plugins.Planner do
       run["apply"] == "apply" ->
         before = state.items
         {state, posts} = apply_run(state, run)
-        pushes = pushes(state.settings, before, state.items)
+        {pushes, state} = pushes(state, before, state.items)
         state = state |> pump() |> changed()
         {state, state.runs[run["id"]], %{pushes: pushes, posts: posts}}
 
@@ -1446,17 +1453,23 @@ defmodule HalC2Plugins.Planner do
 
   # A change to items, answered with what to push to GitHub for the tasks it changed.
   defp edit(state, items, reply) do
-    pushes = pushes(state.settings, state.items, items)
+    {pushes, state} = pushes(state, state.items, items)
     {:reply, {:ok, reply, %{pushes: pushes}}, changed(%{state | items: items})}
   end
 
-  defp pushes(settings, before, items) do
-    for {id, new} <- items,
-        old = before[id],
-        old != new,
-        ops = Sync.pushes(settings, old, new, items),
-        ops != [],
-        do: {id, ops}
+  # What to push for the tasks `items` changed from `before`, each push with a token the
+  # state keeps as its task's latest.
+  defp pushes(state, before, items) do
+    pushes =
+      for {id, new} <- items,
+          old = before[id],
+          old != new,
+          ops = Sync.pushes(state.settings, old, new, items),
+          ops != [],
+          do: {id, System.unique_integer([:monotonic]), ops}
+
+    latest = Map.new(pushes, fn {id, push, _} -> {id, push} end)
+    {pushes, %{state | pushing: Map.merge(state.pushing, latest)}}
   end
 
   defp put_run(state, run), do: put_in(state.runs[run["id"]], run)

@@ -1217,6 +1217,53 @@ defmodule HalC2.Steps.Planning.Planner do
     update_task(context, number, %{"after" => [task_of(plan!(context), other)["id"]]})
   end
 
+  # The rename to `title` waits on a fifo until the scenario answers it, then is refused.
+  step "GitHub answers renaming \#{int} to {string} late, refusing it",
+       %{args: [number, title]} = context do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "run" => "cat '#{gate}' > /dev/null",
+        "exit" => 1,
+        "stderr" => "HTTP 422: Validation Failed\n"
+      }
+    ])
+    |> Map.put(:gh_gate, gate)
+  end
+
+  step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
+       %{args: [number, first, second]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    %{mc: mc} = context
+    call = %{"id" => @id, "method" => "updateItem"}
+    input = %{"id" => task["id"], "fields" => %{"title" => first}}
+
+    # The first rename waits on GitHub in a client of its own, as another window's would.
+    renaming =
+      Task.async(fn ->
+        Mc.call(Mc.connect(mc), mc.environment, "plugins.call", Map.put(call, "input", input))
+      end)
+
+    {_, context} = await_topic(context, "plan", &item(&1, first))
+    context = update_task(context, number, %{"title" => second})
+    File.write!(context.gh_gate, "answer")
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "\#{int}'s task is named {string} and marked as synced",
+       %{args: [number, title]} = context do
+    task = task_of(plan!(context), number)
+    assert task["title"] == title
+    refute task["syncError"], "##{number}'s task is marked as not synced: #{task["syncError"]}"
+    context
+  end
+
   step "GitHub is not asked to change \#{int}", %{args: [number]} = context do
     assert GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}") == []
     assert GitHubIssues.graphql_calls(context, "addBlockedBy(input") == []

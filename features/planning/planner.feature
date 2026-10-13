@@ -492,6 +492,13 @@ Feature: Planner
       Then #7's task is named "Rate limiting" and marked as not synced, with GitHub's reason
 
     @mc
+    Scenario: Only the latest change to a task says whether it synced
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, refusing it
+      When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
+      Then #7's task is named "Rate limits" and marked as synced
+
+    @mc
     Scenario: The user makes a task into an issue
       Given the plan has "Docs" in "api"
       When the user creates an issue for "Docs" in "acme/api"
