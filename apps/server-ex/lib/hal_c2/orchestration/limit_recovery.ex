@@ -3,7 +3,8 @@ defmodule HalC2.Orchestration.LimitRecovery do
   Resumes threads a provider stopped on a usage limit. A thread whose latest run failed on a limit with a
   known reset is armed (`limitRecovery` on the thread) when the user asks for it or
   `autoResumeLimitedThreads` / `snoozeLimitedThreads` is on; once the reset passes an
-  armed auto-resume sends "Continue where you left off.".
+  armed auto-resume sends "Continue where you left off.", or, when the stop held
+  messages in the queue, resumes the queue so they run in order instead.
 
   The due work is derived from the threads' persisted failures and recovery choices,
   so a restart needs no timers restored: the sweep after it finds what became due
@@ -58,9 +59,9 @@ defmodule HalC2.Orchestration.LimitRecovery do
         mc == node(),
         row["lastErrorClass"] == "usage_limit" or row["limitRecovery"] != nil,
         # Rows trail their streams; decide on the thread as it is now.
-        shell =
-          HalC2.Projection.Shell.thread_shell(HalC2.Streams.state(thread_id)),
-        command = command(shell, auto_resume, now_ms, snooze),
+        state = HalC2.Streams.state(thread_id),
+        shell = HalC2.Projection.Shell.thread_shell(state),
+        command = command(shell, auto_resume, now_ms, snooze, held_queue?(state)),
         command != nil do
       case HalC2.Orchestration.dispatch(command) do
         {:ok, _} -> :ok
@@ -73,10 +74,12 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   @doc """
   The command that moves a limited thread's recovery on at `now_ms`: arming it, the
-  continuation message once its reset passed, or nil. The failed run and its reset
-  identify one opportunity.
+  continuation once its reset passed, or nil. The continuation resumes the queue when
+  `held_queue?` (the stop held messages behind it), else it is a message of its own.
+  The failed run and its reset identify one opportunity; the queue's first message
+  starting is a newer run, which ends it.
   """
-  def command(thread, auto_resume, now_ms, snooze \\ false) do
+  def command(thread, auto_resume, now_ms, snooze \\ false, held_queue? \\ false) do
     reset_ms = epoch_ms(thread["usageLimitResetAt"])
     stopped_ms = epoch_ms(thread["latestRunCompletedAt"] || thread["updatedAt"])
     recovery = thread["limitRecovery"]
@@ -114,20 +117,35 @@ defmodule HalC2.Orchestration.LimitRecovery do
       true ->
         delivery = "#{identity(thread, reset_ms)}:#{recovery["requestId"] || "legacy"}"
 
-        %{
-          "type" => "message.dispatch",
-          "commandId" => "limit-resume:#{delivery}",
-          "messageId" => "limit-resume:#{delivery}",
-          "threadId" => thread["id"],
-          "usageLimitContinuationOfRunId" => thread["latestRunId"],
-          "text" => "Continue where you left off.",
-          "attachments" => [],
-          "dispatchMode" => %{"type" => "start_immediately"},
-          "createdBy" => "user",
-          "creationSource" => "server"
-        }
+        if held_queue? do
+          %{
+            "type" => "queue.resume",
+            "commandId" => "limit-resume:#{delivery}",
+            "threadId" => thread["id"]
+          }
+        else
+          %{
+            "type" => "message.dispatch",
+            "commandId" => "limit-resume:#{delivery}",
+            "messageId" => "limit-resume:#{delivery}",
+            "threadId" => thread["id"],
+            "usageLimitContinuationOfRunId" => thread["latestRunId"],
+            "text" => "Continue where you left off.",
+            "attachments" => [],
+            "dispatchMode" => %{"type" => "start_immediately"},
+            "createdBy" => "user",
+            "creationSource" => "server"
+          }
+        end
     end
   end
+
+  defp held_queue?(state),
+    do:
+      Enum.any?(
+        HalC2.StreamState.list(state, "run"),
+        &(&1["status"] == "queued" and &1["queueHeld"] == true)
+      )
 
   defp identity(thread, reset_ms), do: "#{thread["id"]}:#{thread["latestRunId"]}:#{reset_ms}"
 end

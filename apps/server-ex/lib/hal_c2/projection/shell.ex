@@ -29,7 +29,7 @@ defmodule HalC2.Projection.Shell do
     runs = StreamState.list(state, "run")
     turn_items = StreamState.list(state, "turn-item")
     provider_threads = StreamState.list(state, "provider-thread")
-    latest_run = List.last(runs)
+    latest_run = latest_run(runs)
     active_run = runs |> Enum.filter(&interruptible?/1) |> latest_by(&get(&1, "ordinal"))
 
     activity_run =
@@ -152,6 +152,18 @@ defmodule HalC2.Projection.Shell do
     |> Enum.sort_by(&{epoch_ms(get(&1, "createdAt")), get(&1, "id")})
     |> Enum.map(&get(&1, "providerInstanceId"))
     |> Enum.uniq()
+  end
+
+  @doc """
+  The thread's latest run among `runs` (in the order they were made), passing over
+  queued messages held for the user (`queueHeld`): those wait behind the run that
+  stopped, so a usage limit's stop stays the thread's latest run until the queue resumes.
+  """
+  @spec latest_run([map]) :: map | nil
+  def latest_run(runs) do
+    runs
+    |> Enum.reverse()
+    |> Enum.find(&(get(&1, "status") != "queued" or get(&1, "queueHeld") != true))
   end
 
   defp interruptible?(run), do: get(run, "status") in @interruptible

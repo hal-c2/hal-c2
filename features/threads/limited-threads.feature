@@ -7,6 +7,7 @@
 #   apps/server-ex/lib/hal_c2/projection/thread_error.ex (usageLimitResetAt)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (metadata.update limitRecovery)
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex (arm and resume at the reset)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (a limit stop holds the queue behind it)
 #   apps/mobile/src/features/threads/UsageLimitRecoveryCard.tsx (passed reset time, refused change)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (limit recovery refusals, snooze and resume choices)
 #   apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts (resume message, expired resets)
@@ -139,8 +140,24 @@ Feature: Threads stopped by a usage limit
       | "Port tests" is archived                        |
       | the user settled "Port tests"                   |
       | "Port tests" is waiting on an approval          |
-      | a message is queued on "Port tests"             |
       | the choice names a reset time other than 14:00  |
+
+  # A limit stop holds the messages queued behind it, since they would only hit the same
+  # limit. They do not stand in the way of a recovery choice, and the resume starts them
+  # in order instead of writing a message of its own.
+  @mc
+  Scenario: Resuming at the reset with a message queued behind the limit
+    Given "Port tests" stopped on a usage limit that resets at 14:00 with "also update the changelog" queued behind it
+    When the user chooses to resume at the reset
+    Then "Port tests" is scheduled to resume at 14:00
+    And at 14:00 "Port tests" starts "also update the changelog" without writing a message of its own
+
+  @mc
+  Scenario: Snoozing until the reset with a message queued behind the limit
+    Given "Port tests" stopped on a usage limit that resets at 14:00 with "also update the changelog" queued behind it
+    When the user chooses to snooze "Port tests" until the reset
+    Then "Port tests" is snoozed until the reset at 14:00
+    And "also update the changelog" stays queued until the user resumes the queue
 
   @backlog @mc
   Scenario: A limit that had already reset when the agent stopped is never resumed on its own

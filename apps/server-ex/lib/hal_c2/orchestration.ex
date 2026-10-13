@@ -2015,7 +2015,9 @@ defmodule HalC2.Orchestration do
 
   # Choices about resuming a thread stopped on a usage limit (`HalC2.Orchestration.LimitRecovery`)
   # apply to the latest failed run and its reset only; snoozing to the reset sets the
-  # thread's wake time, and turning it off clears a wake time it set.
+  # thread's wake time, and turning it off clears a wake time it set. The messages the
+  # stop held in the queue wait behind it and do not stand in the way; one queued since
+  # (it would start on its own) does.
   defp limit_recovery(
          state,
          %{"type" => "thread.metadata.update", "limitRecovery" => update} = command,
@@ -2067,7 +2069,7 @@ defmodule HalC2.Orchestration do
 
   defp valid_limit_recovery(state, update, thread, now) do
     runs = StreamState.list(state, "run")
-    run = Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+    run = HalC2.Projection.Shell.latest_run(runs)
 
     failure =
       HalC2.Projection.ThreadError.latest_root_provider_failure(
@@ -2086,7 +2088,7 @@ defmodule HalC2.Orchestration do
         failure["resetAt"] != update["resetAt"] or
         reset <= JS.epoch_ms(run["completedAt"] || run["requestedAt"]) or
         Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")) or
-          Enum.any?(runs, &(&1["status"] == "queued")) ->
+          Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] != true)) ->
         {:error, "The provider limit changed before recovery could be configured."}
 
       true ->
