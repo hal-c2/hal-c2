@@ -44,11 +44,11 @@ Item {
     // The plan of the picked view's MC, with dates being dragged in place.
     readonly property string environment: working?.environment ?? plugin.environments[0] ?? ""
     readonly property var plan: plans[environment] ?? null
-    // id → {start, due} sent to the MC and not yet published back.
+    // "environment|id" → {start, due} sent to an MC and not yet published back.
     property var pending: ({})
     readonly property var items: (plan?.items ?? []).map(item => {
         const keyed = Object.assign({}, item, { environment: page.environment, key: page.environment + "|" + item.id });
-        return page.pending[item.id] ? Object.assign(keyed, page.pending[item.id]) : keyed;
+        return page.pending[keyed.key] ? Object.assign(keyed, page.pending[keyed.key]) : keyed;
     })
     readonly property var byId: {
         const map = {};
@@ -128,8 +128,11 @@ Item {
                     const next = Object.assign({}, page.plans);
                     next[environment] = value;
                     page.plans = next;
-                    if (environment === page.environment)
-                        page.pending = {};
+                    const pending = {};
+                    for (const key in page.pending)
+                        if (!key.startsWith(environment + "|"))
+                            pending[key] = page.pending[key];
+                    page.pending = pending;
                 }, environment), page.plugin.watch("runs", value => {
                     const next = Object.assign({}, page.runsBy);
                     next[environment] = value;
@@ -544,12 +547,12 @@ Item {
                 fields.due = page.iso(page.day(item.due) + shift + grow);
         }
         const next = Object.assign({}, page.pending);
-        next[item.id] = fields;
+        next[item.key] = fields;
         page.pending = next;
         page.ask("updateItem", { id: item.id, fields: fields }, item.environment, (result, error) => {
             if (error) {
                 const back = Object.assign({}, page.pending);
-                delete back[item.id];
+                delete back[item.key];
                 page.pending = back;
             }
         });
