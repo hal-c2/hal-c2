@@ -1217,6 +1217,20 @@ defmodule HalC2.Steps.Planning.Planner do
     update_task(context, number, %{"after" => [task_of(plan!(context), other)["id"]]})
   end
 
+  step "the user makes \#{int}'s task wait for {string}", %{args: [number, title]} = context do
+    update_task(context, number, %{"after" => [item!(context, title)["id"]]})
+  end
+
+  step "GitHub is not asked to mark \#{int} as blocked", %{args: [_number]} = context do
+    assert GitHubIssues.graphql_calls(context, "addBlockedBy(input") == []
+    context
+  end
+
+  step "\#{int}'s task is marked as synced", %{args: [number]} = context do
+    refute task_of(plan!(context), number)["syncError"]
+    context
+  end
+
   # The rename to `title` waits on a fifo until the scenario answers it, then is refused.
   step "GitHub answers renaming \#{int} to {string} late, refusing it",
        %{args: [number, title]} = context do

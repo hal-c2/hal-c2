@@ -515,8 +515,12 @@ defmodule HalC2Plugins.Planner.Sync do
       |> put_if(changed.("labels"), "labels", new["labels"])
       |> Map.merge(state(old["status"], new["status"]))
 
+    # Only a task with an issue can be named on GitHub; the others stay in the plan.
     ref = fn id ->
-      with %{"issue" => %{} = issue} <- items[id], do: Map.take(issue, ~w(repository number))
+      case items[id] do
+        %{"issue" => %{} = issue} -> Map.take(issue, ~w(repository number))
+        _ -> nil
+      end
     end
 
     blocked =

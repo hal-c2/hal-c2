@@ -479,6 +479,14 @@ Feature: Planner
         | makes wait for #5's task       | mark #7 as blocked by #5                       |
 
     @mc
+    Scenario: A dependency on a task without an issue stays in the plan
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api"
+      When the user makes #7's task wait for "Docs"
+      Then GitHub is not asked to mark #7 as blocked
+      And #7's task is marked as synced
+
+    @mc
     Scenario: With import only, a change to a task stays in the plan
       Given "planner" follows the issues of "acme/api" without syncing back
       When the user marks #7's task as done
