@@ -3,11 +3,12 @@
 // tokens on disconnect and hands out its app manifest. The user opens and
 // leaves the page, connects (with good, refused or blank tokens),
 // disconnects and copies the manifest; the MC drops and regains Slack on its
-// own, and holds its answers to give them one by one or all at once, so a
-// reply can land after the page was left and come back to, even while
-// another call is out. After every step the published section, the
-// clipboard and the toasts are what the model says, and no token is ever
-// published.
+// own, another client connects or disconnects it, and the MC holds its
+// answers to give them one by one or all at once, so a reply can land after
+// the page was left and come back to, even while another call is out. A
+// status the MC pushes is newer than the page's own error and replaces it.
+// After every step the published section, the clipboard and the toasts are
+// what the model says, and no token is ever published.
 
 #include "Prop.h"
 
@@ -63,13 +64,14 @@ struct Model {
   bool open = false;
   int visit = 0;  // bumped on each opening and leaving: answers of another visit are dropped
   QString pending;
-  QString error;  // the page's own: the last call's refusal, or blank tokens
+  QString error;  // the page's own: the last call's refusal, or blank tokens, until the MC pushes a status
   bool holding = false;
   QList<Held> held;
   QString clipboard;
   int copied = 0;
 
-  // The MC does what it was asked; the page hears the answer if still on the visit.
+  // The MC does what it was asked; the page hears the answer if still on the
+  // visit, then the status a connect or disconnect pushes.
   void perform(const Held& call) {
     switch (call.op) {
       case Op::Good: mc = {QStringLiteral("connected"), true, {}}; break;
@@ -77,13 +79,20 @@ struct Model {
       case Op::Disconnect: mc = {}; break;
       case Op::Manifest: break;
     }
-    if (call.visit != visit) return;
-    pending.clear();
-    if (call.op == Op::Refused) error = kRefusal;
-    if (call.op == Op::Manifest) {
-      clipboard = kManifest;
-      ++copied;
+    if (call.visit == visit) {
+      pending.clear();
+      if (call.op == Op::Refused) error = kRefusal;
+      if (call.op == Op::Manifest) {
+        clipboard = kManifest;
+        ++copied;
+      }
     }
+    if (call.op != Op::Manifest) pushed();
+  }
+
+  // The MC pushed its status: an open page drops its own error for it.
+  void pushed() {
+    if (open) error.clear();
   }
 
   void ask(Op op, const QString& name) {
@@ -325,6 +334,7 @@ struct Drop : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.tokensSet); }
   void apply(Model& model) const override {
     model.mc.state = model.mc.state == QLatin1String("connected") ? QStringLiteral("reconnecting") : QStringLiteral("connected");
+    model.pushed();
   }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
@@ -334,6 +344,25 @@ struct Drop : Command {
     check(next, shell);
   }
   void show(std::ostream& os) const override { os << "Drop"; }
+};
+
+// Another client connects Slack with good tokens, or disconnects it.
+struct Elsewhere : Command {
+  bool connects = *rc::gen::arbitrary<bool>();
+
+  void apply(Model& model) const override {
+    model.mc = connects ? Status{QStringLiteral("connected"), true, {}} : Status{};
+    model.pushed();
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    if (!model.error.isEmpty() && model.open) shell.reached.insert(QStringLiteral("error replaced"));
+    shell.slack.status = next.mc;
+    shell.broadcast();
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override { os << "Elsewhere(" << (connects ? "connect" : "disconnect") << ")"; }
 };
 
 // The MC holds its Slack answers from here on.
@@ -392,10 +421,11 @@ private slots:
       const Model initial = shell.reset();
       check(initial, shell);
       rc::state::check(initial, shell,
-                       rc::state::gen::execOneOfWithArgs<Open, Open, Open, Connect, Connect, Disconnect, CopyManifest, Drop, Hold, Hold, AnswerOne, AnswerOne, Release>());
+                       rc::state::gen::execOneOfWithArgs<Open, Open, Open, Connect, Connect, Disconnect, CopyManifest, Drop, Elsewhere, Hold, Hold, AnswerOne, AnswerOne, Release>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer")), "an answer after the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer while busy")), "a late answer while another call is out");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("replaced")), "tokens replaced");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("error replaced")), "an error replaced by a newer status");
     }));
   }
 };

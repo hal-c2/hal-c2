@@ -9,7 +9,7 @@
 // Publishes `slackSettings`: {open, loaded, editable, statusNote ("" unless
 // several environments are selected), state (off | connecting | connected |
 // reconnecting | failed), team, bot, error ("" or why the last change or the
-// connection failed), tokensSet, pending (connect | disconnect | manifest, ""
+// connection failed, whichever came last), tokensSet, pending (connect | disconnect | manifest, ""
 // when idle)}.
 //
 // Actions (`slackSettings.`): `connect {botToken, appToken}`, `disconnect`,
@@ -110,9 +110,12 @@ private:
     publish();
   }
 
+  // A status from the MC is newer than the page's own error (a refusal, blank
+  // tokens), so it replaces it; the status carries its own error.
   void take(const QJsonObject& status) {
     m_status = status;
     m_loaded = true;
+    m_error.clear();
     publish();
   }
 
