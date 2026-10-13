@@ -842,13 +842,46 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # The task is marked once its thread has started, after the run's reply.
   step "the thread is linked to {string}", %{args: [title]} = context do
-    assert context.thread in item!(context, title)["threads"]
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        context.thread in ((item(plan, title) || %{})["threads"] || [])
+      end)
+
     context
   end
 
   step "{string} is in progress", %{args: [title]} = context do
-    assert item!(context, title)["status"] == "doing"
+    {_, context} = await_topic(context, "plan", &match?(%{"status" => "doing"}, item(&1, title)))
+    context
+  end
+
+  step "{string} runs its actions with an agent this MC does not have",
+       %{args: [@id]} = context do
+    save(context, %{"provider" => "nowhere", "model" => ""})
+  end
+
+  step "the user starts work on {string}", %{args: [title]} = context do
+    context = ensure(context, title)
+    ids = [item!(context, title)["id"]]
+
+    {reply, context} =
+      plugin(context, "run", %{"action" => action_id(context, "Start work"), "itemIds" => ids})
+
+    assert {:ok, %{"run" => run}} = reply
+    Map.put(context, :run, run)
+  end
+
+  step "the run is failed saying there is no such agent", context do
+    {run, context} = await_run(context, &(&1["status"] == "failed"))
+    assert run["error"] =~ "There is no agent nowhere"
+    context
+  end
+
+  step "{string} is not started and no thread is linked to it", %{args: [title]} = context do
+    assert %{"status" => "todo"} = item = item!(context, title)
+    assert (item["threads"] || []) == []
     context
   end
 

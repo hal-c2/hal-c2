@@ -1046,6 +1046,17 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
+  # Only work whose thread started marks its task; work that could not start leaves it.
+  def handle_cast({:started, id, thread_id}, state) do
+    case state.runs[id] do
+      %{"threadId" => ^thread_id, "kind" => "work"} = run ->
+        {:noreply, state |> working(run) |> changed()}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_cast({:start_failed, id, thread_id, message}, state) do
     case state.runs[id] do
       %{"threadId" => ^thread_id, "status" => "running"} = run ->
@@ -1221,7 +1232,6 @@ defmodule HalC2Plugins.Planner do
     |> Enum.take(max(trunc(state.settings["concurrency"] || 2) - running, 0))
     |> Enum.reduce(state, fn run, state ->
       run = Map.merge(run, %{"status" => "running", "threadId" => uuid(), "startedAt" => now()})
-      state = if run["kind"] == "work", do: working(state, run), else: state
       derived = Plan.derive(state.items, today())
       on = for id <- run["itemIds"], item = Enum.find(derived, &(&1["id"] == id)), do: item
       values = Plan.values(derived, on, today(), nil)
@@ -1232,7 +1242,7 @@ defmodule HalC2Plugins.Planner do
     end)
   end
 
-  # The task work starts on is in progress, and linked to the work's thread.
+  # The task work started on is in progress, and linked to the work's thread.
   defp working(state, run) do
     with [id | _] <- run["itemIds"], %{} = item <- state.items[id] do
       item =
@@ -1247,7 +1257,7 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  # Starts the run's thread; tells the server if it could not.
+  # Starts the run's thread and tells the server whether it could.
   defp start(run, action, values, settings) do
     result =
       with %{} <-
@@ -1292,7 +1302,7 @@ defmodule HalC2Plugins.Planner do
 
     case result do
       {:ok, _} ->
-        :ok
+        GenServer.cast(__MODULE__, {:started, run["id"], run["threadId"]})
 
       {:error, error} ->
         GenServer.cast(__MODULE__, {:start_failed, run["id"], run["threadId"], message(error)})

@@ -354,6 +354,13 @@ Feature: Planner
       And "API" is in progress
 
     @mc
+    Scenario: Work that cannot start leaves its task as it was
+      Given "planner" runs its actions with an agent this MC does not have
+      When the user starts work on "API"
+      Then the run is failed saying there is no such agent
+      And "API" is not started and no thread is linked to it
+
+    @mc
     Scenario: The agent working on a task reports its progress
       Given the user started work on "API"
       When its agent reports "API" is 40% done with the note "Endpoints done, tests next"
