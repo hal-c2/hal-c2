@@ -2203,6 +2203,9 @@ Item {
             function edges(item) {
                 const x = day => page.labelWidth + (day - rangeStart) * dayWidth;
                 if (item.kind === "milestone") {
+                    // A milestone whose date was cleared is undated, like a task without dates.
+                    if (isNaN(page.day(item.due)))
+                        return null;
                     const centre = x(page.day(item.due)) + dayWidth / 2;
                     return { start: centre - 7, end: centre + 7 };
                 }

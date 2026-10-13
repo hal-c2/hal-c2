@@ -724,6 +724,15 @@ const Steps steps([] {
     world.waitFor([&] { return viewName() == c[0]; }, [&] { return QStringLiteral("the view %1 to be shown, not %2").arg(c[0], viewName()); });
   });
 
+  step(QStringLiteral("the plan has the milestone %1 without a due date").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWhenEmpty(world);
+    item(world, c[0]).insert(QStringLiteral("kind"), QStringLiteral("milestone"));
+    publish(world);
+  });
+  step(QStringLiteral("%1 is listed with no marker on the timeline").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerTask:") + c[0]);
+    expect(hidden(world, QStringLiteral("plannerMilestone:") + c[0]), QStringLiteral("%1 has a marker").arg(c[0]));
+  });
   step(QStringLiteral("the plan has %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));
     publish(world);

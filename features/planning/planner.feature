@@ -130,6 +130,12 @@ Feature: Planner
       Then "API" is moved to "2026-10-28" to "2026-11-06"
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A milestone without a date has no marker
+      Given the plan has the milestone "Beta" without a due date
+      When the user switches to the "Planner" tab with the view "Timeline"
+      Then "Beta" is listed with no marker on the timeline
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: Dragging the end of a bar changes when the task ends
       Given the plan has "API" from "2026-10-21" to "2026-10-30"
       When the user drags the end of the bar of "API" to "2026-11-03"
