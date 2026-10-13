@@ -142,6 +142,19 @@ defmodule HalC2.IssuesTest do
     refute Map.has_key?(patch, "title")
   end
 
+  test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do
+    rules!(dir, [
+      %{
+        "args" => ["--method POST", "repos/acme/widgets/issues --input"],
+        "stdout" => %{"number" => 9, "html_url" => "issue-url"}
+      },
+      %{"args" => ["api graphql"], "exit" => 1, "stderr" => "HTTP 502: Bad Gateway\n"}
+    ])
+
+    assert {:ok, %{"repository" => "acme/widgets", "number" => 9, "url" => "issue-url"}} =
+             Issues.handle("create", Map.put(@input, "title", "Add limits"))
+  end
+
   test "a comment is posted as written, its indentation kept", %{dir: dir} do
     rules!(dir, [
       %{

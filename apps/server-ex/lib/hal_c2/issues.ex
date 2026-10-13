@@ -289,6 +289,19 @@ defmodule HalC2.Issues do
     end
   end
 
+  # An issue GitHub has changed, read back; a failed read only loses the detail, so a
+  # retry does not make the change twice.
+  defp read_written(ctx, number, made) do
+    case read_issue(ctx, number) do
+      {:ok, issue} ->
+        {:ok, issue}
+
+      _ ->
+        url = if is_map(made), do: made["html_url"]
+        {:ok, %{"repository" => ctx.repository, "number" => number, "url" => url}}
+    end
+  end
+
   @doc false
   def milestones(input) do
     with {:ok, ctx} <- repository(input),
@@ -399,8 +412,8 @@ defmodule HalC2.Issues do
         |> put_present("assignees", input["assignees"])
         |> put_present("milestone", input["milestone"])
 
-      with {:ok, %{"number" => number}} <- post(ctx, "issues", "POST", body),
-           do: read_issue(ctx, number)
+      with {:ok, %{"number" => number} = made} <- post(ctx, "issues", "POST", body),
+           do: read_written(ctx, number, made)
     end
   end
 
@@ -413,7 +426,8 @@ defmodule HalC2.Issues do
         |> Map.take(~w(title body state labels assignees milestone))
         |> put_present("state_reason", input["stateReason"])
 
-      with {:ok, _} <- post(ctx, "issues/#{number}", "PATCH", body), do: read_issue(ctx, number)
+      with {:ok, made} <- post(ctx, "issues/#{number}", "PATCH", body),
+           do: read_written(ctx, number, made)
     end
   end
 
