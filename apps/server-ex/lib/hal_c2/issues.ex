@@ -54,7 +54,7 @@ defmodule HalC2.Issues do
     milestone { number title dueOn }
     issueType { name }
     parent { #{@ref} }
-    subIssues(first: 50) { nodes { #{@ref} } }
+    subIssues(first: 100) { nodes { #{@ref} } }
     subIssuesSummary { total completed }
     blockedBy(first: 50) { nodes { #{@ref} } }
     blocking(first: 50) { nodes { #{@ref} } }
@@ -147,7 +147,7 @@ defmodule HalC2.Issues do
                 ... on PullRequest { number title url state repository { nameWithOwner } }
                 ... on DraftIssue { title }
               }
-              fieldValues(first: 30) {
+              fieldValues(first: 50) {
                 nodes {
                   __typename
                   ... on ProjectV2ItemFieldTextValue { text #{@field_name} }
@@ -293,8 +293,21 @@ defmodule HalC2.Issues do
   def milestones(input) do
     with {:ok, ctx} <- repository(input),
          {:ok, state} <- choice(input["state"], ~w(open closed all), "open"),
-         {:ok, raw} <- GitHub.rest_api(ctx, "milestones?state=#{state}&per_page=100") do
-      {:ok, %{"milestones" => Enum.map(raw || [], &milestone/1)}}
+         {:ok, raw} <- milestone_pages(ctx, state, 1, []) do
+      {:ok, %{"milestones" => Enum.map(raw, &milestone/1)}}
+    end
+  end
+
+  # REST pages until a short one: `gh api` reads only the page it is asked for.
+  defp milestone_pages(ctx, state, page, acc) do
+    path = "milestones?state=#{state}&per_page=#{@page}&page=#{page}"
+
+    with {:ok, raw} <- GitHub.rest_api(ctx, path) do
+      raw = raw || []
+
+      if length(raw) < @page,
+        do: {:ok, acc ++ raw},
+        else: milestone_pages(ctx, state, page + 1, acc ++ raw)
     end
   end
 
@@ -845,12 +858,13 @@ defmodule HalC2.Issues do
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
   # What `gh` said, in words a plugin can show: its install and sign-in as pull
-  # requests word them, and a login without the `project` scope how to get it.
+  # requests word them, and a login without the `project` scope how to get it. Other
+  # missing scopes keep GitHub's own words, which name the scope.
   defp answer({:error, {reason, _detail}}) when reason in [:missing, :unauthenticated],
     do: {:error, PullRequests.requirement(reason)}
 
   defp answer({:error, {_reason, detail}}) do
-    if detail =~ ~r/read:project|INSUFFICIENT_SCOPES|required scopes/i,
+    if detail =~ ~r/'(read:)?project'/,
       do: {:error, @scope},
       else: {:error, detail}
   end

@@ -192,6 +192,21 @@ defmodule HalC2.IssuesTest do
     assert [%{"due_on" => nil}] = rest_inputs(dir, "PATCH")
   end
 
+  test "milestones are read page after page until a short one", %{dir: dir} do
+    numbered = fn range -> for n <- range, do: %{"number" => n, "title" => "M#{n}"} end
+
+    rules!(dir, [
+      %{"args" => ["milestones?state=all&per_page=100&page=1"], "stdout" => numbered.(1..100)},
+      %{"args" => ["milestones?state=all&per_page=100&page=2"], "stdout" => numbered.(101..102)}
+    ])
+
+    assert {:ok, %{"milestones" => milestones}} =
+             Issues.handle("milestones", Map.put(@input, "state", "all"))
+
+    assert Enum.map(milestones, & &1["number"]) == Enum.to_list(1..102)
+    assert length(calls(dir)) == 2
+  end
+
   test "sub-issues and dependencies are changed by the node ids of both issues", %{dir: dir} do
     rules!(dir, [
       graphql(["other: repository(", ~s("other":5)], %{
@@ -342,6 +357,25 @@ defmodule HalC2.IssuesTest do
     assert [_, %{"project" => "PVT_3", "content" => "I_7"}] = graphql_calls(dir)
   end
 
+  test "an issue asks for every sub-issue a parent may have and a board item for every field's value",
+       %{dir: dir} do
+    rules!(dir, [
+      graphql([~s("number":7)], %{"repository" => %{"issue" => issue(7)}}),
+      graphql(["items(first: $first"], board([], false, nil))
+    ])
+
+    assert {:ok, _} = Issues.handle("detail", Map.put(@input, "number", 7))
+
+    assert {:ok, _} =
+             Issues.handle("board", %{"projectId" => "p1", "owner" => "acme", "number" => 3})
+
+    [detail, board] = for %{"stdin" => stdin} <- calls(dir), do: JSON.decode!(stdin)["query"]
+
+    # GitHub allows a parent 100 sub-issues.
+    assert page_size(detail, "subIssues") == 100
+    assert page_size(board, "fieldValues") >= page_size(board, "fields")
+  end
+
   test "boards are listed page after page, each with its owner", %{dir: dir} do
     page = fn nodes, more?, cursor ->
       %{
@@ -381,6 +415,38 @@ defmodule HalC2.IssuesTest do
 
     assert {:error, message} = Issues.handle("boards", %{"projectId" => "p1"})
     assert message =~ "gh auth refresh -s project"
+
+    rules!(dir, [
+      %{
+        "args" => ["api graphql"],
+        "exit" => 1,
+        "stderr" =>
+          "GraphQL: Your token has not been granted the required scopes to execute this query. " <>
+            "The 'addProjectV2ItemById' field requires one of the following scopes: ['project']\n"
+      }
+    ])
+
+    assert {:error, message} =
+             Issues.handle("addBoardItem", %{
+               "projectId" => "p1",
+               "owner" => "acme",
+               "number" => 3,
+               "item" => %{"repository" => "acme/widgets", "number" => 7}
+             })
+
+    assert message =~ "gh auth refresh -s project"
+  end
+
+  test "a login missing another scope is told GitHub's own words", %{dir: dir} do
+    refused =
+      "Your token has not been granted the required scopes to execute this query. " <>
+        "The 'issues' field requires one of the following scopes: ['repo']"
+
+    rules!(dir, [%{"args" => ["api graphql"], "exit" => 1, "stderr" => "GraphQL: #{refused}\n"}])
+
+    assert {:error, message} = Issues.handle("list", @input)
+    assert message =~ "['repo']"
+    refute message =~ "project"
   end
 
   test "gh missing or signed out is told as pull requests tell it", %{dir: dir} do
@@ -452,6 +518,12 @@ defmodule HalC2.IssuesTest do
     for %{"args" => args, "stdin" => stdin} <- calls(dir),
         Enum.join(args, " ") =~ "--method #{method}",
         do: JSON.decode!(stdin)
+  end
+
+  # How many nodes of `connection` a GraphQL document asks for.
+  defp page_size(query, connection) do
+    [size] = Regex.run(~r/\b#{connection}\(first: (\d+)/, query, capture: :all_but_first)
+    String.to_integer(size)
   end
 
   defp graphql(stdin, data),
