@@ -58,7 +58,7 @@ defmodule HalC2.Issues do
     subIssuesSummary { total completed }
     blockedBy(first: 50) { nodes { #{@ref} } }
     blocking(first: 50) { nodes { #{@ref} } }
-    closedByPullRequestsReferences(first: 10, includeClosedPrs: true) {
+    closedByPullRequestsReferences(first: 100, includeClosedPrs: true) {
       nodes { number title url state repository { nameWithOwner } }
     }
   }
