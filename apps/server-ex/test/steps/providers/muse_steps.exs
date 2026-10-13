@@ -267,6 +267,22 @@ defmodule HalC2.Steps.Providers.Muse do
     Map.put(context, :effort, effort)
   end
 
+  step "the user adds the custom Muse Code model {string}", %{args: [slug]} = context do
+    FakeAcp.settings(&put_in(&1, ["providers", "muse", "customModels"], [slug]))
+    Map.put(context, :custom_model, slug)
+  end
+
+  step "the user opens the options for the custom Muse Code model", context do
+    FakeAcp.probe("muse")
+    {providers, context} = FakeAcp.open_config(context)
+
+    model =
+      Enum.find(FakeAcp.find(providers, "muse")["models"], &(&1["slug"] == context.custom_model))
+
+    assert [%{"id" => "reasoningEffort"} = effort] = model["capabilities"]["optionDescriptors"]
+    Map.put(context, :effort, effort)
+  end
+
   step "low, medium, high and max are offered under \"Reasoning\"", context do
     assert Enum.map(context.effort["options"], & &1["label"]) == ~w(Low Medium High Max)
     context

@@ -472,7 +472,17 @@ defmodule HalC2.Muse.ThreadRuntime do
         error
     end
   catch
-    :exit, _ -> {:error, "Muse Code did not answer #{method}"}
+    # The request may still land, so the host is out of step with the MC: it stops,
+    # and its exit ends the turn and drops the session like any host exit.
+    :exit, _ ->
+      close_conn(state.conn)
+      {:error, "Muse Code did not answer #{method}"}
+  end
+
+  defp close_conn(conn) do
+    Connection.stop(conn)
+  catch
+    :exit, _ -> :ok
   end
 
   defp send_turn(state, turn) do

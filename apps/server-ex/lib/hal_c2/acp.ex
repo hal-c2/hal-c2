@@ -240,7 +240,7 @@ defmodule HalC2.Acp do
           "showInteractionModeToggle" => false,
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => HalC2.Orchestration.Entities.now(),
-          "models" => custom_models(models || [], instance),
+          "models" => custom_models(models || [], instance, driver),
           "slashCommands" => [],
           "skills" => []
         },
@@ -1224,9 +1224,15 @@ defmodule HalC2.Acp do
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
   # One without options of its own takes the agent's, which its models share.
-  defp custom_models(models, instance) do
+  # A custom model without capabilities of its own gets the catalog's first model's,
+  # except Muse's, whose catalog describes each model apart: those get Muse's usual efforts.
+  defp custom_models(models, instance, driver) do
     known = MapSet.new(models, & &1["slug"])
-    shared = Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
+
+    shared =
+      if driver == "muse",
+        do: HalC2.Muse.capabilities(),
+        else: Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
 
     custom =
       for entry <- get_in(instance, ["config", "customModels"]) || [],

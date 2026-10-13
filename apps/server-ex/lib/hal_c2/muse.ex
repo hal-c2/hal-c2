@@ -89,7 +89,7 @@ defmodule HalC2.Muse do
              dialect: :v2,
              log: opts[:log]
            ) do
-      case Connection.call(conn, "initialize", initialize_params(opts[:read_only]), 15_000) do
+      case handshake(conn, opts[:read_only]) do
         {:ok, %{"schema" => %{"version" => @schema_version}} = init} ->
           Connection.notify(conn, "initialized", nil)
           {:ok, conn, init["grantedCapabilities"] || []}
@@ -109,6 +109,14 @@ defmodule HalC2.Muse do
     end
   catch
     :exit, reason -> {:error, reason}
+  end
+
+  # A host that does not answer in time is stopped, not left running under a caller
+  # that traps its exit.
+  defp handshake(conn, read_only) do
+    Connection.call(conn, "initialize", initialize_params(read_only), 15_000)
+  catch
+    :exit, reason -> {:error, {:initialize, reason}}
   end
 
   @doc "`initialize`'s params: a read-only host asks for nothing, a full one for session MCP."

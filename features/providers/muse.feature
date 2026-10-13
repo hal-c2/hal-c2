@@ -75,6 +75,13 @@ Feature: Muse Code
     Then low, medium, high, extra high and max are offered under "Reasoning"
     And high is marked as the default
 
+  Scenario: A custom Muse Code model gets the usual reasoning levels
+    Given the Muse Code model reports the reasoning levels low, medium, high and max with high as its default
+    And the user adds the custom Muse Code model "fake/custom"
+    When the user opens the options for the custom Muse Code model
+    Then low, medium, high, extra high and max are offered under "Reasoning"
+    And high is marked as the default
+
   Scenario: The chosen reasoning level reaches Muse Code
     Given a Muse Code thread with reasoning set to max
     When the user sends a message to Muse Code
