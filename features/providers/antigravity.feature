@@ -280,6 +280,15 @@ Feature: Antigravity
     When Google reports that a subscription is required
     Then the thread shows Google's message and any retry time
 
+  # Antigravity says so as the turn's whole reply, not as an error.
+  Scenario: A spent Antigravity quota stops the thread on a usage limit
+    When Antigravity answers that the quota resets in 4 hours, 26 minutes
+    Then the thread is limited until 4 hours and 26 minutes after the answer
+
+  Scenario: A reply that only mentions a usage limit is an ordinary answer
+    When Antigravity's answer talks about a usage limit among other text
+    Then the turn completes
+
   Scenario: Signing in from the mobile app once the runtime is installed
     Given the Antigravity runtime is installed on the environment
     When the user signs in from the mobile app's provider accounts

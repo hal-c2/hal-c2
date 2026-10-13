@@ -1082,6 +1082,40 @@ defmodule HalC2.Steps.Providers.Antigravity do
     Map.put(context, :google_message, message)
   end
 
+  step "Antigravity answers that the quota resets in 4 hours, 26 minutes", context do
+    quota_reply(
+      context,
+      "Usage Limit Reached\n\nYou have reached your current quota for this period. " <>
+        "Your limit will reset in 4 hours, 26 minutes."
+    )
+  end
+
+  step "Antigravity's answer talks about a usage limit among other text", context do
+    quota_reply(
+      context,
+      "The error page says Usage Limit Reached. You have reached your current quota " <>
+        "for this period, so the client should back off."
+    )
+  end
+
+  step "the thread is limited until 4 hours and 26 minutes after the answer", context do
+    state = FakeAcp.await_run(context, "failed")
+    assert last_error(state) =~ "You have reached your current quota for this period."
+
+    row =
+      World.await_row(World.thread_id(context, "Work"), &(&1["lastErrorClass"] == "usage_limit"))
+
+    {:ok, reset, _} = DateTime.from_iso8601(row["usageLimitResetAt"])
+    expected = context.sent_at + (4 * 60 + 26) * 60_000
+    assert_in_delta DateTime.to_unix(reset, :millisecond), expected, 60_000
+    context
+  end
+
+  step "the turn completes", context do
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
   step "the thread shows Google's message and any retry time", context do
     state = FakeAcp.await_run(context, "failed")
     assert last_error(state) == context.google_message
@@ -1409,6 +1443,18 @@ defmodule HalC2.Steps.Providers.Antigravity do
     end
 
     context
+  end
+
+  defp quota_reply(context, text) do
+    turn = %{"match" => "keep going", "steps" => [%{"text" => text}]}
+    FakeAcp.configure(context, &Map.update!(&1, "turns", fn turns -> [turn | turns] end))
+    sent_at = System.system_time(:millisecond)
+
+    context
+    |> signed_in()
+    |> FakeAcp.thread("Work")
+    |> FakeAcp.send_message("keep going")
+    |> Map.put(:sent_at, sent_at)
   end
 
   defp last_error(state) do
