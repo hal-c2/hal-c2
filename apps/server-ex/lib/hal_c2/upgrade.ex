@@ -196,15 +196,16 @@ defmodule HalC2.Upgrade do
     {restart, hot} = Enum.split_with(beams, &restart_module?/1)
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      after_hot_update()
+      after_hot_update(hot)
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)))}
     end
   end
 
   # A hot update stands in for a restart, so it takes in what the MC otherwise looks
-  # at only at boot: plugins put in or changed in the plugins directory, and the
-  # GitHub CLI's sign-in.
-  defp after_hot_update do
+  # at only at boot: services new in the application, plugins put in or changed in
+  # the plugins directory, and the GitHub CLI's sign-in.
+  defp after_hot_update(beams) do
+    if List.keymember?(beams, HalC2.Application, 0), do: start_new_services()
     if Process.whereis(HalC2.Plugins), do: HalC2.Plugins.rescan()
     if Application.get_env(:hal_c2, :start_mc), do: HalC2.Git.use_gh_for_github()
     :ok
@@ -516,7 +517,7 @@ defmodule HalC2.Upgrade do
     beams = for {mod, _} = beam <- beams(bundle), MapSet.member?(wanted, mod), do: beam
 
     case HalC2.Hot.reload(beams) do
-      {:ok, _report} -> after_hot_update()
+      {:ok, _report} -> after_hot_update(beams)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -570,9 +571,22 @@ defmodule HalC2.Upgrade do
     for {mod, bin} = beam <- beams(bundle), loaded_md5(mod) != beam_md5(bin), do: beam
   end
 
-  # Supervisors, and the application that lists the tree, only take effect at start.
-  defp restart_module?({HalC2.Application, _bin}), do: true
+  # The services the application lists that its supervisor is not running start, after
+  # the ones already there. Services it no longer lists, and changes to ones it runs,
+  # wait for a restart.
+  defp start_new_services do
+    running = for {id, _, _, _} <- Supervisor.which_children(HalC2.Supervisor), do: id
 
+    for child <- HalC2.Application.children(),
+        spec = Supervisor.child_spec(child, []),
+        spec.id not in running do
+      Supervisor.start_child(HalC2.Supervisor, spec)
+    end
+
+    :ok
+  end
+
+  # Supervisors only take effect at start.
   defp restart_module?({_mod, bin}) do
     case :beam_lib.chunks(bin, [:attributes]) do
       {:ok, {_, [attributes: attributes]}} ->
