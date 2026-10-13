@@ -129,10 +129,14 @@ start_mc() {
   echo "$port" > "$home/mc.port"
   if [[ -n $seed ]]; then
     command -v sqlite3 > /dev/null || die "--seed needs sqlite3"
-    rm -rf "$home/mc" && mkdir -p "$home/mc/data"
+    # The app's pairing was with the MC this replaces.
+    rm -rf "$home/mc" "$home/app" && mkdir -p "$home/mc/data"
     sqlite3 -readonly "$seed" "VACUUM INTO '$home/mc/data/hal-c2.sqlite'"
   fi
-  (cd "$root/apps/server-ex" && HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 exec setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
+  # On the sandbox's display and bus: what the MC launches (an editor, a browser, a
+  # terminal's shell) opens there, never on the user's screen.
+  (cd "$root/apps/server-ex" && exec "${sandbox_env[@]}" HAL_C2_MC_HOME="$home/mc" HAL_C2_MC_PORT="$port" HAL_C2_MC_NO_AUTO_ACTIONS=1 \
+    setsid mix hal_c2.server > "$home/mc.log" 2>&1) &
   track $! mc
   wait_for 300 "the MC on port $port" mc_up
 }
