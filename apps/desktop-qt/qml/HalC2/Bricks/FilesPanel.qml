@@ -358,13 +358,33 @@ Rectangle {
                         id: renderedPage
 
                         Text {
+                            id: renderedPageText
+
+                            // A link opens on a Ctrl-click (Cmd on macOS) or a
+                            // finger's tap, as in the rendered Markdown.
+                            function follow(eventPoint) {
+                                const link = linkAt(eventPoint.position.x, eventPoint.position.y);
+                                if (link.length > 0)
+                                    Shell.openExternal(link);
+                            }
+
                             objectName: "fileRenderedPage"
                             text: root.source?.renderedText ?? ""
                             textFormat: Text.RichText
                             color: root.foreground
                             font.pixelSize: Math.round(13 * Theme.fontScale)
                             wrapMode: Text.Wrap
-                            onLinkActivated: link => Shell.openExternal(link)
+
+                            TapHandler {
+                                acceptedButtons: Qt.LeftButton
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                acceptedModifiers: Qt.ControlModifier
+                                onTapped: eventPoint => renderedPageText.follow(eventPoint)
+                            }
+                            TapHandler {
+                                acceptedDevices: PointerDevice.TouchScreen
+                                onTapped: eventPoint => renderedPageText.follow(eventPoint)
+                            }
                         }
                     }
                 }

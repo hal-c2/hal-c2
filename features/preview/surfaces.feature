@@ -1671,15 +1671,15 @@ Feature: In-app preview browser
       Then the link opens in <target>
 
       Examples:
-        | default             | click                       | target               |
-        | HAL-C2's browser    | clicks                      | a tab beside the thread |
-        | HAL-C2's browser    | clicks with Cmd or Ctrl on  | the system browser   |
-        | the default browser | clicks                      | the system browser   |
+        | default             | click                                        | target                  |
+        | HAL-C2's browser    | Ctrl-clicks (Cmd on macOS)                   | a tab beside the thread |
+        | HAL-C2's browser    | chooses "Open in system browser" from its menu | the system browser    |
+        | the default browser | Ctrl-clicks (Cmd on macOS)                   | the system browser      |
 
     @backlog @desktop
     Scenario Outline: A link the in-app browser cannot load goes to the system
       Given the user's links open in HAL-C2's browser
-      When the user clicks the link "<link>"
+      When the user Ctrl-clicks the link "<link>"
       Then the system opens it instead of a browser tab
 
       Examples:
@@ -1691,19 +1691,19 @@ Feature: In-app preview browser
     Scenario: A link clicked where no thread is open goes to the system browser
       Given the user's links open in HAL-C2's browser
       And no thread is open
-      When the user clicks a web link
+      When the user Ctrl-clicks a web link
       Then the link opens in the system browser
 
     @backlog @desktop
     Scenario: A link clicked just after launch follows the saved choice
       Given the user chose to open links in HAL-C2's browser in an earlier session
-      When the user clicks a web link before the saved settings have loaded
+      When the user Ctrl-clicks a web link before the saved settings have loaded
       Then the link opens in a tab beside the thread once they have
 
     @backlog @desktop
     Scenario: A link is not opened when the saved choice cannot be read
       Given the saved settings cannot be read
-      When the user clicks a web link
+      When the user Ctrl-clicks a web link
       Then the link is not opened in a browser the user did not choose
 
     @backlog @desktop

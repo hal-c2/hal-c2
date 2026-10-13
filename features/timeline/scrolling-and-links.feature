@@ -227,6 +227,34 @@ Feature: Moving through a thread and following links
     Then "https://example.com/docs" can be opened as a link
     And web addresses inside code are left as text
 
+  # A plain click selects text, so copying an address or a path never opens it by accident.
+  # A finger has no Ctrl, so a tap on a phone still opens it.
+  @desktop
+  Scenario Outline: A link in a reply opens only on a Ctrl-click
+    Given the agent's reply links to "<link>"
+    When the user clicks the link <how>
+    Then <result>
+
+    Examples:
+      | link                     | how                                | result                                      |
+      | https://example.com/docs | without holding Ctrl               | nothing is opened                           |
+      | https://example.com/docs | holding Ctrl (Cmd on macOS)        | "https://example.com/docs" is opened        |
+      | src/cart.ts              | without holding Ctrl               | nothing is opened                           |
+      | src/cart.ts              | holding Ctrl (Cmd on macOS)        | "src/cart.ts" is opened                     |
+
+  @desktop
+  Scenario Outline: A link's menu in a reply opens or copies it
+    Given the agent's reply links to "<link>"
+    When the user opens the menu on the link
+    Then the menu offers "<open>" and "<copy>"
+    When the user chooses "<copy>" from the link's menu
+    Then "<link>" is on the clipboard
+
+    Examples:
+      | link                     | open      | copy      |
+      | https://example.com/docs | Open link | Copy link |
+      | src/cart.ts              | Open file | Copy path |
+
   @desktop @backlog
   Scenario Outline: The user chooses where a web link opens
     Given the agent's reply links to "https://example.com/docs"
@@ -248,7 +276,6 @@ Feature: Moving through a thread and following links
     Examples:
       | choice                 | result                                   |
       | open it in the editor  | "src/cart.ts" opens in the user's editor |
-      | copy its relative path | "src/cart.ts" is on the clipboard        |
       | copy its full path     | the absolute path is on the clipboard    |
 
   @shared @backlog-mobile @backlog-tui

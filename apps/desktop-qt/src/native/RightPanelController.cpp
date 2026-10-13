@@ -1,15 +1,13 @@
 #include "RightPanelController.h"
 #include "MenuController.h"
 
-#include <QClipboard>
-#include <QGuiApplication>
-
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QUrl>
 
@@ -36,6 +34,27 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
 const QString kTerminalTab = QStringLiteral("terminal:");
 const QString kReviewTab = QStringLiteral("pull-request:");
 const QString kDeviceTab = QStringLiteral("device:");
+
+// A conversation link that names a project file rather than an address:
+// "src/cart.ts", "src/cart.ts#L12" or "src/cart.ts:12:3", as ThreadView's
+// openLink reads it. Empty for web, mail and the app's own links.
+struct FileLink {
+  QString path;
+  int line = 0;
+};
+
+FileLink fileLink(const QString& link) {
+  static const QRegularExpression address(QStringLiteral("^(https?|mailto|hal-c2):"), QRegularExpression::CaseInsensitiveOption);
+  if (address.match(link).hasMatch()) return {};
+  QString path = link;
+  if (path.startsWith(QLatin1String("file://"), Qt::CaseInsensitive)) path = path.mid(7);
+  static const QRegularExpression anchor(QStringLiteral("#L(\\d+)"));
+  static const QRegularExpression position(QStringLiteral(":(\\d+)(:\\d+)?$"));
+  QRegularExpressionMatch line = anchor.match(path);
+  if (!line.hasMatch()) line = position.match(path);
+  path.remove(QRegularExpression(QStringLiteral("#.*$"))).remove(QRegularExpression(QStringLiteral("(:\\d+)+$")));
+  return {QUrl::fromPercentEncoding(path.toUtf8()), line.hasMatch() ? line.captured(1).toInt() : 0};
+}
 
 // A review tab's pull request: host, repository and number of "host/repository#number".
 struct Reviewed {
@@ -201,10 +220,14 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     toggle();
   } else if (action == QLatin1String("link.menu")) {
     // A link in the conversation: opening and copying it, and linking the
-    // pull request it names to the thread.
+    // pull request it names to the thread. A path opens in the files.
     const QString url = map.value(QStringLiteral("url")).toString();
-    QList<MenuController::Item> items{{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
-                                      {QStringLiteral("copy"), tr("Copy link"), QStringLiteral("copy")}};
+    const FileLink file = fileLink(url);
+    const bool isFile = !file.path.isEmpty();
+    QList<MenuController::Item> items{
+        isFile ? MenuController::Item{QStringLiteral("open"), tr("Open file"), QStringLiteral("file")}
+               : MenuController::Item{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
+        {QStringLiteral("copy"), isFile ? tr("Copy path") : tr("Copy link"), QStringLiteral("copy")}};
     const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
         (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
@@ -212,11 +235,15 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
       items.append({QStringLiteral("link-pull-request"), tr("Link pull request to thread"), QStringLiteral("git-pull-request")});
     }
     NativeShell::of(this)->controller<MenuController>()->open(
-        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url](const QString& id) {
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url, file](const QString& id) {
           if (id == QLatin1String("open")) {
-            m_bridge->openExternal(QUrl(url));
+            if (file.path.isEmpty()) {
+              m_bridge->openExternal(QUrl(url));
+            } else {
+              open(QStringLiteral("files"), {{QStringLiteral("path"), file.path}, {QStringLiteral("line"), file.line}});
+            }
           } else if (id == QLatin1String("copy")) {
-            if (QClipboard* clipboard = QGuiApplication::clipboard()) clipboard->setText(url);
+            m_bridge->setClipboardText(file.path.isEmpty() ? url : file.path);
           } else {
             showTab(QStringLiteral("pull-requests"));
             m_pullRequests.link(url);

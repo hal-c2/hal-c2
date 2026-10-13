@@ -27,6 +27,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("timeline/markdown.feature"),
     QStringLiteral("timeline/scrolling-and-links.feature:A bare web address*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A link in a reply opens only*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A link's menu in a reply*"),
     QStringLiteral("timeline/scrolling-and-links.feature:A long thread opens*"),
     QStringLiteral("timeline/scrolling-and-links.feature:Earlier turns load*"),
     QStringLiteral("timeline/scrolling-and-links.feature:A thread that does not fill*"),
