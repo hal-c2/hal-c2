@@ -342,6 +342,32 @@ defmodule HalC2.IssuesTest do
     assert [_, %{"project" => "PVT_3", "content" => "I_7"}] = graphql_calls(dir)
   end
 
+  test "boards are listed page after page, each with its owner", %{dir: dir} do
+    page = fn nodes, more?, cursor ->
+      %{
+        "repositoryOwner" => %{
+          "projectsV2" => %{
+            "pageInfo" => %{"hasNextPage" => more?, "endCursor" => cursor},
+            "nodes" => nodes
+          }
+        }
+      }
+    end
+
+    rules!(dir, [
+      graphql(
+        ["projectsV2(first: 100", ~s("after":"c1")],
+        page.([listed(3, "Roadmap")], false, nil)
+      ),
+      graphql(["projectsV2(first: 100"], page.([listed(1, "Bugs"), nil], true, "c1"))
+    ])
+
+    assert {:ok, %{"boards" => boards}} = Issues.handle("boards", %{"projectId" => "p1"})
+
+    assert [%{"number" => 1, "title" => "Bugs", "owner" => "acme"}, %{"number" => 3}] = boards
+    assert [%{"owner" => "acme", "after" => nil}, %{"after" => "c1"}] = graphql_calls(dir)
+  end
+
   test "a board gh may not read for want of the project scope says how to grant it", %{dir: dir} do
     rules!(dir, [
       %{
@@ -445,6 +471,9 @@ defmodule HalC2.IssuesTest do
       fields
     )
   end
+
+  defp listed(number, title),
+    do: %{"number" => number, "title" => title, "url" => "board-#{number}", "closed" => false}
 
   defp issues_page(nodes, more?, cursor) do
     %{

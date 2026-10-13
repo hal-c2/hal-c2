@@ -101,9 +101,14 @@ defmodule HalC2.Issues do
   }
 
   @boards_query """
-  query($owner: String!) {
+  query($owner: String!, $after: String) {
     repositoryOwner(login: $owner) {
-      ... on ProjectV2Owner { projectsV2(first: 100) { nodes { number title url closed } } }
+      ... on ProjectV2Owner {
+        projectsV2(first: 100, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes { number title url closed }
+        }
+      }
     }
   }
   """
@@ -298,24 +303,34 @@ defmodule HalC2.Issues do
     with {:ok, ctx} <- project(input) do
       owner = input["owner"] || owner_of(ctx.repository)
 
-      case GitHub.graphql(ctx, @boards_query, %{"owner" => owner}) do
-        {:ok, %{"repositoryOwner" => %{"projectsV2" => %{"nodes" => nodes}}}} ->
-          {:ok,
-           %{
-             "boards" =>
-               for board <- nodes, board do
-                 board
-                 |> Map.take(~w(number title url closed))
-                 |> Map.put("owner", owner)
-               end
-           }}
-
-        {:ok, _} ->
-          {:error, "#{owner} was not found on #{ctx.host}."}
-
-        error ->
-          error
+      with {:ok, nodes} <- boards_pages(ctx, owner, nil, []) do
+        {:ok,
+         %{
+           "boards" =>
+             for board <- nodes, board do
+               board
+               |> Map.take(~w(number title url closed))
+               |> Map.put("owner", owner)
+             end
+         }}
       end
+    end
+  end
+
+  defp boards_pages(ctx, owner, cursor, acc) do
+    case GitHub.graphql(ctx, @boards_query, %{"owner" => owner, "after" => cursor}) do
+      {:ok, %{"repositoryOwner" => %{"projectsV2" => %{"nodes" => nodes} = found}}} ->
+        page = found["pageInfo"] || %{}
+
+        if page["hasNextPage"] == true,
+          do: boards_pages(ctx, owner, page["endCursor"], acc ++ nodes),
+          else: {:ok, acc ++ nodes}
+
+      {:ok, _} ->
+        {:error, "#{owner} was not found on #{ctx.host}."}
+
+      error ->
+        error
     end
   end
 
