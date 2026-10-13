@@ -129,7 +129,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{turn.ids.driver}:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+    turn = %{turn | ids: ids, cwd: canonical(turn.cwd)}
 
     state = %{
       state
@@ -264,7 +264,8 @@ defmodule HalC2.Muse.ThreadRuntime do
     state =
       if state.turn, do: end_turn(state, "failed", "Muse Code exited unexpectedly"), else: state
 
-    {:noreply, %{state | conn: nil, host: nil}}
+    # The session and model were the dead host's; the next host resumes the session.
+    {:noreply, %{state | conn: nil, host: nil, session: nil, model: nil}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -283,6 +284,17 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp migrate(%{v: @state_version} = state), do: state
 
   # --- session -------------------------------------------------------------------
+
+  # Muse refuses a workspace root that is not canonical (macOS's /tmp, a symlinked
+  # checkout) and names canonical paths in its approvals.
+  defp canonical(cwd) when is_binary(cwd) do
+    case HalC2.Paths.real(cwd) do
+      {:ok, real} -> real
+      {:error, _} -> cwd
+    end
+  end
+
+  defp canonical(cwd), do: cwd
 
   defp ensure_session(state, turn) do
     instance = Entities.instance(turn.ids)

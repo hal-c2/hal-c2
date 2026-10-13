@@ -48,6 +48,11 @@ Feature: Muse Code
     When the MC restarts and the user sends another message
     Then Muse Code continues the same session
 
+  Scenario: A Muse Code thread keeps its conversation when Muse Code exits between turns
+    Given a Muse Code thread with history
+    When Muse Code exits and the user sends another message
+    Then Muse Code continues the same session
+
   Scenario: Muse Code with no models tells the user to sign in
     Given Muse Code reports no models
     When the user refreshes provider status

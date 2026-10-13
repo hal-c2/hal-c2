@@ -195,6 +195,21 @@ defmodule HalC2.Steps.Providers.Muse do
     turn(context, "hello again")
   end
 
+  # The host the thread's runtime holds dies on its own; the runtime has seen it go
+  # once the connection is down and the runtime answered after that.
+  step "Muse Code exits and the user sends another message", context do
+    [{runtime, _}] =
+      Registry.lookup(HalC2.Muse.Registry, World.thread_id(context, context.thread))
+
+    %{conn: conn} = :sys.get_state(runtime)
+    ref = Process.monitor(conn)
+    [%{"pid" => pid}] = thread_starts(context)
+    {_, 0} = System.cmd("kill", ["-9", "#{pid}"])
+    assert_receive {:DOWN, ^ref, _, _, _}, 10_000
+    assert %{conn: nil} = :sys.get_state(runtime)
+    turn(context, "hello again")
+  end
+
   # A new host resumed the session the thread recorded.
   step "Muse Code continues the same session", context do
     assert [_, _] = thread_starts(context)

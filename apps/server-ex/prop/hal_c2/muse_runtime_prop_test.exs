@@ -4,8 +4,8 @@ defmodule HalC2.MuseRuntimePropTest do
   driven through the orchestration commands a client sends: send a message whose turn
   replies, runs until stopped, asks to run a command or asks a question; steer the
   running turn; approve or decline the command; answer the question; interrupt the
-  turn; crash the runtime mid-turn; release the idle thread's session as IdleSessions
-  does.
+  turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
+  release the idle thread's session as IdleSessions does.
 
   Turns run on the fake `muse serve` in `test/support/fake_muse_msp.py`, which keeps
   its sessions on disk. A turn that replies names every message Muse's session has
@@ -107,13 +107,15 @@ defmodule HalC2.MuseRuntimePropTest do
 
     idle = [
       {6, {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :ask])]}},
-      {1, {:call, __MODULE__, :release, []}}
+      {1, {:call, __MODULE__, :release, []}},
+      {1, {:call, __MODULE__, :host_exit, []}}
     ]
 
     busy =
       [
         {2, {:call, __MODULE__, :interrupt, []}},
-        {1, {:call, __MODULE__, :crash, []}}
+        {1, {:call, __MODULE__, :crash, []}},
+        {1, {:call, __MODULE__, :host_exit, []}}
       ] ++
         case turn && turn.kind do
           nil ->
@@ -141,6 +143,7 @@ defmodule HalC2.MuseRuntimePropTest do
     do: match?(%{kind: :shell}, turn)
 
   def precondition(%{turn: turn}, {:call, _, :answer, _}), do: match?(%{kind: :ask}, turn)
+  def precondition(_state, {:call, _, :host_exit, _}), do: true
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
   def next_state(state, _result, {:call, _, :send, [msg, kind]}) do
@@ -166,6 +169,9 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
   def next_state(state, _result, {:call, _, :release, _}), do: state
+
+  def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
+  def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
 
   defp end_turn(%{turn: %{msg: msg}} = state, status) do
     runs = Enum.map(state.runs, fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end)
@@ -275,6 +281,38 @@ defmodule HalC2.MuseRuntimePropTest do
     reply({:ok, %{}}, ending)
   end
 
+  # `muse serve` dies on its own (killed by its OS pid, from the fake's log); the
+  # runtime has seen it once the connection is down and the runtime answered after.
+  def host_exit do
+    ending = active_runs()
+
+    with [{runtime, _}] <- Registry.lookup(HalC2.Muse.Registry, @tid),
+         %{conn: conn} when is_pid(conn) <- :sys.get_state(runtime) do
+      ref = Process.monitor(conn)
+      {_, 0} = System.cmd("kill", ["-9", "#{host_pid()}"])
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      after
+        @wait_ms -> :ok
+      end
+
+      _ = :sys.get_state(runtime)
+    end
+
+    reply({:ok, %{}}, ending)
+  end
+
+  defp host_pid do
+    log = Path.join(Process.get(:fake_dir), "log.jsonl")
+
+    for line <- String.split(File.read!(log), "\n", trim: true),
+        %{"start" => %{"argv" => argv, "pid" => pid}} <- [JSON.decode!(line)],
+        "--disable-write" not in argv,
+        reduce: nil,
+        do: (_ -> pid)
+  end
+
   def release do
     case Orchestration.release_session(@tid) do
       :ok -> reply({:ok, %{}}, [])
@@ -287,6 +325,7 @@ defmodule HalC2.MuseRuntimePropTest do
   defp install_fake(home) do
     dir = Path.join(home, "fake-muse")
     File.mkdir_p!(dir)
+    Process.put(:fake_dir, dir)
     File.write!(Path.join(dir, "config.json"), JSON.encode!(%{"turns" => @turns}))
     bin = Path.join([dir, "bin", "muse"])
     File.mkdir_p!(Path.dirname(bin))
