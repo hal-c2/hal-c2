@@ -366,16 +366,16 @@ Feature: Planner
       Then the action, the state of its run and the apply action are shown above the conversation
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
-    Scenario: An action's thread is marked in the thread list
-      Given "planner" shows its threads in the thread list
-      When the user runs "Reschedule"
-      Then its thread is listed with the planner mark and the state of its run
-
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A proposal of only a status update can be applied
       Given the run of "Write status update" proposes only that the plan is "at-risk"
       When the user opens the run's thread
       Then the run can be applied from its thread and from the "Planner" tab
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: An action's thread is marked in the thread list
+      Given "planner" shows its threads in the thread list
+      When the user runs "Reschedule"
+      Then its thread is listed with the planner mark and the state of its run
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings edit each action's prompt and reset it
@@ -480,6 +480,14 @@ Feature: Planner
       When #7 is moved out of "Beta" on GitHub, leaving #8 in it
       And the plugin looks at GitHub
       Then the milestone "Beta" waits for #8's task and not #7's
+
+    @mc
+    Scenario: A milestone whose last issue left on GitHub stops waiting for it
+      Given "planner" follows the issues of "acme/api"
+      And the tasks of #7 and #8 were imported in the milestone "Beta"
+      When #7 and #8 are moved out of "Beta" on GitHub
+      And the plugin looks at GitHub
+      Then the milestone "Beta" waits for no task
 
     @mc
     Scenario: The pull requests that close an issue are linked to its task

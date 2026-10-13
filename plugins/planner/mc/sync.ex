@@ -410,6 +410,20 @@ defmodule HalC2Plugins.Planner.Sync do
         not Plan.same_ref?(listed[key(issue)], milestone)
     end
 
+    # Every imported milestone, holding a listed issue or no longer, lets go first.
+    items =
+      Enum.reduce(items, items, fn {id, item}, items ->
+        with ref when is_map(ref) <- item["milestone"],
+             nil <- item["syncError"],
+             kept = Enum.reject(item["after"], &left?.(ref, &1)),
+             true <- kept != item["after"],
+             {:ok, items, _old, _new} <- Plan.update(items, id, %{"after" => kept}, now) do
+          items
+        else
+          _ -> items
+        end
+      end)
+
     issues
     |> Enum.filter(&is_map(&1["milestone"]))
     |> Enum.group_by(&{String.downcase(&1["repository"]), &1["milestone"]["number"]})
@@ -443,8 +457,7 @@ defmodule HalC2Plugins.Planner.Sync do
           fields = %{
             "title" => ref["title"],
             "due" => ref["dueOn"],
-            "after" =>
-              Enum.uniq(Enum.reject(milestone["after"], &left?.(milestone["milestone"], &1)) ++ tasks)
+            "after" => Enum.uniq(milestone["after"] ++ tasks)
           }
 
           case Plan.update(items, milestone["id"], fields, now) do

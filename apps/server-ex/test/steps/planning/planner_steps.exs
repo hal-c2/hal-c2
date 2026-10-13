@@ -1144,6 +1144,21 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "\#{int} and \#{int} are moved out of {string} on GitHub",
+       %{args: [one, two, _title]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, one),
+      GitHubIssues.issue(repository, two)
+    ])
+  end
+
+  step "the milestone {string} waits for no task", %{args: [title]} = context do
+    assert %{"kind" => "milestone", "after" => []} = item(plan!(context), title)
+    context
+  end
+
   step "\#{int} is closed by the pull request \#{int}", %{args: [number, pr]} = context do
     repository = context.repository
 
