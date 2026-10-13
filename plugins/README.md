@@ -28,5 +28,6 @@ What the MC lends a plugin, each behind a permission the user grants:
 - a data folder of its own, and topics its UI parts watch.
 
 The two packages here use all of it, and their tests show how to test a plugin:
-MC scenarios in `features/`, run with `mix features`, and the desktop drawing the
-QML against a fake of the MC part in `tst_Features`.
+MC scenarios in `features/`, run from `apps/server-ex` with
+`mise exec -- mix features <globs relative to features/>`, and the desktop drawing
+the QML against a fake of the MC part in `tst_Features`.
