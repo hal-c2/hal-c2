@@ -67,7 +67,7 @@ defmodule HalC2.Steps.Planning.Planner do
     actions = Map.new(@defaults, fn {id, action} -> {id, gated(action, action["prompt"])} end)
 
     context
-    |> Map.merge(%{planner: true, actions: actions, prs: %{}, watched: %{}})
+    |> Map.merge(%{planner: true, actions: actions, prs: %{}, newer_prs: 0, watched: %{}})
     |> save(%{
       "provider" => "codex",
       "model" => "fake/one",
@@ -1080,6 +1080,11 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "\#{int} is merged", %{args: [number]} = context do
     merge(context, number)
+  end
+
+  step "{string} has {int} pull requests updated since \#{int}",
+       %{args: [_repository, count, _number]} = context do
+    pr_list(%{context | newer_prs: count})
   end
 
   step "the plugin looks at GitHub", context do
@@ -2130,13 +2135,32 @@ defmodule HalC2.Steps.Planning.Planner do
 
   defp merge(context, number), do: pr_list(put_in(context.prs[number], "MERGED"))
 
-  # The fake GitHub lists the linked pull requests in the states of `context.prs`.
+  # The fake GitHub lists the linked pull requests in the states of `context.prs`,
+  # after `context.newer_prs` more recently updated ones; a list that runs past a
+  # page carries on from the oldest instant on it.
   defp pr_list(context) do
     prs =
       for {number, state} <- Enum.sort(context.prs),
           do: Shared.gh_pr(context.repository, number, %{"state" => state})
 
-    World.cli_rules(context, [%{"args" => ["pr list"], "stdout" => prs}])
+    newer =
+      for minutes <- context.newer_prs..1//-1 do
+        at = DateTime.add(~U[2026-09-10 00:00:00Z], minutes, :minute)
+        fields = %{"updatedAt" => DateTime.to_iso8601(at)}
+        Shared.gh_pr(context.repository, 1000 + minutes, fields)
+      end
+
+    rows = newer ++ prs
+    first = %{"args" => ["pr list"], "stdout" => Enum.take(rows, 501)}
+
+    case Enum.at(rows, 499) do
+      %{"updatedAt" => boundary} when length(rows) > 500 ->
+        rest = %{"args" => ["pr list", "updated:<=#{boundary}"], "stdout" => Enum.drop(rows, 499)}
+        World.cli_rules(context, [rest, first])
+
+      _ ->
+        World.cli_rules(context, [first])
+    end
   end
 
   defp sync!(context) do

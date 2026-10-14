@@ -521,6 +521,14 @@ Feature: Planner
       Then "API" is 50% done
 
     @mc
+    Scenario: A task follows a pull request past the first page of the repository's list
+      Given "API" is linked to #12 of "acme/api"
+      And "acme/api" has 500 pull requests updated since #12
+      When #12 is merged
+      And the plugin looks at GitHub
+      Then "API" is done
+
+    @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
       And "acme/api" has the open issue #7 "Rate limits" assigned to "dana" with the label "backend"

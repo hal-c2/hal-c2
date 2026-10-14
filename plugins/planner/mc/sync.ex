@@ -227,17 +227,34 @@ defmodule HalC2Plugins.Planner.Sync do
     if ids == [] do
       found
     else
-      case Host.pull_requests(@id, "list", %{
-             "projectIds" => ids,
-             "state" => "all",
-             "limit" => 500
-           }) do
-        {:ok, list} ->
-          prs = for entry <- list["entries"] || [], into: %{}, do: {key(entry), entry["state"]}
-          problem(%{found | prs: prs}, Enum.map(list["errors"] || [], & &1["message"]))
+      case pr_pages(%{"projectIds" => ids, "state" => "all", "limit" => 500}, [], [], 20) do
+        {:ok, entries, errors} ->
+          prs = for entry <- entries, into: %{}, do: {key(entry), entry["state"]}
+          problem(%{found | prs: prs}, errors)
 
         {:error, error} ->
           problem(found, [message(error)])
+      end
+    end
+  end
+
+  # Every page of the repositories' pull requests, carrying each repository on from
+  # where its last page stopped; a page that cannot be carried on from is the last.
+  defp pr_pages(input, entries, errors, pages) do
+    with {:ok, list} <- Host.pull_requests(@id, "list", input) do
+      entries = entries ++ (list["entries"] || [])
+      errors = errors ++ Enum.map(list["errors"] || [], & &1["message"])
+      next = list["nextCursors"] || %{}
+
+      cond do
+        next != %{} and pages > 1 ->
+          pr_pages(Map.put(input, "cursors", next), entries, errors, pages - 1)
+
+        list["truncated"] ->
+          {:ok, entries, errors ++ ["Not every pull request could be read."]}
+
+        true ->
+          {:ok, entries, errors}
       end
     end
   end
