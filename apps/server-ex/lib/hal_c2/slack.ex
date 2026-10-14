@@ -129,6 +129,12 @@ defmodule HalC2.Slack do
           - message.mpim
           - member_joined_channel
           - channel_left
+          - channel_rename
+          - channel_archive
+          - channel_unarchive
+          - group_rename
+          - group_archive
+          - group_unarchive
       interactivity:
         is_enabled: false
       org_deploy_enabled: false
@@ -240,8 +246,13 @@ defmodule HalC2.Slack do
 
   @doc "The bot token while connected."
   def token do
+    with {:ok, token, _connection} <- connection(), do: {:ok, token}
+  end
+
+  # The bot token and a ref of this connection, read together.
+  defp connection do
     case :ets.lookup(@cache, :token) do
-      [{:token, token}] -> {:ok, token}
+      [{:token, token, connection}] -> {:ok, token, connection}
       [] -> {:error, @not_connected}
     end
   rescue
@@ -258,25 +269,29 @@ defmodule HalC2.Slack do
     ArgumentError -> nil
   end
 
+  # What is read from Slack is cached under the connection it was read on, so a read
+  # that outlives its connection is never found by the next one; `lose/1` clears it all.
   @doc "The channels the bot is in, `%{\"id\", \"name\", \"private\"}`, cached until one changes."
   def channels do
-    case :ets.lookup(@cache, :channels) do
-      [{:channels, channels}] ->
-        {:ok, channels}
-
-      [] ->
-        with {:ok, channels} <- fetch_channels() do
-          :ets.insert(@cache, {:channels, channels})
+    with {:ok, token, connection} <- connection() do
+      case :ets.lookup(@cache, {:channels, connection}) do
+        [{_, channels}] ->
           {:ok, channels}
-        end
+
+        [] ->
+          with {:ok, channels} <- fetch_channels(token) do
+            :ets.insert(@cache, {{:channels, connection}, channels})
+            {:ok, channels}
+          end
+      end
     end
   rescue
     ArgumentError -> {:error, @not_connected}
   end
 
-  @doc "Forgets the cached channel list (the bot joined or left one)."
+  @doc "Forgets the cached channel list (the bot joined or left one, or one was renamed or archived)."
   def channels_changed do
-    :ets.delete(@cache, :channels)
+    :ets.match_delete(@cache, {{:channels, :_}, :_})
     :ok
   rescue
     ArgumentError -> :ok
@@ -297,21 +312,23 @@ defmodule HalC2.Slack do
 
   @doc "A user's `%{\"id\", \"name\", \"realName\"}`, cached."
   def user(id) when is_binary(id) do
-    case :ets.lookup(@cache, {:user, id}) do
-      [{_, user}] ->
-        {:ok, user}
-
-      [] ->
-        with {:ok, %{"user" => found}} <- api(:get, "users.info", %{user: id}) do
-          user = %{
-            "id" => id,
-            "name" => found["name"],
-            "realName" => found["real_name"] || get_in(found, ["profile", "real_name"])
-          }
-
-          :ets.insert(@cache, {{:user, id}, user})
+    with {:ok, token, connection} <- connection() do
+      case :ets.lookup(@cache, {:user, connection, id}) do
+        [{_, user}] ->
           {:ok, user}
-        end
+
+        [] ->
+          with {:ok, %{"user" => found}} <- request(:get, "users.info", token, %{user: id}) do
+            user = %{
+              "id" => id,
+              "name" => found["name"],
+              "realName" => found["real_name"] || get_in(found, ["profile", "real_name"])
+            }
+
+            :ets.insert(@cache, {{:user, connection, id}, user})
+            {:ok, user}
+          end
+      end
     end
   rescue
     ArgumentError -> {:error, @not_connected}
@@ -327,10 +344,10 @@ defmodule HalC2.Slack do
     end
   end
 
-  defp fetch_channels do
-    args = %{types: "public_channel,private_channel", exclude_archived: true}
+  defp fetch_channels(token) do
+    args = %{types: "public_channel,private_channel", exclude_archived: true, limit: 200}
 
-    with {:ok, channels} <- pages("users.conversations", args, "channels") do
+    with {:ok, channels} <- pages("users.conversations", token, args, "channels", []) do
       {:ok,
        Enum.map(
          channels,
@@ -516,7 +533,7 @@ defmodule HalC2.Slack do
       )
     end
 
-    :ets.insert(@cache, [{:token, elem(job.tokens, 0)}, {:identity, identity}])
+    :ets.insert(@cache, [{:token, elem(job.tokens, 0), make_ref()}, {:identity, identity}])
 
     state =
       %{state | tokens: job.tokens, conn: %{refs: refs}, identity: identity, error: nil}

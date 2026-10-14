@@ -47,7 +47,9 @@ defmodule HalC2.Slack.Bot do
     }
   end
 
-  def event(type, _payload, _bot) when type in ["member_joined_channel", "channel_left"] do
+  def event(type, _payload, _bot)
+      when type in ~w(member_joined_channel channel_left channel_rename channel_archive
+                      channel_unarchive group_rename group_archive group_unarchive) do
     HalC2.Slack.channels_changed()
     nil
   end
