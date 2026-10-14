@@ -416,7 +416,7 @@ defmodule HalC2Plugins.Planner do
 
   def call_agent_tool(@report_tool, arguments, %{thread_id: thread_id, settings: settings}) do
     with {:ok, report} <- report(arguments),
-         {:ok, run, effects} <- server({:report, thread_id, report}) do
+         {:ok, run, effects} <- decide({:report, thread_id, report}, settings) do
       effects(effects, settings)
 
       {:ok,
@@ -440,7 +440,7 @@ defmodule HalC2Plugins.Planner do
 
   def call_agent_tool(@progress_tool, arguments, %{thread_id: thread_id, settings: settings}) do
     with {:ok, progress} <- progress(arguments),
-         {:ok, item, effects} <- server({:progress, thread_id, progress}) do
+         {:ok, item, effects} <- decide({:progress, thread_id, progress}, settings) do
       effects(effects, settings)
 
       {:ok,
@@ -527,7 +527,7 @@ defmodule HalC2Plugins.Planner do
   # A change to the plan, then what it sends on: its pushes to GitHub, each told back to
   # the server, and its posts to Slack. An item in the reply is read again after them.
   defp change(message, settings) do
-    with {:ok, reply, effects} <- server(message) do
+    with {:ok, reply, effects} <- decide(message, settings) do
       effects(effects, settings)
 
       case reply do
@@ -539,6 +539,18 @@ defmodule HalC2Plugins.Planner do
       end
     end
   end
+
+  # Asks the server for a change. A plan that syncs both ways pushes it, naming the
+  # project each push asks GitHub through, so the MC's projects are read here first:
+  # reading them runs git for each project, which the server is not held up by.
+  defp decide(message, %{"sync" => "twoWay"}) do
+    case Host.projects(@id) do
+      {:ok, projects} -> server({:projects, projects, message})
+      _ -> server(message)
+    end
+  end
+
+  defp decide(message, _settings), do: server(message)
 
   defp effects(effects, settings) do
     for {id, push, ops} <- Map.get(effects, :pushes, []) do
@@ -655,6 +667,11 @@ defmodule HalC2Plugins.Planner do
 
   def handle_call({:looked, found}, _from, state),
     do: {:reply, :ok, state |> apply_look(found) |> changed()}
+
+  # A change with the MC's projects as its caller read them; they stay for the changes
+  # whose callers do not read them, until a look or such a change reads them again.
+  def handle_call({:projects, projects, message}, from, state),
+    do: handle_call(message, from, %{state | projects: projects})
 
   def handle_call({:add, fields}, _from, state) do
     case Plan.add(state.items, id("t"), fields, now()) do
@@ -1271,7 +1288,11 @@ defmodule HalC2Plugins.Planner do
     state =
       Enum.reduce(gone, state, fn run, state ->
         error = "Its task was removed before it started."
-        put_run(state, Map.merge(run, %{"status" => "failed", "error" => error, "finishedAt" => now()}))
+
+        put_run(
+          state,
+          Map.merge(run, %{"status" => "failed", "error" => error, "finishedAt" => now()})
+        )
       end)
 
     running = Enum.count(state.runs, fn {_, run} -> run["status"] == "running" end)
@@ -1533,7 +1554,7 @@ defmodule HalC2Plugins.Planner do
       for {id, new} <- items,
           old = before[id],
           old != new,
-          ops = Sync.pushes(state.settings, old, new, items),
+          ops = Sync.pushes(state.settings, old, new, items, state.projects),
           ops != [],
           do: {id, System.unique_integer([:monotonic]), ops}
 
@@ -1568,7 +1589,8 @@ defmodule HalC2Plugins.Planner do
   defp hold_up(items, id, fun) do
     case items[id] do
       %{"kind" => "milestone", "after" => after_ids} ->
-        with {:ok, items, _old, _new} <- Plan.update(items, id, %{"after" => fun.(after_ids)}, now()),
+        with {:ok, items, _old, _new} <-
+               Plan.update(items, id, %{"after" => fun.(after_ids)}, now()),
              do: {:ok, items}
 
       _ ->

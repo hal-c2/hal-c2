@@ -812,6 +812,14 @@ Feature: Planner
       And the user moves #8's task to end on "2026-11-09"
       Then GitHub is asked to add #8 to "acme/3" and set its "Target date" to "2026-11-09"
 
+    # GitHub holds an issue in one milestone, so a move between two is one change.
+    @mc
+    Scenario: A task moved between imported milestones is moved on GitHub
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      Then GitHub is asked once to move #7 to the milestone "Launch"
+
     @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways
@@ -832,6 +840,17 @@ Feature: Planner
       And GitHub refuses changes to #7
       When the user renames #7's task to "Rate limiting"
       Then #7's task is named "Rate limiting" and marked as not synced, with GitHub's reason
+
+    @mc
+    Scenario: A change GitHub refused goes again with the task's next one
+      Given "planner" syncs "acme/api" both ways
+      And GitHub refuses changes to #7
+      And the user renames #7's task to "Rate limiting"
+      And GitHub takes changes to #7 again
+      When the user labels #7's task "api"
+      Then GitHub is asked to rename #7 to "Rate limiting" and label it "api" at once
+      And GitHub is never asked to change #7's assignees
+      And #7's task is named "Rate limiting" and marked as synced
 
     @mc
     Scenario: Only the latest change to a task says whether it synced
@@ -864,11 +883,25 @@ Feature: Planner
       Then #7's task is named "Rate limiting" and marked as synced
 
     @mc
+    Scenario: The plan can be read while a change to a task waits on the MC's projects
+      Given "planner" syncs "acme/api" both ways
+      And the MC is slow to read its projects' git remotes
+      When the user renames #7's task to "Rate limiting" while the MC reads them
+      Then the plan could be read meanwhile
+      And GitHub is asked to rename #7 to "Rate limiting"
+
+    @mc
     Scenario: The user makes a task into an issue
       Given the plan has "Docs" in "api"
       When the user creates an issue for "Docs" in "acme/api"
       Then GitHub is asked to create the issue "Docs"
       And "Docs" is linked to the new issue
+
+    @mc
+    Scenario: An issue made from a task has the task's labels
+      Given the plan has "Docs" in "api" labelled "docs"
+      When the user creates an issue for "Docs" in "acme/api"
+      Then GitHub is asked to create the issue "Docs" labelled "docs"
 
     @mc
     Scenario: A repository with no project on the MC is reported

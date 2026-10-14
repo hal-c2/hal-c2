@@ -1822,6 +1822,115 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdout" => %{"number" => number}
+      }
+    ])
+  end
+
+  step "the user labels \#{int}'s task {string}", %{args: [number, label]} = context do
+    update_task(context, number, %{"labels" => [label]})
+  end
+
+  step "GitHub is asked to rename \#{int} to {string} and label it {string} at once",
+       %{args: [number, title, label]} = context do
+    GitHubIssues.assert_patched(context, number, %{"title" => title, "labels" => [label]})
+  end
+
+  step "GitHub is never asked to change \#{int}'s assignees", %{args: [number]} = context do
+    changes = GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}")
+    refute Enum.any?(changes, &Map.has_key?(&1, "assignees")), inspect(changes)
+    context
+  end
+
+  step "\#{int} is in the milestone {string} and \#{int} in {string} on GitHub",
+       %{args: [one, first, two, second]} = context do
+    repository = context.repository
+    milestone = &%{"number" => &1, "title" => &2, "dueOn" => "2026-11-30T00:00:00Z"}
+
+    context
+    |> GitHubIssues.answers(repository, [
+      GitHubIssues.issue(repository, one, %{"milestone" => milestone.(1, first)}),
+      GitHubIssues.issue(repository, two, %{"milestone" => milestone.(2, second)})
+    ])
+    |> sync!()
+    |> Map.put(:milestones, %{first => 1, second => 2})
+  end
+
+  # One write for the move, not one for each milestone it touched.
+  step "GitHub is asked once to move \#{int} to the milestone {string}",
+       %{args: [number, title]} = context do
+    moves =
+      for patch <- GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}"),
+          Map.has_key?(patch, "milestone"),
+          do: patch["milestone"]
+
+    assert moves == [context.milestones[title]]
+    context
+  end
+
+  step "the plan has {string} in {string} labelled {string}",
+       %{args: [title, project, label]} = context do
+    ensure(context, title, %{
+      "projectId" => World.project(context, project).id,
+      "labels" => [label]
+    })
+  end
+
+  step "GitHub is asked to create the issue {string} labelled {string}",
+       %{args: [title, label]} = context do
+    created = GitHubIssues.rest_calls(context, "POST", "/issues")
+
+    assert Enum.any?(created, &(&1["title"] == title and &1["labels"] == [label])),
+           "GitHub was not asked to create #{title} labelled #{label}: #{inspect(created)}"
+
+    context
+  end
+
+  # A stand-in for git that holds the first `git remote -v` from here on, which reading
+  # the MC's projects runs for each, on a fifo until the scenario lets it go.
+  step "the MC is slow to read its projects' git remotes", context do
+    dir = Mc.tmp_dir(context.mc, "slow-git")
+    gate = Path.join(dir, "gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    if [ "$1 $2" = "remote -v" ] && mkdir '#{dir}/held' 2>/dev/null; then read _ < '#{gate}'; fi
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+    Map.put(context, :git_gate, gate)
+  end
+
+  # The rename comes from a client of its own, as another window's would, and the plan
+  # is read while the MC reads its projects' remotes for it.
+  step "the user renames \#{int}'s task to {string} while the MC reads them",
+       %{args: [number, title]} = context do
+    %{mc: mc} = context
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    input = %{"id" => task["id"], "fields" => %{"title" => title}}
+    call = %{"id" => @id, "method" => "updateItem", "input" => input}
+    renaming = Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    # Opening the gate waits for git to read it, so the remotes are being read.
+    {:ok, gate} = :file.open(context.git_gate, [:write, :raw])
+    {meanwhile, context} = plugin(context, "plan", %{})
+    :ok = :file.close(gate)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    Map.put(context, :meanwhile, meanwhile)
+  end
+
+  step "the plan could be read meanwhile", context do
+    assert {:ok, %{"items" => _}} = context.meanwhile
+    context
+  end
+
   step "\#{int}'s task is named {string} and marked as not synced, with GitHub's reason",
        %{args: [number, title]} = context do
     assert %{"title" => ^title, "syncError" => error} = task_of(plan!(context), number)

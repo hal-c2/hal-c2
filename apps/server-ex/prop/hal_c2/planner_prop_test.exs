@@ -4,7 +4,7 @@ defmodule HalC2.PlannerPropTest do
   loaded and enabled through `HalC2.Plugins` as a user installs it, with the fake
   Codex, whose turns stay open until the model ends them, and the fake GitHub
   (`test/support/fake_gh.py`), which holds each rename of a linked task until the
-  model answers it.
+  model answers it and answers a later push carrying the name the same at once.
 
   Three tasks (`a`, `b`, `c`), any of them a milestone, are added, nested, made to wait
   for each other, moved from one milestone to another and removed. Two actions on the whole plan run: one whose changes wait for the user and
@@ -39,8 +39,9 @@ defmodule HalC2.PlannerPropTest do
     finished last are kept; the others stay until they are discarded;
   - a linked task's sync error is what its latest push answered: an older push that
     finishes after it leaves it alone, a change GitHub takes without being asked
-    anything clears it, and a push in flight when the task was unlinked, relinked or the
-    plugin restarted says nothing;
+    anything clears it, a change to a task GitHub refused sends its name again, as GitHub
+    then answers, and a push in flight when the task was unlinked, relinked or the plugin
+    restarted says nothing;
   - a linked task's board item is the one its latest push added: an older push, or one
     answered after the task was unlinked, leaves it alone, and unlinking or relinking
     clears it, as does saving the settings with another board, so the next push adds it
@@ -187,7 +188,9 @@ defmodule HalC2.PlannerPropTest do
   # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
   # whether the task synced, `:now` for one that took at once; `held`: push → {slot,
   # gen, :ok | :refused, adds} for the renames GitHub has not answered, how it will, and
-  # whether the push adds the task to the board. `board`: the board the settings name.
+  # whether the push adds the task to the board. `named`: slot → {push, outcome} for the
+  # task's last rename, which GitHub answers each push carrying its name with once it
+  # has answered it. `board`: the board the settings name.
   def initial_state,
     do: %{
       board: @board,
@@ -200,7 +203,8 @@ defmodule HalC2.PlannerPropTest do
       updates: 0,
       pushes: 0,
       latest: %{},
-      held: %{}
+      held: %{},
+      named: %{}
     }
 
   def command(m) do
@@ -220,6 +224,9 @@ defmodule HalC2.PlannerPropTest do
     # the task's.
     relink =
       if m.held != %{} or Enum.any?(linked, &(m.items[&1].board != nil)), do: 6, else: 1
+
+    # And a change to a task GitHub refused, which sends it again.
+    refused = for {slot, %{sync: {:refused, _}}} <- m.items, do: slot
 
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
@@ -267,6 +274,10 @@ defmodule HalC2.PlannerPropTest do
        if(m.held != %{},
          do: [{10, {:call, __MODULE__, :answer, [elements(Map.keys(m.held))]}}],
          else: []
+       ) ++
+       if(refused == [],
+         do: [],
+         else: [{6, {:call, __MODULE__, :wait, [elements(refused), item]}}]
        ) ++
        if(m.asked > 0,
          do: [
@@ -438,7 +449,8 @@ defmodule HalC2.PlannerPropTest do
        m
        | pushes: push,
          latest: Map.put(m.latest, slot, {gen, push}),
-         held: Map.put(m.held, push, {slot, gen, outcome, m.items[slot].board == nil})
+         held: Map.put(m.held, push, {slot, gen, outcome, m.items[slot].board == nil}),
+         named: Map.put(m.named, slot, {push, outcome})
      }, :ok}
   end
 
@@ -601,13 +613,19 @@ defmodule HalC2.PlannerPropTest do
   defp repository_of(number) when here?(number), do: @repository
   defp repository_of(_number), do: @elsewhere
 
-  # A change to a linked task that asks GitHub nothing: its push takes at once. A task
-  # linked to an issue of `@elsewhere` is pushed nothing.
-  defp pushed(m, slot) do
+  # A change to a linked task, which takes at once and says whether it synced. One that
+  # asks GitHub nothing clears the sync error, but a task GitHub refused goes again whole
+  # under its last name, which GitHub answers as it answered that rename, and only a push
+  # GitHub takes goes on to the board. A task linked to an issue of `@elsewhere` is
+  # pushed nothing. `dated` is a change to the task's due date.
+  defp pushed(m, slot, dated \\ false) do
     case m.items[slot] do
-      %{issue: n} when here?(n) ->
+      %{issue: n, sync: sync} when here?(n) ->
+        again = match?({:refused, _}, sync)
+        {push, outcome} = if again, do: m.named[slot], else: {nil, :ok}
         m = %{m | latest: Map.put(m.latest, slot, {m.gens[slot], :now})}
-        put_in(m.items[slot].sync, nil)
+        m = put_in(m.items[slot].sync, if(outcome == :refused, do: {:refused, push}))
+        if outcome == :ok and (again or dated), do: boarded(m, slot), else: m
 
       _ ->
         m
@@ -684,7 +702,7 @@ defmodule HalC2.PlannerPropTest do
       |> then(fn {changes, items} -> {items, changes} end)
 
     moved = for {slot, item} <- items, m.items[slot].due != item.due, do: slot
-    m = Enum.reduce(moved, %{m | items: items}, &(&2 |> pushed(&1) |> boarded(&1)))
+    m = Enum.reduce(moved, %{m | items: items}, &pushed(&2, &1, true))
     m = finish(m, k, %{run | status: :applied, changes: changes})
     if run.health, do: %{m | updates: m.updates + 1}, else: m
   end
@@ -822,23 +840,42 @@ defmodule HalC2.PlannerPropTest do
 
   # Renames the task to a name of the push's own and moves its due date, from a caller
   # of its own as another client's would be. GitHub holds the push until `answer/1` lets
-  # it answer `outcome`.
+  # it answer `outcome`, and answers every later push carrying the name, a task GitHub
+  # refused going again, the same at once. The push is held on a fifo, whose opening
+  # tells the case GitHub has it.
   def rename(slot, outcome, push) do
     title = "#{slot}#{push}"
     gate = gate(push)
+    {_, 0} = System.cmd("mkfifo", [gate])
 
     gh_rule(%{
       "args" => [
         "--method PATCH",
         "repos/#{@repository}/issues/#{Process.get({:pl_issue, slot})} "
       ],
-      "stdin" => [JSON.encode!(%{"title" => title})],
-      "run" => "while [ ! -e '#{gate}' ] && [ -d '#{Path.dirname(gate)}' ]; do sleep 0.01; done",
+      "stdin" => [~s("title":#{JSON.encode!(title)})],
+      "run" => "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi",
       "stdout" => "{}",
       "exit" => if(outcome == :ok, do: 0, else: 1),
       "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
     })
 
+    case_pid = self()
+
+    holder =
+      spawn(fn ->
+        ref = Process.monitor(case_pid)
+        # Opening the fifo waits for the push to read it.
+        {:ok, fd} = :file.open(gate, [:write, :raw])
+        send(case_pid, {:pl_asked, push})
+
+        receive do
+          :answer -> :file.close(fd)
+          {:DOWN, ^ref, :process, _, _} -> :file.close(fd)
+        end
+      end)
+
+    Process.put({:pl_holder, push}, holder)
     input = %{"id" => item_id(slot), "fields" => %{"title" => title, "due" => renamed_due(push)}}
 
     caller =
@@ -852,6 +889,13 @@ defmodule HalC2.PlannerPropTest do
       end)
 
     Process.put({:pl_push, push}, caller)
+
+    receive do
+      {:pl_asked, ^push} -> :ok
+    after
+      15_000 -> problem("the push #{push} never reached GitHub")
+    end
+
     await_plan(&Enum.any?(&1["items"], fn item -> item["title"] == title end))
     observe(:ok)
   end
@@ -863,7 +907,7 @@ defmodule HalC2.PlannerPropTest do
 
     if Process.alive?(pid) do
       gh_rule(board_item(push))
-      File.write!(gate(push), "")
+      send(Process.get({:pl_holder, push}), :answer)
 
       receive do
         {:DOWN, ^ref, :process, _, _} -> :ok
@@ -1231,7 +1275,7 @@ defmodule HalC2.PlannerPropTest do
     )
 
     for {{tag, _} = key, _} <- Process.get(),
-        tag in [:pl_push, :pl_issue],
+        tag in [:pl_push, :pl_holder, :pl_issue],
         do: Process.delete(key)
 
     Process.put(:pl_items, %{})
@@ -1312,7 +1356,7 @@ defmodule HalC2.PlannerPropTest do
     # The fake Codex turns still open end, and their processes with them.
     File.write(Path.join(System.get_env("FAKE_CODEX_GATE"), "answer"), "")
     # So do the pushes GitHub still holds, whose callers find the plugin gone.
-    for {{:pl_push, push}, _} <- Process.get(), do: File.write(gate(push), "")
+    for {{:pl_holder, _}, holder} <- Process.get(), do: send(holder, :answer)
     take_messages()
   end
 

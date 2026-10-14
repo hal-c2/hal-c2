@@ -3,12 +3,13 @@ defmodule HalC2Plugins.Planner.Sync do
   The plan and GitHub: what a look at the followed repositories, the board and the
   linked pull requests finds (`look/2`), how it changes the plan (`apply/5`), and
   what a change to a linked task asks of GitHub when the plan syncs both ways
-  (`pushes/4`, run by `run/1`).
+  (`pushes/5`, run by `run/1`).
 
   GitHub wins over the plan for what it holds, except for a task whose last change
-  GitHub refused (`syncError`): that one keeps the user's until a push takes. A task's
-  state follows its issue only when the issue opens or closes, so a task the user
-  marked doing stays doing while its issue stays open.
+  GitHub refused (`syncError`): that one keeps the user's, and its next push sends all
+  of it again, until a push takes. A task's state follows its issue only when the
+  issue opens or closes, so a task the user marked doing stays doing while its issue
+  stays open.
   """
 
   alias HalC2.Plugins.Host
@@ -127,11 +128,19 @@ defmodule HalC2Plugins.Planner.Sync do
       case read_board(github, owner, number, 500) do
         {:ok, %{"items" => board_items} = read} ->
           # Only the dates the settings name; one empty on the board is cleared.
-          named = for {date, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}], is_binary(field) and field != "", do: {date, field}
+          named =
+            for {date, field} <- [
+                  {"start", settings["startField"]},
+                  {"due", settings["targetField"]}
+                ],
+                is_binary(field) and field != "",
+                do: {date, field}
 
           board =
             for %{"content" => %{"kind" => "issue"} = content} = item <- board_items, into: %{} do
-              dates = for {date, field} <- named, into: %{}, do: {date, day(item["fields"][field])}
+              dates =
+                for {date, field} <- named, into: %{}, do: {date, day(item["fields"][field])}
+
               {key(content), Map.put(dates, "itemId", item["id"])}
             end
 
@@ -451,7 +460,8 @@ defmodule HalC2Plugins.Planner.Sync do
   defp milestones(items, issues, projects, now, new_id) do
     listed =
       Map.new(issues, fn issue ->
-        {key(issue), issue["milestone"] && Map.put(issue["milestone"], "repository", issue["repository"])}
+        {key(issue),
+         issue["milestone"] && Map.put(issue["milestone"], "repository", issue["repository"])}
       end)
 
     left? = fn milestone, id ->
@@ -572,35 +582,48 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   What GitHub is asked when `old` becomes `new` (in `items`) and the plan syncs both
   ways: the issue's title, body, state, assignee and labels, its blocking issues and
-  sub-issues, its dates on the board, and a milestone's title and date. Each op is
-  `{method, input}` for `HalC2.Plugins.Host.issues/3`, or `{:board, input}` to put the
-  issue on the board before its dates are set.
+  sub-issues, its dates on the board, and a milestone's title, date and the issues it
+  holds. Each op is `{method, input}` for `HalC2.Plugins.Host.issues/3`, or
+  `{:board, input}` to put the issue on the board before its dates are set. Each asks
+  through a project of `projects` (`HalC2.Plugins.Host.projects/1`), which the caller
+  reads, as that runs git.
+
+  A task GitHub refused a change to is pushed whole: its issue's fields but the
+  assignees, the dates it has on the board and, for a milestone, its title, date and
+  the issues it holds, so a change refused before goes again with the next, and the
+  mark clears once all of it took.
   """
-  def pushes(%{"sync" => "twoWay"} = settings, old, new, items) do
+  def pushes(%{"sync" => "twoWay"} = settings, old, new, items, projects) do
     with %{"repository" => repo, "number" => number} <- new["issue"] || new["milestone"],
-         project when is_binary(project) <- project_id(new) do
+         project when is_binary(project) <- project_id(new, projects) do
       base = %{"projectId" => project, "repository" => repo, "number" => number}
 
       if new["issue"],
-        do: issue_pushes(settings, base, old, new, items),
-        else: milestone_pushes(base, old, new)
+        do: issue_pushes(settings, base, old, new, items, projects),
+        else: milestone_pushes(base, old, new, items, projects)
     else
       _ -> []
     end
   end
 
-  def pushes(_settings, _old, _new, _items), do: []
+  def pushes(_settings, _old, _new, _items, _projects), do: []
 
-  defp issue_pushes(settings, base, old, new, items) do
-    changed = fn key -> old[key] != new[key] end
+  # A task GitHub refused a change to sends its fields whole and the dates it has; its
+  # owner, blocking issues and parent go only as they changed. A date it never had
+  # stays off a board that may lack the field for it.
+  defp issue_pushes(settings, base, old, new, items, projects) do
+    again? = is_binary(new["syncError"])
+    changed = fn key -> again? or old[key] != new[key] end
+    dated = fn key -> old[key] != new[key] or (again? and new[key] != nil) end
 
     patch =
       %{}
       |> put_if(changed.("title"), "title", new["title"])
       |> put_if(changed.("notes"), "body", new["notes"])
-      |> put_if(changed.("owner"), "assignees", List.wrap(new["owner"]))
+      # The task holds one of the issue's assignees: sent again, it would drop the rest.
+      |> put_if(old["owner"] != new["owner"], "assignees", List.wrap(new["owner"]))
       |> put_if(changed.("labels"), "labels", new["labels"])
-      |> Map.merge(state(old["status"], new["status"]))
+      |> Map.merge(state(if(again?, do: :again, else: old["status"]), new["status"]))
 
     # Only a task with an issue can be named on GitHub; the others stay in the plan.
     ref = fn id ->
@@ -623,10 +646,10 @@ defmodule HalC2Plugins.Planner.Sync do
     me = Map.take(base, ~w(repository number))
 
     parent =
-      if changed.("parent") do
+      if old["parent"] != new["parent"] do
         for {method, id} <- [{"removeSubIssue", old["parent"]}, {"addSubIssue", new["parent"]}],
             r = id && ref.(id),
-            project = project_id(items[id]),
+            project = project_id(items[id], projects),
             do:
               {method,
                %{
@@ -640,10 +663,10 @@ defmodule HalC2Plugins.Planner.Sync do
       end
 
     [if(patch != %{}, do: {"update", Map.merge(base, patch)})] ++
-      blocked ++ parent ++ board_pushes(settings, base, old, new)
+      blocked ++ parent ++ board_pushes(settings, base, dated, new)
   end
 
-  defp board_pushes(settings, base, old, new) do
+  defp board_pushes(settings, base, changed, new) do
     with [owner, number] <- String.split(String.trim(settings["board"] || ""), "/") do
       board = %{
         "projectId" => base["projectId"],
@@ -653,7 +676,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
       sets =
         for {key, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}],
-            old[key] != new[key],
+            changed.(key),
             is_binary(field) and field != "",
             do: {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]})}
 
@@ -672,15 +695,53 @@ defmodule HalC2Plugins.Planner.Sync do
     end
   end
 
-  defp milestone_pushes(base, old, new) do
+  defp milestone_pushes(base, old, new, items, projects) do
+    again? = is_binary(new["syncError"])
+    changed = fn key -> again? or old[key] != new[key] end
+
     patch =
       %{}
-      |> put_if(old["title"] != new["title"], "title", new["title"])
-      |> put_if(old["due"] != new["due"], "dueOn", new["due"])
+      |> put_if(changed.("title"), "title", new["title"])
+      |> put_if(changed.("due"), "dueOn", new["due"])
 
-    if patch == %{}, do: [], else: [{"updateMilestone", Map.merge(base, patch)}]
+    [if(patch != %{}, do: {"updateMilestone", Map.merge(base, patch)})] ++
+      held_pushes(new, if(again?, do: [], else: old["after"]), items, projects)
   end
 
+  # The tasks a milestone of GitHub's gained move their issues to it, and those it lost
+  # leave it, unless another milestone of the repository holds them: a task moved from
+  # one milestone to another is asked of GitHub once, by the one it moved to. Only an
+  # issue of the milestone's repository can be in it.
+  defp held_pushes(%{"milestone" => ref} = new, before, items, projects) do
+    holds? = fn id ->
+      Enum.any?(items, fn {other, item} ->
+        other != new["id"] and is_map(item["milestone"]) and
+          same?(item["milestone"]["repository"], ref["repository"]) and id in item["after"]
+      end)
+    end
+
+    moves =
+      Enum.map(new["after"] -- before, &{&1, ref["number"]}) ++
+        for id <- before -- new["after"], not holds?.(id), do: {id, nil}
+
+    for {id, milestone} <- moves,
+        %{"issue" => %{} = issue} = task <- [items[id]],
+        same?(issue["repository"], ref["repository"]),
+        project = project_id(task, projects),
+        is_binary(project),
+        do:
+          {"update",
+           %{
+             "projectId" => project,
+             "repository" => issue["repository"],
+             "number" => issue["number"],
+             "milestone" => milestone
+           }}
+  end
+
+  defp state(:again, "done"), do: state(nil, "done")
+  defp state(:again, "dropped"), do: state(nil, "dropped")
+  defp state(:again, _new), do: %{"state" => "open"}
   defp state(old, new) when old == new, do: %{}
   defp state(_old, "done"), do: %{"state" => "closed", "stateReason" => "completed"}
   defp state(_old, "dropped"), do: %{"state" => "closed", "stateReason" => "not_planned"}
@@ -725,6 +786,7 @@ defmodule HalC2Plugins.Planner.Sync do
            "body" => item["notes"] || ""
          },
          input = if(item["owner"], do: Map.put(input, "assignees", [item["owner"]]), else: input),
+         input = if(labels?(item), do: Map.put(input, "labels", item["labels"]), else: input),
          {:ok, issue} <- Host.issues(@id, "create", input) do
       {:ok, Map.take(issue, ~w(repository number url state title))}
     else
@@ -738,22 +800,15 @@ defmodule HalC2Plugins.Planner.Sync do
     do:
       Enum.find_value(items, fn {_, item} -> if Plan.same_ref?(item["issue"], ref), do: item end)
 
-  # The project to ask GitHub through: the task's own when it has the repository, or
-  # any project that has it.
-  defp project_id(item) do
+  # The project of `projects` to ask GitHub through: the task's own when it has the
+  # repository, or any project that has it.
+  defp project_id(item, projects) do
     repo = (item["issue"] || item["milestone"] || %{})["repository"]
-
-    case Host.projects(@id) do
-      {:ok, projects} ->
-        own =
-          Enum.find(projects, &(&1["id"] == item["projectId"] and same?(&1["repository"], repo)))
-
-        (own || project_of(projects, repo) || %{})["id"]
-
-      _ ->
-        nil
-    end
+    own = Enum.find(projects, &(&1["id"] == item["projectId"] and same?(&1["repository"], repo)))
+    (own || project_of(projects, repo) || %{})["id"]
   end
+
+  defp labels?(item), do: item["labels"] not in [nil, []]
 
   defp project_of(projects, repo),
     do: Enum.find(projects, &(&1["kind"] == "github" and same?(&1["repository"], repo)))
