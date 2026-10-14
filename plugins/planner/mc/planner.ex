@@ -895,19 +895,19 @@ defmodule HalC2Plugins.Planner do
 
   # How a push to GitHub went; a task removed since is left alone. Pushes run in their
   # callers, so they can finish out of order: only the task's latest push says whether
-  # it synced.
+  # it synced and what it learnt, such as its board item. An older one may be for an
+  # issue the task was unlinked from since; the next look reads the board again.
   def handle_call({:pushed, id, push, error, extra}, _from, state) do
     latest? = state.pushing[id] == push
     state = if latest?, do: %{state | pushing: Map.delete(state.pushing, id)}, else: state
 
     case state.items[id] do
-      nil ->
-        {:reply, :ok, state}
-
-      item ->
-        item = Map.merge(item, extra)
-        item = if latest?, do: Map.put(item, "syncError", error), else: item
+      item when latest? and item != nil ->
+        item = item |> Map.merge(extra) |> Map.put("syncError", error)
         {:reply, :ok, changed(put_in(state.items[id], item))}
+
+      _ ->
+        {:reply, :ok, state}
     end
   end
 

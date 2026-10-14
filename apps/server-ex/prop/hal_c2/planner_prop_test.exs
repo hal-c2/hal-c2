@@ -11,9 +11,10 @@ defmodule HalC2.PlannerPropTest do
   one that applies them itself; a third, like the first, runs on one task. The commands
   start runs, report through the agent tool (nothing, a task's new due date, the plan's
   health), end turns, retry, dismiss, apply and discard runs, and restart the plugin. One task at a time is linked to an
-  issue of a repository the plan syncs both ways, and unlinked again; renaming it
-  pushes to GitHub from a caller of its own, and GitHub takes or refuses those pushes
-  in any order. Work on a task starts on a project the MC does not have, so its thread
+  issue of a repository the plan syncs both ways, with a board, and unlinked again;
+  renaming it also moves its due date, pushing both to GitHub from a caller of its own,
+  and GitHub takes or refuses those pushes in any order. A push for a task not yet on the
+  board adds it there, and GitHub names the board item after the push. Work on a task starts on a project the MC does not have, so its thread
   never launches. After every step:
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
@@ -32,6 +33,8 @@ defmodule HalC2.PlannerPropTest do
     finishes after it leaves it alone, a change GitHub takes without being asked
     anything clears it, and a push in flight when the task was unlinked or the plugin
     restarted says nothing;
+  - a linked task's board item is the one its latest push added: an older push, or one
+    answered after the task was unlinked, leaves it alone, and unlinking clears it;
   - work that could not start leaves its task as it was, not started and linked to no
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
@@ -52,6 +55,7 @@ defmodule HalC2.PlannerPropTest do
   @issues %{"a" => 1, "b" => 2, "c" => 3}
   @due "2026-10-30"
   @moved "2026-11-06"
+  @board "acme/3"
   @concurrency 2
   @actions %{
     "propose" => %{
@@ -149,7 +153,8 @@ defmodule HalC2.PlannerPropTest do
   # --- model ----------------------------------------------------------------------------
 
   # `items`: slot → %{kind (:task or :milestone), parent, after (slots, in order), due, linked (to its issue), sync
-  # (its sync error: nil or {:refused, push})}. `runs`: k (the order it was asked for,
+  # (its sync error: nil or {:refused, push}), board (the push that added its board item,
+  # 0 for one that took at once, or nil)}. `runs`: k (the order it was asked for,
   # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
   # without a thread since its task was removed while it waited), status, seq
   # (order queued), started (its thread started at least once), changes ([{slot, gen, dismissed, outcome}]), health}; a discarded run is gone
@@ -158,7 +163,8 @@ defmodule HalC2.PlannerPropTest do
   # many status updates the plan has. `pushes`: the last push a rename made (renames
   # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
   # whether the task synced, `:now` for one that took at once; `held`: push → {slot,
-  # gen, :ok | :refused} for the renames GitHub has not answered, and how it will.
+  # gen, :ok | :refused, adds} for the renames GitHub has not answered, how it will, and
+  # whether the push adds the task to the board.
   def initial_state,
     do: %{
       items: %{},
@@ -276,7 +282,17 @@ defmodule HalC2.PlannerPropTest do
   # `{model after call, the reply it expects}`: :ok or :error.
   defp step(m, {:call, _, :add, [slot, parent, kind]}) do
     m = %{m | gens: Map.update(m.gens, slot, 1, &(&1 + 1))}
-    item = %{kind: kind, parent: parent, after: [], due: @due, linked: false, sync: nil}
+
+    item = %{
+      kind: kind,
+      parent: parent,
+      after: [],
+      due: @due,
+      linked: false,
+      sync: nil,
+      board: nil
+    }
+
     {put_in(m.items[slot], item), :ok}
   end
 
@@ -331,31 +347,37 @@ defmodule HalC2.PlannerPropTest do
 
   # Nothing in flight speaks for a task no longer linked.
   defp step(m, {:call, _, :unlink, [slot]}) do
-    item = %{m.items[slot] | linked: false, sync: nil}
+    item = %{m.items[slot] | linked: false, sync: nil, board: nil}
     {%{put_in(m.items[slot], item) | latest: Map.delete(m.latest, slot)}, :ok}
   end
 
   # The rename waits for GitHub, which will answer `outcome`; until then the task's sync
-  # error stays as it was.
+  # error and board item stay as they were.
   defp step(m, {:call, _, :rename, [slot, outcome, push]}) do
     gen = m.gens[slot]
+    m = put_in(m.items[slot].due, renamed_due(push))
 
     {%{
        m
        | pushes: push,
          latest: Map.put(m.latest, slot, {gen, push}),
-         held: Map.put(m.held, push, {slot, gen, outcome})
+         held: Map.put(m.held, push, {slot, gen, outcome, m.items[slot].board == nil})
      }, :ok}
   end
 
-  # Only the task's latest push says whether it synced.
+  # Only the task's latest push says whether it synced, and what board item it added; a
+  # refused rename stops before the board.
   defp step(m, {:call, _, :answer, [push]}) do
-    {{slot, gen, outcome}, held} = Map.pop(m.held, push)
+    {{slot, gen, outcome, adds}, held} = Map.pop(m.held, push)
     m = %{m | held: held}
 
-    if Map.has_key?(m.items, slot) and m.latest[slot] == {gen, push},
-      do: {put_in(m.items[slot].sync, if(outcome == :refused, do: {:refused, push})), :ok},
-      else: {m, :ok}
+    if Map.has_key?(m.items, slot) and m.latest[slot] == {gen, push} do
+      item = %{m.items[slot] | sync: if(outcome == :refused, do: {:refused, push})}
+      item = if outcome == :ok and adds, do: %{item | board: push}, else: item
+      {put_in(m.items[slot], item), :ok}
+    else
+      {m, :ok}
+    end
   end
 
   defp step(m, {:call, _, :retry, [k]}) do
@@ -472,6 +494,17 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  # A linked task's new due date goes to the board, adding it there first if it is not on
+  # it yet; GitHub names that item 0, as it takes at once.
+  defp boarded(m, slot) do
+    case m.items[slot] do
+      %{linked: true, board: nil} -> put_in(m.items[slot].board, 0)
+      _ -> m
+    end
+  end
+
+  defp renamed_due(push), do: Date.to_iso8601(Date.add(~D[2027-01-01], push))
+
   defp moved(m, slot, before),
     do: if(slot != nil and m.items[slot] != before[slot], do: pushed(m, slot), else: m)
 
@@ -531,7 +564,7 @@ defmodule HalC2.PlannerPropTest do
       |> then(fn {changes, items} -> {items, changes} end)
 
     moved = for {slot, item} <- items, m.items[slot].due != item.due, do: slot
-    m = Enum.reduce(moved, %{m | items: items}, &pushed(&2, &1))
+    m = Enum.reduce(moved, %{m | items: items}, &(&2 |> pushed(&1) |> boarded(&1)))
     m = put_run(m, k, %{run | status: :applied, changes: changes})
     if run.health, do: %{m | updates: m.updates + 1}, else: m
   end
@@ -619,8 +652,9 @@ defmodule HalC2.PlannerPropTest do
   def unlink(slot),
     do: observe(elem(call("unlink", %{"itemId" => item_id(slot), "kind" => "issue"}), 0))
 
-  # Renames the task to a name of the push's own, from a caller of its own as another
-  # client's would be. GitHub holds the push until `answer/1` lets it answer `outcome`.
+  # Renames the task to a name of the push's own and moves its due date, from a caller
+  # of its own as another client's would be. GitHub holds the push until `answer/1` lets
+  # it answer `outcome`.
   def rename(slot, outcome, push) do
     title = "#{slot}#{push}"
     gate = gate(push)
@@ -634,7 +668,7 @@ defmodule HalC2.PlannerPropTest do
       "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
     })
 
-    input = %{"id" => item_id(slot), "fields" => %{"title" => title}}
+    input = %{"id" => item_id(slot), "fields" => %{"title" => title, "due" => renamed_due(push)}}
 
     caller =
       spawn_monitor(fn ->
@@ -651,11 +685,13 @@ defmodule HalC2.PlannerPropTest do
     observe(:ok)
   end
 
-  # GitHub answers the push, and its caller tells the planner.
+  # GitHub answers the push, naming a board item it adds after it, and its caller tells
+  # the planner.
   def answer(push) do
     {pid, ref} = Process.get({:pl_push, push})
 
     if Process.alive?(pid) do
+      gh_rule(board_item(push))
       File.write!(gate(push), "")
 
       receive do
@@ -663,6 +699,8 @@ defmodule HalC2.PlannerPropTest do
       after
         15_000 -> problem("the push #{push} never finished")
       end
+
+      gh_rule(board_item(0))
     else
       problem("the push #{push} did not wait for GitHub")
     end
@@ -786,7 +824,8 @@ defmodule HalC2.PlannerPropTest do
            after: Enum.map(item["after"], &slots[&1]),
            due: item["due"],
            linked: item["issue"] != nil,
-           sync: sync_error(item["syncError"])
+           sync: sync_error(item["syncError"]),
+           board: board_push(item["boardItemId"])
          }}
       end
 
@@ -837,6 +876,9 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  defp board_push(nil), do: nil
+  defp board_push("item-" <> push), do: String.to_integer(push)
+
   defp thread?(tid) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
     HalC2.StreamState.get(state, "thread")[tid] != nil
@@ -868,6 +910,15 @@ defmodule HalC2.PlannerPropTest do
   end
 
   defp gate(push), do: Path.join(Process.get(:pl_gh), "go-#{push}")
+
+  # GitHub's answer to adding an issue to the board: the item `item-<push>`.
+  defp board_item(push) do
+    %{
+      "args" => ["api graphql"],
+      "stdin" => ["addProjectV2ItemById"],
+      "stdout" => %{"data" => %{"addProjectV2ItemById" => %{"item" => %{"id" => "item-#{push}"}}}}
+    }
+  end
 
   # Puts `rule` first in the fake gh's rules, in one step so a gh starting meanwhile
   # reads either the old rules or the new.
@@ -952,8 +1003,9 @@ defmodule HalC2.PlannerPropTest do
       "start"
     ])
 
-    # The project is on GitHub as `@repository`; gh answers the reads after a push that
-    # took, and a push the model holds waits for its gate.
+    # The project is on GitHub as `@repository`, with the empty board `@board` whose due
+    # dates are its "Target date"; gh answers the reads after a push that took, and a push
+    # the model holds waits for its gate.
     git!(root, ["remote", "add", "origin", "git@github.com:#{@repository}.git"])
     gh = Path.join(home, "gh")
     File.mkdir_p!(gh)
@@ -961,13 +1013,29 @@ defmodule HalC2.PlannerPropTest do
     System.put_env("FAKE_GH_LOG", Path.join(gh, "calls.jsonl"))
     System.put_env("FAKE_GH_RULES", Path.join(gh, "rules.json"))
     issue = %{"number" => 1, "state" => "OPEN", "repository" => %{"nameWithOwner" => @repository}}
+    due = %{"id" => "F_due", "name" => "Target date", "dataType" => "DATE"}
+
+    board = %{
+      "id" => "PVT_board",
+      "title" => "Board",
+      "url" => "https://github.com/orgs/acme/projects/3",
+      "fields" => %{"nodes" => [due]},
+      "items" => %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => []}
+    }
 
     File.write!(
       Path.join(gh, "rules.json"),
       JSON.encode!([
+        board_item(0),
         %{
           "args" => ["api graphql"],
-          "stdout" => %{"data" => %{"repository" => %{"issue" => issue}}}
+          "stdout" => %{
+            "data" => %{
+              "repository" => %{"issue" => issue, "issueOrPullRequest" => %{"id" => "I_1"}},
+              "repositoryOwner" => %{"projectV2" => board},
+              "updateProjectV2ItemFieldValue" => %{"projectV2Item" => %{"id" => "item-0"}}
+            }
+          }
         }
       ])
     )
@@ -1029,6 +1097,8 @@ defmodule HalC2.PlannerPropTest do
           "concurrency" => @concurrency,
           "defaultProject" => "api",
           "sync" => "twoWay",
+          "board" => @board,
+          "targetField" => "Target date",
           "actions" => @actions
         }
       })
