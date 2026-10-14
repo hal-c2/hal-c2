@@ -842,6 +842,15 @@ const Steps steps([] {
                                                   {QStringLiteral("runs"), QJsonObject{{QStringLiteral("runs"), QJsonArray{run}}}},
                                                   {QStringLiteral("threads"), QJsonObject()}});
     runFakePluginOn(world, QStringLiteral("work"), entry(manifest(), state(world).settings));
+    // Until each MC's copy of the plugin is unpacked the tab borrows another's page, and
+    // switching to its own reloads it, closing whatever was open.
+    world.waitFor([&] {
+      const QVariantList environments = world.state(QStringLiteral("mcPlugins")).toMap().value(QStringLiteral("environments")).toList();
+      return environments.size() == 2 && std::ranges::all_of(environments, [](const QVariant& environment) {
+        const QVariantList plugins = environment.toMap().value(QStringLiteral("plugins")).toList();
+        return !plugins.isEmpty() && !plugins.first().toMap().value(QStringLiteral("settingsPageUrl")).toString().isEmpty();
+      });
+    }, QStringLiteral("both MCs' copies of the planner to be unpacked"));
   });
   step(QStringLiteral("the user opens that MC's run on the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == QLatin1String("Planner"), QStringLiteral("planner has no tab %1").arg(c[0]));
