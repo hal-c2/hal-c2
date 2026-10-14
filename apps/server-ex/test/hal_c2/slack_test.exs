@@ -100,6 +100,23 @@ defmodule HalC2.SlackTest do
     end
   end
 
+  test "a connect the Slack service cannot take tells no one the tokens" do
+    secrets = [FakeSlack.bot_token(), FakeSlack.app_token()]
+    {:ok, _} = Slack.connect(tokens())
+    status = inspect(:sys.get_status(Slack), limit: :infinity, printable_limit: :infinity)
+    for secret <- secrets, do: refute(status =~ secret)
+
+    stop_supervised!(Slack)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, message} = HalC2.Rpc.handle("slack.connect", tokens())
+        for secret <- secrets, do: refute(message =~ secret)
+      end)
+
+    for secret <- secrets, do: refute(log =~ secret)
+  end
+
   test "disconnecting stops the connection and forgets the tokens", %{dir: dir} do
     {:ok, _} = Slack.connect(tokens())
     [{_, sup, _, _}] = DynamicSupervisor.which_children(HalC2.Slack.Connections)
