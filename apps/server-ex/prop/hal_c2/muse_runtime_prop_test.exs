@@ -306,7 +306,7 @@ defmodule HalC2.MuseRuntimePropTest do
     ending = active_runs()
 
     with [{runtime, _}] <- Registry.lookup(HalC2.Muse.Registry, @tid),
-         %{conn: conn} when is_pid(conn) <- :sys.get_state(runtime) do
+         %{conn: conn} when is_pid(conn) <- runtime_state(runtime) do
       ref = Process.monitor(conn)
       {_, 0} = System.cmd("kill", ["-9", "#{host_pid()}"])
 
@@ -316,10 +316,17 @@ defmodule HalC2.MuseRuntimePropTest do
         @wait_ms -> :ok
       end
 
-      _ = :sys.get_state(runtime)
+      _ = runtime_state(runtime)
     end
 
     reply({:ok, %{}}, ending)
+  end
+
+  # A runtime killed by `crash` stays registered until Registry sees it go.
+  defp runtime_state(runtime) do
+    :sys.get_state(runtime)
+  catch
+    :exit, _ -> nil
   end
 
   defp host_pid do
