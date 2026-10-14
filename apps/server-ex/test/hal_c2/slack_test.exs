@@ -278,6 +278,41 @@ defmodule HalC2.SlackTest do
       assert length(FakeSlack.calls("conversations.replies")) == 4
     end
 
+    test "a renamed, archived or unarchived channel is read again" do
+      assert {:ok, _} = Slack.call("channels", %{})
+
+      for {type, name} <- [{"channel_rename", "plans"}, {"group_rename", "roadmap"}] do
+        FakeSlack.join("CPLAN", name)
+        HalC2.Slack.Bot.event(type, %{"channel" => %{"id" => "CPLAN", "name" => name}}, %{})
+
+        assert {:ok, %{"channels" => [%{"id" => "CPLAN", "name" => ^name}]}} =
+                 Slack.call("channels", %{})
+      end
+
+      lines = Slack.manifest() |> String.split("\n") |> Enum.map(&String.trim/1)
+
+      for kind <- ~w(channel group), event <- ~w(rename archive unarchive) do
+        assert "- #{kind}_#{event}" in lines
+      end
+    end
+
+    # A read that answers after the connection changed belongs to the old one, and must
+    # not stand in for the new connection's own read.
+    test "channels read across a reconnect are read again on the new connection" do
+      FakeSlack.hold("users.conversations")
+      reading = Task.async(fn -> Slack.channels() end)
+      assert_receive {:fake_slack_held, "users.conversations", _}, 5_000
+
+      assert {:ok, %{"state" => "off"}} = Slack.disconnect()
+      assert {:ok, _} = Slack.connect(tokens())
+      FakeSlack.release()
+      Task.await(reading)
+
+      read = length(FakeSlack.calls("users.conversations"))
+      assert {:ok, _} = Slack.channels()
+      assert length(FakeSlack.calls("users.conversations")) == read + 1
+    end
+
     test "respond answers a slash command only its author sees" do
       url = FakeSlack.response_url()
 
