@@ -269,15 +269,6 @@ defmodule HalC2.Muse.ThreadRuntime do
       else: {:noreply, state}
   end
 
-  # Anything Muse says about this run's turn means it has started it.
-  defp started(%{native: native} = state, params) when native != nil do
-    if native in [params["turnId"], get_in(params, ["item", "turnId"])],
-      do: %{state | started: true},
-      else: state
-  end
-
-  defp started(state, _params), do: state
-
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state =
       if state.turn, do: end_turn(state, "failed", "Muse Code exited unexpectedly"), else: state
@@ -288,6 +279,15 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
+
+  # Anything Muse says about this run's turn means it has started it.
+  defp started(%{native: native} = state, params) when native != nil do
+    if native in [params["turnId"], get_in(params, ["item", "turnId"])],
+      do: %{state | started: true},
+      else: state
+  end
+
+  defp started(state, _params), do: state
 
   @impl true
   def terminate(_reason, state) do

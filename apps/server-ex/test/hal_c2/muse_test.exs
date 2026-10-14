@@ -34,6 +34,21 @@ defmodule HalC2.MuseTest do
                ]
              })
 
+    # A malformed label or tier list does not cost the catalog.
+    assert {:ok, [%{"slug" => "m3", "name" => "m3", "capabilities" => %{}}]} =
+             Muse.models(%{
+               "providerId" => "meta",
+               "models" => [
+                 %{
+                   "modelId" => "m3",
+                   "providerId" => "meta",
+                   "displayLabel" => 3,
+                   "variants" => ["low"],
+                   "reasoningEffortVariants" => "low"
+                 }
+               ]
+             })
+
     assert {:error, _} = Muse.models(%{"providerId" => "other", "models" => []})
     assert {:error, _} = Muse.models(%{})
   end

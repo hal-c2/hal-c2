@@ -185,12 +185,16 @@ defmodule HalC2.Muse do
     :exit, _ -> :ok
   end
 
-  @doc "Provider models from a `model/list` result: Meta's, once each."
+  @doc """
+  Provider models from a `model/list` result: Meta's, once each. A row's malformed label
+  or reasoning tiers fall back to the id and the usual ones.
+  """
   def models(%{"providerId" => "meta", "models" => models}) when is_list(models) do
     models =
       for %{"modelId" => id, "providerId" => "meta"} = model <- models,
           is_binary(id) and id != "" do
-        label = String.trim(model["displayLabel"] || "")
+        label =
+          if is_binary(model["displayLabel"]), do: String.trim(model["displayLabel"]), else: ""
 
         %{
           "slug" => id,
@@ -222,7 +226,7 @@ defmodule HalC2.Muse do
     default = Enum.find(efforts, &(&1 == preferred)) || List.first(efforts)
 
     descriptions =
-      for %{"tier" => tier, "description" => text} <- model["reasoningEffortVariants"] || [],
+      for %{"tier" => tier, "description" => text} <- list(model["reasoningEffortVariants"]),
           is_binary(text) and text != "",
           into: %{},
           do: {tier, text}
@@ -254,6 +258,9 @@ defmodule HalC2.Muse do
 
     %{"optionDescriptors" => descriptors}
   end
+
+  defp list(value) when is_list(value), do: value
+  defp list(_value), do: []
 
   @doc "Whether `effort` is a reasoning effort Muse takes."
   def effort?(effort), do: effort in @efforts
