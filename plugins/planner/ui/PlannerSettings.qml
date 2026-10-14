@@ -200,6 +200,8 @@ ColumnLayout {
                 settings.saving = false;
                 settings.refusal = error;
             } else {
+                // What took is the baseline until the read-back lands, and if it fails.
+                settings.saved = Object.assign({}, settings.saved, values);
                 settings.load(sent);
             }
         });

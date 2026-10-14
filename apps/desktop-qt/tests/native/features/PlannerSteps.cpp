@@ -352,6 +352,9 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
   const QJsonObject input = rpc.payload.value(QLatin1String("input")).toObject();
   if (method == QLatin1String("settings")) {
     if (world.mc.holding(QStringLiteral("planner.settings"))) return world.mc.defer([&world, rpc] { answer(world, rpc); });
+    // Held, a read is refused once the hold is lifted.
+    if (world.mc.holding(QStringLiteral("planner.refuseSettings")))
+      return world.mc.defer([&world, rpc] { world.mc.refuse(rpc, QStringLiteral("The plugin stopped.")); });
     mergeSaved(world);
     QJsonArray channels;
     if (fake.slack) {
@@ -1223,6 +1226,22 @@ const Steps steps([] {
     fake.boards.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("acme/99")}, {QStringLiteral("owner"), QStringLiteral("acme")}, {QStringLiteral("number"), 99}, {QStringLiteral("title"), QStringLiteral("Roadmap")}});
     expect(QMetaObject::invokeMethod(settings, "listBoards"), QStringLiteral("the boards cannot be listed"));
     world.waitFor([&] { return settings->property("boards").toList().size() == fake.boards.size(); }, QStringLiteral("the settings to be read back"));
+  });
+  step(QStringLiteral("the user saves a change to the prompt of %1, then undoes it before a read-back that fails").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
+    world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
+    QQuickItem* prompt = waitShownNamed(world, QStringLiteral("plannerActionPrompt:") + actionId(world, c[0]));
+    const QString before = prompt->property("text").toString();
+    prompt->setProperty("text", QStringLiteral("My own reschedule prompt."));
+    world.mc.hold(QStringLiteral("planner.refuseSettings"));
+    const qsizetype reads = asked(world, QStringLiteral("settings")).size();
+    QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
+    world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
+    expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
+    world.waitFor([&] { return asked(world, QStringLiteral("settings")).size() > reads; }, QStringLiteral("the save to be answered"));
+    prompt->setProperty("text", before);
+    world.mc.answerHeld();
+    world.waitFor([&] { return !settings->property("problem").toString().isEmpty(); }, QStringLiteral("the read-back to fail"));
   });
   step(QStringLiteral("the prompt of %1 is the plugin's again, left to save").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));

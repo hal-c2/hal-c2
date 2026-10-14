@@ -531,6 +531,12 @@ Feature: Planner
       Then the prompt of "Reschedule" is the plugin's again, left to save
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A save whose read-back fails is what the next save starts from
+      Given the user opens the settings of "planner"
+      When the user saves a change to the prompt of "Reschedule", then undoes it before a read-back that fails
+      Then the prompt of "Reschedule" is the plugin's again, left to save
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings name a model and project the MC no longer offers
       Given "planner" runs its actions on the model "claude-retired" in the project "gone"
       When the user opens the planner's settings
