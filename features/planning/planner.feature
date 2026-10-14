@@ -552,6 +552,13 @@ Feature: Planner
       Then the plan has #7 and not #8
 
     @mc
+    Scenario: The planner label matches whatever its case on GitHub
+      Given "planner" follows the issues of "acme/api" labelled "RoadMap"
+      And "acme/api" has the open issues #7 labelled "roadmap" and #8 without it
+      When the plugin looks at GitHub
+      Then the plan has #7 and not #8
+
+    @mc
     Scenario: Milestones become milestones of the plan
       Given "planner" follows the issues of "acme/api"
       And "acme/api" has the milestone "Beta" due "2026-11-30" holding #7

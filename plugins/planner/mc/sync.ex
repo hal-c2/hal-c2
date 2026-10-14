@@ -88,8 +88,11 @@ defmodule HalC2Plugins.Planner.Sync do
                   ],
                   else: []
 
-              {listed ++ Enum.filter(issues, &(label == "" or label in (&1["labels"] || []))),
-               problems ++ cut}
+              # GitHub matches labels whatever their case.
+              labelled =
+                &(label == "" or Enum.any?(&1["labels"] || [], fn l -> same?(l, label) end))
+
+              {listed ++ Enum.filter(issues, labelled), problems ++ cut}
 
             {:error, error} ->
               {listed, problems ++ ["#{repo}: #{message(error)}"]}
