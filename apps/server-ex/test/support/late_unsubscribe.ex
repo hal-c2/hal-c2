@@ -3,14 +3,15 @@ defmodule HalC2.Test.LateUnsubscribe do
   Stands in for a server under its registered name and forwards it everything, except
   that once `arm/1`ed it holds back `{:unsubscribe, ...}` casts until the next
   `{:subscribe, ...}` call has gone ahead of them: unsubscribes sent by `:erpc.cast`,
-  which runs in a process of its own and so may land late.
+  which runs in a process of its own and so may land late. Armed with `hold: true`, it
+  holds that subscribe too until `release/1`, so the server can change meanwhile.
   """
 
   @doc "Takes `name` over from the process registered under it; answers the gate."
   def install(name) do
     server = Process.whereis(name)
     Process.unregister(name)
-    gate = spawn(fn -> loop(server, nil, []) end)
+    gate = spawn(fn -> loop(server, nil, false, nil, []) end)
     Process.register(gate, name)
     gate
   end
@@ -27,11 +28,13 @@ defmodule HalC2.Test.LateUnsubscribe do
 
   @doc """
   Holds back unsubscribes until the next subscribe; the caller is sent
-  `:unsubscribe_held` for each, none left over from an earlier arming.
+  `:unsubscribe_held` for each, none left over from an earlier arming. With `hold: true`
+  the subscribe waits for `release/1`, and the caller is sent `:subscribe_held` when it
+  arrives.
   """
-  def arm(gate) do
+  def arm(gate, opts \\ []) do
     flush_held()
-    send(gate, {:arm, self()})
+    send(gate, {:arm, self(), Keyword.get(opts, :hold, false)})
 
     receive do
       {:armed, ^gate} -> :ok
@@ -40,32 +43,47 @@ defmodule HalC2.Test.LateUnsubscribe do
     end
   end
 
+  @doc "Lets the subscribe an `arm(gate, hold: true)` held go ahead, then the unsubscribes."
+  def release(gate), do: send(gate, :release)
+
   defp flush_held do
     receive do
-      :unsubscribe_held -> flush_held()
+      held when held in [:unsubscribe_held, :subscribe_held] -> flush_held()
     after
       0 -> :ok
     end
   end
 
-  defp loop(server, armer, held) do
+  # `hold`: whether the next subscribe waits for `:release`; `call`: the one waiting.
+  defp loop(server, armer, hold, call, held) do
     receive do
-      {:arm, pid} ->
+      {:arm, pid, hold} ->
         send(pid, {:armed, self()})
-        loop(server, pid, held)
+        loop(server, pid, hold, nil, held)
 
       {:"$gen_cast", request} = cast when armer != nil and elem(request, 0) == :unsubscribe ->
         send(armer, :unsubscribe_held)
-        loop(server, armer, [cast | held])
+        loop(server, armer, hold, call, [cast | held])
+
+      {:"$gen_call", _from, request} = call when hold and elem(request, 0) == :subscribe ->
+        send(armer, :subscribe_held)
+        loop(server, armer, false, call, held)
 
       {:"$gen_call", _from, request} = call when elem(request, 0) == :subscribe ->
-        send(server, call)
-        for cast <- Enum.reverse(held), do: send(server, cast)
-        loop(server, nil, [])
+        pass(server, call, held)
+
+      :release when call != nil ->
+        pass(server, call, held)
 
       message ->
         send(server, message)
-        loop(server, armer, held)
+        loop(server, armer, hold, call, held)
     end
+  end
+
+  defp pass(server, call, held) do
+    send(server, call)
+    for cast <- Enum.reverse(held), do: send(server, cast)
+    loop(server, nil, false, nil, [])
   end
 end

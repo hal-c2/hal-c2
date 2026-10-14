@@ -347,8 +347,11 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_slack, mc, status}, state) do
-    case Map.keys(Map.get(state.by_terminal, {:slack, mc}, %{})) do
+  # A change sent before a subscription was made is older than the status it answered.
+  def handle_info({:hal_c2_slack, mc, refs, status}, state) do
+    subs = Map.get(state.by_terminal, {:slack, mc}, %{})
+
+    case for({id, ref} <- subs, ref in refs, do: id) do
       [] ->
         {:ok, state}
 
