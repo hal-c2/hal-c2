@@ -21,8 +21,17 @@ defmodule HalC2.Slack.Socket do
     }
   end
 
-  def start_link(url, identity, owner),
-    do: WebSockex.start_link(url, __MODULE__, %{identity: identity, owner: owner, alive: true})
+  # WebSockex skips checking the server's certificate unless told otherwise.
+  def start_link(url, identity, owner) do
+    ssl = [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+    ]
+
+    state = %{identity: identity, owner: owner, alive: true}
+    WebSockex.start_link(url, __MODULE__, state, insecure: false, ssl_options: ssl)
+  end
 
   @impl true
   def handle_connect(_conn, state) do

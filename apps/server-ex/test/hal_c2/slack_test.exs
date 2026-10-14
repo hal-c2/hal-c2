@@ -357,6 +357,34 @@ defmodule HalC2.SlackTest do
       refute HalC2.Slack.Socket.ours?(Map.delete(other_team, "authorizations"), @bot)
     end
 
+    test "the socket refuses a server whose certificate it cannot trust" do
+      key = X509.PrivateKey.new_ec(:secp256r1)
+      names = X509.Certificate.Extension.subject_alt_name(["localhost"])
+
+      cert =
+        X509.Certificate.self_signed(key, "/CN=localhost",
+          template: :server,
+          extensions: [subject_alt_name: names]
+        )
+
+      tls = [
+        cert: X509.Certificate.to_der(cert),
+        key: {:ECPrivateKey, X509.PrivateKey.to_der(key)}
+      ]
+
+      {:ok, listen} = :ssl.listen(0, [:binary, active: false, reuseaddr: true] ++ tls)
+      {:ok, {_, port}} = :ssl.sockname(listen)
+      test = self()
+
+      spawn_link(fn ->
+        {:ok, socket} = :ssl.transport_accept(listen)
+        send(test, {:handshake, :ssl.handshake(socket, 5_000)})
+      end)
+
+      assert {:error, _} = HalC2.Slack.Socket.start_link("wss://localhost:#{port}/", @bot, self())
+      assert_receive {:handshake, {:error, _}}, 5_000
+    end
+
     test "the bot's own messages, other threads, edits and plain messages are dropped" do
       base = %{
         "channel" => "CPLAN",
