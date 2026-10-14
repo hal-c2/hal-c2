@@ -17,7 +17,7 @@ defmodule HalC2.Slack do
   `failed` and forgets them; a Slack unreachable, rate limiting or failing in any other
   way keeps retrying with them.
 
-  Watchers (`subscribe/1`) get `{:hal_c2_slack, node(), status}` on every change, and the
+  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), status}` on every change, and the
   plugins granted `slack:read` a `slack.status` event when it connects or stops, in order.
   """
 
@@ -84,10 +84,18 @@ defmodule HalC2.Slack do
   @doc "Stops the connection and forgets the tokens."
   def disconnect, do: GenServer.call(__MODULE__, :disconnect)
 
-  @doc "Sends `pid` `{:hal_c2_slack, node(), status}` on every change; answers the status now."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
+  @doc """
+  Sends `pid` `{:hal_c2_slack, node(), status}` on every change, once however many
+  subscriptions it holds, until it unsubscribes each `ref` it subscribed under or exits;
+  answers the status now.
+  """
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
 
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  @doc """
+  Lets go of `pid`'s subscription `ref` only. A socket's unsubscribe can arrive after its
+  next subscribe (`:erpc.cast` runs in a process of its own), so it cannot drop that one.
+  """
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @doc """
   `slack.*` RPCs: `status`, `connect`, `disconnect` and `manifest`, the Slack app
@@ -469,6 +477,7 @@ defmodule HalC2.Slack do
       conn: nil,
       retries: 0,
       timer: nil,
+      # pid => {monitor, the refs it subscribed under}.
       watchers: %{},
       # What the watchers were last told.
       seen: nil
@@ -502,16 +511,30 @@ defmodule HalC2.Slack do
     {:reply, {:ok, view(state)}, state}
   end
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    {monitor, refs} =
+      Map.get_lazy(state.watchers, pid, fn -> {Process.monitor(pid), MapSet.new()} end)
+
+    watchers = Map.put(state.watchers, pid, {monitor, MapSet.put(refs, ref)})
     {:reply, {:ok, view(state)}, %{state | watchers: watchers}}
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    {:noreply, %{state | watchers: watchers}}
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    case state.watchers do
+      %{^pid => {monitor, refs}} ->
+        refs = MapSet.delete(refs, ref)
+
+        if MapSet.size(refs) == 0 do
+          Process.demonitor(monitor, [:flush])
+          {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+        else
+          {:noreply, %{state | watchers: Map.put(state.watchers, pid, {monitor, refs})}}
+        end
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -539,7 +562,7 @@ defmodule HalC2.Slack do
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
     case state.watchers do
-      %{^pid => ^ref} -> {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+      %{^pid => {^ref, _}} -> {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
       _ -> {:noreply, state}
     end
   end

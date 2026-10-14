@@ -1,7 +1,7 @@
 defmodule HalC2.Web.SocketTest do
   use ExUnit.Case, async: false
 
-  alias HalC2.Test.WsClient
+  alias HalC2.Test.{LateUnsubscribe, WsClient}
 
   @moduletag :tmp_dir
 
@@ -464,6 +464,37 @@ defmodule HalC2.Web.SocketTest do
       HalC2.Slack.connect(%{"botToken" => "xoxb-revoked", "appToken" => "xapp-revoked"})
 
     assert {[], _} = slack_frames(client)
+  end
+
+  # A page closed and opened again: the unsub's :erpc.cast may reach HalC2.Slack only
+  # after the new page's subscribe, and must not stop that one being told.
+  @tag :capture_log
+  test "a Slack unsubscribe landing after the next subscribe leaves that one watching", %{
+    port: port
+  } do
+    :ok = HalC2.Test.FakeSlack.start()
+    start_supervised!(HalC2.Slack)
+    gate = LateUnsubscribe.install(HalC2.Slack)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "slack", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {[{1, "off"}], client} = slack_frames(client)
+
+    LateUnsubscribe.arm(gate)
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> slack_frames()
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {[{2, "off"}], client} = slack_frames(client)
+
+    {:ok, _} =
+      HalC2.Slack.connect(%{
+        "botToken" => HalC2.Test.FakeSlack.bot_token(),
+        "appToken" => HalC2.Test.FakeSlack.app_token()
+      })
+
+    assert {[{2, "connecting"}, {2, "connected"}], _} = slack_frames(client)
   end
 
   # The Slack frames that came before the pong answering a ping sent now, as
