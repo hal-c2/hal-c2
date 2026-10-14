@@ -138,6 +138,20 @@ defmodule HalC2.SlackTest do
     assert %{"state" => "reconnecting", "tokensSet" => true} = Slack.status()
   end
 
+  # The attempt gives up on hello after the disconnect, an answer that is not `{:ok, _}`;
+  # its socket must not live on to take events while the MC says it is off.
+  test "a disconnect while a connect waits for Slack's hello leaves no socket behind" do
+    Application.put_env(:hal_c2, :slack_hello_ms, 200)
+    on_exit(fn -> Application.delete_env(:hal_c2, :slack_hello_ms) end)
+    FakeSlack.hello(false)
+    connecting = Task.async(fn -> Slack.connect(tokens()) end)
+    assert_receive {:fake_slack_socket, :open}, 5_000
+
+    assert {:ok, %{"state" => "off"}} = Slack.disconnect()
+    assert {:error, "Another Slack connection replaced it."} = Task.await(connecting)
+    assert_receive {:fake_slack_socket, :closed}, 5_000
+  end
+
   test "stored tokens connect again when the MC starts" do
     {:ok, _} = Slack.connect(tokens())
     stop_supervised!(Slack)

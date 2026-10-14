@@ -1,6 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/slack.ex (the MC's Slack connection: Socket Mode and slack_elixir's Web API)
 #   apps/server-ex/lib/hal_c2/slack/socket.ex (the Socket Mode connection; events for the bot's workspace and app)
+#   apps/server-ex/lib/hal_c2/slack/bot.ex (Slack events turned into plugin events, dropped once their connection stopped)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.slack, gated by slack:read and slack:write)
 #   apps/server-ex/lib/hal_c2/plugins.ex (Slack events delivered to plugins' handle_event)
 #   apps/server-ex/lib/hal_c2/plugins/package.ex (permission ids and their labels)
@@ -71,6 +72,14 @@ Feature: Slack for MC plugins
       | elsewhere                                   |
       | in a workspace the bot does not belong to   |
       | in an event Slack sends for another app     |
+
+  # A mention waits on Slack to name its author; the connection may stop meanwhile.
+  @mc
+  Scenario: An event read while Slack is disconnected does not reach plugins after it
+    Given the plugins "planner", granted "slack:read", and "quiet", which is not
+    And Slack takes its time to name "dana"
+    When "dana" mentions "HAL" in "#planning", and the MC disconnects Slack before Slack names "dana"
+    Then "planner" is handed Slack stopping, and not the mention
 
   @mc
   Scenario: A plugin hears Slack stop and connect again in the order it happened

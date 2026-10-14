@@ -13,7 +13,8 @@ defmodule HalC2.Test.FakeSlack do
   and "#random" (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and
   `app_token/0`, and `other_app_token/0`, the app token of another app (`A0OTHER`); any
   other is `invalid_auth`. `available(false)` answers every request with a 503 until it is
-  `true` again; `drop/0` closes the socket. Paginated methods follow Slack's `cursor`, in
+  `true` again; `drop/0` closes the socket. `hello(false)` makes new sockets keep quiet,
+  `hold/1` makes a Web API method wait until `release/0`. Paginated methods follow Slack's `cursor`, in
   pages of `page_size/1` at most; `join/2` adds a channel the bot is in. `calls/1` lists
   the requests made to a method, `responses/0` the slash command answers. Tests that use
   it are not async: it is one named process and Req's defaults are global.
@@ -110,10 +111,39 @@ defmodule HalC2.Test.FakeSlack do
         socket: nil,
         # Frames and drops sent before the socket's server side is up, in order.
         pending: [],
+        # Whether a new socket says hello, and who hears it open and close.
+        hello: true,
+        watcher: nil,
+        # Web API methods that wait for `release/0`, and the requests waiting.
+        held: MapSet.new(),
+        waiting: [],
         seq: 0
       },
       overrides
     )
+  end
+
+  @doc """
+  Whether a new socket says hello; `pid` hears `{:fake_slack_socket, :open | :closed}`
+  as the socket's server side opens and closes.
+  """
+  def hello(on?, pid \\ self()),
+    do: Agent.update(__MODULE__, &%{&1 | hello: on?, watcher: pid})
+
+  @doc """
+  Makes requests to `method` wait until `release/0`; `pid` hears
+  `{:fake_slack_held, method, requester}` as each one starts waiting.
+  """
+  def hold(method, pid \\ self()),
+    do: Agent.update(__MODULE__, &%{&1 | held: MapSet.put(&1.held, method), watcher: pid})
+
+  @doc "Lets the held requests answer, and the next ones answer at once."
+  def release do
+    waiting =
+      Agent.get_and_update(__MODULE__, &{&1.waiting, %{&1 | held: MapSet.new(), waiting: []}})
+
+    for pid <- waiting, do: send(pid, :fake_slack_release)
+    :ok
   end
 
   @doc "Whether Slack answers at all."
@@ -230,6 +260,7 @@ defmodule HalC2.Test.FakeSlack do
     params = Map.merge(URI.decode_query(conn.query_string), URI.decode_query(body))
     params = Map.update(params, "channel", nil, &channel_id(&1))
     token = conn |> get_req_header("authorization") |> List.first() |> bearer()
+    wait(method)
 
     reply =
       Agent.get_and_update(__MODULE__, fn state ->
@@ -245,6 +276,26 @@ defmodule HalC2.Test.FakeSlack do
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, JSON.encode!(reply))
+    end
+  end
+
+  # Req runs this plug in the process that asked, so a held method holds it.
+  defp wait(method) do
+    me = self()
+
+    watcher =
+      Agent.get_and_update(__MODULE__, fn state ->
+        if method in state.held,
+          do: {state.watcher, %{state | waiting: [me | state.waiting]}},
+          else: {nil, state}
+      end)
+
+    if watcher do
+      send(watcher, {:fake_slack_held, method, me})
+
+      receive do
+        :fake_slack_release -> :ok
+      end
     end
   end
 
@@ -412,14 +463,15 @@ defmodule HalC2.Test.FakeSlack do
     def init(app) do
       me = self()
 
-      pending =
+      {pending, hello?, watcher} =
         Agent.get_and_update(HalC2.Test.FakeSlack, fn state ->
-          {state.pending, %{state | socket: me, pending: []}}
+          {{state.pending, state.hello, state.watcher}, %{state | socket: me, pending: []}}
         end)
 
       for message <- pending, do: send(self(), message)
+      if watcher, do: send(watcher, {:fake_slack_socket, :open})
       hello = %{"type" => "hello", "connection_info" => %{"app_id" => app}}
-      {:push, {:text, JSON.encode!(hello)}, %{}}
+      if hello?, do: {:push, {:text, JSON.encode!(hello)}, %{}}, else: {:ok, %{}}
     end
 
     @impl true
@@ -434,10 +486,13 @@ defmodule HalC2.Test.FakeSlack do
     def terminate(_reason, _state) do
       me = self()
 
-      Agent.update(HalC2.Test.FakeSlack, fn
-        %{socket: ^me} = state -> %{state | socket: nil}
-        state -> state
-      end)
+      watcher =
+        Agent.get_and_update(HalC2.Test.FakeSlack, fn
+          %{socket: ^me} = state -> {state.watcher, %{state | socket: nil}}
+          state -> {state.watcher, state}
+        end)
+
+      if watcher, do: send(watcher, {:fake_slack_socket, :closed})
     catch
       :exit, _ -> :ok
     end

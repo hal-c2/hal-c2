@@ -12,11 +12,15 @@ defmodule HalC2.Slack.Bot do
   mention it are dropped here, so they cost the plugins nothing.
   """
 
-  @doc "Hands plugins the event for a Slack event, if any; `bot` is `HalC2.Slack.identity/0`."
+  @doc """
+  Hands plugins the event for a Slack event, if any; `bot` is the identity of the
+  connection that took it. Reading the event can wait on Slack (`users.info`), so one
+  whose connection stopped or was replaced meanwhile is dropped.
+  """
   def handle_event(type, payload, bot) do
     case event(type, payload, bot) do
       nil -> :ok
-      event -> HalC2.Plugins.slack_event(event)
+      event -> if HalC2.Slack.identity() == bot, do: HalC2.Plugins.slack_event(event), else: :ok
     end
   end
 

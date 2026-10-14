@@ -7,13 +7,14 @@ defmodule HalC2.SlackPropTest do
   Commands connect with good tokens, with a bot or app token Slack refuses and with an
   app token of another app than the bot token's, disconnect, take Slack away and bring it back, drop the Socket Mode connection (and
   drop it with a long backoff, where the lost connection must be stopped before the
-  retry, then connect again), restart the service and mention the bot in Slack, in its
-  workspace and app or in another. After every step the status must
+  retry, then connect again), disconnect while a connect waits for Slack's hello (its
+  socket must close), restart the service and mention the bot in Slack, in its workspace
+  and app or in another, or mention it and disconnect while the MC asks Slack who wrote it. After every step the status must
   match the model and never carry a token, and the secret store must hold tokens
   exactly when the model keeps them. At the end of a case the plugin granted
   `slack:read` must have heard every connect and every stop (`slack.status`), in the
   order they happened, and every mention in the bot's workspace and app but none from
-  elsewhere, and the plugin without it nothing.
+  elsewhere or read after a disconnect, and the plugin without it nothing.
   """
 
   use ExUnit.Case, async: false
@@ -29,7 +30,14 @@ defmodule HalC2.SlackPropTest do
   @wait 10_000
 
   setup do
-    keys = [:bundled_plugins, :settings_check_ms, :slack_backoff_ms, :slack_backoff_max_ms]
+    keys = [
+      :bundled_plugins,
+      :settings_check_ms,
+      :slack_backoff_ms,
+      :slack_backoff_max_ms,
+      :slack_hello_ms
+    ]
+
     saved = for key <- keys, do: {key, Application.fetch_env(:hal_c2, key)}
 
     on_exit(fn ->
@@ -69,6 +77,7 @@ defmodule HalC2.SlackPropTest do
     Application.put_env(:hal_c2, :bundled_plugins, [])
     Application.put_env(:hal_c2, :slack_backoff_ms, 1)
     Application.put_env(:hal_c2, :slack_backoff_max_ms, 20)
+    Application.put_env(:hal_c2, :slack_hello_ms, 500)
     HalC2.Prop.scratch_home("slack")
     nonce = System.unique_integer([:positive])
     Process.put({__MODULE__, :nonce}, nonce)
@@ -142,13 +151,15 @@ defmodule HalC2.SlackPropTest do
         {2, {:call, __MODULE__, :restore, [state.phase]}},
         {2, {:call, __MODULE__, :restart, [state.stored, state.up]}}
       ] ++
+        if(state.up, do: [{1, {:call, __MODULE__, :disconnect_before_hello, []}}], else: []) ++
         if state.phase == :connected do
           [
             {6, {:call, __MODULE__, :drop, [state.up]}},
             {2, {:call, __MODULE__, :drop_held, []}},
             {4, {:call, __MODULE__, :mention, [:ours]}},
             {1, {:call, __MODULE__, :mention, [:other_team]}},
-            {1, {:call, __MODULE__, :mention, [:other_app]}}
+            {1, {:call, __MODULE__, :mention, [:other_app]}},
+            {1, {:call, __MODULE__, :mention_then_disconnect, []}}
           ]
         else
           []
@@ -159,6 +170,8 @@ defmodule HalC2.SlackPropTest do
   def precondition(state, {:call, _, :drop, _}), do: state.phase == :connected
   def precondition(state, {:call, _, :drop_held, _}), do: state.phase == :connected
   def precondition(state, {:call, _, :mention, _}), do: state.phase == :connected
+  def precondition(state, {:call, _, :mention_then_disconnect, _}), do: state.phase == :connected
+  def precondition(state, {:call, _, :disconnect_before_hello, _}), do: state.up
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :connect, [:good]}) do
@@ -171,6 +184,12 @@ defmodule HalC2.SlackPropTest do
     do: state |> walk([:connecting, :failed]) |> Map.put(:stored, false)
 
   def next_state(state, _result, {:call, _, :disconnect, []}),
+    do: state |> walk([:off]) |> Map.put(:stored, false)
+
+  def next_state(state, _result, {:call, _, :disconnect_before_hello, []}),
+    do: state |> walk([:connecting, :off]) |> Map.put(:stored, false)
+
+  def next_state(state, _result, {:call, _, :mention_then_disconnect, []}),
     do: state |> walk([:off]) |> Map.put(:stored, false)
 
   def next_state(state, _result, {:call, _, :outage, []}), do: %{state | up: false}
@@ -253,6 +272,15 @@ defmodule HalC2.SlackPropTest do
   defp replied?(_state, {:call, _, :disconnect, []}, result),
     do: match?({:ok, %{"state" => "off", "tokensSet" => false}}, result)
 
+  # Whichever gave up first, the connect or its wait for hello, its socket is gone.
+  defp replied?(_state, {:call, _, :disconnect_before_hello, []}, {connected, off, closed}) do
+    match?({:error, _}, connected) and closed == :closed and
+      replied?(nil, {:call, __MODULE__, :disconnect, []}, off)
+  end
+
+  defp replied?(_state, {:call, _, :mention_then_disconnect, []}, result),
+    do: replied?(nil, {:call, __MODULE__, :disconnect, []}, result)
+
   defp replied?(_state, {:call, _, :mention, [:ours]}, result), do: result == :heard
   defp replied?(_state, {:call, _, :mention, _elsewhere}, result), do: result == :sent
 
@@ -285,6 +313,70 @@ defmodule HalC2.SlackPropTest do
   defp tokens(bot, app), do: %{"botToken" => bot, "appToken" => app}
 
   def disconnect, do: HalC2.Slack.disconnect()
+
+  # Connects to a Slack that never says hello, and disconnects once the socket is open:
+  # the attempt is stale, and the connection it started must stop.
+  def disconnect_before_hello do
+    flush_sockets()
+    FakeSlack.hello(false)
+    connecting = Task.async(fn -> connect(:good) end)
+
+    receive do
+      {:fake_slack_socket, :open} -> :ok
+    after
+      @wait -> exit(:slack_socket_never_opened)
+    end
+
+    live =
+      for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Slack.Connections),
+          do: {pid, Process.monitor(pid)}
+
+    off = disconnect()
+    connected = Task.await(connecting, @wait)
+    FakeSlack.hello(true)
+
+    stopped =
+      Enum.all?(live, fn {pid, ref} ->
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} -> true
+        after
+          @wait -> false
+        end
+      end)
+
+    {connected, off, if(live != [] and stopped, do: :closed, else: {:still_running, live})}
+  end
+
+  # Mentions the bot as someone Slack is slow to name, and disconnects meanwhile; the
+  # mention must not reach a plugin once Slack names them (`heard/1`). Slack never knows
+  # this person, so the MC asks every time.
+  def mention_then_disconnect do
+    FakeSlack.hold("users.info")
+
+    FakeSlack.event(%{
+      "type" => "app_mention",
+      "channel" => "CPLAN",
+      "user" => "USTALE",
+      "text" => "<@UHAL> stale",
+      "ts" => "1800000000.#{System.unique_integer([:positive])}"
+    })
+
+    reading =
+      receive do
+        {:fake_slack_held, "users.info", pid} -> Process.monitor(pid)
+      after
+        @wait -> exit(:mention_never_read)
+      end
+
+    off = disconnect()
+    FakeSlack.release()
+
+    receive do
+      {:DOWN, ^reading, :process, _, _} -> off
+    after
+      @wait -> exit(:mention_never_finished)
+    end
+  end
 
   def outage, do: FakeSlack.available(false)
 
@@ -400,6 +492,15 @@ defmodule HalC2.SlackPropTest do
     end
   end
 
+  # Earlier sockets' opens and closes, told to this process since a hello/2 or hold/2.
+  defp flush_sockets do
+    receive do
+      {:fake_slack_socket, _} -> flush_sockets()
+    after
+      0 -> :ok
+    end
+  end
+
   defp receive_state(state) do
     receive do
       {:hal_c2_slack, _, %{"state" => ^state}} -> :ok
@@ -413,14 +514,16 @@ defmodule HalC2.SlackPropTest do
 
   # The granted plugin's slack.status events in the order it heard them, once as many as
   # the model owes have come; the mentions were waited on as they happened, and none from
-  # elsewhere may come. Nothing may reach the other plugin.
+  # elsewhere or read after a disconnect may come. Nothing may reach the other plugin.
   defp heard(model) do
     nonce = Process.get({__MODULE__, :nonce})
     owed = Enum.reverse(model.told)
-    got = gather(nonce, length(owed), %{told: [], deaf: 0, elsewhere: 0})
+    got = gather(nonce, length(owed), %{told: [], deaf: 0, elsewhere: 0, stale: 0})
     got = %{got | told: Enum.reverse(got.told)}
 
-    if got == %{told: owed, deaf: 0, elsewhere: 0}, do: :ok, else: %{owed: owed, got: got}
+    if got == %{told: owed, deaf: 0, elsewhere: 0, stale: 0},
+      do: :ok,
+      else: %{owed: owed, got: got}
   end
 
   defp gather(nonce, owed, got) do
@@ -451,6 +554,9 @@ defmodule HalC2.SlackPropTest do
 
   defp count(got, "heard", %{"text" => "<@UHAL> elsewhere"}),
     do: Map.update!(got, :elsewhere, &(&1 + 1))
+
+  defp count(got, "heard", %{"text" => "<@UHAL> stale"}),
+    do: Map.update!(got, :stale, &(&1 + 1))
 
   defp count(got, "heard", _mention), do: got
 end

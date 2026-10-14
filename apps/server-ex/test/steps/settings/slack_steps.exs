@@ -320,6 +320,34 @@ defmodule HalC2.Steps.Settings.Slack do
     Map.put(context, :said, {event["channel"], event["text"]})
   end
 
+  step "Slack takes its time to name {string}", %{args: [_person]} = context do
+    FakeSlack.hold("users.info")
+    context
+  end
+
+  step "{string} mentions {string} in {string}, and the MC disconnects Slack before Slack names {string}",
+       %{args: [person, _bot, "#" <> name, _named]} = context do
+    FakeSlack.event(%{
+      "type" => "app_mention",
+      "channel" => channel_id(name),
+      "user" => user_id(person),
+      "text" => "<@UHAL> what is late?",
+      "ts" => "1700000100.000001"
+    })
+
+    assert_receive {:fake_slack_held, "users.info", _}, 10_000
+    {_, context} = World.call!(context, "slack.disconnect")
+    FakeSlack.release()
+    context
+  end
+
+  step "{string} is handed Slack stopping, and not the mention", %{args: [id]} = context do
+    assert_receive {:slack_event, ^id, %{"type" => "slack.status", "connected" => false}}, 10_000
+    # The mention's task goes on once Slack names its author; give it its chance.
+    refute_receive {:slack_event, ^id, _}, 200
+    context
+  end
+
   step "{string} mentions {string} in a workspace the bot does not belong to, and then in {string}",
        %{args: [person, _bot, "#" <> name]} = context do
     origin = %{"team_id" => "T0OTHER", "authorizations" => [%{"team_id" => "T0OTHER"}]}
