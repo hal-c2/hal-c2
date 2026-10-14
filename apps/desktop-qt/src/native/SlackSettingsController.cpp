@@ -46,13 +46,10 @@ public:
     if (m_active) return;
     m_active = true;
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-    connect(navigation, &NavigationController::changed, this, [this, navigation] {
-      const bool open = navigation->route().kind == QLatin1String("settings") && navigation->route().section == kSection;
-      if (open == m_open) return;
-      m_open = open;
-      follow();
-    });
+    connect(navigation, &NavigationController::changed, this, [this, navigation] { route(navigation); });
     connect(scope(), &SettingsScopeController::changed, this, &SlackSettingsController::follow);
+    // A window restored on Integrations has its route before this activates.
+    route(navigation);
     publish();
   }
 
@@ -85,6 +82,13 @@ private:
   // The environment whose connection shows: the scope's first connected one.
   QString inspected() const { return m_open ? scope()->targets().value(0) : QString(); }
 
+  void route(const NavigationController* navigation) {
+    const bool open = navigation->route().kind == QLatin1String("settings") && navigation->route().section == kSection;
+    if (open == m_open) return;
+    m_open = open;
+    follow();
+  }
+
   bool editable() const { return !scope()->projectScope() && scope()->editable() && scope()->targets().size() == 1; }
 
   void follow() {
@@ -113,6 +117,7 @@ private:
   // A status from the MC is newer than the page's own error (a refusal, blank
   // tokens), so it replaces it; the status carries its own error.
   void take(const QJsonObject& status) {
+    ++m_statuses;
     m_status = status;
     m_loaded = true;
     m_error.clear();
@@ -121,17 +126,23 @@ private:
 
   // `slack.connect` or `slack.disconnect` on the inspected environment; each
   // answers with the connection as it now is, and Slack's refusal is its error.
+  // The MC answers and pushes its status along different paths, so a status
+  // that arrived while the call was out may be newer than the answer, which
+  // then only frees the buttons.
   void change(const QString& pending, const QJsonObject& input) {
     m_pending = pending;
     m_error.clear();
     const QPointer<SlackSettingsController> self(this);
     const int generation = m_generation;
+    const int statuses = m_statuses;
     m_client->call(this, m_environmentId, QStringLiteral("slack.") + pending, input,
-                   [self, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   [self, generation, statuses](const QJsonValue& result, const std::optional<QString>& error) {
                      if (!self || self->m_generation != generation) return;
                      self->m_pending.clear();
-                     if (error) self->m_error = *error;
-                     else self->take(result.toObject());
+                     if (self->m_statuses == statuses) {
+                       if (error) self->m_error = *error;
+                       else self->take(result.toObject());
+                     }
                      self->publish();
                    });
     publish();
@@ -194,6 +205,8 @@ private:
   // Bumped when the inspected environment changes, so older answers are dropped.
   int m_generation = 0;
   QJsonObject m_status;
+  // Counts the statuses taken, so a call's answer can tell whether one came since it was made.
+  int m_statuses = 0;
   bool m_loaded = false;
   QString m_error;
   QString m_pending;

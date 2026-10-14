@@ -5,8 +5,10 @@
 // disconnects and copies the manifest; the MC drops and regains Slack on its
 // own, another client connects or disconnects it, and the MC holds its
 // answers to give them one by one or all at once, so a reply can land after
-// the page was left and come back to, even while another call is out. A
-// status the MC pushes is newer than the page's own error and replaces it.
+// the page was left and come back to, even while another call is out. The MC
+// may also do a call and push its status but send the answer later, after
+// other pushes. A status the MC pushes is newer than the page's own error and
+// replaces it, and newer than an answer that arrives after it.
 // After every step the published section, the clipboard and the toasts are
 // what the model says, and no token is ever published.
 
@@ -53,10 +55,13 @@ struct Status {
 // What the user asked the MC to do.
 enum class Op { Good, Refused, Disconnect, Manifest };
 
-// A call the MC holds, and the page visit it was made in.
+// A call the MC holds, the page visit it was made in, and how many statuses
+// the page had taken when it was made.
 struct Held {
   Op op;
   int visit;
+  int statuses;
+  Status said = {};  // for an answer sent late, the status it carries
 };
 
 struct Model {
@@ -65,40 +70,55 @@ struct Model {
   int visit = 0;  // bumped on each opening and leaving: answers of another visit are dropped
   QString pending;
   QString error;  // the page's own: the last call's refusal, or blank tokens, until the MC pushes a status
+  int statuses = 0;  // statuses the page took: pushes while open, and answers it believed
   bool holding = false;
   QList<Held> held;
+  QList<Held> late;  // done and pushed, the answer still to come
   QString clipboard;
   int copied = 0;
 
-  // The MC does what it was asked; the page hears the answer if still on the
-  // visit, then the status a connect or disconnect pushes.
+  // The MC does what it was asked; the page hears the answer, then the status
+  // a connect or disconnect pushes.
   void perform(const Held& call) {
+    act(call);
+    answer(call);
+    if (call.op != Op::Manifest) pushed();
+  }
+
+  void act(const Held& call) {
     switch (call.op) {
       case Op::Good: mc = {QStringLiteral("connected"), true, {}}; break;
       case Op::Refused: mc = {QStringLiteral("failed"), false, kRefusal}; break;
       case Op::Disconnect: mc = {}; break;
       case Op::Manifest: break;
     }
-    if (call.visit == visit) {
-      pending.clear();
-      if (call.op == Op::Refused) error = kRefusal;
-      if (call.op == Op::Manifest) {
-        clipboard = kManifest;
-        ++copied;
-      }
-    }
-    if (call.op != Op::Manifest) pushed();
   }
 
-  // The MC pushed its status: an open page drops its own error for it.
+  // An answer counts on the visit it was asked in; what it says about Slack
+  // counts only if no status came since it was asked.
+  void answer(const Held& call) {
+    if (call.visit != visit) return;
+    pending.clear();
+    if (call.op == Op::Manifest) {
+      clipboard = kManifest;
+      ++copied;
+    } else if (call.statuses == statuses) {
+      if (call.op == Op::Refused) error = kRefusal;
+      else ++statuses;
+    }
+  }
+
+  // The MC pushed its status: an open page takes it in place of its own error.
   void pushed() {
-    if (open) error.clear();
+    if (!open) return;
+    error.clear();
+    ++statuses;
   }
 
   void ask(Op op, const QString& name) {
     pending = name;
     if (op != Op::Manifest) error.clear();
-    const Held call{op, visit};
+    const Held call{op, visit, statuses};
     if (holding) held.append(call);
     else perform(call);
   }
@@ -108,7 +128,8 @@ struct Model {
 struct FakeSlack {
   Status status;
   bool holding = false;
-  QList<std::function<void()>> held;
+  QList<std::function<void(bool)>> held;  // given whether to push before answering, and answer later
+  QList<std::function<void()>> late;
 };
 
 QJsonObject statusJson(const Status& status) {
@@ -143,27 +164,35 @@ struct Shell {
       mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), statusJson(slack.status)}});
     });
     mc.onRpc(QStringLiteral("slack."), [this](const FakeMc::Rpc& rpc) {
-      const auto answer = [this, rpc] {
+      const auto answer = [this, rpc](bool late) {
+        std::function<void()> reply;
+        bool pushes = true;
         if (rpc.method == QLatin1String("slack.manifest")) {
-          mc.reply(rpc, QJsonObject{{QStringLiteral("manifest"), kManifest}});
-          return;
-        }
-        if (rpc.method == QLatin1String("slack.connect")) {
+          reply = [this, rpc] { mc.reply(rpc, QJsonObject{{QStringLiteral("manifest"), kManifest}}); };
+          pushes = false;
+        } else if (rpc.method == QLatin1String("slack.connect")) {
           const bool refused = rpc.payload.value(QLatin1String("botToken")).toString() == kRefusedBot;
           slack.status = refused ? Status{QStringLiteral("failed"), false, kRefusal} : Status{QStringLiteral("connected"), true, {}};
-          if (refused) mc.refuse(rpc, kRefusal);
-          else mc.reply(rpc, statusJson(slack.status));
+          const QJsonObject now = statusJson(slack.status);
+          reply = [this, rpc, refused, now] { refused ? mc.refuse(rpc, kRefusal) : mc.reply(rpc, now); };
         } else if (rpc.method == QLatin1String("slack.disconnect")) {
           slack.status = {};
-          mc.reply(rpc, statusJson(slack.status));
+          const QJsonObject now = statusJson(slack.status);
+          reply = [this, rpc, now] { mc.reply(rpc, now); };
         } else {
-          mc.reply(rpc, statusJson(slack.status));
+          reply = [this, rpc, now = statusJson(slack.status)] { mc.reply(rpc, now); };
+          pushes = false;
+        }
+        if (late) {
+          if (pushes) broadcast();
+          slack.late.append(reply);
           return;
         }
-        broadcast();
+        reply();
+        if (pushes) broadcast();
       };
       if (slack.holding) slack.held.append(answer);
-      else answer();
+      else answer(false);
     });
     native.client()->setRetryDelays({20});
     native.setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")),
@@ -181,12 +210,16 @@ struct Shell {
     }
   }
 
-  void answerOne() { slack.held.takeFirst()(); }
+  void answerOne(bool late = false) { slack.held.takeFirst()(late); }
+
+  void answerLate() { slack.late.takeFirst()(); }
 
   void release() {
     slack.holding = false;
-    const QList<std::function<void()>> answers = std::exchange(slack.held, {});
-    for (const auto& answer : answers) answer();
+    const QList<std::function<void(bool)>> answers = std::exchange(slack.held, {});
+    for (const auto& answer : answers) answer(false);
+    const QList<std::function<void()>> late = std::exchange(slack.late, {});
+    for (const auto& answer : late) answer();
   }
 
   NavigationController* navigation() const { return native.controller<NavigationController>(); }
@@ -393,12 +426,49 @@ struct AnswerOne : Command {
   void show(std::ostream& os) const override { os << "AnswerOne"; }
 };
 
-// The MC answers everything it held, in order, and holds nothing more.
+// The MC does the oldest call it holds and pushes its status, but its answer
+// comes later, after whatever else is pushed meanwhile.
+struct PushFirst : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.held.isEmpty()); }
+  void apply(Model& model) const override {
+    Held call = model.held.takeFirst();
+    model.act(call);
+    call.said = model.mc;
+    if (call.op != Op::Manifest) model.pushed();
+    model.late.append(call);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    shell.answerOne(true);
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override { os << "PushFirst"; }
+};
+
+// The oldest answer the MC sent late arrives.
+struct AnswerLate : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.late.isEmpty()); }
+  void apply(Model& model) const override { model.answer(model.late.takeFirst()); }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    const Held& call = model.late.first();
+    if (call.visit == model.visit && call.op != Op::Manifest && !(call.said == model.mc)) shell.reached.insert(QStringLiteral("stale answer"));
+    shell.answerLate();
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override { os << "AnswerLate"; }
+};
+
+// The MC answers everything it held, in order, then what it sent late, and
+// holds nothing more.
 struct Release : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.holding); }
   void apply(Model& model) const override {
     model.holding = false;
     for (const Held& call : std::exchange(model.held, {})) model.perform(call);
+    for (const Held& call : std::exchange(model.late, {})) model.answer(call);
   }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
@@ -421,11 +491,13 @@ private slots:
       const Model initial = shell.reset();
       check(initial, shell);
       rc::state::check(initial, shell,
-                       rc::state::gen::execOneOfWithArgs<Open, Open, Open, Connect, Connect, Disconnect, CopyManifest, Drop, Elsewhere, Hold, Hold, AnswerOne, AnswerOne, Release>());
+                       rc::state::gen::execOneOfWithArgs<Open, Open, Open, Connect, Connect, Disconnect, CopyManifest, Drop, Elsewhere, Hold, Hold, AnswerOne,
+                                                                         AnswerOne, PushFirst, PushFirst, AnswerLate, AnswerLate, Release>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer")), "an answer after the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer while busy")), "a late answer while another call is out");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("replaced")), "tokens replaced");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("error replaced")), "an error replaced by a newer status");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("stale answer")), "an answer saying what Slack no longer is");
     }));
   }
 };
