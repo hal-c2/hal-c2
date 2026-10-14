@@ -126,3 +126,7 @@ your Slack app and:
 
 **Show planner threads** picks whether action threads stay on the **Planner**
 tab, are listed as threads marked with their state, or both.
+
+The **Planner** tab keeps the 50 latest runs that are applied or found nothing to
+change. Older ones leave the tab, and their threads lose the planner's mark. Proposals
+and failed runs stay until you apply or discard them.

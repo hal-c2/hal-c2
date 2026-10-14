@@ -66,12 +66,19 @@ Feature: Planner
     Scenario: A pull request or issue that is not a repository and a number is neither linked nor unlinked
       Given "Rate limits" is linked to #12 of "acme/api"
       When a client links "Rate limits" to a pull request and to an issue whose repository is not text
-      Then the planner answers "link gives a pullRequest or an issue as {repository, number}, or a threadId."
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
       When a client unlinks from "Rate limits" a pull request whose repository is not text
       Then the planner answers "unlink gives the pull request as {repository, number}."
       When a client unlinks from "Rate limits" an issue it does not name
       Then the planner answers "unlink gives the issue as {repository, number}."
       And "Rate limits" is linked to #12
+
+    @mc
+    Scenario: A link to two things at once is refused rather than half made
+      Given the plan has the task "Rate limits"
+      When a client links "Rate limits" to the pull request #12 and the issue #7 of "acme/api" at once
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
+      And "Rate limits" is linked to no pull request and no issue
 
     @mc
     Scenario: A client that still shows a task's old issue does not unlink its new one
@@ -409,6 +416,13 @@ Feature: Planner
       And the run is still running
 
     @mc
+    Scenario: A proposal that links a task to two things at once goes back to the agent
+      Given the run of "Reschedule" is running
+      When its agent reports linking "API" to the pull request #12 and the issue #7 of "acme/api" at once
+      Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+      And the run is still running
+
+    @mc
     Scenario: An action set to apply its changes applies them as it reports
       Given "Validate progress" applies its changes without asking
       And the run of "Validate progress" on "API" is running
@@ -421,6 +435,13 @@ Feature: Planner
       Given the run of "Reschedule" proposes moving "API"
       When the user discards the run
       Then "API" is not moved and the run is gone
+
+    @mc
+    Scenario: Only the latest finished runs are kept
+      Given the planner keeps the 2 latest finished runs
+      And the run of "Reschedule" proposes moving "API"
+      When "Give feedback", "Write status update" and "Reschedule" each run and report nothing to change
+      Then the runs are the proposal of "Reschedule" and the last two that finished
 
     @mc
     Scenario: Feedback lands on the tasks it is about

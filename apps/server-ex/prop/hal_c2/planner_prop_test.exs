@@ -10,7 +10,8 @@ defmodule HalC2.PlannerPropTest do
   for each other, moved from one milestone to another and removed. Two actions on the whole plan run: one whose changes wait for the user and
   one that applies them itself; a third, like the first, runs on one task. The commands
   start runs, report through the agent tool (nothing, a task's new due date, the plan's
-  health), end turns, retry, dismiss, apply and discard runs, and restart the plugin. One task at a time is linked to an
+  health, a link to two things at once), end turns, retry, dismiss, apply and discard
+  runs, and restart the plugin. The plugin keeps `@kept_runs` finished runs. One task at a time is linked to an
   issue of a repository the plan syncs both ways, with a board, relinked to another issue,
   of that repository or of one no project on the MC has, which is pushed nothing, and
   unlinked again, by a client that may still show the issue it had before;
@@ -21,7 +22,8 @@ defmodule HalC2.PlannerPropTest do
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
-  - a task with no title, or a change whose fields are not an object, is refused and
+  - a task with no title, a change whose fields are not an object, or a link to a pull
+    request and an issue at once, from a client or in an agent's report, is refused and
     changes nothing;
   - a task moved between milestones leaves the one and joins the other in one step,
     or neither when either is not a milestone or it would wait for itself;
@@ -33,6 +35,8 @@ defmodule HalC2.PlannerPropTest do
     stale rather than applied;
   - a run is failed when its turn ends without a report or the plugin restarts under
     it, and only a failed run is tried again;
+  - of the runs that are applied or had nothing to apply, only the `@kept_runs` that
+    finished last are kept; the others stay until they are discarded;
   - a linked task's sync error is what its latest push answered: an older push that
     finishes after it leaves it alone, a change GitHub takes without being asked
     anything clears it, and a push in flight when the task was unlinked, relinked or the
@@ -70,6 +74,7 @@ defmodule HalC2.PlannerPropTest do
   @board "acme/3"
   @other_board "acme/4"
   @concurrency 2
+  @kept_runs 1
   @actions %{
     "propose" => %{
       "label" => "Propose",
@@ -107,7 +112,7 @@ defmodule HalC2.PlannerPropTest do
          GIT_CONFIG_VALUE_0)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
-    apps = ~w(gh_command codex_command settings_check_ms home planner_today)a
+    apps = ~w(gh_command codex_command settings_check_ms home planner_today planner_kept_runs)a
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
 
     for var <- ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0),
@@ -129,6 +134,7 @@ defmodule HalC2.PlannerPropTest do
 
     Application.put_env(:hal_c2, :settings_check_ms, nil)
     Application.put_env(:hal_c2, :planner_today, "2026-10-15")
+    Application.put_env(:hal_c2, :planner_kept_runs, @kept_runs)
 
     on_exit(fn ->
       for {var, value} <- previous_vars,
@@ -173,8 +179,9 @@ defmodule HalC2.PlannerPropTest do
   # 0 for one that took at once, or nil)}. `runs`: k (the order it was asked for,
   # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
   # without a thread since its task was removed while it waited), status, seq
-  # (order queued), started (its thread started at least once), changes ([{slot, gen, dismissed, outcome}]), health}; a discarded run is gone
-  # from it. `gens`: slot → how many times a task was added in it, so a change to a
+  # (order queued), started (its thread started at least once), changes ([{slot, gen, dismissed, outcome}]), health,
+  # finished (when it was applied or found nothing, counted by `finished`)}; a discarded
+  # run, or one too long finished, is gone from it. `gens`: slot → how many times a task was added in it, so a change to a
   # removed task is not taken for one to the task added in its place. `updates`: how
   # many status updates the plan has. `pushes`: the last push a rename made (renames
   # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
@@ -189,6 +196,7 @@ defmodule HalC2.PlannerPropTest do
       runs: %{},
       asked: 0,
       seq: 0,
+      finished: 0,
       updates: 0,
       pushes: 0,
       latest: %{},
@@ -220,7 +228,16 @@ defmodule HalC2.PlannerPropTest do
        {2, {:call, __MODULE__, :remove, [item]}},
        {1,
         {:call, __MODULE__, :malformed,
-         [oneof([:untitled, item, {:link, item}, {:unlink, item}, {:unnamed, item}])]}},
+         [
+           oneof([
+             :untitled,
+             item,
+             {:link, item},
+             {:both, item},
+             {:unlink, item},
+             {:unnamed, item}
+           ])
+         ]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item, oneof(["nowhere", "api"])]}},
@@ -264,7 +281,7 @@ defmodule HalC2.PlannerPropTest do
          do: [
            {6,
             {:call, __MODULE__, :report,
-             [elements(started), oneof([:nothing, :health, {:due, item}])]}},
+             [elements(started), oneof([:nothing, :health, {:due, item}, {:both, item}])]}},
            {2,
             {:call, __MODULE__, :turn_finished,
              [elements(started), oneof(~w(completed interrupted))]}}
@@ -447,6 +464,9 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  # A report that links a task to two things at once is refused, whatever its run is in.
+  defp step(m, {:call, _, :report, [_k, {:both, _slot}]}), do: {m, :error}
+
   defp step(m, {:call, _, :report, [k, kind]}) do
     run = m.runs[k]
 
@@ -466,7 +486,7 @@ defmodule HalC2.PlannerPropTest do
 
         cond do
           changes == [] and health == nil ->
-            {m |> put_run(k, %{run | status: :done}) |> pump(), :ok}
+            {m |> finish(k, %{run | status: :done}) |> pump(), :ok}
 
           run.action == "auto" ->
             {m |> put_run(k, run) |> apply_run(k) |> pump(), :ok}
@@ -530,6 +550,22 @@ defmodule HalC2.PlannerPropTest do
 
   defp put_run(m, k, run), do: %{m | runs: Map.put(m.runs, k, run)}
 
+  # `run` finished last, applied or with nothing to apply; of the runs that did, only the
+  # `@kept_runs` that finished last stay.
+  defp finish(m, k, run) do
+    n = m.finished + 1
+    m = put_run(%{m | finished: n}, k, %{run | finished: n})
+
+    dropped =
+      m.runs
+      |> Enum.filter(fn {_, run} -> run.status in [:applied, :done] end)
+      |> Enum.sort_by(fn {_, run} -> run.finished end, :desc)
+      |> Enum.drop(@kept_runs)
+      |> Enum.map(&elem(&1, 0))
+
+    %{m | runs: Map.drop(m.runs, dropped)}
+  end
+
   # Queues a run of `action`, on the task in `slot` when it is given.
   defp ask(m, action, slot) do
     k = m.asked + 1
@@ -543,7 +579,8 @@ defmodule HalC2.PlannerPropTest do
       seq: nil,
       started: false,
       changes: [],
-      health: nil
+      health: nil,
+      finished: nil
     }
 
     m = %{m | asked: k, runs: Map.put(m.runs, k, run)}
@@ -648,7 +685,7 @@ defmodule HalC2.PlannerPropTest do
 
     moved = for {slot, item} <- items, m.items[slot].due != item.due, do: slot
     m = Enum.reduce(moved, %{m | items: items}, &(&2 |> pushed(&1) |> boarded(&1)))
-    m = put_run(m, k, %{run | status: :applied, changes: changes})
+    m = finish(m, k, %{run | status: :applied, changes: changes})
     if run.health, do: %{m | updates: m.updates + 1}, else: m
   end
 
@@ -700,6 +737,12 @@ defmodule HalC2.PlannerPropTest do
   # A pull request whose repository is not text is neither linked nor unlinked.
   def malformed({:link, slot}),
     do: observe(elem(call("link", %{"itemId" => item_id(slot), "pullRequest" => @bad_ref}), 0))
+
+  # A pull request and an issue at once: neither is linked.
+  def malformed({:both, slot}) do
+    input = %{"itemId" => item_id(slot), "pullRequest" => pr_ref(), "issue" => issue_ref(slot)}
+    observe(elem(call("link", input), 0))
+  end
 
   def malformed({:unlink, slot}) do
     input = %{"itemId" => item_id(slot), "kind" => "pullRequest", "ref" => @bad_ref}
@@ -866,6 +909,14 @@ defmodule HalC2.PlannerPropTest do
             "summary" => "Later.",
             "changes" => [%{"op" => "update", "itemId" => id, "fields" => %{"due" => @moved}}]
           }
+
+        {:both, slot} ->
+          fields = %{"pullRequest" => pr_ref(), "issue" => issue_ref(slot)}
+
+          %{
+            "summary" => "Linked.",
+            "changes" => [%{"op" => "link", "itemId" => item_id(slot), "fields" => fields}]
+          }
       end
 
     observe(reply(HalC2.Plugins.call_tool("planner_report", arguments, thread_of(k))))
@@ -907,6 +958,9 @@ defmodule HalC2.PlannerPropTest do
   defp reply({:error, _, _}), do: :error
   # The thread of a run that takes no more reports is not offered the tool at all.
   defp reply(nil), do: :error
+
+  defp pr_ref, do: %{"repository" => @repository, "number" => 40}
+  defp issue_ref(slot), do: %{"repository" => @repository, "number" => @issues[slot]}
 
   defp item_id(slot), do: Map.get(Process.get(:pl_items), slot, "gone-#{slot}")
   defp item(slot), do: Enum.find(plan()["items"], &(&1["id"] == item_id(slot)))

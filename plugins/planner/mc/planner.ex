@@ -8,9 +8,10 @@ defmodule HalC2Plugins.Planner do
   (`HalC2Plugins.Planner.Slack`).
 
   A run is `queued`, `running`, `failed`, `proposed` (its changes wait for the user),
-  `applied` or `done` (it had nothing to apply). The plan and its runs are kept in
-  `plan.json` in the plugin's data directory and published for the UI parts: the plan
-  on the `plan` topic, the runs on `runs`, and each run thread's run on `threads`.
+  `applied` or `done` (it had nothing to apply). Of the action runs that are applied
+  or done, only the latest are kept. The plan and its runs are kept in `plan.json` in
+  the plugin's data directory and published for the UI parts: the plan on the `plan`
+  topic, the runs on `runs`, and each run thread's run on `threads`.
 
   The server only decides. GitHub and Slack are asked outside it: in the caller of a
   call or tool once the server has answered, and in a process of its own for the timer.
@@ -245,19 +246,19 @@ defmodule HalC2Plugins.Planner do
   end
 
   def call("link", %{"itemId" => id} = input, context) do
+    kinds = ~w(pullRequest issue threadId)
+
     fields =
-      cond do
-        ref?(input["pullRequest"]) ->
-          {:ok, %{"pullRequest" => input["pullRequest"]}}
-
-        ref?(input["issue"]) ->
-          {:ok, %{"issue" => input["issue"]}}
-
-        is_binary(input["threadId"]) ->
+      case Plan.link_target(Map.take(input, kinds), kinds) do
+        {:ok, "threadId"} ->
           thread(input["threadId"])
 
-        true ->
-          {:error, "link gives a pullRequest or an issue as {repository, number}, or a threadId."}
+        {:ok, kind} ->
+          {:ok, %{kind => input[kind]}}
+
+        :error ->
+          {:error,
+           "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."}
       end
 
     with {:ok, fields} <- fields, do: change({:link, id, fields}, context.settings)
@@ -1545,7 +1546,21 @@ defmodule HalC2Plugins.Planner do
     {pushes, %{state | pushing: state.pushing |> Map.drop(relinked) |> Map.merge(latest)}}
   end
 
-  defp put_run(state, run), do: put_in(state.runs[run["id"]], run)
+  defp put_run(state, run), do: %{state | runs: prune(Map.put(state.runs, run["id"], run))}
+
+  # Every run is published and saved on each change, so only the latest `kept_runs()`
+  # action runs that are over, applied or with nothing to apply, are kept. Work marks its
+  # thread for as long as the work goes on, and a run the user can still apply, retry or
+  # hear a report from stays until it is discarded.
+  defp prune(runs) do
+    over =
+      for {id, %{"status" => status} = run} <- runs,
+          status in ~w(applied done) and run["kind"] != "work",
+          do: {run["appliedAt"] || run["finishedAt"], id}
+
+    dropped = over |> Enum.sort(:desc) |> Enum.drop(kept_runs()) |> Enum.map(&elem(&1, 1))
+    Map.drop(runs, dropped)
+  end
 
   # Changes what the milestone `id` waits for with `fun`, nothing for no milestone.
   defp hold_up(items, nil, _fun), do: {:ok, items}
@@ -1684,7 +1699,7 @@ defmodule HalC2Plugins.Planner do
       views: data["views"] || Plan.default_views(),
       updates: data["updates"] || [],
       plan_feedback: data["planFeedback"] || [],
-      runs: runs
+      runs: prune(runs)
     }
   end
 
@@ -1710,6 +1725,9 @@ defmodule HalC2Plugins.Planner do
   # The plan's today. A test holds it on a day of its own with this application env.
   defp today,
     do: Application.get_env(:hal_c2, :planner_today) || Date.to_iso8601(Date.utc_today())
+
+  # How many finished action runs are kept. A test keeps fewer with this application env.
+  defp kept_runs, do: Application.get_env(:hal_c2, :planner_kept_runs, 50)
 
   defp repository?(value), do: is_binary(value) and value =~ ~r{^[\w.-]+/[\w.-]+$}
   defp board?(value), do: value == "" or (is_binary(value) and value =~ ~r{^[\w.-]+/\d+$})

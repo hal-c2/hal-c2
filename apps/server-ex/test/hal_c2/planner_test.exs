@@ -266,6 +266,32 @@ defmodule HalC2.PlannerTest do
       assert {:error, "changes is a list."} = Plan.check_changes(items, %{})
     end
 
+    test "a link names just one pull request or issue, never two at once", %{items: items} do
+      pr = %{"repository" => "acme/api", "number" => 12}
+      issue = %{"repository" => "acme/api", "number" => 7}
+      link = &%{"op" => "link", "itemId" => "api", "fields" => &1}
+
+      refused =
+        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+
+      assert {:ok, [%{"fields" => %{"issue" => ^issue}}]} =
+               Plan.check_changes(items, [link.(%{"issue" => issue, "pullRequest" => nil})])
+
+      for fields <- [
+            %{"pullRequest" => pr, "issue" => issue},
+            %{"issue" => issue, "threadId" => "t1"},
+            %{"issue" => issue, "title" => "API"},
+            %{"threadId" => "t1"},
+            %{}
+          ],
+          do: assert({:error, ^refused} = Plan.check_changes(items, [link.(fields)]))
+
+      kinds = ~w(pullRequest issue threadId)
+      assert {:ok, "threadId"} = Plan.link_target(%{"threadId" => "t1"}, kinds)
+      assert :error = Plan.link_target(%{"pullRequest" => pr, "threadId" => "t1"}, kinds)
+      assert :error = Plan.link_target(%{"issue" => %{"repository" => 7, "number" => 1}}, kinds)
+    end
+
     test "an added task's ref is named by later changes, and it lands in its parent's project", %{
       items: items
     } do

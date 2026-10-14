@@ -188,6 +188,23 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :reply, reply)
   end
 
+  step "a client links {string} to the pull request \#{int} and the issue \#{int} of {string} at once",
+       %{args: [title, pr, issue, repository]} = context do
+    input = %{
+      "itemId" => item!(context, title)["id"],
+      "pullRequest" => %{"repository" => repository, "number" => pr},
+      "issue" => %{"repository" => repository, "number" => issue}
+    }
+
+    {reply, context} = plugin(context, "link", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} is linked to no pull request and no issue", %{args: [title]} = context do
+    assert %{"pullRequests" => [], "issue" => nil} = item!(context, title)
+    context
+  end
+
   step "a client unlinks from {string} a pull request whose repository is not text",
        %{args: [title]} = context do
     input = %{"itemId" => item!(context, title)["id"], "kind" => "pullRequest"}
@@ -834,6 +851,30 @@ defmodule HalC2.Steps.Planning.Planner do
     )
   end
 
+  step "its agent reports linking {string} to the pull request \#{int} and the issue \#{int} of {string} at once",
+       %{args: [title, pr, issue, repository]} = context do
+    change = %{
+      "op" => "link",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{
+        "pullRequest" => %{"repository" => repository, "number" => pr},
+        "issue" => %{"repository" => repository, "number" => issue}
+      }
+    }
+
+    Map.put(
+      context,
+      :tool_result,
+      tool(context, "planner_report", %{"summary" => "Linked.", "changes" => [change]})
+    )
+  end
+
+  step "the agent is told {string}", %{args: [message]} = context do
+    assert %{"isError" => true} = context.tool_result
+    assert inspect(context.tool_result) =~ message
+    context
+  end
+
   step "the agent is told that would make {string} wait for itself", %{args: [title]} = context do
     assert %{"isError" => true} = context.tool_result
     assert inspect(context.tool_result) =~ "That would make #{title} wait for itself."
@@ -885,6 +926,37 @@ defmodule HalC2.Steps.Planning.Planner do
   step "the user discards the run", context do
     {reply, context} = plugin(context, "discard", %{"runId" => context.run["id"]})
     assert {:ok, _} = reply
+    context
+  end
+
+  step "the planner keeps the {int} latest finished runs", %{args: [kept]} = context do
+    World.put_app_env(:planner_kept_runs, kept)
+    context
+  end
+
+  step "{string}, {string} and {string} each run and report nothing to change",
+       %{args: labels} = context do
+    proposal = context.run["id"]
+
+    {finished, context} =
+      Enum.map_reduce(labels, context, fn label, context ->
+        context = start_run(context, label)
+        report!(context, %{"summary" => "Nothing to change."})
+        {context.run["id"], context}
+      end)
+
+    Map.merge(context, %{proposal: proposal, finished: finished})
+  end
+
+  step "the runs are the proposal of {string} and the last two that finished",
+       %{args: [label]} = context do
+    runs = runs!(context)
+
+    assert %{"label" => ^label, "status" => "proposed"} =
+             Enum.find(runs, &(&1["id"] == context.proposal))
+
+    kept = [context.proposal | Enum.take(context.finished, -2)]
+    assert Enum.sort(Enum.map(runs, & &1["id"])) == Enum.sort(kept)
     context
   end
 

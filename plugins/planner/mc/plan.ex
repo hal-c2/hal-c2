@@ -377,9 +377,9 @@ defmodule HalC2Plugins.Planner.Plan do
       op == "add" and not is_binary(fields["title"]) ->
         {:error, "a task it adds needs a title."}
 
-      op == "link" and not (ref?(fields["pullRequest"]) or ref?(fields["issue"])) ->
+      op == "link" and link_target(fields, ~w(pullRequest issue)) == :error ->
         {:error,
-         "link gives fields {\"pullRequest\": {\"repository\", \"number\"}} or {\"issue\": …}."}
+         "link gives in fields just one of: a pullRequest or an issue as {repository, number}."}
 
       bad = op in ~w(update add) && Enum.find(Map.keys(fields), &(&1 not in @change_fields)) ->
         {:error, "#{bad} is not a field a change can set."}
@@ -401,10 +401,24 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp change(_change, _i), do: {:error, "op is update, add, remove or link."}
 
-  defp ref?(%{"repository" => repository, "number" => number}),
+  @doc """
+  `{:ok, kind}` when `given` names just one thing to link to, of `kinds`, and names it
+  well: a pullRequest or an issue as {repository, number}, a threadId as text. Anything
+  else in it, a second one included, is `:error`, so no part of a link is dropped.
+  """
+  def link_target(given, kinds) do
+    case Map.reject(given, fn {_, value} -> is_nil(value) end) |> Map.to_list() do
+      [{kind, value}] -> if kind in kinds and target?(kind, value), do: {:ok, kind}, else: :error
+      _ -> :error
+    end
+  end
+
+  defp target?("threadId", value), do: is_binary(value)
+
+  defp target?(_kind, %{"repository" => repository, "number" => number}),
     do: is_binary(repository) and is_integer(number)
 
-  defp ref?(_), do: false
+  defp target?(_kind, _value), do: false
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
