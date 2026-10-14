@@ -1590,7 +1590,13 @@ Item {
                             Layout.fillWidth: true
                             outline: true
                             model: [qsTr("No project")].concat(page.projects.map(project => project.title))
-                            currentIndex: page.projects.findIndex(project => project.id === itemColumn.item?.projectId) + 1
+                            // A project the MC no longer offers is shown by its id, not as none.
+                            currentIndex: {
+                                const id = itemColumn.item?.projectId ?? "";
+                                const at = page.projects.findIndex(project => project.id === id);
+                                return id === "" ? 0 : at < 0 ? -1 : at + 1;
+                            }
+                            displayText: currentIndex >= 0 ? currentText : itemColumn.item?.projectId ?? ""
                             Accessible.name: qsTr("Project")
                             onActivated: index => page.update(itemColumn.item, { projectId: index === 0 ? null : page.projects[index - 1].id })
                         }
@@ -2206,7 +2212,7 @@ Item {
             readonly property int rangeStart: {
                 let first = page.day(page.today);
                 for (const item of page.items) {
-                    for (const date of [item.start, item.due, item.baseline?.start]) {
+                    for (const date of [item.start, item.due, item.baseline?.start, item.baseline?.due]) {
                         if (date)
                             first = Math.min(first, page.day(date));
                     }
@@ -2217,7 +2223,7 @@ Item {
             readonly property int rangeEnd: {
                 let last = page.day(page.today);
                 for (const item of page.items) {
-                    for (const date of [item.start, item.due, item.baseline?.due]) {
+                    for (const date of [item.start, item.due, item.baseline?.start, item.baseline?.due]) {
                         if (date)
                             last = Math.max(last, page.day(date));
                     }

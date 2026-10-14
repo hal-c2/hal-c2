@@ -824,6 +824,28 @@ const Steps steps([] {
     world.waitFor([&] { return says() == QStringLiteral("Ends %1 days before its baseline").arg(c[0]); },
                   [&] { return QStringLiteral("the panel says %1").arg(says()); });
   });
+  step(QStringLiteral("the plan has the milestone %1 due (\\d+) days after its baseline").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& milestone = item(world, c[0]);
+    milestone.insert(QStringLiteral("kind"), QStringLiteral("milestone"));
+    milestone.insert(QStringLiteral("due"), QStringLiteral("2026-10-30"));
+    milestone.insert(QStringLiteral("baseline"), QJsonObject{{QStringLiteral("due"), iso(date(QStringLiteral("2026-10-30")).addDays(-c[1].toInt()))}});
+    publish(world);
+  });
+  step(QStringLiteral("the chart reaches back to the baseline of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QDate due = date(item(world, c[0]).value(QLatin1String("baseline")).toObject().value(QLatin1String("due")).toString());
+    const int first = waitShownNamed(world, QStringLiteral("plannerGantt"))->property("rangeStart").toInt();
+    expect(first <= QDate(1970, 1, 1).daysTo(due), QStringLiteral("the chart starts on %1, after the baseline's %2").arg(iso(QDate(1970, 1, 1).addDays(first)), iso(due)));
+  });
+  step(QStringLiteral("the plan has %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30")).insert(QStringLiteral("projectId"), c[1]);
+    publish(world);
+  });
+  step(QStringLiteral("its project reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The MC offers only the project api.
+    QQuickItem* combo = waitShownNamed(world, QStringLiteral("plannerItemProject"));
+    expect(combo->property("currentIndex").toInt() == -1 && combo->property("displayText").toString() == c[0],
+           QStringLiteral("the project reads %1").arg(combo->property("displayText").toString()));
+  });
   step(QStringLiteral("the plan has the milestone %1 without a due date").arg(q), [](World& world, const Captures& c, const Table&) {
     seedWhenEmpty(world);
     item(world, c[0]).insert(QStringLiteral("kind"), QStringLiteral("milestone"));
@@ -1125,6 +1147,24 @@ const Steps steps([] {
       expect(combo->property("currentIndex").toInt() == -1 && combo->property("displayText").toString() == wanted,
              QStringLiteral("%1 reads %2").arg(name, combo->property("displayText").toString()));
     }
+  });
+
+  step(QStringLiteral("the user types %1 as the actions at once and as the minutes between looks at GitHub").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QString& key : {QStringLiteral("concurrency"), QStringLiteral("pollMinutes")}) {
+      QQuickItem* count = waitShownNamed(world, QStringLiteral("plannerSetting:") + key);
+      count->setProperty("text", c[0]);
+      expect(QMetaObject::invokeMethod(count, "textEdited"), QStringLiteral("%1 cannot be typed in").arg(key));
+    }
+  });
+  step(QStringLiteral("neither setting is changed"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
+    const QVariantMap values = settings->property("values").toMap();
+    expect(!settings->property("dirty").toBool(),
+           QStringLiteral("the settings were changed to %1 at once, every %2 minutes").arg(values.value(QStringLiteral("concurrency")).toString(), values.value(QStringLiteral("pollMinutes")).toString()));
+  });
+  step(QStringLiteral("%1 can only be on a task, while %1 can be on a task or the plan").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerActionScope:") + actionId(world, c[1]));
+    expect(hidden(world, QStringLiteral("plannerActionScope:") + actionId(world, c[0])), QStringLiteral("%1 can be put on the plan").arg(c[0]));
   });
 
   step(QStringLiteral("the MC is connected to Slack as the bot %1").arg(q), [](World& world, const Captures&, const Table&) { state(world).slack = true; });

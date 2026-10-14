@@ -353,7 +353,7 @@ ColumnLayout {
         implicitWidth: 100
         inputMethodHints: Qt.ImhDigitsOnly
         validator: IntValidator {
-            bottom: 0
+            bottom: 1
         }
         text: String(settings.values[count.key] ?? "")
         onTextEdited: if (acceptableInput)
@@ -597,9 +597,12 @@ ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 16
 
+                        // Work is always on one task.
                         Choice {
+                            objectName: "plannerActionScope:" + card.modelData
                             width: implicitWidth
                             Layout.fillWidth: false
+                            visible: card.action.kind !== "work"
                             options: [
                                 { value: "item", label: qsTr("On a task") },
                                 { value: "plan", label: qsTr("On the plan") }

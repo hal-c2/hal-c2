@@ -111,6 +111,18 @@ Feature: Planner
       When the user opens the task "API"
       Then its panel says it ends 3 days before its baseline
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The chart reaches back to a baseline long before the plan
+      Given the plan has the milestone "Launch" due 200 days after its baseline
+      When the user is on the view "Timeline"
+      Then the chart reaches back to the baseline of "Launch"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A task names a project the MC no longer offers
+      Given the plan has "API" in the project "gone"
+      When the user opens the task "API"
+      Then its project reads "gone"
+
     @mc
     Scenario: A baseline keeps the dates to compare against
       Given the plan has "API" from "2026-10-21" to "2026-10-30"
@@ -472,6 +484,17 @@ Feature: Planner
       Given "planner" runs its actions on the model "claude-retired" in the project "gone"
       When the user opens the planner's settings
       Then the planner's model reads "claude-retired" and its default project "gone"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings take no count the MC refuses
+      Given the user opens the planner's settings
+      When the user types "0" as the actions at once and as the minutes between looks at GitHub
+      Then neither setting is changed
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: Starting work is always on one task
+      When the user opens the planner's settings
+      Then "Start work" can only be on a task, while "Reschedule" can be on a task or the plan
 
   Rule: Work on a task is a thread linked to it
 
