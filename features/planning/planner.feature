@@ -764,6 +764,25 @@ Feature: Planner
       Then beside its date fields the settings say "acme/9 was not found."
       And the date fields are typed in as "Begins" and "Ends"
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: A screen reader names the planner's settings when the board's date fields are <dates>
+      Given "acme" has the board "acme/3" "Roadmap" with the date fields "Begins" and "Ends"
+      And "planner" follows the board "<board>" with "Begins" and "Ends" as its dates
+      When the user opens the planner's settings
+      Then the board's date fields are <dates>
+      And a screen reader names the settings:
+        | Actions at once                |
+        | Only issues labelled           |
+        | Start date field               |
+        | Target date field              |
+        | Look at GitHub every (minutes) |
+        | Slash command                  |
+
+      Examples:
+        | board  | dates              |
+        | acme/3 | picked from a list |
+        | acme/9 | typed in           |
+
     @mc
     Scenario Outline: With two-way sync a change to a task reaches GitHub
       Given "planner" syncs "acme/api" both ways with the board "acme/3"

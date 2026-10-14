@@ -489,6 +489,22 @@ bool hidden(World& world, const QString& objectName) {
 
 void waitHidden(World& world, const QString& objectName) { world.waitFor([&] { return hidden(world, objectName); }, QStringLiteral("%1 to be hidden").arg(objectName)); }
 
+// The names a screen reader gives the shown text inputs and lists under `root`: their
+// QML `Accessible.name`, which lives on the attached object QML parents to the item.
+QStringList accessibleInputNames(const QQuickItem* root) {
+  QStringList names;
+  for (QQuickItem* child : root->childItems()) {
+    if (!child->isVisible()) continue;
+    if (child->inherits("QQuickTextInput") || child->inherits("QQuickComboBox")) {
+      for (const QObject* each : child->children()) {
+        if (qstrcmp(each->metaObject()->className(), "QQuickAccessibleAttached") == 0) names.append(each->property("name").toString());
+      }
+    }
+    names.append(accessibleInputNames(child));
+  }
+  return names;
+}
+
 // The Planner tab, on the view `name` when one is given.
 QQuickItem* showPlanner(World& world, const QString& name = {}) {
   switchToTab(world, QStringLiteral("Planner"));
@@ -1290,6 +1306,20 @@ const Steps steps([] {
     waitHidden(world, QStringLiteral("plannerDateField:targetField"));
     waitText(world, QStringLiteral("plannerSetting:startField"), c[0]);
     waitText(world, QStringLiteral("plannerSetting:targetField"), c[1]);
+  });
+  step(QStringLiteral("the board's date fields are picked from a list"), [](World& world, const Captures&, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerDateField:startField"));
+    waitShownNamed(world, QStringLiteral("plannerDateField:targetField"));
+  });
+  step(QStringLiteral("the board's date fields are typed in"), [](World& world, const Captures&, const Table&) {
+    waitHidden(world, QStringLiteral("plannerDateField:startField"));
+    waitHidden(world, QStringLiteral("plannerDateField:targetField"));
+  });
+  step(QStringLiteral("a screen reader names the settings:"), [](World& world, const Captures&, const Table& table) {
+    const QStringList names = accessibleInputNames(waitShownNamed(world, QStringLiteral("plannerSettings")));
+    for (const QStringList& row : table) {
+      expect(names.count(row.at(0)) == 1, QStringLiteral("no one setting is named %1 among %2").arg(row.at(0), names.join(QStringLiteral(", "))));
+    }
   });
   step(QStringLiteral("%1 is saved with no field for its start date").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));

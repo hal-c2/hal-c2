@@ -377,11 +377,12 @@ ColumnLayout {
     }
 
     // A board field holding dates: picked from the board's date fields once they are
-    // read, or None for no mapping; typed in otherwise.
+    // read, or None for no mapping; typed in otherwise. `label` names it to a screen reader.
     component DateField: RowLayout {
         id: dateField
 
         property string key
+        property string label
         readonly property string value: settings.values[key] ?? ""
 
         ShellComboBox {
@@ -392,6 +393,7 @@ ColumnLayout {
             model: [qsTr("None")].concat(settings.dateFields)
             currentIndex: settings.pickedAfterNone(settings.dateFields, "", dateField.value)
             displayText: currentIndex >= 0 ? currentText : dateField.value
+            Accessible.name: dateField.label
             onActivated: index => settings.set(dateField.key, index === 0 ? "" : settings.dateFields[index - 1])
         }
 
@@ -399,6 +401,7 @@ ColumnLayout {
             key: dateField.key
             visible: settings.dateFields.length === 0
             implicitWidth: 180
+            Accessible.name: dateField.label
         }
     }
 
@@ -518,6 +521,7 @@ ColumnLayout {
 
                 Count {
                     key: "concurrency"
+                    Accessible.name: qsTr("Actions at once")
                 }
             }
         }
@@ -774,6 +778,7 @@ ColumnLayout {
 
             Line {
                 key: "issueLabel"
+                Accessible.name: qsTr("Only issues labelled")
             }
         }
 
@@ -830,6 +835,7 @@ ColumnLayout {
 
                 DateField {
                     key: "startField"
+                    label: qsTr("Start date field")
                 }
             }
 
@@ -839,6 +845,7 @@ ColumnLayout {
 
                 DateField {
                     key: "targetField"
+                    label: qsTr("Target date field")
                 }
             }
         }
@@ -859,6 +866,7 @@ ColumnLayout {
 
             Count {
                 key: "pollMinutes"
+                Accessible.name: qsTr("Look at GitHub every (minutes)")
             }
         }
 
@@ -924,6 +932,7 @@ ColumnLayout {
             Line {
                 key: "slackCommand"
                 implicitWidth: 180
+                Accessible.name: qsTr("Slash command")
             }
         }
 
