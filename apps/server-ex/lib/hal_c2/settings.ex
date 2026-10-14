@@ -408,6 +408,25 @@ defmodule HalC2.Settings do
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
     if pi.(settings) != pi.(state.settings), do: HalC2.Acp.forget("pi")
 
+    muse = &get_in(&1, ["providers", "muse", "binaryPath"])
+    if muse.(settings) != muse.(state.settings), do: HalC2.Acp.forget("muse")
+
+    # So is an added instance whose driver, or own or driver's binaryPath, changed
+    # (HalC2.Acp.binary_path/1).
+    binaries = fn settings ->
+      for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
+        {id,
+         {entry["driver"], get_in(entry, ["config", "binaryPath"]),
+          get_in(settings, ["providers", entry["driver"] || id, "binaryPath"])}}
+      end
+    end
+
+    {old, new} = {binaries.(state.settings), binaries.(settings)}
+
+    for id <- Enum.uniq(Map.keys(old) ++ Map.keys(new)),
+        old[id] != new[id],
+        do: HalC2.Acp.forget(id)
+
     for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
 
     %{

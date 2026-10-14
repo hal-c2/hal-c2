@@ -238,6 +238,15 @@ Feature: MC self-update and hot upgrades
     And the report lists modules that need a restart
 
   @mc
+  Scenario: A reload starts the services the MC's new code adds
+    Given MCs started from a checkout whose new code adds services
+    When a developer reloads them after editing code
+    Then the new service runs without a restart
+    And a boot task that already ran does not run again
+    And a new service that fails to start is reported as needing a restart
+    And services it changed or no longer lists are reported as needing a restart
+
+  @mc
   Scenario: A developer reloads the MC their checkout runs without naming it
     Given MCs started from a checkout
     When a developer reloads the local MC with its own access token

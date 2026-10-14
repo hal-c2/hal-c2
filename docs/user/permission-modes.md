@@ -30,4 +30,6 @@ actions still require approval.
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+Muse Code offers only **Supervised** and **Full access**.
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.

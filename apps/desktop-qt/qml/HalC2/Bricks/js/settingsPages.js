@@ -39,7 +39,7 @@ var sections = [
       keywords: "snapshot snapshots snap shot capture screenshot window shortcut sound flash animation portal accessibility" },
     { to: "/settings/providers", label: "Providers", brick: "ProvidersSettings", requires: "providerSettings",
       detail: "Install, sign-in, versions and models",
-      keywords: "providers provider codex claude cursor grok opencode antigravity acp agents sign in sign out login logout account email enable disable update version models refresh" },
+      keywords: "providers provider codex claude cursor grok opencode antigravity pi muse acp agents sign in sign out login logout account email enable disable update version models refresh" },
     { to: "/settings/integrations", label: "Integrations", brick: "IntegrationsSettings", requires: "deviceSettings",
       detail: "Simulators, emulators, agent device access and Slack",
       keywords: "integrations devices device hub simulator emulator ios android xcode agent device access tools version update slack bot token socket mode manifest" },

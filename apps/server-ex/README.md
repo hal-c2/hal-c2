@@ -69,8 +69,9 @@ build of its own), and clients offer to update it like any server. It moves to t
 new version in place when it can: the running code is replaced module by module and
 nothing reconnects. A version that changes only HAL-C2's own code takes nothing else
 from its bundle, so it keeps the Erlang runtime and dependencies the MC already runs
-and installs from a bundle built for any platform. A new OTP release, dependency,
-configuration or supervision tree needs a restart instead, which
+and installs from a bundle built for any platform, and services new in the application
+start alongside the running ones. A new OTP release, dependency, configuration, or
+change to a supervisor or a running service's spec needs a restart instead, which
 `bin/hal-c2-service` provides from this platform's bundle (`HalC2.Upgrade` has the rules).
 
 MCs get a version's bundle from a cluster peer that has it, or else from the
