@@ -313,6 +313,44 @@ defmodule HalC2.SlackTest do
       end
     end
 
+    test "a channel the bot leaves or that is deleted leaves the list" do
+      for {type, id} <- [
+            {"group_left", "CLEFT"},
+            {"group_deleted", "CGONE"},
+            {"channel_deleted", "CDROP"}
+          ] do
+        FakeSlack.join(id, String.downcase(id))
+        Slack.channels_changed()
+        assert {:ok, %{"channels" => channels}} = Slack.call("channels", %{})
+        assert id in Enum.map(channels, & &1["id"])
+
+        FakeSlack.leave(id)
+        HalC2.Slack.Bot.event(type, %{"channel" => id}, %{})
+        assert {:ok, %{"channels" => channels}} = Slack.call("channels", %{})
+        refute id in Enum.map(channels, & &1["id"]), type
+      end
+
+      lines = Slack.manifest() |> String.split("\n") |> Enum.map(&String.trim/1)
+
+      for event <- ~w(channel_left channel_deleted group_left group_deleted),
+          do: assert("- #{event}" in lines)
+    end
+
+    # A list read before a channel changed must not stand in for the list after it.
+    test "channels read across a change are read again" do
+      FakeSlack.hold("users.conversations")
+      reading = Task.async(fn -> Slack.channels() end)
+      assert_receive {:fake_slack_held, "users.conversations", _}, 5_000
+
+      Slack.channels_changed()
+      FakeSlack.release()
+      Task.await(reading)
+
+      read = length(FakeSlack.calls("users.conversations"))
+      assert {:ok, _} = Slack.channels()
+      assert length(FakeSlack.calls("users.conversations")) == read + 1
+    end
+
     # A read that answers after the connection changed belongs to the old one, and must
     # not stand in for the new connection's own read.
     test "channels read across a reconnect are read again on the new connection" do
