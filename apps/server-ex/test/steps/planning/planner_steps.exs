@@ -178,6 +178,24 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :reply, reply)
   end
 
+  step "a client links {string} to a pull request and to an issue whose repository is not text",
+       %{args: [title]} = context do
+    id = item!(context, title)["id"]
+    ref = %{"repository" => 7, "number" => 12}
+    {reply, context} = plugin(context, "link", %{"itemId" => id, "pullRequest" => ref})
+    assert {:error, _, _} = reply
+    {reply, context} = plugin(context, "link", %{"itemId" => id, "issue" => ref})
+    Map.put(context, :reply, reply)
+  end
+
+  step "a client unlinks from {string} a pull request whose repository is not text",
+       %{args: [title]} = context do
+    input = %{"itemId" => item!(context, title)["id"], "kind" => "pullRequest"}
+    input = Map.put(input, "ref", %{"repository" => 7, "number" => 12})
+    {reply, context} = plugin(context, "unlink", input)
+    Map.put(context, :reply, reply)
+  end
+
   step "the planner answers {string}", %{args: [message]} = context do
     assert {:error, _, _} = context.reply
     assert inspect(context.reply) =~ message

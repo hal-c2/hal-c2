@@ -247,10 +247,10 @@ defmodule HalC2Plugins.Planner do
   def call("link", %{"itemId" => id} = input, context) do
     fields =
       cond do
-        is_map(input["pullRequest"]) ->
+        ref?(input["pullRequest"]) ->
           {:ok, %{"pullRequest" => input["pullRequest"]}}
 
-        is_map(input["issue"]) ->
+        ref?(input["issue"]) ->
           {:ok, %{"issue" => input["issue"]}}
 
         is_binary(input["threadId"]) ->
@@ -263,8 +263,11 @@ defmodule HalC2Plugins.Planner do
     with {:ok, fields} <- fields, do: change({:link, id, fields}, context.settings)
   end
 
-  def call("unlink", %{"itemId" => id, "kind" => kind} = input, context),
-    do: change({:unlink, id, kind, input["ref"] || input["threadId"]}, context.settings)
+  def call("unlink", %{"itemId" => id, "kind" => kind} = input, context) do
+    if kind == "pullRequest" and not ref?(input["ref"]),
+      do: {:error, "unlink gives the pull request as {repository, number}."},
+      else: change({:unlink, id, kind, input["ref"] || input["threadId"]}, context.settings)
+  end
 
   def call(method, _input, _context), do: {:error, "planner has no method #{method}."}
 

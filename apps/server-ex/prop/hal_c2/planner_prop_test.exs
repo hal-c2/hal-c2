@@ -55,6 +55,7 @@ defmodule HalC2.PlannerPropTest do
   @slots ~w(a b c)
   @repository "acme/api"
   @issues %{"a" => 1, "b" => 2, "c" => 3}
+  @bad_ref %{"repository" => 7, "number" => 1}
   @due "2026-10-30"
   @moved "2026-11-06"
   @board "acme/3"
@@ -194,7 +195,9 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
        {2, {:call, __MODULE__, :remove, [item]}},
-       {1, {:call, __MODULE__, :malformed, [oneof([:untitled, item])]}},
+       {1,
+        {:call, __MODULE__, :malformed,
+         [oneof([:untitled, item, {:link, item}, {:unlink, item}])]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item]}},
@@ -618,6 +621,15 @@ defmodule HalC2.PlannerPropTest do
   # A task with no title, or a change whose fields are not an object.
   def malformed(:untitled),
     do: observe(elem(call("addItem", %{"fields" => %{"kind" => "task"}}), 0))
+
+  # A pull request whose repository is not text is neither linked nor unlinked.
+  def malformed({:link, slot}),
+    do: observe(elem(call("link", %{"itemId" => item_id(slot), "pullRequest" => @bad_ref}), 0))
+
+  def malformed({:unlink, slot}) do
+    input = %{"itemId" => item_id(slot), "kind" => "pullRequest", "ref" => @bad_ref}
+    observe(elem(call("unlink", input), 0))
+  end
 
   def malformed(slot),
     do: observe(elem(call("updateItem", %{"id" => item_id(slot), "fields" => ["title"]}), 0))

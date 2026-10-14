@@ -63,6 +63,15 @@ Feature: Planner
       And the plan holds only "Rate limits"
 
     @mc
+    Scenario: A pull request or issue that is not a repository and a number is neither linked nor unlinked
+      Given "Rate limits" is linked to #12 of "acme/api"
+      When a client links "Rate limits" to a pull request and to an issue whose repository is not text
+      Then the planner answers "link gives a pullRequest or an issue as {repository, number}, or a threadId."
+      When a client unlinks from "Rate limits" a pull request whose repository is not text
+      Then the planner answers "unlink gives the pull request as {repository, number}."
+      And "Rate limits" is linked to #12
+
+    @mc
     Scenario: A task moves from one milestone to another in one step
       Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
       When the user moves "API" from "Beta" to "Launch"
