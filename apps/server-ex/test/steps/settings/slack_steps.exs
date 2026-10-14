@@ -12,7 +12,7 @@ defmodule HalC2.Steps.Settings.Slack do
   import ExUnit.Assertions
 
   alias HalC2.Steps.Support.{PluginHost, Slack}
-  alias HalC2.Test.FakeSlack
+  alias HalC2.Test.{FakeSlack, Mc, WsClient}
   alias HalC2.Test.Mc.World
 
   # --- the connection -----------------------------------------------------------------
@@ -144,6 +144,41 @@ defmodule HalC2.Steps.Settings.Slack do
     {status, context} = Slack.await(context, "connected")
     assert %{"team" => "acme", "tokensSet" => true} = status
     context
+  end
+
+  # Pages 1 and 2 subscribe to the `slack` shape on the `"pages"` socket.
+  step "two Integrations pages on one connection show Slack", context do
+    client =
+      World.client(context, "pages") |> Mc.sub(1, Slack.shape()) |> Mc.sub(2, Slack.shape())
+
+    {frames, client} = slack_frames(client)
+    assert [{1, "connected"}, {2, "connected"}] = frames
+    World.put_client(context, "pages", client)
+  end
+
+  step "one of the pages is closed", context do
+    {[], client} = context |> World.client("pages") |> Mc.unsub(1) |> slack_frames()
+    World.put_client(context, "pages", client)
+  end
+
+  step "the other page shows Slack as not connected", context do
+    {_, skipped, client} =
+      WsClient.recv_until(
+        World.client(context, "pages"),
+        &(&1["t"] == "slack" and &1["id"] == 2 and &1["status"]["state"] == "off"),
+        10_000
+      )
+
+    context
+    |> World.put_client("pages", client)
+    |> Map.put(:closed_page, for(%{"t" => "slack", "id" => 1} = frame <- skipped, do: frame))
+  end
+
+  step "the closed page is told nothing", context do
+    {frames, client} = slack_frames(World.client(context, "pages"))
+    assert context.closed_page == []
+    assert for({1, _} = frame <- frames, do: frame) == []
+    World.put_client(context, "pages", client)
   end
 
   step "the MC is asked for the Slack app manifest", context do
@@ -533,5 +568,13 @@ defmodule HalC2.Steps.Settings.Slack do
     FakeSlack.event(mention.("<@UHAL> is this ours?", "1700000100.000003"), origin)
     FakeSlack.event(mention.("<@UHAL> what is late?", "1700000100.000004"))
     Map.put(context, :said, {channel_id(name), "<@UHAL> what is late?"})
+  end
+
+  # The Slack frames sent before the pong answering a ping sent now, as {id, state}:
+  # the socket reads its frames in order, so everything before the ping is in.
+  defp slack_frames(client) do
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 10_000)
+    {for(%{"t" => "slack", "id" => id, "status" => s} <- frames, do: {id, s["state"]}), client}
   end
 end
