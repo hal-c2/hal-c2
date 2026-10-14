@@ -192,6 +192,12 @@ QVariantList presets(const QString& driver) {
                     choice(QStringLiteral("high"), QStringLiteral("High")), choice(QStringLiteral("xhigh"), QStringLiteral("Extra High")),
                     choice(QStringLiteral("max"), QStringLiteral("Max"))})};
   }
+  // Muse's fallback tiers for a model its catalog does not describe.
+  if (driver == QLatin1String("muse")) {
+    QVariantList muse = effort(QStringLiteral("high"));
+    muse.append(choice(QStringLiteral("max"), QStringLiteral("Max")));
+    return {option(QStringLiteral("reasoningEffort"), QStringLiteral("Reasoning"), QStringLiteral("select"), muse)};
+  }
   if (driver == QLatin1String("opencode")) {
     return {option(QStringLiteral("variant"), QStringLiteral("Reasoning"), QStringLiteral("select"), effort()),
             option(QStringLiteral("agent"), QStringLiteral("Agent"), QStringLiteral("select"),

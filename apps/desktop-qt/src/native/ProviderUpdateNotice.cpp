@@ -32,6 +32,7 @@ QString driverName(const QString& driver) {
       {QStringLiteral("grok"), QStringLiteral("Grok")},
       {QStringLiteral("acpRegistry"), QStringLiteral("ACP Registry")},
       {QStringLiteral("pi"), QStringLiteral("Pi")},
+      {QStringLiteral("muse"), QStringLiteral("Muse Code")},
       {QStringLiteral("opencode"), QStringLiteral("OpenCode")},
   };
   return names.value(driver, driver);

@@ -469,6 +469,78 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  step "MCs started from a checkout whose new code adds services", context do
+    System.delete_env("RELEASE_ROOT")
+    ebin = Path.join([Mc.tmp_dir(context.mc, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
+    File.mkdir_p!(ebin)
+    Mc.remember_module(HalC2.Application)
+    {HalC2.Application, original, _} = :code.get_object_code(HalC2.Application)
+
+    # The new code's beam, compiled and then the running code put back.
+    Code.put_compiler_option(:ignore_module_conflict, true)
+
+    [{HalC2.Application, beam}] =
+      Code.compile_string("""
+      defmodule HalC2.Application do
+        def children,
+          do: [
+            Supervisor.child_spec({Task, fn -> Process.sleep(:infinity) end},
+              id: :search_backfill
+            ),
+            {Registry, keys: :unique, name: HalC2.Test.NewService},
+            %{id: :broken_service, start: {:erlang, :apply, [fn -> {:error, :boom} end, []]}}
+          ]
+      end
+      """)
+
+    Code.put_compiler_option(:ignore_module_conflict, false)
+    {:module, _} = :code.load_binary(HalC2.Application, ~c"application.beam", original)
+    File.write!(Path.join(ebin, "Elixir.HalC2.Application.beam"), beam)
+    true = :code.add_patha(String.to_charlist(ebin))
+
+    ExUnit.Callbacks.on_exit(fn ->
+      :code.del_path(String.to_charlist(ebin))
+      Supervisor.terminate_child(HalC2.Supervisor, :search_backfill)
+      Supervisor.terminate_child(HalC2.Supervisor, HalC2.Test.NewService)
+      Supervisor.delete_child(HalC2.Supervisor, HalC2.Test.NewService)
+    end)
+
+    context
+  end
+
+  step "the new service runs without a restart", context do
+    assert {:ok, %{changed: changed, needs_restart: needs_restart}} = context.report
+    assert HalC2.Application in changed
+    refute HalC2.Test.NewService in needs_restart
+    assert Process.whereis(HalC2.Test.NewService)
+    context
+  end
+
+  # Its id was in the old application, so the reload never started it, though its spec
+  # changed; started, it would still be running.
+  step "a boot task that already ran does not run again", context do
+    refute Enum.any?(
+             Supervisor.which_children(HalC2.Supervisor),
+             &(elem(&1, 0) == :search_backfill)
+           )
+
+    context
+  end
+
+  step "a new service that fails to start is reported as needing a restart", context do
+    assert {:ok, %{needs_restart: needs_restart}} = context.report
+    assert :broken_service in needs_restart
+    context
+  end
+
+  # The new code's backfill task is another function, and it lists no store.
+  step "services it changed or no longer lists are reported as needing a restart", context do
+    assert {:ok, %{needs_restart: needs_restart}} = context.report
+    assert :search_backfill in needs_restart
+    assert HalC2.Store in needs_restart
+    context
+  end
+
   step "another checkout holds edited code the MC was not started from", context do
     System.delete_env("RELEASE_ROOT")
     build = Path.join([Mc.tmp_dir(context.mc, "worktree"), "_build", "dev"])

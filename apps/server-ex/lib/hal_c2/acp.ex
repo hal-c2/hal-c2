@@ -21,6 +21,8 @@ defmodule HalC2.Acp do
     "cursor" => %{binary: "node", label: "Cursor"},
     # Pi in its own RPC mode (`HalC2.Pi`), not ACP: listed here for its provider entry.
     "pi" => %{binary: "pi", label: "Pi"},
+    # Muse Code over its own session protocol (`HalC2.Muse`), not ACP, like Pi.
+    "muse" => %{binary: "muse", label: "Muse Code"},
     # Google's Antigravity agent, from the MC's managed runtime (`HalC2.Acp.Antigravity`).
     "antigravity" => %{binary: "agy_acp_server.par", label: "Antigravity"}
   }
@@ -132,6 +134,9 @@ defmodule HalC2.Acp do
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
 
+      {"muse", _entry} ->
+        HalC2.Muse.launch(instance, runtime_mode: runtime_mode)
+
       {"antigravity", _entry} ->
         HalC2.Acp.Antigravity.command(instance)
 
@@ -235,7 +240,7 @@ defmodule HalC2.Acp do
           "showInteractionModeToggle" => false,
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => HalC2.Orchestration.Entities.now(),
-          "models" => custom_models(models || [], instance),
+          "models" => custom_models(models || [], instance, driver),
           "slashCommands" => [],
           "skills" => []
         },
@@ -353,6 +358,27 @@ defmodule HalC2.Acp do
   # Pi is offered where Pi is installed; its adapter installs when first used.
   defp base_entry(_id, "pi", instance) do
     if System.find_executable(binary("pi", instance, "pi")), do: {:ok, %{}}, else: :error
+  end
+
+  # Muse is offered where Muse is installed. One the user enabled stays listed, and its
+  # load says it is missing, so the client never waits on an entry that will not come.
+  defp base_entry(id, "muse", instance) do
+    cond do
+      System.find_executable(binary("muse", instance, "muse")) ->
+        {:ok, %{}}
+
+      enabled?(id, "muse", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
   end
 
   # Antigravity is always listed: its entry says how to install or sign in.
@@ -556,6 +582,17 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Muse's models come from its catalog (`model/list`) on a read-only host. Its
+  # protocol says nothing of sign-in: an empty catalog is the only sign.
+  defp read_agent(id, dir, "muse", entry) do
+    with :ok <- check_version(id, "muse", entry),
+         {:ok, models} <- HalC2.Muse.discover(id, dir) do
+      :persistent_term.put({__MODULE__, id, :models}, models)
+      :persistent_term.put({__MODULE__, id, :muse_signed_out}, models == [])
+      :ok
+    end
+  end
+
   defp read_agent(id, dir, driver, entry) do
     with :ok <- check_version(id, driver, entry) do
       with_agent(id, dir, fn conn, init ->
@@ -654,6 +691,41 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Any Muse that answers `muse --version` ("Muse Code 1.4.7 (...)") is tried.
+  defp check_version(id, "muse", entry) do
+    result =
+      with path when is_binary(path) <-
+             System.find_executable(binary("muse", entry, "muse")) || :missing,
+           task =
+             Task.async(fn ->
+               System.cmd(path, ["--version"],
+                 stderr_to_stdout: true,
+                 env: [{"MUSE_NO_AUTO_UPDATE", "1"}]
+               )
+             end),
+           {:ok, {out, 0}} <- Task.yield(task, 10_000) || Task.shutdown(task) do
+        {:ok, out}
+      end
+
+    case result do
+      {:ok, out} when is_binary(out) ->
+        version =
+          case Regex.run(~r/\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?/, out) do
+            [version] -> version
+            nil -> "unknown"
+          end
+
+        :persistent_term.put({__MODULE__, id, :version}, version)
+        :ok
+
+      :missing ->
+        {:error, "Muse Code was not found on this machine. Install it, or set its binary path."}
+
+      _ ->
+        {:error, "Muse Code CLI could not be run. Check the binary path in provider settings."}
+    end
+  end
+
   defp check_version(_id, _driver, _entry), do: :ok
 
   # --- per-driver fields --------------------------------------------------------
@@ -696,6 +768,34 @@ defmodule HalC2.Acp do
            "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
            "message" =>
              "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+         }),
+       else: entry
+  end
+
+  # Muse maps two access modes (`promptUnmatched`, `allowAll`), cannot rewind or fork
+  # its sessions, and reports no sign-in; custom models get the usual efforts.
+  defp driver_fields(entry, "muse", id, _instance) do
+    entry =
+      entry
+      |> Map.merge(%{
+        "supportedRuntimeModes" => ~w(approval-required full-access),
+        "slashCommands" => if(entry["enabled"], do: [@compact], else: []),
+        "supportsConversationRollback" => false,
+        "auth" => Map.put(entry["auth"], "status", "unknown")
+      })
+      |> Map.update!("models", fn models ->
+        Enum.map(
+          models,
+          &((&1["capabilities"] && &1) || Map.put(&1, "capabilities", HalC2.Muse.capabilities()))
+        )
+      end)
+
+    if entry["status"] == "ready" and
+         :persistent_term.get({__MODULE__, id, :muse_signed_out}, false),
+       do:
+         Map.merge(entry, %{
+           "status" => "warning",
+           "message" => "Muse Code returned no models. Run `muse login` on this machine."
          }),
        else: entry
   end
@@ -1056,7 +1156,8 @@ defmodule HalC2.Acp do
           :config,
           :commands,
           :skills,
-          :pi_signed_out
+          :pi_signed_out,
+          :muse_signed_out
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 
@@ -1143,9 +1244,15 @@ defmodule HalC2.Acp do
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
   # One without options of its own takes the agent's, which its models share.
-  defp custom_models(models, instance) do
+  # A custom model without capabilities of its own gets the catalog's first model's,
+  # except Muse's, whose catalog describes each model apart: those get Muse's usual efforts.
+  defp custom_models(models, instance, driver) do
     known = MapSet.new(models, & &1["slug"])
-    shared = Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
+
+    shared =
+      if driver == "muse",
+        do: HalC2.Muse.capabilities(),
+        else: Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
 
     custom =
       for entry <- get_in(instance, ["config", "customModels"]) || [],

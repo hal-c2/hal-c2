@@ -14,7 +14,13 @@ defmodule HalC2.Orchestration.IdleSessions do
 
   use GenServer
 
-  @registries [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Pi.Registry]
+  @registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 

@@ -36,4 +36,15 @@ defmodule HalC2.SettingsUpdateTest do
 
     assert {%{"a" => 2}, 2} = HalC2.Settings.get()
   end
+
+  test "an added instance that changes driver forgets what the old driver read" do
+    instance = &put_in(&1, [Access.key("providerInstances", %{}), "work"], %{"driver" => &2})
+    {:ok, _} = HalC2.Settings.update(&instance.(&1, "opencode"))
+    :persistent_term.put({HalC2.Acp, "work", :models}, [%{"slug" => "old"}])
+    on_exit(fn -> HalC2.Acp.forget("work") end)
+
+    {:ok, _} = HalC2.Settings.update(&instance.(&1, "muse"))
+
+    assert :persistent_term.get({HalC2.Acp, "work", :models}, nil) == nil
+  end
 end

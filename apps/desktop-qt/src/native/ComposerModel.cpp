@@ -28,6 +28,7 @@ QString brandLabel(const QString& driver) {
       {QStringLiteral("grok"), QStringLiteral("Grok")},
       {QStringLiteral("acpRegistry"), QStringLiteral("ACP Registry")},
       {QStringLiteral("pi"), QStringLiteral("Pi")},
+      {QStringLiteral("muse"), QStringLiteral("Muse Code")},
       {QStringLiteral("opencode"), QStringLiteral("OpenCode")},
   };
   return labels.value(driver);

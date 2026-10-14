@@ -2,7 +2,9 @@ defmodule HalC2.Test.FakeAcp do
   @moduledoc """
   A scripted ACP agent (`test/support/fake_acp_scripted.py`) standing in for a
   provider CLI (Grok, OpenCode) in the provider features, and a scripted Pi RPC
-  process (`test/support/fake_pi_rpc.py`, `install_pi/3`) for Pi. Provider CLIs never
+  process (`test/support/fake_pi_rpc.py`, `install_pi/3`) for Pi, and a scripted Muse
+  Session Protocol host (`test/support/fake_muse_msp.py`, `install_muse/3`) for Muse
+  Code. Provider CLIs never
   run for real.
 
   `install/4` gives an instance its own fake: a directory with the script's
@@ -19,7 +21,8 @@ defmodule HalC2.Test.FakeAcp do
 
   @script Path.expand("fake_acp_scripted.py", __DIR__)
   @pi_script Path.expand("fake_pi_rpc.py", __DIR__)
-  @instances ~w(grok opencode pi cursor antigravity)
+  @muse_script Path.expand("fake_muse_msp.py", __DIR__)
+  @instances ~w(grok opencode pi cursor antigravity muse)
 
   @run_test %{
     "permission" => %{
@@ -193,6 +196,14 @@ defmodule HalC2.Test.FakeAcp do
     install(context, "pi", config, Keyword.merge([script: @pi_script, turns: @pi_turns], opts))
   end
 
+  @doc """
+  Sets up the fake Muse host (`fake_muse_msp.py`) as the `muse` instance's binary,
+  with `config` (see the script). Takes `install/4`'s options.
+  """
+  def install_muse(context, config \\ %{}, opts \\ []) do
+    install(context, "muse", config, Keyword.merge([script: @muse_script, turns: []], opts))
+  end
+
   @doc "The services an ACP thread needs besides the MC's own."
   def services do
     Mc.ensure(HalC2.Settings)
@@ -205,6 +216,12 @@ defmodule HalC2.Test.FakeAcp do
 
     Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Pi.Registry}, id: :pi_registry)
+    )
+
+    Mc.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Muse.Registry},
+        id: :muse_registry
+      )
     )
 
     Mc.ensure(
