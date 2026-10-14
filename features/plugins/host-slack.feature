@@ -59,6 +59,13 @@ Feature: Slack for MC plugins
       | "dana" runs the slash command "/planner status"           | slack.command |
 
   @mc
+  Scenario: A plugin hears Slack stop and connect again in the order it happened
+    Given a plugin granted "slack:read" that takes its time with each Slack event
+    When the MC disconnects Slack and connects it again
+    Then the plugin is handed Slack stopping, and nothing more until it is done with it
+    And it is handed Slack connected after that
+
+  @mc
   Scenario: A plugin answers a slash command only the person who ran it sees
     Given a plugin granted "slack:write"
     And "dana" ran the slash command "/planner status"

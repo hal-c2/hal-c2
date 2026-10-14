@@ -2,7 +2,7 @@ defmodule HalC2.Slack.Bot do
   @moduledoc """
   What Slack's Socket Mode delivers (`Slack.Bot.handle_event/3`, each in a task of
   slack_elixir's), turned into the events plugins granted `slack:read` hear
-  (`HalC2.Plugins.slack_event/1`):
+  (`HalC2.Plugins.slack_event/2`):
 
     * `slack.mention`: a message that mentions the bot (`app_mention`).
     * `slack.reply`: a reply in the thread of a message the bot posted that does not

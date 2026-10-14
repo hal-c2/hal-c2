@@ -256,7 +256,8 @@ defmodule HalC2.Plugins.Extension do
       "threadTs"}`, `slack.reply` (the same, in the thread of a message the bot posted,
       plus `"parentTs"`), `%{"type" => "slack.command", "command", "text", "user",
       "userName", "channel", "responseUrl"}` and `%{"type" => "slack.status",
-      "connected"}`. Each runs in a process of its own, so it may take its time.
+      "connected"}`. Each runs in a process of its own, so it may take its time;
+      `slack.status` events reach a plugin one at a time, in the order they happened.
     * `agent_tools(context)` and `call_agent_tool(name, arguments, context)`: tools
       offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
       plugin was granted `agentTools`. The context names the thread whose agent is

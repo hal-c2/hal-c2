@@ -349,6 +349,37 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
+  step "a plugin granted {string} that takes its time with each Slack event",
+       %{args: [permission]} = context do
+    Slack.listener(context, "slow", [permission], hold: true)
+  end
+
+  step "the MC disconnects Slack and connects it again", context do
+    {_, context} = World.call!(context, "slack.disconnect")
+    {reply, context} = World.call(context, "slack.connect", Slack.tokens())
+    assert {:ok, %{"state" => "connected"}} = reply
+    context
+  end
+
+  step "the plugin is handed Slack stopping, and nothing more until it is done with it",
+       context do
+    assert_receive {:slack_held, "slow", %{"type" => "slack.status", "connected" => false}, pid},
+                   10_000
+
+    # The connect that followed has had its chance to overtake.
+    refute_receive {:slack_held, "slow", _, _}, 200
+    send(pid, :go)
+    context
+  end
+
+  step "it is handed Slack connected after that", context do
+    assert_receive {:slack_held, "slow", %{"type" => "slack.status", "connected" => true}, pid},
+                   10_000
+
+    send(pid, :go)
+    context
+  end
+
   step "{string} ran the slash command {string}", %{args: [person, command]} = context do
     command(context, person, command)
   end

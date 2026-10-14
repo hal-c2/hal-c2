@@ -15,7 +15,7 @@ defmodule HalC2.Slack do
   Slack refusing the tokens ends in `failed`, an unreachable Slack keeps retrying.
 
   Watchers (`subscribe/1`) get `{:hal_c2_slack, node(), status}` on every change, and the
-  plugins granted `slack:read` a `slack.status` event when it connects or stops.
+  plugins granted `slack:read` a `slack.status` event when it connects or stops, in order.
   """
 
   use GenServer
@@ -25,11 +25,15 @@ defmodule HalC2.Slack do
   @cache __MODULE__.Cache
   @connections __MODULE__.Connections
   @tasks __MODULE__.Tasks
+  @courier __MODULE__.Courier
   @not_connected "Slack is not connected on this MC."
   @max_backoff 60_000
 
   def child_spec(_) do
+    # The courier comes first so that a crash of the rest leaves it, and the order it
+    # keeps, alone.
     children = [
+      %{id: @courier, start: {Agent, :start_link, [fn -> %{} end, [name: @courier]]}},
       {Task.Supervisor, name: @tasks},
       {DynamicSupervisor, name: @connections, strategy: :one_for_one},
       %{id: :connection, start: {GenServer, :start_link, [__MODULE__, nil, [name: __MODULE__]]}}
@@ -579,12 +583,14 @@ defmodule HalC2.Slack do
     %{state | conn: nil, timer: nil, identity: nil, dirty: state.dirty or state.conn != nil}
   end
 
-  # Plugins hear when it connects or stops, from a process of its own: a plugin may be
-  # asking this server something meanwhile.
+  # Plugins hear when it connects or stops through the courier, not this server: a
+  # plugin may be asking this server something meanwhile. The courier takes the
+  # changes in order and keeps the process that handed each plugin the last one, so
+  # a plugin hears them one at a time, in order.
   defp phase(state, phase) do
     if state.phase == :connected != (phase == :connected) do
       event = %{"type" => "slack.status", "connected" => phase == :connected}
-      Task.start(fn -> HalC2.Plugins.slack_event(event) end)
+      Agent.cast(@courier, &HalC2.Plugins.slack_event(event, &1))
     end
 
     %{state | phase: phase}
