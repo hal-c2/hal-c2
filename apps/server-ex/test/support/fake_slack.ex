@@ -4,12 +4,15 @@ defmodule HalC2.Test.FakeSlack do
   request the MC sends answer from this plug (`Req.default_options/1`, restored when
   the test ends): the Web API under `/api/<method>` and slash commands' `response_url`s.
   `apps.connections.open` hands out a loopback Socket Mode URL served by Bandit, whose
-  socket says hello, takes acks and pushes what `event/1` and `command/1` send.
+  socket says hello (naming the app token's app), takes acks and pushes what `event/2`
+  and `command/1` send, as envelopes from the bot's app and workspace unless told
+  otherwise.
 
-  The workspace is "acme" (`T0ACME`) with the bot "HAL" (`UHAL`, `BHAL`), the person
-  "dana" (`UDANA`), the channel "#planning" (`CPLAN`) the bot is in and "#random"
-  (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and `app_token/0`; any other
-  is `invalid_auth`. `available(false)` answers every request with a 503 until it is
+  The workspace is "acme" (`T0ACME`) with the app `A0ACME`, its bot "HAL" (`UHAL`,
+  `BHAL`), the person "dana" (`UDANA`), the channel "#planning" (`CPLAN`) the bot is in
+  and "#random" (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and
+  `app_token/0`, and `other_app_token/0`, the app token of another app (`A0OTHER`); any
+  other is `invalid_auth`. `available(false)` answers every request with a 503 until it is
   `true` again; `drop/0` closes the socket. Paginated methods follow Slack's `cursor`, in
   pages of `page_size/1` at most; `join/2` adds a channel the bot is in. `calls/1` lists
   the requests made to a method, `responses/0` the slash command answers. Tests that use
@@ -21,9 +24,12 @@ defmodule HalC2.Test.FakeSlack do
 
   @bot_token "xoxb-acme-test"
   @app_token "xapp-acme-test"
+  @other_app_token "xapp-other-test"
+  @apps %{@app_token => "A0ACME", @other_app_token => "A0OTHER"}
 
   def bot_token, do: @bot_token
   def app_token, do: @app_token
+  def other_app_token, do: @other_app_token
 
   @doc "Starts the workspace under the test supervisor, for as long as the test runs."
   def start(overrides \\ %{}) do
@@ -86,6 +92,7 @@ defmodule HalC2.Test.FakeSlack do
         bot: "HAL",
         bot_user_id: "UHAL",
         bot_id: "BHAL",
+        app_id: "A0ACME",
         available: true,
         channels: %{
           "CPLAN" => %{"name" => "planning", "member" => true, "private" => false},
@@ -126,12 +133,31 @@ defmodule HalC2.Test.FakeSlack do
   @doc "Closes the Socket Mode connection, as Slack or the network does."
   def drop, do: to_socket(:drop)
 
-  @doc "Pushes a Socket Mode `events_api` envelope carrying `event`."
-  def event(event),
-    do: to_socket({:frame, envelope("events_api", %{"event" => event})})
+  @doc """
+  Pushes a Socket Mode `events_api` envelope carrying `event`, from the bot's app and
+  workspace; `payload` overrides the rest (`team_id`, `api_app_id`, `authorizations`).
+  """
+  def event(event, payload \\ %{}) do
+    payload = Map.merge(origin(), Map.put(payload, "event", event))
+    to_socket({:frame, envelope("events_api", payload)})
+  end
 
   @doc "Pushes a `slash_commands` envelope; `payload` as Slack sends one."
-  def command(payload), do: to_socket({:frame, envelope("slash_commands", payload)})
+  def command(payload),
+    do: to_socket({:frame, envelope("slash_commands", Map.merge(origin(), payload))})
+
+  # Where an envelope comes from: the bot's app, installed in the bot's workspace.
+  defp origin do
+    Agent.get(__MODULE__, fn state ->
+      %{
+        "team_id" => state.team_id,
+        "api_app_id" => state.app_id,
+        "authorizations" => [
+          %{"team_id" => state.team_id, "user_id" => state.bot_user_id, "is_bot" => true}
+        ]
+      }
+    end)
+  end
 
   @doc "The params of every request to Web API `method`, oldest first."
   def calls(method) do
@@ -181,8 +207,10 @@ defmodule HalC2.Test.FakeSlack do
 
   @impl true
   def call(%{request_path: "/link"} = conn, _opts) do
+    app = URI.decode_query(conn.query_string)["app_id"]
+
     conn
-    |> WebSockAdapter.upgrade(__MODULE__.Socket, nil, timeout: :infinity)
+    |> WebSockAdapter.upgrade(__MODULE__.Socket, app, timeout: :infinity)
     |> halt()
   end
 
@@ -223,8 +251,8 @@ defmodule HalC2.Test.FakeSlack do
   defp bearer("Bearer " <> token), do: token
   defp bearer(_), do: nil
 
-  defp answer("apps.connections.open", @app_token, _params, state),
-    do: {ok(%{"url" => "ws://127.0.0.1:#{state.port}/link"}), state}
+  defp answer("apps.connections.open", token, _params, state) when is_map_key(@apps, token),
+    do: {ok(%{"url" => "ws://127.0.0.1:#{state.port}/link?app_id=#{@apps[token]}"}), state}
 
   defp answer("apps.connections.open", _token, _params, state),
     do: {refuse("invalid_auth"), state}
@@ -242,6 +270,19 @@ defmodule HalC2.Test.FakeSlack do
        "url" => "https://acme.slack.com/"
      }), state}
   end
+
+  defp answer("bots.info", _token, %{"bot" => id}, %{bot_id: id} = state) do
+    {ok(%{
+       "bot" => %{
+         "id" => id,
+         "name" => state.bot,
+         "app_id" => state.app_id,
+         "user_id" => state.bot_user_id
+       }
+     }), state}
+  end
+
+  defp answer("bots.info", _token, _params, state), do: {refuse("bot_not_found"), state}
 
   defp answer("users.conversations", _token, params, state) do
     channels =
@@ -368,7 +409,7 @@ defmodule HalC2.Test.FakeSlack do
     @behaviour WebSock
 
     @impl true
-    def init(_) do
+    def init(app) do
       me = self()
 
       pending =
@@ -377,7 +418,8 @@ defmodule HalC2.Test.FakeSlack do
         end)
 
       for message <- pending, do: send(self(), message)
-      {:push, {:text, JSON.encode!(%{"type" => "hello"})}, %{}}
+      hello = %{"type" => "hello", "connection_info" => %{"app_id" => app}}
+      {:push, {:text, JSON.encode!(hello)}, %{}}
     end
 
     @impl true

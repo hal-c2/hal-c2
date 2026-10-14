@@ -77,6 +77,18 @@ defmodule HalC2.SlackTest do
     assert {:error, "Slack is not connected on this MC."} = Slack.call("channels", %{})
   end
 
+  test "a bot token and an app token of two Slack apps are refused and not kept", %{dir: dir} do
+    message = "The bot token and app token belong to different Slack apps."
+
+    assert {:error, ^message} =
+             Slack.connect(tokens(FakeSlack.bot_token(), FakeSlack.other_app_token()))
+
+    assert %{"state" => "failed", "error" => ^message, "tokensSet" => false} = Slack.status()
+    refute File.exists?(Path.join([dir, "secrets", "slack.bin"]))
+    assert DynamicSupervisor.which_children(HalC2.Slack.Connections) == []
+    assert {:error, "Slack is not connected on this MC."} = Slack.call("channels", %{})
+  end
+
   test "an unreachable Slack fails a connect without keeping the tokens" do
     FakeSlack.available(false)
     assert {:error, "Could not reach Slack: HTTP 503"} = Slack.connect(tokens())
@@ -110,8 +122,8 @@ defmodule HalC2.SlackTest do
     assert {:ok, %{"channels" => [%{"id" => "CPLAN"}]}} = Slack.call("channels", %{})
   end
 
-  # slack_elixir restarts the socket it lost at once; that one must not live on to take
-  # events while the MC says it is reconnecting and has no token for plugins.
+  # Nothing of the lost connection may live on to take events while the MC says it is
+  # reconnecting and has no token for plugins.
   test "a dropped socket's connection stops at once, not when the backoff ends" do
     Application.put_env(:hal_c2, :slack_backoff_ms, 600_000)
     {:ok, _} = Slack.connect(tokens())
@@ -136,8 +148,7 @@ defmodule HalC2.SlackTest do
       {:ok, %{"state" => "connecting", "tokensSet" => true}} -> await_state("connected")
     end
 
-    # auth.test twice per attempt: the check, and slack_elixir's own.
-    assert length(FakeSlack.calls("auth.test")) == 4
+    assert length(FakeSlack.calls("auth.test")) == 2
   end
 
   test "stored tokens Slack now refuses are forgotten at start" do
@@ -270,12 +281,13 @@ defmodule HalC2.SlackTest do
   end
 
   describe "events" do
-    @bot %Elixir.Slack.Bot{
-      id: "BHAL",
-      module: HalC2.Slack.Bot,
+    @bot %{
+      team: "acme",
       team_id: "T0ACME",
-      token: "x",
-      user_id: "UHAL"
+      bot: "HAL",
+      bot_user_id: "UHAL",
+      bot_id: "BHAL",
+      app_id: "A0ACME"
     }
 
     test "a mention, a reply in the bot's thread and a slash command reach plugins" do
@@ -323,6 +335,26 @@ defmodule HalC2.SlackTest do
                  },
                  @bot
                )
+    end
+
+    test "only envelopes for the bot's app and workspace are its own" do
+      ours = %{
+        "team_id" => "T0ACME",
+        "api_app_id" => "A0ACME",
+        "authorizations" => [%{"team_id" => "T0ACME", "user_id" => "UHAL"}]
+      }
+
+      # In a channel shared with another workspace, the event happens there and reaches
+      # the bot's installation here.
+      shared = %{ours | "team_id" => "T0PARTNER"}
+      other_team = %{shared | "authorizations" => [%{"team_id" => "T0PARTNER"}]}
+      other_app = %{ours | "api_app_id" => "A0OTHER"}
+
+      assert HalC2.Slack.Socket.ours?(ours, @bot)
+      assert HalC2.Slack.Socket.ours?(shared, @bot)
+      refute HalC2.Slack.Socket.ours?(other_team, @bot)
+      refute HalC2.Slack.Socket.ours?(other_app, @bot)
+      refute HalC2.Slack.Socket.ours?(Map.delete(other_team, "authorizations"), @bot)
     end
 
     test "the bot's own messages, other threads, edits and plain messages are dropped" do

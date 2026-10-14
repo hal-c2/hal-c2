@@ -51,6 +51,19 @@ defmodule HalC2.Steps.Settings.Slack do
     Map.put(context, :reply, reply)
   end
 
+  step "the user connects Slack with a bot token of one Slack app and an app token of another",
+       context do
+    context = Slack.ready(context)
+
+    {reply, context} =
+      World.call(context, "slack.connect", %{
+        Slack.tokens()
+        | "appToken" => FakeSlack.other_app_token()
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
   step "Slack shows as connected to the workspace {string} as the bot {string}",
        %{args: [team, bot]} = context do
     assert {:ok, %{"state" => "connected", "team" => ^team, "bot" => ^bot}} = context.reply
@@ -307,6 +320,17 @@ defmodule HalC2.Steps.Settings.Slack do
     Map.put(context, :said, {event["channel"], event["text"]})
   end
 
+  step "{string} mentions {string} in a workspace the bot does not belong to, and then in {string}",
+       %{args: [person, _bot, "#" <> name]} = context do
+    origin = %{"team_id" => "T0OTHER", "authorizations" => [%{"team_id" => "T0OTHER"}]}
+    mention_elsewhere(context, person, name, origin)
+  end
+
+  step "{string} mentions {string} in an event Slack sends for another app, and then in {string}",
+       %{args: [person, _bot, "#" <> name]} = context do
+    mention_elsewhere(context, person, name, %{"api_app_id" => "A0OTHER"})
+  end
+
   step "{string} replies in the thread of a message the bot posted in Slack",
        %{args: [person]} = context do
     channel = channel_id("planning")
@@ -340,6 +364,18 @@ defmodule HalC2.Steps.Settings.Slack do
     assert %{"channel" => ^channel, "user" => "UDANA", "userName" => "dana", "text" => ^text} =
              event
 
+    context
+  end
+
+  step "{string} is handed only the mention in {string}", %{args: [id, _channel]} = context do
+    {channel, text} = context.said
+
+    assert_receive {:slack_event, ^id, %{"type" => "slack.mention", "text" => ^text} = event},
+                   10_000
+
+    assert event["channel"] == channel
+    # Each event is handed on in a task of its own; give the other one its chance.
+    refute_receive {:slack_event, ^id, _}, 200
     context
   end
 
@@ -452,5 +488,22 @@ defmodule HalC2.Steps.Settings.Slack do
     Agent.get(FakeSlack, fn state ->
       Enum.find_value(state.users, fn {id, u} -> u["name"] == name && id end)
     end)
+  end
+
+  # A mention from `origin` (overriding the envelope's team or app), then one in `name`.
+  defp mention_elsewhere(context, person, name, origin) do
+    mention = fn text, ts ->
+      %{
+        "type" => "app_mention",
+        "channel" => channel_id(name),
+        "user" => user_id(person),
+        "text" => text,
+        "ts" => ts
+      }
+    end
+
+    FakeSlack.event(mention.("<@UHAL> is this ours?", "1700000100.000003"), origin)
+    FakeSlack.event(mention.("<@UHAL> what is late?", "1700000100.000004"))
+    Map.put(context, :said, {channel_id(name), "<@UHAL> what is late?"})
   end
 end

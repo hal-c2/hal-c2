@@ -5,12 +5,12 @@ defmodule HalC2.Slack do
   Mode), kept in the secret store (`<home>/secrets/slack.bin`) and never sent to a client,
   which sees only `tokensSet`.
 
-  slack_elixir's `Slack.Supervisor` holds the socket. It registers global names, so a node
-  has at most one, and its start raises when Slack refuses, so the tokens are checked first
-  (`auth.test`, `apps.connections.open`) and it runs under a `DynamicSupervisor` of this
-  module's own as a temporary child. Every attempt runs in a task, one at a time, so the
-  server always answers; each begins by stopping what the last one started. A connection
-  that drops (the socket or its supervisor exits) is torn down at once and made again with
+  An attempt checks the bot token (`auth.test`, then `bots.info` for its app), opens
+  Socket Mode with the app token (`apps.connections.open`) and starts `HalC2.Slack.Socket`
+  under a `DynamicSupervisor` of this module's own, connected once Slack's hello names the
+  bot token's app; the socket hands on only events for that app and the bot's workspace.
+  Every attempt runs in a task, one at a time, so the server always answers; each begins
+  by stopping what the last one started. A connection that drops is made again with
   backoff (`:slack_backoff_ms`, doubling to a minute) while the status is `reconnecting`;
   Slack refusing the tokens ends in `failed`, an unreachable Slack keeps retrying.
 
@@ -28,6 +28,7 @@ defmodule HalC2.Slack do
   @courier __MODULE__.Courier
   @not_connected "Slack is not connected on this MC."
   @max_backoff 60_000
+  @hello_ms 10_000
 
   def child_spec(_) do
     # The courier comes first so that a crash of the rest leaves it, and the order it
@@ -248,7 +249,7 @@ defmodule HalC2.Slack do
     ArgumentError -> {:error, @not_connected}
   end
 
-  @doc "The bot's identity while connected: `%{team, team_id, bot, bot_user_id, bot_id}`."
+  @doc "The bot's identity while connected: `%{team, team_id, bot, bot_user_id, bot_id, app_id}`."
   def identity do
     case :ets.lookup(@cache, :identity) do
       [{:identity, identity}] -> identity
@@ -445,16 +446,15 @@ defmodule HalC2.Slack do
     {:noreply, state |> settle(job, result) |> drive() |> publish()}
   end
 
-  # The attempt crashed: Slack answered something slack_elixir did not expect.
+  # The attempt crashed on something Slack answered.
   def handle_info({:DOWN, ref, :process, _, reason}, %{job: %{ref: ref} = job} = state) do
     state = %{state | job: nil}
     result = {:error, :unreachable, "The Slack connection failed: #{short(reason)}"}
     {:noreply, state |> settle(job, result) |> drive() |> publish()}
   end
 
-  # slack_elixir's supervisor restarts a lost socket at once, which would take and ack
-  # events while this says reconnecting, so the old connection is stopped now; the
-  # retry makes a new one after the backoff.
+  # The socket ended; what is left of it is stopped now, and the retry makes a new
+  # one after the backoff.
   def handle_info({:DOWN, ref, :process, _, reason}, %{conn: %{refs: refs}} = state)
       when is_map_key(refs, ref) do
     Logger.info("Slack connection dropped: #{short(reason)}")
@@ -504,8 +504,8 @@ defmodule HalC2.Slack do
     if match?({:ok, _}, result), do: %{state | dirty: true}, else: state
   end
 
-  defp settle(state, job, {:ok, %{supervisor: sup, socket: socket, identity: identity}}) do
-    refs = Map.new([sup, socket], &{Process.monitor(&1), &1})
+  defp settle(state, job, {:ok, %{socket: socket, identity: identity}}) do
+    refs = %{Process.monitor(socket) => socket}
 
     if job.tokens != state.tokens do
       {bot, app} = job.tokens
@@ -635,30 +635,28 @@ defmodule HalC2.Slack do
   defp attempt({bot_token, app_token}) do
     teardown()
 
-    with {:ok, auth} <- check(:get, "auth.test", bot_token, "bot token"),
+    with {:ok, auth} <- check(:get, "auth.test", bot_token, %{}, "bot token"),
          :ok <- bot_token?(auth),
-         {:ok, _} <- check(:post, "apps.connections.open", app_token, "app token"),
-         {:ok, sup} <- start_connection(bot_token, app_token) do
-      socket =
-        Enum.find_value(Supervisor.which_children(sup), sup, fn
-          {Slack.Socket, pid, _, _} when is_pid(pid) -> pid
-          _ -> nil
-        end)
-
+         {:ok, %{"bot" => bot}} <-
+           check(:get, "bots.info", bot_token, %{bot: auth["bot_id"]}, "bot token"),
+         :ok <- app?(bot),
+         {:ok, open} <- check(:post, "apps.connections.open", app_token, %{}, "app token"),
+         {:ok, url} <- url(open) do
       identity = %{
         team: auth["team"],
         team_id: auth["team_id"],
         bot: auth["user"],
         bot_user_id: auth["user_id"],
-        bot_id: auth["bot_id"]
+        bot_id: auth["bot_id"],
+        app_id: bot["app_id"]
       }
 
-      {:ok, %{supervisor: sup, socket: socket, identity: identity}}
+      with {:ok, socket} <- start_connection(url, identity), do: hello(socket, identity)
     end
   end
 
-  defp check(verb, endpoint, token, what) do
-    case apply(Slack.API, verb, [endpoint, token, %{}]) do
+  defp check(verb, endpoint, token, args, what) do
+    case apply(Slack.API, verb, [endpoint, token, args]) do
       {:ok, body} ->
         {:ok, body}
 
@@ -673,23 +671,48 @@ defmodule HalC2.Slack do
   defp bot_token?(%{"bot_id" => id}) when is_binary(id), do: :ok
   defp bot_token?(_), do: {:error, :refused, "Slack refused the bot token: not a bot token"}
 
-  defp start_connection(bot_token, app_token) do
-    spec = %{
-      id: Slack.Supervisor,
-      start:
-        {Slack.Supervisor, :start_link,
-         [[bot_token: bot_token, app_token: app_token, bot: HalC2.Slack.Bot]]},
-      restart: :temporary,
-      type: :supervisor
-    }
+  defp app?(%{"app_id" => id}) when is_binary(id), do: :ok
+  defp app?(_), do: {:error, :refused, "Slack refused the bot token: it names no app"}
 
-    case DynamicSupervisor.start_child(@connections, spec) do
-      {:ok, sup} ->
-        {:ok, sup}
+  defp url(%{"url" => url}) when is_binary(url), do: {:ok, url}
+  defp url(_), do: {:error, :unreachable, "Slack handed out no Socket Mode URL."}
+
+  defp start_connection(url, identity) do
+    case DynamicSupervisor.start_child(
+           @connections,
+           {HalC2.Slack.Socket, {url, identity, self()}}
+         ) do
+      {:ok, socket} ->
+        {:ok, socket}
 
       {:error, reason} ->
         Logger.warning("Slack connection did not start: #{short(reason)}")
         {:error, :unreachable, "The Slack connection did not start: #{short(reason)}"}
+    end
+  end
+
+  # Slack's hello names the app the app token is for, which must be the bot token's:
+  # each answers for itself, so a pair from two apps would otherwise connect.
+  defp hello(socket, identity) do
+    ref = Process.monitor(socket)
+    app = identity.app_id
+
+    receive do
+      {:slack_hello, ^socket, ^app} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, %{socket: socket, identity: identity}}
+
+      {:slack_hello, ^socket, _other} ->
+        Process.demonitor(ref, [:flush])
+        DynamicSupervisor.terminate_child(@connections, socket)
+        {:error, :refused, "The bot token and app token belong to different Slack apps."}
+
+      {:DOWN, ^ref, :process, ^socket, reason} ->
+        {:error, :unreachable, "The Slack connection failed: #{short(reason)}"}
+    after
+      @hello_ms ->
+        Process.demonitor(ref, [:flush])
+        {:error, :unreachable, "Slack did not say hello."}
     end
   end
 
