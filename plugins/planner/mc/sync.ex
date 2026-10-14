@@ -384,9 +384,29 @@ defmodule HalC2Plugins.Planner.Sync do
     end
   end
 
-  defp prs_of(item, issue, now),
-    do:
-      Enum.reduce(issue["pullRequests"] || [], item, &Plan.link(&2, %{"pullRequest" => &1}, now))
+  # The pull requests GitHub says close the issue, linked and marked as the issue's.
+  # One the issue named before and no longer does goes; one linked by hand stays.
+  defp prs_of(item, issue, now) do
+    named = issue["pullRequests"] || []
+    prs = item["pullRequests"] || []
+
+    kept =
+      Enum.reject(prs, fn pr ->
+        pr["fromIssue"] == true and not Enum.any?(named, &Plan.same_ref?(&1, pr))
+      end)
+
+    item = if kept == prs, do: item, else: %{item | "pullRequests" => kept, "updatedAt" => now}
+
+    Enum.reduce(named, item, fn pr, item ->
+      if Enum.any?(item["pullRequests"], &Plan.same_ref?(&1, pr)) do
+        item
+      else
+        linked = Plan.link(item, %{"pullRequest" => pr}, now)
+        marked = List.update_at(linked["pullRequests"], -1, &Map.put(&1, "fromIssue", true))
+        %{linked | "pullRequests" => marked}
+      end
+    end)
+  end
 
   # Sub-issues and blocking issues as subtasks and dependencies, once every issue has
   # its task. One that would make a task its own subtask or wait for itself is left out.

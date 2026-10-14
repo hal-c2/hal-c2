@@ -1265,6 +1265,19 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  step "\#{int} is no longer closed by \#{int} on GitHub", %{args: [number, _pr]} = context do
+    repository = context.repository
+    GitHubIssues.answers(context, repository, [GitHubIssues.issue(repository, number)])
+  end
+
+  step "\#{int}'s task is linked to \#{int} and not \#{int}",
+       %{args: [number, kept, gone]} = context do
+    assert [kept] == Enum.map(task_of(plan!(context), number)["pullRequests"], & &1["number"]),
+           "expected only ##{kept}, not ##{gone}"
+
+    context
+  end
+
   step "\#{int}'s task is linked to \#{int}", %{args: [number, pr]} = context do
     assert pr in Enum.map(task_of(plan!(context), number)["pullRequests"], & &1["number"])
     context

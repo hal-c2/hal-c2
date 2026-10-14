@@ -588,6 +588,16 @@ Feature: Planner
       Then #7's task is linked to #12
 
     @mc
+    Scenario: A pull request that no longer closes an issue leaves its task, one linked by hand stays
+      Given "planner" follows the issues of "acme/api"
+      And #7 is closed by the pull request #12
+      And the plugin looks at GitHub
+      And "Issue 7" is linked to #14 of "acme/api"
+      When #7 is no longer closed by #12 on GitHub
+      And the plugin looks at GitHub
+      Then #7's task is linked to #14 and not #12
+
+    @mc
     Scenario: A closed issue's task is done
       Given #7's task is in progress
       When #7 is closed on GitHub
