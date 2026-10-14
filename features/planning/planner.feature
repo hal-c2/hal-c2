@@ -442,6 +442,7 @@ Feature: Planner
       Given "planner" shows its threads in the thread list
       When the user runs "Reschedule"
       Then its thread is listed with the planner mark and the state of its run
+      And its mark says so when the run proposes only a status update
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings edit each action's prompt and reset it

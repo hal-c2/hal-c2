@@ -1,9 +1,8 @@
 import QtQuick
 import HalC2.Shell
 
-// Beside a planner thread's row in the thread list: where its run is, or how many
-// changes it proposes. Follows the plugin's `threads` topic, which every row's mark
-// shares.
+// Beside a planner thread's row in the thread list: where its run is, or what it
+// proposes. Follows the plugin's `threads` topic, which every row's mark shares.
 Rectangle {
     id: mark
 
@@ -38,6 +37,8 @@ Rectangle {
         case "failed":
             return qsTr("Failed");
         case "proposed":
+            if (changes === 0 && run?.health)
+                return qsTr("Status update");
             return changes === 1 ? qsTr("1 change") : qsTr("%1 changes").arg(changes);
         case "applied":
             return qsTr("Applied");

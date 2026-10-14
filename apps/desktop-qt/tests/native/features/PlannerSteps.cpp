@@ -1017,6 +1017,19 @@ const Steps steps([] {
     marked(QStringLiteral("1 change"));
   });
 
+  step(QStringLiteral("its mark says so when the run proposes only a status update"), [](World& world, const Captures&, const Table&) {
+    QJsonObject& run = state(world).runs.last();
+    run.insert(QStringLiteral("status"), QStringLiteral("proposed"));
+    run.insert(QStringLiteral("changes"), QJsonArray());
+    run.insert(QStringLiteral("health"), QStringLiteral("on-track"));
+    publish(world);
+    QQuickItem* mark = nullptr;
+    world.waitFor([&] {
+      QQuickItem* host = waitShownNamed(world, QStringLiteral("pluginRowMark"));
+      return (mark = findNamed(host, QStringLiteral("plannerRowMark"))) && drawsText(mark, QStringLiteral("Status update"));
+    }, QStringLiteral("the row mark to say Status update"));
+  });
+
   step(QStringLiteral("the user changes the prompt of %1 and resets %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
     world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
