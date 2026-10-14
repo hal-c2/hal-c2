@@ -727,6 +727,13 @@ Feature: Planner
       Then the plugin reports that gh needs the "project" scope
       And the tasks it has are kept
 
+    @mc
+    Scenario: An issue list or board too long to read whole is reported
+      Given "planner" follows the issues of "acme/api" and the board "acme/3"
+      And "acme/api" has more open issues, and "acme/3" more items, than the plugin reads
+      When the plugin looks at GitHub
+      Then the plugin reports that only part of "acme/api" and of "acme/3" was read
+
     @backlog @mc
     Scenario: Issues from other hosts become tasks
       Given "planner" follows the issues of a repository on GitLab

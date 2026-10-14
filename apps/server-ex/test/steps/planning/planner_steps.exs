@@ -1636,6 +1636,31 @@ defmodule HalC2.Steps.Planning.Planner do
     context |> ensure("API") |> save(%{"board" => board})
   end
 
+  step "{string} follows the issues of {string} and the board {string}",
+       %{args: [@id, repository, board]} = context do
+    save(context, %{"repositories" => [repository], "sync" => "import", "board" => board})
+  end
+
+  # Every page GitHub answers is full and says another follows, so the plugin stops
+  # at its limit.
+  step "{string} has more open issues, and {string} more items, than the plugin reads",
+       %{args: [repository, board]} = context do
+    issues = for n <- 1..100, do: GitHubIssues.issue(repository, n)
+    items = for n <- 1..100, do: %{"number" => n, "repository" => repository}
+
+    context
+    |> GitHubIssues.answers(repository, issues, true)
+    |> GitHubIssues.board(board, ["Start date"], items, true)
+  end
+
+  step "the plugin reports that only part of {string} and of {string} was read",
+       %{args: [repository, board]} = context do
+    problem = plan!(context)["sync"]["problem"]
+    assert problem =~ "#{repository}: only its 500 most recently updated open issues were read."
+    assert problem =~ "#{board}: only its first 500 items were read."
+    context
+  end
+
   step "the plugin reports that gh needs the {string} scope", %{args: [scope]} = context do
     assert plan!(context)["sync"]["problem"] =~ "-s #{scope}"
     context

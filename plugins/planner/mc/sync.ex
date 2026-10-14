@@ -80,9 +80,16 @@ defmodule HalC2Plugins.Planner.Sync do
           input = if label != "", do: Map.put(input, "labels", [label]), else: input
 
           case Host.issues(@id, "list", input) do
-            {:ok, %{"issues" => issues}} ->
+            {:ok, %{"issues" => issues} = list} ->
+              cut =
+                if list["truncated"],
+                  do: [
+                    "#{repo}: only its 500 most recently updated open issues were read. A planner label follows fewer."
+                  ],
+                  else: []
+
               {listed ++ Enum.filter(issues, &(label == "" or label in (&1["labels"] || []))),
-               problems}
+               problems ++ cut}
 
             {:error, error} ->
               {listed, problems ++ ["#{repo}: #{message(error)}"]}
@@ -115,7 +122,7 @@ defmodule HalC2Plugins.Planner.Sync do
     with {:ok, owner, number} <- board_name(settings["board"]),
          [_ | _] <- github do
       case read_board(github, owner, number, 500) do
-        {:ok, %{"items" => board_items}} ->
+        {:ok, %{"items" => board_items} = read} ->
           # Only the dates the settings name; one empty on the board is cleared.
           named = for {date, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}], is_binary(field) and field != "", do: {date, field}
 
@@ -125,7 +132,12 @@ defmodule HalC2Plugins.Planner.Sync do
               {key(content), Map.put(dates, "itemId", item["id"])}
             end
 
-          %{found | board: board}
+          cut =
+            if read["truncated"],
+              do: ["#{settings["board"]}: only its first 500 items were read."],
+              else: []
+
+          problem(%{found | board: board}, cut)
 
         {:error, error} ->
           problem(found, ["#{settings["board"]}: #{message(error)}"])
