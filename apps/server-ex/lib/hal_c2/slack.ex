@@ -28,7 +28,6 @@ defmodule HalC2.Slack do
   @courier __MODULE__.Courier
   @not_connected "Slack is not connected on this MC."
   @max_backoff 60_000
-  @hello_ms 10_000
 
   def child_spec(_) do
     # The courier comes first so that a crash of the rest leaves it, and the order it
@@ -496,12 +495,13 @@ defmodule HalC2.Slack do
     %{ref: ref}
   end
 
-  # A stale attempt's connection is left for the next attempt (or a teardown) to stop.
+  # A stale attempt's connection is left for the next attempt (or a teardown) to stop,
+  # whatever it answered: one that gave up waiting for hello leaves its socket running.
   defp settle(state, %{gen: gen, tokens: nil}, _result) when gen == state.gen, do: state
 
-  defp settle(state, %{gen: gen} = job, result) when gen != state.gen do
+  defp settle(state, %{gen: gen} = job, _result) when gen != state.gen do
     if job.from, do: GenServer.reply(job.from, {:error, "Another Slack connection replaced it."})
-    if match?({:ok, _}, result), do: %{state | dirty: true}, else: state
+    %{state | dirty: true}
   end
 
   defp settle(state, job, {:ok, %{socket: socket, identity: identity}}) do
@@ -710,7 +710,7 @@ defmodule HalC2.Slack do
       {:DOWN, ^ref, :process, ^socket, reason} ->
         {:error, :unreachable, "The Slack connection failed: #{short(reason)}"}
     after
-      @hello_ms ->
+      Application.get_env(:hal_c2, :slack_hello_ms, 10_000) ->
         Process.demonitor(ref, [:flush])
         {:error, :unreachable, "Slack did not say hello."}
     end
