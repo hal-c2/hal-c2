@@ -3,10 +3,15 @@ defmodule HalC2.Slack.Socket do
   One Socket Mode connection, started by `HalC2.Slack` with the URL `apps.connections.open`
   handed out and the bot's identity. It tells its owner the app Slack's `hello` names
   (`{:slack_hello, socket, app_id}`), so the MC can refuse an app token of another app
-  than the bot token's, and acks every envelope but hands `HalC2.Slack.Bot` only those for
-  the bot's app and workspace, each in a task. An ack can be lost with the connection, and
-  Slack then delivers the event again, on the next connection too; `HalC2.Slack.Bot` hands
-  it on once. It never reconnects: when it ends, `HalC2.Slack` makes a new one.
+  than the bot token's. Until the owner has made the bot's identity the MC's
+  (`activate/1`) it holds envelopes unacked, as Slack may send them straight after hello:
+  `HalC2.Slack.Bot` would drop them, and Slack, acked, would not send them again. A socket
+  never activated (the attempt was replaced) ends with them unacked, and Slack delivers
+  them on the next connection. Active, it acks every envelope, in the order they came, but
+  hands `HalC2.Slack.Bot` only those for the bot's app and workspace, each in a task. An
+  ack can be lost with the connection, and Slack then delivers the event again, on the
+  next connection too; `HalC2.Slack.Bot` hands it on once. It never reconnects: when it
+  ends, `HalC2.Slack` makes a new one.
   """
 
   use WebSockex
@@ -30,9 +35,12 @@ defmodule HalC2.Slack.Socket do
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ]
 
-    state = %{identity: identity, owner: owner, alive: true}
+    state = %{identity: identity, owner: owner, alive: true, active: false, held: []}
     WebSockex.start_link(url, __MODULE__, state, insecure: false, ssl_options: ssl)
   end
+
+  @doc "Acks and hands on the envelopes held so far, and every one after; the owner's call."
+  def activate(socket), do: send(socket, :activate)
 
   @impl true
   def handle_connect(_conn, state) do
@@ -49,9 +57,12 @@ defmodule HalC2.Slack.Socket do
         send(state.owner, {:slack_hello, self(), get_in(hello, ["connection_info", "app_id"])})
         {:ok, state}
 
-      {:ok, %{"envelope_id" => id} = envelope} ->
-        deliver(envelope, state.identity)
-        {:reply, {:text, JSON.encode!(%{"envelope_id" => id})}, state}
+      # Behind held ones too, so they are handed on in the order they came.
+      {:ok, %{"envelope_id" => _} = envelope} when state.active and state.held == [] ->
+        {:reply, take(envelope, state.identity), state}
+
+      {:ok, %{"envelope_id" => _} = envelope} ->
+        {:ok, %{state | held: state.held ++ [envelope]}}
 
       _ ->
         {:ok, state}
@@ -81,7 +92,24 @@ defmodule HalC2.Slack.Socket do
     {:reply, :ping, %{state | alive: false}}
   end
 
+  # One held envelope per message, as a callback acks only one.
+  def handle_info(:activate, state) do
+    send(self(), :drain)
+    {:ok, %{state | active: true}}
+  end
+
+  def handle_info(:drain, %{held: [envelope | rest]} = state) do
+    if rest != [], do: send(self(), :drain)
+    {:reply, take(envelope, state.identity), %{state | held: rest}}
+  end
+
   def handle_info(_message, state), do: {:ok, state}
+
+  # Hands the envelope on if it is the bot's; answers its ack.
+  defp take(%{"envelope_id" => id} = envelope, identity) do
+    deliver(envelope, identity)
+    {:text, JSON.encode!(%{"envelope_id" => id})}
+  end
 
   defp deliver(%{"type" => type, "payload" => payload}, identity) do
     with true <- ours?(payload, identity),

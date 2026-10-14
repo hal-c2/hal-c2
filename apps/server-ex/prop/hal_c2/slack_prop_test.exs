@@ -11,7 +11,8 @@ defmodule HalC2.SlackPropTest do
   socket must close), restart the service and mention the bot in Slack, in its workspace
   and app or in another, or mention it and disconnect while the MC asks Slack who wrote it,
   and have Slack deliver a mention again (as it does when an ack was lost), however the
-  connection changed since. After every step the status must
+  connection changed since, or connect while Slack mentions the bot straight after hello,
+  before the service has made the connection its own. After every step the status must
   match the model and never carry a token, and the secret store must hold tokens
   exactly when the model keeps them. At the end of a case the plugin granted
   `slack:read` must have heard every connect and every stop (`slack.status`), in the
@@ -156,7 +157,13 @@ defmodule HalC2.SlackPropTest do
         {2, {:call, __MODULE__, :restore, [state.phase]}},
         {2, {:call, __MODULE__, :restart, [state.stored, state.up]}}
       ] ++
-        if(state.up, do: [{1, {:call, __MODULE__, :disconnect_before_hello, []}}], else: []) ++
+        if(state.up,
+          do: [
+            {1, {:call, __MODULE__, :disconnect_before_hello, []}},
+            {1, {:call, __MODULE__, :mention_at_hello, [state.sent]}}
+          ],
+          else: []
+        ) ++
         if state.phase == :connected do
           [
             {6, {:call, __MODULE__, :drop, [state.up]}},
@@ -200,6 +207,9 @@ defmodule HalC2.SlackPropTest do
 
   def precondition(state, {:call, _, :disconnect_before_hello, _}), do: state.up
 
+  def precondition(state, {:call, _, :mention_at_hello, [n]}),
+    do: state.up and n >= state.sent
+
   def precondition(state, {:call, _, :read_across_reconnect, _}),
     do: state.phase == :connected and state.up
 
@@ -226,6 +236,11 @@ defmodule HalC2.SlackPropTest do
   def next_state(state, _result, {:call, _, :mention_then_disconnect, [n]}) do
     state = %{state | sent: n + 1, events: Map.put(state.events, n, :stale)}
     state |> walk([:off]) |> Map.put(:stored, false)
+  end
+
+  def next_state(state, _result, {:call, _, :mention_at_hello, [n]}) do
+    state = next_state(state, nil, {:call, __MODULE__, :connect, [:good]})
+    next_state(state, nil, {:call, __MODULE__, :mention, [:ours, n]})
   end
 
   # Connected afresh twice: once to start from empty caches, once under the reads.
@@ -335,10 +350,14 @@ defmodule HalC2.SlackPropTest do
       replied?(nil, {:call, __MODULE__, :disconnect, []}, off)
   end
 
-  defp replied?(_state, {:call, _, :mention_then_disconnect, []}, result),
+  defp replied?(_state, {:call, _, :mention_then_disconnect, [_n]}, result),
     do: replied?(nil, {:call, __MODULE__, :disconnect, []}, result)
 
   defp replied?(_state, {:call, _, :read_across_change, []}, result), do: result == :read_again
+
+  defp replied?(state, {:call, _, :mention_at_hello, _}, {connected, heard}) do
+    heard == :heard and replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
+  end
 
   defp replied?(state, {:call, _, :read_across_reconnect, []}, {connected, read_again}) do
     read_again == {true, true} and
@@ -435,6 +454,50 @@ defmodule HalC2.SlackPropTest do
     after
       @wait -> exit(:mention_never_finished)
     end
+  end
+
+  # Connects while Slack mentions the bot straight after hello, the service's answer to
+  # the attempt held back until the socket took the mention and whatever it handed on
+  # finished: the mention must be heard once connected, as Slack, acked, would not send
+  # it again.
+  def mention_at_hello(n) do
+    FakeSlack.hold("auth.test")
+    connecting = Task.async(fn -> connect(:good) end)
+
+    receive do
+      {:fake_slack_held, "auth.test", _} -> :ok
+    after
+      @wait -> exit(:connect_never_started)
+    end
+
+    :sys.suspend(HalC2.Slack)
+
+    FakeSlack.at_hello(fn ->
+      FakeSlack.event(mention_event(n, :ours), %{"event_id" => event_id(n)})
+      FakeSlack.ping()
+    end)
+
+    FakeSlack.release()
+
+    receive do
+      :fake_slack_pong -> :ok
+    after
+      @wait -> exit(:socket_never_took_the_mention)
+    end
+
+    for pid <- Task.Supervisor.children(HalC2.Slack.Tasks) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _} -> :ok
+      after
+        @wait -> exit(:slack_task_never_finished)
+      end
+    end
+
+    :sys.resume(HalC2.Slack)
+    connected = Task.await(connecting, @wait)
+    {connected, heard_mention(n)}
   end
 
   # Reads the channels while one of them changes: the list read before the change must

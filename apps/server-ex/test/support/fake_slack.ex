@@ -13,8 +13,10 @@ defmodule HalC2.Test.FakeSlack do
   and "#random" (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and
   `app_token/0`, and `other_app_token/0`, the app token of another app (`A0OTHER`); any
   other is `invalid_auth`. `available(false)` answers every request with a 503 until it is
-  `true` again; `drop/0` closes the socket. `hello(false)` makes new sockets keep quiet,
-  `hold/1` makes a Web API method wait until `release/0`. Paginated methods follow Slack's `cursor`, in
+  `true` again; `drop/0` closes the socket, `ping/0` pings it, and `at_hello/1` pushes to
+  the next socket straight after its hello instead. `hello(false)` makes new sockets keep
+  quiet, `hold/1` makes a Web API method wait until `release/0`; the process
+  either names hears the socket's acks and pongs. Paginated methods follow Slack's `cursor`, in
   pages of `page_size/1` at most; `join/2` adds a channel the bot is in. `calls/1` lists
   the requests made to a method, `responses/0` the slash command answers. Tests that use
   it are not async: it is one named process and Req's defaults are global.
@@ -109,8 +111,10 @@ defmodule HalC2.Test.FakeSlack do
         calls: [],
         responses: [],
         socket: nil,
-        # Frames and drops sent before the socket's server side is up, in order.
+        # Frames and drops sent before the socket's server side is up, in order, and those
+        # for the next socket whatever is up (`at_hello/1`).
         pending: [],
+        next: [],
         # Whether a new socket says hello, and who hears it open and close.
         hello: true,
         watcher: nil,
@@ -166,6 +170,12 @@ defmodule HalC2.Test.FakeSlack do
 
   @doc "Closes the Socket Mode connection, as Slack or the network does."
   def drop, do: to_socket(:drop)
+
+  @doc """
+  Pings the socket behind what was pushed before; the watcher hears `:fake_slack_pong`
+  once the MC's end has taken all of it.
+  """
+  def ping, do: to_socket(:ping)
 
   @doc """
   Pushes a Socket Mode `events_api` envelope carrying `event`, from the bot's app and
@@ -241,9 +251,23 @@ defmodule HalC2.Test.FakeSlack do
       "payload" => payload
     }
 
+  @doc """
+  Runs `fun`, whose pushes (`event/2`, `ping/0`, ...) go to the next socket, straight after
+  its hello, not to the one up now.
+  """
+  def at_hello(fun) do
+    Process.put({__MODULE__, :at_hello}, true)
+    fun.()
+  after
+    Process.delete({__MODULE__, :at_hello})
+  end
+
   defp to_socket(message) do
+    next? = Process.get({__MODULE__, :at_hello}, false)
+
     pid =
       Agent.get_and_update(__MODULE__, fn
+        state when next? -> {nil, %{state | next: state.next ++ [message]}}
         %{socket: nil} = state -> {nil, %{state | pending: state.pending ++ [message]}}
         state -> {state.socket, state}
       end)
@@ -487,7 +511,8 @@ defmodule HalC2.Test.FakeSlack do
 
       {pending, hello?, watcher} =
         Agent.get_and_update(HalC2.Test.FakeSlack, fn state ->
-          {{state.pending, state.hello, state.watcher}, %{state | socket: me, pending: []}}
+          {{state.pending ++ state.next, state.hello, state.watcher},
+           %{state | socket: me, pending: [], next: []}}
         end)
 
       for message <- pending, do: send(self(), message)
@@ -496,13 +521,35 @@ defmodule HalC2.Test.FakeSlack do
       if hello?, do: {:push, {:text, JSON.encode!(hello)}, %{}}, else: {:ok, %{}}
     end
 
+    # The watcher hears `{:fake_slack_ack, envelope_id}`.
     @impl true
-    def handle_in(_ack, state), do: {:ok, state}
+    def handle_in({text, opcode: :text}, state) do
+      with {:ok, %{"envelope_id" => id}} <- JSON.decode(text), do: tell({:fake_slack_ack, id})
+      {:ok, state}
+    end
+
+    def handle_in(_frame, state), do: {:ok, state}
+
+    @impl true
+    def handle_control({_data, opcode: :pong}, state) do
+      tell(:fake_slack_pong)
+      {:ok, state}
+    end
+
+    def handle_control(_frame, state), do: {:ok, state}
 
     @impl true
     def handle_info({:frame, frame}, state), do: {:push, {:text, JSON.encode!(frame)}, state}
+    def handle_info(:ping, state), do: {:push, {:ping, ""}, state}
     def handle_info(:drop, state), do: {:stop, :normal, state}
     def handle_info(_, state), do: {:ok, state}
+
+    defp tell(message) do
+      watcher = Agent.get(HalC2.Test.FakeSlack, & &1.watcher)
+      if watcher, do: send(watcher, message)
+    catch
+      :exit, _ -> :ok
+    end
 
     @impl true
     def terminate(_reason, _state) do
