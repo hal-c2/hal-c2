@@ -2765,8 +2765,8 @@ Item {
         }
     }
 
-    // The board: a column per state, or per owner, label or project; a card dragged
-    // to another column is changed to it.
+    // The board: a column per state, or per owner, label or project, or one for
+    // everything; a card dragged to another column is changed to it.
     Component {
         id: boardView
 
@@ -2779,7 +2779,10 @@ Item {
                 if (view === null)
                     return [];
                 const sorted = page.shown.slice().sort((a, b) => page.compare(a, b, view.sortBy));
-                if (groupBy !== "status" && groupBy !== "none") {
+                // Not grouped, every task is in one column.
+                if (groupBy === "none")
+                    return [{ value: "", label: qsTr("All tasks"), items: sorted }];
+                if (groupBy !== "status") {
                     const groups = new Map();
                     for (const item of sorted) {
                         for (const group of page.groupsOf(item, groupBy)) {

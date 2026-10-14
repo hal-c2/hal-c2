@@ -26,7 +26,11 @@ Rectangle {
     property int watching: -1
     property int watchingPlan: -1
     property string followed: ""
-    property bool applying: false
+    // The run shown, by its MC: an apply's answer only lands on the run it applied.
+    readonly property string runKey: run !== null ? (thread?.environmentId ?? "") + "/" + run.runId : ""
+    // The run an apply from here waits on.
+    property string applyingRun: ""
+    readonly property bool applying: applyingRun.length > 0 && applyingRun === runKey
     // Why the last apply from here failed, until the run changes.
     property string refusal: ""
 
@@ -51,11 +55,13 @@ Rectangle {
     }
 
     function apply() {
-        header.applying = true;
+        const key = header.runKey;
+        header.applyingRun = key;
         header.refusal = "";
         header.plugin.call("apply", { runId: header.run.runId }, (result, error) => {
-            header.applying = false;
-            if (error)
+            if (header.applyingRun === key)
+                header.applyingRun = "";
+            if (error && header.runKey === key)
                 header.refusal = error;
         }, header.followed || undefined);
     }
@@ -103,6 +109,7 @@ Rectangle {
     implicitHeight: run !== null ? column.implicitHeight + 16 : 0
     color: Theme.palette.color("surface", "#18181b")
     onStatusChanged: refusal = ""
+    onRunKeyChanged: refusal = ""
     onThreadChanged: follow()
     onWorkChanged: followPlan()
     Component.onCompleted: {

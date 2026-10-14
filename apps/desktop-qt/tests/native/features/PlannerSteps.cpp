@@ -283,6 +283,14 @@ QJsonObject& propose(World& world, const QString& label, const QString& title, c
   return run;
 }
 
+// The run of the action `label`.
+QJsonObject runOf(World& world, const QString& label) {
+  for (const QJsonObject& run : std::as_const(state(world).runs)) {
+    if (run.value(QLatin1String("label")) == label) return run;
+  }
+  fail(QStringLiteral("no run of %1").arg(label));
+}
+
 QJsonObject manifest() {
   QFile file(QDir(package()).filePath(QStringLiteral("plugin.json")));
   expect(file.open(QIODevice::ReadOnly), QStringLiteral("%1 cannot be read").arg(file.fileName()));
@@ -409,6 +417,9 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
     for (const QJsonValue& each : input.value(QLatin1String("itemIds")).toArray()) titles.append(fake.items.value(each.toString()).value(QLatin1String("title")).toString());
     result = QJsonObject{{QStringLiteral("run"), addRun(world, configured.value(QLatin1String("label")).toString(), titles, QStringLiteral("running"))}};
   } else if (QJsonObject* run = runById(world, input.value(QLatin1String("runId")))) {
+    // Held, an apply is refused once the hold is lifted, as when the plan changed under it.
+    if (method == QLatin1String("apply") && world.mc.holding(QStringLiteral("planner.refuseApply")))
+      return world.mc.defer([&world, rpc] { world.mc.refuse(rpc, QStringLiteral("The plan changed under this run.")); });
     if (method == QLatin1String("dismissChange")) {
       QJsonArray changes = run->value(QLatin1String("changes")).toArray();
       for (QJsonValueRef each : changes) {
@@ -650,6 +661,24 @@ const Steps steps([] {
     expect(asked(world, QStringLiteral("updateItem")).isEmpty(), QStringLiteral("the milestones were changed one at a time: %1").arg(showAsked(world, QStringLiteral("updateItem"))));
     world.waitFor([&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + c[0]), QStringLiteral("plannerCard:") + c[1]) != nullptr; },
                   QStringLiteral("%1 to be under %2").arg(c[1], c[0]));
+  });
+  step(QStringLiteral("the plan has %1 not started and %1 dropped").arg(q), [](World& world, const Captures& c, const Table&) {
+    item(world, c[0]).insert(QStringLiteral("status"), QStringLiteral("todo"));
+    item(world, c[1]).insert(QStringLiteral("status"), QStringLiteral("dropped"));
+    publish(world);
+  });
+  step(QStringLiteral("%1 and %1 are in the one column of the board").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* board = waitShownNamed(world, QStringLiteral("plannerBoard"));
+    const auto columns = [&] {
+      QStringList labels;
+      for (const QVariant& column : board->property("columns").toList()) labels.append(column.toMap().value(QStringLiteral("label")).toString());
+      return labels;
+    };
+    world.waitFor([&] { return columns().size() == 1; }, [&] { return QStringLiteral("one column on the board, not %1").arg(columns().join(QStringLiteral(", "))); });
+    QQuickItem* column = waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + columns().first());
+    for (const QString& title : {c[0], c[1]}) {
+      world.waitFor([&] { return findNamed(column, QStringLiteral("plannerCard:") + title) != nullptr; }, QStringLiteral("%1 to be in the column").arg(title));
+    }
   });
 
   step(QStringLiteral("the view %1 shows the owner and the due date").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -1038,6 +1067,35 @@ const Steps steps([] {
       return state ? state->property("text").toString() : QString();
     };
     world.waitFor([&] { return says() == QStringLiteral("Status update"); }, [&] { return QStringLiteral("the run list says %1").arg(says()); });
+  });
+  step(QStringLiteral("the user applies %1 from its thread and opens the thread of %1 before the MC answers").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto open = [&](const QString& label) {
+      openPluginThread(world, runOf(world, label).value(QLatin1String("threadId")).toString());
+      QQuickItem* header = waitShownNamed(world, QStringLiteral("plannerHeader"));
+      world.waitFor([&] { return findNamed(header, QStringLiteral("plannerHeaderTitle"))->property("text") == label; },
+                    [&] { return QStringLiteral("the header to be %1's, not %2's").arg(label, findNamed(header, QStringLiteral("plannerHeaderTitle"))->property("text").toString()); });
+      return header;
+    };
+    QQuickItem* header = open(c[0]);
+    world.mc.hold(QStringLiteral("planner.refuseApply"));
+    click(world, findNamed(header, QStringLiteral("plannerHeaderApply")));
+    waitAsked(world, QStringLiteral("apply"), {{QStringLiteral("runId"), runOf(world, c[0]).value(QLatin1String("id"))}});
+    open(c[1]);
+  });
+  step(QStringLiteral("the MC refuses to apply %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.holding(QStringLiteral("planner.refuseApply")), QStringLiteral("the apply of %1 is not waiting on the MC").arg(c[0]));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the thread of %1 can be applied and shows no problem").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* header = waitShownNamed(world, QStringLiteral("plannerHeader"));
+    const QString title = findNamed(header, QStringLiteral("plannerHeaderTitle"))->property("text").toString();
+    expect(title == c[0], QStringLiteral("the header is %1's").arg(title));
+    QQuickItem* problem = findNamed(header, QStringLiteral("plannerHeaderProblem"));
+    expect(!problem->isVisible(), QStringLiteral("the header says %1").arg(problem->property("text").toString()));
+    QQuickItem* apply = findNamed(header, QStringLiteral("plannerHeaderApply"));
+    expect(apply->isVisible() && apply->isEnabled() && apply->property("text") == QStringLiteral("Apply"),
+           QStringLiteral("the run cannot be applied: its button says %1").arg(apply->property("text").toString()));
   });
 
   step(QStringLiteral("%1 shows its threads in the thread list").arg(q), [](World& world, const Captures& c, const Table&) {

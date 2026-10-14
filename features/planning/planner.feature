@@ -226,6 +226,13 @@ Feature: Planner
       Then "Launch" waits for "API" and "Beta" no longer does
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The board not grouped shows every task in one column
+      Given the plan has "API" not started and "Docs" dropped
+      And the "Board" is grouped by "none"
+      When the user switches to the "Planner" tab with the view "Board"
+      Then "API" and "Docs" are in the one column of the board
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The list shows the fields the view picks
       Given the view "All tasks" shows the owner and the due date
       When the user opens "All tasks"
@@ -461,6 +468,14 @@ Feature: Planner
       When the user opens the run's thread
       Then the run can be applied from its thread and from the "Planner" tab
       And the run list says it proposes a status update
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A late answer to an apply stays with the run it applied
+      Given the run of "Reschedule" proposes moving "API"
+      And the run of "Validate progress" proposes moving "API"
+      When the user applies "Reschedule" from its thread and opens the thread of "Validate progress" before the MC answers
+      And the MC refuses to apply "Reschedule"
+      Then the thread of "Validate progress" can be applied and shows no problem
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A run on another MC names that MC's task
