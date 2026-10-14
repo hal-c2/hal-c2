@@ -101,6 +101,22 @@ Feature: Slack for MC plugins
     Then the plugin is handed Slack stopping, and nothing more until it is done with it
     And it is handed Slack connected after that
 
+  # What still waits for a plugin busy with an event belongs to the plugin as it ran:
+  # stopping it drops that, and the plugin started again does not hear it.
+  @mc
+  Scenario Outline: A plugin stopped while Slack events wait for it does not hear them later
+    Given a plugin granted "slack:read" that takes its time with each Slack event
+    And the MC disconnects Slack and connects it again
+    And the plugin is handed Slack stopping, and is still busy with it
+    When the plugin is <stopped>
+    And it is done with Slack stopping, and the MC disconnects Slack
+    Then the plugin is handed Slack stopping again, and never the connect that waited
+
+    Examples:
+      | stopped                 |
+      | turned off and on again |
+      | restarted               |
+
   @mc
   Scenario: A plugin answers a slash command only the person who ran it sees
     Given a plugin granted "slack:write"

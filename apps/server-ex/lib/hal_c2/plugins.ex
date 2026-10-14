@@ -21,8 +21,9 @@ defmodule HalC2.Plugins do
   settings, live in the MC's settings document under `plugins.<id>`
   (`%{"enabled", "settings"}`), so they survive restarts and reach every client
   with the settings push; secret fields sit in `<home>/secrets` with a marker in
-  the document. An enabled plugin runs under its own supervisor: a crash restarts
-  its process, and crashing more than `@max_restarts` times in `@max_seconds`
+  the document. An enabled plugin runs under its own supervisor, with its handling of
+  events (`slack_event/2`), so stopping it drops what it has not heard yet: a crash
+  restarts its process, and crashing more than `@max_restarts` times in `@max_seconds`
   stops it as failed with its last error until the user restarts it.
 
   Provider adapters (`HalC2.Plugins.ProviderAdapter`) are where turns run: the running
@@ -450,7 +451,7 @@ defmodule HalC2.Plugins do
 
     # The extension that started the thread hears of it too.
     with %{"plugin" => %{"id" => owner} = mark} <- thread.(),
-         {^owner, module, settings} <- List.keyfind(running("extension"), owner, 0),
+         {^owner, module, settings, sup} <- List.keyfind(runs("extension"), owner, 0),
          true <- function_exported?(module, :handle_event, 2) do
       event = %{
         "type" => "turn.finished",
@@ -461,7 +462,7 @@ defmodule HalC2.Plugins do
 
       context = %{id: owner, settings: settings, thread_id: thread_id}
 
-      Task.start(fn ->
+      deliver(sup, fn _tasks ->
         with {:error, message} <- safely(fn -> module.handle_event(event, context) end),
              do:
                Logger.warning("plugin #{owner} failed handling a finished turn: #{text(message)}")
@@ -473,29 +474,59 @@ defmodule HalC2.Plugins do
 
   @doc """
   Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension
-  granted `slack:read`, each in a process of its own. `previous` maps a plugin's id to
-  the process that handed it the event before this one in a series (`slack.status`):
-  this one waits for that to finish, so the plugin hears the series in order. Answers
-  `previous` with this event's processes in place.
+  granted `slack:read`, each in a process of its own under the plugin's run
+  (`deliver/2`). `previous` maps a plugin's id to the process that handed it the event
+  before this one in a series (`slack.status`): this one waits for that to finish, so
+  the plugin hears the series in order. Answers `previous` with this event's processes
+  in place.
   """
   def slack_event(%{"type" => type} = event, previous \\ %{}) do
-    for {id, module, settings} <- running("extension"),
+    for {id, module, settings, sup} <- runs("extension"),
         "slack:read" in granted(id),
         function_exported?(module, :handle_event, 2),
-        into: previous do
-      before = previous[id]
+        reduce: previous do
+      previous ->
+        before = previous[id]
 
-      {:ok, pid} =
-        Task.start(fn ->
-          if before, do: await_exit(before)
+        pid =
+          deliver(sup, fn tasks ->
+            if before do
+              await_exit(before)
+              # A run that stops ends its deliveries together, and the one before may go
+              # first; its task supervisor answers only while the run is up, so this one
+              # never reaches the plugin in between.
+              DynamicSupervisor.count_children(tasks)
+            end
 
-          with {:error, message} <-
-                 safely(fn -> module.handle_event(event, %{id: id, settings: settings}) end),
-               do: Logger.warning("plugin #{id} failed handling #{type}: #{text(message)}")
-        end)
+            with {:error, message} <-
+                   safely(fn -> module.handle_event(event, %{id: id, settings: settings}) end),
+                 do: Logger.warning("plugin #{id} failed handling #{type}: #{text(message)}")
+          end)
 
-      {id, pid}
+        if pid, do: Map.put(previous, id, pid), else: previous
     end
+  end
+
+  # Runs `fun` in a process under the plugin run `sup`, given the task supervisor the run
+  # gains on its first delivery, so stopping or replacing the run ends it: what was
+  # handed to a run that is gone, or still waits behind a slow handler, never reaches the
+  # plugin. Nil when the run is gone already.
+  defp deliver(sup, fun) do
+    spec = Supervisor.child_spec(Task.Supervisor, id: :deliveries)
+
+    tasks =
+      case Supervisor.start_child(sup, spec) do
+        {:ok, tasks} -> tasks
+        {:error, {:already_started, tasks}} -> tasks
+        {:error, _} -> nil
+      end
+
+    if tasks do
+      {:ok, pid} = Task.Supervisor.start_child(tasks, fn -> fun.(tasks) end)
+      pid
+    end
+  catch
+    :exit, _ -> nil
   end
 
   defp await_exit(pid) do
@@ -524,7 +555,11 @@ defmodule HalC2.Plugins do
   end
 
   # `{id, module, settings}` of the running plugins of a kind, secrets included.
-  defp running(kind) do
+  defp running(kind),
+    do: for({id, module, settings, _sup} <- runs(kind), do: {id, module, settings})
+
+  # `running/1` with the supervisor of each plugin's run.
+  defp runs(kind) do
     GenServer.call(__MODULE__, {:running, kind})
   catch
     :exit, _ -> []
@@ -600,7 +635,7 @@ defmodule HalC2.Plugins do
     running =
       for {id, %{sup: sup} = plugin} <- state.plugins,
           sup != nil and kind in plugin.kinds,
-          do: {id, plugin.module, settings(plugin)}
+          do: {id, plugin.module, settings(plugin), sup}
 
     {:reply, running, state}
   end

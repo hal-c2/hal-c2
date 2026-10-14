@@ -17,8 +17,9 @@ defmodule HalC2.Slack do
   `failed` and forgets them; a Slack unreachable, rate limiting or failing in any other
   way keeps retrying with them.
 
-  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), status}` on every change, and the
-  plugins granted `slack:read` a `slack.status` event when it connects or stops, in order.
+  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), refs, status}` on every change,
+  and the plugins granted `slack:read` a `slack.status` event when it connects or stops,
+  in order.
   """
 
   use GenServer
@@ -85,9 +86,10 @@ defmodule HalC2.Slack do
   def disconnect, do: GenServer.call(__MODULE__, :disconnect)
 
   @doc """
-  Sends `pid` `{:hal_c2_slack, node(), status}` on every change, once however many
+  Sends `pid` `{:hal_c2_slack, node(), refs, status}` on every change, once however many
   subscriptions it holds, until it unsubscribes each `ref` it subscribed under or exits;
-  answers the status now.
+  answers the status now. `refs` are the subscriptions the change was sent to: one made
+  after it was sent (a change can still sit in the mailbox) answered a newer status.
   """
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
 
@@ -701,7 +703,11 @@ defmodule HalC2.Slack do
     view = view(state)
 
     if view != state.seen,
-      do: for({pid, _} <- state.watchers, do: send(pid, {:hal_c2_slack, node(), view}))
+      do:
+        for(
+          {pid, {_, refs}} <- state.watchers,
+          do: send(pid, {:hal_c2_slack, node(), MapSet.to_list(refs), view})
+        )
 
     %{state | seen: view}
   end

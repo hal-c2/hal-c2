@@ -730,8 +730,8 @@ defmodule HalC2.SlackPropTest do
 
   defp receive_error do
     receive do
-      {:hal_c2_slack, _, %{"error" => error}} when error != nil -> error
-      {:hal_c2_slack, _, _} -> receive_error()
+      {:hal_c2_slack, _, _, %{"error" => error}} when error != nil -> error
+      {:hal_c2_slack, _, _, _} -> receive_error()
     after
       @wait -> exit(:slack_never_failed)
     end
@@ -747,7 +747,7 @@ defmodule HalC2.SlackPropTest do
 
   defp flush do
     receive do
-      {:hal_c2_slack, _, _} -> flush()
+      {:hal_c2_slack, _, _, _} -> flush()
     after
       0 -> :ok
     end
@@ -764,8 +764,8 @@ defmodule HalC2.SlackPropTest do
 
   defp receive_state(state) do
     receive do
-      {:hal_c2_slack, _, %{"state" => ^state}} -> :ok
-      {:hal_c2_slack, _, _} -> receive_state(state)
+      {:hal_c2_slack, _, _, %{"state" => ^state}} -> :ok
+      {:hal_c2_slack, _, _, _} -> receive_state(state)
     after
       @wait -> exit({:slack_never_became, state})
     end

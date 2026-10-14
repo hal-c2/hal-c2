@@ -569,6 +569,50 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
+  step "the plugin is handed Slack stopping, and is still busy with it", context do
+    assert_receive {:slack_held, "slow", %{"type" => "slack.status", "connected" => false}, pid},
+                   10_000
+
+    # The MC handed the plugin the connect before it answered it, through the courier
+    # (`HalC2.Slack`), which keeps the process the connect waits in.
+    assert %{"slow" => waiting} = Agent.get(HalC2.Slack.Courier, & &1)
+    refute waiting == pid
+    Map.put(context, :busy, pid)
+  end
+
+  step "the plugin is turned off and on again", context do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => "slow"})
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{
+        "id" => "slow",
+        "acceptPermissions" => ["slack:read"]
+      })
+
+    context
+  end
+
+  step "the plugin is restarted", context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => "slow"})
+    context
+  end
+
+  # Were the busy handler still running, finishing it would let the connect go on.
+  step "it is done with Slack stopping, and the MC disconnects Slack", context do
+    send(context.busy, :go)
+    {_, context} = World.call!(context, "slack.disconnect")
+    context
+  end
+
+  # The plugin hears its events in order: the connect, had it survived, would come first.
+  step "the plugin is handed Slack stopping again, and never the connect that waited",
+       context do
+    assert_receive {:slack_held, "slow", event, pid}, 10_000
+    assert event == %{"type" => "slack.status", "connected" => false}
+    send(pid, :go)
+    context
+  end
+
   step "{string} ran the slash command {string}", %{args: [person, command]} = context do
     command(context, person, command)
   end

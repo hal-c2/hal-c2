@@ -7,10 +7,12 @@ defmodule HalC2.WebSocketSlackPropTest do
 
   Commands subscribe and unsubscribe ids from a small pool, unsubscribe an id and
   subscribe it again with the unsubscribe reaching HalC2.Slack only after the new
-  subscribe (as an `:erpc.cast` may), and change the status (connect, or disconnect
-  when connected). After every step, the Slack frames the socket sent before the pong
-  answering a ping must be exactly the model's: a snapshot for a sub, nothing for an
-  unsub, and each step of a change for each subscription held.
+  subscribe (as an `:erpc.cast` may), the same while the status changes before the new
+  subscribe is answered (the changes sent for the old subscription still waiting in the
+  socket's mailbox), and change the status (connect, or disconnect when connected).
+  After every step, the Slack frames the socket sent before the pong answering a ping
+  must be exactly the model's: a snapshot for a sub, nothing for an unsub, each step of
+  a change for each subscription held, and only where it ended for one made during it.
   """
 
   use ExUnit.Case, async: false
@@ -104,7 +106,8 @@ defmodule HalC2.WebSocketSlackPropTest do
              let(
                id <- oneof(state.subs),
                do: {:call, __MODULE__, :resub, [id, state.subs == [id]]}
-             )}
+             )},
+            {2, {:call, __MODULE__, :resub_changing, [oneof(state.subs), state.phase]}}
           ],
           else: []
         )
@@ -117,6 +120,9 @@ defmodule HalC2.WebSocketSlackPropTest do
   def precondition(state, {:call, _, :resub, [id, alone]}),
     do: id in state.subs and alone == (state.subs == [id])
 
+  def precondition(state, {:call, _, :resub_changing, [id, phase]}),
+    do: id in state.subs and phase == state.phase
+
   def precondition(state, {:call, _, :change, [phase]}), do: phase == state.phase
 
   def next_state(state, _result, {:call, _, :sub, [id]}), do: %{state | subs: [id | state.subs]}
@@ -125,6 +131,11 @@ defmodule HalC2.WebSocketSlackPropTest do
     do: %{state | subs: List.delete(state.subs, id)}
 
   def next_state(state, _result, {:call, _, :resub, _}), do: state
+
+  def next_state(state, _result, {:call, _, :resub_changing, [_, "off"]}),
+    do: %{state | phase: "connected"}
+
+  def next_state(state, _result, {:call, _, :resub_changing, _}), do: %{state | phase: "off"}
   def next_state(state, _result, {:call, _, :change, ["off"]}), do: %{state | phase: "connected"}
   def next_state(state, _result, {:call, _, :change, [_]}), do: %{state | phase: "off"}
 
@@ -132,10 +143,17 @@ defmodule HalC2.WebSocketSlackPropTest do
   def postcondition(_state, {:call, _, :unsub, _}, frames), do: frames == []
   def postcondition(state, {:call, _, :resub, [id, _]}, frames), do: frames == [{id, state.phase}]
 
-  def postcondition(state, {:call, _, :change, [phase]}, frames) do
-    steps = if phase == "off", do: ["connecting", "connected"], else: ["off"]
-    frames == Enum.sort(for id <- state.subs, step <- steps, do: {id, step})
+  def postcondition(state, {:call, _, :change, [phase]}, frames),
+    do: frames == Enum.sort(for id <- state.subs, step <- steps(phase), do: {id, step})
+
+  # The resubscribed id sees only where the change ended; the others, each step of it.
+  def postcondition(state, {:call, _, :resub_changing, [id, phase]}, frames) do
+    others = for other <- state.subs, other != id, step <- steps(phase), do: {other, step}
+    frames == Enum.sort([{id, List.last(steps(phase))} | others])
   end
+
+  defp steps("off"), do: ["connecting", "connected"]
+  defp steps(_connected), do: ["off"]
 
   # --- commands ---------------------------------------------------------------------
 
@@ -161,20 +179,46 @@ defmodule HalC2.WebSocketSlackPropTest do
     unsubbed ++ sub(id)
   end
 
-  def change("off") do
+  # Unsubs `id`, then subs it again with the subscribe held at HalC2.Slack until the
+  # status has changed, as if the change landed while the socket waited on its answer.
+  def resub_changing(id, phase) do
+    gate = Process.get({__MODULE__, :gate})
+    LateUnsubscribe.arm(gate, hold: true)
+    unsubbed = unsub(id)
+
+    client = Process.get({__MODULE__, :client})
+    shape = %{"type" => "slack", "mc" => mc()}
+
+    Process.put(
+      {__MODULE__, :client},
+      WsClient.send_json(client, %{"t" => "sub", "id" => id, "shape" => shape})
+    )
+
+    receive do
+      :subscribe_held -> :ok
+    after
+      10_000 -> exit(:subscribe_never_sent)
+    end
+
+    change!(phase)
+    LateUnsubscribe.release(gate)
+    unsubbed ++ slack_frames()
+  end
+
+  def change(phase) do
+    change!(phase)
+    slack_frames()
+  end
+
+  defp change!("off") do
     {:ok, _} =
       HalC2.Slack.connect(%{
         "botToken" => FakeSlack.bot_token(),
         "appToken" => FakeSlack.app_token()
       })
-
-    slack_frames()
   end
 
-  def change(_connected) do
-    {:ok, _} = HalC2.Slack.disconnect()
-    slack_frames()
-  end
+  defp change!(_connected), do: {:ok, _} = HalC2.Slack.disconnect()
 
   defp mc, do: Atom.to_string(node())
 
