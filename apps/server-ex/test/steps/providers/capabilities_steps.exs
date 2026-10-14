@@ -17,12 +17,14 @@ defmodule HalC2.Steps.Providers.Capabilities do
     "Grok" => "grok",
     "OpenCode" => "opencode",
     "Cursor" => "cursor",
-    "Pi" => "pi"
+    "Pi" => "pi",
+    "Muse Code" => "muse",
+    "custom Muse Code" => "museWork"
   }
 
   # --- steering --------------------------------------------------------------------------
 
-  step ~r/^a (?<provider>Codex|Claude|Grok|OpenCode|Cursor|Pi) thread with a running turn$/,
+  step ~r/^a (?<provider>Codex|Claude|Grok|OpenCode|Cursor|Pi|Muse Code|custom Muse Code) thread with a running turn$/,
        %{args: [provider]} = context do
     context =
       context
@@ -42,6 +44,26 @@ defmodule HalC2.Steps.Providers.Capabilities do
       enabled: true,
       turns: [wait | HalC2.Test.FakeAcp.pi_turns()]
     )
+  end
+
+  # Muse Code runs over its own session protocol, with the scripted Muse host.
+  defp fake_pi(context, "Muse Code") do
+    wait = %{"match" => "wait for me", "steps" => [%{"waitInterrupt" => true}]}
+    HalC2.Test.FakeAcp.install_muse(context, %{}, enabled: true, turns: [wait])
+  end
+
+  # An instance the user added for Muse Code runs on the same host.
+  defp fake_pi(context, "custom Muse Code") do
+    context = fake_pi(context, "Muse Code")
+
+    HalC2.Test.FakeAcp.settings(
+      &put_in(&1, [Access.key("providerInstances", %{}), "museWork"], %{
+        "driver" => "muse",
+        "enabled" => true
+      })
+    )
+
+    context
   end
 
   defp fake_pi(context, _provider), do: context

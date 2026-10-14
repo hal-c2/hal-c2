@@ -216,8 +216,12 @@ defmodule HalC2.Steps.Providers.Usage do
   end
 
   step "that turn is missing from the totals", context do
-    # The Background's turn and the unfinished session's completed one.
-    assert bucket(context.usage, "grok", "grok-4")["totals"]["outputTokens"] == 200 + 20
+    # The Background's turn and the unfinished session's completed one, which
+    # land in different days' buckets when the run crosses midnight.
+    output =
+      context.usage |> buckets("grok", "grok-4", nil) |> Enum.map(& &1["totals"]["outputTokens"])
+
+    assert Enum.sum(output) == 200 + 20
     context
   end
 

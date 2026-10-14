@@ -878,7 +878,8 @@ defmodule HalC2.Orchestration do
           HalC2.Codex.Registry,
           HalC2.Claude.Registry,
           HalC2.Acp.Registry,
-          HalC2.Pi.Registry
+          HalC2.Pi.Registry,
+          HalC2.Muse.Registry
         ],
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id) do
@@ -900,7 +901,8 @@ defmodule HalC2.Orchestration do
             HalC2.Codex.Registry,
             HalC2.Claude.Registry,
             HalC2.Acp.Registry,
-            HalC2.Pi.Registry
+            HalC2.Pi.Registry,
+            HalC2.Muse.Registry
           ],
           Process.whereis(registry) != nil,
           {pid, _} <- Registry.lookup(registry, thread_id),
@@ -949,7 +951,8 @@ defmodule HalC2.Orchestration do
       HalC2.Codex.ThreadRuntime,
       HalC2.Claude.ThreadRuntime,
       HalC2.Acp.ThreadRuntime,
-      HalC2.Pi.ThreadRuntime
+      HalC2.Pi.ThreadRuntime,
+      HalC2.Muse.ThreadRuntime
     ]
 
     builtin ++
@@ -1429,7 +1432,7 @@ defmodule HalC2.Orchestration do
   @doc "The runtime (a `HalC2.Plugins.ProviderAdapter`) for a provider instance."
   def runtime(instance) do
     case is_binary(instance) && HalC2.Plugins.provider(instance) do
-      # The bundled ACP plugin serves Pi too, but Pi runs in its own RPC mode.
+      # The bundled ACP plugin serves Pi and Muse too, but each runs its own protocol.
       {:ok, _driver, HalC2.Plugins.Bundled.Acp} -> builtin_runtime(instance)
       {:ok, _driver, module} -> module
       _ -> builtin_runtime(instance)
@@ -1441,6 +1444,7 @@ defmodule HalC2.Orchestration do
   defp builtin_runtime(instance) when is_binary(instance) and instance != "codex" do
     cond do
       HalC2.Acp.driver(instance) == "pi" -> HalC2.Pi.ThreadRuntime
+      HalC2.Acp.driver(instance) == "muse" -> HalC2.Muse.ThreadRuntime
       HalC2.Acp.agent?(instance) -> HalC2.Acp.ThreadRuntime
       instance in HalC2.Settings.instances_of("claudeAgent") -> HalC2.Claude.ThreadRuntime
       true -> HalC2.Codex.ThreadRuntime

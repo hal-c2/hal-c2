@@ -22,7 +22,7 @@ defmodule HalC2.Diagnostics do
   @idle_every 15_000
   @watched_every 2_000
   @keep :timer.hours(1)
-  @providers ~w(codex claude opencode grok cursor-agent pi-acp node devin gemini)
+  @providers ~w(codex claude opencode grok cursor-agent pi-acp node devin gemini muse)
   @shells ~w(zsh bash fish sh nu)
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)

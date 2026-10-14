@@ -13,6 +13,7 @@
 #   apps/web/src/components/settings/customModelEditor.logic.ts
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
 #   apps/web/src/components/settings/ProviderSetupSection.tsx (the managed Antigravity runtime)
+#   upstream pingdotgg/t3code packages/provider-muse/src/client.ts (Muse Code's "Beta" badge)
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.start, provider.install.cancel, provider.install.remove)
 #   apps/server-ex/lib/hal_c2/acp/url_auth.ex (Continue authentication, server.acceptAcpRegistryUrlAuth)
 #   apps/web/src/components/settings/providerStatus.ts (version advisory titles, Update now, Install <version>)
@@ -223,13 +224,14 @@ Feature: Providers settings panel
     @backlog @desktop
     Scenario Outline: A provider still in early access is marked in the choices and on its instances
       When the user opens the choice of providers to add
-      Then "<provider>" is marked "Early Access"
+      Then "<provider>" is marked "<mark>"
       And every "<provider>" instance in the list carries the same mark
 
       Examples:
-        | provider     |
-        | Pi           |
-        | ACP Registry |
+        | provider     | mark         |
+        | Pi           | Early Access |
+        | ACP Registry | Early Access |
+        | Muse Code    | Beta         |
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (hasDefaultInstance: false)
     @backlog @desktop

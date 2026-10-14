@@ -113,6 +113,17 @@ defmodule HalC2.Steps.Providers.CapabilitiesControls do
     |> Map.put(:instance, instance)
   end
 
+  step "a Muse Code thread", context do
+    context =
+      context
+      |> FakeAcp.install_muse(%{}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("hello")
+
+    FakeAcp.await_runs(context, 1)
+    Map.merge(context, %{instance: "muse", current_thread: @thread})
+  end
+
   step "a Antigravity thread", context do
     context =
       context
