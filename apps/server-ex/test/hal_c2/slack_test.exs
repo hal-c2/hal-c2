@@ -504,6 +504,28 @@ defmodule HalC2.SlackTest do
     end
   end
 
+  test "a change handed to plugins just before the service stops still reaches them" do
+    test = self()
+    courier = Process.whereis(HalC2.Slack.Courier)
+
+    # Busy until the stop reaches it, which then waits behind the change.
+    Agent.cast(courier, fn previous ->
+      receive do
+        {:EXIT, _, _} = stop -> send(self(), stop)
+      end
+
+      previous
+    end)
+
+    Agent.cast(courier, fn previous ->
+      send(test, :handed_on)
+      previous
+    end)
+
+    stop_supervised!(Slack)
+    assert_received :handed_on
+  end
+
   describe "events" do
     @bot %{
       team: "acme",

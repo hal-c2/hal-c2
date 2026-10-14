@@ -38,9 +38,14 @@ defmodule HalC2.Slack do
 
   def child_spec(_) do
     # The courier comes first so that a crash of the rest leaves it, and the order it
-    # keeps, alone.
+    # keeps, alone. Trapping exits, it stops behind the changes it holds, not before them.
+    courier = fn ->
+      Process.flag(:trap_exit, true)
+      %{}
+    end
+
     children = [
-      %{id: @courier, start: {Agent, :start_link, [fn -> %{} end, [name: @courier]]}},
+      %{id: @courier, start: {Agent, :start_link, [courier, [name: @courier]]}},
       {Task.Supervisor, name: @tasks},
       {DynamicSupervisor, name: @connections, strategy: :one_for_one},
       %{id: :connection, start: {GenServer, :start_link, [__MODULE__, nil, [name: __MODULE__]]}}
