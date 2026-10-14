@@ -411,11 +411,12 @@ defmodule HalC2.Settings do
     muse = &get_in(&1, ["providers", "muse", "binaryPath"])
     if muse.(settings) != muse.(state.settings), do: HalC2.Acp.forget("muse")
 
-    # So is an added instance whose own or driver's binaryPath changed (HalC2.Acp.binary_path/1).
+    # So is an added instance whose driver, or own or driver's binaryPath, changed
+    # (HalC2.Acp.binary_path/1).
     binaries = fn settings ->
       for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
         {id,
-         {get_in(entry, ["config", "binaryPath"]),
+         {entry["driver"], get_in(entry, ["config", "binaryPath"]),
           get_in(settings, ["providers", entry["driver"] || id, "binaryPath"])}}
       end
     end
