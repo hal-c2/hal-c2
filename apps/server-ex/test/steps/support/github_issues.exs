@@ -76,9 +76,9 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   @doc """
   GitHub answering for `issues` (GraphQL issue nodes, see `issue/3`): their listing,
   each one read, and the changes `HalC2.Issues` makes to them, which it accepts.
-  A new issue is `#13`.
+  A new issue is `#13`. With `more`, every page of the listing says another follows.
   """
-  def answers(context, repository, issues) do
+  def answers(context, repository, issues, more \\ false) do
     numbers = Enum.uniq(Enum.map(issues, & &1["number"]) ++ [5, 7, 9, 12, 13])
     new = Enum.find(issues, &(&1["number"] == 13)) || issue(repository, 13)
 
@@ -88,7 +88,7 @@ defmodule HalC2.Steps.Support.GitHubIssues do
         graphql(["issues(first: $first"], %{
           "repository" => %{
             "issues" => %{
-              "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+              "pageInfo" => %{"hasNextPage" => more, "endCursor" => more && "next"},
               "nodes" => issues
             }
           }
@@ -124,9 +124,10 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   @doc """
   The board `owner/number` with `fields` (names; "Status" is a single select with
   "Todo", "Doing" and "Done", a name ending in "date" a date, anything else text)
-  and `items` (`%{"number", "repository", "fields" => %{name => value}}`).
+  and `items` (`%{"number", "repository", "fields" => %{name => value}}`). With
+  `more`, every page of items says another follows.
   """
-  def board(context, board, fields, items) do
+  def board(context, board, fields, items, more \\ false) do
     [owner, number] = String.split(board, "/")
     number = String.to_integer(number)
 
@@ -179,7 +180,7 @@ defmodule HalC2.Steps.Support.GitHubIssues do
       "url" => "https://github.com/orgs/#{owner}/projects/#{number}",
       "fields" => %{"nodes" => field_nodes},
       "items" => %{
-        "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+        "pageInfo" => %{"hasNextPage" => more, "endCursor" => more && "next"},
         "nodes" => item_nodes
       }
     }

@@ -55,6 +55,12 @@ Feature: Issues, milestones and boards for MC plugins
     Then #7 is an item of "acme/3" with those dates
 
   @mc
+  Scenario: A listing or a board cut short at the plugin's limit says so
+    Given "acme/api" has more open issues, and the board "acme/3" more items, than a plugin asks for
+    When a plugin granted "issues:read" lists 2 open issues of "acme/api" and 2 items of "acme/3"
+    Then both answers say more were left unread
+
+  @mc
   Scenario: A plugin sets a field of a board item by the field's name
     Given a plugin granted "issues:write"
     When it sets "Target date" of #7 on the board "acme/3" to "2026-11-09"

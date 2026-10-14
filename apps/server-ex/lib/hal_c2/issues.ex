@@ -248,11 +248,12 @@ defmodule HalC2.Issues do
         "filter" => filter
       }
 
-      with {:ok, issues} <- list_pages(ctx, variables, limit, nil, []),
-           do: {:ok, %{"issues" => issues}}
+      with {:ok, issues, truncated} <- list_pages(ctx, variables, limit, nil, []),
+           do: {:ok, %{"issues" => issues, "truncated" => truncated}}
     end
   end
 
+  # The issues up to `limit`, and whether more were left unread.
   defp list_pages(ctx, variables, limit, cursor, acc) do
     variables = Map.merge(variables, %{"first" => min(@page, limit), "after" => cursor})
 
@@ -261,9 +262,11 @@ defmodule HalC2.Issues do
       acc = acc ++ Enum.map(nodes, &issue/1)
       left = limit - length(nodes)
 
-      if left > 0 and page["hasNextPage"] == true,
+      more = page["hasNextPage"] == true
+
+      if left > 0 and more,
         do: list_pages(ctx, variables, left, page["endCursor"], acc),
-        else: {:ok, acc}
+        else: {:ok, acc, more}
     else
       {:error, _} = error ->
         error
@@ -370,7 +373,7 @@ defmodule HalC2.Issues do
       limit = input["limit"] |> integer(500) |> max(1)
       variables = %{"owner" => owner, "number" => number}
 
-      with {:ok, project, items} <- board_pages(ctx, variables, limit, nil, nil, []) do
+      with {:ok, project, items, truncated} <- board_pages(ctx, variables, limit, nil, nil, []) do
         {:ok,
          %{
            "owner" => owner,
@@ -378,12 +381,14 @@ defmodule HalC2.Issues do
            "title" => project["title"],
            "url" => project["url"],
            "fields" => Enum.flat_map(project["fields"]["nodes"] || [], &field/1),
-           "items" => items
+           "items" => items,
+           "truncated" => truncated
          }}
       end
     end
   end
 
+  # The board and its items up to `limit`, and whether more were left unread.
   defp board_pages(ctx, variables, limit, cursor, project, acc) do
     variables = Map.merge(variables, %{"first" => min(@page, limit), "after" => cursor})
 
@@ -392,9 +397,11 @@ defmodule HalC2.Issues do
       acc = acc ++ for(item <- nodes, item, do: item(item))
       left = limit - length(nodes)
 
-      if left > 0 and page["hasNextPage"] == true,
+      more = page["hasNextPage"] == true
+
+      if left > 0 and more,
         do: board_pages(ctx, variables, left, page["endCursor"], project || found, acc),
-        else: {:ok, project || found, acc}
+        else: {:ok, project || found, acc, more}
     else
       {:error, _} = error -> error
       _ -> no_board(variables)
