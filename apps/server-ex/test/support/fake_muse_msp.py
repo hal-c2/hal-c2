@@ -68,10 +68,13 @@ def load_session(sid):
         return None
 
 
+# Written whole, so a host killed mid-turn never leaves the next one a torn session.
 def save_session(sid, session):
     os.makedirs(SESSIONS, exist_ok=True)
-    with open(session_path(sid), "w") as f:
+    tmp = "%s.%d.tmp" % (session_path(sid), os.getpid())
+    with open(tmp, "w") as f:
         json.dump(session, f)
+    os.replace(tmp, session_path(sid))
 
 
 if "--version" in sys.argv:
