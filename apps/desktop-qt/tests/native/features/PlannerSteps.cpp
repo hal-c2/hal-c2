@@ -819,9 +819,8 @@ const Steps steps([] {
     waitText(world, QStringLiteral("plannerItemTitle"), c[0]);
   });
   step(QStringLiteral("its panel says it ends (\\d+) days before its baseline"), [](World& world, const Captures& c, const Table&) {
-    // Untranslated, %n's plural reads "day(s)".
     const auto says = [&] { return textOf(world, QStringLiteral("plannerItemNotices")); };
-    world.waitFor([&] { return says().startsWith(QStringLiteral("Ends %1 day").arg(c[0])) && says().endsWith(QLatin1String(" before its baseline")); },
+    world.waitFor([&] { return says() == QStringLiteral("Ends %1 days before its baseline").arg(c[0]); },
                   [&] { return QStringLiteral("the panel says %1").arg(says()); });
   });
   step(QStringLiteral("the plan has the milestone %1 without a due date").arg(q), [](World& world, const Captures& c, const Table&) {

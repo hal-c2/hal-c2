@@ -413,7 +413,7 @@ Item {
                 for (const pull of item.pullRequests ?? [])
                     parts.push("PR #" + pull.number);
                 if ((item.threads ?? []).length > 0)
-                    parts.push(qsTr("%n thread(s)", "", item.threads.length));
+                    parts.push(item.threads.length === 1 ? qsTr("1 thread") : qsTr("%1 threads").arg(item.threads.length));
                 return parts.join(" · ");
             }
         default:
@@ -1454,9 +1454,9 @@ Item {
                             for (const id of item.early ?? [])
                                 parts.push(qsTr("Starts before %1 ends").arg(page.byId[id]?.title ?? id));
                             if (item.slip > 0)
-                                parts.push(qsTr("Ends %n day(s) after its baseline", "", item.slip));
+                                parts.push(item.slip === 1 ? qsTr("Ends 1 day after its baseline") : qsTr("Ends %1 days after its baseline").arg(item.slip));
                             else if (item.slip < 0)
-                                parts.push(qsTr("Ends %n day(s) before its baseline", "", -item.slip));
+                                parts.push(item.slip === -1 ? qsTr("Ends 1 day before its baseline") : qsTr("Ends %1 days before its baseline").arg(-item.slip));
                             return parts.join(" · ");
                         }
                         color: page.warningColor
