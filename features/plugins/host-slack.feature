@@ -54,11 +54,14 @@ Feature: Slack for MC plugins
     Then "planner" is handed a "<event>" event with the channel, the user and the text
     And "quiet" is handed nothing
 
+    # Slack sends a message that mentions the bot twice, as itself and as a mention, but
+    # only once in a direct message, where it sends no mention.
     Examples:
-      | something happens                                         | event         |
-      | "dana" mentions "HAL" in "#planning"                      | slack.mention |
-      | "dana" replies in the thread of a message the bot posted  | slack.reply   |
-      | "dana" runs the slash command "/planner status"           | slack.command |
+      | something happens                                            | event         |
+      | "dana" mentions "HAL" in "#planning"                         | slack.mention |
+      | "dana" mentions "HAL" in a reply to the bot's direct message | slack.mention |
+      | "dana" replies in the thread of a message the bot posted     | slack.reply   |
+      | "dana" runs the slash command "/planner status"              | slack.command |
 
   # One Slack app installed in several workspaces hears them all on one Socket Mode
   # connection, while the bot token answers for one.

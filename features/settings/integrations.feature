@@ -583,12 +583,20 @@ Feature: Integrations settings
       And the tokens are forgotten
       And plugins are told Slack is not connected
 
+    # Only Slack refusing the tokens forgets them; Slack being down or busy is waited out.
     @mc
-    Scenario: A dropped connection comes back on its own
+    Scenario Outline: A dropped connection comes back on its own
       Given Slack is connected
-      When the Socket Mode connection drops
-      Then Slack shows as reconnecting
+      When the Socket Mode connection drops while <Slack is down>
+      Then Slack shows as reconnecting with why it could not connect
+      And the tokens are kept
       And it shows as connected again once Slack answers
+
+      Examples:
+        | Slack is down                         |
+        | Slack cannot be reached               |
+        | Slack says it is rate limiting the MC |
+        | Slack says it had an internal error   |
 
     # A client keeps one connection to an MC, and each of its windows its own
     # Integrations page on it.

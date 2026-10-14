@@ -5,7 +5,9 @@ defmodule HalC2.SlackPropTest do
   what the plugins hear. Slack is `HalC2.Test.FakeSlack`.
 
   Commands connect with good tokens, with a bot or app token Slack refuses and with an
-  app token of another app than the bot token's, disconnect, take Slack away and bring it back, drop the Socket Mode connection (and
+  app token of another app than the bot token's, disconnect, take Slack away (unreachable,
+  or answering every request with a rate limit or a server error, which must keep stored
+  tokens and retry with them) and bring it back, drop the Socket Mode connection (and
   drop it with a long backoff, where the lost connection must be stopped before the
   retry, then connect again), disconnect while a connect waits for Slack's hello (its
   socket must close), restart the service and mention the bot in Slack, in its workspace
@@ -138,12 +140,25 @@ defmodule HalC2.SlackPropTest do
   # --- model ------------------------------------------------------------------------
 
   # phase: what the status says. stored: whether it keeps tokens. up: whether Slack
-  # answers. told: the slack.status events the granted plugin is owed, their
+  # answers; failure: what a connect is told while it does not. told: the slack.status events the granted plugin is owed, their
   # `connected`, newest first. mentions: the mentions it is owed. sent: the next mention's
   # number, its event id. events: the mentions in the bot's workspace and app since the
   # service started, by number: :heard, or :stale (read after a disconnect, so not heard).
   def initial_state,
-    do: %{phase: :off, stored: false, up: true, told: [], mentions: 0, sent: 0, events: %{}}
+    do: %{
+      phase: :off,
+      stored: false,
+      up: true,
+      failure: nil,
+      told: [],
+      mentions: 0,
+      sent: 0,
+      events: %{}
+    }
+
+  # How Slack is away: unreachable, or answering only one of its errors that are not the
+  # tokens' fault.
+  @outages [:unreachable, "ratelimited", "internal_error", "service_unavailable"]
 
   def command(state) do
     frequency(
@@ -153,7 +168,7 @@ defmodule HalC2.SlackPropTest do
         {1, {:call, __MODULE__, :connect, [:bad_app]}},
         {1, {:call, __MODULE__, :connect, [:other_app]}},
         {2, {:call, __MODULE__, :disconnect, []}},
-        {2, {:call, __MODULE__, :outage, []}},
+        {2, {:call, __MODULE__, :outage, [elements(@outages)]}},
         {2, {:call, __MODULE__, :restore, [state.phase]}},
         {2, {:call, __MODULE__, :restart, [state.stored, state.up]}}
       ] ++
@@ -261,7 +276,11 @@ defmodule HalC2.SlackPropTest do
     end)
   end
 
-  def next_state(state, _result, {:call, _, :outage, []}), do: %{state | up: false}
+  def next_state(state, _result, {:call, _, :outage, [:unreachable]}),
+    do: %{state | up: false, failure: "Could not reach Slack: HTTP 503"}
+
+  def next_state(state, _result, {:call, _, :outage, [error]}),
+    do: %{state | up: false, failure: "Slack could not check the bot token: #{error}"}
 
   def next_state(state, _result, {:call, _, :restore, _}) do
     state = %{state | up: true}
@@ -332,13 +351,13 @@ defmodule HalC2.SlackPropTest do
   defp replied?(state, {:call, _, :connect, [:good]}, result) do
     if state.up,
       do: match?({:ok, %{"state" => "connected", "team" => "acme", "bot" => "HAL"}}, result),
-      else: result == {:error, "Could not reach Slack: HTTP 503"}
+      else: result == {:error, state.failure}
   end
 
   defp replied?(state, {:call, _, :connect, [:other_app]}, result) do
     if state.up,
       do: result == {:error, "The bot token and app token belong to different Slack apps."},
-      else: result == {:error, "Could not reach Slack: HTTP 503"}
+      else: result == {:error, state.failure}
   end
 
   defp replied?(state, {:call, _, :connect, [bad]}, result) do
@@ -346,7 +365,7 @@ defmodule HalC2.SlackPropTest do
 
     if state.up,
       do: result == {:error, "Slack refused the #{token} token: invalid_auth"},
-      else: result == {:error, "Could not reach Slack: HTTP 503"}
+      else: result == {:error, state.failure}
   end
 
   defp replied?(_state, {:call, _, :disconnect, []}, result),
@@ -362,6 +381,12 @@ defmodule HalC2.SlackPropTest do
     do: replied?(nil, {:call, __MODULE__, :disconnect, []}, result)
 
   defp replied?(_state, {:call, _, :read_across_change, []}, result), do: result == :read_again
+
+  # Slack away, the retry's failure says why.
+  defp replied?(state, {:call, _, :drop, [false]}, result), do: result == state.failure
+
+  defp replied?(state, {:call, _, :restart, [true, false]}, result),
+    do: result == state.failure
 
   defp replied?(state, {:call, _, :mention_at_hello, _}, {connected, heard}) do
     heard == :heard and replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
@@ -570,7 +595,8 @@ defmodule HalC2.SlackPropTest do
     {connected, List.to_tuple(read_again)}
   end
 
-  def outage, do: FakeSlack.available(false)
+  def outage(:unreachable), do: FakeSlack.available(false)
+  def outage(error), do: FakeSlack.available(error)
 
   def restore(phase) do
     FakeSlack.available(true)
@@ -578,12 +604,12 @@ defmodule HalC2.SlackPropTest do
     :ok
   end
 
+  # With Slack away, answers the error of the first retry, once it has failed.
   def drop(up) do
     watch()
     FakeSlack.drop()
     receive_state("reconnecting")
-    if up, do: receive_state("connected")
-    :ok
+    if up, do: receive_state("connected"), else: receive_error()
   end
 
   # Drops the socket while the backoff is far off: by the time the status says
@@ -618,10 +644,15 @@ defmodule HalC2.SlackPropTest do
     {if(held, do: :held, else: {:still_running, live}), connect(:good)}
   end
 
+  # With stored tokens and Slack away, answers the error of the first attempt.
   def restart(stored, up) do
     HalC2.Prop.restart_service(HalC2.Slack)
-    if stored and up, do: await("connected")
-    :ok
+
+    cond do
+      stored and up -> await("connected")
+      stored -> await_error()
+      true -> :ok
+    end
   end
 
   # A mention in the bot's workspace and app, heard before this answers; one from
@@ -686,6 +717,23 @@ defmodule HalC2.SlackPropTest do
     case watch() do
       %{"state" => ^state} -> :ok
       _ -> receive_state(state)
+    end
+  end
+
+  # Waits until the status carries an error: now, or in a later push; answers it.
+  defp await_error do
+    case watch() do
+      %{"error" => error} when error != nil -> error
+      _ -> receive_error()
+    end
+  end
+
+  defp receive_error do
+    receive do
+      {:hal_c2_slack, _, %{"error" => error}} when error != nil -> error
+      {:hal_c2_slack, _, _} -> receive_error()
+    after
+      @wait -> exit(:slack_never_failed)
     end
   end
 

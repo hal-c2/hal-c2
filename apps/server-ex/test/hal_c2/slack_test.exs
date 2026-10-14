@@ -89,10 +89,15 @@ defmodule HalC2.SlackTest do
     assert {:error, "Slack is not connected on this MC."} = Slack.call("channels", %{})
   end
 
-  test "an unreachable Slack fails a connect without keeping the tokens" do
-    FakeSlack.available(false)
-    assert {:error, "Could not reach Slack: HTTP 503"} = Slack.connect(tokens())
-    assert %{"state" => "failed", "tokensSet" => false} = Slack.status()
+  test "an unreachable or busy Slack fails a connect without keeping the tokens" do
+    for {down, message} <- [
+          {false, "Could not reach Slack: HTTP 503"},
+          {"ratelimited", "Slack could not check the bot token: ratelimited"}
+        ] do
+      FakeSlack.available(down)
+      assert {:error, ^message} = Slack.connect(tokens())
+      assert %{"state" => "failed", "error" => ^message, "tokensSet" => false} = Slack.status()
+    end
   end
 
   test "disconnecting stops the connection and forgets the tokens", %{dir: dir} do
@@ -220,6 +225,49 @@ defmodule HalC2.SlackTest do
     end
 
     assert length(FakeSlack.calls("auth.test")) == 2
+  end
+
+  # Only an error saying the tokens will never do forgets them; one saying Slack is busy
+  # or failing is waited out, at start and on reconnect.
+  test "stored tokens Slack cannot check for now are kept and connect once it answers", %{
+    dir: dir
+  } do
+    Application.put_env(:hal_c2, :slack_backoff_max_ms, 20)
+    on_exit(fn -> Application.delete_env(:hal_c2, :slack_backoff_max_ms) end)
+    {:ok, _} = Slack.connect(tokens())
+    {:ok, _} = Slack.subscribe(self())
+
+    FakeSlack.available("ratelimited")
+    FakeSlack.drop()
+    message = "Slack could not check the bot token: ratelimited"
+
+    assert %{"state" => "reconnecting", "tokensSet" => true, "error" => ^message} =
+             await_error()
+
+    FakeSlack.available(true)
+    await_state("connected")
+
+    stop_supervised!(Slack)
+    FakeSlack.available("internal_error")
+    start_supervised!(Slack)
+    message = "Slack could not check the bot token: internal_error"
+
+    status =
+      case Slack.subscribe(self()) do
+        {:ok, %{"error" => nil}} -> await_error()
+        {:ok, status} -> status
+      end
+
+    assert %{"state" => "connecting", "tokensSet" => true, "error" => ^message} = status
+    assert File.exists?(Path.join([dir, "secrets", "slack.bin"]))
+    FakeSlack.available(true)
+    await_state("connected")
+  end
+
+  # The first status pushed that carries an error.
+  defp await_error do
+    assert_receive {:hal_c2_slack, _, %{"error" => error} = status} when error != nil, 10_000
+    status
   end
 
   test "stored tokens Slack now refuses are forgotten at start" do
@@ -475,6 +523,15 @@ defmodule HalC2.SlackTest do
       assert %{"type" => "slack.reply", "parentTs" => "1", "threadTs" => "1", "text" => "ok"} =
                HalC2.Slack.Bot.event("message", reply, @bot)
 
+      # Slack sends no app_mention for a direct message, in a thread or not.
+      dm = %{reply | "channel" => "D0DANA", "text" => "<@UHAL> ok"}
+      dm = Map.put(dm, "channel_type", "im")
+
+      for message <- [dm, Map.drop(dm, ["thread_ts", "parent_user_id"])] do
+        assert %{"type" => "slack.mention", "channel" => "D0DANA", "text" => "<@UHAL> ok"} =
+                 HalC2.Slack.Bot.event("message", message, @bot)
+      end
+
       assert %{
                "type" => "slack.command",
                "command" => "/planner",
@@ -563,16 +620,19 @@ defmodule HalC2.SlackTest do
         "text" => "ok",
         "ts" => "3",
         "thread_ts" => "1",
-        "parent_user_id" => "UHAL"
+        "parent_user_id" => "UHAL",
+        "channel_type" => "channel"
       }
 
+      # A channel's message that mentions the bot comes again as app_mention.
       for message <- [
             %{base | "parent_user_id" => "UDANA"},
             %{base | "user" => "UHAL"},
             Map.put(base, "bot_id", "BOTHER"),
             Map.put(base, "subtype", "message_changed"),
             %{base | "text" => "<@UHAL> ok"},
-            Map.drop(base, ["thread_ts", "parent_user_id"])
+            Map.drop(base, ["thread_ts", "parent_user_id"]),
+            %{base | "channel_type" => "im"} |> Map.drop(["thread_ts", "parent_user_id"])
           ] do
         assert HalC2.Slack.Bot.event("message", message, @bot) == nil, inspect(message)
       end

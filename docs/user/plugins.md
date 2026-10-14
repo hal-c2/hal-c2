@@ -108,7 +108,7 @@ those you allowed to read or write Slack when you turned them on. To connect it:
 
 The MC keeps the tokens in its secret store and does not show them again;
 **Disconnect** forgets them. The connection comes back on its own after a
-network drop or a restart. Invite the bot to the channels a plugin should post
-in. Each environment needs a Slack app of its own: two MCs on one app would
+network drop, a Slack outage or a restart. Invite the bot to the channels a
+plugin should post in. Each environment needs a Slack app of its own: two MCs on one app would
 split its events. A plugin that answers a slash command names it in its
 settings; add that command to your Slack app yourself.

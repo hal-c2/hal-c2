@@ -12,8 +12,9 @@ defmodule HalC2.Test.FakeSlack do
   `BHAL`), the person "dana" (`UDANA`), the channel "#planning" (`CPLAN`) the bot is in
   and "#random" (`CRANDOM`) it is not. It takes the tokens `bot_token/0` and
   `app_token/0`, and `other_app_token/0`, the app token of another app (`A0OTHER`); any
-  other is `invalid_auth`. `available(false)` answers every request with a 503 until it is
-  `true` again; `drop/0` closes the socket, `ping/0` pings it, and `at_hello/1` pushes to
+  other is `invalid_auth`. `available(false)` answers every Web API request with a 503
+  until it is `true` again, `available(error)` with Slack's JSON `error` (`ratelimited`
+  as a 429, as Slack sends it); `drop/0` closes the socket, `ping/0` pings it, and `at_hello/1` pushes to
   the next socket straight after its hello instead. `hello(false)` makes new sockets keep
   quiet, `hold/1` makes a Web API method wait until `release/0`; the process
   either names hears the socket's acks and pongs. Paginated methods follow Slack's `cursor`, in
@@ -150,7 +151,7 @@ defmodule HalC2.Test.FakeSlack do
     :ok
   end
 
-  @doc "Whether Slack answers at all."
+  @doc "Whether Slack answers at all (`true`, `false`), or answers only the JSON `error`."
   def available(on?), do: Agent.update(__MODULE__, &%{&1 | available: on?})
 
   @doc "Pages of paginated methods hold at most `size` items from now on."
@@ -311,12 +312,21 @@ defmodule HalC2.Test.FakeSlack do
     reply =
       Agent.get_and_update(__MODULE__, fn state ->
         state = %{state | calls: [{method, params} | state.calls]}
-        if state.available, do: answer(method, token, params, state), else: {:down, state}
+
+        case state.available do
+          true -> answer(method, token, params, state)
+          down -> {{:down, down}, state}
+        end
       end)
 
     case reply do
-      :down ->
+      {:down, false} ->
         send_resp(conn, 503, "unavailable")
+
+      {:down, error} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(if(error == "ratelimited", do: 429, else: 200), JSON.encode!(refuse(error)))
 
       reply ->
         conn
