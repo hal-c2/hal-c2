@@ -705,6 +705,13 @@ Feature: Planner
       And the user picks None for the board's start date
       Then "planner" is saved with no field for its start date
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings say why the board's date fields could not be read
+      Given "planner" follows the board "acme/9" with "Begins" and "Ends" as its dates
+      When the user opens the planner's settings
+      Then beside its date fields the settings say "acme/9 was not found."
+      And the date fields are typed in as "Begins" and "Ends"
+
     @mc
     Scenario Outline: With two-way sync a change to a task reaches GitHub
       Given "planner" syncs "acme/api" both ways with the board "acme/3"

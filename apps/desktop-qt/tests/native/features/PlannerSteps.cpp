@@ -1221,6 +1221,18 @@ const Steps steps([] {
     world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
     expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
   });
+  step(QStringLiteral("beside its date fields the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !hidden(world, QStringLiteral("plannerDateFieldsProblem")) && textOf(world, QStringLiteral("plannerDateFieldsProblem")).contains(c[0]); },
+                  [&] { return QStringLiteral("the date fields to say %1, not %2").arg(c[0], hidden(world, QStringLiteral("plannerDateFieldsProblem")) ? QStringLiteral("nothing") : textOf(world, QStringLiteral("plannerDateFieldsProblem"))); });
+    // Not the warning of the board list, which is about other boards.
+    if (!hidden(world, QStringLiteral("plannerBoardProblem"))) fail(QStringLiteral("the board list says %1").arg(textOf(world, QStringLiteral("plannerBoardProblem"))));
+  });
+  step(QStringLiteral("the date fields are typed in as %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitHidden(world, QStringLiteral("plannerDateField:startField"));
+    waitHidden(world, QStringLiteral("plannerDateField:targetField"));
+    waitText(world, QStringLiteral("plannerSetting:startField"), c[0]);
+    waitText(world, QStringLiteral("plannerSetting:targetField"), c[1]);
+  });
   step(QStringLiteral("%1 is saved with no field for its start date").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
     QJsonObject sent;

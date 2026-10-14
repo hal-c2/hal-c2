@@ -26,10 +26,11 @@ ColumnLayout {
     property var slackChannels: []
     property bool slackConnected: false
     // The open GitHub boards of the projects' owners, why some could not be listed,
-    // and the date fields of the chosen board.
+    // and the date fields of the chosen board, or why they could not be read.
     property var boards: []
     property string boardProblem: ""
     property var dateFields: []
+    property string dateFieldsProblem: ""
     property bool loaded: false
     property bool dirty: false
     property bool saving: false
@@ -92,15 +93,19 @@ ColumnLayout {
         });
     }
 
-    // The chosen board's date fields; none, so they are typed in, until they are read.
+    // The chosen board's date fields; none, so they are typed in, until they are read,
+    // and none with the reason when the MC cannot read them.
     function readDateFields() {
         const board = settings.board;
         settings.dateFields = [];
+        settings.dateFieldsProblem = "";
         if (!/^[^/\s]+\/\d+$/.test(board.trim()))
             return;
         settings.plugin.call("boardFields", { board: board }, (result, error) => {
-            if (board === settings.board)
-                settings.dateFields = error ? [] : (result?.dateFields ?? []);
+            if (board !== settings.board)
+                return;
+            settings.dateFields = error ? [] : (result?.dateFields ?? []);
+            settings.dateFieldsProblem = error ? String(error) : "";
         });
     }
 
@@ -836,6 +841,12 @@ ColumnLayout {
                     key: "targetField"
                 }
             }
+        }
+
+        Hint {
+            objectName: "plannerDateFieldsProblem"
+            text: settings.dateFieldsProblem.length > 0 ? qsTr("The board's date fields could not be read: %1").arg(settings.dateFieldsProblem) : ""
+            color: settings.warningColor
         }
 
         Toggle {
