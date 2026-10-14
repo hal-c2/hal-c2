@@ -58,18 +58,28 @@ defmodule HalC2Plugins.Planner.Slack do
   `{:run, action, rest}` when its first word is an action's id or the first word of
   only one action's label, `{:ambiguous, word, actions}` when it begins several labels,
   or `{:unknown, word}`. `actions` are `%{"id", "label", ...}`.
+
+  "status" and "run" are the command's own words, so an action whose id or label
+  begins with one is reached by `run <id>`, which takes only an id. The answers below
+  name actions that way.
   """
   def command(text, actions) do
-    case String.split(String.trim(text || ""), ~r/\s+/, parts: 2) do
-      [word | _] when word in ["", "status"] ->
+    case words(text) do
+      [word, _] when word in ["", "status"] ->
         :status
 
-      [word | rest] ->
-        word = String.downcase(word)
-        rest = String.trim(Enum.join(rest, " "))
+      ["run", rest] ->
+        [id, rest] = words(rest)
+
+        case by_id(actions, id) do
+          nil -> {:unknown, id}
+          named -> {:run, named, rest}
+        end
+
+      [word, rest] ->
         labelled = Enum.filter(actions, &(first_word(&1["label"]) == word))
 
-        case {Enum.find(actions, &(String.downcase(&1["id"]) == word)), labelled} do
+        case {by_id(actions, word), labelled} do
           {%{} = named, _} -> {:run, named, rest}
           {nil, [named]} -> {:run, named, rest}
           {nil, []} -> {:unknown, word}
@@ -78,9 +88,21 @@ defmodule HalC2Plugins.Planner.Slack do
     end
   end
 
+  # The first word of `text`, lowercased, and the rest.
+  defp words(text) do
+    case String.split(String.trim(text || ""), ~r/\s+/, parts: 2) do
+      [word, rest] -> [String.downcase(word), rest]
+      [word] -> [String.downcase(word), ""]
+    end
+  end
+
+  defp by_id(actions, id), do: Enum.find(actions, &(String.downcase(&1["id"]) == id))
+
   @doc "The answer to a command naming no action: what can be run."
   def actions(word, actions, command) do
-    "There is no action #{word}. #{command} status shows how the plan stands; the actions are:\n#{listed(actions, command)}"
+    missing = if word == "", do: "Name the action to run.", else: "There is no action #{word}."
+
+    "#{missing} #{command} status shows how the plan stands; the actions are:\n#{listed(actions, command)}"
   end
 
   @doc "The answer to a command whose word begins more than one action's label."
@@ -93,12 +115,13 @@ defmodule HalC2Plugins.Planner.Slack do
     ~s(More than one task is called "#{title}"; run #{action["label"]} on one by its id:\n) <>
       Enum.map_join(items, "\n", fn item ->
         due = if item["due"], do: ", due #{item["due"]}", else: ""
-        "#{command} #{action["id"]} #{item["id"]} — #{item["title"]} (#{item["status"]}#{due})"
+
+        "#{command} run #{action["id"]} #{item["id"]} — #{item["title"]} (#{item["status"]}#{due})"
       end)
   end
 
   defp listed(actions, command),
-    do: Enum.map_join(actions, "\n", &"#{command} #{&1["id"]} — #{&1["label"]}")
+    do: Enum.map_join(actions, "\n", &"#{command} run #{&1["id"]} — #{&1["label"]}")
 
   defp first_word(label),
     do: label |> String.split(~r/\s+/, parts: 2) |> hd() |> String.downcase()

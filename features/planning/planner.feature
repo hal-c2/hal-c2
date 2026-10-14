@@ -525,6 +525,12 @@ Feature: Planner
       Then the prompt of "Reschedule" holds the second change, left to save
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings save again only once the last save is read back
+      Given the user opens the settings of "planner"
+      When the user saves a change to the prompt of "Reschedule", then undoes it and tries to save again before the settings are read back
+      Then the prompt of "Reschedule" is the plugin's again, left to save
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings name a model and project the MC no longer offers
       Given "planner" runs its actions on the model "claude-retired" in the project "gone"
       When the user opens the planner's settings
@@ -874,6 +880,29 @@ Feature: Planner
       And #7's task is named "Rate limiting" and marked as synced
 
     @mc
+    Scenario Outline: Removing a task drops its relation to another on GitHub
+      Given "planner" syncs "acme/api" both ways
+      And <relation>
+      When the user removes "Issue 5"
+      Then GitHub is asked to <effect>
+
+      Examples:
+        | relation                                    | effect             |
+        | #7 is blocked by #5 on GitHub               | unblock #7 from #5 |
+        | #7's task was imported as a subtask of #5's | take #7 out of #5  |
+
+    @mc
+    Scenario: A dependency on a removed task GitHub refused to drop goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is blocked by #5 on GitHub
+      And GitHub refuses to unblock #7
+      And the user removes "Issue 5"
+      And GitHub takes unblocking #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked a second time to unblock #7 from #5
+      And #7's task is named "Rate limiting" and marked as synced
+
+    @mc
     Scenario: A task stays marked as not synced until its refused change takes
       Given "planner" syncs "acme/api" both ways
       And #7 is blocked by #5 on GitHub
@@ -908,8 +937,8 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
       Then #7's task is named "Rate limits" and marked as synced
 
-    # The owner's push sends the name too, as GitHub has not taken it yet; GitHub takes
-    # that push, whatever it answers the rename.
+    # The owner waits for GitHub to answer the rename, then goes with the name, as GitHub
+    # refused it; GitHub takes that push.
     @mc
     Scenario: A change made while an earlier one waits on GitHub sends both
       Given "planner" syncs "acme/api" both ways
@@ -917,6 +946,16 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then makes "dana" its owner before GitHub answers
       Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
       And #7's task is named "Rate limiting" and marked as synced
+
+    # GitHub keeps the change that reaches it last, so a change waits for GitHub to answer
+    # the one before it.
+    @mc
+    Scenario: A rename made while an earlier one waits on GitHub is the one GitHub keeps
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" at once
+      When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
+      Then GitHub names #7 "Rate limits" last
+      And #7's task is named "Rate limits" and marked as synced
 
     @mc
     Scenario: A change GitHub answers after its task was unlinked does not mark the task
@@ -1060,7 +1099,7 @@ Feature: Planner
       When "dana" runs "/planner validate API" in Slack
       Then only "dana" is asked to run "Validate progress" on one of the "API" tasks by its id
       And no run starts
-      When "dana" runs "/planner validate" with the second "API" task's id in Slack
+      When "dana" runs "/planner run validate" with the second "API" task's id in Slack
       Then a "Validate progress" run of the second "API" task starts
 
     @mc
@@ -1069,6 +1108,12 @@ Feature: Planner
       When "dana" runs "/planner check" in Slack
       Then only "dana" is asked to run "Check API" or "Check docs" by its id
       And no run starts
+
+    @mc
+    Scenario: The slash command's answer names each action the way that runs it
+      When "dana" runs "/planner nothing" in Slack
+      And "dana" runs the line its answer gives for "Write status update"
+      Then a "Write status update" run of the plan starts
 
     @mc
     Scenario: Without a Slack connection updates stay in the plan

@@ -504,5 +504,21 @@ defmodule HalC2.PlannerTest do
 
       assert {:run, %{"id" => "check-docs"}, "Docs"} = Slack.command("check-docs Docs", actions)
     end
+
+    test "run names an action only by its id, even one the command's own words hide" do
+      actions = [
+        %{"id" => "status", "label" => "Write status update"},
+        %{"id" => "run-tests", "label" => "Run tests"}
+      ]
+
+      assert Slack.command("Status", actions) == :status
+      assert {:run, %{"id" => "status"}, ""} = Slack.command("run status", actions)
+      assert {:run, %{"id" => "run-tests"}, "API"} = Slack.command("Run  run-tests API", actions)
+      assert {:unknown, "tests"} = Slack.command("run tests", actions)
+      assert {:unknown, ""} = Slack.command("run", actions)
+
+      assert Slack.actions("", actions, "/planner") =~
+               ~r"^Name the action to run\..*\n/planner run status — Write status update\n"
+    end
   end
 end

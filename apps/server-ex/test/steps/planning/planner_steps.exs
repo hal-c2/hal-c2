@@ -1789,6 +1789,43 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "GitHub is asked to unblock \#{int} from \#{int}", %{args: [number, blocker]} = context do
+    GitHubIssues.assert_related(context, "removeBlockedBy", number, blocker)
+  end
+
+  step "GitHub is asked to take \#{int} out of \#{int}", %{args: [sub, number]} = context do
+    GitHubIssues.assert_related(context, "removeSubIssue", number, sub)
+  end
+
+  # GitHub takes renaming #`number` to `late` once the scenario answers it, and to `soon`
+  # at once; it notes each name in the order it takes them.
+  step "GitHub takes renaming \#{int} to {string} late and to {string} at once",
+       %{args: [number, late, soon]} = context do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    names = Path.join(context.mc.home, "gh-names")
+
+    rename = fn title, wait ->
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "run" => wait <> "echo '#{title}' >> '#{names}'",
+        "stdout" => %{"number" => number}
+      }
+    end
+
+    context
+    |> World.cli_rules([rename.(late, "cat '#{gate}' > /dev/null; "), rename.(soon, "")])
+    |> Map.merge(%{gh_gate: gate, gh_names: names})
+  end
+
+  step "GitHub names \#{int} {string} last", %{args: [_number, title]} = context do
+    assert context.gh_names |> File.read!() |> String.split("\n", trim: true) |> List.last() ==
+             title
+
+    context
+  end
+
   step "\#{int}'s task is marked as not synced", %{args: [number]} = context do
     error = task_of(plan!(context), number)["syncError"]
     assert is_binary(error) and error != "", "##{number}'s task is marked as synced"
@@ -2282,7 +2319,7 @@ defmodule HalC2.Steps.Planning.Planner do
     assert length(tasks) == 2
 
     for task <- tasks,
-        do: assert(text =~ "/planner #{action_id(context, label)} #{task["id"]} — #{title} (")
+        do: assert(text =~ "/planner run #{action_id(context, label)} #{task["id"]} — #{title} (")
 
     context
   end
@@ -2350,9 +2387,28 @@ defmodule HalC2.Steps.Planning.Planner do
         do:
           assert(
             text =~
-              "/planner #{label |> String.downcase() |> String.replace(" ", "-")} — #{label}"
+              "/planner run #{label |> String.downcase() |> String.replace(" ", "-")} — #{label}"
           )
 
+    context
+  end
+
+  step "{string} runs the line its answer gives for {string}",
+       %{args: ["dana", label]} = context do
+    assert %{"text" => text} = context.answer
+
+    line =
+      text
+      |> String.split("\n")
+      |> Enum.find(&String.ends_with?(&1, " — #{label}")) || flunk("no line for #{label}")
+
+    ["/planner " <> command, _] = String.split(line, " — ", parts: 2)
+    slash(context, command)
+  end
+
+  step "a {string} run of the plan starts", %{args: [label]} = context do
+    run = Enum.find(runs!(context), &(&1["label"] == label)) || flunk("no #{label} run")
+    assert %{"status" => "running", "itemIds" => []} = run
     context
   end
 

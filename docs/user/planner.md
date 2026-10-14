@@ -124,6 +124,10 @@ your Slack app and:
   stands.
 - `/planner validate API` runs **Validate progress** on the task "API". Any
   action works, named by the first word of its label.
+- `/planner run status` runs **Write status update** by its id, `status`. Use
+  `run` and the id when the first word of an action's label is `status`, `run`,
+  or shared with another action. A command the planner does not understand
+  answers with every action written this way.
 
 ## Where runs show up
 

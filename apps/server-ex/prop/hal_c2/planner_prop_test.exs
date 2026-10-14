@@ -3,24 +3,29 @@ defmodule HalC2.PlannerPropTest do
   A state machine model of the planner plugin's MC process (`plugins/planner/mc`),
   loaded and enabled through `HalC2.Plugins` as a user installs it, with the fake
   Codex, whose turns stay open until the model ends them, and the fake GitHub
-  (`test/support/fake_gh.py`), which holds each rename of a linked task until the
-  model answers it and answers a later push carrying the name the same at once, and
-  lists the one issue of the followed repository a task is linked to, so a look at
-  GitHub brings that task's name up to date.
+  (`test/support/fake_gh.py`), which holds the first push of a rename of a linked task
+  until the model answers it, answers a later push carrying the name the same at once,
+  writes down each name it takes and each relation between issues it makes or drops,
+  and lists the issues of the followed repository tasks are linked to, so a look at
+  GitHub brings those tasks' names up to date.
 
-  Three tasks (`a`, `b`, `c`), any of them a milestone, are added, nested, made to wait
-  for each other, moved from one milestone to another and removed. Two actions on the whole plan run: one whose changes wait for the user and
+  Three tasks (`a`, `b`, `c`), any of them a milestone, are added, nested and moved to
+  another parent, made to wait for each other, moved from one milestone to another and
+  removed. Two actions on the whole plan run: one whose changes wait for the user and
   one that applies them itself; a third, like the first, runs on one task. The commands
   start runs, report through the agent tool (nothing, a task's new due date, the plan's
   health, a link to two things at once), end turns, retry, dismiss, apply and discard
-  runs, look at GitHub, and restart the plugin, which looks too. The plugin keeps `@kept_runs` finished runs. One task at a time is linked to an
-  issue of a repository the plan syncs both ways, with a board, relinked to another issue,
-  of that repository or of one no project on the MC has, which is pushed nothing, and
-  unlinked again, by a client that may still show the issue it had before;
-  renaming it also moves its due date, pushing both to GitHub from a caller of its own,
-  and GitHub takes or refuses those pushes in any order. A push for a task not yet on the
-  board adds it there, and GitHub names the board item after the push. Work on a task starts on a project the MC does not have, or on one whose
-  worktree setup is not running so the launch exits, and its thread never launches. After every step:
+  runs, look at GitHub, and restart the plugin, which looks too. The plugin keeps
+  `@kept_runs` finished runs. Any of the tasks is linked to an issue of a repository the
+  plan syncs both ways, with a board, relinked to another issue, of that repository or
+  of one no project on the MC has, which is pushed nothing, and unlinked again, by a
+  client that may still show the issue it had before; renaming one also moves its due
+  date, pushing both to GitHub from a caller of its own, and renaming it again before
+  GitHub answers pushes nothing until it does. GitHub takes or refuses a name, and
+  answers the pushes held in any order. A push for a task not yet on the board adds it
+  there, and GitHub names the board item after the push. Work on a task starts on a
+  project the MC does not have, or on one whose worktree setup is not running so the
+  launch exits, and its thread never launches. After every step:
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
@@ -39,18 +44,28 @@ defmodule HalC2.PlannerPropTest do
     it, and only a failed run is tried again;
   - of the runs that are applied or had nothing to apply, only the `@kept_runs` that
     finished last are kept; the others stay until they are discarded;
-  - a linked task's sync error is what its latest push answered: an older push that
-    finishes after it leaves it alone, and a push in flight when the task was unlinked,
-    relinked or the plugin restarted says nothing;
+  - GitHub has at most one push of a task at a time: a change made while one is on the
+    way pushes nothing, and once GitHub answers, the task's caller pushes what the task
+    has that GitHub has not, so the name GitHub keeps for an issue is the one that
+    reached it last, and a chain of pushes that ends without a refusal leaves GitHub
+    with the task's latest name;
+  - a linked task's sync error is what the last push of its chain answered, and a push
+    on the way when the task was removed, unlinked, relinked or the plugin restarted
+    says nothing, though GitHub still takes it;
   - a push sends what the task has that GitHub has not, as far as the plugin knows, and
-    only that: a change to a task whose rename GitHub refused, or has not answered yet,
-    sends the name again, as GitHub then answers, along with its due date when GitHub
-    does not have that either, and a change that leaves GitHub nothing to take sends
-    nothing and leaves the task's latest push to say whether it synced;
-  - a look at GitHub brings a linked task's name up to date unless GitHub refused its
-    last change or a push to it is on the way;
-  - a linked task's board item is the one its latest push added: an older push, or one
-    answered after the task was unlinked, leaves it alone, and unlinking or relinking
+    only that: a change to a task whose rename GitHub refused sends the name again, as
+    GitHub then answers, along with its due date and relations when GitHub does not have
+    those either, and a change that leaves GitHub nothing to take sends nothing and
+    clears the task's marks;
+  - the relations GitHub has between issues are the ones the pushes made and dropped:
+    a task waiting for, or a subtask of, another task with an issue is related to that
+    issue on GitHub once a push takes, and the relation goes with the next push of the
+    task that no longer has it, even when the other task was removed or relinked since;
+  - a look at GitHub brings a linked task's name up to date, and drops the relations
+    to tasks with issues GitHub does not list, unless GitHub refused its last change or
+    a push to it is on the way;
+  - a linked task's board item is the one a push of its chain added: one answered after
+    the task was unlinked or relinked leaves it alone, and unlinking or relinking
     clears it, as does saving the settings with another board, so the next push adds it
     to that one;
   - an unlink naming an issue the task no longer has leaves it linked, and one naming no
@@ -191,15 +206,17 @@ defmodule HalC2.PlannerPropTest do
   # finished (when it was applied or found nothing, counted by `finished`)}; a discarded
   # run, or one too long finished, is gone from it. `gens`: slot → how many times a task was added in it, so a change to a
   # removed task is not taken for one to the task added in its place. `updates`: how
-  # many status updates the plan has. `pushes`: the last push a rename made (renames
-  # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
-  # whether the task synced, `:now` for one that took at once; `held`: push → {slot,
-  # gen, :ok | :refused, adds, synced} for the renames GitHub has not answered, how it
-  # will, whether the push adds the task to the board, and what GitHub had of it. `named`: slot → {push, outcome} for the
-  # task's last rename, which GitHub answers each push carrying its name with once it
-  # has answered it. `synced`: slot → %{name, due} for what GitHub has of a task a push
-  # left it, until a push takes whole; a task with none has all of it on GitHub. `board`:
-  # the board the settings name.
+  # many status updates the plan has. `pushes`: the last rename (numbered, its name
+  # `<slot><push>`). `flights`: slot → %{gen, push, changed} for the task whose push
+  # GitHub holds, the rename that made it and whether the task changed since. `held`:
+  # push → %{slot, gen, ops, b} for the pushes GitHub holds, what they ask (see `ops/3`)
+  # and what GitHub had of the task (`b`, a baseline as `own/2` makes); one whose flight
+  # is gone speaks for nobody, but GitHub still takes it. `outcomes`: name → {push,
+  # :ok | :refused}, how GitHub answers every push carrying the name. `synced`: slot → the
+  # baseline a push left the task, until a push takes whole; a task with none has all of
+  # it on GitHub. `github`: issue → the last name GitHub took for it. `rel`: the
+  # relations GitHub has, `{:blocked, {issue, blocker}}` and `{:sub, {parent, child}}`.
+  # `board`: the board the settings name.
   def initial_state,
     do: %{
       board: @board,
@@ -211,10 +228,12 @@ defmodule HalC2.PlannerPropTest do
       finished: 0,
       updates: 0,
       pushes: 0,
-      latest: %{},
+      flights: %{},
       held: %{},
-      named: %{},
-      synced: %{}
+      outcomes: %{},
+      synced: %{},
+      github: %{},
+      rel: MapSet.new()
     }
 
   def command(m) do
@@ -225,6 +244,7 @@ defmodule HalC2.PlannerPropTest do
     started = for {k, %{started: true}} <- m.runs, do: k
     asked = Enum.to_list(1..max(m.asked, 1))
     linked = for {slot, %{issue: n}} <- m.items, n != nil, do: slot
+    unlinked = for {slot, %{issue: nil}} <- m.items, do: slot
     # Only a task linked to an issue of `@repository` is pushed anything.
     pushed = for {slot, %{issue: n}} <- m.items, here?(n), do: slot
     # Switching boards matters most once a task is on one.
@@ -238,15 +258,21 @@ defmodule HalC2.PlannerPropTest do
     # And a change to a task GitHub refused, or has not answered yet, which sends what it
     # has not taken again.
     refused =
-      Enum.uniq(
-        for({slot, %{sync: {:refused, _}}} <- m.items, do: slot) ++
-          for({_, {slot, _, _, _, _}} <- m.held, Map.has_key?(m.items, slot), do: slot)
-      )
+      Enum.uniq(for({slot, %{sync: {:refused, _}}} <- m.items, do: slot) ++ Map.keys(m.flights))
+
+    # So does removing a linked task another linked task waits for or is a subtask of,
+    # whose relation on GitHub the other's next push drops.
+    related =
+      for {slot, %{issue: n}} <- m.items,
+          n != nil,
+          Enum.any?(linked, &(m.items[&1].parent == slot or slot in m.items[&1].after)),
+          do: slot
 
     # A look matters most while a push is on the way.
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
+       {2, {:call, __MODULE__, :nest, [item, oneof([nil, item])]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
        {2, {:call, __MODULE__, :remove, [item]}},
        {1,
@@ -268,8 +294,10 @@ defmodule HalC2.PlannerPropTest do
        {if(m.held == %{}, do: 1, else: 4), {:call, __MODULE__, :look, []}},
        {switch, {:call, __MODULE__, :switch_board, [other]}}
      ] ++
+       if(unlinked == [], do: [], else: [{4, {:call, __MODULE__, :link, [elements(unlinked)]}}]) ++
+       if(related == [], do: [], else: [{6, {:call, __MODULE__, :remove, [elements(related)]}}]) ++
        if(linked == [],
-         do: [{4, {:call, __MODULE__, :link, [item]}}],
+         do: [],
          else: [
            {relink,
             {:call, __MODULE__, :relink, [elements(linked), oneof([@repository, @elsewhere])]}},
@@ -285,7 +313,17 @@ defmodule HalC2.PlannerPropTest do
          do: [],
          else: [
            {8,
-            {:call, __MODULE__, :rename, [elements(pushed), oneof([:ok, :refused]), m.pushes + 1]}}
+            oneof(
+              for slot <- pushed,
+                  do:
+                    {:call, __MODULE__, :rename,
+                     [
+                       slot,
+                       oneof([:ok, :refused]),
+                       m.pushes + 1,
+                       Map.has_key?(m.flights, slot)
+                     ]}
+            )}
          ]
        ) ++
        if(m.held != %{},
@@ -322,24 +360,25 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, :add, [slot, parent, _kind]}),
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
 
-  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait, :move, :work],
-    do: Map.has_key?(m.items, slot)
+  def precondition(m, {:call, _, cmd, [slot | _]})
+      when cmd in [:remove, :wait, :nest, :move, :work],
+      do: Map.has_key?(m.items, slot)
 
   def precondition(m, {:call, _, :run, [_action, slot]}),
     do: slot == nil or Map.has_key?(m.items, slot)
 
-  # One task is linked at a time, so no push asks GitHub to relate two issues.
   def precondition(m, {:call, _, :link, [slot]}),
-    do:
-      Map.has_key?(m.items, slot) and
-        not Enum.any?(m.items, fn {_, item} -> item.issue != nil end)
+    do: Map.has_key?(m.items, slot) and m.items[slot].issue == nil
 
   def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:relink, :unlink],
     do: linked?(m, slot)
 
-  # A rename names its push, so the push's gate and name stay its own when shrinking.
-  def precondition(m, {:call, _, :rename, [slot, _outcome, push]}),
-    do: Map.has_key?(m.items, slot) and here?(m.items[slot].issue) and push > m.pushes
+  # A rename names its push, so the push's gate and name stay its own when shrinking, and
+  # says whether GitHub holds a push of the task, which the rename then waits behind.
+  def precondition(m, {:call, _, :rename, [slot, _outcome, push, flying]}),
+    do:
+      Map.has_key?(m.items, slot) and here?(m.items[slot].issue) and push > m.pushes and
+        flying == Map.has_key?(m.flights, slot)
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
   def precondition(m, {:call, _, :switch_board, [board]}), do: board != m.board
@@ -354,9 +393,18 @@ defmodule HalC2.PlannerPropTest do
 
   def next_state(m, _result, call), do: m |> step(call) |> elem(0)
 
-  def postcondition(m, call, observed) do
-    {m, reply} = step(m, call)
-    expected = %{reply: reply, items: m.items, runs: view(m), updates: m.updates, problems: []}
+  def postcondition(before, call, observed) do
+    {m, reply} = step(before, call)
+
+    expected = %{
+      reply: reply,
+      items: m.items,
+      runs: view(m),
+      updates: m.updates,
+      github: m.github,
+      rel: m.rel,
+      problems: []
+    }
 
     if observed != expected do
       for {field, value} <- expected, observed[field] != value do
@@ -367,8 +415,27 @@ defmodule HalC2.PlannerPropTest do
       end
     end
 
-    observed == expected
+    observed == expected and latest_on_github?(before, m, call, observed)
   end
+
+  # Once GitHub answers the last push of a task's chain and refuses none of it, GitHub
+  # has the task's name, whatever the model says it should.
+  defp latest_on_github?(before, m, {:call, _, :answer, [push]}, observed) do
+    %{slot: slot, gen: gen} = before.held[push]
+
+    with %{gen: ^gen, push: ^push} <- before.flights[slot],
+         %{sync: nil, issue: n} <- m.items[slot],
+         false <- Map.has_key?(m.flights, slot),
+         named = observed.github[n],
+         %{name: name} when name != named <- observed.items[slot] do
+      IO.puts("GitHub names ##{n} #{inspect(named)}, not #{inspect(name)}")
+      false
+    else
+      _ -> true
+    end
+  end
+
+  defp latest_on_github?(_before, _m, _call, _observed), do: true
 
   # `{model after call, the reply it expects}`: :ok or :error.
   defp step(m, {:call, _, :add, [slot, parent, kind]}) do
@@ -397,7 +464,17 @@ defmodule HalC2.PlannerPropTest do
       not Map.has_key?(m.items, other) -> {m, :error}
       other == slot or reaches?(m.items, [other], slot) -> {m, :error}
       after_slots == m.items[slot].after -> {m, :ok}
-      true -> {m |> put_in([:items, slot, :after], after_slots) |> pushed(slot), :ok}
+      true -> {m |> put_in([:items, slot, :after], after_slots) |> changed(slot, m), :ok}
+    end
+  end
+
+  # `slot` becomes a subtask of `parent`, or of nothing.
+  defp step(m, {:call, _, :nest, [slot, parent]}) do
+    cond do
+      parent != nil and not Map.has_key?(m.items, parent) -> {m, :error}
+      parent == slot or slot in ancestors(m.items, parent) -> {m, :error}
+      m.items[slot].parent == parent -> {m, :ok}
+      true -> {m |> put_in([:items, slot, :parent], parent) |> changed(slot, m), :ok}
     end
   end
 
@@ -412,17 +489,24 @@ defmodule HalC2.PlannerPropTest do
 
       if to != nil and (to == slot or reaches?(items, [slot], to)),
         do: {m, :error},
-        else: {Enum.reduce([from, to], %{m | items: items}, &moved(&2, &1, m.items)), :ok}
+        else: {Enum.reduce(Enum.uniq([from, to]), %{m | items: items}, &moved(&2, &1, m)), :ok}
     else
       {m, :error}
     end
   end
 
-  defp step(m, {:call, _, :remove, [slot]}) do
-    {removed, items} = Map.pop(m.items, slot)
-    m = %{m | synced: Map.delete(m.synced, slot)}
+  # The tasks that waited for the removed one, or were its subtasks, push what they lost
+  # of it, and a push of it on the way speaks for nobody.
+  defp step(before, {:call, _, :remove, [slot]}) do
+    {removed, items} = Map.pop(before.items, slot)
 
-    changed =
+    m = %{
+      before
+      | synced: Map.delete(before.synced, slot),
+        flights: Map.delete(before.flights, slot)
+    }
+
+    touched =
       for {key, item} <- items, item.parent == slot or slot in item.after, do: key
 
     items =
@@ -431,71 +515,93 @@ defmodule HalC2.PlannerPropTest do
         {key, %{item | parent: parent, after: List.delete(item.after, slot)}}
       end)
 
-    {Enum.reduce(changed, %{m | items: items}, &pushed(&2, &1)), :ok}
+    {Enum.reduce(touched, %{m | items: items}, &changed(&2, &1, before)), :ok}
   end
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
 
+  # Linking pushes nothing: GitHub is taken to have what the task had.
   defp step(m, {:call, _, :link, [slot]}),
-    do: {m |> put_in([:items, slot, :issue], @issues[slot]) |> pushed(slot), :ok}
+    do: {m |> put_in([:items, slot, :issue], @issues[slot]) |> changed(slot, m), :ok}
 
   # The board item, sync error and what GitHub has of the issue before stay with it, and
-  # so do the pushes to it in flight, whether or not the relink pushes anything itself.
-  defp step(m, {:call, _, :relink, [slot, repository]}) do
-    item = %{m.items[slot] | issue: relinked(m, slot, repository), sync: nil, board: nil}
-    m = %{m | latest: Map.delete(m.latest, slot), synced: Map.delete(m.synced, slot)}
-    {m |> put_in([:items, slot], item) |> pushed(slot), :ok}
+  # the push to it on the way speaks for nobody, whether or not the relink pushes
+  # anything itself. GitHub is taken to have of the new issue what the task had, so a
+  # rename GitHub has not answered yet is not pushed to it.
+  defp step(before, {:call, _, :relink, [slot, repository]}) do
+    item = %{
+      before.items[slot]
+      | issue: relinked(before, slot, repository),
+        sync: nil,
+        board: nil
+    }
+
+    m = %{
+      before
+      | flights: Map.delete(before.flights, slot),
+        synced: Map.delete(before.synced, slot)
+    }
+
+    {m |> put_in([:items, slot], item) |> changed(slot, m), :ok}
   end
 
-  # Nothing in flight speaks for a task no longer linked. A client that still shows an
+  # Nothing on the way speaks for a task no longer linked. A client that still shows an
   # issue the task no longer has unlinks nothing.
   defp step(m, {:call, _, :unlink, [slot, number]}) do
     if m.items[slot].issue == number do
       item = %{m.items[slot] | issue: nil, sync: nil, board: nil}
-      m = %{m | latest: Map.delete(m.latest, slot), synced: Map.delete(m.synced, slot)}
+      m = %{m | flights: Map.delete(m.flights, slot), synced: Map.delete(m.synced, slot)}
       {put_in(m.items[slot], item), :ok}
     else
       {m, :ok}
     end
   end
 
-  # The rename waits for GitHub, which will answer `outcome`; until then the task's sync
-  # error and board item stay as they were, and it keeps what GitHub had of it.
-  defp step(m, {:call, _, :rename, [slot, outcome, push]}) do
-    gen = m.gens[slot]
-    item = m.items[slot]
-    synced = m.synced[slot] || %{name: item.name, due: item.due}
-    m = put_in(m.items[slot], %{item | name: "#{slot}#{push}", due: renamed_due(push)})
+  # A rename with no push of the task on the way pushes, and GitHub holds it, answering
+  # its name with `outcome`; until then the task's sync error and board item stay as they
+  # were, and it keeps what GitHub had of it. One made while GitHub holds a push of the
+  # task only marks it, to go once GitHub answers.
+  defp step(before, {:call, _, :rename, [slot, outcome, push, flying]}) do
+    item = %{before.items[slot] | name: "#{slot}#{push}", due: renamed_due(push)}
+    outcomes = Map.put(before.outcomes, item.name, {push, outcome})
+    m = put_in(%{before | pushes: push, outcomes: outcomes}, [:items, slot], item)
 
-    {%{
-       m
-       | pushes: push,
-         latest: Map.put(m.latest, slot, {gen, push}),
-         held: Map.put(m.held, push, {slot, gen, outcome, item.board == nil, synced}),
-         named: Map.put(m.named, slot, {push, outcome}),
-         synced: Map.put(m.synced, slot, synced)
-     }, :ok}
+    if flying do
+      {changed(m, slot, before), :ok}
+    else
+      gen = m.gens[slot]
+      b = baseline(before, slot)
+      held = %{slot: slot, gen: gen, ops: ops(m, slot, b), b: b}
+
+      {%{
+         m
+         | held: Map.put(m.held, push, held),
+           flights: Map.put(m.flights, slot, %{gen: gen, push: push, changed: false}),
+           synced: Map.put(m.synced, slot, b)
+       }, :ok}
+    end
   end
 
-  # Only the task's latest push says whether it synced, and what board item it added; a
-  # refused rename stops before the board, and GitHub still has what it had.
+  # GitHub takes the push held, as far as it does, whoever it speaks for. When its task
+  # still waits on it, the task hears how it went and, when it changed meanwhile, its
+  # caller pushes what GitHub lacks of it now, which GitHub answers at once.
   defp step(m, {:call, _, :answer, [push]}) do
-    {{slot, gen, outcome, adds, synced}, held} = Map.pop(m.held, push)
-    m = %{m | held: held}
+    {%{slot: slot, gen: gen, ops: ops, b: b}, held} = Map.pop(m.held, push)
+    {m, took} = land(%{m | held: held}, ops, b, push)
 
-    if Map.has_key?(m.items, slot) and m.gens[slot] == gen and m.latest[slot] == {gen, push} do
-      item = %{m.items[slot] | sync: if(outcome == :refused, do: {:refused, push})}
-      item = if outcome == :ok and adds, do: %{item | board: push}, else: item
+    case m.flights[slot] do
+      %{gen: ^gen, push: ^push, changed: changed?} ->
+        m = settle(%{m | flights: Map.delete(m.flights, slot)}, slot, took)
 
-      synced =
-        if outcome == :ok,
-          do: Map.delete(m.synced, slot),
-          else: Map.put(m.synced, slot, synced)
+        case changed? && ops(m, slot, took.b) do
+          false -> {m, :ok}
+          [] -> {clear(m, slot), :ok}
+          ops -> {land_on(m, slot, ops, took.b, push), :ok}
+        end
 
-      {%{put_in(m.items[slot], item) | synced: synced}, :ok}
-    else
-      {m, :ok}
+      _ ->
+        {m, :ok}
     end
   end
 
@@ -574,15 +680,15 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # Starts again from what it saved: what ran is failed, and what waits starts. It does
-  # not know the pushes in flight, so their answers no longer say whether a task synced,
-  # and it looks at GitHub.
+  # not know the pushes on the way, so their answers no longer say whether a task synced,
+  # though GitHub still takes them, and it looks at GitHub.
   defp step(m, {:call, _, :restart, []}) do
     runs =
       Map.new(m.runs, fn {k, run} ->
         {k, if(run.status == :running, do: %{run | status: :failed}, else: run)}
       end)
 
-    {%{m | runs: runs, latest: %{}} |> pump() |> looked(), :ok}
+    {%{m | runs: runs, flights: %{}} |> pump() |> looked(), :ok}
   end
 
   # Saving the settings with another board starts the plugin again, and the tasks' board
@@ -646,78 +752,176 @@ defmodule HalC2.PlannerPropTest do
   defp repository_of(number) when here?(number), do: @repository
   defp repository_of(_number), do: @elsewhere
 
-  # A change to a linked task, which pushes what the task has that GitHub has not
-  # (`synced`, or else what it had before the change) and says at once whether it
-  # synced. A name GitHub does not have goes again, answered as GitHub answers that
-  # rename; a push GitHub refused stops there, and one it takes goes on to the board. A
-  # change that leaves GitHub nothing to take pushes nothing, and only clears the marks
-  # of a task no push is on the way to. A task linked to an issue of `@elsewhere` is
-  # pushed nothing. `dated` is a change to the task's due date.
-  defp pushed(m, slot, dated \\ false) do
-    case m.items[slot] do
-      %{issue: n} = item when here?(n) ->
-        synced = m.synced[slot]
-        named? = synced != nil and synced.name != item.name
-        dated? = if synced, do: synced.due != item.due, else: dated
-
-        cond do
-          named? or dated? ->
-            {push, outcome} = if named?, do: m.named[slot], else: {nil, :ok}
-            m = %{m | latest: Map.put(m.latest, slot, {m.gens[slot], :now})}
-
-            if outcome == :refused do
-              m = put_in(m.items[slot].sync, {:refused, push})
-              %{m | synced: Map.put(m.synced, slot, synced)}
-            else
-              m = %{put_in(m.items[slot].sync, nil) | synced: Map.delete(m.synced, slot)}
-              if dated?, do: boarded(m, slot), else: m
-            end
-
-          (item.sync != nil or synced != nil) and not pushing?(m, slot) ->
-            %{put_in(m.items[slot].sync, nil) | synced: Map.delete(m.synced, slot)}
-
-          true ->
-            m
-        end
-
-      _ ->
-        m
+  # A change to the task in `slot` from `before`. A task linked to an issue of
+  # `@repository` with no push on the way pushes what it has that GitHub has not (its
+  # `synced`, or else what it had before the change), from the caller, which GitHub
+  # answers at once. One with a push on the way is only marked, to go once GitHub
+  # answers. A change that leaves GitHub nothing to take pushes nothing and clears the
+  # task's marks. A task linked to an issue of `@elsewhere` is pushed nothing.
+  defp changed(m, slot, before) do
+    cond do
+      not here?(m.items[slot][:issue]) -> m
+      Map.has_key?(m.flights, slot) -> put_in(m.flights[slot].changed, true)
+      true -> push_now(m, slot, baseline(before, slot))
     end
   end
 
-  # Whether a push GitHub has not answered yet is the task's latest.
-  defp pushing?(m, slot) do
-    held = m.held
-    match?({_, push} when is_map_key(held, push), m.latest[slot])
+  defp push_now(m, slot, b) do
+    case ops(m, slot, b) do
+      [] -> if m.items[slot].sync != nil or m.synced[slot] != nil, do: clear(m, slot), else: m
+      ops -> land_on(m, slot, ops, b, 0)
+    end
   end
 
-  # A look at GitHub, which lists the issue of `@repository` a task is linked to: that
-  # task takes the issue's name and has all of it, unless GitHub refused its last change
-  # or a push to it is on the way.
-  defp looked(m) do
-    Enum.reduce(m.items, m, fn {slot, item}, m ->
-      if here?(item.issue) and item.sync == nil and not pushing?(m, slot),
-        do: %{
-          put_in(m.items[slot].name, "Issue #{item.issue}")
-          | synced: Map.delete(m.synced, slot)
-        },
-        else: m
+  # What GitHub has of the task in `slot` of `m`, as a push knows it: the baseline a push
+  # left it, or else what it has.
+  defp baseline(m, slot), do: m.synced[slot] || own(m, slot)
+
+  # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, the tasks
+  # it waits for and its parent (`{slot, gen}`), and the issues those had then (`refs`).
+  defp own(m, slot) do
+    item = m.items[slot]
+    after_keys = Enum.map(item.after, &key(m, &1))
+    parent = key(m, item.parent)
+
+    refs =
+      for k <- [parent | after_keys], k != nil, r = issue_at(m, k), into: %{}, do: {k, r}
+
+    %{name: item.name, due: item.due, after: after_keys, parent: parent, refs: refs}
+  end
+
+  defp key(_m, nil), do: nil
+  defp key(m, slot), do: {slot, m.gens[slot]}
+
+  # The issue the task `{slot, gen}` has, nil when it has none or is gone.
+  defp issue_at(m, {slot, gen}) do
+    if m.gens[slot] == gen, do: m.items[slot][:issue]
+  end
+
+  # What a push of the task in `slot` asks GitHub, of which GitHub has `b`, in order: its
+  # name; the issues it waits for and no longer does, by the issue it had for the task
+  # when it can; the parent it leaves and the one it joins, of `@repository` only; the
+  # board, when it is not on it, and its due date there.
+  defp ops(m, slot, b) do
+    item = m.items[slot]
+    n = item.issue
+    now_after = Enum.map(item.after, &key(m, &1))
+    to = key(m, item.parent)
+    had = &(b.refs[&1] || issue_at(m, &1))
+    title = if b.name != item.name, do: [{:title, n, item.name}], else: []
+    blocks = for k <- now_after -- b.after, r = issue_at(m, k), do: {:block, {n, r}, k}
+    unblocks = for k <- b.after -- now_after, r = had.(k), do: {:unblock, {n, r}, k}
+
+    parent =
+      if b.parent != to,
+        do:
+          for(
+            {op, k, r} <- [
+              {:unsub, b.parent, b.parent && had.(b.parent)},
+              {:sub, to, to && issue_at(m, to)}
+            ],
+            here?(r),
+            do: {op, {r, n}, k}
+          ),
+        else: []
+
+    due =
+      cond do
+        b.due == item.due -> []
+        item.board == nil -> [:board, {:due, item.due}]
+        true -> [{:due, item.due}]
+      end
+
+    title ++ blocks ++ unblocks ++ parent ++ due
+  end
+
+  # GitHub takes `ops` in order, of which it had `b`, until it refuses a name, a board
+  # item it adds named after `board`: `{m with what GitHub has, %{error, b, board}}`, `b`
+  # with what took and `board` set when it added one.
+  defp land(m, ops, b, board) do
+    Enum.reduce_while(ops, {m, %{error: nil, b: b, board: nil}}, fn op, {m, took} ->
+      case op do
+        {:title, n, name} ->
+          case m.outcomes[name] do
+            {push, :refused} -> {:halt, {m, %{took | error: {:refused, push}}}}
+            _ -> {:cont, {put_in(m.github[n], name), put_in(took.b.name, name)}}
+          end
+
+        {:block, {_, r} = pair, k} ->
+          b = %{took.b | after: took.b.after ++ [k], refs: Map.put(took.b.refs, k, r)}
+          {:cont, {%{m | rel: MapSet.put(m.rel, {:blocked, pair})}, %{took | b: b}}}
+
+        {:unblock, pair, k} ->
+          b = %{took.b | after: took.b.after -- [k]}
+          {:cont, {%{m | rel: MapSet.delete(m.rel, {:blocked, pair})}, %{took | b: b}}}
+
+        {:unsub, pair, _k} ->
+          {:cont, {%{m | rel: MapSet.delete(m.rel, {:sub, pair})}, put_in(took.b.parent, nil)}}
+
+        {:sub, {r, _} = pair, k} ->
+          b = %{took.b | parent: k, refs: Map.put(took.b.refs, k, r)}
+          {:cont, {%{m | rel: MapSet.put(m.rel, {:sub, pair})}, %{took | b: b}}}
+
+        :board ->
+          {:cont, {m, %{took | board: board}}}
+
+        {:due, due} ->
+          {:cont, {m, put_in(took.b.due, due)}}
+      end
     end)
   end
 
-  # A linked task's new due date goes to the board, adding it there first if it is not on
-  # it yet; GitHub names that item 0, as it takes at once.
-  defp boarded(m, slot) do
-    case m.items[slot] do
-      %{issue: n, board: nil} when here?(n) -> put_in(m.items[slot].board, 0)
-      _ -> m
-    end
+  # The task in `slot` pushes `ops` and hears how it went.
+  defp land_on(m, slot, ops, b, board) do
+    {m, took} = land(m, ops, b, board)
+    settle(m, slot, took)
+  end
+
+  # The task in `slot` hears how its push went: the sync error, the board item it added,
+  # and what GitHub has of it, which it keeps when GitHub refused some of it.
+  defp settle(m, slot, %{error: error, b: b, board: board}) do
+    item = %{m.items[slot] | sync: error}
+    m = put_in(m.items[slot], if(board, do: %{item | board: board}, else: item))
+    if error, do: put_in(m.synced[slot], b), else: %{m | synced: Map.delete(m.synced, slot)}
+  end
+
+  defp clear(m, slot),
+    do: %{put_in(m.items[slot].sync, nil) | synced: Map.delete(m.synced, slot)}
+
+  # A look at GitHub, which lists the issues of `@repository` tasks are linked to, with
+  # no relations: such a task takes its issue's name, has all of it, waits for no task
+  # with an issue and is the subtask of none, unless GitHub refused its last change or a
+  # push to it is on the way.
+  defp looked(m) do
+    Enum.reduce(m.items, m, fn {slot, item}, acc ->
+      if here?(item.issue) and item.sync == nil and not Map.has_key?(acc.flights, slot) do
+        issue? = &(&1 != nil and m.items[&1].issue != nil)
+
+        item = %{
+          item
+          | name: "Issue #{item.issue}",
+            after: Enum.reject(item.after, issue?),
+            parent: if(issue?.(item.parent), do: nil, else: item.parent)
+        }
+
+        %{put_in(acc.items[slot], item) | synced: Map.delete(acc.synced, slot)}
+      else
+        acc
+      end
+    end)
   end
 
   defp renamed_due(push), do: Date.to_iso8601(Date.add(~D[2027-01-01], push))
 
   defp moved(m, slot, before),
-    do: if(slot != nil and m.items[slot] != before[slot], do: pushed(m, slot), else: m)
+    do:
+      if(slot != nil and m.items[slot] != before.items[slot],
+        do: changed(m, slot, before),
+        else: m
+      )
+
+  defp ancestors(_items, nil), do: []
+  defp ancestors(items, slot), do: [slot | ancestors(items, items[slot].parent)]
 
   defp queue(m, k) do
     run = %{m.runs[k] | status: :queued, gone: false, seq: m.seq + 1, changes: [], health: nil}
@@ -774,8 +978,9 @@ defmodule HalC2.PlannerPropTest do
       end)
       |> then(fn {changes, items} -> {items, changes} end)
 
-    moved = for {slot, item} <- items, m.items[slot].due != item.due, do: slot
-    m = Enum.reduce(moved, %{m | items: items}, &pushed(&2, &1, true))
+    before = m
+    moved = for {slot, item} <- items, before.items[slot].due != item.due, do: slot
+    m = Enum.reduce(moved, %{m | items: items}, &changed(&2, &1, before))
     m = finish(m, k, %{run | status: :applied, changes: changes})
     if run.health, do: %{m | updates: m.updates + 1}, else: m
   end
@@ -853,6 +1058,11 @@ defmodule HalC2.PlannerPropTest do
     observe(
       elem(call("updateItem", %{"id" => item_id(slot), "fields" => %{"after" => after_ids}}), 0)
     )
+  end
+
+  def nest(slot, parent) do
+    fields = %{"parent" => parent && item_id(parent)}
+    observe(elem(call("updateItem", %{"id" => item_id(slot), "fields" => fields}), 0))
   end
 
   def move(slot, from, to) do
@@ -954,27 +1164,26 @@ defmodule HalC2.PlannerPropTest do
   # The plugin looks at GitHub as the user asks it to.
   def look, do: observe(elem(call("sync", %{}), 0))
 
-  # Renames the task to a name of the push's own and moves its due date, from a caller
-  # of its own as another client's would be. GitHub holds the push until `answer/1` lets
-  # it answer `outcome`, and answers every later push carrying the name, a task GitHub
-  # refused going again, the same at once. The push is held on a fifo, whose opening
-  # tells the case GitHub has it.
-  def rename(slot, outcome, push) do
+  # Renames the task to a name of the push's own and moves its due date. GitHub answers
+  # every push carrying the name with `outcome`, at once, and writes the name down when
+  # it takes it.
+  #
+  # With a push of the task on the way (`flying`), the rename only waits behind it.
+  # Otherwise it pushes from a caller of its own, as another client's would, and GitHub
+  # holds that push until `answer/1` lets it answer. The push is held on a fifo, whose
+  # opening tells the case GitHub has it.
+  def rename(slot, outcome, push, true) do
+    gh_rule(name_rule(slot, push, outcome, ""))
+    input = %{"id" => item_id(slot), "fields" => renamed(slot, push)}
+    observe(elem(call("updateItem", input), 0))
+  end
+
+  def rename(slot, outcome, push, false) do
     title = "#{slot}#{push}"
     gate = gate(push)
     {_, 0} = System.cmd("mkfifo", [gate])
-
-    gh_rule(%{
-      "args" => [
-        "--method PATCH",
-        "repos/#{@repository}/issues/#{Process.get({:pl_issue, slot})} "
-      ],
-      "stdin" => [~s("title":#{JSON.encode!(title)})],
-      "run" => "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi",
-      "stdout" => "{}",
-      "exit" => if(outcome == :ok, do: 0, else: 1),
-      "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
-    })
+    hold = "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi; "
+    gh_rule(name_rule(slot, push, outcome, hold))
 
     case_pid = self()
 
@@ -992,7 +1201,7 @@ defmodule HalC2.PlannerPropTest do
       end)
 
     Process.put({:pl_holder, push}, holder)
-    input = %{"id" => item_id(slot), "fields" => %{"title" => title, "due" => renamed_due(push)}}
+    input = %{"id" => item_id(slot), "fields" => renamed(slot, push)}
 
     caller =
       spawn_monitor(fn ->
@@ -1016,8 +1225,31 @@ defmodule HalC2.PlannerPropTest do
     observe(:ok)
   end
 
+  defp renamed(slot, push), do: %{"title" => "#{slot}#{push}", "due" => renamed_due(push)}
+
+  # GitHub's answer to every push naming the task's issue `slot<push>`: `outcome`, after
+  # running `hold`, writing the name down as the issue's when it takes it.
+  defp name_rule(slot, push, outcome, hold) do
+    number = Process.get({:pl_issue, slot})
+    title = "#{slot}#{push}"
+
+    took =
+      if outcome == :ok,
+        do: "echo '#{number} #{title}' >> '#{Path.join(Process.get(:pl_gh), "named")}'",
+        else: ":"
+
+    %{
+      "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
+      "stdin" => [~s("title":#{JSON.encode!(title)})],
+      "run" => hold <> took,
+      "stdout" => "{}",
+      "exit" => if(outcome == :ok, do: 0, else: 1),
+      "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
+    }
+  end
+
   # GitHub answers the push, naming a board item it adds after it, and its caller tells
-  # the planner.
+  # the planner, then pushes what the planner answers with until it answers nothing.
   def answer(push) do
     {pid, ref} = Process.get({:pl_push, push})
 
@@ -1213,9 +1445,51 @@ defmodule HalC2.PlannerPropTest do
       items: items,
       runs: view,
       updates: length(plan["updates"]),
+      github: named(),
+      rel: related(),
       problems: Process.put(:pl_problems, []) |> Enum.reverse()
     }
   end
+
+  # Issue → the name GitHub took for it last.
+  defp named do
+    case File.read(Path.join(Process.get(:pl_gh), "named")) do
+      {:ok, text} ->
+        for line <- String.split(text, "\n", trim: true), into: %{} do
+          [number, name] = String.split(line, " ", parts: 2)
+          {String.to_integer(number), name}
+        end
+
+      {:error, :enoent} ->
+        %{}
+    end
+  end
+
+  # The relations GitHub has, as the mutations asked of it in order made and dropped them.
+  defp related do
+    lines =
+      case File.read(System.get_env("FAKE_GH_LOG")) do
+        {:ok, text} -> String.split(text, "\n", trim: true)
+        {:error, :enoent} -> []
+      end
+
+    Enum.reduce(lines, MapSet.new(), fn line, rel ->
+      with %{"args" => ["api", "graphql" | _], "stdin" => stdin} <- JSON.decode!(line),
+           {:ok, %{"query" => query, "variables" => vars}} <- JSON.decode(stdin),
+           [_, change, kind] <- Regex.run(~r/(add|remove)(BlockedBy|SubIssue)\(input/, query) do
+        pair = {issue_number(vars["issue"]), issue_number(vars["other"])}
+        relation = {if(kind == "BlockedBy", do: :blocked, else: :sub), pair}
+
+        if change == "add",
+          do: MapSet.put(rel, relation),
+          else: MapSet.delete(rel, relation)
+      else
+        _ -> rel
+      end
+    end)
+  end
+
+  defp issue_number("I_" <> n), do: String.to_integer(n)
 
   # Which push GitHub refused, by the reason the fake gave.
   defp sync_error(nil), do: nil
@@ -1375,22 +1649,43 @@ defmodule HalC2.PlannerPropTest do
       "items" => %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => []}
     }
 
-    File.write!(
-      Path.join(gh, "rules.json"),
-      JSON.encode!([
-        issue_list([]),
-        board_item(0),
+    # Relations are made by node id, which GitHub reads for both issues at once: issue n
+    # is `I_<n>`. `number` and `other` sort before the variables after them.
+    here = Enum.flat_map(Map.values(@issues), &[&1, &1 + 10])
+    every = here ++ Enum.map(Map.values(@issues), &(&1 + @elsewhere_from))
+
+    pairs =
+      for a <- here, b <- every, a != b do
         %{
           "args" => ["api graphql"],
+          "stdin" => ["other: repository(", ~s("number":#{a},), ~s("other":#{b},)],
           "stdout" => %{
             "data" => %{
-              "repository" => %{"issue" => issue, "issueOrPullRequest" => %{"id" => "I_1"}},
-              "repositoryOwner" => %{"projectV2" => board},
-              "updateProjectV2ItemFieldValue" => %{"projectV2Item" => %{"id" => "item-0"}}
+              "issue" => %{"issue" => %{"id" => "I_#{a}"}},
+              "other" => %{"issue" => %{"id" => "I_#{b}"}}
             }
           }
         }
-      ])
+      end
+
+    File.write!(
+      Path.join(gh, "rules.json"),
+      JSON.encode!(
+        [issue_list([]), board_item(0)] ++
+          pairs ++
+          [
+            %{
+              "args" => ["api graphql"],
+              "stdout" => %{
+                "data" => %{
+                  "repository" => %{"issue" => issue, "issueOrPullRequest" => %{"id" => "I_1"}},
+                  "repositoryOwner" => %{"projectV2" => board},
+                  "updateProjectV2ItemFieldValue" => %{"projectV2Item" => %{"id" => "item-0"}}
+                }
+              }
+            }
+          ]
+      )
     )
 
     for {{tag, _} = key, _} <- Process.get(),

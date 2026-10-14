@@ -553,13 +553,31 @@ defmodule HalC2Plugins.Planner do
   defp decide(message, _settings), do: server(message)
 
   defp effects(effects, settings) do
-    for {id, push, ops, synced} <- Map.get(effects, :pushes, []) do
-      {error, extra} = Sync.run(ops, synced)
-      server({:pushed, id, push, error, extra})
-    end
+    for {id, token, ops, synced} <- Map.get(effects, :pushes, []),
+        do: push(id, token, ops, synced)
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
     :ok
+  end
+
+  # Asks GitHub for a push of the task `id`, tells the server how it went and runs the
+  # push it answers with, the task's change made while GitHub had this one, until none
+  # is left. A push that raised is one GitHub did not take, so the task is not left
+  # waiting on it.
+  defp push(id, token, ops, synced) do
+    {error, extra} =
+      try do
+        Sync.run(ops, synced)
+      catch
+        kind, reason ->
+          {"The push to GitHub failed: #{Exception.format_banner(kind, reason)}",
+           %{"synced" => synced}}
+      end
+
+    case server({:pushed, id, token, error, extra}) do
+      {:push, ops, synced} -> push(id, token, ops, synced)
+      :ok -> :ok
+    end
   end
 
   # Posts to the plan's channel, if it has one; the server hears how it went.
@@ -683,33 +701,33 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  def handle_call({:update, id, fields}, _from, state) do
+  def handle_call({:update, id, fields}, caller, state) do
     case Plan.update(state.items, id, fields, now()) do
-      {:ok, items, _old, item} -> edit(state, items, %{"item" => item})
+      {:ok, items, _old, item} -> edit(state, items, %{"item" => item}, caller)
       error -> {:reply, error, state}
     end
   end
 
-  def handle_call({:remove, id}, _from, state) do
+  def handle_call({:remove, id}, caller, state) do
     if state.items[id],
-      do: edit(state, Plan.remove(state.items, id), %{}),
+      do: edit(state, Plan.remove(state.items, id), %{}, caller),
       else: {:reply, {:error, "There is no task #{id}."}, state}
   end
 
-  def handle_call({:move, id, parent, before}, _from, state) do
+  def handle_call({:move, id, parent, before}, caller, state) do
     case Plan.move(state.items, id, parent, before, now()) do
-      {:ok, items} -> edit(state, items, %{})
+      {:ok, items} -> edit(state, items, %{}, caller)
       error -> {:reply, error, state}
     end
   end
 
   # A task stops holding up the milestone `from` and holds up `to` instead, both or
   # neither; either may be nil for no milestone.
-  def handle_call({:to_milestone, id, from, to}, _from, state) do
+  def handle_call({:to_milestone, id, from, to}, caller, state) do
     with %{} <- state.items[id] || {:error, "There is no task #{id}."},
          {:ok, items} <- hold_up(state.items, from, &List.delete(&1, id)),
          {:ok, items} <- hold_up(items, to, &Enum.uniq(&1 ++ [id])) do
-      edit(state, items, %{})
+      edit(state, items, %{}, caller)
     else
       error -> {:reply, error, state}
     end
@@ -869,12 +887,12 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  def handle_call({:apply, id}, _from, state) do
+  def handle_call({:apply, id}, caller, state) do
     case state.runs[id] do
       %{"status" => "proposed"} = run ->
         before = state.items
         {state, posts} = apply_run(state, run)
-        {pushes, state} = pushes(state, before, state.items)
+        {pushes, state} = pushes(state, before, state.items, caller)
         state = changed(state)
         {:reply, {:ok, %{"run" => state.runs[id]}, %{pushes: pushes, posts: posts}}, state}
 
@@ -918,25 +936,39 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  # How a push to GitHub went; a task removed since is left alone. Pushes run in their
-  # callers, so they can finish out of order: only the task's latest push says whether
-  # it synced and what it learnt, such as its board item. An older one may be for an
-  # issue the task was unlinked from since; the next look reads the board again.
-  def handle_call({:pushed, id, push, error, extra}, _from, state) do
-    latest? = state.pushing[id] == push
-    state = if latest?, do: %{state | pushing: Map.delete(state.pushing, id)}, else: state
+  # How the push `token` of a task went, from its runner: whether it synced, what GitHub
+  # has of the task and what the task learnt, such as its board item. The task keeps
+  # what GitHub has, and the runner gets the task's next push, `{:push, ops, synced}`,
+  # when the task changed while GitHub had this one; a refusal of a task that did not
+  # change stands until its next change. A push for an issue the task was unlinked or
+  # relinked from since, or for a task removed since, says nothing; the next look reads
+  # the board again.
+  def handle_call({:pushed, id, token, error, extra}, _from, state) do
+    case state.pushing[id] do
+      {^token, changed?} ->
+        item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
 
-    case state.items[id] do
-      item when latest? and item != nil ->
-        item = item |> Map.merge(extra) |> Map.put("syncError", error)
-        {:reply, :ok, changed(put_in(state.items[id], item))}
+        {next, state} =
+          cond do
+            changed? -> next_push(state, id, item, item["synced"])
+            error -> {nil, put_in(state.items[id], item)}
+            true -> {nil, put_in(state.items[id], Map.put(item, "synced", nil))}
+          end
+
+        case next do
+          {ops, synced} ->
+            {:reply, {:push, ops, synced}, changed(put_in(state.pushing[id], {token, false}))}
+
+          nil ->
+            {:reply, :ok, changed(%{state | pushing: forget(state.pushing, [id])})}
+        end
 
       _ ->
         {:reply, :ok, state}
     end
   end
 
-  def handle_call({:link, id, fields}, _from, state) do
+  def handle_call({:link, id, fields}, caller, state) do
     case state.items[id] do
       nil ->
         {:reply, {:error, "There is no task #{id}."}, state}
@@ -953,11 +985,11 @@ defmodule HalC2Plugins.Planner do
               Plan.link(item, fields, now())
           end
 
-        edit(state, Map.put(state.items, id, item), %{"item" => item})
+        edit(state, Map.put(state.items, id, item), %{"item" => item}, caller)
     end
   end
 
-  def handle_call({:unlink, id, kind, ref}, _from, state) do
+  def handle_call({:unlink, id, kind, ref}, caller, state) do
     item = state.items[id]
 
     unlinked =
@@ -994,7 +1026,7 @@ defmodule HalC2Plugins.Planner do
       end
 
     case unlinked do
-      {:ok, item} -> edit(state, Map.put(state.items, id, item), %{"item" => item})
+      {:ok, item} -> edit(state, Map.put(state.items, id, item), %{"item" => item}, caller)
       error -> {:reply, error, state}
     end
   end
@@ -1023,7 +1055,7 @@ defmodule HalC2Plugins.Planner do
   end
 
   # A report that does not fit the plan goes back to the agent to fix.
-  def handle_call({:report, thread_id, report}, _from, state) do
+  def handle_call({:report, thread_id, report}, caller, state) do
     with %{} = run <-
            by_thread(state, thread_id) || {:error, "This thread is not a planner action."},
          true <-
@@ -1034,14 +1066,14 @@ defmodule HalC2Plugins.Planner do
              {:error, "The run of #{run["label"]} is #{run["status"]}; it takes no more reports."},
          {:ok, changes} <- Plan.check_changes(state.items, report.changes),
          :ok <- check_feedback(state.items, report.feedback) do
-      {state, run, effects} = take_report(state, run, changes, report)
+      {state, run, effects} = take_report(state, run, changes, report, caller)
       {:reply, {:ok, run, effects}, state}
     else
       {:error, _} = error -> {:reply, error, state}
     end
   end
 
-  def handle_call({:progress, thread_id, progress}, _from, state) do
+  def handle_call({:progress, thread_id, progress}, caller, state) do
     run = by_thread(state, thread_id)
     linked = for {id, item} <- state.items, thread_id in (item["threads"] || []), do: id
     ids = Enum.uniq(linked ++ if(run, do: run["itemIds"], else: []))
@@ -1067,7 +1099,7 @@ defmodule HalC2Plugins.Planner do
                 else: item
 
             items = Map.put(items, id, item)
-            {pushes, state} = pushes(state, state.items, items)
+            {pushes, state} = pushes(state, state.items, items, caller)
             {:reply, {:ok, item, %{pushes: pushes}}, changed(state)}
 
           error ->
@@ -1150,6 +1182,20 @@ defmodule HalC2Plugins.Planner do
           |> changed()
 
     {:noreply, state}
+  end
+
+  # A push whose runner stopped before telling how it went, which GitHub may or may not
+  # have: the task is marked, and its next change sends what GitHub lacks again.
+  def handle_info({:DOWN, token, :process, _pid, _reason}, state) do
+    case Enum.find(state.pushing, &match?({_, {^token, _}}, &1)) do
+      {id, _} ->
+        state = %{state | pushing: Map.delete(state.pushing, id)}
+        error = "The push to GitHub stopped before GitHub answered."
+        {:noreply, changed(put_in(state.items[id]["syncError"], error))}
+
+      nil ->
+        {:noreply, state}
+    end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -1463,7 +1509,7 @@ defmodule HalC2Plugins.Planner do
   # The report taken: feedback on a task lands at once, as a note rather than a change;
   # feedback on the plan goes into the summary. Changes wait for the user unless the
   # action applies them.
-  defp take_report(state, run, changes, report) do
+  defp take_report(state, run, changes, report, caller) do
     at = now()
     on_plan = for %{"itemId" => nil, "text" => text} <- report.feedback, do: text
 
@@ -1497,7 +1543,7 @@ defmodule HalC2Plugins.Planner do
       run["apply"] == "apply" ->
         before = state.items
         {state, posts} = apply_run(state, run)
-        {pushes, state} = pushes(state, before, state.items)
+        {pushes, state} = pushes(state, before, state.items, caller)
         state = state |> pump() |> changed()
         {state, state.runs[run["id"]], %{pushes: pushes, posts: posts}}
 
@@ -1550,48 +1596,78 @@ defmodule HalC2Plugins.Planner do
 
   # --- state ----------------------------------------------------------------------------
 
-  # A change to items, answered with what to push to GitHub for the tasks it changed.
-  defp edit(state, items, reply) do
-    {pushes, state} = pushes(state, state.items, items)
+  # A change to items by the caller `from`, answered with what it pushes to GitHub for
+  # the tasks it changed.
+  defp edit(state, items, reply, from) do
+    {pushes, state} = pushes(state, state.items, items, from)
     {:reply, {:ok, reply, %{pushes: pushes}}, changed(state)}
   end
 
-  # The state with `items`, and what to push for the tasks they changed from `before`:
-  # each push with a token the state keeps as its task's latest, and what GitHub has of
-  # the task, which the task keeps (`synced`) until a push takes whole. A task GitHub
-  # has all of again, with no push on the way, is no longer marked. A task unlinked from
-  # its issue, or linked to another, no longer hears from the pushes in flight to the
-  # one before, even when the change itself pushes nothing.
-  defp pushes(state, before, items) do
-    {pushes, items} =
-      Enum.reduce(items, {[], items}, fn {id, new}, {pushes, items} ->
-        old = before[id]
-        synced = old && Sync.synced(old, new)
-
-        ops = old && old != new && Sync.pushes(state.settings, synced, new, items, state.projects)
-        marked? = new["synced"] != nil or new["syncError"] != nil
-
-        cond do
-          is_list(ops) and ops != [] ->
-            push = {id, System.unique_integer([:monotonic]), ops, synced}
-            {[push | pushes], Map.put(items, id, Map.put(new, "synced", synced))}
-
-          ops == [] and marked? and not is_map_key(state.pushing, id) ->
-            {pushes, Map.put(items, id, Map.merge(new, %{"synced" => nil, "syncError" => nil}))}
-
-          true ->
-            {pushes, items}
-        end
-      end)
-
-    relinked =
+  # The state with `items`, and what the caller `from` pushes for the tasks they changed
+  # from `before`: each push with the token the state keeps for it in `pushing`, and what
+  # GitHub has of the task, which the task keeps (`synced`) until a push takes whole.
+  # GitHub has at most one push of a task at a time, so they reach it in order: a task
+  # with one on the way pushes nothing, and its runner pushes the change once GitHub
+  # answers (`{:pushed, ...}`). A task unlinked from its issue, linked to another or
+  # removed no longer hears from the push on the way to the one before.
+  defp pushes(state, before, items, from) do
+    gone =
       for {id, old} <- before,
-          old["issue"] != nil and not Plan.same_ref?(old["issue"], items[id]["issue"]),
+          items[id] == nil or
+            (old["issue"] != nil and not Plan.same_ref?(old["issue"], items[id]["issue"])),
           do: id
 
-    latest = Map.new(pushes, fn {id, push, _, _} -> {id, push} end)
-    pushing = state.pushing |> Map.drop(relinked) |> Map.merge(latest)
-    {pushes, %{state | items: items, pushing: pushing}}
+    state = %{state | items: items, pushing: forget(state.pushing, gone)}
+
+    Enum.reduce(items, {[], state}, fn {id, new}, {pushes, state} ->
+      old = before[id]
+
+      cond do
+        old == nil or old == new ->
+          {pushes, state}
+
+        flight = state.pushing[id] ->
+          {pushes, put_in(state.pushing[id], put_elem(flight, 1, true))}
+
+        true ->
+          case next_push(state, id, new, Sync.synced(old, new, before)) do
+            {nil, state} ->
+              {pushes, state}
+
+            {{ops, synced}, state} ->
+              {runner, _} = from
+              token = Process.monitor(runner)
+              state = put_in(state.pushing[id], {token, false})
+              {[{id, token, ops, synced} | pushes], state}
+          end
+      end
+    end)
+  end
+
+  # What GitHub is asked for the task `id`, now `item`, of which it has `synced`:
+  # `{{ops, synced}, state}` with the task keeping `synced` until GitHub answers, or
+  # `{nil, state}` when the plan does not push it, or GitHub has all of it, which clears
+  # its marks.
+  defp next_push(state, id, item, synced) do
+    marked? = item["synced"] != nil or item["syncError"] != nil
+
+    case Sync.pushes(state.settings, synced, item, state.items, state.projects) do
+      [_ | _] = ops ->
+        {{ops, synced}, put_in(state.items[id], Map.put(item, "synced", synced))}
+
+      [] when marked? ->
+        {nil, put_in(state.items[id], Map.merge(item, %{"synced" => nil, "syncError" => nil}))}
+
+      _ ->
+        {nil, put_in(state.items[id], item)}
+    end
+  end
+
+  # `pushing` without the pushes of the tasks `ids`, whose runners it no longer watches.
+  defp forget(pushing, ids) do
+    {gone, pushing} = Map.split(pushing, ids)
+    for {_, {token, _}} <- gone, do: Process.demonitor(token, [:flush])
+    pushing
   end
 
   defp put_run(state, run), do: %{state | runs: prune(Map.put(state.runs, run["id"], run))}

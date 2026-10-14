@@ -33,7 +33,11 @@ ColumnLayout {
     property string dateFieldsProblem: ""
     property bool loaded: false
     property bool dirty: false
+    // From a save until its settings are read back, so Save and Discard never work
+    // from what was read before it.
     property bool saving: false
+    // Counts reads of the settings; only the latest one lands.
+    property int reads: 0
     property string refusal: ""
     property string problem: ""
     readonly property var watched: values.repositories ?? []
@@ -58,10 +62,15 @@ ColumnLayout {
     ]
     readonly property string variables: qsTr("{{today}}, {{plan}}, {{items}}, {{project}} and {{item.id}}, {{item.title}}, {{item.notes}}, {{item.status}}, {{item.start}}, {{item.due}}, {{item.progress}}, {{item.owner}}, {{item.labels}}, {{item.issue}}, {{item.pullRequests}}, {{item.subtasks}} and {{item.after}} are filled in. How to report is added after it.")
 
-    // Reads the saved settings. Given `sent`, the values a save sent, what the user
-    // changed since is kept as unsaved changes on top.
+    // Reads the saved settings and ends a save. Given `sent`, the values a save sent,
+    // what the user changed since is kept as unsaved changes on top. A read answered
+    // after a later one began is dropped: it may predate a save.
     function load(sent) {
+        const read = ++settings.reads;
         settings.plugin.call("settings", {}, (result, error) => {
+            if (read !== settings.reads)
+                return;
+            settings.saving = false;
             if (error) {
                 settings.problem = error;
                 return;
@@ -181,17 +190,18 @@ ColumnLayout {
         return changed;
     }
 
-    // The form stays editable while it saves; the reload keeps what was typed since.
+    // The form stays editable while it saves; the read-back keeps what was typed since.
     function save(values) {
         const sent = Object.assign({}, settings.values);
         settings.saving = true;
         settings.refusal = "";
         settings.plugin.saveSettings(values, (result, error) => {
-            settings.saving = false;
-            if (error)
+            if (error) {
+                settings.saving = false;
                 settings.refusal = error;
-            else
+            } else {
                 settings.load(sent);
+            }
         });
     }
 
