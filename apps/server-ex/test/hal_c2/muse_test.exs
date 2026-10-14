@@ -54,6 +54,14 @@ defmodule HalC2.MuseTest do
     assert %{"optionDescriptors" => []} = Muse.capabilities(%{"variants" => []})
   end
 
+  test "an effort the model does not offer is left to Muse" do
+    capabilities = Muse.capabilities(%{"variants" => ["low", "high"]})
+    assert Muse.effort("high", capabilities) == "high"
+    assert Muse.effort("max", capabilities) == nil
+    assert Muse.effort(nil, capabilities) == nil
+    assert Muse.effort("high", Muse.capabilities(%{"variants" => []})) == nil
+  end
+
   test "full access allows all; everything else prompts" do
     assert Muse.approval_mode("full-access") == "allowAll"
     assert Muse.approval_mode("approval-required") == "promptUnmatched"

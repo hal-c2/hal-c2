@@ -406,6 +406,38 @@ defmodule HalC2.Steps.Providers.Muse do
     })
   end
 
+  step "a Muse Code thread with reasoning set to max on a model that offers low, medium and high",
+       context do
+    context =
+      install(context, %{
+        "models" => [
+          %{
+            "modelId" => "fake/one",
+            "providerId" => "meta",
+            "displayLabel" => "Fake One",
+            "variants" => ~w(low medium high),
+            "defaultReasoningEffort" => "medium"
+          }
+        ]
+      })
+
+    FakeAcp.probe("muse")
+
+    FakeAcp.thread(context, "Work", "full-access", %{
+      "modelSelection" => %{
+        "instanceId" => "muse",
+        "model" => "fake/one",
+        "options" => [%{"id" => "reasoningEffort", "value" => "max"}]
+      }
+    })
+  end
+
+  step "Muse Code runs the turn at the model's own default reasoning", context do
+    assert [params] = received(context, "turn/start")
+    refute Map.has_key?(params, "reasoningEffort")
+    context
+  end
+
   step "Muse Code runs the turn at max reasoning", context do
     assert [%{"reasoningEffort" => "max"}] = received(context, "turn/start")
     context

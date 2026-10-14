@@ -246,4 +246,18 @@ defmodule HalC2.Muse do
 
   @doc "Whether `effort` is a reasoning effort Muse takes."
   def effort?(effort), do: effort in @efforts
+
+  @doc """
+  `effort` if the model whose `capabilities` these are offers it, else nil (Muse uses
+  the model's default).
+  """
+  def effort(effort, capabilities) do
+    options =
+      for %{"id" => "reasoningEffort", "options" => options} <-
+            capabilities["optionDescriptors"] || [],
+          %{"id" => id} <- options,
+          do: id
+
+    if effort in options, do: effort
+  end
 end

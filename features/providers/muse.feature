@@ -114,6 +114,11 @@ Feature: Muse Code
     When the user sends a message to Muse Code
     Then Muse Code runs the turn at max reasoning
 
+  Scenario: A reasoning level the Muse Code model does not offer is left to Muse
+    Given a Muse Code thread with reasoning set to max on a model that offers low, medium and high
+    When the user sends a message to Muse Code
+    Then Muse Code runs the turn at the model's own default reasoning
+
   Scenario: Context usage Muse Code reports after a turn reaches the context meter
     Given Muse Code is installed and enabled
     When Muse Code reports its context usage after the turn has ended

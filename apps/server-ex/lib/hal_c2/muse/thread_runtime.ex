@@ -525,7 +525,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp start(state, turn) do
     attachments = Map.get(turn, :attachments, [])
-    effort = option(turn, "reasoningEffort")
+    effort = effort(state, turn)
 
     params =
       %{
@@ -536,7 +536,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         "workspaceRoots" => [turn.cwd],
         "ifBusy" => "queue"
       }
-      |> then(&if(Muse.effort?(effort), do: Map.put(&1, "reasoningEffort", effort), else: &1))
+      |> then(&if(effort, do: Map.put(&1, "reasoningEffort", effort), else: &1))
 
     case command(state, "turn/start", params) do
       {:ok, %{"turnId" => id}} when id == state.native ->
@@ -559,6 +559,24 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   # The composer's options arrive as option id -> value (`Orchestration` turn fields).
+  # The chosen effort, if the session's model offers it: a choice kept from another
+  # model may not be one this model takes. Without the catalog, any effort Muse knows.
+  defp effort(state, turn) do
+    effort = option(turn, "reasoningEffort")
+    model = if model?(turn.model), do: turn.model, else: state.model
+
+    case HalC2.Acp.entry(Entities.instance(turn.ids)) do
+      %{"models" => models} when is_list(models) ->
+        case Enum.find(models, &(&1["slug"] == model)) do
+          %{"capabilities" => %{} = capabilities} -> Muse.effort(effort, capabilities)
+          _ -> if Muse.effort?(effort), do: effort
+        end
+
+      _ ->
+        if Muse.effort?(effort), do: effort
+    end
+  end
+
   defp option(turn, id) do
     case (Map.get(turn, :options) || %{})[id] do
       value when is_binary(value) -> value
