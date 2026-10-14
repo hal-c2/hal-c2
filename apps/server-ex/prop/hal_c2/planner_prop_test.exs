@@ -11,11 +11,12 @@ defmodule HalC2.PlannerPropTest do
   one that applies them itself; a third, like the first, runs on one task. The commands
   start runs, report through the agent tool (nothing, a task's new due date, the plan's
   health), end turns, retry, dismiss, apply and discard runs, and restart the plugin. One task at a time is linked to an
-  issue of a repository the plan syncs both ways, with a board, and unlinked again;
+  issue of a repository the plan syncs both ways, with a board, relinked to another issue,
+  and unlinked again, by a client that may still show the issue it had before;
   renaming it also moves its due date, pushing both to GitHub from a caller of its own,
   and GitHub takes or refuses those pushes in any order. A push for a task not yet on the
-  board adds it there, and GitHub names the board item after the push. Work on a task starts on a project the MC does not have, so its thread
-  never launches. After every step:
+  board adds it there, and GitHub names the board item after the push. Work on a task starts on a project the MC does not have, or on one whose
+  worktree setup is not running so the launch exits, and its thread never launches. After every step:
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
@@ -36,8 +37,11 @@ defmodule HalC2.PlannerPropTest do
     anything clears it, and a push in flight when the task was unlinked or the plugin
     restarted says nothing;
   - a linked task's board item is the one its latest push added: an older push, or one
-    answered after the task was unlinked, leaves it alone, and unlinking clears it, as
-    does saving the settings with another board, so the next push adds it to that one;
+    answered after the task was unlinked, leaves it alone, and unlinking or relinking
+    clears it, as does saving the settings with another board, so the next push adds it
+    to that one;
+  - an unlink naming an issue the task no longer has leaves it linked, and one naming no
+    issue is refused;
   - work that could not start leaves its task as it was, not started and linked to no
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
@@ -157,7 +161,7 @@ defmodule HalC2.PlannerPropTest do
 
   # --- model ----------------------------------------------------------------------------
 
-  # `items`: slot → %{kind (:task or :milestone), parent, after (slots, in order), due, linked (to its issue), sync
+  # `items`: slot → %{kind (:task or :milestone), parent, after (slots, in order), due, issue (the number it is linked to, or nil), sync
   # (its sync error: nil or {:refused, push}), board (the push that added its board item,
   # 0 for one that took at once, or nil)}. `runs`: k (the order it was asked for,
   # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
@@ -191,10 +195,12 @@ defmodule HalC2.PlannerPropTest do
     parent = oneof([nil | if(present == [], do: [], else: [elements(present)])])
     started = for {k, %{started: true}} <- m.runs, do: k
     asked = Enum.to_list(1..max(m.asked, 1))
-    linked = for {slot, %{linked: true}} <- m.items, do: slot
+    linked = for {slot, %{issue: n}} <- m.items, n != nil, do: slot
     # Switching boards matters most once a task is on one.
     switch = if Enum.any?(m.items, fn {_, item} -> item.board != nil end), do: 6, else: 1
     other = if m.board == @board, do: @other_board, else: @board
+    # So does relinking: the board item is the issue's, not the task's.
+    relink = if Enum.any?(linked, &(m.items[&1].board != nil)), do: 6, else: 1
 
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
@@ -203,10 +209,10 @@ defmodule HalC2.PlannerPropTest do
        {2, {:call, __MODULE__, :remove, [item]}},
        {1,
         {:call, __MODULE__, :malformed,
-         [oneof([:untitled, item, {:link, item}, {:unlink, item}])]}},
+         [oneof([:untitled, item, {:link, item}, {:unlink, item}, {:unnamed, item}])]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
-       {2, {:call, __MODULE__, :work, [item]}},
+       {2, {:call, __MODULE__, :work, [item, oneof(["nowhere", "api"])]}},
        {1, {:call, __MODULE__, :restart, []}},
        {switch, {:call, __MODULE__, :switch_board, [other]}}
      ] ++
@@ -215,7 +221,13 @@ defmodule HalC2.PlannerPropTest do
          else: [
            {8,
             {:call, __MODULE__, :rename, [elements(linked), oneof([:ok, :refused]), m.pushes + 1]}},
-           {1, {:call, __MODULE__, :unlink, [elements(linked)]}}
+           {relink, {:call, __MODULE__, :relink, [elements(linked)]}},
+           {1,
+            {:call, __MODULE__, :unlink,
+             [
+               elements(linked),
+               oneof(Enum.flat_map(linked, &[issue_of(m, &1), other_issue(m, &1)]))
+             ]}}
          ]
        ) ++
        if(m.held != %{},
@@ -256,13 +268,16 @@ defmodule HalC2.PlannerPropTest do
 
   # One task is linked at a time, so no push asks GitHub to relate two issues.
   def precondition(m, {:call, _, :link, [slot]}),
-    do: Map.has_key?(m.items, slot) and not Enum.any?(m.items, fn {_, item} -> item.linked end)
+    do:
+      Map.has_key?(m.items, slot) and
+        not Enum.any?(m.items, fn {_, item} -> item.issue != nil end)
 
-  def precondition(m, {:call, _, :unlink, [slot]}), do: match?(%{linked: true}, m.items[slot])
+  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:relink, :unlink],
+    do: linked?(m, slot)
 
   # A rename names its push, so the push's gate and name stay its own when shrinking.
   def precondition(m, {:call, _, :rename, [slot, _outcome, push]}),
-    do: match?(%{linked: true}, m.items[slot]) and push > m.pushes
+    do: linked?(m, slot) and push > m.pushes
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
   def precondition(m, {:call, _, :switch_board, [board]}), do: board != m.board
@@ -302,7 +317,7 @@ defmodule HalC2.PlannerPropTest do
       parent: parent,
       after: [],
       due: @due,
-      linked: false,
+      issue: nil,
       sync: nil,
       board: nil
     }
@@ -356,15 +371,26 @@ defmodule HalC2.PlannerPropTest do
   end
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
-  defp step(m, {:call, _, :work, [slot]}), do: {ask(m, "work", slot), :ok}
+  defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
 
   defp step(m, {:call, _, :link, [slot]}),
-    do: {m |> put_in([:items, slot, :linked], true) |> pushed(slot), :ok}
+    do: {m |> put_in([:items, slot, :issue], @issues[slot]) |> pushed(slot), :ok}
 
-  # Nothing in flight speaks for a task no longer linked.
-  defp step(m, {:call, _, :unlink, [slot]}) do
-    item = %{m.items[slot] | linked: false, sync: nil, board: nil}
-    {%{put_in(m.items[slot], item) | latest: Map.delete(m.latest, slot)}, :ok}
+  # The board item and sync error of the issue before stay with it.
+  defp step(m, {:call, _, :relink, [slot]}) do
+    item = %{m.items[slot] | issue: other_issue(m, slot), sync: nil, board: nil}
+    {m |> put_in([:items, slot], item) |> pushed(slot), :ok}
+  end
+
+  # Nothing in flight speaks for a task no longer linked. A client that still shows an
+  # issue the task no longer has unlinks nothing.
+  defp step(m, {:call, _, :unlink, [slot, number]}) do
+    if m.items[slot].issue == number do
+      item = %{m.items[slot] | issue: nil, sync: nil, board: nil}
+      {%{put_in(m.items[slot], item) | latest: Map.delete(m.latest, slot)}, :ok}
+    else
+      {m, :ok}
+    end
   end
 
   # The rename waits for GitHub, which will answer `outcome`; until then the task's sync
@@ -506,10 +532,17 @@ defmodule HalC2.PlannerPropTest do
     m |> queue(k) |> pump()
   end
 
+  defp linked?(m, slot), do: match?(%{issue: n} when n != nil, m.items[slot])
+  defp issue_of(m, slot), do: m.items[slot].issue
+
+  # The issue a relink moves the task in `slot` to: the one it was not linked to of two.
+  defp other_issue(m, slot),
+    do: if(m.items[slot].issue == @issues[slot], do: @issues[slot] + 10, else: @issues[slot])
+
   # A change to a linked task that asks GitHub nothing: its push takes at once.
   defp pushed(m, slot) do
     case m.items[slot] do
-      %{linked: true} ->
+      %{issue: n} when n != nil ->
         m = %{m | latest: Map.put(m.latest, slot, {m.gens[slot], :now})}
         put_in(m.items[slot].sync, nil)
 
@@ -522,7 +555,7 @@ defmodule HalC2.PlannerPropTest do
   # it yet; GitHub names that item 0, as it takes at once.
   defp boarded(m, slot) do
     case m.items[slot] do
-      %{linked: true, board: nil} -> put_in(m.items[slot].board, 0)
+      %{issue: n, board: nil} when n != nil -> put_in(m.items[slot].board, 0)
       _ -> m
     end
   end
@@ -647,6 +680,10 @@ defmodule HalC2.PlannerPropTest do
     observe(elem(call("unlink", input), 0))
   end
 
+  # An issue unlinked without naming which.
+  def malformed({:unnamed, slot}),
+    do: observe(elem(call("unlink", %{"itemId" => item_id(slot), "kind" => "issue"}), 0))
+
   def malformed(slot),
     do: observe(elem(call("updateItem", %{"id" => item_id(slot), "fields" => ["title"]}), 0))
 
@@ -676,21 +713,40 @@ defmodule HalC2.PlannerPropTest do
     observe(reply)
   end
 
-  # Work on a project the MC does not have, whose thread cannot launch.
-  def work(slot) do
-    input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "nowhere"}
+  # Work on a project the MC does not have, or on "api", whose launch exits calling the
+  # worktree setup the case does not run; either way its thread cannot launch.
+  def work(slot, project) do
+    input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => project}
     {reply, value} = call("run", input)
     if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
     observe(reply)
   end
 
-  def link(slot) do
-    issue = %{"repository" => @repository, "number" => @issues[slot]}
-    observe(elem(call("link", %{"itemId" => item_id(slot), "issue" => issue}), 0))
+  def link(slot), do: link_to(slot, @issues[slot])
+
+  # Links the task to the issue of the two it is not linked to.
+  def relink(slot) do
+    current = Process.get({:pl_issue, slot})
+    link_to(slot, if(current == @issues[slot], do: @issues[slot] + 10, else: @issues[slot]))
   end
 
-  def unlink(slot),
-    do: observe(elem(call("unlink", %{"itemId" => item_id(slot), "kind" => "issue"}), 0))
+  # Unlinks the issue `number`, the task's or one it had before.
+  def unlink(slot, number) do
+    ref = %{"repository" => @repository, "number" => number}
+    {reply, _} = call("unlink", %{"itemId" => item_id(slot), "kind" => "issue", "ref" => ref})
+
+    if reply == :ok and number == Process.get({:pl_issue, slot}),
+      do: Process.delete({:pl_issue, slot})
+
+    observe(reply)
+  end
+
+  defp link_to(slot, number) do
+    issue = %{"repository" => @repository, "number" => number}
+    {reply, _} = call("link", %{"itemId" => item_id(slot), "issue" => issue})
+    if reply == :ok, do: Process.put({:pl_issue, slot}, number)
+    observe(reply)
+  end
 
   # Renames the task to a name of the push's own and moves its due date, from a caller
   # of its own as another client's would be. GitHub holds the push until `answer/1` lets
@@ -700,7 +756,10 @@ defmodule HalC2.PlannerPropTest do
     gate = gate(push)
 
     gh_rule(%{
-      "args" => ["--method PATCH", "repos/#{@repository}/issues/#{@issues[slot]} "],
+      "args" => [
+        "--method PATCH",
+        "repos/#{@repository}/issues/#{Process.get({:pl_issue, slot})} "
+      ],
       "stdin" => [JSON.encode!(%{"title" => title})],
       "run" => "while [ ! -e '#{gate}' ] && [ -d '#{Path.dirname(gate)}' ]; do sleep 0.01; done",
       "stdout" => "{}",
@@ -871,7 +930,7 @@ defmodule HalC2.PlannerPropTest do
            parent: slots[item["parent"]],
            after: Enum.map(item["after"], &slots[&1]),
            due: item["due"],
-           linked: item["issue"] != nil,
+           issue: item["issue"]["number"],
            sync: sync_error(item["syncError"]),
            board: board_push(item["boardItemId"])
          }}
@@ -1088,7 +1147,10 @@ defmodule HalC2.PlannerPropTest do
       ])
     )
 
-    for {{:pl_push, _} = key, _} <- Process.get(), do: Process.delete(key)
+    for {{tag, _} = key, _} <- Process.get(),
+        tag in [:pl_push, :pl_issue],
+        do: Process.delete(key)
+
     Process.put(:pl_items, %{})
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])

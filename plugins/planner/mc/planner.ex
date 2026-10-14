@@ -264,8 +264,10 @@ defmodule HalC2Plugins.Planner do
   end
 
   def call("unlink", %{"itemId" => id, "kind" => kind} = input, context) do
-    if kind == "pullRequest" and not ref?(input["ref"]),
-      do: {:error, "unlink gives the pull request as {repository, number}."},
+    named = %{"pullRequest" => "pull request", "issue" => "issue"}[kind]
+
+    if named && not ref?(input["ref"]),
+      do: {:error, "unlink gives the #{named} as {repository, number}."},
       else: change({:unlink, id, kind, input["ref"] || input["threadId"]}, context.settings)
   end
 
@@ -741,28 +743,27 @@ defmodule HalC2Plugins.Planner do
      changed(%{state | updates: [update | state.updates]})}
   end
 
-  # How a post to Slack, or the connection, went. Older news than the last is dropped.
+  # How a post to Slack, or the connection, went. An update keeps its post whenever it
+  # is heard; older news of the connection than the last is dropped.
   def handle_call({:slack, update_id, result, at}, _from, state) do
-    if state.slack_at != nil and at < state.slack_at do
-      {:reply, :ok, state}
-    else
-      state =
-        case result do
-          {:ok, posted} ->
-            updates =
-              Enum.map(
-                state.updates,
-                &if(&1["id"] == update_id, do: Map.put(&1, "slack", posted), else: &1)
-              )
+    {problem, posted} =
+      case result do
+        {:ok, posted} -> {nil, posted}
+        {:error, error} -> {error, nil}
+      end
 
-            %{state | slack: nil, slack_at: at, updates: updates}
+    updates =
+      Enum.map(
+        state.updates,
+        &if(posted && &1["id"] == update_id, do: Map.put(&1, "slack", posted), else: &1)
+      )
 
-          {:error, error} ->
-            %{state | slack: error, slack_at: at}
-        end
+    new =
+      if state.slack_at != nil and at < state.slack_at,
+        do: %{state | updates: updates},
+        else: %{state | updates: updates, slack: problem, slack_at: at}
 
-      {:reply, :ok, changed(state)}
-    end
+    {:reply, :ok, if(new == state, do: state, else: changed(new))}
   end
 
   def handle_call({:slack_reply, parent, user, text}, _from, state) do
@@ -954,8 +955,12 @@ defmodule HalC2Plugins.Planner do
              &Enum.reject(&1, fn pr -> Plan.same_ref?(pr, ref) end)
            )}
 
+        # A client that saw another issue than the task has now unlinks nothing.
         "issue" ->
-          {:ok, Map.merge(item, %{"issue" => nil, "boardItemId" => nil, "syncError" => nil})}
+          if Plan.same_ref?(item["issue"], ref),
+            do:
+              {:ok, Map.merge(item, %{"issue" => nil, "boardItemId" => nil, "syncError" => nil})},
+            else: {:ok, item}
 
         "thread" ->
           {:ok, Map.update(item, "threads", [], &List.delete(&1, ref))}
@@ -965,7 +970,10 @@ defmodule HalC2Plugins.Planner do
       end
 
     # A task unlinked from its issue no longer hears from the pushes to it in flight.
-    state = if kind == "issue", do: %{state | pushing: Map.delete(state.pushing, id)}, else: state
+    state =
+      if kind == "issue" and match?({:ok, %{"issue" => nil}}, unlinked),
+        do: %{state | pushing: Map.delete(state.pushing, id)},
+        else: state
 
     case unlinked do
       {:ok, item} -> edit(state, Map.put(state.items, id, item), %{"item" => item})
@@ -1358,6 +1366,14 @@ defmodule HalC2Plugins.Planner do
       GenServer.cast(
         __MODULE__,
         {:start_failed, run["id"], run["threadId"], Exception.message(e)}
+      )
+  catch
+    # A call inside the launch can exit; the run fails rather than holding its slot for good.
+    :exit, reason ->
+      GenServer.cast(
+        __MODULE__,
+        {:start_failed, run["id"], run["threadId"],
+         "The thread could not start: " <> Exception.format_exit(reason)}
       )
   end
 

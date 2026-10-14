@@ -196,6 +196,49 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :reply, reply)
   end
 
+  step "a client unlinks from {string} an issue it does not name", %{args: [title]} = context do
+    input = %{"itemId" => item!(context, title)["id"], "kind" => "issue"}
+    {reply, context} = plugin(context, "unlink", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} is linked to the issue \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    context = ensure(context, title)
+    issue = %{"repository" => repository, "number" => number}
+
+    {reply, context} =
+      plugin(context, "link", %{"itemId" => item!(context, title)["id"], "issue" => issue})
+
+    assert {:ok, _} = reply
+    Map.put(context, :repository, repository)
+  end
+
+  step "another client relinks {string} to the issue \#{int}",
+       %{args: [title, number]} = context do
+    issue = %{"repository" => context.repository, "number" => number}
+
+    {reply, context} =
+      plugin(context, "link", %{"itemId" => item!(context, title)["id"], "issue" => issue})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "a client that still shows \#{int} unlinks it from {string}",
+       %{args: [number, title]} = context do
+    ref = %{"repository" => context.repository, "number" => number}
+    input = %{"itemId" => item!(context, title)["id"], "kind" => "issue", "ref" => ref}
+    {reply, context} = plugin(context, "unlink", input)
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} is linked to the issue \#{int}", %{args: [title, number]} = context do
+    assert %{"issue" => %{"number" => ^number}} = item!(context, title)
+    context
+  end
+
   step "the planner answers {string}", %{args: [message]} = context do
     assert {:error, _, _} = context.reply
     assert inspect(context.reply) =~ message
@@ -975,6 +1018,18 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :run, run)
   end
 
+  # The launch's call to the worktree setup exits, with no process to answer it.
+  step "the MC cannot set up worktrees", context do
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
+    context
+  end
+
+  step "the run is failed saying its thread could not start", context do
+    {run, context} = await_run(context, &(&1["status"] == "failed"))
+    assert run["error"] =~ "The thread could not start"
+    context
+  end
+
   step "the run is failed saying there is no such agent", context do
     {run, context} = await_run(context, &(&1["status"] == "failed"))
     assert run["error"] =~ "There is no agent nowhere"
@@ -1503,6 +1558,14 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user relinks \#{int}'s task to \#{int}", %{args: [number, other]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    issue = %{"repository" => context.repository, "number" => other}
+    {reply, context} = plugin(context, "link", %{"itemId" => task["id"], "issue" => issue})
+    assert {:ok, _} = reply
+    context
+  end
+
   step "{string} syncs {string} both ways", %{args: [@id, repository]} = context do
     context
     |> save(%{"repositories" => [repository], "sync" => "twoWay"})
@@ -1595,7 +1658,11 @@ defmodule HalC2.Steps.Planning.Planner do
        %{args: [number, title]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, title)
-    {reply, context} = plugin(context, "unlink", %{"itemId" => task["id"], "kind" => "issue"})
+    ref = Map.take(task["issue"], ~w(repository number))
+
+    {reply, context} =
+      plugin(context, "unlink", %{"itemId" => task["id"], "kind" => "issue", "ref" => ref})
+
     assert {:ok, _} = reply
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
@@ -1835,6 +1902,39 @@ defmodule HalC2.Steps.Planning.Planner do
     })
 
     context
+  end
+
+  # Both posts fail (a post is tried before postUpdate answers), so neither update is in
+  # Slack until the scenario says it is.
+  step "Slack is down while the updates {string} and {string} are posted",
+       %{args: texts} = context do
+    FakeSlack.available(false)
+
+    {updates, context} =
+      Enum.map_reduce(texts, context, fn text, context ->
+        post_update(context, "at risk", text)
+      end)
+
+    FakeSlack.available(true)
+    Map.put(context, :slack_updates, Map.new(Enum.zip(texts, updates)))
+  end
+
+  # The answers to two posts, heard in the other order: each post's answer is timed
+  # before the planner hears it, so a slow one can arrive after a newer one.
+  step "the planner hears {string} was posted, then that {string} was posted before it",
+       %{args: [later, earlier]} = context do
+    at = System.monotonic_time()
+
+    for {text, at, ts} <- [
+          {later, at, "1700000050.000002"},
+          {earlier, at - 1, "1700000040.000001"}
+        ] do
+      posted = %{"channel" => "CPLAN", "ts" => ts}
+      update = context.slack_updates[text]["id"]
+      :ok = GenServer.call(HalC2Plugins.Planner, {:slack, update, {:ok, posted}, at})
+    end
+
+    Map.put(context, :update, context.slack_updates[earlier])
   end
 
   step "the plan has the feedback {string} from {string} in Slack",

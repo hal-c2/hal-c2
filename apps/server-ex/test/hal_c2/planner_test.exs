@@ -200,6 +200,23 @@ defmodule HalC2.PlannerTest do
       assert [%{"number" => 4, "url" => "https://github.com/acme/api/pull/4", "state" => "open"}] =
                item["pullRequests"]
     end
+
+    test "a task linked to another issue leaves the old issue's board row and failure behind" do
+      issue = fn repository, number ->
+        %{"issue" => %{"repository" => repository, "number" => number}}
+      end
+
+      item =
+        plan([{"a", %{}}])["a"]
+        |> Plan.link(issue.("acme/api", 7), @now)
+        |> Map.merge(%{"boardItemId" => "item-7", "syncError" => "HTTP 422"})
+
+      assert %{"boardItemId" => "item-7", "syncError" => "HTTP 422"} =
+               Plan.link(item, issue.("Acme/API", 7), @now)
+
+      assert %{"issue" => %{"number" => 8}, "boardItemId" => nil, "syncError" => nil} =
+               Plan.link(item, issue.("acme/api", 8), @now)
+    end
   end
 
   describe "an agent's changes" do

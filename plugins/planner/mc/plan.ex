@@ -522,7 +522,11 @@ defmodule HalC2Plugins.Planner.Plan do
       "state" => ref["state"] || "open"
     }
 
-    %{item | "issue" => issue, "updatedAt" => now}
+    # The board row and the failure belong to the issue the task was linked to before.
+    stale =
+      if same_ref?(item["issue"], ref), do: %{}, else: %{"boardItemId" => nil, "syncError" => nil}
+
+    item |> Map.merge(stale) |> Map.merge(%{"issue" => issue, "updatedAt" => now})
   end
 
   def link(item, _fields, _now), do: item

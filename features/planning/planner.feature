@@ -69,7 +69,16 @@ Feature: Planner
       Then the planner answers "link gives a pullRequest or an issue as {repository, number}, or a threadId."
       When a client unlinks from "Rate limits" a pull request whose repository is not text
       Then the planner answers "unlink gives the pull request as {repository, number}."
+      When a client unlinks from "Rate limits" an issue it does not name
+      Then the planner answers "unlink gives the issue as {repository, number}."
       And "Rate limits" is linked to #12
+
+    @mc
+    Scenario: A client that still shows a task's old issue does not unlink its new one
+      Given "Rate limits" is linked to the issue #7 of "acme/api"
+      And another client relinks "Rate limits" to the issue #8
+      When a client that still shows #7 unlinks it from "Rate limits"
+      Then "Rate limits" is linked to the issue #8
 
     @mc
     Scenario: A task moves from one milestone to another in one step
@@ -513,6 +522,13 @@ Feature: Planner
       And "API" is not started and no thread is linked to it
 
     @mc
+    Scenario: Work whose thread cannot be set up fails rather than holding its turn
+      Given the MC cannot set up worktrees
+      When the user starts work on "API"
+      Then the run is failed saying its thread could not start
+      And "API" is not started and no thread is linked to it
+
+    @mc
     Scenario: Work waiting its turn fails if its task is removed first
       Given "planner" runs one action at a time
       And the user started work on "API"
@@ -735,6 +751,13 @@ Feature: Planner
       Then GitHub is asked to add #7 to "acme/4" and set its "Target date" to "2026-11-09"
 
     @mc
+    Scenario: A task relinked to another issue is added to the board before its dates are set
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      When the user relinks #7's task to #8
+      And the user moves #8's task to end on "2026-11-09"
+      Then GitHub is asked to add #8 to "acme/3" and set its "Target date" to "2026-11-09"
+
+    @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways
       And the plan has "Docs" in "api"
@@ -843,6 +866,13 @@ Feature: Planner
     Scenario: A reply to a posted update becomes feedback on the plan
       Given the update "Docs slip a week" was posted to "#planning"
       When "dana" replies "Can API wait too?" in its thread
+      Then the plan has the feedback "Can API wait too?" from "dana" in Slack
+
+    @mc
+    Scenario: An update keeps its Slack post when the answer to a later post is heard first
+      Given Slack is down while the updates "Docs slip a week" and "API is back" are posted
+      When the planner hears "API is back" was posted, then that "Docs slip a week" was posted before it
+      And "dana" replies "Can API wait too?" in its thread
       Then the plan has the feedback "Can API wait too?" from "dana" in Slack
 
     @mc
