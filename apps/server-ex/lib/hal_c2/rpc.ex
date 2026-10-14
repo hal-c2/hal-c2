@@ -158,6 +158,7 @@ defmodule HalC2.Rpc do
   def handle("device.shutdown", input), do: HalC2.Devices.shutdown(input)
   def handle("device.detail", input), do: HalC2.Devices.detail(input)
   def handle("device.action", input), do: HalC2.Devices.action(input)
+  def handle("slack." <> method, input), do: HalC2.Slack.handle(method, input)
   def handle("scheduledTasks.list", input), do: HalC2.ScheduledTasks.list(input)
   def handle("scheduledTasks.upsert", input), do: HalC2.ScheduledTasks.upsert(input)
   def handle("scheduledTasks.delete", input), do: HalC2.ScheduledTasks.delete(input)
@@ -308,6 +309,7 @@ defmodule HalC2.Rpc do
     sourceControl.lookupRepository projects.listEntries projects.readFile
     projects.searchContents projects.searchEntries filesystem.browse agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
+    slack.status slack.manifest
   )
   @pull_request_writes ~w(
     runAction update comment updateComment submitReview replyToThread setThreadResolution

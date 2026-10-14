@@ -9,14 +9,17 @@
 #   apps/server/src/device/deviceToolMaintenance.test.ts, DeviceToolchain.test.ts (prune safety, the
 #     maintenance lock, completion marks, failed installs)
 #   apps/server-ex/lib/hal_c2/rpc.ex (device.configure, device.list)
+#   apps/server-ex/lib/hal_c2/slack.ex (the MC's Slack connection; tokens in the secret store)
+#   apps/desktop-qt Settings → Integrations → Slack
 #   Ownership: this file is the only settings file for "Open links in", browser profiles and
 #   auto-show floating preview (browser-import.feature covers importing cookies into a profile).
 #   Terminal font and theme belong to the Appearance page in navigation/appearance.feature
 #   (Fonts and text) and terminal/links-and-graphics.feature; no settings/ file repeats them.
 
 Feature: Integrations settings
-  The Integrations page holds the built-in browser's defaults for this device and the device
-  hub that lets the user and agents use simulators and emulators on an environment.
+  The Integrations page holds the built-in browser's defaults for this device, the device
+  hub that lets the user and agents use simulators and emulators on an environment, and
+  the environment's Slack connection, which plugins use to post and listen in Slack.
 
   Background:
     Given the user has opened the Integrations settings
@@ -550,3 +553,92 @@ Feature: Integrations settings
       Then the control reads "Versions unavailable"
       When the user opens the device tools' version details
       Then it says "Host unreachable"
+
+  Rule: An environment connects to one Slack workspace for its plugins
+    # The connection belongs to the MC: one Slack app (bot token and Socket Mode app token)
+    # per environment, lent to the plugins granted slack:read or slack:write.
+
+    @mc @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user connects Slack with the app's tokens
+      When the user enters a Slack bot token and app token and connects
+      Then Slack shows as connected to the workspace "acme" as the bot "HAL"
+      And the tokens show as set but are never shown again
+
+    @mc @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: Tokens Slack refuses leave Slack disconnected
+      When the user connects Slack with a bot token Slack refuses
+      Then Slack shows as not connected with Slack's reason "invalid_auth"
+
+    # Each token answers for itself; Slack's Socket Mode hello names the app token's app.
+    @mc
+    Scenario: A bot token and an app token from two Slack apps leave Slack disconnected
+      When the user connects Slack with a bot token of one Slack app and an app token of another
+      Then Slack shows as not connected with Slack's reason "belong to different Slack apps"
+
+    @mc @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user disconnects Slack
+      Given Slack is connected
+      When the user disconnects Slack
+      Then Slack shows as not connected
+      And the tokens are forgotten
+      And plugins are told Slack is not connected
+
+    # Only Slack refusing the tokens forgets them; Slack being down or busy is waited out.
+    @mc
+    Scenario Outline: A dropped connection comes back on its own
+      Given Slack is connected
+      When the Socket Mode connection drops while <Slack is down>
+      Then Slack shows as reconnecting with why it could not connect
+      And the tokens are kept
+      And it shows as connected again once Slack answers
+
+      Examples:
+        | Slack is down                         |
+        | Slack cannot be reached               |
+        | Slack says it is rate limiting the MC |
+        | Slack says it had an internal error   |
+
+    # A client keeps one connection to an MC, and each of its windows its own
+    # Integrations page on it.
+    @mc
+    Scenario: Two Integrations pages on one connection each follow Slack
+      Given Slack is connected
+      And two Integrations pages on one connection show Slack
+      When one of the pages is closed
+      And the user disconnects Slack
+      Then the other page shows Slack as not connected
+      And the closed page is told nothing
+
+    @mc
+    Scenario: The connection survives a restart of the MC
+      Given Slack is connected
+      When the MC restarts
+      Then Slack connects again with the stored tokens
+
+    @mc
+    Scenario Outline: The Slack app manifest hears replies in every kind of conversation the bot reads
+      When the MC is asked for the Slack app manifest
+      Then it asks for "<kind>:read" and "<kind>:history" and subscribes to "message.<kind>"
+
+      Examples:
+        | kind     |
+        | channels |
+        | groups   |
+        | im       |
+        | mpim     |
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The page shows how to make the Slack app
+      When the user opens the Slack section
+      Then it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs
+
+    # The MC turns the page down when HalC2.Slack is not running or the MC serving the
+    # environment is out of reach, and follows nothing for it until the user asks again.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The Slack section that could not load says why and tries again
+      Given Slack is connected
+      And the MC cannot reach the environment's Slack connection
+      When the user opens the Slack section
+      Then the user is told Slack could not load, and why
+      When the MC can reach it again and the user tries again
+      Then Slack shows as connected to the workspace "acme" as the bot "HAL"

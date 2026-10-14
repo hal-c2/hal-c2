@@ -55,3 +55,4 @@ export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./plugin.ts";
+export * from "./slack.ts";

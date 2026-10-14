@@ -347,6 +347,22 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # A change sent before a subscription was made is older than the status it answered.
+  def handle_info({:hal_c2_slack, mc, refs, status}, state) do
+    subs = Map.get(state.by_terminal, {:slack, mc}, %{})
+
+    case for({id, ref} <- subs, ref in refs, do: id) do
+      [] ->
+        {:ok, state}
+
+      ids ->
+        frames =
+          for id <- ids, do: Protocol.encode(%{"t" => "slack", "id" => id, "status" => status})
+
+        {:push, frames, state}
+    end
+  end
+
   def handle_info({:hal_c2_project_clones, mc, clones}, state) do
     case state.by_terminal do
       %{{:project_clones, ^mc} => id} ->
@@ -887,6 +903,27 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # Several subscriptions on one socket (a page in each window) may watch one MC's
+  # Slack, each under a ref of its own that its unsub lets go of, so an unsubscribe
+  # cast landing after the next subscribe cannot drop it.
+  defp subscribe(state, id, {:slack, mc} = shape, _offset) do
+    ref = make_ref()
+
+    case remote(mc, HalC2.Slack, :subscribe, [self(), ref]) do
+      {:ok, {:ok, status}} ->
+        {:push, Protocol.encode(%{"t" => "slack", "id" => id, "status" => status}),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal:
+               Map.update(state.by_terminal, shape, %{id => ref}, &Map.put(&1, id, ref))
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
   defp subscribe(state, id, {:project_clones, mc} = shape, _offset) do
     case remote(mc, HalC2.ProjectClones, :subscribe, [self()]) do
       {:ok, {:ok, clones}} ->
@@ -1369,6 +1406,17 @@ defmodule HalC2.Web.Socket do
       {{:devices, mc} = shape, subs} ->
         :erpc.cast(mc, HalC2.Devices, :unsubscribe, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+      {{:slack, mc} = shape, subs} ->
+        {ref, refs} = Map.pop(Map.fetch!(state.by_terminal, shape), id)
+        :erpc.cast(mc, HalC2.Slack, :unsubscribe, [self(), ref])
+
+        by_terminal =
+          if refs == %{},
+            do: Map.delete(state.by_terminal, shape),
+            else: Map.put(state.by_terminal, shape, refs)
+
+        %{state | subs: subs, by_terminal: by_terminal}
 
       {{:project_clones, mc}, subs} ->
         :erpc.cast(mc, HalC2.ProjectClones, :unsubscribe, [self()])

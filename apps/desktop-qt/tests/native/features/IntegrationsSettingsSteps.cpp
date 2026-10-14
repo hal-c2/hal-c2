@@ -1,12 +1,19 @@
-// The native Integrations settings section (DeviceSettingsController): the
-// @desktop device scenarios of features/settings/integrations.feature. The
-// MC fakes HalC2.Devices: its DeviceServiceState follows each environment's
-// settings document, `device.configure` saves there, and its own state goes
-// to `devices` watchers.
+// The native Integrations settings section (DeviceSettingsController and
+// SlackSettingsController): the @desktop device and Slack scenarios of
+// features/settings/integrations.feature. The MC fakes HalC2.Devices: its
+// DeviceServiceState follows each environment's settings document,
+// `device.configure` saves there, and its own state goes to `devices`
+// watchers. It fakes HalC2.Slack too: `slack.connect` takes any tokens but a
+// refused bot token, and its status goes to `slack` watchers, unless the MC
+// turns the shape down as one that cannot reach HalC2.Slack does.
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
+
+#include <algorithm>
 
 #include "FakeConfig.h"
 #include "Harness.h"
@@ -114,6 +121,84 @@ const FakeMc::Extension devices([](FakeMc& mc) {
   });
 });
 
+// HalC2.Slack on the MC: the tokens it holds and the status it shows.
+struct FakeSlack {
+  QString botToken, appToken;
+  QString state = QStringLiteral("off");
+  QString error;
+};
+
+// While set, why the MC turns the slack shape down.
+struct SlackUnreachable {
+  QString reason;
+};
+
+const QString kRefusedBot = QStringLiteral("xoxb-refused");
+const QString kUnreachable = QStringLiteral("MC unavailable: noconnection");
+const QString kBotToken = QStringLiteral("xoxb-desktop-bot");
+const QString kAppToken = QStringLiteral("xapp-desktop-app");
+
+QJsonObject slackStatus(FakeMc& mc) {
+  const FakeSlack& fake = mc.part<FakeSlack>();
+  const bool up = fake.state == QLatin1String("connected");
+  const auto either = [up](const QString& value) { return up ? QJsonValue(value) : QJsonValue(QJsonValue::Null); };
+  return {{QStringLiteral("state"), fake.state},
+          {QStringLiteral("team"), either(QStringLiteral("acme"))},
+          {QStringLiteral("teamId"), either(QStringLiteral("T0ACME"))},
+          {QStringLiteral("bot"), either(QStringLiteral("HAL"))},
+          {QStringLiteral("botUserId"), either(QStringLiteral("UHAL"))},
+          {QStringLiteral("error"), fake.error.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(fake.error)},
+          {QStringLiteral("tokensSet"), !fake.botToken.isEmpty()}};
+}
+
+void slackBroadcast(FakeMc& mc) {
+  for (const int id : mc.subscribers(QStringLiteral("slack"))) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), slackStatus(mc)}});
+  }
+}
+
+// The scopes, events and Socket Mode of HalC2.Slack.manifest/0, in short.
+const QString kManifest = QStringLiteral(
+    "display_information:\n  name: HAL-C2\nfeatures:\n  bot_user:\n    display_name: HAL-C2\noauth_config:\n  scopes:\n    bot:\n"
+    "      - app_mentions:read\n      - channels:history\n      - channels:read\n      - chat:write\n      - commands\n      - users:read\n"
+    "settings:\n  event_subscriptions:\n    bot_events:\n      - app_mention\n      - message.channels\n  socket_mode_enabled: true\n");
+
+const FakeMc::Extension slack([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("slack"), [&mc](int id, const QJsonObject&) {
+    if (const QString reason = mc.part<SlackUnreachable>().reason; !reason.isEmpty()) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), reason}});
+      mc.forget(id);
+      return;
+    }
+    mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), slackStatus(mc)}});
+  });
+  mc.onRpc(QStringLiteral("slack."), [&mc](const FakeMc::Rpc& rpc) {
+    FakeSlack& fake = mc.part<FakeSlack>();
+    if (rpc.method == QLatin1String("slack.connect")) {
+      const QString bot = rpc.payload.value(QLatin1String("botToken")).toString();
+      if (bot == kRefusedBot) {
+        fake = {};
+        fake.state = QStringLiteral("failed");
+        fake.error = QStringLiteral("Slack refused the bot token: invalid_auth");
+        mc.refuse(rpc, fake.error);
+      } else {
+        fake = {bot, rpc.payload.value(QLatin1String("appToken")).toString(), QStringLiteral("connected"), {}};
+        mc.reply(rpc, slackStatus(mc));
+      }
+    } else if (rpc.method == QLatin1String("slack.disconnect")) {
+      fake = {};
+      mc.reply(rpc, slackStatus(mc));
+    } else if (rpc.method == QLatin1String("slack.manifest")) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("manifest"), kManifest}});
+      return;
+    } else {
+      mc.reply(rpc, slackStatus(mc));
+      return;
+    }
+    slackBroadcast(mc);
+  });
+});
+
 QVariantMap section(World& world) {
   return world.state(QStringLiteral("deviceSettings")).toMap();
 }
@@ -129,6 +214,37 @@ void ready(World& world) {
   if (!(navigation->route() == integrations)) navigation->open(integrations);
   world.waitFor([&] { return section(world).value(QStringLiteral("open")).toBool() && section(world).value(QStringLiteral("loaded")).toBool(); },
                 [&] { return QStringLiteral("the device settings to load; they are %1").arg(show(section(world))); });
+}
+
+QVariantMap slackSection(World& world) {
+  return world.state(QStringLiteral("slackSettings")).toMap();
+}
+
+// Connects once the Givens have set the MC up, then waits for the Slack section
+// to load, or to fail to.
+void slackReady(World& world) {
+  if (world.shellSubscriptions() == 0) {
+    world.connect();
+    world.sync();
+  }
+  auto* navigation = world.native().controller<NavigationController>();
+  const NavigationController::Route integrations = NavigationController::Route::settings(QStringLiteral("/settings/integrations"));
+  if (!(navigation->route() == integrations)) navigation->open(integrations);
+  world.waitFor([&] {
+    const QVariantMap slack = slackSection(world);
+    return slack.value(QStringLiteral("open")).toBool() && (slack.value(QStringLiteral("loaded")).toBool() || slack.value(QStringLiteral("failed")).toBool());
+  }, [&] { return QStringLiteral("the Slack settings to load; they are %1").arg(show(slackSection(world))); });
+}
+
+void slackConnect(World& world, const QString& bot) {
+  slackReady(world);
+  world.waitFor([&] { return slackSection(world).value(QStringLiteral("editable")).toBool(); },
+                [&] { return QStringLiteral("Slack to be editable; the section is %1").arg(show(slackSection(world))); });
+  world.bridge().dispatch(QStringLiteral("slackSettings.connect"), QVariantMap{{QStringLiteral("botToken"), bot}, {QStringLiteral("appToken"), kAppToken}});
+}
+
+bool slackCalled(World& world, const QString& method) {
+  return std::any_of(world.mc.calls.cbegin(), world.mc.calls.cend(), [&](const FakeMc::Rpc& rpc) { return rpc.method == method; });
 }
 
 void chooseAllEnvironments(World& world) {
@@ -259,6 +375,92 @@ const Steps steps([] {
   step(QStringLiteral("the user is told to select an environment to inspect its simulator support"), [](World& world, const Captures&, const Table&) {
     expect(section(world).value(QStringLiteral("statusNote")).toString().endsWith(QLatin1String("Select an environment to inspect its simulator support.")),
            QStringLiteral("the note; the section is %1").arg(show(section(world))));
+  });
+
+  step(QStringLiteral("Slack is connected"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeSlack>() = {kBotToken, kAppToken, QStringLiteral("connected"), {}};
+  });
+  step(QStringLiteral("the user enters a Slack bot token and app token and connects"), [](World& world, const Captures&, const Table&) {
+    slackConnect(world, kBotToken);
+  });
+  step(QStringLiteral("the user connects Slack with a bot token Slack refuses"), [](World& world, const Captures&, const Table&) {
+    slackConnect(world, kRefusedBot);
+  });
+  step(QStringLiteral("Slack shows as connected to the workspace %1 as the bot %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap slack = slackSection(world);
+      return slack.value(QStringLiteral("state")) == QLatin1String("connected") && slack.value(QStringLiteral("team")) == c[0] &&
+             slack.value(QStringLiteral("bot")) == c[1] && slack.value(QStringLiteral("pending")).toString().isEmpty();
+    }, [&] { return QStringLiteral("Slack to show as connected; the section is %1").arg(show(slackSection(world))); });
+  });
+  step(QStringLiteral("the tokens show as set but are never shown again"), [](World& world, const Captures&, const Table&) {
+    const FakeSlack& fake = world.mc.part<FakeSlack>();
+    expect(fake.botToken == kBotToken && fake.appToken == kAppToken, QStringLiteral("the MC to have been given both tokens"));
+    const QVariantMap slack = slackSection(world);
+    const QString shown = show(slack);
+    expect(slack.value(QStringLiteral("tokensSet")).toBool() && !shown.contains(kBotToken) && !shown.contains(kAppToken),
+           QStringLiteral("the tokens to show only as set; the section is %1").arg(shown));
+  });
+  step(QStringLiteral("Slack shows as not connected with Slack's reason %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap slack = slackSection(world);
+      return slack.value(QStringLiteral("state")) == QLatin1String("failed") && slack.value(QStringLiteral("error")).toString().endsWith(c[0]) &&
+             !slack.value(QStringLiteral("tokensSet")).toBool() && slack.value(QStringLiteral("pending")).toString().isEmpty();
+    }, [&] { return QStringLiteral("Slack to show Slack's reason; the section is %1").arg(show(slackSection(world))); });
+  });
+  step(QStringLiteral("the user disconnects Slack"), [](World& world, const Captures&, const Table&) {
+    slackReady(world);
+    world.waitFor([&] { return slackSection(world).value(QStringLiteral("tokensSet")).toBool() && slackSection(world).value(QStringLiteral("editable")).toBool(); },
+                  [&] { return QStringLiteral("Slack to be connected; the section is %1").arg(show(slackSection(world))); });
+    world.bridge().dispatch(QStringLiteral("slackSettings.disconnect"), QVariantMap{});
+  });
+  step(QStringLiteral("Slack shows as not connected"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap slack = slackSection(world);
+      return slack.value(QStringLiteral("state")) == QLatin1String("off") && slack.value(QStringLiteral("team")).toString().isEmpty() &&
+             slack.value(QStringLiteral("pending")).toString().isEmpty();
+    }, [&] { return QStringLiteral("Slack to show as not connected; the section is %1").arg(show(slackSection(world))); });
+  });
+  step(QStringLiteral("the tokens are forgotten"), [](World& world, const Captures&, const Table&) {
+    expect(world.mc.part<FakeSlack>().botToken.isEmpty() && !slackSection(world).value(QStringLiteral("tokensSet")).toBool(),
+           QStringLiteral("the tokens to be gone; the section is %1").arg(show(slackSection(world))));
+  });
+  // The MC tells its plugins (mix features proves that); here, that the MC was asked.
+  step(QStringLiteral("plugins are told Slack is not connected"), [](World& world, const Captures&, const Table&) {
+    expect(slackCalled(world, QStringLiteral("slack.disconnect")), QStringLiteral("the MC to have been asked to disconnect Slack"));
+  });
+  step(QStringLiteral("the user opens the Slack section"), [](World& world, const Captures&, const Table&) {
+    QGuiApplication::clipboard()->clear();
+    slackReady(world);
+  });
+  step(QStringLiteral("the MC cannot reach the environment's Slack connection"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<SlackUnreachable>().reason = kUnreachable;
+  });
+  step(QStringLiteral("the user is told Slack could not load, and why"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap slack = slackSection(world);
+    expect(slack.value(QStringLiteral("failed")).toBool() && slack.value(QStringLiteral("error")) == kUnreachable &&
+               !slack.value(QStringLiteral("loaded")).toBool() && !slack.value(QStringLiteral("editable")).toBool(),
+           QStringLiteral("Slack to have failed to load with the MC's reason; the section is %1").arg(show(slack)));
+  });
+  step(QStringLiteral("the MC can reach it again and the user tries again"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<SlackUnreachable>().reason.clear();
+    world.bridge().dispatch(QStringLiteral("slackSettings.retry"), QVariantMap{});
+  });
+  step(QStringLiteral("it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("slackSettings.copyManifest"), QVariantMap{});
+    world.waitFor([] { return QGuiApplication::clipboard()->text() == kManifest; },
+                  [] { return QStringLiteral("the manifest to be copied; the clipboard holds %1").arg(QGuiApplication::clipboard()->text()); });
+    const QString copied = QGuiApplication::clipboard()->text();
+    for (const QString& needed : {QStringLiteral("app_mentions:read"), QStringLiteral("chat:write"), QStringLiteral("commands"),
+                                  QStringLiteral("app_mention"), QStringLiteral("socket_mode_enabled: true")}) {
+      expect(copied.contains(needed), QStringLiteral("the manifest to name %1").arg(needed));
+    }
+    world.waitFor([&] {
+      for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+        if (toast.toMap().value(QStringLiteral("title")) == QLatin1String("Slack app manifest copied")) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("the copy to be confirmed; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
   });
 });
 

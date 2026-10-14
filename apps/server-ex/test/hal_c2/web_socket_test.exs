@@ -1,7 +1,7 @@
 defmodule HalC2.Web.SocketTest do
   use ExUnit.Case, async: false
 
-  alias HalC2.Test.WsClient
+  alias HalC2.Test.{LateUnsubscribe, WsClient}
 
   @moduletag :tmp_dir
 
@@ -421,5 +421,121 @@ defmodule HalC2.Web.SocketTest do
 
     assert {%{"t" => "config.usageLimitSources", "id" => 3, "sources" => [^source]}, _} =
              WsClient.recv(client, 1_000)
+  end
+
+  @tag :capture_log
+  test "two subscriptions to Slack on one socket each follow it until their own unsub", %{
+    port: port
+  } do
+    :ok = HalC2.Test.FakeSlack.start()
+    start_supervised!(HalC2.Slack)
+    shape = %{"type" => "slack", "mc" => Atom.to_string(node())}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => shape})
+
+    {[{1, "off"}, {2, "off"}], client} = slack_frames(client)
+
+    {:ok, _} =
+      HalC2.Slack.connect(%{
+        "botToken" => HalC2.Test.FakeSlack.bot_token(),
+        "appToken" => HalC2.Test.FakeSlack.app_token()
+      })
+
+    {frames, client} = slack_frames(client)
+
+    assert Enum.sort(frames) == [
+             {1, "connected"},
+             {1, "connecting"},
+             {2, "connected"},
+             {2, "connecting"}
+           ]
+
+    # One page going leaves the other watching.
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> slack_frames()
+    {:ok, _} = HalC2.Slack.disconnect()
+    assert {[{2, "off"}], client} = slack_frames(client)
+
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 2}) |> slack_frames()
+
+    {:error, _} =
+      HalC2.Slack.connect(%{"botToken" => "xoxb-revoked", "appToken" => "xapp-revoked"})
+
+    assert {[], _} = slack_frames(client)
+  end
+
+  # A page closed and opened again: the unsub's :erpc.cast may reach HalC2.Slack only
+  # after the new page's subscribe, and must not stop that one being told.
+  @tag :capture_log
+  test "a Slack unsubscribe landing after the next subscribe leaves that one watching", %{
+    port: port
+  } do
+    :ok = HalC2.Test.FakeSlack.start()
+    start_supervised!(HalC2.Slack)
+    gate = LateUnsubscribe.install(HalC2.Slack)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "slack", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {[{1, "off"}], client} = slack_frames(client)
+
+    LateUnsubscribe.arm(gate)
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> slack_frames()
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {[{2, "off"}], client} = slack_frames(client)
+
+    {:ok, _} =
+      HalC2.Slack.connect(%{
+        "botToken" => HalC2.Test.FakeSlack.bot_token(),
+        "appToken" => HalC2.Test.FakeSlack.app_token()
+      })
+
+    assert {[{2, "connecting"}, {2, "connected"}], _} = slack_frames(client)
+  end
+
+  # A page closed and opened again while Slack connects: the changes the socket was sent
+  # for the closed page, still in its mailbox, are older than the new page's snapshot.
+  @tag :capture_log
+  test "a Slack status sent before a resubscribe does not follow its snapshot", %{port: port} do
+    :ok = HalC2.Test.FakeSlack.start()
+    start_supervised!(HalC2.Slack)
+    gate = LateUnsubscribe.install(HalC2.Slack)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "slack", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {[{1, "off"}], client} = slack_frames(client)
+
+    LateUnsubscribe.arm(gate, hold: true)
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> slack_frames()
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    assert_receive :subscribe_held, 5_000
+
+    {:ok, _} =
+      HalC2.Slack.connect(%{
+        "botToken" => HalC2.Test.FakeSlack.bot_token(),
+        "appToken" => HalC2.Test.FakeSlack.app_token()
+      })
+
+    LateUnsubscribe.release(gate)
+    assert {[{2, "connected"}], _} = slack_frames(client)
+  end
+
+  # The Slack frames that came before the pong answering a ping sent now, as
+  # {id, state}. HalC2.Slack may answer a change before it tells the socket, so the
+  # ping waits for it to finish the change first.
+  defp slack_frames(client) do
+    HalC2.Slack.status()
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
+
+    {for(%{"t" => "slack", "id" => id, "status" => status} <- frames, do: {id, status["state"]}),
+     client}
   end
 end

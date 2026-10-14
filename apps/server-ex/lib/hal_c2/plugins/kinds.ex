@@ -250,8 +250,14 @@ defmodule HalC2.Plugins.Extension do
     * `call(method, input, context)`: answers its UI parts (`plugins.call`) with
       `{:ok, json}` or `{:error, message}`.
     * `handle_event(event, context)`: a turn finished in a thread the plugin started,
-      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`. Runs
-      in a process of its own, so it may take its time.
+      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`; with
+      `slack:read`, what happens in the MC's Slack (`HalC2.Slack.Bot`):
+      `%{"type" => "slack.mention", "channel", "user", "userName", "text", "ts",
+      "threadTs"}`, `slack.reply` (the same, in the thread of a message the bot posted,
+      plus `"parentTs"`), `%{"type" => "slack.command", "command", "text", "user",
+      "userName", "channel", "responseUrl"}` and `%{"type" => "slack.status",
+      "connected"}`. Each runs in a process of its own, so it may take its time;
+      `slack.status` events reach a plugin one at a time, in the order they happened.
     * `agent_tools(context)` and `call_agent_tool(name, arguments, context)`: tools
       offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
       plugin was granted `agentTools`. The context names the thread whose agent is

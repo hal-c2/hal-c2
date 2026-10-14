@@ -137,4 +137,22 @@ defmodule HalC2.Plugins.Host do
        "#{id} was not granted the permission to #{String.downcase(HalC2.Plugins.Package.permission_label(permission))} (#{permission})."}
     end
   end
+
+  @doc """
+  The MC's Slack connection (`HalC2.Slack`), as the bot. Reads need `slack:read`:
+  `"status"` → `%{"connected", "team", "bot", "botUserId"}`, `"channels"` →
+  `%{"channels" => [%{"id", "name", "private"}]}` (the bot's), `"replies"`
+  `%{channel, ts}` → `%{"messages" => [message]}` (the parent and every reply), `"user"` `%{user}` →
+  `%{"id", "name", "realName"}`. Writes need `slack:write`: `"post"` `%{channel, text,
+  threadTs?, blocks?}` and `"update"` `%{channel, ts, text, blocks?}` →
+  `%{"channel", "ts"}`, `"respond"` `%{responseUrl, text}` (seen only by who ran the
+  slash command) and `"react"` `%{channel, ts, name}` → `%{"ok" => true}`. A channel is an
+  id or `"#name"`; a message is `%{"channel", "ts", "threadTs", "user", "userName",
+  "text", "botId"}`. Errors: `"Slack is not connected on this MC."` and
+  `"Slack refused it: <Slack's error>"`.
+  """
+  def slack(id, method, input) do
+    permission = if HalC2.Slack.write?(method), do: "slack:write", else: "slack:read"
+    with :ok <- permit(id, permission), do: HalC2.Slack.call(method, input)
+  end
 end

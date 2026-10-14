@@ -58,6 +58,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.generate/3" => "runs a plugin's text generation in the caller's process",
       "HalC2.Plugins.pull_requests/2" => "asks a plugin's git host in the caller's process",
       "HalC2.Plugins.turn_finished/2" => "tells the plugins of a finished turn, in a task",
+      "HalC2.Plugins.slack_event/2" =>
+        "hands a Slack event to the plugins granted slack:read, each in a task after the last",
       "HalC2.Plugins.publish/3" => @topics,
       "HalC2.Plugins.subscribe_topic/3" => @topics,
       "HalC2.Plugins.unsubscribe_topic/3" => @topics,

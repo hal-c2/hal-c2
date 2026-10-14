@@ -7,11 +7,15 @@ import HalC2.Shell
 
 // Settings → Integrations, natively (DeviceSettingsController's
 // `deviceSettings`): the device hub and agent device access on the selected
-// environments, and one environment's device status.
+// environments, and one environment's device status. Then the environment's
+// Slack connection (SlackSettingsController's `slackSettings`), which its
+// plugins post and listen through.
 SettingsPage {
     id: page
 
     readonly property var settings: Shell.state.deviceSettings ?? null
+    readonly property var slack: Shell.state.slackSettings ?? null
+    readonly property bool slackIdle: (slack?.pending ?? "") === ""
     readonly property bool idle: (settings?.pending ?? "") === ""
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warning", "#fbbf24")
@@ -268,6 +272,138 @@ SettingsPage {
                 text: page.settings?.pending === "retry" ? qsTr("Retrying…") : qsTr("Retry")
                 onClicked: page.send("retry", { hostId: host.modelData.id })
             }
+        }
+    }
+
+    Label {
+        Layout.topMargin: 12
+        text: qsTr("Slack")
+        color: page.muted
+        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.weight: Font.DemiBold
+    }
+
+    // The tokens are sent once and cleared: the MC keeps them, and the page
+    // only learns that they are set.
+    ColumnLayout {
+        id: slackSection
+
+        function connectSlack() {
+            Shell.dispatch("slackSettings.connect", { botToken: slackBot.text, appToken: slackApp.text });
+            slackBot.clear();
+            slackApp.clear();
+        }
+
+        objectName: "slack"
+        Layout.fillWidth: true
+        spacing: 8
+
+        Caption {
+            text: qsTr("Connect this environment to one Slack workspace. Plugins you allow to read or write Slack use it to post, follow threads and answer their own slash commands.")
+        }
+
+        Caption {
+            objectName: "slackStatusNote"
+            visible: text.length > 0
+            text: page.slack?.statusNote ?? ""
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+
+            Label {
+                objectName: "slackStatus"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: page.slack?.state === "failed" || (page.slack?.failed ?? false) ? page.danger : page.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                text: {
+                    if (page.slack?.failed ?? false)
+                        return qsTr("Could not load Slack");
+                    switch (page.slack?.state ?? "off") {
+                    case "connected":
+                        return qsTr("Connected to %1 as %2").arg(page.slack.team).arg(page.slack.bot);
+                    case "connecting":
+                        return qsTr("Connecting…");
+                    case "reconnecting":
+                        return qsTr("Reconnecting…");
+                    case "failed":
+                        return qsTr("Not connected");
+                    default:
+                        return (page.slack?.loaded ?? false) ? qsTr("Not connected") : qsTr("Loading…");
+                    }
+                }
+            }
+
+            ShellButton {
+                objectName: "slackRetry"
+                visible: page.slack?.failed ?? false
+                text: qsTr("Try again")
+                onClicked: Shell.dispatch("slackSettings.retry", {})
+            }
+
+            ShellButton {
+                objectName: "slackCopyManifest"
+                subtle: true
+                enabled: page.slackIdle && (page.slack?.loaded ?? false)
+                text: page.slack?.pending === "manifest" ? qsTr("Copying…") : qsTr("Copy app manifest")
+                onClicked: Shell.dispatch("slackSettings.copyManifest", {})
+            }
+
+            ShellButton {
+                objectName: "slackDisconnect"
+                visible: page.slack?.tokensSet ?? false
+                enabled: page.slackIdle && (page.slack?.editable ?? false)
+                text: page.slack?.pending === "disconnect" ? qsTr("Disconnecting…") : qsTr("Disconnect")
+                onClicked: Shell.dispatch("slackSettings.disconnect", {})
+            }
+        }
+
+        Label {
+            objectName: "slackError"
+            visible: text.length > 0
+            Layout.fillWidth: true
+            text: page.slack?.error ?? ""
+            color: page.danger
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.Wrap
+        }
+
+        Caption {
+            text: qsTr("Make a Slack app from the manifest at api.slack.com/apps, install it to the workspace, and add an app-level token with connections:write. Then paste the bot token and the app token here.")
+        }
+
+        ShellTextField {
+            id: slackBot
+            objectName: "slackBotToken"
+            Layout.fillWidth: true
+            enabled: page.slack?.editable ?? false
+            echoMode: TextInput.Password
+            maximumLength: 512
+            placeholderText: (page.slack?.tokensSet ?? false) ? qsTr("Bot token set (xoxb-…)") : qsTr("Bot token (xoxb-…)")
+            Accessible.name: qsTr("Slack bot token")
+            onAccepted: if (slackConnect.enabled) slackSection.connectSlack()
+        }
+
+        ShellTextField {
+            id: slackApp
+            objectName: "slackAppToken"
+            Layout.fillWidth: true
+            enabled: page.slack?.editable ?? false
+            echoMode: TextInput.Password
+            maximumLength: 512
+            placeholderText: (page.slack?.tokensSet ?? false) ? qsTr("App token set (xapp-…)") : qsTr("App token (xapp-…)")
+            Accessible.name: qsTr("Slack app token")
+            onAccepted: if (slackConnect.enabled) slackSection.connectSlack()
+        }
+
+        ShellButton {
+            id: slackConnect
+            objectName: "slackConnect"
+            enabled: page.slackIdle && (page.slack?.editable ?? false) && slackBot.text.trim().length > 0 && slackApp.text.trim().length > 0
+            text: page.slack?.pending === "connect" ? qsTr("Connecting…") : ((page.slack?.tokensSet ?? false) ? qsTr("Replace tokens") : qsTr("Connect"))
+            onClicked: slackSection.connectSlack()
         }
     }
 }
