@@ -38,9 +38,14 @@ defmodule HalC2.Slack do
 
   def child_spec(_) do
     # The courier comes first so that a crash of the rest leaves it, and the order it
-    # keeps, alone.
+    # keeps, alone. Trapping exits, it stops behind the changes it holds, not before them.
+    courier = fn ->
+      Process.flag(:trap_exit, true)
+      %{}
+    end
+
     children = [
-      %{id: @courier, start: {Agent, :start_link, [fn -> %{} end, [name: @courier]]}},
+      %{id: @courier, start: {Agent, :start_link, [courier, [name: @courier]]}},
       {Task.Supervisor, name: @tasks},
       {DynamicSupervisor, name: @connections, strategy: :one_for_one},
       %{id: :connection, start: {GenServer, :start_link, [__MODULE__, nil, [name: __MODULE__]]}}
@@ -76,11 +81,20 @@ defmodule HalC2.Slack do
     case {String.trim(bot), String.trim(app)} do
       {"", _} -> {:error, "A Slack bot token is required."}
       {_, ""} -> {:error, "A Slack app token is required."}
-      tokens -> GenServer.call(__MODULE__, {:connect, tokens}, 60_000)
+      tokens -> connect_with(tokens)
     end
   end
 
   def connect(_input), do: {:error, "A Slack bot token and app token are required."}
+
+  # A failed call exits with its message, the tokens in it: neither the client nor the
+  # log may see that.
+  defp connect_with(tokens) do
+    GenServer.call(__MODULE__, {:connect, tokens}, 60_000)
+  catch
+    :exit, {:timeout, _} -> {:error, "Slack did not answer the connect in time."}
+    :exit, _ -> {:error, "The Slack connection is not running on this MC."}
+  end
 
   @doc "Stops the connection and forgets the tokens."
   def disconnect, do: GenServer.call(__MODULE__, :disconnect)
@@ -494,6 +508,33 @@ defmodule HalC2.Slack do
 
   @impl true
   def handle_continue(:drive, state), do: {:noreply, state |> drive() |> publish()}
+
+  # What a crash report or `:sys.get_status/1` shows, the tokens left out.
+  @impl true
+  def format_status(status) do
+    Map.new(status, fn
+      {:state, %{tokens: _} = state} -> {:state, redact(state)}
+      {:message, message} -> {:message, redact(message)}
+      {:queue, queue} -> {:queue, Enum.map(queue, &redact/1)}
+      other -> other
+    end)
+  end
+
+  defp redact(%{tokens: _, want: _, job: _} = state) do
+    %{
+      state
+      | tokens: state.tokens && :redacted,
+        want: with({_tokens, from} <- state.want, do: {:redacted, from}),
+        job: state.job && %{state.job | tokens: state.job.tokens && :redacted}
+    }
+  end
+
+  defp redact({:connect, _tokens}), do: {:connect, :redacted}
+
+  defp redact({:"$gen_call", from, {:connect, _tokens}}),
+    do: {:"$gen_call", from, {:connect, :redacted}}
+
+  defp redact(other), do: other
 
   @impl true
   def handle_call(:status, _from, state), do: {:reply, view(state), state}
