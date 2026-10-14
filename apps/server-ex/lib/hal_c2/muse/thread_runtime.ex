@@ -1005,7 +1005,8 @@ defmodule HalC2.Muse.ThreadRuntime do
     token_usage(state, %{
       "inputTokens" => usage["inputTokens"],
       "cachedInputTokens" => usage["cacheReadTokens"] || usage["cachedTokens"],
-      "outputTokens" => usage["outputTokens"]
+      "outputTokens" => usage["outputTokens"],
+      "reasoningOutputTokens" => usage["reasoningTokens"]
     })
   end
 
