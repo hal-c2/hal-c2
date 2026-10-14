@@ -171,6 +171,46 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the milestones {string} and {string}, with {string} waiting for {string}",
+       %{args: [first, second, waiting, title]} = context do
+    context = ensure(context, title)
+
+    context =
+      for milestone <- [first, second], reduce: context do
+        context ->
+          add!(context, %{"title" => milestone, "kind" => "milestone", "due" => "2026-11-30"})
+      end
+
+    update!(context, waiting, %{"after" => [item!(context, title)["id"]]})
+  end
+
+  step "the user moves {string} from {string} to {string}",
+       %{args: [title, from, to]} = context do
+    context = ensure(context, to)
+    ids = Enum.map([title, from, to], &item!(context, &1)["id"])
+    input = Enum.zip(["id", "from", "to"], ids) |> Map.new()
+    {reply, context} = plugin(context, "moveToMilestone", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} waits for {string} and {string} no longer does",
+       %{args: [title, other, left]} = context do
+    assert item!(context, title)["after"] == [item!(context, other)["id"]]
+    refute item!(context, other)["id"] in item!(context, left)["after"]
+    context
+  end
+
+  step "the user is told there is no milestone {string}", %{args: [title]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "There is no milestone #{item!(context, title)["id"]}."
+    context
+  end
+
+  step "{string} still waits for {string}", %{args: [title, other]} = context do
+    assert item!(context, other)["id"] in item!(context, title)["after"]
+    context
+  end
+
   step "today is {string}", %{args: [day]} = context do
     World.put_app_env(:planner_today, day)
     context

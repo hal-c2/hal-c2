@@ -6,8 +6,8 @@ defmodule HalC2.PlannerPropTest do
   (`test/support/fake_gh.py`), which holds each rename of a linked task until the
   model answers it.
 
-  Three tasks (`a`, `b`, `c`) are added, nested, made to wait for each other and
-  removed. Two actions on the whole plan run: one whose changes wait for the user and
+  Three tasks (`a`, `b`, `c`), any of them a milestone, are added, nested, made to wait
+  for each other, moved from one milestone to another and removed. Two actions on the whole plan run: one whose changes wait for the user and
   one that applies them itself; a third, like the first, runs on one task. The commands
   start runs, report through the agent tool (nothing, a task's new due date, the plan's
   health), end turns, retry, dismiss, apply and discard runs, and restart the plugin. One task at a time is linked to an
@@ -18,6 +18,8 @@ defmodule HalC2.PlannerPropTest do
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
+  - a task moved between milestones leaves the one and joins the other in one step,
+    or neither when either is not a milestone or it would wait for itself;
   - at most two runs run at once, the oldest queued starts first, and each run that
     started has a thread of its own; a run whose task was removed while it waited
     fails instead of starting;
@@ -146,7 +148,7 @@ defmodule HalC2.PlannerPropTest do
 
   # --- model ----------------------------------------------------------------------------
 
-  # `items`: slot → %{parent, after (slots, in order), due, linked (to its issue), sync
+  # `items`: slot → %{kind (:task or :milestone), parent, after (slots, in order), due, linked (to its issue), sync
   # (its sync error: nil or {:refused, push})}. `runs`: k (the order it was asked for,
   # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
   # without a thread since its task was removed while it waited), status, seq
@@ -180,8 +182,9 @@ defmodule HalC2.PlannerPropTest do
     linked = for {slot, %{linked: true}} <- m.items, do: slot
 
     ([
-       {4, {:call, __MODULE__, :add, [slot, parent]}},
+       {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
+       {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
        {2, {:call, __MODULE__, :remove, [item]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
@@ -223,10 +226,10 @@ defmodule HalC2.PlannerPropTest do
     |> frequency()
   end
 
-  def precondition(m, {:call, _, :add, [slot, parent]}),
+  def precondition(m, {:call, _, :add, [slot, parent, _kind]}),
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
 
-  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait, :work],
+  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:remove, :wait, :move, :work],
     do: Map.has_key?(m.items, slot)
 
   def precondition(m, {:call, _, :run, [_action, slot]}),
@@ -271,9 +274,9 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # `{model after call, the reply it expects}`: :ok or :error.
-  defp step(m, {:call, _, :add, [slot, parent]}) do
+  defp step(m, {:call, _, :add, [slot, parent, kind]}) do
     m = %{m | gens: Map.update(m.gens, slot, 1, &(&1 + 1))}
-    item = %{parent: parent, after: [], due: @due, linked: false, sync: nil}
+    item = %{kind: kind, parent: parent, after: [], due: @due, linked: false, sync: nil}
     {put_in(m.items[slot], item), :ok}
   end
 
@@ -285,6 +288,23 @@ defmodule HalC2.PlannerPropTest do
       other == slot or reaches?(m.items, [other], slot) -> {m, :error}
       after_slots == m.items[slot].after -> {m, :ok}
       true -> {m |> put_in([:items, slot, :after], after_slots) |> pushed(slot), :ok}
+    end
+  end
+
+  # `slot` stops holding up the milestone `from` and holds up `to`; nil is no milestone.
+  defp step(m, {:call, _, :move, [slot, from, to]}) do
+    milestone? = &(&1 == nil or match?(%{kind: :milestone}, m.items[&1]))
+
+    if milestone?.(from) and milestone?.(to) do
+      items = m.items
+      items = if from, do: update_in(items[from].after, &List.delete(&1, slot)), else: items
+      items = if to, do: update_in(items[to].after, &Enum.uniq(&1 ++ [slot])), else: items
+
+      if to != nil and (to == slot or reaches?(items, [slot], to)),
+        do: {m, :error},
+        else: {Enum.reduce([from, to], %{m | items: items}, &moved(&2, &1, m.items)), :ok}
+    else
+      {m, :error}
     end
   end
 
@@ -452,6 +472,9 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  defp moved(m, slot, before),
+    do: if(slot != nil and m.items[slot] != before[slot], do: pushed(m, slot), else: m)
+
   defp queue(m, k) do
     run = %{m.runs[k] | status: :queued, gone: false, seq: m.seq + 1, changes: [], health: nil}
     %{put_run(m, k, run) | seq: m.seq + 1}
@@ -535,8 +558,14 @@ defmodule HalC2.PlannerPropTest do
 
   # --- commands ---------------------------------------------------------------------------
 
-  def add(slot, parent) do
-    fields = %{"title" => slot, "due" => @due, "parent" => parent && item_id(parent)}
+  def add(slot, parent, kind) do
+    fields = %{
+      "title" => slot,
+      "kind" => Atom.to_string(kind),
+      "due" => @due,
+      "parent" => parent && item_id(parent)
+    }
+
     {reply, value} = call("addItem", %{"fields" => fields})
 
     if reply == :ok do
@@ -554,6 +583,11 @@ defmodule HalC2.PlannerPropTest do
     observe(
       elem(call("updateItem", %{"id" => item_id(slot), "fields" => %{"after" => after_ids}}), 0)
     )
+  end
+
+  def move(slot, from, to) do
+    ids = %{"id" => item_id(slot), "from" => from && item_id(from), "to" => to && item_id(to)}
+    observe(elem(call("moveToMilestone", ids), 0))
   end
 
   def remove(slot) do
@@ -747,6 +781,7 @@ defmodule HalC2.PlannerPropTest do
       for {id, slot} <- slots, item = by_id[id], into: %{} do
         {slot,
          %{
+           kind: String.to_existing_atom(item["kind"]),
            parent: slots[item["parent"]],
            after: Enum.map(item["after"], &slots[&1]),
            due: item["due"],

@@ -370,6 +370,17 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
     const QJsonObject fields = input.value(QLatin1String("fields")).toObject();
     for (auto it = fields.begin(); it != fields.end(); ++it) task.insert(it.key(), it.value());
     result = QJsonObject{{QStringLiteral("item"), task}};
+  } else if (method == QLatin1String("moveToMilestone")) {
+    for (const auto& [key, held] : {std::pair{QLatin1String("from"), false}, std::pair{QLatin1String("to"), true}}) {
+      const QString milestone = input.value(key).toString();
+      if (milestone.isEmpty()) continue;
+      QJsonArray after = fake.items[milestone].value(QLatin1String("after")).toArray();
+      for (qsizetype i = after.size() - 1; i >= 0; --i) {
+        if (after.at(i) == id) after.removeAt(i);
+      }
+      if (held) after.append(id);
+      fake.items[milestone].insert(QStringLiteral("after"), after);
+    }
   } else if (method == QLatin1String("removeItem")) {
     fake.items.remove(id);
     fake.order.removeAll(id);
@@ -631,9 +642,8 @@ const Steps steps([] {
     publish(world);
   });
   step(QStringLiteral("%1 waits for %1 and %1 no longer does").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString task = idOf(world, c[1]);
-    waitAsked(world, QStringLiteral("updateItem"), {{QStringLiteral("id"), idOf(world, c[0])}, {QStringLiteral("fields"), QJsonObject{{QStringLiteral("after"), QJsonArray{task}}}}});
-    waitAsked(world, QStringLiteral("updateItem"), {{QStringLiteral("id"), idOf(world, c[2])}, {QStringLiteral("fields"), QJsonObject{{QStringLiteral("after"), QJsonArray()}}}});
+    waitAsked(world, QStringLiteral("moveToMilestone"), {{QStringLiteral("id"), idOf(world, c[1])}, {QStringLiteral("from"), idOf(world, c[2])}, {QStringLiteral("to"), idOf(world, c[0])}});
+    expect(asked(world, QStringLiteral("updateItem")).isEmpty(), QStringLiteral("the milestones were changed one at a time: %1").arg(showAsked(world, QStringLiteral("updateItem"))));
     world.waitFor([&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerBoardColumn:") + c[0]), QStringLiteral("plannerCard:") + c[1]) != nullptr; },
                   QStringLiteral("%1 to be under %2").arg(c[1], c[0]));
   });

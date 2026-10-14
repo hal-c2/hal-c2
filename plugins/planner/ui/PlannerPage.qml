@@ -2747,15 +2747,10 @@ Item {
                 else if (groupBy === "parent")
                     page.update(item, { parent: to.value || null });
                 else if (groupBy === "milestone") {
-                    // A milestone is its own column; a task moves from waiting on one to the other.
+                    // A milestone is its own column; a task stops holding up one and holds up the other.
                     if (item.kind === "milestone")
                         return;
-                    const left = page.byId[from.value];
-                    const joined = page.byId[to.value];
-                    if (left)
-                        page.update(left, { after: (left.after ?? []).filter(id => id !== item.id) });
-                    if (joined)
-                        page.update(joined, { after: (joined.after ?? []).concat([item.id]) });
+                    page.ask("moveToMilestone", { id: item.id, from: from.value || null, to: to.value || null }, item.environment);
                 } else
                     page.update(item, { status: to.value });
             }

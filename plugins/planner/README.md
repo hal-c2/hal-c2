@@ -34,7 +34,8 @@ state of GitHub and Slack; `runs`, every action run with its proposal; and
 `threads`, each planner thread's run or task, for the header and row mark, sent
 only when one of those changes. Views filter and group in the client, so a view
 costs nothing on the wire. The UI acts through calls such as `addItem`,
-`updateItem`, `saveView`, `run`, `dismissChange`, `apply` and `sync`.
+`updateItem`, `moveToMilestone`, `saveView`, `run`, `dismissChange`, `apply` and
+`sync`.
 
 Agents use three tools: `planner_read` reads the plan, `planner_report` is how an
 action's agent reports its summary, changes and feedback, and `planner_progress`

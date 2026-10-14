@@ -54,6 +54,19 @@ Feature: Planner
       And "Schema" waits for nothing
 
     @mc
+    Scenario: A task moves from one milestone to another in one step
+      Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
+      When the user moves "API" from "Beta" to "Launch"
+      Then "Launch" waits for "API" and "Beta" no longer does
+
+    @mc
+    Scenario: A move to something that is not a milestone changes neither
+      Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
+      When the user moves "API" from "Beta" to "Schema"
+      Then the user is told there is no milestone "Schema"
+      And "Beta" still waits for "API"
+
+    @mc
     Scenario: A task past its due date that is not done is late
       Given today is "2026-10-31"
       And the plan has "API" due "2026-10-30" and in progress

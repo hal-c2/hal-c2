@@ -193,6 +193,9 @@ defmodule HalC2Plugins.Planner do
   def call("moveItem", %{"id" => id} = input, context),
     do: change({:move, id, input["parent"], input["before"]}, context.settings)
 
+  def call("moveToMilestone", %{"id" => id} = input, context),
+    do: change({:to_milestone, id, input["from"], input["to"]}, context.settings)
+
   def call("saveView", %{"view" => view}, context),
     do: change({:save_view, view}, context.settings)
 
@@ -672,6 +675,18 @@ defmodule HalC2Plugins.Planner do
   def handle_call({:move, id, parent, before}, _from, state) do
     case Plan.move(state.items, id, parent, before, now()) do
       {:ok, items} -> edit(state, items, %{})
+      error -> {:reply, error, state}
+    end
+  end
+
+  # A task stops holding up the milestone `from` and holds up `to` instead, both or
+  # neither; either may be nil for no milestone.
+  def handle_call({:to_milestone, id, from, to}, _from, state) do
+    with %{} <- state.items[id] || {:error, "There is no task #{id}."},
+         {:ok, items} <- hold_up(state.items, from, &List.delete(&1, id)),
+         {:ok, items} <- hold_up(items, to, &Enum.uniq(&1 ++ [id])) do
+      edit(state, items, %{})
+    else
       error -> {:reply, error, state}
     end
   end
@@ -1500,6 +1515,20 @@ defmodule HalC2Plugins.Planner do
   end
 
   defp put_run(state, run), do: put_in(state.runs[run["id"]], run)
+
+  # Changes what the milestone `id` waits for with `fun`, nothing for no milestone.
+  defp hold_up(items, nil, _fun), do: {:ok, items}
+
+  defp hold_up(items, id, fun) do
+    case items[id] do
+      %{"kind" => "milestone", "after" => after_ids} ->
+        with {:ok, items, _old, _new} <- Plan.update(items, id, %{"after" => fun.(after_ids)}, now()),
+             do: {:ok, items}
+
+      _ ->
+        {:error, "There is no milestone #{id}."}
+    end
+  end
 
   defp by_thread(state, thread_id),
     do: Enum.find_value(state.runs, fn {_, run} -> if run["threadId"] == thread_id, do: run end)
