@@ -38,6 +38,11 @@ Feature: Muse Code
     When the user enables Muse Code
     Then Muse Code is listed as unavailable, saying it could not be run
 
+  Scenario: A Muse Code that exits while listing its models says so
+    Given Muse Code is installed but exits while listing its models
+    When the user enables Muse Code
+    Then Muse Code is listed as unavailable, saying it could not list its models
+
   Scenario: Enabling Muse Code lists it with its models
     Given Muse Code is installed but not enabled
     When the user enables Muse Code

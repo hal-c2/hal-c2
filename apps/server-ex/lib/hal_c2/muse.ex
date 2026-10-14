@@ -159,19 +159,30 @@ defmodule HalC2.Muse do
 
   @doc """
   The models of Muse's catalog, from a read-only host in `cwd`:
-  `{:ok, models} | {:error, reason}`. An empty list means Muse is signed out.
+  `{:ok, models} | {:error, reason}`. An empty list means Muse is signed out; a host
+  that dies or times out is an error, so the provider says so.
   """
   def discover(instance, cwd) do
     with {:ok, conn, _granted} <- connect(instance, cwd, read_only: true) do
       try do
         case Connection.call(conn, "model/list", %{}, 15_000) do
           {:ok, catalog} -> models(catalog)
-          {:error, reason} -> {:error, reason}
+          {:error, %{"message" => _} = reason} -> {:error, reason}
+          {:error, _closed} -> {:error, "Muse Code could not list its models."}
         end
+      catch
+        :exit, _ -> {:error, "Muse Code could not list its models."}
       after
-        Connection.stop(conn)
+        stop(conn)
       end
     end
+  end
+
+  # The host may already be gone.
+  defp stop(conn) do
+    Connection.stop(conn)
+  catch
+    :exit, _ -> :ok
   end
 
   @doc "Provider models from a `model/list` result: Meta's, once each."

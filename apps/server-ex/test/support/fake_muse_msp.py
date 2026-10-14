@@ -9,6 +9,7 @@
 #   version   `muse --version` (default "1.4.7")
 #   versionExit  `muse --version`'s exit status (default 0)
 #   models    model/list's models (default one Meta model, fake/one)
+#   modelListExit  exit instead of answering model/list
 #   turns     [{"match": substring, "steps": [...]}], first match wins
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
 #
@@ -218,10 +219,11 @@ def run_turn(sid, turn, text, params):
                 terminal = "cancelled"
                 break
             say(sid, turn, "steered: " + event[1])
+    # Cleared first: the MC may start the next turn as soon as it sees this one end.
+    state["turn"] = None
     notify("turn/completed", {"sessionId": sid, "turnId": turn, "terminal": terminal})
     for usage in after:
         notify("session/contextUsage", dict(usage, sessionId=sid))
-    state["turn"] = None
 
 
 def compact(sid, command):
@@ -249,6 +251,8 @@ def handle(msg):
     if method == "initialize":
         requested = params.get("capabilities", {}).get("requestedCapabilities", [])
         reply({"schema": {"version": 1}, "grantedCapabilities": requested})
+    elif method == "model/list" and config().get("modelListExit"):
+        os._exit(1)
     elif method == "model/list":
         models = config().get("models", [{"modelId": "fake/one", "providerId": "meta",
                                           "displayLabel": "Fake One", "isDefault": True}])
