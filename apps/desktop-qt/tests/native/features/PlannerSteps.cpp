@@ -875,6 +875,20 @@ const Steps steps([] {
     const qreal proposed = ghost->mapToScene(QPointF(ghost->width(), 0)).x();
     expect(proposed > ends, QStringLiteral("the proposed bar ends at %1, not after %2").arg(proposed).arg(ends));
   });
+  step(QStringLiteral("the run list counts only the changes the user keeps"), [](World& world, const Captures&, const Table&) {
+    const QString label = state(world).runs.last().value(QLatin1String("label")).toString();
+    const auto says = [&] {
+      QQuickItem* state = findNamed(waitShownNamed(world, QStringLiteral("plannerRun:") + label), QStringLiteral("plannerRunState"));
+      return state ? state->property("text").toString() : QString();
+    };
+    const auto counts = [&](const QString& text) { world.waitFor([&] { return says() == text; }, [&] { return QStringLiteral("the run list says %1").arg(says()); }); };
+    const auto dismiss = [&] { return findNamed(waitShownNamed(world, QStringLiteral("plannerChange:c1")), QStringLiteral("plannerChangeDismiss")); };
+    counts(QStringLiteral("1 change"));
+    click(world, dismiss());
+    counts(QStringLiteral("0 changes"));
+    click(world, dismiss());
+    counts(QStringLiteral("1 change"));
+  });
   step(QStringLiteral("the user can dismiss the change, apply the run or discard it"), [](World& world, const Captures&, const Table&) {
     const QString run = state(world).runs.last().value(QLatin1String("id")).toString();
     // A changed run draws its changes again.
@@ -993,6 +1007,15 @@ const Steps steps([] {
     click(world, waitShownNamed(world, QStringLiteral("plannerRunsToggle")));
     click(world, waitShownNamed(world, QStringLiteral("plannerRun:") + state(world).runs.last().value(QLatin1String("label")).toString()));
     expect(waitShownNamed(world, QStringLiteral("plannerApply"))->isEnabled(), QStringLiteral("the status update cannot be applied from the Planner tab"));
+  });
+  step(QStringLiteral("the run list says it proposes a status update"), [](World& world, const Captures&, const Table&) {
+    const QString label = state(world).runs.last().value(QLatin1String("label")).toString();
+    QQuickItem* row = waitShownNamed(world, QStringLiteral("plannerRun:") + label);
+    const auto says = [&] {
+      QQuickItem* state = findNamed(row, QStringLiteral("plannerRunState"));
+      return state ? state->property("text").toString() : QString();
+    };
+    world.waitFor([&] { return says() == QStringLiteral("Status update"); }, [&] { return QStringLiteral("the run list says %1").arg(says()); });
   });
 
   step(QStringLiteral("%1 shows its threads in the thread list").arg(q), [](World& world, const Captures& c, const Table&) {

@@ -319,6 +319,17 @@ Item {
         return page.muted;
     }
 
+    // A run in the run list: what a proposal still holds once dismissed changes are left
+    // out, as its thread's header says it, or where it is.
+    function runLabel(run) {
+        if (run.status !== "proposed")
+            return page.runStatusLabel(run.status);
+        const kept = (run.changes ?? []).filter(change => !change.dismissed).length;
+        if (kept === 0 && run.health)
+            return qsTr("Status update");
+        return kept === 1 ? qsTr("1 change") : qsTr("%1 changes").arg(kept);
+    }
+
     function runStatusLabel(status) {
         switch (status) {
         case "queued":
@@ -1969,7 +1980,7 @@ Item {
                             topPadding: 5
                             bottomPadding: 5
                             highlighted: modelData.key === page.pickedRun
-                            Accessible.name: qsTr("%1, %2").arg(modelData.label).arg(page.runStatusLabel(modelData.status))
+                            Accessible.name: qsTr("%1, %2").arg(modelData.label).arg(page.runLabel(modelData))
                             onClicked: page.pickedRun = modelData.key
 
                             background: Rectangle {
@@ -1994,7 +2005,8 @@ Item {
                                 }
 
                                 Text {
-                                    text: entry.modelData.status === "proposed" ? qsTr("%n change(s)", "", (entry.modelData.changes ?? []).length) : page.runStatusLabel(entry.modelData.status)
+                                    objectName: "plannerRunState"
+                                    text: page.runLabel(entry.modelData)
                                     color: entry.modelData.status === "failed" ? page.errorColor : entry.modelData.status === "proposed" ? page.warningColor : page.muted
                                     font.pixelSize: Math.round(11 * Theme.fontScale)
                                 }

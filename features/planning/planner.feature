@@ -416,6 +416,7 @@ Feature: Planner
       Given the run of "Reschedule" proposes moving "API" to end on "2026-11-06"
       When the user opens the run on the "Planner" tab
       Then the bar "API" would have is drawn beside its current one
+      And the run list counts only the changes the user keeps
       And the user can dismiss the change, apply the run or discard it
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
@@ -429,6 +430,7 @@ Feature: Planner
       Given the run of "Write status update" proposes only that the plan is "at-risk"
       When the user opens the run's thread
       Then the run can be applied from its thread and from the "Planner" tab
+      And the run list says it proposes a status update
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A run on another MC names that MC's task
