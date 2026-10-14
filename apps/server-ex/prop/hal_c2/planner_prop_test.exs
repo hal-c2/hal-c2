@@ -19,6 +19,8 @@ defmodule HalC2.PlannerPropTest do
 
   - nothing waits for itself, a removed task's subtasks move up to its parent and
     nothing waits for it any more;
+  - a task with no title, or a change whose fields are not an object, is refused and
+    changes nothing;
   - a task moved between milestones leaves the one and joins the other in one step,
     or neither when either is not a milestone or it would wait for itself;
   - at most two runs run at once, the oldest queued starts first, and each run that
@@ -192,6 +194,7 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
        {2, {:call, __MODULE__, :remove, [item]}},
+       {1, {:call, __MODULE__, :malformed, [oneof([:untitled, item])]}},
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item]}},
@@ -295,6 +298,8 @@ defmodule HalC2.PlannerPropTest do
 
     {put_in(m.items[slot], item), :ok}
   end
+
+  defp step(m, {:call, _, :malformed, [_what]}), do: {m, :error}
 
   defp step(m, {:call, _, :wait, [slot, other]}) do
     after_slots = Enum.uniq(m.items[slot].after ++ [other])
@@ -609,6 +614,13 @@ defmodule HalC2.PlannerPropTest do
 
     observe(reply)
   end
+
+  # A task with no title, or a change whose fields are not an object.
+  def malformed(:untitled),
+    do: observe(elem(call("addItem", %{"fields" => %{"kind" => "task"}}), 0))
+
+  def malformed(slot),
+    do: observe(elem(call("updateItem", %{"id" => item_id(slot), "fields" => ["title"]}), 0))
 
   def wait(slot, other) do
     after_ids = Enum.uniq(item(slot)["after"] ++ [item_id(other)])

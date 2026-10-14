@@ -166,6 +166,29 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "a client adds a task with no title", context do
+    {reply, context} = plugin(context, "addItem", %{"fields" => %{"status" => "todo"}})
+    Map.put(context, :reply, reply)
+  end
+
+  step "a client changes {string} with fields that are not an object",
+       %{args: [title]} = context do
+    input = %{"id" => item!(context, title)["id"], "fields" => ["title", "Renamed"]}
+    {reply, context} = plugin(context, "updateItem", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the planner answers {string}", %{args: [message]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ message
+    context
+  end
+
+  step "the plan holds only {string}", %{args: [title]} = context do
+    assert [%{"title" => ^title}] = plan!(context)["items"]
+    context
+  end
+
   step "{string} waits for nothing", %{args: [title]} = context do
     assert item!(context, title)["after"] == []
     context

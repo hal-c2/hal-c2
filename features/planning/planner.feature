@@ -54,6 +54,15 @@ Feature: Planner
       And "Schema" waits for nothing
 
     @mc
+    Scenario: A task with no title, or fields that are not an object, is refused
+      Given the plan has the task "Rate limits"
+      When a client adds a task with no title
+      Then the planner answers "A task needs a title."
+      When a client changes "Rate limits" with fields that are not an object
+      Then the planner answers "Give the fields as an object."
+      And the plan holds only "Rate limits"
+
+    @mc
     Scenario: A task moves from one milestone to another in one step
       Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
       When the user moves "API" from "Beta" to "Launch"

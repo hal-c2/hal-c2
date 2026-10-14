@@ -69,6 +69,9 @@ defmodule HalC2Plugins.Planner.Plan do
   `{:ok, items, old, new}` with `fields` set on item `id`, or `{:error, message}`.
   Keys that are not fields of a task are left out, so a client may send an item back.
   """
+  def update(_items, _id, fields, _now) when not is_map(fields),
+    do: {:error, "Give the fields as an object."}
+
   def update(items, id, fields, now) do
     with %{} = old <- items[id] || {:error, "There is no task #{id}."},
          {:ok, fields} <- cast(Map.take(fields, @fields), @fields),
@@ -195,14 +198,17 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp date(key, value), do: {:error, "#{key}: #{inspect(value)} is not a date (YYYY-MM-DD)."}
 
-  # `{:ok, item}` once it fits the plan: what it names exists, it is nobody's subtask
-  # or dependency through itself, and it ends no earlier than it starts.
+  # `{:ok, item}` once it fits the plan: it has a title, what it names exists, it is
+  # nobody's subtask or dependency through itself, and it ends no earlier than it starts.
   defp check(items, item) do
     id = item["id"]
     item = if item["kind"] == "milestone", do: %{item | "start" => nil}, else: item
     others = Map.put(items, id, item)
 
     cond do
+      item["title"] == "" ->
+        {:error, "A task needs a title."}
+
       item["parent"] == id ->
         {:error, "#{item["title"]} cannot be a subtask of itself."}
 
