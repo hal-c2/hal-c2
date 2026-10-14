@@ -133,6 +133,17 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
+  step "the MC is asked for the Slack app manifest", context do
+    {%{"manifest" => manifest}, context} = World.call!(context, "slack.manifest")
+    Map.put(context, :manifest, manifest |> String.split("\n") |> Enum.map(&String.trim/1))
+  end
+
+  step "it asks for {string} and {string} and subscribes to {string}",
+       %{args: entries} = context do
+    for entry <- entries, do: assert(("- " <> entry) in context.manifest, entry)
+    context
+  end
+
   # --- plugins' calls -----------------------------------------------------------------
 
   step "a plugin granted {string} that posted {string} to {string}",

@@ -160,6 +160,17 @@ defmodule HalC2.SlackTest do
              Slack.status()
   end
 
+  # A reply in a thread the bot started reaches it only from a conversation whose
+  # history it may read and whose messages it subscribes to.
+  test "the manifest hears messages in every kind of conversation the bot may read" do
+    lines = Slack.manifest() |> String.split("\n") |> Enum.map(&String.trim/1)
+
+    for kind <- ~w(channels groups im mpim), "- #{kind}:read" in lines do
+      assert "- #{kind}:history" in lines, kind
+      assert "- message.#{kind}" in lines, kind
+    end
+  end
+
   describe "plugin calls" do
     setup do
       {:ok, _} = Slack.connect(tokens())

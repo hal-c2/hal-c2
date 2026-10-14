@@ -590,6 +590,18 @@ Feature: Integrations settings
       When the MC restarts
       Then Slack connects again with the stored tokens
 
+    @mc
+    Scenario Outline: The Slack app manifest hears replies in every kind of conversation the bot reads
+      When the MC is asked for the Slack app manifest
+      Then it asks for "<kind>:read" and "<kind>:history" and subscribes to "message.<kind>"
+
+      Examples:
+        | kind     |
+        | channels |
+        | groups   |
+        | im       |
+        | mpim     |
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The page shows how to make the Slack app
       When the user opens the Slack section

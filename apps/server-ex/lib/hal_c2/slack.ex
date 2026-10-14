@@ -109,6 +109,7 @@ defmodule HalC2.Slack do
           - groups:read
           - im:history
           - im:read
+          - mpim:history
           - mpim:read
           - chat:write
           - commands
@@ -121,6 +122,7 @@ defmodule HalC2.Slack do
           - message.channels
           - message.groups
           - message.im
+          - message.mpim
           - member_joined_channel
           - channel_left
       interactivity:
