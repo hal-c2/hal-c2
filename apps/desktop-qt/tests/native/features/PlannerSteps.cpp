@@ -735,6 +735,43 @@ const Steps steps([] {
     world.waitFor([&] { return viewName() == c[0]; }, [&] { return QStringLiteral("the view %1 to be shown, not %2").arg(c[0], viewName()); });
   });
 
+  step(QStringLiteral("the user focuses %1 on %1 and presses Enter").arg(q), [](World& world, const Captures& c, const Table&) {
+    showPlanner(world, c[1]);
+    QQuickItem* shown = nullptr;
+    world.waitFor([&] {
+      for (const QString& prefix : {QStringLiteral("plannerTask:"), QStringLiteral("plannerCard:"), QStringLiteral("plannerRow:")}) {
+        if ((shown = findNamed(waitShownNamed(world, QStringLiteral("plannerPage")), prefix + c[0])) && shown->isVisible()) return true;
+      }
+      return false;
+    }, QStringLiteral("%1 to be shown on %2").arg(c[0], c[1]));
+    expect(shown->activeFocusOnTab(), QStringLiteral("%1 cannot be reached with Tab on %2").arg(c[0], c[1]));
+    shown->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(pluginShell(world), Qt::Key_Return);
+    world.sync();
+    world.waitFor([&] { return shown->hasActiveFocus(); }, QStringLiteral("%1 to keep the keyboard").arg(c[0]));
+  });
+  step(QStringLiteral("the panel of %1 is open and %1 is marked as focused").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("plannerItemTitle"), c[0]);
+    QQuickItem* focused = waitShownNamed(world, QStringLiteral("plannerPage"))->window()->activeFocusItem();
+    expect(focused && focused->objectName().endsWith(QLatin1Char(':') + c[1]), QStringLiteral("%1 does not have the keyboard").arg(c[1]));
+    const QObject* border = focused->property("border").value<QObject*>();
+    expect(border && border->property("width").toReal() > 0, QStringLiteral("%1 has no focus border").arg(c[1]));
+  });
+  step(QStringLiteral("the user focuses the group %1 on %1 and presses Space").arg(q), [](World& world, const Captures& c, const Table&) {
+    showPlanner(world, c[1]);
+    waitShownNamed(world, QStringLiteral("plannerGroup:") + c[0])->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(pluginShell(world), Qt::Key_Space);
+    world.sync();
+  });
+  step(QStringLiteral("%1 is hidden until the user presses Space again").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = waitShownNamed(world, QStringLiteral("plannerList"));
+    const auto listed = [&] { return findNamed(list, QStringLiteral("plannerRow:") + c[0]) != nullptr; };
+    world.waitFor([&] { return !listed(); }, QStringLiteral("%1 to be folded away").arg(c[0]));
+    world.waitFor([&] { return list->window()->activeFocusItem() && list->window()->activeFocusItem()->objectName().startsWith(QLatin1String("plannerGroup:")); },
+                  QStringLiteral("the group to keep the keyboard once folded"));
+    QTest::keyClick(pluginShell(world), Qt::Key_Space);
+    world.waitFor(listed, QStringLiteral("%1 to be listed again").arg(c[0]));
+  });
   step(QStringLiteral("the plan has %1 ending (\\d+) days before its baseline").arg(q), [](World& world, const Captures& c, const Table&) {
     QJsonObject& task = dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));
     task.insert(QStringLiteral("baseline"), QJsonObject{{QStringLiteral("start"), QStringLiteral("2026-10-21")}, {QStringLiteral("due"), iso(date(QStringLiteral("2026-10-30")).addDays(c[1].toInt()))}});

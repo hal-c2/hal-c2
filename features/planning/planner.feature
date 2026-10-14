@@ -212,6 +212,25 @@ Feature: Planner
       Then the planner shows the view "Board"
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: The user opens a task from the keyboard on <view>
+      Given the plan has "API"
+      When the user focuses "API" on "<view>" and presses Enter
+      Then the panel of "API" is open and "API" is marked as focused
+
+      Examples:
+        | view      |
+        | Timeline  |
+        | Board     |
+        | All tasks |
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A group folds and unfolds from the keyboard
+      Given the plan has "API"
+      And the "All tasks" is grouped by "status"
+      When the user focuses the group "To do" on "All tasks" and presses Space
+      Then "API" is hidden until the user presses Space again
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user edits a task from any view
       Given the plan has "API"
       When the user opens "API" and sets its owner to "dana" and its due date to "2026-11-06"

@@ -77,6 +77,8 @@ Item {
 
     // The item picked in any view, and the run picked in the runs panel.
     property string selectedKey: ""
+    // The row the keyboard was on when the rows were last made again.
+    property string keyRow: ""
     readonly property var selected: items.find(item => item.key === selectedKey) ?? null
     property bool runsOpen: false
     property string pickedRun: ""
@@ -529,6 +531,38 @@ Item {
 
     function select(item) {
         page.selectedKey = item ? item.key : "";
+    }
+
+    // A row of the timeline or the list pressed: its task opens, its group folds.
+    function press(row) {
+        if (row.item)
+            page.select(row.item);
+        else
+            page.collapse(row.key);
+    }
+
+    // Enter or Space presses a row; Left and Right fold and unfold one with subtasks.
+    // Folding makes the rows again, so the row's remade self takes the keyboard back.
+    function rowKey(event, row) {
+        const pressing = event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space;
+        const folding = (event.key === Qt.Key_Left || event.key === Qt.Key_Right) && row.children && (event.key === Qt.Key_Left) !== !!page.collapsed[row.key];
+        if (!pressing && !folding)
+            return;
+        if (folding || !row.item)
+            page.keyRow = row.key;
+        if (pressing)
+            page.press(row);
+        else
+            page.collapse(row.key);
+        event.accepted = true;
+    }
+
+    // A row made while it is `keyRow` takes the keyboard.
+    function takeKeys(row, key) {
+        if (key !== page.keyRow)
+            return;
+        page.keyRow = "";
+        row.forceActiveFocus(Qt.TabFocusReason);
     }
 
     function update(item, fields) {
@@ -2646,11 +2680,21 @@ Item {
 
                 // The row's name, pinned while the timeline scrolls.
                 Rectangle {
+                    id: label
+
                     objectName: lane.item ? "plannerTask:" + lane.item.title : "plannerGroup:" + (lane.modelData.label ?? "")
                     x: gantt.contentX
                     width: page.labelWidth
                     height: parent.height
                     color: lane.picked ? Theme.palette.color("sidebarRowSelected", "#27272a") : labelMouse.containsMouse ? Theme.palette.color("sidebarRowHover", "#1f1f23") : page.surface
+                    border.width: activeFocus ? 1 : 0
+                    border.color: Theme.palette.color("focus", "#3b82f6")
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: labelText.text
+                    Accessible.onPressAction: page.press(lane.modelData)
+                    Keys.onPressed: event => page.rowKey(event, lane.modelData)
+                    Component.onCompleted: page.takeKeys(label, lane.modelData.key)
 
                     Rectangle {
                         anchors.right: parent.right
@@ -2672,6 +2716,8 @@ Item {
                     }
 
                     Text {
+                        id: labelText
+
                         x: chevron.x + 14
                         width: parent.width - x - 8
                         anchors.verticalCenter: parent.verticalCenter
@@ -2689,6 +2735,7 @@ Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: mouse => {
+                            label.forceActiveFocus(Qt.MouseFocusReason);
                             if (lane.modelData.children && (lane.item === null || mouse.x < chevron.x + 16))
                                 page.collapse(lane.modelData.key);
                             else
@@ -2829,10 +2876,18 @@ Item {
                                 implicitHeight: cardColumn.implicitHeight + 16
                                 radius: Math.min(Theme.radius, 8)
                                 color: modelData.key === page.selectedKey ? Theme.palette.color("sidebarRowSelected", "#27272a") : page.surface
-                                border.color: modelData.late ? page.warningColor : page.border
+                                border.color: activeFocus ? Theme.palette.color("focus", "#3b82f6") : modelData.late ? page.warningColor : page.border
                                 opacity: board.dragged?.key === modelData.key ? 0.4 : 1
+                                activeFocusOnTab: true
                                 Accessible.role: Accessible.ListItem
                                 Accessible.name: modelData.title
+                                Accessible.onPressAction: page.select(modelData)
+                                Keys.onPressed: event => {
+                                    if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Space)
+                                        return;
+                                    page.select(card.modelData);
+                                    event.accepted = true;
+                                }
 
                                 ColumnLayout {
                                     id: cardColumn
@@ -3009,6 +3064,14 @@ Item {
                 width: list.width
                 height: page.rowHeight
                 color: item !== null && item.key === page.selectedKey ? Theme.palette.color("sidebarRowSelected", "#27272a") : rowMouse.containsMouse ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
+                border.width: activeFocus ? 1 : 0
+                border.color: Theme.palette.color("focus", "#3b82f6")
+                activeFocusOnTab: true
+                Accessible.role: Accessible.ListItem
+                Accessible.name: rowTitle.text
+                Accessible.onPressAction: page.press(row.modelData)
+                Keys.onPressed: event => page.rowKey(event, row.modelData)
+                Component.onCompleted: page.takeKeys(row, row.modelData.key)
 
                 MouseArea {
                     id: rowMouse
@@ -3016,10 +3079,8 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     onClicked: {
-                        if (row.item === null)
-                            page.collapse(row.modelData.key);
-                        else
-                            page.select(row.item);
+                        row.forceActiveFocus(Qt.MouseFocusReason);
+                        page.press(row.modelData);
                     }
                 }
 
@@ -3030,6 +3091,8 @@ Item {
                     height: parent.height
 
                     Text {
+                        id: rowTitle
+
                         width: list.titleWidth
                         anchors.verticalCenter: parent.verticalCenter
                         leftPadding: row.modelData.depth * 14
