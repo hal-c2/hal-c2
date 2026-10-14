@@ -1737,20 +1737,41 @@ defmodule HalC2.Steps.Planning.Planner do
     |> ensure(doing, %{"status" => "doing"})
   end
 
-  step "{string} runs {string} in Slack", %{args: ["dana", "/planner " <> text]} = context do
+  step "the plan has a second task called {string}", %{args: [title]} = context do
     context = seed(context)
+    first = item!(context, title)["id"]
+    context = add!(context, Map.put(sample(context, title), "due", "2026-11-20"))
+    second = Enum.find(plan!(context)["items"], &(&1["title"] == title and &1["id"] != first))
+    Map.put(context, :second, second)
+  end
 
-    FakeSlack.command(%{
-      "command" => "/planner",
-      "text" => text,
-      "user_id" => "UDANA",
-      "user_name" => "dana",
-      "channel_id" => "CPLAN",
-      "response_url" => FakeSlack.response_url()
-    })
+  step "{string} runs {string} with the second {string} task's id in Slack",
+       %{args: ["dana", "/planner " <> text, _title]} = context do
+    slash(context, "#{text} #{context.second["id"]}")
+  end
 
-    assert_receive {:slack_request, "hooks.slack.com", _}, 10_000
-    Map.put(context, :answer, List.last(FakeSlack.responses())["body"])
+  step "{string} runs {string} in Slack", %{args: ["dana", "/planner " <> text]} = context do
+    context |> seed() |> slash(text)
+  end
+
+  step "only {string} is asked to run {string} on one of the {string} tasks by its id",
+       %{args: ["dana", label, title]} = context do
+    assert %{"response_type" => "ephemeral", "text" => text} = context.answer
+    assert text =~ ~s(More than one task is called "#{title}"; run #{label} on one by its id:)
+    tasks = Enum.filter(plan!(context)["items"], &(&1["title"] == title))
+    assert length(tasks) == 2
+
+    for task <- tasks,
+        do: assert(text =~ "/planner #{action_id(context, label)} #{task["id"]} — #{title} (")
+
+    context
+  end
+
+  step "a {string} run of the second {string} task starts", %{args: [label, _title]} = context do
+    run = Enum.find(runs!(context), &(&1["label"] == label))
+    assert %{"status" => "running", "itemIds" => [id]} = run
+    assert id == context.second["id"]
+    context
   end
 
   step "only {string} is shown that {string} is late, {string} is in progress, and the latest health",
@@ -1882,6 +1903,20 @@ defmodule HalC2.Steps.Planning.Planner do
     {reply, _} = plugin(context, "settings", %{})
     assert {:ok, %{"settings" => settings}} = reply
     settings
+  end
+
+  defp slash(context, text) do
+    FakeSlack.command(%{
+      "command" => "/planner",
+      "text" => text,
+      "user_id" => "UDANA",
+      "user_name" => "dana",
+      "channel_id" => "CPLAN",
+      "response_url" => FakeSlack.response_url()
+    })
+
+    assert_receive {:slack_request, "hooks.slack.com", _}, 10_000
+    Map.put(context, :answer, List.last(FakeSlack.responses())["body"])
   end
 
   # GitHub's list of the open issues: #`number`, named `title`.

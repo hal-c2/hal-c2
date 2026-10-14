@@ -757,6 +757,15 @@ Feature: Planner
       Then only "dana" is told no task is called "Nothing"
 
     @mc
+    Scenario: The slash command asks which task a title shared by two means
+      Given the plan has a second task called "API"
+      When "dana" runs "/planner validate API" in Slack
+      Then only "dana" is asked to run "Validate progress" on one of the "API" tasks by its id
+      And no run starts
+      When "dana" runs "/planner validate" with the second "API" task's id in Slack
+      Then a "Validate progress" run of the second "API" task starts
+
+    @mc
     Scenario: The slash command asks which action a word shared by two means
       Given the user added the actions "Check API" and "Check docs" on the whole plan
       When "dana" runs "/planner check" in Slack

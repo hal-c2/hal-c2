@@ -578,6 +578,7 @@ defmodule HalC2Plugins.Planner do
         {:run, action, title} ->
           case server({:run_titled, action["id"], title}) do
             {:ok, text} -> text
+            {:several, items} -> Slack.tasks(title, action, items, settings["slackCommand"])
             {:error, error} -> error
           end
 
@@ -773,15 +774,14 @@ defmodule HalC2Plugins.Planner do
   def handle_call({:run, action, item_ids, project}, _from, state),
     do: start_run(state, action, item_ids, project)
 
-  # A slash command names its task by title; the answer is what its runner is told.
+  # A slash command names its task by title, or by id when tasks share the title; the
+  # answer is what its runner is told, or `{:several, tasks}` to ask which.
   def handle_call({:run_titled, action_id, title}, _from, state) do
     action = actions(state.settings)[action_id]
     wanted = String.downcase(title)
-
-    item =
-      Enum.find_value(state.items, fn {_, item} ->
-        if String.downcase(item["title"]) == wanted, do: item
-      end)
+    titled = for {_, item} <- state.items, String.downcase(item["title"]) == wanted, do: item
+    named = state.items[wanted]
+    item = named || List.first(titled)
 
     cond do
       title != "" and item == nil ->
@@ -789,6 +789,9 @@ defmodule HalC2Plugins.Planner do
 
       title == "" and action["scope"] == "item" ->
         {:reply, {:error, "Name the task #{action["label"]} acts on."}, state}
+
+      named == nil and length(titled) > 1 ->
+        {:reply, {:several, Enum.sort_by(titled, &{&1["start"], &1["id"]})}, state}
 
       true ->
         case start_run(state, action_id, if(item, do: [item["id"]], else: []), nil) do

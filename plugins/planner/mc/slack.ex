@@ -88,6 +88,15 @@ defmodule HalC2Plugins.Planner.Slack do
     "#{word} could be more than one action; run one by its id:\n#{listed(actions, command)}"
   end
 
+  @doc "The answer to a command naming a title more than one task has."
+  def tasks(title, action, items, command) do
+    ~s(More than one task is called "#{title}"; run #{action["label"]} on one by its id:\n) <>
+      Enum.map_join(items, "\n", fn item ->
+        due = if item["due"], do: ", due #{item["due"]}", else: ""
+        "#{command} #{action["id"]} #{item["id"]} — #{item["title"]} (#{item["status"]}#{due})"
+      end)
+  end
+
   defp listed(actions, command),
     do: Enum.map_join(actions, "\n", &"#{command} #{&1["id"]} — #{&1["label"]}")
 
