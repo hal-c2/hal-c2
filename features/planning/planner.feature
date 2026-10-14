@@ -807,6 +807,14 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then unlinks it before GitHub answers
       Then "Rate limiting" is linked to no issue and not marked as not synced
 
+    # The relink pushes nothing: no project on the MC has "acme/web".
+    @mc
+    Scenario: A change GitHub answers after its task was relinked to another issue does not mark the task
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, refusing it
+      When the user renames #7's task to "Rate limiting", then relinks it to "acme/web" #3 before GitHub answers
+      Then "Rate limiting" is linked to "acme/web" #3 and not marked as not synced
+
     @mc
     Scenario: A look at GitHub that began before a change to a task does not undo it
       Given "planner" syncs "acme/api" both ways

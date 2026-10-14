@@ -1696,6 +1696,26 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user renames \#{int}'s task to {string}, then relinks it to {string} \#{int} before GitHub answers",
+       %{args: [number, title, repository, other]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    issue = %{"repository" => repository, "number" => other}
+    {reply, context} = plugin(context, "link", %{"itemId" => task["id"], "issue" => issue})
+    assert {:ok, _} = reply
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "{string} is linked to {string} \#{int} and not marked as not synced",
+       %{args: [title, repository, number]} = context do
+    task = item!(context, title)
+    assert %{"repository" => ^repository, "number" => ^number} = task["issue"]
+    refute task["syncError"], "#{title} is marked as not synced: #{task["syncError"]}"
+    context
+  end
+
   step "{string} is linked to no issue and not marked as not synced",
        %{args: [title]} = context do
     task = item!(context, title)

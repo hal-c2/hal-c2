@@ -969,12 +969,6 @@ defmodule HalC2Plugins.Planner do
           {:error, "unlink takes the kind pullRequest, issue or thread."}
       end
 
-    # A task unlinked from its issue no longer hears from the pushes to it in flight.
-    state =
-      if kind == "issue" and match?({:ok, %{"issue" => nil}}, unlinked),
-        do: %{state | pushing: Map.delete(state.pushing, id)},
-        else: state
-
     case unlinked do
       {:ok, item} -> edit(state, Map.put(state.items, id, item), %{"item" => item})
       error -> {:reply, error, state}
@@ -1530,7 +1524,9 @@ defmodule HalC2Plugins.Planner do
   end
 
   # What to push for the tasks `items` changed from `before`, each push with a token the
-  # state keeps as its task's latest.
+  # state keeps as its task's latest. A task unlinked from its issue, or linked to another,
+  # no longer hears from the pushes in flight to the one before, even when the change
+  # itself pushes nothing.
   defp pushes(state, before, items) do
     pushes =
       for {id, new} <- items,
@@ -1540,8 +1536,13 @@ defmodule HalC2Plugins.Planner do
           ops != [],
           do: {id, System.unique_integer([:monotonic]), ops}
 
+    relinked =
+      for {id, old} <- before,
+          old["issue"] != nil and not Plan.same_ref?(old["issue"], items[id]["issue"]),
+          do: id
+
     latest = Map.new(pushes, fn {id, push, _} -> {id, push} end)
-    {pushes, %{state | pushing: Map.merge(state.pushing, latest)}}
+    {pushes, %{state | pushing: state.pushing |> Map.drop(relinked) |> Map.merge(latest)}}
   end
 
   defp put_run(state, run), do: put_in(state.runs[run["id"]], run)
