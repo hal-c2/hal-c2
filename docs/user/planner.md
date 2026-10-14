@@ -100,12 +100,15 @@ The planner reads GitHub through the `gh` login on the MC's machine.
   project on that MC has it as its remote.
 - **Boards:** pick a **GitHub Project** from those of your projects' owners, or type
   one as `owner/number`, then pick which of its date fields hold the start and
-  target dates (**Start date** and **Target date** by default). Listing and reading
-  boards needs `gh auth refresh -s project`; until then the settings say so.
+  target dates (**Start date** and **Target date** by default). If the board
+  renames or drops one of those fields, tasks keep their dates until you pick
+  the field again. Listing and reading boards needs `gh auth refresh -s project`;
+  until then the settings say so.
 - **Sync:** **Import from GitHub** only reads GitHub. **Both ways** also sends your changes
   back: closing, renaming, labels, assignees, dependencies, sub-issues and board
   dates. A change GitHub refuses is kept and marked as not synced, with GitHub's
-  reason. **Create issue** on a task makes it an issue.
+  reason, and goes again with your next change to that task; the mark clears once
+  GitHub has taken all of it. **Create issue** on a task makes it an issue.
 
 The planner looks every few minutes; **Look now** looks at once.
 

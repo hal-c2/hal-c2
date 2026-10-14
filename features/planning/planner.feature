@@ -724,6 +724,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task starts on "2026-10-20" and has no due date
 
+    # A field renamed or deleted on the board, or one that holds no dates, says nothing
+    # about the task's dates: they stay until the settings name a date field it has.
+    @mc
+    Scenario: A date field the board no longer has leaves the task's dates
+      Given "planner" follows the board "acme/3" with "Start date" and "Target date" as its dates
+      And #7 was imported from "acme/3" with the dates "2026-10-20" to "2026-11-02"
+      When "acme/3" renames its "Target date" field to "Due date"
+      And the plugin looks at GitHub
+      Then #7's task is from "2026-10-20" to "2026-11-02"
+
     @mc
     Scenario: The settings offer the open boards of the projects' owners
       Given "acme" has the boards "acme/3" "Roadmap" and "acme/4" "Old roadmap", which is closed
@@ -853,11 +863,60 @@ Feature: Planner
       And #7's task is named "Rate limiting" and marked as synced
 
     @mc
+    Scenario: A dependency GitHub refused to drop goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is blocked by #5 on GitHub
+      And GitHub refuses to unblock #7
+      And the user makes #7's task wait for nothing
+      And GitHub takes unblocking #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked a second time to unblock #7 from #5
+      And #7's task is named "Rate limiting" and marked as synced
+
+    @mc
+    Scenario: A task stays marked as not synced until its refused change takes
+      Given "planner" syncs "acme/api" both ways
+      And #7 is blocked by #5 on GitHub
+      And GitHub refuses to unblock #7
+      And the user makes #7's task wait for nothing
+      When the user renames #7's task to "Rate limiting"
+      Then #7's task is marked as not synced
+
+    # An earlier push may have taken without the plugin hearing, say it stopped first.
+    @mc
+    Scenario: A dependency GitHub no longer has is taken as dropped
+      Given "planner" syncs "acme/api" both ways
+      And #7 is blocked by #5 on GitHub
+      And GitHub answers unblocking #7 that #5 no longer blocks it
+      When the user makes #7's task wait for nothing
+      Then #7's task is marked as synced
+
+    @mc
+    Scenario: An owner GitHub refused goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And GitHub refuses changes to #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      And #7's task is named "Rate limiting" and marked as synced
+
+    @mc
     Scenario: Only the latest change to a task says whether it synced
       Given "planner" syncs "acme/api" both ways
       And GitHub answers renaming #7 to "Rate limiting" late, refusing it
       When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
       Then #7's task is named "Rate limits" and marked as synced
+
+    # The owner's push sends the name too, as GitHub has not taken it yet; GitHub takes
+    # that push, whatever it answers the rename.
+    @mc
+    Scenario: A change made while an earlier one waits on GitHub sends both
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, refusing it
+      When the user renames #7's task to "Rate limiting", then makes "dana" its owner before GitHub answers
+      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      And #7's task is named "Rate limiting" and marked as synced
 
     @mc
     Scenario: A change GitHub answers after its task was unlinked does not mark the task
@@ -880,6 +939,13 @@ Feature: Planner
       And #7's task was imported as "Rate limits"
       And GitHub lists #7 as "Rate limits" late
       When the user renames #7's task to "Rate limiting" while the plugin looks at GitHub
+      Then #7's task is named "Rate limiting" and marked as synced
+
+    @mc
+    Scenario: A look at GitHub while a change to a task waits on GitHub does not undo it
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then the plugin looks at GitHub before GitHub answers
       Then #7's task is named "Rate limiting" and marked as synced
 
     @mc

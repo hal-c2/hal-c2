@@ -3,13 +3,15 @@ defmodule HalC2Plugins.Planner.Sync do
   The plan and GitHub: what a look at the followed repositories, the board and the
   linked pull requests finds (`look/2`), how it changes the plan (`apply/5`), and
   what a change to a linked task asks of GitHub when the plan syncs both ways
-  (`pushes/5`, run by `run/1`).
+  (`pushes/5`, run by `run/2`).
 
   GitHub wins over the plan for what it holds, except for a task whose last change
-  GitHub refused (`syncError`): that one keeps the user's, and its next push sends all
-  of it again, until a push takes. A task's state follows its issue only when the
-  issue opens or closes, so a task the user marked doing stays doing while its issue
-  stays open.
+  GitHub refused (`syncError`): that one keeps the user's. A pushed task keeps what
+  GitHub has of it (`synced`, see `synced/2`) until a push takes whole, and each push
+  sends what the task has that GitHub has not, so a change refused goes again with the
+  task's next one and the mark clears once GitHub has all of it. A task's state follows
+  its issue only when the issue opens or closes, so a task the user marked doing stays
+  doing while its issue stays open.
   """
 
   alias HalC2.Plugins.Host
@@ -127,14 +129,19 @@ defmodule HalC2Plugins.Planner.Sync do
          [_ | _] <- github do
       case read_board(github, owner, number, 500) do
         {:ok, %{"items" => board_items} = read} ->
-          # Only the dates the settings name; one empty on the board is cleared.
+          # Only the dates the settings name, from fields the board has as dates: one
+          # empty there is cleared, while a field it lacks (renamed, deleted, or not a
+          # date) says nothing, and the task keeps its date.
+          fields = for %{"type" => "date", "name" => name} <- read["fields"] || [], do: name
+
           named =
             for {date, field} <- [
                   {"start", settings["startField"]},
                   {"due", settings["targetField"]}
                 ],
-                is_binary(field) and field != "",
-                do: {date, field}
+                is_binary(field),
+                name = Enum.find(fields, &same?(&1, String.trim(field))),
+                do: {date, name}
 
           board =
             for %{"content" => %{"kind" => "issue"} = content} = item <- board_items, into: %{} do
@@ -384,7 +391,8 @@ defmodule HalC2Plugins.Planner.Sync do
             {:error, _} -> items
           end
 
-        item = items[item["id"]]
+        # The task now has GitHub's, so what a push left it of GitHub's goes.
+        item = Map.replace(items[item["id"]], "synced", nil)
         issue_ref = Map.merge(item["issue"], link["issue"])
 
         item =
@@ -580,50 +588,71 @@ defmodule HalC2Plugins.Planner.Sync do
   # --- pushing ------------------------------------------------------------------------------
 
   @doc """
-  What GitHub is asked when `old` becomes `new` (in `items`) and the plan syncs both
-  ways: the issue's title, body, state, assignee and labels, its blocking issues and
-  sub-issues, its dates on the board, and a milestone's title, date and the issues it
-  holds. Each op is `{method, input}` for `HalC2.Plugins.Host.issues/3`, or
-  `{:board, input}` to put the issue on the board before its dates are set. Each asks
-  through a project of `projects` (`HalC2.Plugins.Host.projects/1`), which the caller
-  reads, as that runs git.
-
-  A task GitHub refused a change to is pushed whole: its issue's fields but the
-  assignees, the dates it has on the board and, for a milestone, its title, date and
-  the issues it holds, so a change refused before goes again with the next, and the
-  mark clears once all of it took.
+  What GitHub has of a task that changed from `old` to `new`, as far as the plan
+  knows: the `synced` a push left on it until a push took whole, or else what `old`
+  had, GitHub having taken or given all of it. A task linked to another issue loses
+  its `synced`, so what it had before stands for the new issue, which pushes only
+  what the change itself made. Its `"state"` is the issue's: open, done or dropped.
   """
-  def pushes(%{"sync" => "twoWay"} = settings, old, new, items, projects) do
+  def synced(old, new), do: new["synced"] || own(old)
+
+  defp own(item),
+    do:
+      item
+      |> Map.take(~w(title notes owner labels start due after parent))
+      |> Map.put("state", state_of(item["status"]))
+
+  defp state_of(status) when status in ~w(done dropped), do: status
+  defp state_of(_status), do: "open"
+
+  @doc """
+  What GitHub is asked when the plan syncs both ways and `new` (in `items`) differs
+  from what GitHub has of it (`synced`, see `synced/2`): the issue's title, body,
+  state, assignee and labels, its blocking issues and sub-issues, its dates on the
+  board, and a milestone's title, date and the issues it holds. Each op is
+  `{method, input, took}` for `HalC2.Plugins.Host.issues/3`, the method `:board`
+  putting the issue on the board before its dates are set, and `took` what GitHub has
+  once it took. Each asks through a project of `projects`
+  (`HalC2.Plugins.Host.projects/1`), which the caller reads, as that runs git.
+
+  `[]` when GitHub has all of `new`, nil when the plan does not push it.
+  """
+  def pushes(%{"sync" => "twoWay"} = settings, synced, new, items, projects) do
     with %{"repository" => repo, "number" => number} <- new["issue"] || new["milestone"],
          project when is_binary(project) <- project_id(new, projects) do
       base = %{"projectId" => project, "repository" => repo, "number" => number}
 
       if new["issue"],
-        do: issue_pushes(settings, base, old, new, items, projects),
-        else: milestone_pushes(base, old, new, items, projects)
+        do: issue_pushes(settings, base, synced, new, items, projects),
+        else: milestone_pushes(base, synced, new, items, projects)
     else
-      _ -> []
+      _ -> nil
     end
   end
 
-  def pushes(_settings, _old, _new, _items, _projects), do: []
+  def pushes(_settings, _synced, _new, _items, _projects), do: nil
 
-  # A task GitHub refused a change to sends its fields whole and the dates it has; its
-  # owner, blocking issues and parent go only as they changed. A date it never had
-  # stays off a board that may lack the field for it.
-  defp issue_pushes(settings, base, old, new, items, projects) do
-    again? = is_binary(new["syncError"])
-    changed = fn key -> again? or old[key] != new[key] end
-    dated = fn key -> old[key] != new[key] or (again? and new[key] != nil) end
+  defp issue_pushes(settings, base, synced, new, items, projects) do
+    differs = &(synced[&1] != new[&1])
+    state = state_of(new["status"])
 
     patch =
       %{}
-      |> put_if(changed.("title"), "title", new["title"])
-      |> put_if(changed.("notes"), "body", new["notes"])
-      # The task holds one of the issue's assignees: sent again, it would drop the rest.
-      |> put_if(old["owner"] != new["owner"], "assignees", List.wrap(new["owner"]))
-      |> put_if(changed.("labels"), "labels", new["labels"])
-      |> Map.merge(state(if(again?, do: :again, else: old["status"]), new["status"]))
+      |> put_if(differs.("title"), "title", new["title"])
+      |> put_if(differs.("notes"), "body", new["notes"])
+      # The task holds one of the issue's assignees: sent when it did not change, it
+      # would drop the rest.
+      |> put_if(differs.("owner"), "assignees", List.wrap(new["owner"]))
+      |> put_if(differs.("labels"), "labels", new["labels"])
+      |> Map.merge(if(synced["state"] == state, do: %{}, else: state(state)))
+
+    update =
+      if patch != %{},
+        do: [
+          {"update", Map.merge(base, patch),
+           &Map.merge(&1, Map.take(own(new), ~w(title notes owner labels state)))}
+        ],
+        else: []
 
     # Only a task with an issue can be named on GitHub; the others stay in the plan.
     ref = fn id ->
@@ -635,19 +664,26 @@ defmodule HalC2Plugins.Planner.Sync do
 
     blocked =
       for(
-        id <- new["after"] -- old["after"],
+        id <- new["after"] -- synced["after"],
         r = ref.(id),
-        do: {"addBlockedBy", Map.put(base, "blockedBy", r)}
+        do:
+          {"addBlockedBy", Map.put(base, "blockedBy", r),
+           &Map.update!(&1, "after", fn ids -> ids ++ [id] end)}
       ) ++
-        for id <- old["after"] -- new["after"],
+        for id <- synced["after"] -- new["after"],
             r = ref.(id),
-            do: {"removeBlockedBy", Map.put(base, "blockedBy", r)}
+            do:
+              {"removeBlockedBy", Map.put(base, "blockedBy", r),
+               &Map.update!(&1, "after", fn ids -> ids -- [id] end)}
 
     me = Map.take(base, ~w(repository number))
 
     parent =
-      if old["parent"] != new["parent"] do
-        for {method, id} <- [{"removeSubIssue", old["parent"]}, {"addSubIssue", new["parent"]}],
+      if differs.("parent") do
+        for {method, id, to} <- [
+              {"removeSubIssue", synced["parent"], nil},
+              {"addSubIssue", new["parent"], new["parent"]}
+            ],
             r = id && ref.(id),
             project = project_id(items[id], projects),
             do:
@@ -657,16 +693,15 @@ defmodule HalC2Plugins.Planner.Sync do
                  "repository" => r["repository"],
                  "number" => r["number"],
                  "subIssue" => me
-               }}
+               }, &Map.put(&1, "parent", to)}
       else
         []
       end
 
-    [if(patch != %{}, do: {"update", Map.merge(base, patch)})] ++
-      blocked ++ parent ++ board_pushes(settings, base, dated, new)
+    update ++ blocked ++ parent ++ board_pushes(settings, base, differs, new)
   end
 
-  defp board_pushes(settings, base, changed, new) do
+  defp board_pushes(settings, base, differs, new) do
     with [owner, number] <- String.split(String.trim(settings["board"] || ""), "/") do
       board = %{
         "projectId" => base["projectId"],
@@ -676,36 +711,43 @@ defmodule HalC2Plugins.Planner.Sync do
 
       sets =
         for {key, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}],
-            changed.(key),
+            differs.(key),
             is_binary(field) and field != "",
-            do: {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]})}
+            do:
+              {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]}),
+               &Map.put(&1, key, new[key])}
 
       cond do
         sets == [] ->
           []
 
         new["boardItemId"] ->
-          Enum.map(sets, fn {m, input} -> {m, Map.put(input, "itemId", new["boardItemId"])} end)
+          for {m, input, took} <- sets,
+              do: {m, Map.put(input, "itemId", new["boardItemId"]), took}
 
         true ->
-          [{:board, Map.put(board, "item", Map.take(base, ~w(repository number)))} | sets]
+          [{:board, Map.put(board, "item", Map.take(base, ~w(repository number))), & &1} | sets]
       end
     else
       _ -> []
     end
   end
 
-  defp milestone_pushes(base, old, new, items, projects) do
-    again? = is_binary(new["syncError"])
-    changed = fn key -> again? or old[key] != new[key] end
-
+  defp milestone_pushes(base, synced, new, items, projects) do
     patch =
       %{}
-      |> put_if(changed.("title"), "title", new["title"])
-      |> put_if(changed.("due"), "dueOn", new["due"])
+      |> put_if(synced["title"] != new["title"], "title", new["title"])
+      |> put_if(synced["due"] != new["due"], "dueOn", new["due"])
 
-    [if(patch != %{}, do: {"updateMilestone", Map.merge(base, patch)})] ++
-      held_pushes(new, if(again?, do: [], else: old["after"]), items, projects)
+    update =
+      if patch != %{},
+        do: [
+          {"updateMilestone", Map.merge(base, patch),
+           &Map.merge(&1, Map.take(new, ~w(title due)))}
+        ],
+        else: []
+
+    update ++ held_pushes(new, synced["after"], items, projects)
   end
 
   # The tasks a milestone of GitHub's gained move their issues to it, and those it lost
@@ -721,10 +763,15 @@ defmodule HalC2Plugins.Planner.Sync do
     end
 
     moves =
-      Enum.map(new["after"] -- before, &{&1, ref["number"]}) ++
-        for id <- before -- new["after"], not holds?.(id), do: {id, nil}
+      for(
+        id <- new["after"] -- before,
+        do: {id, ref["number"], &Map.update!(&1, "after", fn ids -> ids ++ [id] end)}
+      ) ++
+        for id <- before -- new["after"],
+            not holds?.(id),
+            do: {id, nil, &Map.update!(&1, "after", fn ids -> ids -- [id] end)}
 
-    for {id, milestone} <- moves,
+    for {id, milestone, took} <- moves,
         %{"issue" => %{} = issue} = task <- [items[id]],
         same?(issue["repository"], ref["repository"]),
         project = project_id(task, projects),
@@ -736,42 +783,68 @@ defmodule HalC2Plugins.Planner.Sync do
              "repository" => issue["repository"],
              "number" => issue["number"],
              "milestone" => milestone
-           }}
+           }, took}
   end
 
-  defp state(:again, "done"), do: state(nil, "done")
-  defp state(:again, "dropped"), do: state(nil, "dropped")
-  defp state(:again, _new), do: %{"state" => "open"}
-  defp state(old, new) when old == new, do: %{}
-  defp state(_old, "done"), do: %{"state" => "closed", "stateReason" => "completed"}
-  defp state(_old, "dropped"), do: %{"state" => "closed", "stateReason" => "not_planned"}
-  defp state(old, _new) when old in ~w(done dropped), do: %{"state" => "open"}
-  defp state(_old, _new), do: %{}
+  defp state("done"), do: %{"state" => "closed", "stateReason" => "completed"}
+  defp state("dropped"), do: %{"state" => "closed", "stateReason" => "not_planned"}
+  defp state("open"), do: %{"state" => "open"}
 
   @doc """
-  Asks GitHub for `ops` in order until one is refused: `{nil, extra}` when all took,
-  `{message, extra}` when one did not. `extra` holds what the task learnt, such as its
-  board item.
+  Asks GitHub for `ops` (`pushes/5`) in order until one is refused: `{nil, extra}`
+  when all took, `{message, extra}` when one did not. `extra` holds what the task
+  learnt: its board item, and what GitHub has of it, `synced` with what took (nil when
+  all of it did, GitHub then having the task's).
   """
-  def run(ops) do
-    Enum.reduce_while(Enum.reject(ops, &is_nil/1), {nil, %{}}, fn
-      {:board, input}, {nil, extra} ->
-        case Host.issues(@id, "addBoardItem", input) do
-          {:ok, %{"itemId" => item}} -> {:cont, {nil, Map.put(extra, "boardItemId", item)}}
-          {:error, error} -> {:halt, {message(error), extra}}
+  def run(ops, synced) do
+    {error, extra, synced} =
+      Enum.reduce_while(ops, {nil, %{}, synced}, fn {method, input, took}, {nil, extra, synced} ->
+        input =
+          if method == "setBoardField",
+            do: Map.put_new(input, "itemId", extra["boardItemId"]),
+            else: input
+
+        case ask(method, input) do
+          {:ok, %{"itemId" => item}} when method == :board ->
+            {:cont, {nil, Map.put(extra, "boardItemId", item), took.(synced)}}
+
+          {:ok, _} when method != :board ->
+            {:cont, {nil, extra, took.(synced)}}
+
+          {:error, error} ->
+            {:halt, {message(error), extra, synced}}
         end
+      end)
 
-      {"setBoardField", input}, {nil, extra} ->
-        input = Map.put_new(input, "itemId", extra["boardItemId"])
-        result(Host.issues(@id, "setBoardField", input), extra)
-
-      {method, input}, {nil, extra} ->
-        result(Host.issues(@id, method, input), extra)
-    end)
+    {error, Map.put(extra, "synced", if(error, do: synced))}
   end
 
-  defp result({:ok, _}, extra), do: {:cont, {nil, extra}}
-  defp result({:error, error}, extra), do: {:halt, {message(error), extra}}
+  defp ask(:board, input), do: Host.issues(@id, "addBoardItem", input)
+
+  # A relation GitHub says the issues already have, or do not have to remove, is what
+  # the plan asked for: an earlier push took it without the plan hearing, say the
+  # plugin stopped first. GitHub's wording for these is not documented, so the match
+  # is narrow; a miss marks the task as not synced, as any refusal does.
+  defp ask(method, input)
+       when method in ~w(addBlockedBy addSubIssue removeBlockedBy removeSubIssue) do
+    case Host.issues(@id, method, input) do
+      {:error, error} = refused ->
+        if had?(method, message(error)), do: {:ok, %{}}, else: refused
+
+      answer ->
+        answer
+    end
+  end
+
+  defp ask(method, input), do: Host.issues(@id, method, input)
+
+  defp had?(method, message) when method in ~w(addBlockedBy addSubIssue),
+    do: message =~ ~r/already (exists|been taken|added)|duplicate/i
+
+  defp had?(_method, message),
+    do:
+      message =~
+        ~r/not (a sub-issue|blocked by)|(relationship|dependency|sub-issue) (was not found|does not exist)/i
 
   @doc "`{:ok, issue}`, a new issue in `repository` made of `item`, as a link to it."
   def create_issue(item, repository) do

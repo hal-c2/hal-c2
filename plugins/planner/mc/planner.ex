@@ -553,8 +553,8 @@ defmodule HalC2Plugins.Planner do
   defp decide(message, _settings), do: server(message)
 
   defp effects(effects, settings) do
-    for {id, push, ops} <- Map.get(effects, :pushes, []) do
-      {error, extra} = Sync.run(ops)
+    for {id, push, ops, synced} <- Map.get(effects, :pushes, []) do
+      {error, extra} = Sync.run(ops, synced)
       server({:pushed, id, push, error, extra})
     end
 
@@ -661,7 +661,7 @@ defmodule HalC2Plugins.Planner do
   def handle_call({:item, id}, _from, state) do
     case state.items[id] do
       nil -> {:reply, {:error, "There is no task #{id}."}, state}
-      item -> {:reply, {:ok, item}, state}
+      item -> {:reply, {:ok, Map.delete(item, "synced")}, state}
     end
   end
 
@@ -977,7 +977,13 @@ defmodule HalC2Plugins.Planner do
         "issue" ->
           if Plan.same_ref?(item["issue"], ref),
             do:
-              {:ok, Map.merge(item, %{"issue" => nil, "boardItemId" => nil, "syncError" => nil})},
+              {:ok,
+               Map.merge(item, %{
+                 "issue" => nil,
+                 "boardItemId" => nil,
+                 "syncError" => nil,
+                 "synced" => nil
+               })},
             else: {:ok, item}
 
         "thread" ->
@@ -1062,7 +1068,7 @@ defmodule HalC2Plugins.Planner do
 
             items = Map.put(items, id, item)
             {pushes, state} = pushes(state, state.items, items)
-            {:reply, {:ok, item, %{pushes: pushes}}, changed(%{state | items: items})}
+            {:reply, {:ok, item, %{pushes: pushes}}, changed(state)}
 
           error ->
             {:reply, error, state}
@@ -1171,10 +1177,15 @@ defmodule HalC2Plugins.Planner do
   defp apply_look(%{looked: looked} = state, %{at: at}) when looked != nil and at < looked,
     do: state
 
-  # A task changed since the look read the plan, by the user or a push GitHub took,
-  # keeps its change: the look is older news about it, and the next one catches it up.
+  # A task changed since the look read the plan, by the user or a push GitHub answered,
+  # keeps its change, as does one with a push on the way, which GitHub may not have
+  # taken when the look read it: the look is older news about it, and the next one
+  # catches it up.
   defp apply_look(state, found) do
-    kept = Map.filter(state.items, fn {id, item} -> found.items[id] != item end)
+    kept =
+      Map.filter(state.items, fn {id, item} ->
+        found.items[id] != item or is_map_key(state.pushing, id)
+      end)
 
     items =
       state.items
@@ -1542,29 +1553,45 @@ defmodule HalC2Plugins.Planner do
   # A change to items, answered with what to push to GitHub for the tasks it changed.
   defp edit(state, items, reply) do
     {pushes, state} = pushes(state, state.items, items)
-    {:reply, {:ok, reply, %{pushes: pushes}}, changed(%{state | items: items})}
+    {:reply, {:ok, reply, %{pushes: pushes}}, changed(state)}
   end
 
-  # What to push for the tasks `items` changed from `before`, each push with a token the
-  # state keeps as its task's latest. A task unlinked from its issue, or linked to another,
-  # no longer hears from the pushes in flight to the one before, even when the change
-  # itself pushes nothing.
+  # The state with `items`, and what to push for the tasks they changed from `before`:
+  # each push with a token the state keeps as its task's latest, and what GitHub has of
+  # the task, which the task keeps (`synced`) until a push takes whole. A task GitHub
+  # has all of again, with no push on the way, is no longer marked. A task unlinked from
+  # its issue, or linked to another, no longer hears from the pushes in flight to the
+  # one before, even when the change itself pushes nothing.
   defp pushes(state, before, items) do
-    pushes =
-      for {id, new} <- items,
-          old = before[id],
-          old != new,
-          ops = Sync.pushes(state.settings, old, new, items, state.projects),
-          ops != [],
-          do: {id, System.unique_integer([:monotonic]), ops}
+    {pushes, items} =
+      Enum.reduce(items, {[], items}, fn {id, new}, {pushes, items} ->
+        old = before[id]
+        synced = old && Sync.synced(old, new)
+
+        ops = old && old != new && Sync.pushes(state.settings, synced, new, items, state.projects)
+        marked? = new["synced"] != nil or new["syncError"] != nil
+
+        cond do
+          is_list(ops) and ops != [] ->
+            push = {id, System.unique_integer([:monotonic]), ops, synced}
+            {[push | pushes], Map.put(items, id, Map.put(new, "synced", synced))}
+
+          ops == [] and marked? and not is_map_key(state.pushing, id) ->
+            {pushes, Map.put(items, id, Map.merge(new, %{"synced" => nil, "syncError" => nil}))}
+
+          true ->
+            {pushes, items}
+        end
+      end)
 
     relinked =
       for {id, old} <- before,
           old["issue"] != nil and not Plan.same_ref?(old["issue"], items[id]["issue"]),
           do: id
 
-    latest = Map.new(pushes, fn {id, push, _} -> {id, push} end)
-    {pushes, %{state | pushing: state.pushing |> Map.drop(relinked) |> Map.merge(latest)}}
+    latest = Map.new(pushes, fn {id, push, _, _} -> {id, push} end)
+    pushing = state.pushing |> Map.drop(relinked) |> Map.merge(latest)
+    {pushes, %{state | items: items, pushing: pushing}}
   end
 
   defp put_run(state, run), do: %{state | runs: prune(Map.put(state.runs, run["id"], run))}

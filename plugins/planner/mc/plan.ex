@@ -275,7 +275,10 @@ defmodule HalC2Plugins.Planner.Plan do
     |> Map.values()
     |> Enum.sort_by(&{&1["order"], &1["id"]})
     |> Enum.map(fn item ->
-      Map.merge(item, %{
+      # What GitHub has of the task is the sync's own; clients show `syncError`.
+      item
+      |> Map.delete("synced")
+      |> Map.merge(%{
         "late" => late?(item, today),
         "early" => early(items, item),
         "derivedProgress" => progress(item, children),
@@ -495,7 +498,12 @@ defmodule HalC2Plugins.Planner.Plan do
   # task is kept, for `check/2` to refuse.
   defp resolve(fields, refs) do
     fields
-    |> then(&if(is_binary(&1["parent"]), do: Map.put(&1, "parent", refs[&1["parent"]] || &1["parent"]), else: &1))
+    |> then(
+      &if(is_binary(&1["parent"]),
+        do: Map.put(&1, "parent", refs[&1["parent"]] || &1["parent"]),
+        else: &1
+      )
+    )
     |> then(
       &if(is_list(&1["after"]),
         do:
@@ -536,9 +544,12 @@ defmodule HalC2Plugins.Planner.Plan do
       "state" => ref["state"] || "open"
     }
 
-    # The board row and the failure belong to the issue the task was linked to before.
+    # The board row, the failure and what GitHub has of the task belong to the issue the
+    # task was linked to before.
     stale =
-      if same_ref?(item["issue"], ref), do: %{}, else: %{"boardItemId" => nil, "syncError" => nil}
+      if same_ref?(item["issue"], ref),
+        do: %{},
+        else: %{"boardItemId" => nil, "syncError" => nil, "synced" => nil}
 
     item |> Map.merge(stale) |> Map.merge(%{"issue" => issue, "updatedAt" => now})
   end

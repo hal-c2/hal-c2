@@ -1515,7 +1515,18 @@ defmodule HalC2.Steps.Planning.Planner do
     context
     |> board_item(number, board, start, due)
     |> sync!()
-    |> Map.put(:board_dates, {start, due})
+    |> Map.merge(%{board_dates: {start, due}, board_issue: number})
+  end
+
+  # GitHub keeps a field's values through a rename.
+  step "{string} renames its {string} field to {string}",
+       %{args: [board, field, name]} = context do
+    {start_field, ^field} = context.board_fields
+    {start, due} = context.board_dates
+
+    context
+    |> Map.put(:board_fields, {start_field, name})
+    |> board_item(context.board_issue, board, start, due)
   end
 
   step "the {string} of \#{int} is cleared on {string}",
@@ -1697,23 +1708,101 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
-  # The rename to `title` waits on a fifo until the scenario answers it, then is refused.
   step "GitHub answers renaming \#{int} to {string} late, refusing it",
        %{args: [number, title]} = context do
-    gate = Path.join(context.mc.home, "gh-gate")
-    {_, 0} = System.cmd("mkfifo", [gate])
+    answers_late(context, number, title, %{
+      "exit" => 1,
+      "stderr" => "HTTP 422: Validation Failed\n"
+    })
+  end
 
+  step "GitHub answers renaming \#{int} to {string} late, taking it",
+       %{args: [number, title]} = context do
+    answers_late(context, number, title, %{"stdout" => %{"number" => number}})
+  end
+
+  step "the user renames \#{int}'s task to {string}, then the plugin looks at GitHub before GitHub answers",
+       %{args: [number, title]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    # GitHub still lists the issue by its old title: the rename has not reached it.
+    context = sync!(context)
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     context
-    |> World.cli_rules([
-      %{
-        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
-        "stdin" => [JSON.encode!(%{"title" => title})],
-        "run" => "cat '#{gate}' > /dev/null",
+  end
+
+  step "\#{int} is blocked by \#{int} on GitHub", %{args: [number, blocker]} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, [
+        GitHubIssues.issue(repository, number, %{"blockedBy" => [blocker]}),
+        GitHubIssues.issue(repository, blocker, %{"blocking" => [number]})
+      ])
+      |> sync!()
+
+    plan = plan!(context)
+    assert task_of(plan, number)["after"] == [task_of(plan, blocker)["id"]]
+    context
+  end
+
+  step "GitHub refuses to unblock \#{int}", %{args: [number]} = context do
+    World.cli_rules(context, [
+      unblocking(number, %{
         "exit" => 1,
-        "stderr" => "HTTP 422: Validation Failed\n"
-      }
+        "stderr" => "GraphQL: Resource not accessible by integration (removeBlockedBy)\n"
+      })
     ])
-    |> Map.put(:gh_gate, gate)
+  end
+
+  # GitHub's wording for this is not documented; this is the shape the plugin matches.
+  step "GitHub answers unblocking \#{int} that \#{int} no longer blocks it",
+       %{args: [number, blocker]} = context do
+    World.cli_rules(context, [
+      unblocking(number, %{
+        "exit" => 1,
+        "stderr" =>
+          "GraphQL: Issue ##{number} is not blocked by issue ##{blocker} (removeBlockedBy)\n"
+      })
+    ])
+  end
+
+  step "GitHub takes unblocking \#{int} again", %{args: [number]} = context do
+    World.cli_rules(context, [
+      unblocking(number, %{
+        "stdout" => %{"data" => %{"removeBlockedBy" => %{"clientMutationId" => nil}}}
+      })
+    ])
+  end
+
+  step "the user makes \#{int}'s task wait for nothing", %{args: [number]} = context do
+    update_task(context, number, %{"after" => []})
+  end
+
+  step "GitHub is asked a second time to unblock \#{int} from \#{int}",
+       %{args: [number, blocker]} = context do
+    asked = GitHubIssues.graphql_calls(context, "removeBlockedBy(input")
+    pair = %{"issue" => GitHubIssues.issue_id(number), "other" => GitHubIssues.issue_id(blocker)}
+    assert Enum.count(asked, &(&1 == pair)) == 2, inspect(asked)
+    context
+  end
+
+  step "\#{int}'s task is marked as not synced", %{args: [number]} = context do
+    error = task_of(plan!(context), number)["syncError"]
+    assert is_binary(error) and error != "", "##{number}'s task is marked as synced"
+    context
+  end
+
+  step "the user makes {string} the owner of \#{int}'s task",
+       %{args: [owner, number]} = context do
+    update_task(context, number, %{"owner" => owner})
+  end
+
+  step "GitHub is asked to rename \#{int} to {string} and assign it to {string} at once",
+       %{args: [number, title, owner]} = context do
+    GitHubIssues.assert_patched(context, number, %{"title" => title, "assignees" => [owner]})
   end
 
   step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
@@ -1721,6 +1810,16 @@ defmodule HalC2.Steps.Planning.Planner do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, first)
     context = update_task(context, number, %{"title" => second})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then makes {string} its owner before GitHub answers",
+       %{args: [number, title, owner]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    context = update_task(context, number, %{"owner" => owner})
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     context
@@ -2403,6 +2502,30 @@ defmodule HalC2.Steps.Planning.Planner do
   # the file server, the open would hold every other file call until gh reads it, the
   # rename's own on its way to gh included.
   defp answer_late(context), do: File.write!(context.gh_gate, "answer", [:raw])
+
+  # GitHub's answer to renaming #`number` to `title` (a fake gh rule's outcome) waits on
+  # a fifo until the scenario answers it.
+  defp answers_late(context, number, title, outcome) do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+
+    rule =
+      Map.merge(outcome, %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "run" => "cat '#{gate}' > /dev/null"
+      })
+
+    context |> World.cli_rules([rule]) |> Map.put(:gh_gate, gate)
+  end
+
+  # GitHub's answer (a fake gh rule's outcome) to unblocking #`number`.
+  defp unblocking(number, outcome),
+    do:
+      Map.merge(outcome, %{
+        "args" => ["api graphql"],
+        "stdin" => ["removeBlockedBy(input", ~s("issue":"#{GitHubIssues.issue_id(number)}")]
+      })
 
   # Renames `task` to `title` in a client of its own, as another window's would, so the
   # rename can wait on GitHub while the scenario goes on; returns once the plan has it.
