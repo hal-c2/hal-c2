@@ -23,11 +23,14 @@ defmodule HalC2.Slack do
 
   @secret "slack"
   @cache __MODULE__.Cache
+  @delivered __MODULE__.Delivered
   @connections __MODULE__.Connections
   @tasks __MODULE__.Tasks
   @courier __MODULE__.Courier
   @not_connected "Slack is not connected on this MC."
   @max_backoff 60_000
+  # Slack retries an event for minutes; far fewer reach plugins meanwhile.
+  @remembered 10_000
 
   def child_spec(_) do
     # The courier comes first so that a crash of the rest leaves it, and the order it
@@ -336,6 +339,28 @@ defmodule HalC2.Slack do
 
   def user(_id), do: {:error, "A Slack user is required."}
 
+  @doc """
+  Whether the event Slack names `id` (the Events API's `event_id`) reaches plugins for the
+  first time, remembering it if so. Socket Mode delivers an event again, with the same id,
+  when the ack did not reach Slack, on the next connection too, so the last #{@remembered}
+  are kept across reconnects; a restart of the service forgets them. A nil id (a slash
+  command, which Slack does not deliver again) is always new.
+  """
+  def first_delivery?(nil), do: true
+
+  def first_delivery?(id) do
+    n = :ets.update_counter(@delivered, :count, 1, {:count, 0})
+
+    if rem(n, @remembered) == 0 do
+      old = [{{{:event, :_}, :"$1"}, [{:"=<", :"$1", n - @remembered}], [true]}]
+      :ets.select_delete(@delivered, old)
+    end
+
+    :ets.insert_new(@delivered, {{:event, id}, n})
+  rescue
+    ArgumentError -> true
+  end
+
   @doc "A user's name, or nil when Slack does not say."
   def user_name(id) do
     case user(id) do
@@ -392,6 +417,7 @@ defmodule HalC2.Slack do
   @impl true
   def init(nil) do
     :ets.new(@cache, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@delivered, [:named_table, :public, :set, write_concurrency: true])
     tokens = stored_tokens()
 
     state = %{

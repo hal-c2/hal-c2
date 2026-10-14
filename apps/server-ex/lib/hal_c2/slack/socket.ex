@@ -4,8 +4,9 @@ defmodule HalC2.Slack.Socket do
   handed out and the bot's identity. It tells its owner the app Slack's `hello` names
   (`{:slack_hello, socket, app_id}`), so the MC can refuse an app token of another app
   than the bot token's, and acks every envelope but hands `HalC2.Slack.Bot` only those for
-  the bot's app and workspace, each in a task. It never reconnects: when it ends,
-  `HalC2.Slack` makes a new one.
+  the bot's app and workspace, each in a task. An ack can be lost with the connection, and
+  Slack then delivers the event again, on the next connection too; `HalC2.Slack.Bot` hands
+  it on once. It never reconnects: when it ends, `HalC2.Slack` makes a new one.
   """
 
   use WebSockex
@@ -84,17 +85,20 @@ defmodule HalC2.Slack.Socket do
 
   defp deliver(%{"type" => type, "payload" => payload}, identity) do
     with true <- ours?(payload, identity),
-         {type, event} when is_map(event) <- event(type, payload) do
+         {type, event, id} when is_map(event) <- event(type, payload) do
       Task.Supervisor.start_child(HalC2.Slack.Tasks, fn ->
-        HalC2.Slack.Bot.handle_event(type, event, identity)
+        HalC2.Slack.Bot.handle_event(type, event, identity, id)
       end)
     end
   end
 
   defp deliver(_envelope, _identity), do: nil
 
-  defp event("events_api", %{"event" => %{"type" => type} = event}), do: {type, event}
-  defp event("slash_commands", payload), do: {"slash_commands", payload}
+  # With the Events API's `event_id`, the same on every delivery of an event.
+  defp event("events_api", %{"event" => %{"type" => type} = event} = payload),
+    do: {type, event, payload["event_id"]}
+
+  defp event("slash_commands", payload), do: {"slash_commands", payload, nil}
   defp event(_type, _payload), do: nil
 
   @doc """

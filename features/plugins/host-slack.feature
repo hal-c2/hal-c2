@@ -81,6 +81,16 @@ Feature: Slack for MC plugins
     When "dana" mentions "HAL" in "#planning", and the MC disconnects Slack before Slack names "dana"
     Then "planner" is handed Slack stopping, and not the mention
 
+  # Socket Mode delivers at least once: an ack lost with the connection has Slack deliver
+  # the event again, with the same event id, on the next connection.
+  @mc
+  Scenario: An event Slack delivers again after a reconnect reaches plugins once
+    Given the plugins "planner", granted "slack:read", and "quiet", which is not
+    And "dana" mentioned "HAL" in "#planning" and "planner" was handed it
+    And the Socket Mode connection dropped and came back
+    When Slack delivers that mention again, and then "dana" mentions "HAL" once more
+    Then "planner" is handed the second mention, and not the first one again
+
   @mc
   Scenario: A plugin hears Slack stop and connect again in the order it happened
     Given a plugin granted "slack:read" that takes its time with each Slack event

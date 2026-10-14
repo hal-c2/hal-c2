@@ -122,6 +122,23 @@ defmodule HalC2.SlackTest do
     assert {:ok, %{"channels" => [%{"id" => "CPLAN"}]}} = Slack.call("channels", %{})
   end
 
+  # Slack delivers an event again when its ack was lost, on the next connection too.
+  test "an event is new once, across a reconnect, until many newer ones pushed it out" do
+    {:ok, _} = Slack.connect(tokens())
+    {:ok, _} = Slack.subscribe(self())
+    assert Slack.first_delivery?("Ev1")
+    refute Slack.first_delivery?("Ev1")
+
+    FakeSlack.drop()
+    await_state("reconnecting")
+    await_state("connected")
+    refute Slack.first_delivery?("Ev1")
+
+    for n <- 2..20_001, do: assert(Slack.first_delivery?("Ev#{n}"))
+    refute Slack.first_delivery?("Ev20001")
+    assert Slack.first_delivery?("Ev1")
+  end
+
   # Nothing of the lost connection may live on to take events while the MC says it is
   # reconnecting and has no token for plugins.
   test "a dropped socket's connection stops at once, not when the backoff ends" do

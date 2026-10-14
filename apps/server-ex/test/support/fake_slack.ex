@@ -6,7 +6,7 @@ defmodule HalC2.Test.FakeSlack do
   `apps.connections.open` hands out a loopback Socket Mode URL served by Bandit, whose
   socket says hello (naming the app token's app), takes acks and pushes what `event/2`
   and `command/1` send, as envelopes from the bot's app and workspace unless told
-  otherwise.
+  otherwise, and what `retry/3` sends again.
 
   The workspace is "acme" (`T0ACME`) with the app `A0ACME`, its bot "HAL" (`UHAL`,
   `BHAL`), the person "dana" (`UDANA`), the channel "#planning" (`CPLAN`) the bot is in
@@ -165,11 +165,29 @@ defmodule HalC2.Test.FakeSlack do
 
   @doc """
   Pushes a Socket Mode `events_api` envelope carrying `event`, from the bot's app and
-  workspace; `payload` overrides the rest (`team_id`, `api_app_id`, `authorizations`).
+  workspace, with an `event_id` of its own; `payload` overrides the rest (`event_id`,
+  `team_id`, `api_app_id`, `authorizations`).
   """
   def event(event, payload \\ %{}) do
-    payload = Map.merge(origin(), Map.put(payload, "event", event))
+    id = %{"event_id" => "Ev#{System.unique_integer([:positive])}"}
+    payload = origin() |> Map.merge(id) |> Map.merge(Map.put(payload, "event", event))
     to_socket({:frame, envelope("events_api", payload)})
+  end
+
+  @doc """
+  Pushes `event` again as Slack does when it missed the ack of the event `id`: a new
+  envelope with the same `event_id`, and Socket Mode's `retry_attempt` and `retry_reason`.
+  """
+  def retry(event, id, attempt \\ 1) do
+    payload = Map.merge(origin(), %{"event" => event, "event_id" => id})
+
+    envelope =
+      Map.merge(envelope("events_api", payload), %{
+        "retry_attempt" => attempt,
+        "retry_reason" => "timeout"
+      })
+
+    to_socket({:frame, envelope})
   end
 
   @doc "Pushes a `slash_commands` envelope; `payload` as Slack sends one."
