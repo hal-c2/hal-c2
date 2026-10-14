@@ -422,4 +422,57 @@ defmodule HalC2.Web.SocketTest do
     assert {%{"t" => "config.usageLimitSources", "id" => 3, "sources" => [^source]}, _} =
              WsClient.recv(client, 1_000)
   end
+
+  @tag :capture_log
+  test "two subscriptions to Slack on one socket each follow it until their own unsub", %{
+    port: port
+  } do
+    :ok = HalC2.Test.FakeSlack.start()
+    start_supervised!(HalC2.Slack)
+    shape = %{"type" => "slack", "mc" => Atom.to_string(node())}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => shape})
+
+    {[{1, "off"}, {2, "off"}], client} = slack_frames(client)
+
+    {:ok, _} =
+      HalC2.Slack.connect(%{
+        "botToken" => HalC2.Test.FakeSlack.bot_token(),
+        "appToken" => HalC2.Test.FakeSlack.app_token()
+      })
+
+    {frames, client} = slack_frames(client)
+
+    assert Enum.sort(frames) == [
+             {1, "connected"},
+             {1, "connecting"},
+             {2, "connected"},
+             {2, "connecting"}
+           ]
+
+    # One page going leaves the other watching.
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> slack_frames()
+    {:ok, _} = HalC2.Slack.disconnect()
+    assert {[{2, "off"}], client} = slack_frames(client)
+
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 2}) |> slack_frames()
+
+    {:error, _} =
+      HalC2.Slack.connect(%{"botToken" => "xoxb-revoked", "appToken" => "xapp-revoked"})
+
+    assert {[], _} = slack_frames(client)
+  end
+
+  # The Slack frames that came before the pong answering a ping sent now, as
+  # {id, state}: the MC pushes a status before HalC2.Slack answers the change.
+  defp slack_frames(client) do
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
+
+    {for(%{"t" => "slack", "id" => id, "status" => status} <- frames, do: {id, status["state"]}),
+     client}
+  end
 end

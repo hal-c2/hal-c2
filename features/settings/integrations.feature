@@ -590,6 +590,17 @@ Feature: Integrations settings
       Then Slack shows as reconnecting
       And it shows as connected again once Slack answers
 
+    # A client keeps one connection to an MC, and each of its windows its own
+    # Integrations page on it.
+    @mc
+    Scenario: Two Integrations pages on one connection each follow Slack
+      Given Slack is connected
+      And two Integrations pages on one connection show Slack
+      When one of the pages is closed
+      And the user disconnects Slack
+      Then the other page shows Slack as not connected
+      And the closed page is told nothing
+
     @mc
     Scenario: The connection survives a restart of the MC
       Given Slack is connected

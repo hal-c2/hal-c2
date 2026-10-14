@@ -348,12 +348,15 @@ defmodule HalC2.Web.Socket do
   end
 
   def handle_info({:hal_c2_slack, mc, status}, state) do
-    case state.by_terminal do
-      %{{:slack, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "slack", "id" => id, "status" => status}), state}
-
-      _ ->
+    case Map.get(state.by_terminal, {:slack, mc}, []) do
+      [] ->
         {:ok, state}
+
+      ids ->
+        frames =
+          for id <- ids, do: Protocol.encode(%{"t" => "slack", "id" => id, "status" => status})
+
+        {:push, frames, state}
     end
   end
 
@@ -897,6 +900,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # Several subscriptions on one socket (a page in each window) may watch one MC's
+  # Slack; HalC2.Slack knows only the socket, so it is let go with the last of them.
   defp subscribe(state, id, {:slack, mc} = shape, _offset) do
     case remote(mc, HalC2.Slack, :subscribe, [self()]) do
       {:ok, {:ok, status}} ->
@@ -904,7 +909,7 @@ defmodule HalC2.Web.Socket do
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
+             by_terminal: Map.update(state.by_terminal, shape, [id], &[id | &1])
          }}
 
       {:error, reason} ->
@@ -1396,8 +1401,14 @@ defmodule HalC2.Web.Socket do
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:slack, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.Slack, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+        case List.delete(Map.get(state.by_terminal, shape, []), id) do
+          [] ->
+            :erpc.cast(mc, HalC2.Slack, :unsubscribe, [self()])
+            %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+          ids ->
+            %{state | subs: subs, by_terminal: Map.put(state.by_terminal, shape, ids)}
+        end
 
       {{:project_clones, mc}, subs} ->
         :erpc.cast(mc, HalC2.ProjectClones, :unsubscribe, [self()])
