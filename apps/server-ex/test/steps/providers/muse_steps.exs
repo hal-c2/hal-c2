@@ -599,6 +599,43 @@ defmodule HalC2.Steps.Providers.Muse do
     context
   end
 
+  step "Muse Code is busy with a long task and overloaded the first two times it is steered",
+       context do
+    context =
+      context
+      |> install(%{"overloaded" => %{"turn/steer" => 2}})
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("a long task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "message"), &(&1["text"] == "Working on it."))
+    end)
+
+    context
+  end
+
+  step "the user steers the Muse Code turn", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-steer",
+        "threadId" => World.thread_id(context, context.thread),
+        "messageId" => "msg-steer",
+        "text" => "also this",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    context
+  end
+
+  step "Muse Code is asked again until the steer lands", context do
+    FakeAcp.await_run(context, "completed")
+    assert length(received(context, "turn/steer")) == 3
+    assert "steered: also this" in replies(context)
+    context
+  end
+
   step "the user dismisses the Muse Code question", context do
     request = FakeAcp.await_request(context)
 

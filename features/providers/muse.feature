@@ -189,6 +189,11 @@ Feature: Muse Code
     And the user dismisses the Muse Code question
     Then Muse Code is told and the turn goes on
 
+  Scenario: An overloaded Muse Code is asked again
+    Given Muse Code is busy with a long task and overloaded the first two times it is steered
+    When the user steers the Muse Code turn
+    Then Muse Code is asked again until the steer lands
+
   Scenario: Stopping a Muse Code turn interrupts it
     Given a Muse Code turn is running
     When the user stops the turn

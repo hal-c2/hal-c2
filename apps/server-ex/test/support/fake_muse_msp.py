@@ -10,6 +10,7 @@
 #   versionExit  `muse --version`'s exit status (default 0)
 #   models    model/list's models (default one Meta model, fake/one)
 #   modelListExit  exit instead of answering model/list
+#   overloaded  {method: n}: the first n calls of method are refused as overloaded (-32001)
 #   turns     [{"match": substring, "steps": [...]}], first match wins
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
 #
@@ -90,7 +91,7 @@ log({"start": {
     "env": {k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIXES)},
 }})
 
-state = {"session": None, "turn": None, "late": []}
+state = {"session": None, "turn": None, "late": [], "overloaded": {}}
 # What the running turn waits on: decisions, answers, interrupts and steers.
 events = queue.Queue()
 # Approvals with requirements still to come: approvalId -> [request, how many].
@@ -249,6 +250,11 @@ def handle(msg):
 
     def answered(id):
         return "other-" + id if config().get("mismatch") == method else id
+
+    refused = state["overloaded"].get(method, 0)
+    if refused < config().get("overloaded", {}).get(method, 0):
+        state["overloaded"][method] = refused + 1
+        return error(-32001, "overloaded")
 
     if method == "initialize":
         requested = params.get("capabilities", {}).get("requestedCapabilities", [])

@@ -177,10 +177,14 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   def handle_call(:interrupt, _from, %{turn: turn} = state) when turn != nil do
-    # Muse runs a turn it joined first, so stopping the run stops it too.
-    for joined <- state.joined, do: command(state, "turn/interrupt", %{"turnId" => joined})
+    # Muse runs a turn it joined first, so stopping the run stops it too; all within
+    # the one budget the caller waits for.
+    deadline = deadline()
 
-    case command(state, "turn/interrupt", %{"turnId" => state.native}) do
+    for joined <- state.joined,
+        do: command(state, "turn/interrupt", %{"turnId" => joined}, deadline)
+
+    case command(state, "turn/interrupt", %{"turnId" => state.native}, deadline) do
       {:ok, _} -> {:reply, :ok, %{state | interrupted: true}}
       {:error, reason} -> {:reply, {:error, format(reason)}, state}
     end
@@ -482,14 +486,20 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # A command: the session and a fresh command id go with every one, and Muse's
   # "overloaded" and "backpressured" are retried under the same id.
-  defp command(state, method, params, attempt \\ 1) do
+  # A command, sent again while Muse is overloaded, all before `deadline`: the public
+  # calls wait 35s, so a retry never lands after its caller gave up.
+  defp command(state, method, params, deadline \\ deadline(), attempt \\ 1) do
     id = params["commandId"] || Muse.command_id()
     params = Map.merge(%{"sessionId" => state.session, "commandId" => id}, params)
+    left = deadline - System.monotonic_time(:millisecond)
 
-    case Connection.call(state.conn, method, params, 30_000) do
+    case left > 0 && Connection.call(state.conn, method, params, left) do
+      false ->
+        {:error, "Muse Code did not answer #{method} in time"}
+
       {:error, %{"code" => code}} when code in @retryable and attempt < 3 ->
         Process.sleep(200 * attempt)
-        command(state, method, params, attempt + 1)
+        command(state, method, params, deadline, attempt + 1)
 
       {:ok, result} when is_map(result) ->
         {:ok, result}
@@ -507,6 +517,8 @@ defmodule HalC2.Muse.ThreadRuntime do
       close_conn(state.conn)
       {:error, "Muse Code did not answer #{method}"}
   end
+
+  defp deadline, do: System.monotonic_time(:millisecond) + 30_000
 
   defp close_conn(conn) do
     Connection.stop(conn)
