@@ -448,6 +448,58 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
+  step "{string} mentioned {string} in {string} and {string} was handed it",
+       %{args: [person, _bot, "#" <> name, id]} = context do
+    event = %{
+      "type" => "app_mention",
+      "channel" => channel_id(name),
+      "user" => user_id(person),
+      "text" => "<@UHAL> what is late?",
+      "ts" => "1700000100.000005"
+    }
+
+    FakeSlack.event(event, %{"event_id" => "Ev0LATE"})
+
+    assert_receive {:slack_event, ^id, %{"type" => "slack.mention", "ts" => "1700000100.000005"}},
+                   10_000
+
+    Map.put(context, :mention, event)
+  end
+
+  step "the Socket Mode connection dropped and came back", context do
+    context = Slack.watch(context)
+    FakeSlack.available(false)
+    FakeSlack.drop()
+    {_, context} = Slack.await(context, "reconnecting")
+    FakeSlack.available(true)
+    {_, context} = Slack.await(context, "connected")
+    context
+  end
+
+  step "Slack delivers that mention again, and then {string} mentions {string} once more",
+       %{args: [person, _bot]} = context do
+    FakeSlack.retry(context.mention, "Ev0LATE")
+
+    FakeSlack.event(%{
+      context.mention
+      | "user" => user_id(person),
+        "text" => "<@UHAL> anything else?",
+        "ts" => "1700000100.000006"
+    })
+
+    context
+  end
+
+  step "{string} is handed the second mention, and not the first one again",
+       %{args: [id]} = context do
+    assert_receive {:slack_event, ^id, %{"type" => "slack.mention", "ts" => "1700000100.000006"}},
+                   10_000
+
+    # Each event is handed on in a task of its own; give the first one its chance.
+    refute_receive {:slack_event, ^id, %{"ts" => "1700000100.000005"}}, 200
+    context
+  end
+
   step "a plugin granted {string} that takes its time with each Slack event",
        %{args: [permission]} = context do
     Slack.listener(context, "slow", [permission], hold: true)

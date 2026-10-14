@@ -9,12 +9,15 @@ defmodule HalC2.SlackPropTest do
   drop it with a long backoff, where the lost connection must be stopped before the
   retry, then connect again), disconnect while a connect waits for Slack's hello (its
   socket must close), restart the service and mention the bot in Slack, in its workspace
-  and app or in another, or mention it and disconnect while the MC asks Slack who wrote it. After every step the status must
+  and app or in another, or mention it and disconnect while the MC asks Slack who wrote it,
+  and have Slack deliver a mention again (as it does when an ack was lost), however the
+  connection changed since. After every step the status must
   match the model and never carry a token, and the secret store must hold tokens
   exactly when the model keeps them. At the end of a case the plugin granted
   `slack:read` must have heard every connect and every stop (`slack.status`), in the
-  order they happened, and every mention in the bot's workspace and app but none from
-  elsewhere or read after a disconnect, and the plugin without it nothing.
+  order they happened, and every mention in the bot's workspace and app once, but none from
+  elsewhere, and one read after a disconnect only when Slack delivered it again, once;
+  the plugin without it nothing.
   """
 
   use ExUnit.Case, async: false
@@ -135,9 +138,11 @@ defmodule HalC2.SlackPropTest do
 
   # phase: what the status says. stored: whether it keeps tokens. up: whether Slack
   # answers. told: the slack.status events the granted plugin is owed, their
-  # `connected`, newest first. mentions: the mentions it is owed.
+  # `connected`, newest first. mentions: the mentions it is owed. sent: the next mention's
+  # number, its event id. events: the mentions in the bot's workspace and app since the
+  # service started, by number: :heard, or :stale (read after a disconnect, so not heard).
   def initial_state,
-    do: %{phase: :off, stored: false, up: true, told: [], mentions: 0}
+    do: %{phase: :off, stored: false, up: true, told: [], mentions: 0, sent: 0, events: %{}}
 
   def command(state) do
     frequency(
@@ -156,21 +161,36 @@ defmodule HalC2.SlackPropTest do
           [
             {6, {:call, __MODULE__, :drop, [state.up]}},
             {2, {:call, __MODULE__, :drop_held, []}},
-            {4, {:call, __MODULE__, :mention, [:ours]}},
-            {1, {:call, __MODULE__, :mention, [:other_team]}},
-            {1, {:call, __MODULE__, :mention, [:other_app]}},
-            {1, {:call, __MODULE__, :mention_then_disconnect, []}}
-          ] ++ if(state.up, do: [{1, {:call, __MODULE__, :read_across_reconnect, []}}], else: [])
+            {4, {:call, __MODULE__, :mention, [:ours, state.sent]}},
+            {1, {:call, __MODULE__, :mention, [:other_team, state.sent]}},
+            {1, {:call, __MODULE__, :mention, [:other_app, state.sent]}},
+            {1, {:call, __MODULE__, :mention_then_disconnect, [state.sent]}}
+          ] ++
+            if(state.up, do: [{1, {:call, __MODULE__, :read_across_reconnect, []}}], else: []) ++
+            if(state.events != %{}, do: [{4, retry_command(state)}], else: [])
         else
           []
         end
     )
   end
 
+  defp retry_command(state) do
+    let n <- elements(Map.keys(state.events)),
+        do: {:call, __MODULE__, :retry, [n, state.events[n]]}
+  end
+
   def precondition(state, {:call, _, :drop, _}), do: state.phase == :connected
   def precondition(state, {:call, _, :drop_held, _}), do: state.phase == :connected
-  def precondition(state, {:call, _, :mention, _}), do: state.phase == :connected
-  def precondition(state, {:call, _, :mention_then_disconnect, _}), do: state.phase == :connected
+
+  def precondition(state, {:call, _, :mention, [_, n]}),
+    do: state.phase == :connected and n >= state.sent
+
+  def precondition(state, {:call, _, :mention_then_disconnect, [n]}),
+    do: state.phase == :connected and n >= state.sent
+
+  def precondition(state, {:call, _, :retry, [n, kind]}),
+    do: state.phase == :connected and state.events[n] == kind
+
   def precondition(state, {:call, _, :disconnect_before_hello, _}), do: state.up
 
   def precondition(state, {:call, _, :read_across_reconnect, _}),
@@ -193,8 +213,10 @@ defmodule HalC2.SlackPropTest do
   def next_state(state, _result, {:call, _, :disconnect_before_hello, []}),
     do: state |> walk([:connecting, :off]) |> Map.put(:stored, false)
 
-  def next_state(state, _result, {:call, _, :mention_then_disconnect, []}),
-    do: state |> walk([:off]) |> Map.put(:stored, false)
+  def next_state(state, _result, {:call, _, :mention_then_disconnect, [n]}) do
+    state = %{state | sent: n + 1, events: Map.put(state.events, n, :stale)}
+    state |> walk([:off]) |> Map.put(:stored, false)
+  end
 
   # Connected afresh twice: once to start from empty caches, once under the reads.
   def next_state(state, _result, {:call, _, :read_across_reconnect, []}) do
@@ -222,16 +244,27 @@ defmodule HalC2.SlackPropTest do
     next_state(state, nil, {:call, __MODULE__, :connect, [:good]})
   end
 
-  # A service that stops says nothing; the one that starts connects when it keeps tokens.
+  # A service that stops says nothing, and forgets the events it handed on; the one that
+  # starts connects when it keeps tokens.
   def next_state(state, _result, {:call, _, :restart, _}) do
-    state = %{state | phase: if(state.stored, do: :connecting, else: :off)}
+    state = %{state | phase: if(state.stored, do: :connecting, else: :off), events: %{}}
     if state.stored and state.up, do: walk(state, [:connected]), else: state
   end
 
-  def next_state(state, _result, {:call, _, :mention, [:ours]}),
-    do: %{state | mentions: state.mentions + 1}
+  def next_state(state, _result, {:call, _, :mention, [:ours, n]}),
+    do: %{
+      state
+      | mentions: state.mentions + 1,
+        sent: n + 1,
+        events: Map.put(state.events, n, :heard)
+    }
 
-  def next_state(state, _result, {:call, _, :mention, _elsewhere}), do: state
+  def next_state(state, _result, {:call, _, :mention, [_elsewhere, n]}),
+    do: %{state | sent: n + 1}
+
+  # Delivered again, a stale mention is heard now, and a heard one not again.
+  def next_state(state, _result, {:call, _, :retry, [n, _kind]}),
+    do: %{state | events: Map.put(state.events, n, :heard)}
 
   # Moves through `phases`, owing the plugins an event for every connect and every stop.
   defp walk(state, phases) do
@@ -298,8 +331,10 @@ defmodule HalC2.SlackPropTest do
       replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
   end
 
-  defp replied?(_state, {:call, _, :mention, [:ours]}, result), do: result == :heard
+  defp replied?(_state, {:call, _, :mention, [:ours, _]}, result), do: result == :heard
   defp replied?(_state, {:call, _, :mention, _elsewhere}, result), do: result == :sent
+  defp replied?(_state, {:call, _, :retry, [_, :stale]}, result), do: result == :heard
+  defp replied?(_state, {:call, _, :retry, [_, :heard]}, result), do: result == :sent
 
   defp replied?(state, {:call, _, :drop_held, []}, result) do
     match?({:held, _}, result) and
@@ -367,16 +402,9 @@ defmodule HalC2.SlackPropTest do
   # Mentions the bot as someone Slack is slow to name, and disconnects meanwhile; the
   # mention must not reach a plugin once Slack names them (`heard/1`). Slack never knows
   # this person, so the MC asks every time.
-  def mention_then_disconnect do
+  def mention_then_disconnect(n) do
     FakeSlack.hold("users.info")
-
-    FakeSlack.event(%{
-      "type" => "app_mention",
-      "channel" => "CPLAN",
-      "user" => "USTALE",
-      "text" => "<@UHAL> stale",
-      "ts" => "1800000000.#{System.unique_integer([:positive])}"
-    })
+    FakeSlack.event(mention_event(n, :stale), %{"event_id" => event_id(n)})
 
     reading =
       receive do
@@ -488,22 +516,39 @@ defmodule HalC2.SlackPropTest do
 
   # A mention in the bot's workspace and app, heard before this answers; one from
   # elsewhere is sent, and must never be heard (`heard/1`).
-  def mention(where) do
-    ts = "1800000000.#{System.unique_integer([:positive])}"
-
-    FakeSlack.event(
-      %{
-        "type" => "app_mention",
-        "channel" => "CPLAN",
-        "user" => "UDANA",
-        "text" => if(where == :ours, do: "<@UHAL> what is late?", else: "<@UHAL> elsewhere"),
-        "ts" => ts
-      },
-      origin(where)
-    )
-
-    if where == :ours, do: heard_mention(ts), else: :sent
+  def mention(where, n) do
+    FakeSlack.event(mention_event(n, where), Map.put(origin(where), "event_id", event_id(n)))
+    if where == :ours, do: heard_mention(n), else: :sent
   end
+
+  # Slack delivers mention `n` again: a stale one is heard before this answers, one heard
+  # already is sent, and must never be heard again (`heard/1`).
+  def retry(n, kind) do
+    FakeSlack.retry(mention_event(n, kind), event_id(n))
+    if kind == :stale, do: heard_mention(n), else: :sent
+  end
+
+  defp event_id(n), do: "Ev#{n}"
+
+  # Mention `n`; a stale one is by someone Slack never names.
+  defp mention_event(n, kind) do
+    {user, text} =
+      case kind do
+        :stale -> {"USTALE", "<@UHAL> stale"}
+        where when where in [:ours, :heard] -> {"UDANA", "<@UHAL> what is late?"}
+        _elsewhere -> {"UDANA", "<@UHAL> elsewhere"}
+      end
+
+    %{
+      "type" => "app_mention",
+      "channel" => "CPLAN",
+      "user" => user,
+      "text" => text,
+      "ts" => ts(n)
+    }
+  end
+
+  defp ts(n), do: "1800000000.#{n}"
 
   defp origin(:ours), do: %{}
 
@@ -512,8 +557,9 @@ defmodule HalC2.SlackPropTest do
 
   defp origin(:other_app), do: %{"api_app_id" => "A0OTHER"}
 
-  defp heard_mention(ts) do
+  defp heard_mention(n) do
     nonce = Process.get({__MODULE__, :nonce})
+    ts = ts(n)
 
     receive do
       {:slack_event, ^nonce, "heard", %{"type" => "slack.mention", "ts" => ^ts}} -> :heard
@@ -568,14 +614,16 @@ defmodule HalC2.SlackPropTest do
 
   # The granted plugin's slack.status events in the order it heard them, once as many as
   # the model owes have come; the mentions were waited on as they happened, and none from
-  # elsewhere or read after a disconnect may come. Nothing may reach the other plugin.
+  # elsewhere, read after a disconnect, or heard before may come. Nothing may reach the
+  # other plugin.
   defp heard(model) do
     nonce = Process.get({__MODULE__, :nonce})
     owed = Enum.reverse(model.told)
-    got = gather(nonce, length(owed), %{told: [], deaf: 0, elsewhere: 0, stale: 0})
+    none = %{told: [], deaf: 0, elsewhere: 0, stale: 0, again: 0}
+    got = gather(nonce, length(owed), none)
     got = %{got | told: Enum.reverse(got.told)}
 
-    if got == %{told: owed, deaf: 0, elsewhere: 0, stale: 0},
+    if got == %{none | told: owed},
       do: :ok,
       else: %{owed: owed, got: got}
   end
@@ -612,5 +660,8 @@ defmodule HalC2.SlackPropTest do
   defp count(got, "heard", %{"text" => "<@UHAL> stale"}),
     do: Map.update!(got, :stale, &(&1 + 1))
 
-  defp count(got, "heard", _mention), do: got
+  defp count(got, "heard", %{"type" => "slack.mention"}),
+    do: Map.update!(got, :again, &(&1 + 1))
+
+  defp count(got, "heard", _event), do: got
 end

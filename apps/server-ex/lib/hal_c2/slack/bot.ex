@@ -14,13 +14,21 @@ defmodule HalC2.Slack.Bot do
 
   @doc """
   Hands plugins the event for a Slack event, if any; `bot` is the identity of the
-  connection that took it. Reading the event can wait on Slack (`users.info`), so one
-  whose connection stopped or was replaced meanwhile is dropped.
+  connection that took it, `id` the Events API's `event_id` (nil for a slash command).
+  Reading the event can wait on Slack (`users.info`), so one whose connection stopped or
+  was replaced meanwhile is dropped. Slack delivers an event again when its ack was lost
+  (`HalC2.Slack.first_delivery?/1`); only the first delivery handed on reaches plugins, so
+  a retry of one dropped here still does.
   """
-  def handle_event(type, payload, bot) do
+  def handle_event(type, payload, bot, id) do
     case event(type, payload, bot) do
-      nil -> :ok
-      event -> if HalC2.Slack.identity() == bot, do: HalC2.Plugins.slack_event(event), else: :ok
+      nil ->
+        :ok
+
+      event ->
+        if HalC2.Slack.identity() == bot and HalC2.Slack.first_delivery?(id),
+          do: HalC2.Plugins.slack_event(event),
+          else: :ok
     end
   end
 
