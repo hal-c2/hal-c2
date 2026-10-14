@@ -15,6 +15,10 @@ defmodule HalC2.Plugins.Package do
     "projects:read" => "Read this MC's projects and their repositories",
     "pullRequests:read" => "Read pull requests",
     "pullRequests:write" => "Comment on, review and change pull requests",
+    "issues:read" => "Read issues, milestones and boards",
+    "issues:write" => "Create and change issues, milestones and boards",
+    "slack:read" => "Read Slack channels and hear messages to the bot",
+    "slack:write" => "Post in Slack as the bot",
     "threads:read" => "Read threads",
     "threads:create" => "Start threads that run agents",
     "agentTools" => "Offer tools to agents"
