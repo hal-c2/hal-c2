@@ -473,19 +473,36 @@ defmodule HalC2.Plugins do
 
   @doc """
   Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension
-  granted `slack:read`, each in a process of its own; answers the ids it went to.
+  granted `slack:read`, each in a process of its own. `previous` maps a plugin's id to
+  the process that handed it the event before this one in a series (`slack.status`):
+  this one waits for that to finish, so the plugin hears the series in order. Answers
+  `previous` with this event's processes in place.
   """
-  def slack_event(%{"type" => type} = event) do
+  def slack_event(%{"type" => type} = event, previous \\ %{}) do
     for {id, module, settings} <- running("extension"),
         "slack:read" in granted(id),
-        function_exported?(module, :handle_event, 2) do
-      Task.start(fn ->
-        with {:error, message} <-
-               safely(fn -> module.handle_event(event, %{id: id, settings: settings}) end),
-             do: Logger.warning("plugin #{id} failed handling #{type}: #{text(message)}")
-      end)
+        function_exported?(module, :handle_event, 2),
+        into: previous do
+      before = previous[id]
 
-      id
+      {:ok, pid} =
+        Task.start(fn ->
+          if before, do: await_exit(before)
+
+          with {:error, message} <-
+                 safely(fn -> module.handle_event(event, %{id: id, settings: settings}) end),
+               do: Logger.warning("plugin #{id} failed handling #{type}: #{text(message)}")
+        end)
+
+      {id, pid}
+    end
+  end
+
+  defp await_exit(pid) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
     end
   end
 

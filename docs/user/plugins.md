@@ -103,7 +103,8 @@ those you allowed to read or write Slack when you turned them on. To connect it:
 3. Under the app's **Basic Information**, add an app-level token with the
    `connections:write` scope.
 4. Paste the bot token (`xoxb-…`) and the app token (`xapp-…`) into
-   **Settings → Integrations → Slack** and click **Connect**.
+   **Settings → Integrations → Slack** and click **Connect**. Both must come
+   from the same app; the MC refuses tokens from two.
 
 The MC keeps the tokens in its secret store and does not show them again;
 **Disconnect** forgets them. The connection comes back on its own after a

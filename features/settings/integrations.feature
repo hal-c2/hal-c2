@@ -569,6 +569,12 @@ Feature: Integrations settings
       When the user connects Slack with a bot token Slack refuses
       Then Slack shows as not connected with Slack's reason "invalid_auth"
 
+    # Each token answers for itself; Slack's Socket Mode hello names the app token's app.
+    @mc
+    Scenario: A bot token and an app token from two Slack apps leave Slack disconnected
+      When the user connects Slack with a bot token of one Slack app and an app token of another
+      Then Slack shows as not connected with Slack's reason "belong to different Slack apps"
+
     @mc @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user disconnects Slack
       Given Slack is connected
@@ -589,6 +595,18 @@ Feature: Integrations settings
       Given Slack is connected
       When the MC restarts
       Then Slack connects again with the stored tokens
+
+    @mc
+    Scenario Outline: The Slack app manifest hears replies in every kind of conversation the bot reads
+      When the MC is asked for the Slack app manifest
+      Then it asks for "<kind>:read" and "<kind>:history" and subscribes to "message.<kind>"
+
+      Examples:
+        | kind     |
+        | channels |
+        | groups   |
+        | im       |
+        | mpim     |
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The page shows how to make the Slack app

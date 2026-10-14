@@ -1,8 +1,7 @@
 defmodule HalC2.Slack.Bot do
   @moduledoc """
-  What Slack's Socket Mode delivers (`Slack.Bot.handle_event/3`, each in a task of
-  slack_elixir's), turned into the events plugins granted `slack:read` hear
-  (`HalC2.Plugins.slack_event/1`):
+  What Slack's Socket Mode delivers (`HalC2.Slack.Socket`, each event in a task), turned
+  into the events plugins granted `slack:read` hear (`HalC2.Plugins.slack_event/2`):
 
     * `slack.mention`: a message that mentions the bot (`app_mention`).
     * `slack.reply`: a reply in the thread of a message the bot posted that does not
@@ -13,9 +12,7 @@ defmodule HalC2.Slack.Bot do
   mention it are dropped here, so they cost the plugins nothing.
   """
 
-  use Slack.Bot
-
-  @impl true
+  @doc "Hands plugins the event for a Slack event, if any; `bot` is `HalC2.Slack.identity/0`."
   def handle_event(type, payload, bot) do
     case event(type, payload, bot) do
       nil -> :ok
@@ -24,12 +21,12 @@ defmodule HalC2.Slack.Bot do
   end
 
   @doc "The plugin event for a Slack event, or nil."
-  def event("app_mention", %{"user" => user} = message, %{user_id: me}) when user != me,
+  def event("app_mention", %{"user" => user} = message, %{bot_user_id: me}) when user != me,
     do: message("slack.mention", message)
 
   def event("message", %{"thread_ts" => parent, "ts" => ts} = message, bot)
       when parent != ts do
-    if plain?(message, bot) and message["parent_user_id"] == bot.user_id and
+    if plain?(message, bot) and message["parent_user_id"] == bot.bot_user_id and
          not mentions?(message, bot),
        do: Map.put(message("slack.reply", message), "parentTs", parent)
   end
@@ -55,11 +52,12 @@ defmodule HalC2.Slack.Bot do
 
   # A person's message as written: not the bot's, not an edit or a join.
   defp plain?(message, bot) do
-    message["user"] != nil and message["user"] != bot.user_id and message["bot_id"] == nil and
+    message["user"] != nil and message["user"] != bot.bot_user_id and message["bot_id"] == nil and
       message["subtype"] in [nil, "thread_broadcast", "file_share"]
   end
 
-  defp mentions?(message, bot), do: String.contains?(message["text"] || "", "<@#{bot.user_id}>")
+  defp mentions?(message, bot),
+    do: String.contains?(message["text"] || "", "<@#{bot.bot_user_id}>")
 
   defp message(type, message) do
     %{

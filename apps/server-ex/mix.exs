@@ -58,10 +58,12 @@ defmodule HalC2.MixProject do
       {:mint_web_socket, "~> 1.0"},
       # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
       {:propcheck, "~> 1.5", only: :prop},
-      # The Slack connection plugins borrow (HalC2.Slack): Socket Mode and the Web API.
+      # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
+      # Slack's Socket Mode (HalC2.Slack.Socket).
+      {:websockex, "~> 0.5.1"},
       {:x509, "~> 0.9"}
     ]
   end

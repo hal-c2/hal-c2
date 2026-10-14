@@ -1,5 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/slack.ex (the MC's Slack connection, through slack_elixir's Socket Mode and Web API)
+#   apps/server-ex/lib/hal_c2/slack.ex (the MC's Slack connection: Socket Mode and slack_elixir's Web API)
+#   apps/server-ex/lib/hal_c2/slack/socket.ex (the Socket Mode connection; events for the bot's workspace and app)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.slack, gated by slack:read and slack:write)
 #   apps/server-ex/lib/hal_c2/plugins.ex (Slack events delivered to plugins' handle_event)
 #   apps/server-ex/lib/hal_c2/plugins/package.ex (permission ids and their labels)
@@ -57,6 +58,26 @@ Feature: Slack for MC plugins
       | "dana" mentions "HAL" in "#planning"                      | slack.mention |
       | "dana" replies in the thread of a message the bot posted  | slack.reply   |
       | "dana" runs the slash command "/planner status"           | slack.command |
+
+  # One Slack app installed in several workspaces hears them all on one Socket Mode
+  # connection, while the bot token answers for one.
+  @mc
+  Scenario Outline: What happens outside the bot's workspace and app does not reach plugins
+    Given the plugins "planner", granted "slack:read", and "quiet", which is not
+    When "dana" mentions "HAL" <elsewhere>, and then in "#planning"
+    Then "planner" is handed only the mention in "#planning"
+
+    Examples:
+      | elsewhere                                   |
+      | in a workspace the bot does not belong to   |
+      | in an event Slack sends for another app     |
+
+  @mc
+  Scenario: A plugin hears Slack stop and connect again in the order it happened
+    Given a plugin granted "slack:read" that takes its time with each Slack event
+    When the MC disconnects Slack and connects it again
+    Then the plugin is handed Slack stopping, and nothing more until it is done with it
+    And it is handed Slack connected after that
 
   @mc
   Scenario: A plugin answers a slash command only the person who ran it sees

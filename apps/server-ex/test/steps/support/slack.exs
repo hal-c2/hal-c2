@@ -5,7 +5,9 @@ defmodule HalC2.Steps.Support.Slack do
   connects as a client does (`slack.connect`); `watch/1` subscribes the `"slack"` client
   to the `slack` shape and `await/2` waits for a status pushed there. `listener/3`
   installs and enables a plugin granted the given permissions whose `handle_event`
-  tells the test process (`:hal_c2_plugin_probe`) `{:slack_event, id, event}`.
+  tells the test process (`:hal_c2_plugin_probe`) `{:slack_event, id, event}`; with
+  `hold: true` it tells it `{:slack_held, id, event, pid}` instead and returns only once
+  `pid` is sent `:go`.
   """
 
   import ExUnit.Assertions
@@ -55,7 +57,7 @@ defmodule HalC2.Steps.Support.Slack do
   end
 
   @doc "Installs and enables `id` granted `permissions`, telling the test process its events."
-  def listener(context, id, permissions) do
+  def listener(context, id, permissions, opts \\ []) do
     dir = Path.join([context.mc.home, "plugins", id])
     File.rm_rf!(dir)
     File.mkdir_p!(Path.join(dir, "mc"))
@@ -81,8 +83,7 @@ defmodule HalC2.Steps.Support.Slack do
       def call(method, _input, _context), do: {:error, "no method " <> method}
 
       @impl true
-      def handle_event(event, context),
-        do: send(:hal_c2_plugin_probe, {:slack_event, context.id, event})
+      #{if opts[:hold], do: held(), else: heard()}
     end
     """)
 
@@ -94,5 +95,24 @@ defmodule HalC2.Steps.Support.Slack do
 
     assert %{"status" => "running"} = Fixtures.entry(id)
     context
+  end
+
+  defp heard do
+    """
+    def handle_event(event, context),
+        do: send(:hal_c2_plugin_probe, {:slack_event, context.id, event})
+    """
+  end
+
+  defp held do
+    """
+    def handle_event(event, context) do
+        send(:hal_c2_plugin_probe, {:slack_held, context.id, event, self()})
+
+        receive do
+          :go -> :ok
+        end
+      end
+    """
   end
 end
