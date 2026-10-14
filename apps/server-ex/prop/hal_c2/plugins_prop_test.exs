@@ -10,10 +10,13 @@ defmodule HalC2.PluginsPropTest do
   enable with whatever a client sends as accepted permissions, disable, restart, save
   settings, call the running plugin, read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
-  a worker announced the way a host from before an update in place heard of them, and
-  kill the host itself. After every step the listing, the document, the code that is
-  loaded and running, what the packages' code did at compile time, and the host's
-  monitors must agree with the model.
+  a worker announced the way a host from before an update in place heard of them,
+  install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
+  courier does) that each plugin holds until the test releases it, and kill the host
+  itself. After every step the listing, the document, the code that is loaded and
+  running, what the packages' code did at compile time, the host's monitors, and the
+  events still waiting for a plugin must agree with the model: an event belongs to the
+  run of the plugin it was handed to, and is dropped when that run stops.
   """
 
   use ExUnit.Case, async: false
@@ -82,11 +85,24 @@ defmodule HalC2.PluginsPropTest do
     HalC2.Prop.start_services([HalC2.Settings, Plugins])
     sync()
     Process.put({__MODULE__, :clients}, %{0 => Client.start(), 1 => Client.start()})
+    Process.register(self(), Packages.probe())
+    Process.put({__MODULE__, :previous}, %{})
+    Process.put({__MODULE__, :tasks}, [])
   end
 
   defp stop do
     for {_, pid} <- Process.delete({__MODULE__, :clients}) || %{}, do: Process.exit(pid, :kill)
     HalC2.Prop.stop_services()
+    Process.unregister(Packages.probe())
+    flush_heard()
+  end
+
+  defp flush_heard do
+    receive do
+      {:prop_heard, _id, _n, _pid} -> flush_heard()
+    after
+      0 -> :ok
+    end
   end
 
   # --- model ------------------------------------------------------------------
@@ -95,9 +111,14 @@ defmodule HalC2.PluginsPropTest do
   # held: what the host holds for each id (`entry/2`). config: `plugins.<id>` of the
   # settings document, with the secret the store holds. accepted: every permission a
   # client accepted for an id. last: what each topic last carried; subs and inbox:
-  # what each client follows and has been sent.
+  # what each client follows and has been sent. runs: how many runs have started, each
+  # held entry's `run` its own. queue: the Slack events handed to each id and not yet
+  # heard to the end, `{run, n}` in order; next: the number of the next event.
   def initial_state,
     do: %{
+      runs: 0,
+      queue: %{},
+      next: 0,
       disk: %{},
       held: %{},
       config: %{},
@@ -131,8 +152,11 @@ defmodule HalC2.PluginsPropTest do
         {2, {:call, __MODULE__, :inbox, [client()]}},
         {1, {:call, __MODULE__, :kill_client, [client()]}},
         {1, {:call, __MODULE__, :kill_plugins, []}},
-        {1, {:call, __MODULE__, :stale_worker, [held]}}
+        {1, {:call, __MODULE__, :stale_worker, [held]}},
+        {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
+        {if(hearing(state) == [], do: 1, else: 8), {:call, __MODULE__, :deliver, [state.next]}}
       ] ++
+        for({id, [{_, n} | _]} <- state.queue, do: {8, {:call, __MODULE__, :release, [id, n]}}) ++
         if workers == [] do
           []
         else
@@ -179,7 +203,14 @@ defmodule HalC2.PluginsPropTest do
         ]),
       version <- oneof(["1", "2"]),
       permissions <-
-        oneof([[], ["projects:read"], ["threads:read"], ["projects:read", "threads:read"]])
+        oneof([
+          [],
+          ["projects:read"],
+          ["threads:read"],
+          ["projects:read", "threads:read"],
+          ["slack:read"],
+          ["projects:read", "slack:read"]
+        ])
     ] do
       {variant, version, permissions}
     end
@@ -194,6 +225,7 @@ defmodule HalC2.PluginsPropTest do
         ["projects:read"],
         ["threads:read"],
         ["projects:read", "threads:read"],
+        ["slack:read"],
         "projects:read",
         [1]
       ])
@@ -239,6 +271,10 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
+  # The next event the plugin is to hear is the first of its queue.
+  def precondition(state, {:call, _, :release, [id, n]}),
+    do: match?([{_, ^n} | _], state.queue[id])
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, call), do: state |> step(call) |> elem(0)
@@ -253,16 +289,59 @@ defmodule HalC2.PluginsPropTest do
     problems == []
   end
 
+  # A step, then the events of runs it stopped or replaced dropped.
+  defp step(s, call) do
+    {next, expect} = act(s, call)
+
+    queue =
+      next.queue
+      |> Map.new(fn {id, queued} ->
+        {id, Enum.filter(queued, fn {run, _n} -> current_run?(next, id, run) end)}
+      end)
+      |> Map.reject(fn {_id, queued} -> queued == [] end)
+
+    {%{next | queue: queue}, expect}
+  end
+
+  defp current_run?(s, id, run), do: match?(%{running: true, run: ^run}, s.held[id])
+
+  # `{id, run}` of the plugins that hear Slack events.
+  defp hearing(s) do
+    for {id, %{running: true, st: :compiled, desc: {:ok, _, _}, run: run}} <- s.held,
+        "slack:read" in conf(s, id).granted,
+        do: {id, run}
+  end
+
+  # Every running plugin whose code loaded and that was granted slack:read is handed the
+  # event; it hears it once it is done with the ones before.
+  defp act(s, {:call, _, :deliver, [n]}) do
+    queue =
+      Enum.reduce(hearing(s), s.queue, fn {id, run}, queue ->
+        Map.update(queue, id, [{run, n}], &(&1 ++ [{run, n}]))
+      end)
+
+    {%{s | queue: queue, next: max(s.next, n + 1)}, :ok}
+  end
+
+  defp act(s, {:call, _, :release, [id, n]}),
+    do: {update_in(s.queue[id], &tl/1), {:exactly, {:heard, n}}}
+
+  # A package that hears Slack installed and turned on, as `install/2` then `enable/2`.
+  defp act(s, {:call, _, :listen, [id, version]}) do
+    {s, :ok} = act(s, {:call, nil, :install, [id, {:ok, version, ["slack:read"]}]})
+    act(s, {:call, nil, :enable, [id, ["slack:read"]]})
+  end
+
   # `{next state, the reply expected}`.
-  defp step(s, {:call, _, :write, [id, desc]}), do: {put_in(s.disk[id], desc), :ok}
-  defp step(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
-  defp step(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
-  defp step(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
+  defp act(s, {:call, _, :write, [id, desc]}), do: {put_in(s.disk[id], desc), :ok}
+  defp act(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
+  defp act(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
+  defp act(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
 
   # A restarted host remembers nothing it held, only the document and the disk.
-  defp step(s, {:call, _, :kill_plugins, []}), do: {scan(%{s | held: %{}}), :ok}
+  defp act(s, {:call, _, :kill_plugins, []}), do: {scan(%{s | held: %{}}), :ok}
 
-  defp step(s, {:call, _, :enable, [id, accepted]}) do
+  defp act(s, {:call, _, :enable, [id, accepted]}) do
     cond do
       not (is_nil(accepted) or (is_list(accepted) and Enum.all?(accepted, &is_binary/1))) ->
         {s, :error_text}
@@ -295,7 +374,7 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  defp step(s, {:call, _, :disable, [id]}) do
+  defp act(s, {:call, _, :disable, [id]}) do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
@@ -308,7 +387,7 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  defp step(s, {:call, _, :restart, [id]}) do
+  defp act(s, {:call, _, :restart, [id]}) do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
@@ -324,14 +403,14 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  defp step(s, {:call, _, :save_settings, [id, input]}) do
+  defp act(s, {:call, _, :save_settings, [id, input]}) do
     case s.held[id] do
       nil -> {s, {:tag, "PluginNotFound"}}
       e -> save(s, id, e, input)
     end
   end
 
-  defp step(s, {:call, _, :call_plugin, [id]}) do
+  defp act(s, {:call, _, :call_plugin, [id]}) do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
@@ -351,7 +430,7 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  defp step(s, {:call, _, :file, [id, path]}) do
+  defp act(s, {:call, _, :file, [id, path]}) do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
@@ -366,14 +445,14 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  defp step(s, {:call, _, :subscribe, [c, id, topic]}),
+  defp act(s, {:call, _, :subscribe, [c, id, topic]}),
     do:
       {update_in(s.subs[c], &MapSet.put(&1, {id, topic})), {:exactly, {:ok, s.last[{id, topic}]}}}
 
-  defp step(s, {:call, _, :unsubscribe, [c, id, topic]}),
+  defp act(s, {:call, _, :unsubscribe, [c, id, topic]}),
     do: {update_in(s.subs[c], &MapSet.delete(&1, {id, topic})), :ok}
 
-  defp step(s, {:call, _, :publish, [id, topic, value]}) do
+  defp act(s, {:call, _, :publish, [id, topic, value]}) do
     inbox =
       Map.new(s.inbox, fn {c, messages} ->
         if MapSet.member?(s.subs[c], {id, topic}),
@@ -384,13 +463,13 @@ defmodule HalC2.PluginsPropTest do
     {%{s | last: Map.put(s.last, {id, topic}, value), inbox: inbox}, :ok}
   end
 
-  defp step(s, {:call, _, :inbox, [c]}),
+  defp act(s, {:call, _, :inbox, [c]}),
     do: {put_in(s.inbox[c], []), {:exactly, s.inbox[c]}}
 
-  defp step(s, {:call, _, :kill_client, [c]}),
+  defp act(s, {:call, _, :kill_client, [c]}),
     do: {%{s | subs: Map.put(s.subs, c, MapSet.new()), inbox: Map.put(s.inbox, c, [])}, :ok}
 
-  defp step(s, {:call, _, :crash, [id]}) do
+  defp act(s, {:call, _, :crash, [id]}) do
     e = s.held[id]
 
     {put_in(s.held[id], %{e | crashes: e.crashes + 1, restarts: e.restarts && e.restarts + 1}),
@@ -398,10 +477,10 @@ defmodule HalC2.PluginsPropTest do
   end
 
   # Its supervisor is not known, so it is no one's, whatever runs now.
-  defp step(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
+  defp act(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
 
   # Killed until its supervisor gives up: how many kills that took is not known.
-  defp step(s, {:call, _, :crash_hard, [id]}) do
+  defp act(s, {:call, _, :crash_hard, [id]}) do
     e = s.held[id]
     {put_in(s.held[id], %{e | running: false, failed: true, crashes: 0, restarts: nil}), :ok}
   end
@@ -417,7 +496,8 @@ defmodule HalC2.PluginsPropTest do
       failed: false,
       reload_error: false,
       crashes: 0,
-      restarts: 0
+      restarts: 0,
+      run: nil
     }
 
   defp valid?(id, {variant, _, _}), do: id != "Gamma" and variant in @valid
@@ -500,7 +580,10 @@ defmodule HalC2.PluginsPropTest do
       else: put_in(s.held[id], %{e | st: :error_code})
   end
 
-  defp start(s, id, e), do: put_in(s.held[id], %{e | running: true, failed: false, crashes: 0})
+  defp start(s, id, e) do
+    s = %{s | runs: s.runs + 1}
+    put_in(s.held[id], %{e | running: true, failed: false, crashes: 0, run: s.runs})
+  end
 
   defp save(s, id, e, input) do
     c = conf(s, id)
@@ -593,6 +676,11 @@ defmodule HalC2.PluginsPropTest do
       observed.code
     )
     |> check(:monitors, monitors(s), observed.monitors)
+    |> check(
+      :waiting,
+      Enum.sort(for {id, q} <- s.queue, {_, n} <- q, do: {id, n}),
+      observed.waiting
+    )
     |> check(
       :granted_was_accepted,
       [],
@@ -822,11 +910,64 @@ defmodule HalC2.PluginsPropTest do
   end
 
   # The host stops and starts again under its supervisor, its heir left running. A
-  # stop, not a kill: kills would count toward the supervisor's restart limit.
+  # stop, not a kill: kills would count toward the supervisor's restart limit. The
+  # plugins' runs stop with the host; this returns once they have.
   def kill_plugins do
+    runs = :sys.get_state(Plugins).supervisor
+    ref = Process.monitor(runs)
     :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
     {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, Plugins)
     {:ok, observe()}
+  end
+
+  def listen(id, version) do
+    put_package(id, {:ok, version, ["slack:read"]})
+    Plugins.handle("rescan", %{})
+    {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => ["slack:read"]}), observe()}
+  end
+
+  # Event `n` is handed on, after the ones before it, as the Slack courier hands them.
+  def deliver(n) do
+    previous = Process.get({__MODULE__, :previous})
+    handed = Plugins.slack_event(%{"type" => "slack.status", "n" => n}, previous)
+    Process.put({__MODULE__, :previous}, handed)
+    tasks = for {id, pid} <- handed, previous[id] != pid, do: {{id, n}, pid}
+    Process.put({__MODULE__, :tasks}, Process.get({__MODULE__, :tasks}) ++ tasks)
+    {:ok, observe()}
+  end
+
+  # Waits for plugin `id` to hear event `n`, lets it finish, and waits until it has. The
+  # bound only keeps a wrong host from hanging the run.
+  def release(id, n) do
+    reply =
+      case List.keyfind(Process.get({__MODULE__, :tasks}), {id, n}, 0) do
+        nil ->
+          :never_handed
+
+        {_, pid} ->
+          ref = Process.monitor(pid)
+
+          receive do
+            {:prop_heard, ^id, heard, ^pid} ->
+              send(pid, :go)
+
+              receive do
+                {:DOWN, ^ref, _, _, _} -> {:heard, heard}
+              end
+
+            {:DOWN, ^ref, _, _, reason} ->
+              {:gone, reason}
+          after
+            10_000 -> :not_heard
+          end
+      end
+
+    {reply, observe()}
   end
 
   defp parent(worker) do
@@ -865,7 +1006,8 @@ defmodule HalC2.PluginsPropTest do
       config: Map.new(@ids, &{&1, observed_config(&1)}),
       code: Map.new(@code_ids, &{&1, code(&1)}),
       marks: new_marks(),
-      monitors: observed_monitors()
+      monitors: observed_monitors(),
+      waiting: waiting()
     }
   end
 
@@ -936,6 +1078,12 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
+  # The events handed on whose processes still run: queued, or being heard.
+  defp waiting do
+    for({key, pid} <- Process.get({__MODULE__, :tasks}), Process.alive?(pid), do: key)
+    |> Enum.sort()
+  end
+
   defp observed_monitors do
     {:monitors, monitors} = Process.info(Process.whereis(Plugins), :monitors)
     length(monitors)
@@ -997,6 +1145,17 @@ defmodule HalC2.PluginsPropTest do
     ]
 
     def plugin_module(id), do: Module.concat(HalC2PropPlugin, Macro.camelize(id))
+    def probe, do: HalC2.PluginsPropTest.Probe
+
+    # Where a plugin's `handle_event` waits to be released, by a tail call: a process
+    # waiting in the plugin's own code keeps that code in use, and a refused update
+    # loaded meanwhile then stays loaded, which this model does not cover.
+    def hold do
+      receive do
+        :go -> :ok
+      end
+    end
+
     def main(id, version), do: "#{id} #{version} main"
     def icon(id, version), do: "<svg>#{id} #{version}</svg>"
 
@@ -1105,6 +1264,11 @@ defmodule HalC2.PluginsPropTest do
         end
 
         def call(method, _input, _context), do: {:error, "no method " <> method}
+
+        def handle_event(event, context) do
+          send(#{inspect(probe())}, {:prop_heard, context.id, event["n"], self()})
+          #{inspect(__MODULE__)}.hold()
+        end
       end
       """
     end

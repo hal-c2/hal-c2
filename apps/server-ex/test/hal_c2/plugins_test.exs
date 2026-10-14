@@ -189,6 +189,66 @@ defmodule HalC2.PluginsTest do
     assert %{restarts: 0, last_error: nil} = plugin("notes")
   end
 
+  test "a Slack event waiting behind a slow handler is dropped when the plugin is turned off" do
+    {first, waiting, _previous} = queued_behind_slow_handler()
+
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "listener"})
+
+    # Were the slow handler still running, its finishing would let the waiting one go on.
+    send(first, :go)
+    await_down(waiting)
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+  end
+
+  test "a Slack event waiting behind a slow handler does not reach the plugin turned off and on again" do
+    {first, waiting, previous} = queued_behind_slow_handler()
+
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "listener"})
+    assert {:ok, _} = enable_listener()
+
+    send(first, :go)
+    await_down(waiting)
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+
+    # The new run hears what comes after, in the same series.
+    Plugins.slack_event(%{"type" => "slack.status", "n" => 3}, previous)
+    assert_receive {:heard, "listener", %{"n" => 3}, _}
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+  end
+
+  test "a Slack event waiting behind a slow handler does not reach the restarted plugin" do
+    {first, waiting, previous} = queued_behind_slow_handler()
+
+    assert {:ok, _} = Plugins.handle("restart", %{"id" => "listener"})
+
+    send(first, :go)
+    await_down(waiting)
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+
+    Plugins.slack_event(%{"type" => "slack.status", "n" => 3}, previous)
+    assert_receive {:heard, "listener", %{"n" => 3}, _}
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+  end
+
+  # A run that stops ends its deliveries together, in no set order: the handler a waiting
+  # delivery follows can be ended first. The run's task supervisor is held mid-way, as it
+  # is while it ends them, and the waiting delivery is traced to see what it does next.
+  test "a Slack event waiting behind a slow handler ended by a stopping run is dropped" do
+    {first, waiting, _previous} = queued_behind_slow_handler()
+
+    {:deliveries, tasks, _, _} =
+      List.keyfind(Supervisor.which_children(plugin("listener").sup), :deliveries, 0)
+
+    :ok = :sys.suspend(tasks)
+    :erlang.trace(waiting, true, [:send])
+    Process.exit(first, :shutdown)
+
+    assert_receive {:trace, ^waiting, :send, _, ^tasks}
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "listener"})
+    await_down(waiting)
+    refute_received {:heard, "listener", %{"n" => 2}, _}
+  end
+
   defp save(id, settings),
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 
@@ -235,6 +295,65 @@ defmodule HalC2.PluginsTest do
         }
       })
     )
+  end
+
+  # The plugin "listener", granted `slack:read`, is in its handler of event 1 (`first`,
+  # which returns once sent `:go`) while event 2 waits for it in `waiting`.
+  defp queued_behind_slow_handler do
+    listener("listener")
+    previous = Plugins.slack_event(%{"type" => "slack.status", "n" => 1, "hold" => true})
+    assert_receive {:heard, "listener", %{"n" => 1}, first}
+    previous = Plugins.slack_event(%{"type" => "slack.status", "n" => 2}, previous)
+    %{"listener" => waiting} = previous
+    refute waiting == first
+    {first, waiting, previous}
+  end
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}
+  end
+
+  defp enable_listener,
+    do: Plugins.handle("enable", %{"id" => "listener", "acceptPermissions" => ["slack:read"]})
+
+  # A package granted `slack:read` whose `handle_event` tells the test process what it
+  # heard, and holds an event marked `hold` until sent `:go`.
+  defp listener(id) do
+    Process.register(self(), :hal_c2_plugins_test)
+    dir = Path.join(plugins_dir(), id)
+    File.mkdir_p!(Path.join(dir, "mc"))
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{
+        "id" => id,
+        "name" => id,
+        "version" => "1",
+        "description" => "Hears Slack.",
+        "apiVersion" => 1,
+        "permissions" => [%{"id" => "slack:read", "reason" => "The test."}]
+      })
+    )
+
+    File.write!(Path.join(dir, "mc/listener.ex"), """
+    defmodule HalC2PluginsTest.Listener do
+      @behaviour HalC2.Plugins.Extension
+
+      @impl true
+      def call(method, _input, _context), do: {:error, "no method " <> method}
+
+      @impl true
+      def handle_event(event, context) do
+        send(:hal_c2_plugins_test, {:heard, context.id, event, self()})
+        if event["hold"], do: receive(do: (:go -> :ok))
+        :ok
+      end
+    end
+    """)
+
+    Plugins.handle("rescan", %{})
+    assert {:ok, %{"status" => "running"}} = enable_listener()
   end
 
   defp monitors do
