@@ -1119,6 +1119,33 @@ const Steps steps([] {
     world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
     expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
   });
+  step(QStringLiteral("%1 follows the board %1 with %1 and %1 as its dates").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
+    QJsonObject& settings = state(world).settings;
+    settings.insert(QStringLiteral("board"), c[1]);
+    settings.insert(QStringLiteral("startField"), c[2]);
+    settings.insert(QStringLiteral("targetField"), c[3]);
+  });
+  step(QStringLiteral("the user picks None for the board's start date"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* combo = waitShownNamed(world, QStringLiteral("plannerDateField:startField"));
+    world.waitFor([&] { return combo->property("currentIndex").toInt() == 1; }, QStringLiteral("the board's date fields to be read"));
+    expect(QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, 0)), QStringLiteral("None cannot be picked"));
+    QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
+    world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
+    expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
+  });
+  step(QStringLiteral("%1 is saved with no field for its start date").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
+    QJsonObject sent;
+    world.waitFor([&] {
+      for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+        if (rpc.method == QLatin1String("plugins.saveSettings")) sent = rpc.payload.value(QLatin1String("settings")).toObject();
+      }
+      return !sent.isEmpty();
+    }, QStringLiteral("the settings to be saved"));
+    // Only what changed is sent; an empty field is no mapping.
+    expect(sent == QJsonObject{{QStringLiteral("startField"), QString()}}, QStringLiteral("the MC was sent %1").arg(dump(sent)));
+  });
   step(QStringLiteral("%1 is saved following %1 with %1 and %1 as its dates").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
     QJsonObject sent;

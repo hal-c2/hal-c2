@@ -632,6 +632,14 @@ Feature: Planner
       And the user picks the board "Roadmap" with "Begins" and "Ends" as its dates
       Then "planner" is saved following "acme/3" with "Begins" and "Ends" as its dates
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings unmap a date field of the board
+      Given "acme" has the board "acme/3" "Roadmap" with the date fields "Begins" and "Ends"
+      And "planner" follows the board "acme/3" with "Begins" and "Ends" as its dates
+      When the user opens the planner's settings
+      And the user picks None for the board's start date
+      Then "planner" is saved with no field for its start date
+
     @mc
     Scenario Outline: With two-way sync a change to a task reaches GitHub
       Given "planner" syncs "acme/api" both ways with the board "acme/3"

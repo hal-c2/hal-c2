@@ -107,12 +107,13 @@ ColumnLayout {
         settings.refusal = "";
     }
 
-    // The entry of a combo whose first entry is "none" for `value`, the key of a row of
-    // `rows`: -1 for one no longer offered, which the combo shows by its key instead.
+    // The entry of a combo whose first entry is "none" for `value`, the `key` of a row of
+    // `rows` (or a row itself, with no key): -1 for one no longer offered, which the
+    // combo shows by its value instead.
     function pickedAfterNone(rows, key, value) {
         if ((value ?? "") === "")
             return 0;
-        const at = rows.findIndex(each => each[key] === value);
+        const at = rows.findIndex(each => (key ? each[key] : each) === value);
         return at < 0 ? -1 : at + 1;
     }
 
@@ -363,7 +364,7 @@ ColumnLayout {
     }
 
     // A board field holding dates: picked from the board's date fields once they are
-    // read, typed in otherwise.
+    // read, or None for no mapping; typed in otherwise.
     component DateField: RowLayout {
         id: dateField
 
@@ -375,10 +376,10 @@ ColumnLayout {
             visible: settings.dateFields.length > 0
             outline: true
             implicitWidth: 180
-            model: settings.dateFields
-            currentIndex: settings.dateFields.indexOf(dateField.value)
+            model: [qsTr("None")].concat(settings.dateFields)
+            currentIndex: settings.pickedAfterNone(settings.dateFields, "", dateField.value)
             displayText: currentIndex >= 0 ? currentText : dateField.value
-            onActivated: index => settings.set(dateField.key, settings.dateFields[index])
+            onActivated: index => settings.set(dateField.key, index === 0 ? "" : settings.dateFields[index - 1])
         }
 
         Line {
