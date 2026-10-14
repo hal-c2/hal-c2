@@ -24,6 +24,9 @@ namespace {
 
 const QString kId = QStringLiteral("planner");
 const QString kProject = QStringLiteral("p1");
+// Every field a view can show, in the order the list draws them.
+const QStringList kFields{QStringLiteral("status"), QStringLiteral("owner"), QStringLiteral("start"), QStringLiteral("due"),
+                          QStringLiteral("progress"), QStringLiteral("labels"), QStringLiteral("project"), QStringLiteral("links")};
 const QString kToday = QStringLiteral("2026-10-20");
 
 QString package() { return QDir(QStringLiteral(HAL_C2_FEATURES_DIR "/../plugins/planner")).absolutePath(); }
@@ -771,6 +774,39 @@ const Steps steps([] {
                   QStringLiteral("the group to keep the keyboard once folded"));
     QTest::keyClick(pluginShell(world), Qt::Key_Space);
     world.waitFor(listed, QStringLiteral("%1 to be listed again").arg(c[0]));
+  });
+  step(QStringLiteral("the view %1 shows every field").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWhenEmpty(world);
+    for (QJsonValueRef each : state(world).views) {
+      QJsonObject shown = each.toObject();
+      if (shown.value(QLatin1String("name")) != c[0]) continue;
+      shown.insert(QStringLiteral("fields"), QJsonArray::fromStringList(kFields));
+      each = shown;
+    }
+    publish(world);
+    showPlanner(world, c[0]);
+  });
+  step(QStringLiteral("the user scrolls the list sideways to its end"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* list = waitShownNamed(world, QStringLiteral("plannerList"));
+    world.waitFor([&] { return list->property("contentWidth").toReal() > list->width(); }, QStringLiteral("the list's columns to be wider than it"));
+    // Drags the scroll bar's handle to the far end, the way a mouse user reaches the last columns.
+    QQuickItem* bar = waitShownNamed(world, QStringLiteral("plannerListScroll"));
+    QQuickWindow* window = list->window();
+    const qreal size = bar->property("size").toReal();
+    const QPoint from = bar->mapToScene(QPointF(bar->width() * size / 2, bar->height() / 2)).toPoint();
+    const QPoint to = bar->mapToScene(QPointF(bar->width() - 1, bar->height() / 2)).toPoint();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
+    for (int step = 1; step <= 10; ++step) QTest::mouseMove(window, from + (to - from) * step / 10);
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, to);
+    world.sync();
+  });
+  step(QStringLiteral("the column of the last field is shown"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* list = waitShownNamed(world, QStringLiteral("plannerList"));
+    QQuickItem* column = waitShownNamed(world, QStringLiteral("plannerColumn:") + kFields.last());
+    world.waitFor([&] {
+      const QRectF shown = column->mapRectToItem(list, QRectF(0, 0, column->width(), column->height()));
+      return shown.left() >= 0 && shown.right() <= list->width();
+    }, QStringLiteral("the %1 column to be inside the list").arg(kFields.last()));
   });
   step(QStringLiteral("the plan has %1 ending (\\d+) days before its baseline").arg(q), [](World& world, const Captures& c, const Table&) {
     QJsonObject& task = dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));

@@ -231,6 +231,12 @@ Feature: Planner
       Then "API" is hidden until the user presses Space again
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The list scrolls sideways to columns wider than it
+      Given the view "All tasks" shows every field
+      When the user scrolls the list sideways to its end
+      Then the column of the last field is shown
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user edits a task from any view
       Given the plan has "API"
       When the user opens "API" and sets its owner to "dana" and its due date to "2026-11-06"

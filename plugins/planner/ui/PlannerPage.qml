@@ -2995,18 +2995,23 @@ Item {
             readonly property var fields: page.working?.fields ?? []
             readonly property real cellWidth: 120
             readonly property real titleWidth: Math.max(220, width - fields.length * cellWidth - 24)
+            // Every column the view picks, wider than the list when it has many.
+            readonly property real rowWidth: titleWidth + fields.length * cellWidth + 24
 
             objectName: "plannerList"
             clip: true
             model: page.rows
+            contentWidth: rowWidth
+            flickableDirection: Flickable.AutoFlickIfNeeded
             boundsBehavior: Flickable.StopAtBounds
             headerPositioning: ListView.OverlayHeader
 
             ScrollBar.vertical: ScrollBar {}
+            ScrollBar.horizontal: ScrollBar { objectName: "plannerListScroll" }
 
             header: Rectangle {
                 z: 5
-                width: list.width
+                width: list.rowWidth
                 height: 30
                 color: page.surface
 
@@ -3061,7 +3066,7 @@ Item {
                 readonly property var item: modelData.item ?? null
 
                 objectName: item ? "plannerRow:" + item.title : "plannerGroup:" + (modelData.label ?? "")
-                width: list.width
+                width: list.rowWidth
                 height: page.rowHeight
                 color: item !== null && item.key === page.selectedKey ? Theme.palette.color("sidebarRowSelected", "#27272a") : rowMouse.containsMouse ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
                 border.width: activeFocus ? 1 : 0
