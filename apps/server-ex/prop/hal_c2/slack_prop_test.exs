@@ -166,7 +166,13 @@ defmodule HalC2.SlackPropTest do
             {1, {:call, __MODULE__, :mention, [:other_app, state.sent]}},
             {1, {:call, __MODULE__, :mention_then_disconnect, [state.sent]}}
           ] ++
-            if(state.up, do: [{1, {:call, __MODULE__, :read_across_reconnect, []}}], else: []) ++
+            if(state.up,
+              do: [
+                {1, {:call, __MODULE__, :read_across_reconnect, []}},
+                {1, {:call, __MODULE__, :read_across_change, []}}
+              ],
+              else: []
+            ) ++
             if(state.events != %{}, do: [{4, retry_command(state)}], else: [])
         else
           []
@@ -196,6 +202,9 @@ defmodule HalC2.SlackPropTest do
   def precondition(state, {:call, _, :read_across_reconnect, _}),
     do: state.phase == :connected and state.up
 
+  def precondition(state, {:call, _, :read_across_change, _}),
+    do: state.phase == :connected and state.up
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :connect, [:good]}) do
@@ -219,6 +228,8 @@ defmodule HalC2.SlackPropTest do
   end
 
   # Connected afresh twice: once to start from empty caches, once under the reads.
+  def next_state(state, _result, {:call, _, :read_across_change, []}), do: state
+
   def next_state(state, _result, {:call, _, :read_across_reconnect, []}) do
     Enum.reduce(1..2, state, fn _, state ->
       state = state |> walk([:off]) |> Map.put(:stored, false)
@@ -326,6 +337,8 @@ defmodule HalC2.SlackPropTest do
   defp replied?(_state, {:call, _, :mention_then_disconnect, []}, result),
     do: replied?(nil, {:call, __MODULE__, :disconnect, []}, result)
 
+  defp replied?(_state, {:call, _, :read_across_change, []}, result), do: result == :read_again
+
   defp replied?(state, {:call, _, :read_across_reconnect, []}, {connected, read_again}) do
     read_again == {true, true} and
       replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
@@ -421,6 +434,31 @@ defmodule HalC2.SlackPropTest do
     after
       @wait -> exit(:mention_never_finished)
     end
+  end
+
+  # Reads the channels while one of them changes: the list read before the change must
+  # not stand in for the one after it, so the channels are read again after.
+  def read_across_change do
+    HalC2.Slack.channels_changed()
+    FakeSlack.hold("users.conversations")
+    reading = Task.async(fn -> HalC2.Slack.channels() end)
+
+    receive do
+      {:fake_slack_held, "users.conversations", _} -> :ok
+    after
+      @wait -> exit(:channels_never_read)
+    end
+
+    HalC2.Slack.channels_changed()
+    FakeSlack.release()
+    Task.await(reading, @wait)
+
+    before = length(FakeSlack.calls("users.conversations"))
+    {:ok, _} = HalC2.Slack.channels()
+
+    if length(FakeSlack.calls("users.conversations")) == before + 1,
+      do: :read_again,
+      else: :cached
   end
 
   # Reads the channels and a person while the connection changes under them: what the old

@@ -135,9 +135,12 @@ defmodule HalC2.Slack do
           - channel_rename
           - channel_archive
           - channel_unarchive
+          - channel_deleted
+          - group_left
           - group_rename
           - group_archive
           - group_unarchive
+          - group_deleted
       interactivity:
         is_enabled: false
       org_deploy_enabled: false
@@ -274,16 +277,20 @@ defmodule HalC2.Slack do
 
   # What is read from Slack is cached under the connection it was read on, so a read
   # that outlives its connection is never found by the next one; `lose/1` clears it all.
+  # The channel list is also cached under how many times the channels changed when it
+  # was read, so a read that outlives a change is never found either.
   @doc "The channels the bot is in, `%{\"id\", \"name\", \"private\"}`, cached until one changes."
   def channels do
     with {:ok, token, connection} <- connection() do
-      case :ets.lookup(@cache, {:channels, connection}) do
+      key = {:channels, connection, changes()}
+
+      case :ets.lookup(@cache, key) do
         [{_, channels}] ->
           {:ok, channels}
 
         [] ->
           with {:ok, channels} <- fetch_channels(token) do
-            :ets.insert(@cache, {{:channels, connection}, channels})
+            :ets.insert(@cache, {key, channels})
             {:ok, channels}
           end
       end
@@ -292,9 +299,17 @@ defmodule HalC2.Slack do
     ArgumentError -> {:error, @not_connected}
   end
 
-  @doc "Forgets the cached channel list (the bot joined or left one, or one was renamed or archived)."
+  defp changes do
+    case :ets.lookup(@cache, :channel_changes) do
+      [{_, n}] -> n
+      [] -> 0
+    end
+  end
+
+  @doc "Forgets the cached channel list (the bot joined or left one, or one was renamed, archived or deleted)."
   def channels_changed do
-    :ets.match_delete(@cache, {{:channels, :_}, :_})
+    :ets.update_counter(@cache, :channel_changes, 1, {:channel_changes, 0})
+    :ets.match_delete(@cache, {{:channels, :_, :_}, :_})
     :ok
   rescue
     ArgumentError -> :ok

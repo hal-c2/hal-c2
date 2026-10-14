@@ -160,6 +160,10 @@ defmodule HalC2.Test.FakeSlack do
     end)
   end
 
+  @doc "Takes the bot out of the channel `id`, as leaving it or its deletion does."
+  def leave(id),
+    do: Agent.update(__MODULE__, &%{&1 | channels: Map.delete(&1.channels, id)})
+
   @doc "Closes the Socket Mode connection, as Slack or the network does."
   def drop, do: to_socket(:drop)
 
