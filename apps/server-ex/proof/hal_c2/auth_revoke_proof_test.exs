@@ -56,7 +56,7 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_background_policy, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_pull_request_refreshes, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_plugins, _, _}" => @socket_traffic,
-      "HalC2.Web.Socket handle_info {:hal_c2_slack, _, _}" => @socket_traffic,
+      "HalC2.Web.Socket handle_info {:hal_c2_slack, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_plugin_topic, _, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_worktree_setup, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_provider_install, _, _}" => @socket_traffic,
