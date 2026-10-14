@@ -316,9 +316,11 @@ SettingsPage {
                 objectName: "slackStatus"
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
-                color: page.slack?.state === "failed" ? page.danger : page.foreground
+                color: page.slack?.state === "failed" || (page.slack?.failed ?? false) ? page.danger : page.foreground
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 text: {
+                    if (page.slack?.failed ?? false)
+                        return qsTr("Could not load Slack");
                     switch (page.slack?.state ?? "off") {
                     case "connected":
                         return qsTr("Connected to %1 as %2").arg(page.slack.team).arg(page.slack.bot);
@@ -332,6 +334,13 @@ SettingsPage {
                         return (page.slack?.loaded ?? false) ? qsTr("Not connected") : qsTr("Loading…");
                     }
                 }
+            }
+
+            ShellButton {
+                objectName: "slackRetry"
+                visible: page.slack?.failed ?? false
+                text: qsTr("Try again")
+                onClicked: Shell.dispatch("slackSettings.retry", {})
             }
 
             ShellButton {

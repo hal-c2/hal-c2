@@ -26,10 +26,13 @@ QJsonObject connected() {
           {QStringLiteral("tokensSet"), true}};
 }
 
-// A fake MC whose HalC2.Slack holds `status`, pushed with push().
+// A fake MC whose HalC2.Slack holds `status`, pushed with push(). While
+// `down` names why, the MC turns the slack shape down as the real one does
+// when HalC2.Slack or the MC serving it cannot be reached.
 struct Mc {
   FakeMc mc;
   QJsonObject status = off();
+  QString down;
 
   Mc() {
     mc.onShape(QStringLiteral("config"), [this](int id, const QJsonObject&) {
@@ -39,6 +42,11 @@ struct Mc {
                {QStringLiteral("config"), QJsonObject{{QStringLiteral("settings"), QJsonObject()}}}});
     });
     mc.onShape(QStringLiteral("slack"), [this](int id, const QJsonObject&) {
+      if (!down.isEmpty()) {
+        mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), down}});
+        mc.forget(id);
+        return;
+      }
       mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), status}});
     });
   }
@@ -131,6 +139,33 @@ private slots:
     QCOMPARE(shell.section().value(QStringLiteral("pending")).toString(), QStringLiteral("connect"));
     QTRY_COMPARE(shell.section().value(QStringLiteral("pending")).toString(), QString());
     QCOMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("off"));
+  }
+
+  // The MC turning the slack shape down (HalC2.Slack not running, the MC
+  // serving the environment out of reach) left the page loading for good,
+  // every action off, with nothing to bring it back once Slack was up again.
+  void aSlackThatCouldNotLoadSaysWhyAndTriesAgain() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.down = QStringLiteral("MC unavailable: noconnection");
+    Shell shell(home, mc.mc);
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.openIntegrations();
+    QTRY_VERIFY(shell.section().value(QStringLiteral("failed")).toBool());
+    QCOMPARE(shell.section().value(QStringLiteral("error")).toString(), mc.down);
+    QVERIFY(!shell.section().value(QStringLiteral("loaded")).toBool());
+    QVERIFY(!shell.section().value(QStringLiteral("editable")).toBool());
+
+    mc.down.clear();
+    mc.status = connected();
+    shell.bridge.dispatch(QStringLiteral("slackSettings.retry"), QVariantMap{});
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("connected"));
+    QVERIFY(shell.section().value(QStringLiteral("loaded")).toBool());
+    QVERIFY(!shell.section().value(QStringLiteral("failed")).toBool());
+    QCOMPARE(shell.section().value(QStringLiteral("error")).toString(), QString());
+    // The dead subscription went with the failure: only the retry's is live.
+    QCOMPARE(mc.mc.subscribers(QStringLiteral("slack")).size(), 1);
   }
 };
 

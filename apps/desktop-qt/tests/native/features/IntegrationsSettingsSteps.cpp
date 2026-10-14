@@ -4,7 +4,8 @@
 // DeviceServiceState follows each environment's settings document,
 // `device.configure` saves there, and its own state goes to `devices`
 // watchers. It fakes HalC2.Slack too: `slack.connect` takes any tokens but a
-// refused bot token, and its status goes to `slack` watchers.
+// refused bot token, and its status goes to `slack` watchers, unless the MC
+// turns the shape down as one that cannot reach HalC2.Slack does.
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -127,7 +128,13 @@ struct FakeSlack {
   QString error;
 };
 
+// While set, why the MC turns the slack shape down.
+struct SlackUnreachable {
+  QString reason;
+};
+
 const QString kRefusedBot = QStringLiteral("xoxb-refused");
+const QString kUnreachable = QStringLiteral("MC unavailable: noconnection");
 const QString kBotToken = QStringLiteral("xoxb-desktop-bot");
 const QString kAppToken = QStringLiteral("xapp-desktop-app");
 
@@ -158,6 +165,11 @@ const QString kManifest = QStringLiteral(
 
 const FakeMc::Extension slack([](FakeMc& mc) {
   mc.onShape(QStringLiteral("slack"), [&mc](int id, const QJsonObject&) {
+    if (const QString reason = mc.part<SlackUnreachable>().reason; !reason.isEmpty()) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), reason}});
+      mc.forget(id);
+      return;
+    }
     mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), slackStatus(mc)}});
   });
   mc.onRpc(QStringLiteral("slack."), [&mc](const FakeMc::Rpc& rpc) {
@@ -208,7 +220,8 @@ QVariantMap slackSection(World& world) {
   return world.state(QStringLiteral("slackSettings")).toMap();
 }
 
-// Connects once the Givens have set the MC up, then waits for the Slack section.
+// Connects once the Givens have set the MC up, then waits for the Slack section
+// to load, or to fail to.
 void slackReady(World& world) {
   if (world.shellSubscriptions() == 0) {
     world.connect();
@@ -217,8 +230,10 @@ void slackReady(World& world) {
   auto* navigation = world.native().controller<NavigationController>();
   const NavigationController::Route integrations = NavigationController::Route::settings(QStringLiteral("/settings/integrations"));
   if (!(navigation->route() == integrations)) navigation->open(integrations);
-  world.waitFor([&] { return slackSection(world).value(QStringLiteral("open")).toBool() && slackSection(world).value(QStringLiteral("loaded")).toBool(); },
-                [&] { return QStringLiteral("the Slack settings to load; they are %1").arg(show(slackSection(world))); });
+  world.waitFor([&] {
+    const QVariantMap slack = slackSection(world);
+    return slack.value(QStringLiteral("open")).toBool() && (slack.value(QStringLiteral("loaded")).toBool() || slack.value(QStringLiteral("failed")).toBool());
+  }, [&] { return QStringLiteral("the Slack settings to load; they are %1").arg(show(slackSection(world))); });
 }
 
 void slackConnect(World& world, const QString& bot) {
@@ -417,6 +432,19 @@ const Steps steps([] {
   step(QStringLiteral("the user opens the Slack section"), [](World& world, const Captures&, const Table&) {
     QGuiApplication::clipboard()->clear();
     slackReady(world);
+  });
+  step(QStringLiteral("the MC cannot reach the environment's Slack connection"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<SlackUnreachable>().reason = kUnreachable;
+  });
+  step(QStringLiteral("the user is told Slack could not load, and why"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap slack = slackSection(world);
+    expect(slack.value(QStringLiteral("failed")).toBool() && slack.value(QStringLiteral("error")) == kUnreachable &&
+               !slack.value(QStringLiteral("loaded")).toBool() && !slack.value(QStringLiteral("editable")).toBool(),
+           QStringLiteral("Slack to have failed to load with the MC's reason; the section is %1").arg(show(slack)));
+  });
+  step(QStringLiteral("the MC can reach it again and the user tries again"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<SlackUnreachable>().reason.clear();
+    world.bridge().dispatch(QStringLiteral("slackSettings.retry"), QVariantMap{});
   });
   step(QStringLiteral("it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("slackSettings.copyManifest"), QVariantMap{});

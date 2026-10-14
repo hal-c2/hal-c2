@@ -232,9 +232,11 @@ defmodule HalC2.WebSocketSlackPropTest do
   end
 
   # The Slack frames sent before the pong answering a ping sent now, sorted, as
-  # {id, state}. HalC2.Slack tells the socket of a change before it answers it, and the
-  # socket reads its frames in order, so everything a step caused is in.
+  # {id, state}. HalC2.Slack may answer a change before it tells the socket, so the
+  # ping waits for it to finish the change first; the socket reads its frames in order,
+  # so everything a step caused is in.
   defp slack_frames do
+    HalC2.Slack.status()
     client = WsClient.send_json(Process.get({__MODULE__, :client}), %{"t" => "ping"})
     {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 10_000)
     Process.put({__MODULE__, :client}, client)

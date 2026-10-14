@@ -8,7 +8,9 @@
 // the page was left and come back to, even while another call is out. The MC
 // may also do a call and push its status but send the answer later, after
 // other pushes. A status the MC pushes is newer than the page's own error and
-// replaces it, and newer than an answer that arrives after it.
+// replaces it, and newer than an answer that arrives after it. The MC may turn
+// the slack shape down (HalC2.Slack or the MC serving it out of reach) and
+// take it again: a page that opens meanwhile says why until the user retries.
 // After every step the published section, the clipboard and the toasts are
 // what the model says, and no token is ever published.
 
@@ -42,6 +44,7 @@ const QString kRefusal = QStringLiteral("Slack refused the bot token: invalid_au
 const QString kBlank = QStringLiteral("Enter both the bot token and the app token.");
 const QString kManifest = QStringLiteral("socket_mode_enabled: true\n");
 const QString kCopied = QStringLiteral("Slack app manifest copied");
+const QString kUnreachable = QStringLiteral("MC unavailable: noconnection");
 const QDateTime kEpoch(QDate(2026, 10, 13), QTime(9, 0), QTimeZone::UTC);
 
 // HalC2.Slack's status, as the MC holds it.
@@ -66,7 +69,9 @@ struct Held {
 
 struct Model {
   Status mc;
+  bool unreachable = false;  // the MC turns the slack shape down
   bool open = false;
+  bool failed = false;  // the page could not follow Slack, and follows nothing
   int visit = 0;  // bumped on each opening and leaving: answers of another visit are dropped
   QString pending;
   QString error;  // the page's own: the last call's refusal, or blank tokens, until the MC pushes a status
@@ -110,9 +115,17 @@ struct Model {
 
   // The MC pushed its status: an open page takes it in place of its own error.
   void pushed() {
-    if (!open) return;
+    if (!open || failed) return;
     error.clear();
     ++statuses;
+  }
+
+  // The page follows Slack afresh: answers asked before are dropped.
+  void follow() {
+    ++visit;
+    pending.clear();
+    error.clear();
+    failed = open && unreachable;
   }
 
   void ask(Op op, const QString& name) {
@@ -127,6 +140,7 @@ struct Model {
 // The MC's Slack, held answers and all.
 struct FakeSlack {
   Status status;
+  bool unreachable = false;
   bool holding = false;
   QList<std::function<void(bool)>> held;  // given whether to push before answering, and answer later
   QList<std::function<void()>> late;
@@ -161,6 +175,11 @@ struct Shell {
                {QStringLiteral("config"), QJsonObject{{QStringLiteral("settings"), QJsonObject()}}}});
     });
     mc.onShape(QStringLiteral("slack"), [this](int id, const QJsonObject&) {
+      if (slack.unreachable) {
+        mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), kUnreachable}});
+        mc.forget(id);
+        return;
+      }
       mc.send({{QStringLiteral("t"), QStringLiteral("slack")}, {QStringLiteral("id"), id}, {QStringLiteral("status"), statusJson(slack.status)}});
     });
     mc.onRpc(QStringLiteral("slack."), [this](const FakeMc::Rpc& rpc) {
@@ -250,6 +269,7 @@ struct Shell {
     release();
     barrier();
     slack.status = {};
+    slack.unreachable = false;
     auto* toasts = native.controller<ToastController>();
     for (const QVariant& item : bridge.state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
       toasts->dismiss(item.toMap().value(QStringLiteral("id")).toString());
@@ -263,9 +283,23 @@ struct Shell {
 // The section as the model says it shows.
 QVariantMap expected(const Model& model) {
   if (!model.open) return {{QStringLiteral("open"), false}};
+  if (model.failed) {
+    return {{QStringLiteral("open"), true},
+            {QStringLiteral("loaded"), false},
+            {QStringLiteral("failed"), true},
+            {QStringLiteral("editable"), false},
+            {QStringLiteral("statusNote"), QString()},
+            {QStringLiteral("state"), QStringLiteral("off")},
+            {QStringLiteral("team"), QString()},
+            {QStringLiteral("bot"), QString()},
+            {QStringLiteral("error"), kUnreachable},
+            {QStringLiteral("tokensSet"), false},
+            {QStringLiteral("pending"), QString()}};
+  }
   const bool up = model.mc.state == QLatin1String("connected");
   return {{QStringLiteral("open"), true},
           {QStringLiteral("loaded"), true},
+          {QStringLiteral("failed"), false},
           {QStringLiteral("editable"), true},
           {QStringLiteral("statusNote"), QString()},
           {QStringLiteral("state"), model.mc.state},
@@ -300,9 +334,7 @@ struct Open : Command {
   void apply(Model& model) const override {
     if (model.open == open) return;
     model.open = open;
-    ++model.visit;
-    model.pending.clear();
-    model.error.clear();
+    model.follow();
   }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
@@ -317,7 +349,7 @@ struct Open : Command {
 struct Connect : Command {
   int kind = *rc::gen::inRange(0, 3);
 
-  bool acts(const Model& model) const { return model.open && model.pending.isEmpty(); }
+  bool acts(const Model& model) const { return model.open && !model.failed && model.pending.isEmpty(); }
   void apply(Model& model) const override {
     if (!acts(model)) return;
     if (kind == 2) model.error = kBlank;
@@ -335,7 +367,7 @@ struct Connect : Command {
 };
 
 struct Disconnect : Command {
-  bool acts(const Model& model) const { return model.open && model.pending.isEmpty(); }
+  bool acts(const Model& model) const { return model.open && !model.failed && model.pending.isEmpty(); }
   void apply(Model& model) const override {
     if (acts(model)) model.ask(Op::Disconnect, QStringLiteral("disconnect"));
   }
@@ -349,7 +381,7 @@ struct Disconnect : Command {
 };
 
 struct CopyManifest : Command {
-  bool acts(const Model& model) const { return model.open && model.pending.isEmpty(); }
+  bool acts(const Model& model) const { return model.open && !model.failed && model.pending.isEmpty(); }
   void apply(Model& model) const override {
     if (acts(model)) model.ask(Op::Manifest, QStringLiteral("manifest"));
   }
@@ -396,6 +428,35 @@ struct Elsewhere : Command {
     check(next, shell);
   }
   void show(std::ostream& os) const override { os << "Elsewhere(" << (connects ? "connect" : "disconnect") << ")"; }
+};
+
+// The MC turns the slack shape down from here on (HalC2.Slack stopped, the MC
+// serving it out of reach), or takes it again. A page already following Slack
+// keeps its subscription.
+struct Unreachable : Command {
+  void apply(Model& model) const override { model.unreachable = !model.unreachable; }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    shell.slack.unreachable = next.unreachable;
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override { os << "Unreachable"; }
+};
+
+// The user tries again to load a section that could not load.
+struct Retry : Command {
+  void apply(Model& model) const override {
+    if (model.open && model.failed) model.follow();
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    if (model.open && model.failed) shell.reached.insert(next.failed ? QStringLiteral("retried in vain") : QStringLiteral("retried"));
+    shell.dispatch(QStringLiteral("retry"));
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override { os << "Retry"; }
 };
 
 // The MC holds its Slack answers from here on.
@@ -492,12 +553,15 @@ private slots:
       check(initial, shell);
       rc::state::check(initial, shell,
                        rc::state::gen::execOneOfWithArgs<Open, Open, Open, Connect, Connect, Disconnect, CopyManifest, Drop, Elsewhere, Hold, Hold, AnswerOne,
-                                                                         AnswerOne, PushFirst, PushFirst, AnswerLate, AnswerLate, Release>());
+                                                                         AnswerOne, PushFirst, PushFirst, AnswerLate, AnswerLate, Release, Unreachable, Retry,
+                                                                         Retry>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer")), "an answer after the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("late answer while busy")), "a late answer while another call is out");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("replaced")), "tokens replaced");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("error replaced")), "an error replaced by a newer status");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("stale answer")), "an answer saying what Slack no longer is");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("retried")), "a section that could not load, loaded on retry");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("retried in vain")), "a retry the MC turned down again");
     }));
   }
 };
