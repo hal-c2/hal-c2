@@ -5,17 +5,19 @@ defmodule HalC2.WebSocketSlackPropTest do
   is told every change of the MC's Slack status under its own id, from its sub until
   its own unsub, whatever the others do. Slack is `HalC2.Test.FakeSlack`.
 
-  Commands subscribe and unsubscribe ids from a small pool, and change the status
-  (connect, or disconnect when connected). After every step, the Slack frames the
-  socket sent before the pong answering a ping must be exactly the model's: a snapshot
-  for a sub, nothing for an unsub, and each step of a change for each subscription held.
+  Commands subscribe and unsubscribe ids from a small pool, unsubscribe an id and
+  subscribe it again with the unsubscribe reaching HalC2.Slack only after the new
+  subscribe (as an `:erpc.cast` may), and change the status (connect, or disconnect
+  when connected). After every step, the Slack frames the socket sent before the pong
+  answering a ping must be exactly the model's: a snapshot for a sub, nothing for an
+  unsub, and each step of a change for each subscription held.
   """
 
   use ExUnit.Case, async: false
   use PropCheck
   use PropCheck.StateM
 
-  alias HalC2.Test.{FakeSlack, WsClient}
+  alias HalC2.Test.{FakeSlack, LateUnsubscribe, WsClient}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -71,6 +73,7 @@ defmodule HalC2.WebSocketSlackPropTest do
         port
       end
 
+    Process.put({__MODULE__, :gate}, LateUnsubscribe.install(HalC2.Slack))
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
     {%{"t" => "hello"}, client} = WsClient.recv(client, 5_000)
     Process.put({__MODULE__, :client}, client)
@@ -78,6 +81,7 @@ defmodule HalC2.WebSocketSlackPropTest do
 
   defp stop do
     Process.delete({__MODULE__, :client})
+    if gate = Process.delete({__MODULE__, :gate}), do: LateUnsubscribe.uninstall(gate)
     HalC2.Prop.stop_services()
     if stop = Process.delete({__MODULE__, :fake}), do: stop.()
   end
@@ -94,7 +98,14 @@ defmodule HalC2.WebSocketSlackPropTest do
       [{3, {:call, __MODULE__, :change, [state.phase]}}] ++
         if(free != [], do: [{3, {:call, __MODULE__, :sub, [oneof(free)]}}], else: []) ++
         if(state.subs != [],
-          do: [{2, {:call, __MODULE__, :unsub, [oneof(state.subs)]}}],
+          do: [
+            {2, {:call, __MODULE__, :unsub, [oneof(state.subs)]}},
+            {2,
+             let(
+               id <- oneof(state.subs),
+               do: {:call, __MODULE__, :resub, [id, state.subs == [id]]}
+             )}
+          ],
           else: []
         )
     )
@@ -102,6 +113,10 @@ defmodule HalC2.WebSocketSlackPropTest do
 
   def precondition(state, {:call, _, :sub, [id]}), do: id not in state.subs
   def precondition(state, {:call, _, :unsub, [id]}), do: id in state.subs
+
+  def precondition(state, {:call, _, :resub, [id, alone]}),
+    do: id in state.subs and alone == (state.subs == [id])
+
   def precondition(state, {:call, _, :change, [phase]}), do: phase == state.phase
 
   def next_state(state, _result, {:call, _, :sub, [id]}), do: %{state | subs: [id | state.subs]}
@@ -109,11 +124,13 @@ defmodule HalC2.WebSocketSlackPropTest do
   def next_state(state, _result, {:call, _, :unsub, [id]}),
     do: %{state | subs: List.delete(state.subs, id)}
 
+  def next_state(state, _result, {:call, _, :resub, _}), do: state
   def next_state(state, _result, {:call, _, :change, ["off"]}), do: %{state | phase: "connected"}
   def next_state(state, _result, {:call, _, :change, [_]}), do: %{state | phase: "off"}
 
   def postcondition(state, {:call, _, :sub, [id]}, frames), do: frames == [{id, state.phase}]
   def postcondition(_state, {:call, _, :unsub, _}, frames), do: frames == []
+  def postcondition(state, {:call, _, :resub, [id, _]}, frames), do: frames == [{id, state.phase}]
 
   def postcondition(state, {:call, _, :change, [phase]}, frames) do
     steps = if phase == "off", do: ["connecting", "connected"], else: ["off"]
@@ -126,6 +143,23 @@ defmodule HalC2.WebSocketSlackPropTest do
     do: send_frame(%{"t" => "sub", "id" => id, "shape" => %{"type" => "slack", "mc" => mc()}})
 
   def unsub(id), do: send_frame(%{"t" => "unsub", "id" => id})
+
+  # The unsub's frames, then the sub's, the unsubscribe held back until the sub is in.
+  # The socket's last unsub on the MC must tell HalC2.Slack, so that one is waited for.
+  def resub(id, alone) do
+    LateUnsubscribe.arm(Process.get({__MODULE__, :gate}))
+    unsubbed = unsub(id)
+
+    if alone do
+      receive do
+        :unsubscribe_held -> :ok
+      after
+        10_000 -> exit(:last_unsubscribe_never_sent)
+      end
+    end
+
+    unsubbed ++ sub(id)
+  end
 
   def change("off") do
     {:ok, _} =
