@@ -385,6 +385,15 @@ defmodule HalC2.SlackTest do
       assert_receive {:handshake, {:error, _}}, 5_000
     end
 
+    test "a pong echoes the ping's payload" do
+      state = %{identity: @bot, owner: self(), alive: false}
+
+      assert {:reply, {:pong, "beat"}, %{alive: true}} =
+               HalC2.Slack.Socket.handle_ping({:ping, "beat"}, state)
+
+      assert {:reply, :pong, %{alive: true}} = HalC2.Slack.Socket.handle_ping(:ping, state)
+    end
+
     test "the bot's own messages, other threads, edits and plain messages are dropped" do
       base = %{
         "channel" => "CPLAN",

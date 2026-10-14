@@ -4,7 +4,7 @@ import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
 // features/settings/integrations.feature: the Integrations section draws what
-// DeviceSettingsController and SlackSettingsController publish and sends the
+// DeviceSettingsController and SlackSettingsController publish and send the
 // user's choices back.
 Item {
     id: root
