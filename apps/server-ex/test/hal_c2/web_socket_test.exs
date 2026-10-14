@@ -528,8 +528,10 @@ defmodule HalC2.Web.SocketTest do
   end
 
   # The Slack frames that came before the pong answering a ping sent now, as
-  # {id, state}: the MC pushes a status before HalC2.Slack answers the change.
+  # {id, state}. HalC2.Slack may answer a change before it tells the socket, so the
+  # ping waits for it to finish the change first.
   defp slack_frames(client) do
+    HalC2.Slack.status()
     client = WsClient.send_json(client, %{"t" => "ping"})
     {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
 
