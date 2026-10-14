@@ -57,12 +57,18 @@ ColumnLayout {
     ]
     readonly property string variables: qsTr("{{today}}, {{plan}}, {{items}}, {{project}} and {{item.id}}, {{item.title}}, {{item.notes}}, {{item.status}}, {{item.start}}, {{item.due}}, {{item.progress}}, {{item.owner}}, {{item.labels}}, {{item.issue}}, {{item.pullRequests}}, {{item.subtasks}} and {{item.after}} are filled in. How to report is added after it.")
 
-    // Reads the saved settings; `edits`, unsaved changes to keep, are made again on top.
-    function load(edits) {
+    // Reads the saved settings. Given `sent`, the values a save sent, what the user
+    // changed since is kept as unsaved changes on top.
+    function load(sent) {
         settings.plugin.call("settings", {}, (result, error) => {
             if (error) {
                 settings.problem = error;
                 return;
+            }
+            const edits = {};
+            for (const key in sent ? settings.values : {}) {
+                if (JSON.stringify(settings.values[key]) !== JSON.stringify(sent[key]))
+                    edits[key] = settings.values[key];
             }
             settings.problem = "";
             settings.saved = result.settings ?? {};
@@ -74,7 +80,7 @@ ColumnLayout {
             settings.slackConnected = result.slackConnected === true;
             settings.loaded = true;
             settings.reset();
-            for (const key in edits ?? {})
+            for (const key in edits)
                 settings.set(key, edits[key]);
         });
     }
@@ -170,7 +176,9 @@ ColumnLayout {
         return changed;
     }
 
+    // The form stays editable while it saves; the reload keeps what was typed since.
     function save(values) {
+        const sent = Object.assign({}, settings.values);
         settings.saving = true;
         settings.refusal = "";
         settings.plugin.saveSettings(values, (result, error) => {
@@ -178,7 +186,7 @@ ColumnLayout {
             if (error)
                 settings.refusal = error;
             else
-                settings.load();
+                settings.load(sent);
         });
     }
 

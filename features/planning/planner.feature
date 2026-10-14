@@ -462,6 +462,12 @@ Feature: Planner
       Then the prompt of "Reschedule" is saved as changed and "Give feedback" as the plugin's
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: What the user changes while the settings save is kept
+      Given the user opens the settings of "planner"
+      When the user changes the prompt of "Reschedule" and saves, then changes it again before the settings are read back
+      Then the prompt of "Reschedule" holds the second change, left to save
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings name a model and project the MC no longer offers
       Given "planner" runs its actions on the model "claude-retired" in the project "gone"
       When the user opens the planner's settings

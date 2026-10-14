@@ -343,6 +343,7 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
   const QString method = rpc.payload.value(QLatin1String("method")).toString();
   const QJsonObject input = rpc.payload.value(QLatin1String("input")).toObject();
   if (method == QLatin1String("settings")) {
+    if (world.mc.holding(QStringLiteral("planner.settings"))) return world.mc.defer([&world, rpc] { answer(world, rpc); });
     mergeSaved(world);
     QJsonArray channels;
     if (fake.slack) {
@@ -1084,6 +1085,30 @@ const Steps steps([] {
     // Read again after the save, nothing is left to save.
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
     world.waitFor([&] { return !settings->property("dirty").toBool(); }, QStringLiteral("the settings to be read again"));
+  });
+
+  step(QStringLiteral("the user changes the prompt of %1 and saves, then changes it again before the settings are read back").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
+    world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
+    QQuickItem* prompt = waitShownNamed(world, QStringLiteral("plannerActionPrompt:") + actionId(world, c[0]));
+    prompt->setProperty("text", QStringLiteral("My own reschedule prompt."));
+    world.mc.hold(QStringLiteral("planner.settings"));
+    QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
+    world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
+    expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
+    world.waitFor([&] { return !settings->property("saving").toBool(); }, QStringLiteral("the save to be answered"));
+    prompt->setProperty("text", QStringLiteral("My second reschedule prompt."));
+    world.mc.answerHeld();
+  });
+  step(QStringLiteral("the prompt of %1 holds the second change, left to save").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
+    const QString id = actionId(world, c[0]);
+    const auto prompt = [&] { return settings->property("actions").toMap().value(id).toMap().value(QStringLiteral("prompt")).toString(); };
+    // Read back, the first change is saved.
+    world.waitFor([&] { return settings->property("saved").toMap().value(QStringLiteral("actions")).toMap().value(id).toMap().value(QStringLiteral("prompt")) == QStringLiteral("My own reschedule prompt."); },
+                  QStringLiteral("the settings to be read back"));
+    expect(prompt() == QStringLiteral("My second reschedule prompt."), QStringLiteral("the prompt reads %1").arg(prompt()));
+    expect(settings->property("dirty").toBool(), QStringLiteral("the second change is not left to save"));
   });
 
   step(QStringLiteral("%1 runs its actions on the model %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
