@@ -164,6 +164,7 @@ defmodule HalC2.SlackPropTest do
             {4, {:call, __MODULE__, :mention, [:ours, state.sent]}},
             {1, {:call, __MODULE__, :mention, [:other_team, state.sent]}},
             {1, {:call, __MODULE__, :mention, [:other_app, state.sent]}},
+            {1, {:call, __MODULE__, :mention, [:their_installation, state.sent]}},
             {1, {:call, __MODULE__, :mention_then_disconnect, [state.sent]}}
           ] ++
             if(state.up,
@@ -594,6 +595,9 @@ defmodule HalC2.SlackPropTest do
     do: %{"team_id" => "T0OTHER", "authorizations" => [%{"team_id" => "T0OTHER"}]}
 
   defp origin(:other_app), do: %{"api_app_id" => "A0OTHER"}
+
+  # In this workspace, in a channel shared with another, for that one's installation.
+  defp origin(:their_installation), do: %{"authorizations" => [%{"team_id" => "T0OTHER"}]}
 
   defp heard_mention(n) do
     nonce = Process.get({__MODULE__, :nonce})

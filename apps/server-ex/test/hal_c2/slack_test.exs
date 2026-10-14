@@ -382,6 +382,21 @@ defmodule HalC2.SlackTest do
              ] =
                FakeSlack.responses()
     end
+
+    test "respond posts only to Slack's response URLs" do
+      for url <- [
+            "https://internal.example/hook",
+            "https://hooks.slack.com.example/commands/x",
+            "https://hooks.slack.com:8443/commands/x",
+            "https://user@hooks.slack.com/commands/x",
+            "http://hooks.slack.com/commands/x"
+          ] do
+        assert {:error, "slack respond takes only a Slack response URL."} =
+                 Slack.call("respond", %{"responseUrl" => url, "text" => "Nothing is late"})
+      end
+
+      assert FakeSlack.responses() == []
+    end
   end
 
   describe "events" do
@@ -453,11 +468,14 @@ defmodule HalC2.SlackTest do
       shared = %{ours | "team_id" => "T0PARTNER"}
       other_team = %{shared | "authorizations" => [%{"team_id" => "T0PARTNER"}]}
       other_app = %{ours | "api_app_id" => "A0OTHER"}
+      # Here, in a channel shared with another workspace, for that workspace's installation.
+      theirs = %{other_team | "team_id" => "T0ACME"}
 
       assert HalC2.Slack.Socket.ours?(ours, @bot)
       assert HalC2.Slack.Socket.ours?(shared, @bot)
       refute HalC2.Slack.Socket.ours?(other_team, @bot)
       refute HalC2.Slack.Socket.ours?(other_app, @bot)
+      refute HalC2.Slack.Socket.ours?(theirs, @bot)
       refute HalC2.Slack.Socket.ours?(Map.delete(other_team, "authorizations"), @bot)
     end
 

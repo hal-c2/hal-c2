@@ -207,8 +207,10 @@ defmodule HalC2.Slack do
   end
 
   # A slash command's response_url takes the answer without the token, for a while after.
-  def call("respond", %{"responseUrl" => "https://" <> _ = url, "text" => text}) do
-    with {:ok, _token} <- token() do
+  # Only Slack's own hosts take it, so a plugin cannot point the MC at anything else.
+  def call("respond", %{"responseUrl" => url, "text" => text}) when is_binary(url) do
+    with :ok <- response_url(url),
+         {:ok, _token} <- token() do
       case Req.post(url, json: %{"text" => text, "response_type" => "ephemeral"}) do
         {:ok, %Req.Response{status: status}} when status in 200..299 -> {:ok, %{"ok" => true}}
         {:ok, %Req.Response{} = response} -> {:error, "Slack refused it: #{reason(response)}"}
@@ -221,6 +223,19 @@ defmodule HalC2.Slack do
     do: {:error, "slack #{method} is missing an argument."}
 
   def call(method, _input), do: {:error, "unknown Slack call #{method}"}
+
+  @response_hosts ~w(hooks.slack.com hooks.slack-gov.com)
+
+  defp response_url(url) do
+    case URI.parse(url) do
+      %URI{scheme: "https", host: host, port: 443, userinfo: nil}
+      when host in @response_hosts ->
+        :ok
+
+      _ ->
+        {:error, "slack respond takes only a Slack response URL."}
+    end
+  end
 
   defp posted(input, args) do
     args
