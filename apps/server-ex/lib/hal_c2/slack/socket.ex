@@ -103,11 +103,17 @@ defmodule HalC2.Slack.Socket do
 
   @doc """
   Whether an envelope's payload is for the bot: its app, and its workspace. Slack names the
-  workspace an event happened in and, in `authorizations`, the installations it reached;
-  in a channel shared with another workspace those differ.
+  workspace an event happened in and, in `authorizations`, the installation it reached; in a
+  channel shared with another workspace those differ, and only the installation counts. A
+  payload without `authorizations`, such as a slash command, names the workspace alone.
   """
   def ours?(payload, identity) do
-    teams = [payload["team_id"] | for(a <- payload["authorizations"] || [], do: a["team_id"])]
+    teams =
+      case payload["authorizations"] do
+        [_ | _] = authorizations -> for a <- authorizations, do: a["team_id"]
+        _ -> [payload["team_id"]]
+      end
+
     payload["api_app_id"] == identity.app_id and identity.team_id in teams
   end
 end
