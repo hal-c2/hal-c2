@@ -1051,6 +1051,22 @@ const Steps steps([] {
     world.waitFor([&] { return !settings->property("dirty").toBool(); }, QStringLiteral("the settings to be read again"));
   });
 
+  step(QStringLiteral("%1 runs its actions on the model %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));
+    QJsonObject& settings = state(world).settings;
+    settings.insert(QStringLiteral("provider"), QStringLiteral("claudeAgent"));
+    settings.insert(QStringLiteral("model"), c[1]);
+    settings.insert(QStringLiteral("defaultProject"), c[2]);
+  });
+  step(QStringLiteral("the planner's model reads %1 and its default project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Neither is offered: the agent has no models, and the MC has only the project api.
+    for (const auto& [name, wanted] : {std::pair{QStringLiteral("plannerSetting:model"), c[0]}, std::pair{QStringLiteral("plannerSetting:defaultProject"), c[1]}}) {
+      QQuickItem* combo = waitShownNamed(world, name);
+      expect(combo->property("currentIndex").toInt() == -1 && combo->property("displayText").toString() == wanted,
+             QStringLiteral("%1 reads %2").arg(name, combo->property("displayText").toString()));
+    }
+  });
+
   step(QStringLiteral("the MC is connected to Slack as the bot %1").arg(q), [](World& world, const Captures&, const Table&) { state(world).slack = true; });
   step(QStringLiteral("%1 posts to the Slack channel %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == kId, QStringLiteral("only %1 is faked").arg(kId));

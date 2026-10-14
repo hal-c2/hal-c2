@@ -440,6 +440,12 @@ Feature: Planner
       When the user changes the prompt of "Reschedule" and resets "Give feedback"
       Then the prompt of "Reschedule" is saved as changed and "Give feedback" as the plugin's
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings name a model and project the MC no longer offers
+      Given "planner" runs its actions on the model "claude-retired" in the project "gone"
+      When the user opens the planner's settings
+      Then the planner's model reads "claude-retired" and its default project "gone"
+
   Rule: Work on a task is a thread linked to it
 
     @mc

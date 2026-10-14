@@ -107,6 +107,15 @@ ColumnLayout {
         settings.refusal = "";
     }
 
+    // The entry of a combo whose first entry is "none" for `value`, the key of a row of
+    // `rows`: -1 for one no longer offered, which the combo shows by its key instead.
+    function pickedAfterNone(rows, key, value) {
+        if ((value ?? "") === "")
+            return 0;
+        const at = rows.findIndex(each => each[key] === value);
+        return at < 0 ? -1 : at + 1;
+    }
+
     function set(key, value) {
         const next = Object.assign({}, settings.values);
         next[key] = value;
@@ -437,7 +446,7 @@ ColumnLayout {
                     outline: true
                     implicitWidth: 240
                     model: [qsTr("Its default model")].concat(models.map(each => each.name || each.slug))
-                    currentIndex: (settings.values.model ?? "") === "" ? 0 : models.findIndex(each => each.slug === settings.values.model) + 1
+                    currentIndex: settings.pickedAfterNone(models, "slug", settings.values.model)
                     displayText: currentIndex >= 0 ? currentText : settings.values.model
                     Accessible.name: qsTr("Model")
                     onActivated: index => settings.set("model", index === 0 ? "" : models[index - 1].slug)
@@ -478,7 +487,7 @@ ColumnLayout {
                 outline: true
                 implicitWidth: 240
                 model: [qsTr("None")].concat(settings.projects.map(each => each.title || each.id))
-                currentIndex: (settings.values.defaultProject ?? "") === "" ? 0 : settings.projects.findIndex(each => each.id === settings.values.defaultProject) + 1
+                currentIndex: settings.pickedAfterNone(settings.projects, "id", settings.values.defaultProject)
                 displayText: currentIndex >= 0 ? currentText : settings.values.defaultProject
                 Accessible.name: qsTr("Default project")
                 onActivated: index => settings.set("defaultProject", index === 0 ? "" : settings.projects[index - 1].id)
