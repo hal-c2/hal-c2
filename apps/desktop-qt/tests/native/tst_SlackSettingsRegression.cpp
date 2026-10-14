@@ -109,6 +109,29 @@ private slots:
     QTRY_VERIFY(again.section().value(QStringLiteral("loaded")).toBool());
     QVERIFY(again.section().value(QStringLiteral("open")).toBool());
   }
+
+  // The MC answers a call and pushes its status along different paths: a
+  // connect's answer that arrived after another client's disconnect put back
+  // "connected" with nothing more to come.
+  void anAnswerOlderThanAPushedStatusIsIgnored() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.mc.onRpc(QStringLiteral("slack.connect"), [&mc](const FakeMc::Rpc& rpc) {
+      mc.push(connected());
+      mc.push(off());
+      mc.mc.reply(rpc, connected());
+    });
+    Shell shell(home, mc.mc);
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.openIntegrations();
+    QTRY_VERIFY(shell.section().value(QStringLiteral("loaded")).toBool());
+    shell.bridge.dispatch(QStringLiteral("slackSettings.connect"),
+                          QVariantMap{{QStringLiteral("botToken"), QStringLiteral("xoxb-bot")}, {QStringLiteral("appToken"), QStringLiteral("xapp-app")}});
+    QCOMPARE(shell.section().value(QStringLiteral("pending")).toString(), QStringLiteral("connect"));
+    QTRY_COMPARE(shell.section().value(QStringLiteral("pending")).toString(), QString());
+    QCOMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("off"));
+  }
 };
 
 int main(int argc, char** argv) {

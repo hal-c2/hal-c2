@@ -117,6 +117,7 @@ private:
   // A status from the MC is newer than the page's own error (a refusal, blank
   // tokens), so it replaces it; the status carries its own error.
   void take(const QJsonObject& status) {
+    ++m_statuses;
     m_status = status;
     m_loaded = true;
     m_error.clear();
@@ -125,17 +126,23 @@ private:
 
   // `slack.connect` or `slack.disconnect` on the inspected environment; each
   // answers with the connection as it now is, and Slack's refusal is its error.
+  // The MC answers and pushes its status along different paths, so a status
+  // that arrived while the call was out may be newer than the answer, which
+  // then only frees the buttons.
   void change(const QString& pending, const QJsonObject& input) {
     m_pending = pending;
     m_error.clear();
     const QPointer<SlackSettingsController> self(this);
     const int generation = m_generation;
+    const int statuses = m_statuses;
     m_client->call(this, m_environmentId, QStringLiteral("slack.") + pending, input,
-                   [self, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   [self, generation, statuses](const QJsonValue& result, const std::optional<QString>& error) {
                      if (!self || self->m_generation != generation) return;
                      self->m_pending.clear();
-                     if (error) self->m_error = *error;
-                     else self->take(result.toObject());
+                     if (self->m_statuses == statuses) {
+                       if (error) self->m_error = *error;
+                       else self->take(result.toObject());
+                     }
                      self->publish();
                    });
     publish();
@@ -198,6 +205,8 @@ private:
   // Bumped when the inspected environment changes, so older answers are dropped.
   int m_generation = 0;
   QJsonObject m_status;
+  // Counts the statuses taken, so a call's answer can tell whether one came since it was made.
+  int m_statuses = 0;
   bool m_loaded = false;
   QString m_error;
   QString m_pending;
