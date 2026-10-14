@@ -26,7 +26,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 2
+  @state_version 3
   @registry HalC2.Muse.Registry
   # Muse's "overloaded" and "backpressured": the command may be sent again.
   @retryable [-32001, -32031]
@@ -121,6 +121,9 @@ defmodule HalC2.Muse.ThreadRuntime do
        flush_timer: nil,
        interrupted: false,
        usage: %{},
+       # Whether Muse has started this run's turn (turn/started); before then, context
+       # usage is still the last turn's.
+       started: false,
        # The provider turn of the run that ended last, for usage Muse reports after it.
        last_ids: nil,
        # Open prompts: request id -> {:approval, approval} | {:question, user input}.
@@ -142,7 +145,8 @@ defmodule HalC2.Muse.ThreadRuntime do
         joined: MapSet.new(),
         compact: false,
         interrupted: false,
-        usage: %{}
+        usage: %{},
+        started: false
     }
 
     with {:ok, state} <- ensure_session(state, turn),
@@ -228,7 +232,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         end
 
       {:ok, {:question, input}} ->
-        with {:ok, answers} <- answers(input["questions"], response["answers"]),
+        with {:ok, answers} <- question_answers(input["questions"], response),
              {:ok, _} <-
                command(state, "userInput/answer", %{
                  "userInputId" => input["userInputId"],
@@ -261,9 +265,18 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   def handle_info({:json_rpc, conn, {:notification, method, params}}, %{conn: conn} = state) do
     if is_map(params) and params["sessionId"] == state.session,
-      do: {:noreply, notification(method, params, state)},
+      do: {:noreply, notification(method, params, started(state, params))},
       else: {:noreply, state}
   end
+
+  # Anything Muse says about this run's turn means it has started it.
+  defp started(%{native: native} = state, params) when native != nil do
+    if native in [params["turnId"], get_in(params, ["item", "turnId"])],
+      do: %{state | started: true},
+      else: state
+  end
+
+  defp started(state, _params), do: state
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state =
@@ -287,6 +300,9 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  # v3 knows whether Muse started the running turn; one running at the update has.
+  defp migrate(%{v: 2} = state), do: state |> Map.merge(%{v: 3, started: true}) |> migrate()
 
   # v2 keeps the last turn's ids, not only its provider turn.
   defp migrate(%{v: 1} = state),
@@ -506,7 +522,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   defp compact(state) do
-    state = %{state | compact: true}
+    state = %{state | compact: true, started: true}
 
     case command(state, "session/compact", %{"commandId" => state.native}) do
       {:ok, %{"status" => "accepted"}} ->
@@ -604,7 +620,9 @@ defmodule HalC2.Muse.ThreadRuntime do
         do: Map.put(usage, "maxTokens", params["windowTokens"]),
         else: usage
 
-    token_usage(state, usage)
+    if state.turn != nil and not state.started,
+      do: last_turn_usage(state, usage),
+      else: token_usage(state, usage)
   end
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
@@ -718,8 +736,10 @@ defmodule HalC2.Muse.ThreadRuntime do
             {submitted, _} -> submitted
           end
 
+        status = if match?(%{"dismissed" => true}, decision), do: "cancelled", else: "resolved"
+
         %{state | requests: Map.delete(state.requests, request_id)}
-        |> resolve_request(request_id, decision)
+        |> resolve_request(request_id, decision, status)
 
       nil ->
         state
@@ -1012,6 +1032,34 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp completed_usage(state, _usage), do: state
 
+  # Muse reports a turn's context usage after it completes, and the next run may have
+  # started meanwhile: the usage stays with the turn it followed.
+  defp last_turn_usage(%{last_ids: nil} = state, _usage), do: state
+
+  defp last_turn_usage(state, usage) do
+    usage = Map.put(usage, "updatedAt", Entities.now())
+    ids = state.last_ids
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &Map.put(&1, "contextUsage", usage)
+        ),
+        Orchestration.upsert(
+          stream,
+          "provider-turn",
+          ids.provider_turn,
+          &Map.put(&1, "tokenUsage", Map.merge(&1["tokenUsage"] || %{}, usage))
+        )
+      ]
+    end)
+
+    state
+  end
+
   # The meter needs Muse's context usage, which the provider thread keeps (the meter
   # reads it there) and the turn records; the turn's totals ride along with it.
   defp token_usage(state, usage) do
@@ -1203,6 +1251,18 @@ defmodule HalC2.Muse.ThreadRuntime do
     {state, request_id} = open_question(flush(state), native, questions)
     %{state | requests: Map.put(state.requests, request_id, {:question, input})}
   end
+
+  # Muse cannot leave a question unanswered: a dismissed one tells it so, and the turn
+  # goes on.
+  defp question_answers(questions, %{"dismissed" => true}) when is_list(questions),
+    do:
+      {:ok,
+       for(
+         %{"id" => id} <- questions,
+         do: %{"questionId" => id, "freeText" => "The user dismissed the question."}
+       )}
+
+  defp question_answers(questions, response), do: answers(questions, response["answers"])
 
   @doc false
   # The user's answers in Muse's shape: chosen labels, and anything else as free text.

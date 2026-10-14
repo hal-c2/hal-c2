@@ -150,7 +150,10 @@ defmodule HalC2.MuseRuntimePropTest do
             ]
 
           :ask ->
-            [{3, {:call, __MODULE__, :answer, [oneof(~w(red green purple))]}}]
+            [
+              {3, {:call, __MODULE__, :answer, [oneof(~w(red green purple))]}},
+              {1, {:call, __MODULE__, :dismiss, []}}
+            ]
         end
 
     frequency(if(turn == nil, do: idle, else: busy))
@@ -169,7 +172,9 @@ defmodule HalC2.MuseRuntimePropTest do
   def precondition(%{turn: turn}, {:call, _, :decline, _}),
     do: match?(%{kind: k} when k in [:shell, :guarded, :workflow], turn)
 
-  def precondition(%{turn: turn}, {:call, _, :answer, _}), do: match?(%{kind: :ask}, turn)
+  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:answer, :dismiss],
+    do: match?(%{kind: :ask}, turn)
+
   def precondition(_state, {:call, _, :host_exit, _}), do: true
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
@@ -197,8 +202,9 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(state, _result, {:call, _, :approve, [false]}),
     do: %{state | turn: %{state.turn | kind: :shell}}
 
-  def next_state(state, _result, {:call, _, fun, _}) when fun in [:approve, :decline, :answer],
-    do: end_turn(state, "completed")
+  def next_state(state, _result, {:call, _, fun, _})
+      when fun in [:approve, :decline, :answer, :dismiss],
+      do: end_turn(state, "completed")
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
@@ -291,6 +297,23 @@ defmodule HalC2.MuseRuntimePropTest do
   def approve(last?), do: respond(%{"decision" => "accept"}, last?)
   def decline, do: respond(%{"decision" => "decline"})
   def answer(choice), do: respond(%{"answers" => %{"q1" => choice}})
+
+  # Muse is told the question was dismissed, and the turn goes on.
+  def dismiss do
+    ending = active_runs()
+
+    request =
+      current()
+      |> StreamState.list("runtime-request")
+      |> Enum.find(&(&1["status"] == "pending"))
+
+    Orchestration.dispatch(%{
+      "type" => "thread.user-input.dismiss",
+      "threadId" => @tid,
+      "requestId" => request && request["id"]
+    })
+    |> reply(ending)
+  end
 
   defp respond(response, ends? \\ true) do
     ending = if ends?, do: active_runs(), else: []

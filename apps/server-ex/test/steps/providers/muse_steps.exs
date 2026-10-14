@@ -57,6 +57,13 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     },
     %{
+      "match" => "count it late",
+      "steps" => [
+        %{"text" => "Counted."},
+        %{"contextAfter" => %{"usedTokens" => 4321, "windowTokens" => 200_000}, "late" => true}
+      ]
+    },
+    %{
       "match" => "a long task",
       "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
     },
@@ -567,6 +574,55 @@ defmodule HalC2.Steps.Providers.Muse do
           &(usage?.(&1["tokenUsage"]) and &1["tokenUsage"]["reasoningOutputTokens"] == 120)
         )
     end)
+
+    context
+  end
+
+  step "Muse Code reports a turn's context usage as the next turn starts", context do
+    context |> FakeAcp.thread() |> turn("count it late") |> turn("hello again")
+  end
+
+  step "the usage stays with the turn it followed", context do
+    turns =
+      World.await_stream(World.thread_id(context, context.thread), fn state ->
+        turns = StreamState.get(state, "provider-turn")
+
+        turns =
+          for run <- Enum.sort_by(StreamState.list(state, "run"), & &1["ordinal"]),
+              do: Enum.find_value(turns, fn {id, t} -> String.ends_with?(id, run["id"]) && t end)
+
+        if match?([%{"tokenUsage" => %{"usedTokens" => 4321}}, _], turns), do: turns
+      end)
+
+    assert [_, second] = turns
+    refute get_in(second, ["tokenUsage", "usedTokens"])
+    context
+  end
+
+  step "the user dismisses the Muse Code question", context do
+    request = FakeAcp.await_request(context)
+
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "thread.user-input.dismiss",
+               "threadId" => World.thread_id(context, context.thread),
+               "requestId" => request["id"]
+             })
+
+    Map.put(context, :request, request)
+  end
+
+  step "Muse Code is told and the turn goes on", context do
+    FakeAcp.await_run(context, "completed")
+
+    assert [%{"answers" => [%{"questionId" => "q1", "freeText" => "The user dismissed" <> _}]}] =
+             received(context, "userInput/answer")
+
+    assert %{"status" => "cancelled"} =
+             context
+             |> state()
+             |> StreamState.get("runtime-request")
+             |> Map.get(context.request["id"])
 
     context
   end

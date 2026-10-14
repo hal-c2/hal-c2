@@ -18,7 +18,7 @@
 # asks n times, each approval answered by approval/updated naming the next one), {"question": {"header",
 # "question", "options"}} (waits for the answer, then says it), {"usage": {...}}
 # (session/tokenUsage), {"contextAfter": {"usedTokens", "windowTokens"}} (session/contextUsage
-# once the turn has completed), {"childShell": command} (a workflow child asks, offering
+# once the turn has completed; with "late": true, as the next turn/start arrives), {"childShell": command} (a workflow child asks, offering
 # no way to approve unless "approvable", for "requirements" approvals), {"todos": [{"text",
 # "status"}]} (session/todoListChanged), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
@@ -90,7 +90,7 @@ log({"start": {
     "env": {k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIXES)},
 }})
 
-state = {"session": None, "turn": None}
+state = {"session": None, "turn": None, "late": []}
 # What the running turn waits on: decisions, answers, interrupts and steers.
 events = queue.Queue()
 # Approvals with requirements still to come: approvalId -> [request, how many].
@@ -209,6 +209,8 @@ def run_turn(sid, turn, text, params):
             log({"tool": {"name": "shell", "approved": approved, "asked": True}})
         elif "todos" in step:
             notify("session/todoListChanged", {"sessionId": sid, "items": step["todos"]})
+        elif "contextAfter" in step and step.get("late"):
+            state["late"].append(step["contextAfter"])
         elif "contextAfter" in step:
             after.append(step["contextAfter"])
         elif "usage" in step:
@@ -285,6 +287,10 @@ def handle(msg):
         while not events.empty():
             events.get()
         text = "".join(p.get("text", "") for p in params["input"] if p["type"] == "text")
+        # The last turn's usage, as Muse sends it while the MC is starting this one.
+        for usage in state["late"]:
+            notify("session/contextUsage", dict(usage, sessionId=sid))
+        state["late"] = []
         reply({"commandId": turn, "turnId": answered(turn), "status": "accepted", "disposition": "started"})
         threading.Thread(target=run_turn, args=(sid, turn, text, params), daemon=True).start()
     elif method == "turn/steer":

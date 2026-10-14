@@ -129,6 +129,11 @@ Feature: Muse Code
     When Muse Code reports its context usage after the turn has ended
     Then the turn's context usage is shown
 
+  Scenario: Context usage Muse Code reports as the next turn starts stays with its turn
+    Given Muse Code is installed and enabled
+    When Muse Code reports a turn's context usage as the next turn starts
+    Then the usage stays with the turn it followed
+
   Scenario: Steps Muse Code cancelled are left out of its plan
     Given Muse Code shares a plan with a step it cancelled
     Then the plan leaves the cancelled step out
@@ -178,6 +183,11 @@ Feature: Muse Code
   Scenario: Muse Code questions are answered from the composer
     When Muse Code asks the user a question with choices
     Then the choices appear in the composer and the answer goes back to Muse Code
+
+  Scenario: A dismissed Muse Code question is closed and the turn goes on
+    When Muse Code asks the user a question with choices
+    And the user dismisses the Muse Code question
+    Then Muse Code is told and the turn goes on
 
   Scenario: Stopping a Muse Code turn interrupts it
     Given a Muse Code turn is running
