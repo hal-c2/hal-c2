@@ -46,13 +46,10 @@ public:
     if (m_active) return;
     m_active = true;
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-    connect(navigation, &NavigationController::changed, this, [this, navigation] {
-      const bool open = navigation->route().kind == QLatin1String("settings") && navigation->route().section == kSection;
-      if (open == m_open) return;
-      m_open = open;
-      follow();
-    });
+    connect(navigation, &NavigationController::changed, this, [this, navigation] { route(navigation); });
     connect(scope(), &SettingsScopeController::changed, this, &SlackSettingsController::follow);
+    // A window restored on Integrations has its route before this activates.
+    route(navigation);
     publish();
   }
 
@@ -84,6 +81,13 @@ private:
 
   // The environment whose connection shows: the scope's first connected one.
   QString inspected() const { return m_open ? scope()->targets().value(0) : QString(); }
+
+  void route(const NavigationController* navigation) {
+    const bool open = navigation->route().kind == QLatin1String("settings") && navigation->route().section == kSection;
+    if (open == m_open) return;
+    m_open = open;
+    follow();
+  }
 
   bool editable() const { return !scope()->projectScope() && scope()->editable() && scope()->targets().size() == 1; }
 
