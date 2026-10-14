@@ -376,7 +376,7 @@ defmodule HalC2.PlannerPropTest do
     {{slot, gen, outcome, adds}, held} = Map.pop(m.held, push)
     m = %{m | held: held}
 
-    if Map.has_key?(m.items, slot) and m.latest[slot] == {gen, push} do
+    if Map.has_key?(m.items, slot) and m.gens[slot] == gen and m.latest[slot] == {gen, push} do
       item = %{m.items[slot] | sync: if(outcome == :refused, do: {:refused, push})}
       item = if outcome == :ok and adds, do: %{item | board: push}, else: item
       {put_in(m.items[slot], item), :ok}
