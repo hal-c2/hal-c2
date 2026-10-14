@@ -114,6 +114,13 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
+  step "the tokens are kept", context do
+    {status, context} = World.call!(context, "slack.status")
+    assert status["tokensSet"] == true
+    assert File.exists?(Path.join([HalC2.Paths.data_dir(), "secrets", "slack.bin"]))
+    context
+  end
+
   step "plugins are told Slack is not connected", context do
     assert_receive {:slack_event, "listener", %{"type" => "slack.status", "connected" => false}},
                    10_000
@@ -121,16 +128,27 @@ defmodule HalC2.Steps.Settings.Slack do
     context
   end
 
-  step "the Socket Mode connection drops", context do
-    context = Slack.watch(context)
-    FakeSlack.available(false)
-    FakeSlack.drop()
-    context
-  end
+  step("the Socket Mode connection drops while Slack cannot be reached", context,
+    do: drop_while(context, false)
+  )
 
-  step "Slack shows as reconnecting", context do
-    {_, context} = Slack.await(context, "reconnecting")
-    context
+  step("the Socket Mode connection drops while Slack says it is rate limiting the MC", context,
+    do: drop_while(context, "ratelimited")
+  )
+
+  step("the Socket Mode connection drops while Slack says it had an internal error", context,
+    do: drop_while(context, "internal_error")
+  )
+
+  # Once a retry has asked Slack and failed; the status tells why.
+  step "Slack shows as reconnecting with why it could not connect", context do
+    context = Slack.watch(context)
+
+    {frame, client} =
+      Mc.await(World.client(context, "slack"), &(&1["t"] == "slack" and &1["status"]["error"]))
+
+    assert %{"state" => "reconnecting", "tokensSet" => true} = frame["status"]
+    World.put_client(context, "slack", client)
   end
 
   step "it shows as connected again once Slack answers", context do
@@ -394,6 +412,24 @@ defmodule HalC2.Steps.Settings.Slack do
     mention_elsewhere(context, person, name, %{"api_app_id" => "A0OTHER"})
   end
 
+  step "{string} mentions {string} in a reply to the bot's direct message in Slack",
+       %{args: [person, _bot]} = context do
+    text = "<@UHAL> can we slip docs?"
+
+    FakeSlack.event(%{
+      "type" => "message",
+      "channel" => "D0DANA",
+      "channel_type" => "im",
+      "user" => user_id(person),
+      "text" => text,
+      "ts" => "1700000100.000003",
+      "thread_ts" => "1700000100.000001",
+      "parent_user_id" => "UHAL"
+    })
+
+    Map.put(context, :said, {"D0DANA", text})
+  end
+
   step "{string} replies in the thread of a message the bot posted in Slack",
        %{args: [person]} = context do
     channel = channel_id("planning")
@@ -427,6 +463,8 @@ defmodule HalC2.Steps.Settings.Slack do
     assert %{"channel" => ^channel, "user" => "UDANA", "userName" => "dana", "text" => ^text} =
              event
 
+    # Each event is handed on in a task of its own; give a second one its chance.
+    refute_receive {:slack_event, ^id, _}, 200
     context
   end
 
@@ -553,6 +591,14 @@ defmodule HalC2.Steps.Settings.Slack do
   end
 
   # --- helpers ------------------------------------------------------------------------
+
+  # Drops the socket while Slack answers nothing (`false`) or only the JSON error `down`.
+  defp drop_while(context, down) do
+    context = Slack.watch(context)
+    FakeSlack.available(down)
+    FakeSlack.drop()
+    context
+  end
 
   defp post(context, text, channel) do
     context = PluginHost.call(context, "slack", "post", %{"channel" => channel, "text" => text})

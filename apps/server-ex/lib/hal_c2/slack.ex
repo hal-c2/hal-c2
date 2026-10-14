@@ -13,7 +13,9 @@ defmodule HalC2.Slack do
   Every attempt runs in a task, one at a time, so the server always answers; each begins
   by stopping what the last one started. A connection that drops is made again with
   backoff (`:slack_backoff_ms`, doubling to a minute) while the status is `reconnecting`;
-  Slack refusing the tokens ends in `failed`, an unreachable Slack keeps retrying.
+  Slack refusing the tokens (`invalid_auth`, `token_revoked` and the like) ends in
+  `failed` and forgets them; a Slack unreachable, rate limiting or failing in any other
+  way keeps retrying with them.
 
   Watchers (`subscribe/1`) get `{:hal_c2_slack, node(), status}` on every change, and the
   plugins granted `slack:read` a `slack.status` event when it connects or stops, in order.
@@ -730,13 +732,25 @@ defmodule HalC2.Slack do
     end
   end
 
+  # Slack's errors that say the token will never do. Only these forget stored tokens, which
+  # the user must then fetch from api.slack.com again; any other error (`ratelimited`,
+  # `internal_error`, `service_unavailable`, one Slack adds later) is retried with them,
+  # which costs a request a minute at most and shows the error meanwhile.
+  @refusals ~w(invalid_auth not_authed invalid_token account_inactive token_revoked
+               token_expired not_allowed_token_type missing_scope no_permission access_denied
+               ekm_access_denied team_access_not_granted org_login_required
+               two_factor_setup_required bot_not_found)
+
   defp check(verb, endpoint, token, args, what) do
     case apply(Slack.API, verb, [endpoint, token, args]) do
       {:ok, body} ->
         {:ok, body}
 
-      {:error, %Req.Response{body: %{"error" => error}}} ->
+      {:error, %Req.Response{body: %{"error" => error}}} when error in @refusals ->
         {:error, :refused, "Slack refused the #{what}: #{error}"}
+
+      {:error, %Req.Response{body: %{"error" => error}}} ->
+        {:error, :unreachable, "Slack could not check the #{what}: #{error}"}
 
       {:error, error} ->
         {:error, :unreachable, "Could not reach Slack: #{reason(error)}"}

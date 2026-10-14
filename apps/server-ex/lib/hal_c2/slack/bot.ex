@@ -3,7 +3,8 @@ defmodule HalC2.Slack.Bot do
   What Slack's Socket Mode delivers (`HalC2.Slack.Socket`, each event in a task), turned
   into the events plugins granted `slack:read` hear (`HalC2.Plugins.slack_event/2`):
 
-    * `slack.mention`: a message that mentions the bot (`app_mention`).
+    * `slack.mention`: a message that mentions the bot (`app_mention`; in a direct
+      message, where Slack sends no `app_mention`, the message itself).
     * `slack.reply`: a reply in the thread of a message the bot posted that does not
       mention it (that one is a mention), with the parent's `parentTs`.
     * `slack.command`: a slash command the app answers, with its `responseUrl`.
@@ -36,11 +37,24 @@ defmodule HalC2.Slack.Bot do
   def event("app_mention", %{"user" => user} = message, %{bot_user_id: me}) when user != me,
     do: message("slack.mention", message)
 
-  def event("message", %{"thread_ts" => parent, "ts" => ts} = message, bot)
-      when parent != ts do
-    if plain?(message, bot) and message["parent_user_id"] == bot.bot_user_id and
-         not mentions?(message, bot),
-       do: Map.put(message("slack.reply", message), "parentTs", parent)
+  # Outside a direct message, one that mentions the bot comes again as `app_mention`.
+  def event("message", message, bot) do
+    cond do
+      not plain?(message, bot) ->
+        nil
+
+      mentions?(message, bot) and message["channel_type"] == "im" ->
+        message("slack.mention", message)
+
+      mentions?(message, bot) ->
+        nil
+
+      reply?(message, bot) ->
+        Map.put(message("slack.reply", message), "parentTs", message["thread_ts"])
+
+      true ->
+        nil
+    end
   end
 
   def event("slash_commands", %{"command" => command} = payload, _bot) do
@@ -70,6 +84,11 @@ defmodule HalC2.Slack.Bot do
     message["user"] != nil and message["user"] != bot.bot_user_id and message["bot_id"] == nil and
       message["subtype"] in [nil, "thread_broadcast", "file_share"]
   end
+
+  defp reply?(%{"thread_ts" => parent, "ts" => ts} = message, bot),
+    do: parent != ts and message["parent_user_id"] == bot.bot_user_id
+
+  defp reply?(_message, _bot), do: false
 
   defp mentions?(message, bot),
     do: String.contains?(message["text"] || "", "<@#{bot.bot_user_id}>")
