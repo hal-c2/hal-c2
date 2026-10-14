@@ -155,6 +155,46 @@ defmodule HalC2.SlackTest do
     assert %{"state" => "reconnecting", "tokensSet" => true} = Slack.status()
   end
 
+  # Slack may send an event straight after hello, before this server has made the
+  # connection its own; acked then and dropped, Slack would never send it again.
+  test "an event Slack sends right after hello waits, unacked, for the connection and reaches plugins" do
+    FakeSlack.hold("auth.test")
+    connecting = Task.async(fn -> Slack.connect(tokens()) end)
+    assert_receive {:fake_slack_held, "auth.test", _}, 5_000
+
+    # The attempt's answer waits for the server while the socket takes the event.
+    :sys.suspend(Slack)
+
+    mention = %{
+      "type" => "app_mention",
+      "channel" => "CPLAN",
+      "user" => "UDANA",
+      "text" => "<@UHAL> hi",
+      "ts" => "1800000000.1"
+    }
+
+    FakeSlack.event(mention, %{"event_id" => "EvEarly"})
+    FakeSlack.ping()
+    FakeSlack.release()
+    assert_receive :fake_slack_pong, 5_000
+    await_tasks()
+    refute_received {:fake_slack_ack, _}
+
+    :sys.resume(Slack)
+    assert {:ok, %{"state" => "connected"}} = Task.await(connecting)
+    assert_receive {:fake_slack_ack, _}, 5_000
+    await_tasks()
+    refute Slack.first_delivery?("EvEarly")
+  end
+
+  # What the connection's tasks (its attempt, the events it handed on) were doing is done.
+  defp await_tasks do
+    for pid <- Task.Supervisor.children(HalC2.Slack.Tasks) do
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+    end
+  end
+
   # The attempt gives up on hello after the disconnect, an answer that is not `{:ok, _}`;
   # its socket must not live on to take events while the MC says it is off.
   test "a disconnect while a connect waits for Slack's hello leaves no socket behind" do

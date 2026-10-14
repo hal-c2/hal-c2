@@ -8,7 +8,8 @@ defmodule HalC2.Slack do
   An attempt checks the bot token (`auth.test`, then `bots.info` for its app), opens
   Socket Mode with the app token (`apps.connections.open`) and starts `HalC2.Slack.Socket`
   under a `DynamicSupervisor` of this module's own, connected once Slack's hello names the
-  bot token's app; the socket hands on only events for that app and the bot's workspace.
+  bot token's app; the socket hands on only events for that app and the bot's workspace,
+  and none before this server has made the connection its own.
   Every attempt runs in a task, one at a time, so the server always answers; each begins
   by stopping what the last one started. A connection that drops is made again with
   backoff (`:slack_backoff_ms`, doubling to a minute) while the status is `reconnecting`;
@@ -590,6 +591,7 @@ defmodule HalC2.Slack do
     end
 
     :ets.insert(@cache, [{:token, elem(job.tokens, 0), make_ref()}, {:identity, identity}])
+    HalC2.Slack.Socket.activate(socket)
 
     state =
       %{state | tokens: job.tokens, conn: %{refs: refs}, identity: identity, error: nil}
