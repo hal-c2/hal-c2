@@ -201,10 +201,15 @@ defmodule HalC2.Muse.ThreadRuntime do
   def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "Muse Code cannot be steered now"}, state}
 
+  # An answer Muse accepts stays open until Muse settles it (approval/resolved,
+  # userInput/settled): an approval can still gain a requirement (approval/updated).
   def handle_call({:respond, request_id, response}, _from, state) do
     case Map.fetch(state.requests, request_id) do
       :error ->
         {:reply, {:error, "no pending request #{request_id}"}, state}
+
+      {:ok, {_kind, %{submitted: _}}} ->
+        {:reply, :ok, state}
 
       {:ok, {:approval, approval}} ->
         decision = response["decision"] || "decline"
@@ -216,8 +221,7 @@ defmodule HalC2.Muse.ThreadRuntime do
                  "requirementId" => approval["currentRequirementId"],
                  "choiceId" => choice
                }) do
-          state = %{state | requests: Map.delete(state.requests, request_id)}
-          {:reply, :ok, resolve_request(state, request_id, decision)}
+          {:reply, :ok, submitted(state, request_id, decision)}
         else
           {:error, :no_choice} -> {:reply, {:error, "Muse did not offer this decision."}, state}
           {:error, reason} -> {:reply, {:error, format(reason)}, state}
@@ -230,8 +234,7 @@ defmodule HalC2.Muse.ThreadRuntime do
                  "userInputId" => input["userInputId"],
                  "answers" => answers
                }) do
-          state = %{state | requests: Map.delete(state.requests, request_id)}
-          {:reply, :ok, resolve_request(state, request_id, response)}
+          {:reply, :ok, submitted(state, request_id, response)}
         else
           {:error, reason} -> {:reply, {:error, format(reason)}, state}
         end
@@ -677,7 +680,8 @@ defmodule HalC2.Muse.ThreadRuntime do
       else: state
   end
 
-  # Settled elsewhere (in Muse's own UI, or by the turn ending): Muse's decision stands.
+  # Settled after our answer (which it records), in Muse's own UI, or by the turn
+  # ending (Muse's decision stands).
   defp notification(method, params, state)
        when method in ["approval/resolved", "userInput/settled"] do
     native = params["approvalId"] || params["userInputId"]
@@ -685,11 +689,11 @@ defmodule HalC2.Muse.ThreadRuntime do
     case Enum.find(state.requests, fn {_id, {_, req}} ->
            (req["approvalId"] || req["userInputId"]) == native
          end) do
-      {request_id, _} ->
+      {request_id, {_kind, req}} ->
         decision =
-          case params["decision"] do
-            d when is_binary(d) -> decision(%{"decision" => d, "scope" => "once"})
-            _ -> nil
+          case {req[:submitted], params["decision"]} do
+            {nil, d} when is_binary(d) -> decision(%{"decision" => d, "scope" => "once"})
+            {submitted, _} -> submitted
           end
 
         %{state | requests: Map.delete(state.requests, request_id)}
@@ -1231,6 +1235,15 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   def answers(_questions, _answers), do: {:error, "Muse needs an answer to every question."}
+
+  defp submitted(state, request_id, answer) do
+    requests =
+      Map.update!(state.requests, request_id, fn {kind, req} ->
+        {kind, Map.put(req, :submitted, answer)}
+      end)
+
+    %{state | requests: requests}
+  end
 
   defp cancel_requests(state) do
     Enum.reduce(state.requests, %{state | requests: %{}}, fn {request_id, _}, state ->

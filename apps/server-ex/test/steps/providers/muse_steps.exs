@@ -17,6 +17,10 @@ defmodule HalC2.Steps.Providers.Muse do
   @turns [
     %{"match" => "run a command", "steps" => [%{"shell" => "npm test"}, %{"text" => "Ran it."}]},
     %{
+      "match" => "run a guarded command",
+      "steps" => [%{"shell" => "npm test", "requirements" => 2}, %{"text" => "Ran it."}]
+    },
+    %{
       "match" => "edit a file",
       "steps" => [%{"edit" => "src/app.ts"}, %{"text" => "Edited it."}]
     },
@@ -514,6 +518,97 @@ defmodule HalC2.Steps.Providers.Muse do
       |> FakeAcp.send_message("please run a command")
 
     Map.put(context, :request, FakeAcp.await_request(context))
+  end
+
+  step "Muse Code asked to run a command that needs two approvals", context do
+    context =
+      context
+      |> install()
+      |> FakeAcp.thread("Work", "approval-required")
+      |> FakeAcp.send_message("please run a guarded command")
+
+    Map.put(context, :request, FakeAcp.await_request(context))
+  end
+
+  step "the user approves the Muse Code command", context do
+    assert context.request["kind"] == "command"
+    FakeAcp.respond(context, context.request["id"], %{"decision" => "accept"})
+  end
+
+  # Muse named its next requirement before acknowledging the first approval.
+  step "the request still waits for the user", context do
+    assert [%{"status" => "pending"}] =
+             context |> state() |> StreamState.list("runtime-request")
+
+    assert [%{"requirementId" => "req-1"}] = received(context, "approval/decide")
+    assert for(%{"tool" => t} <- FakeAcp.log(context), do: t) == []
+    context
+  end
+
+  step "Muse Code runs the command and the turn continues", context do
+    FakeAcp.await_run(context, "completed")
+
+    assert [%{"requirementId" => "req-1"}, %{"requirementId" => "req-2"}] =
+             received(context, "approval/decide")
+
+    assert [%{"name" => "shell", "approved" => true}] =
+             for(%{"tool" => t} <- FakeAcp.log(context), do: t)
+
+    assert [%{"status" => "resolved", "decision" => "accept"}] =
+             context |> state() |> StreamState.list("runtime-request")
+
+    assert List.last(replies(context)) == "Ran it."
+    context
+  end
+
+  step "a Muse Code instance the user added runs a muse whose version check fails", context do
+    context = install(context, %{"versionExit" => 2})
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget("museWork") end)
+
+    FakeAcp.settings(
+      &put_in(&1, [Access.key("providerInstances", %{}), "museWork"], %{
+        "driver" => "muse",
+        "enabled" => true,
+        "config" => %{"binaryPath" => FakeAcp.fake(context).bin}
+      })
+    )
+
+    {_providers, context} =
+      FakeAcp.await_providers(
+        context,
+        &match?(%{"status" => "error", "message" => _}, FakeAcp.find(&1, "museWork"))
+      )
+
+    context
+  end
+
+  step "the user points that instance at a working muse", context do
+    dir = Mc.tmp_dir(context.mc, "working-muse")
+    File.write!(Path.join(dir, "config.json"), "{}")
+    bin = Path.join(dir, "muse")
+
+    File.write!(bin, """
+    #!/bin/sh
+    export FAKE_DIR='#{dir}'
+    exec python3 -u '#{Path.expand("../../support/fake_muse_msp.py", __DIR__)}' "$@"
+    """)
+
+    File.chmod!(bin, 0o755)
+
+    FakeAcp.settings(&put_in(&1, ["providerInstances", "museWork", "config", "binaryPath"], bin))
+
+    context
+  end
+
+  step "that instance is listed with the models from Muse's catalog", context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        &match?(%{"models" => [_ | _]}, FakeAcp.find(&1, "museWork"))
+      )
+
+    refute FakeAcp.find(providers, "museWork")["status"] == "error"
+    context
   end
 
   step "the user approves the Muse Code request", context do

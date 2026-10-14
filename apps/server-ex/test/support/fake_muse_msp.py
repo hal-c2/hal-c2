@@ -13,7 +13,8 @@
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
 #
 # Turn steps: {"text": s}, {"shell": command} and {"edit": path} (asked first unless
-# the session allows all; a decline skips the tool), {"question": {"header",
+# the session allows all; a decline skips the tool; "requirements": n on a shell step
+# asks n times, each approval answered by approval/updated naming the next one), {"question": {"header",
 # "question", "options"}} (waits for the answer, then says it), {"usage": {...}}
 # (session/tokenUsage), {"contextAfter": {"usedTokens", "windowTokens"}} (session/contextUsage
 # once the turn has completed), {"childShell": command} (a workflow child asks, offering
@@ -87,6 +88,8 @@ log({"start": {
 state = {"session": None, "turn": None}
 # What the running turn waits on: decisions, answers, interrupts and steers.
 events = queue.Queue()
+# Approvals with requirements still to come: approvalId -> [request, how many].
+requirements = {}
 
 
 def item(turn, kind, status, revision, **fields):
@@ -112,7 +115,7 @@ def wait(kinds):
             return event
 
 
-def ask(sid, turn, subject, choices, origin=None):
+def ask(sid, turn, subject, choices, origin=None, count=1):
     approval = "approval-" + uuid.uuid4().hex[:8]
     request = {
         "sessionId": sid, "turnId": turn, "approvalId": approval,
@@ -120,6 +123,7 @@ def ask(sid, turn, subject, choices, origin=None):
     }
     if origin:
         request["subagentOrigin"] = origin
+    requirements[approval] = [request, count]
     notify("approval/requested", request)
     event = wait(("decide", "interrupt"))
     if event[0] == "interrupt":
@@ -157,7 +161,7 @@ def run_turn(sid, turn, text, params):
                 {"choiceId": "once", "decision": "approved", "scope": "once"},
                 {"choiceId": "session", "decision": "approvedForSession", "scope": "session"},
                 {"choiceId": "reject", "decision": "abort", "scope": "once"},
-            ])
+            ], count=step.get("requirements", 1))
             if approved is None:
                 terminal = "cancelled"
                 break
@@ -282,6 +286,18 @@ def handle(msg):
         if state["turn"] == params.get("turnId"):
             events.put(("interrupt",))
     elif method == "approval/decide":
+        request, count = requirements.get(params.get("approvalId"), (None, 1))
+        if request and params.get("requirementId") != request["currentRequirementId"]:
+            return error(-32011, "not the current requirement")
+        choice = request and next(c for c in request["availableChoices"]
+                                  if c["choiceId"] == params["choiceId"])
+        if count > 1 and choice["decision"].startswith("approved"):
+            # The next requirement goes out before the decision is acknowledged.
+            request = dict(request, currentRequirementId="req-%d" % (int(request["currentRequirementId"][4:]) + 1))
+            requirements[params["approvalId"]] = [request, count - 1]
+            notify("approval/updated", request)
+            return reply({})
+        requirements.pop(params.get("approvalId"), None)
         reply({})
         events.put(("decide", params))
     elif method == "userInput/answer":

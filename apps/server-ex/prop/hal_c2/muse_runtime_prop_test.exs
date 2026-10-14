@@ -2,8 +2,9 @@ defmodule HalC2.MuseRuntimePropTest do
   @moduledoc """
   A state machine over one supervised Muse Code thread (`HalC2.Muse.ThreadRuntime`)
   driven through the orchestration commands a client sends: send a message whose turn
-  replies, runs until stopped, asks to run a command or asks a question; steer the
-  running turn; approve or decline the command; answer the question; interrupt the
+  replies, runs until stopped, asks to run a command (once, or for two requirements in
+  turn) or asks a question; steer the running turn; approve or decline the command;
+  answer the question; interrupt the
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
   release the idle thread's session as IdleSessions does.
 
@@ -32,6 +33,10 @@ defmodule HalC2.MuseRuntimePropTest do
   @turns [
     %{"match" => "wait", "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]},
     %{"match" => "shell", "steps" => [%{"shell" => "npm test"}, %{"text" => "Ran it."}]},
+    %{
+      "match" => "guarded",
+      "steps" => [%{"shell" => "npm test", "requirements" => 2}, %{"text" => "Ran it."}]
+    },
     %{
       "match" => "ask",
       "steps" => [%{"question" => %{"question" => "Pick", "options" => ~w(red green)}}]
@@ -97,7 +102,8 @@ defmodule HalC2.MuseRuntimePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made;
-  # turn: the running turn's %{msg, kind}, kind :wait | :shell | :ask;
+  # turn: the running turn's %{msg, kind}, kind :wait | :shell | :ask, or :guarded for a
+  # command with two requirements (:shell once the first is approved);
   # history: what Muse's session has been sent, oldest first;
   # replies: the replies naming that history, in order.
   def initial_state, do: %{runs: [], turn: nil, history: [], replies: [], next: 1}
@@ -106,7 +112,7 @@ defmodule HalC2.MuseRuntimePropTest do
     msg = "m#{next}"
 
     idle = [
-      {6, {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :ask])]}},
+      {6, {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :guarded, :ask])]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
     ]
@@ -124,8 +130,11 @@ defmodule HalC2.MuseRuntimePropTest do
           :wait ->
             [{3, {:call, __MODULE__, :steer, [msg]}}]
 
-          :shell ->
-            [{3, {:call, __MODULE__, :approve, []}}, {3, {:call, __MODULE__, :decline, []}}]
+          kind when kind in [:shell, :guarded] ->
+            [
+              {3, {:call, __MODULE__, :approve, [kind == :shell]}},
+              {3, {:call, __MODULE__, :decline, []}}
+            ]
 
           :ask ->
             [{3, {:call, __MODULE__, :answer, [oneof(~w(red green purple))]}}]
@@ -139,8 +148,13 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def precondition(%{turn: turn}, {:call, _, :steer, _}), do: match?(%{kind: :wait}, turn)
 
-  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:approve, :decline],
-    do: match?(%{kind: :shell}, turn)
+  def precondition(%{turn: turn}, {:call, _, :approve, [last?]}),
+    do:
+      match?(%{kind: :shell}, turn) == last? and
+        match?(%{kind: k} when k in [:shell, :guarded], turn)
+
+  def precondition(%{turn: turn}, {:call, _, :decline, _}),
+    do: match?(%{kind: k} when k in [:shell, :guarded], turn)
 
   def precondition(%{turn: turn}, {:call, _, :answer, _}), do: match?(%{kind: :ask}, turn)
   def precondition(_state, {:call, _, :host_exit, _}), do: true
@@ -162,6 +176,10 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def next_state(state, _result, {:call, _, :steer, _}),
     do: end_turn(%{state | next: state.next + 1}, "completed")
+
+  # Approving the first of two requirements leaves the request open for the second.
+  def next_state(state, _result, {:call, _, :approve, [false]}),
+    do: %{state | turn: %{state.turn | kind: :shell}}
 
   def next_state(state, _result, {:call, _, fun, _}) when fun in [:approve, :decline, :answer],
     do: end_turn(state, "completed")
@@ -185,7 +203,7 @@ defmodule HalC2.MuseRuntimePropTest do
       runs: model.runs,
       request:
         case model.turn do
-          %{kind: :shell} -> "command"
+          %{kind: kind} when kind in [:shell, :guarded] -> "command"
           %{kind: :ask} -> "user_input"
           _ -> nil
         end,
@@ -235,12 +253,13 @@ defmodule HalC2.MuseRuntimePropTest do
     }
   end
 
-  def approve, do: respond(%{"decision" => "accept"})
+  # `last?`: the approval answers the command's last requirement, so its run ends.
+  def approve(last?), do: respond(%{"decision" => "accept"}, last?)
   def decline, do: respond(%{"decision" => "decline"})
   def answer(choice), do: respond(%{"answers" => %{"q1" => choice}})
 
-  defp respond(response) do
-    ending = active_runs()
+  defp respond(response, ends? \\ true) do
+    ending = if ends?, do: active_runs(), else: []
 
     request =
       current()

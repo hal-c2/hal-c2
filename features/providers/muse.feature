@@ -48,6 +48,11 @@ Feature: Muse Code
     When the user sends a message to Muse Code
     Then the turn runs on the user's own Muse Code installation
 
+  Scenario: A Muse Code instance the user added is read again after its binary changes
+    Given a Muse Code instance the user added runs a muse whose version check fails
+    When the user points that instance at a working muse
+    Then that instance is listed with the models from Muse's catalog
+
   Scenario: A custom Muse Code binary path is used
     Given Muse Code's binary path is set to "/opt/muse/bin/muse"
     When the user sends a message to Muse Code
@@ -138,6 +143,13 @@ Feature: Muse Code
     Given Muse Code asked to edit a file
     When the user approves the Muse Code request
     Then Muse Code edits the file and the turn continues
+
+  Scenario: A Muse Code request that needs a second approval asks again
+    Given Muse Code asked to run a command that needs two approvals
+    When the user approves the Muse Code command
+    Then the request still waits for the user
+    When the user approves the Muse Code command
+    Then Muse Code runs the command and the turn continues
 
   Scenario: Declining a Muse Code request is reported back to Muse
     Given Muse Code asked to run a command
