@@ -193,7 +193,15 @@ defmodule HalC2.SlackPropTest do
         do: {:call, __MODULE__, :retry, [n, state.events[n]]}
   end
 
-  def precondition(state, {:call, _, :drop, _}), do: state.phase == :connected
+  # Commands that carry what the model was when they were made hold only while it still
+  # is, so a shrunk case never runs one the model has moved on from.
+  def precondition(state, {:call, _, :drop, [up]}),
+    do: state.phase == :connected and up == state.up
+
+  def precondition(state, {:call, _, :restart, [stored, up]}),
+    do: stored == state.stored and up == state.up
+
+  def precondition(state, {:call, _, :restore, [phase]}), do: phase == state.phase
   def precondition(state, {:call, _, :drop_held, _}), do: state.phase == :connected
 
   def precondition(state, {:call, _, :mention, [_, n]}),
