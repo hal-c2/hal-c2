@@ -671,6 +671,14 @@ Feature: Planner
       Then "Rate limiting" is linked to no issue and not marked as not synced
 
     @mc
+    Scenario: A look at GitHub that began before a change to a task does not undo it
+      Given "planner" syncs "acme/api" both ways
+      And #7's task was imported as "Rate limits"
+      And GitHub lists #7 as "Rate limits" late
+      When the user renames #7's task to "Rate limiting" while the plugin looks at GitHub
+      Then #7's task is named "Rate limiting" and marked as synced
+
+    @mc
     Scenario: The user makes a task into an issue
       Given the plan has "Docs" in "api"
       When the user creates an issue for "Docs" in "acme/api"

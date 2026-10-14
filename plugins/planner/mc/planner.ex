@@ -1124,8 +1124,9 @@ defmodule HalC2Plugins.Planner do
 
   # --- looking at GitHub and Slack ----------------------------------------------------------
 
+  # The look keeps the plan it read, so applying it can tell the tasks changed since.
   defp look(settings, items) do
-    found = Sync.look(settings, items)
+    found = settings |> Sync.look(items) |> Map.put(:items, items)
 
     if String.trim(settings["slackChannel"] || "") != "",
       do: Map.put(found, :slack, connected?()),
@@ -1144,8 +1145,15 @@ defmodule HalC2Plugins.Planner do
   defp apply_look(%{looked: looked} = state, %{at: at}) when looked != nil and at < looked,
     do: state
 
+  # A task changed since the look read the plan, by the user or a push GitHub took,
+  # keeps its change: the look is older news about it, and the next one catches it up.
   defp apply_look(state, found) do
-    items = Sync.apply(state.items, found, state.settings, now(), fn -> id("t") end)
+    kept = Map.filter(state.items, fn {id, item} -> found.items[id] != item end)
+
+    items =
+      state.items
+      |> Sync.apply(found, state.settings, now(), fn -> id("t") end)
+      |> Map.merge(kept)
 
     state = %{
       state

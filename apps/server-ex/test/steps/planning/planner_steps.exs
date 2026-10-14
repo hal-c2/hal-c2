@@ -1507,6 +1507,33 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # The next look's list of issues names #`number` `title`, once the scenario opens and
+  # closes the fifo it waits on; later looks no longer wait.
+  step "GitHub lists \#{int} as {string} late", %{args: [number, title]} = context do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    wait = "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}'; fi"
+
+    context
+    |> World.cli_rules([Map.put(listed(context, number, title), "run", wait)])
+    |> Map.put(:gh_gate, gate)
+  end
+
+  step "the user renames \#{int}'s task to {string} while the plugin looks at GitHub",
+       %{args: [number, title]} = context do
+    %{mc: mc} = context
+    call = %{"id" => @id, "method" => "sync", "input" => %{}}
+    looking = Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    # Opening the gate waits for the look's gh to read it, so the look has read the plan.
+    {:ok, gate} = :file.open(context.gh_gate, [:write, :raw])
+    context = update_task(context, number, %{"title" => title})
+    # GitHub has the rename now, for the looks after this one.
+    context = World.cli_rules(context, [listed(context, number, title)])
+    :ok = :file.close(gate)
+    assert {{:ok, _}, _} = Task.await(looking, 30_000)
+    context
+  end
+
   step "{string} is linked to no issue and not marked as not synced",
        %{args: [title]} = context do
     task = item!(context, title)
@@ -1855,6 +1882,20 @@ defmodule HalC2.Steps.Planning.Planner do
     {reply, _} = plugin(context, "settings", %{})
     assert {:ok, %{"settings" => settings}} = reply
     settings
+  end
+
+  # GitHub's list of the open issues: #`number`, named `title`.
+  defp listed(context, number, title) do
+    issue =
+      GitHubIssues.issue(context.repository, number, %{"title" => title, "body" => "First notes"})
+
+    page = %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => [issue]}
+
+    %{
+      "args" => ["api graphql"],
+      "stdin" => ["issues(first: $first"],
+      "stdout" => %{"data" => %{"repository" => %{"issues" => page}}}
+    }
   end
 
   defp action_id(context, label),
