@@ -25,6 +25,26 @@ defmodule HalC2.Steps.Providers.Muse do
       "steps" => [%{"edit" => "src/app.ts"}, %{"text" => "Edited it."}]
     },
     %{
+      "match" => "a guarded workflow command",
+      "steps" => [
+        %{"childShell" => "make", "approvable" => true, "requirements" => 2},
+        %{"text" => "Done."}
+      ]
+    },
+    %{
+      "match" => "plan the work",
+      "steps" => [
+        %{
+          "todos" => [
+            %{"text" => "Read", "status" => "completed"},
+            %{"text" => "Dropped", "status" => "cancelled"},
+            %{"text" => "Write", "status" => "inProgress"}
+          ]
+        },
+        %{"text" => "Planned."}
+      ]
+    },
+    %{
       "match" => "a workflow command",
       "steps" => [%{"childShell" => "rm -rf build"}, %{"text" => "Done."}]
     },
@@ -470,6 +490,36 @@ defmodule HalC2.Steps.Providers.Muse do
 
   step "a Muse Code workflow asks to run a command it offers no way to approve", context do
     FakeAcp.send_message(context, "please run a workflow command")
+  end
+
+  step "a Muse Code workflow asks twice to run a command it can be approved for", context do
+    FakeAcp.send_message(context, "please run a guarded workflow command")
+  end
+
+  step "both approvals are given without asking the user", context do
+    FakeAcp.await_run(context, "completed")
+
+    assert [%{"requirementId" => "req-1"}, %{"requirementId" => "req-2"}] =
+             received(context, "approval/decide")
+
+    assert context |> state() |> StreamState.list("runtime-request") == []
+    assert List.last(replies(context)) == "Done."
+    context
+  end
+
+  step "Muse Code shares a plan with a step it cancelled", context do
+    context |> install() |> FakeAcp.thread() |> turn("plan the work")
+  end
+
+  step "the plan leaves the cancelled step out", context do
+    assert [%{"steps" => steps}] = context |> state() |> StreamState.list("plan")
+
+    assert [
+             %{"text" => "Read", "status" => "completed"},
+             %{"text" => "Write", "status" => "running"}
+           ] = steps
+
+    context
   end
 
   step "the request is shown to the user", context do

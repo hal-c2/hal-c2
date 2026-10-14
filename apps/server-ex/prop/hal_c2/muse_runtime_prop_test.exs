@@ -38,6 +38,13 @@ defmodule HalC2.MuseRuntimePropTest do
       "steps" => [%{"shell" => "npm test", "requirements" => 2}, %{"text" => "Ran it."}]
     },
     %{
+      "match" => "workflow",
+      "steps" => [
+        %{"childShell" => "make", "approvable" => true, "requirements" => 2},
+        %{"text" => "Ran it."}
+      ]
+    },
+    %{
       "match" => "ask",
       "steps" => [%{"question" => %{"question" => "Pick", "options" => ~w(red green)}}]
     }
@@ -53,6 +60,7 @@ defmodule HalC2.MuseRuntimePropTest do
         File.mkdir_p!(work)
         {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
         Process.put(:work, work)
+        Process.put(:mode, "approval-required")
         bin = install_fake(home)
 
         HalC2.Prop.start_services([
@@ -102,17 +110,22 @@ defmodule HalC2.MuseRuntimePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made;
-  # turn: the running turn's %{msg, kind}, kind :wait | :shell | :ask, or :guarded for a
-  # command with two requirements (:shell once the first is approved);
+  # turn: the running turn's %{msg, kind}, kind :wait | :shell | :ask, :guarded for a
+  # command with two requirements (:shell once the first is approved), or :workflow for a
+  # workflow child's :guarded command;
+  # mode: the thread's runtime mode; full access runs every command without asking;
   # history: what Muse's session has been sent, oldest first;
   # replies: the replies naming that history, in order.
-  def initial_state, do: %{runs: [], turn: nil, history: [], replies: [], next: 1}
+  def initial_state,
+    do: %{runs: [], turn: nil, history: [], replies: [], next: 1, mode: "approval-required"}
 
   def command(%{turn: turn, next: next}) do
     msg = "m#{next}"
 
     idle = [
-      {6, {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :guarded, :ask])]}},
+      {6,
+       {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :guarded, :workflow, :ask])]}},
+      {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access))]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
     ]
@@ -130,7 +143,7 @@ defmodule HalC2.MuseRuntimePropTest do
           :wait ->
             [{3, {:call, __MODULE__, :steer, [msg]}}]
 
-          kind when kind in [:shell, :guarded] ->
+          kind when kind in [:shell, :guarded, :workflow] ->
             [
               {3, {:call, __MODULE__, :approve, [kind == :shell]}},
               {3, {:call, __MODULE__, :decline, []}}
@@ -143,7 +156,7 @@ defmodule HalC2.MuseRuntimePropTest do
     frequency(if(turn == nil, do: idle, else: busy))
   end
 
-  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:send, :release],
+  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:send, :release, :set_mode],
     do: turn == nil
 
   def precondition(%{turn: turn}, {:call, _, :steer, _}), do: match?(%{kind: :wait}, turn)
@@ -151,10 +164,10 @@ defmodule HalC2.MuseRuntimePropTest do
   def precondition(%{turn: turn}, {:call, _, :approve, [last?]}),
     do:
       match?(%{kind: :shell}, turn) == last? and
-        match?(%{kind: k} when k in [:shell, :guarded], turn)
+        match?(%{kind: k} when k in [:shell, :guarded, :workflow], turn)
 
   def precondition(%{turn: turn}, {:call, _, :decline, _}),
-    do: match?(%{kind: k} when k in [:shell, :guarded], turn)
+    do: match?(%{kind: k} when k in [:shell, :guarded, :workflow], turn)
 
   def precondition(%{turn: turn}, {:call, _, :answer, _}), do: match?(%{kind: :ask}, turn)
   def precondition(_state, {:call, _, :host_exit, _}), do: true
@@ -165,6 +178,9 @@ defmodule HalC2.MuseRuntimePropTest do
     state = %{state | next: state.next + 1, history: state.history ++ [text]}
 
     case kind do
+      kind when kind in [:shell, :guarded, :workflow] and state.mode == "full-access" ->
+        %{state | runs: state.runs ++ [{msg, "completed"}]}
+
       :say ->
         reply = "Reply to #{text} after [#{Enum.join(state.history -- [text], " | ")}]"
         %{state | runs: state.runs ++ [{msg, "completed"}], replies: state.replies ++ [reply]}
@@ -187,6 +203,7 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
   def next_state(state, _result, {:call, _, :release, _}), do: state
+  def next_state(state, _result, {:call, _, :set_mode, [mode]}), do: %{state | mode: mode}
 
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
@@ -203,7 +220,7 @@ defmodule HalC2.MuseRuntimePropTest do
       runs: model.runs,
       request:
         case model.turn do
-          %{kind: kind} when kind in [:shell, :guarded] -> "command"
+          %{kind: kind} when kind in [:shell, :guarded, :workflow] -> "command"
           %{kind: :ask} -> "user_input"
           _ -> nil
         end,
@@ -231,8 +248,25 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def send(msg, kind) do
     result = Orchestration.dispatch(message(msg, "#{kind} #{msg}", "queue_after_active"))
-    # A reply ends its run; the others stop where the fake waits.
-    reply(result, if(kind == :say, do: [run_of(msg)], else: []))
+    # A reply ends its run, as does a command in full access; the others stop where the
+    # fake waits.
+    ends? =
+      kind == :say or
+        (kind in [:shell, :guarded, :workflow] and Process.get(:mode) == "full-access")
+
+    reply(result, if(ends?, do: [run_of(msg)], else: []))
+  end
+
+  def set_mode(mode) do
+    Process.put(:mode, mode)
+
+    Orchestration.dispatch(%{
+      "type" => "thread.runtime-mode.set",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => @tid,
+      "runtimeMode" => mode
+    })
+    |> reply([])
   end
 
   def steer(msg) do

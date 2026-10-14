@@ -18,7 +18,8 @@
 # "question", "options"}} (waits for the answer, then says it), {"usage": {...}}
 # (session/tokenUsage), {"contextAfter": {"usedTokens", "windowTokens"}} (session/contextUsage
 # once the turn has completed), {"childShell": command} (a workflow child asks, offering
-# no way to approve), {"waitInterrupt": true} (until turn/interrupt, or a
+# no way to approve unless "approvable", for "requirements" approvals), {"todos": [{"text",
+# "status"}]} (session/todoListChanged), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
@@ -196,13 +197,17 @@ def run_turn(sid, turn, text, params):
             notify("userInput/settled", {"sessionId": sid, "userInputId": "input-1"})
             say(sid, turn, "Picked %s." % (answer.get("selectedLabel") or answer.get("freeText")))
         elif "childShell" in step:
+            choices = [{"choiceId": "reject", "decision": "abort", "scope": "once"}]
+            if step.get("approvable"):
+                choices.insert(0, {"choiceId": "once", "decision": "approved", "scope": "once"})
             approved = ask(sid, turn, {"kind": "shell", "command": step["childShell"]},
-                           [{"choiceId": "reject", "decision": "abort", "scope": "once"}],
-                           {"agentId": "child-1"})
+                           choices, {"agentId": "child-1"}, count=step.get("requirements", 1))
             if approved is None:
                 terminal = "cancelled"
                 break
             log({"tool": {"name": "shell", "approved": approved, "asked": True}})
+        elif "todos" in step:
+            notify("session/todoListChanged", {"sessionId": sid, "items": step["todos"]})
         elif "contextAfter" in step:
             after.append(step["contextAfter"])
         elif "usage" in step:

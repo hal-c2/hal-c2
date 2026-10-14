@@ -124,6 +124,10 @@ Feature: Muse Code
     When Muse Code reports its context usage after the turn has ended
     Then the turn's context usage is shown
 
+  Scenario: Steps Muse Code cancelled are left out of its plan
+    Given Muse Code shares a plan with a step it cancelled
+    Then the plan leaves the cancelled step out
+
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread
     Then supervised and full access are offered
@@ -138,6 +142,11 @@ Feature: Muse Code
       | mode        | outcome                |
       | supervised  | asked for approval     |
       | full access | allowed without asking |
+
+  Scenario: A Muse Code workflow's request with a second requirement is approved for it too
+    Given the thread runs Muse Code in full access
+    When a Muse Code workflow asks twice to run a command it can be approved for
+    Then both approvals are given without asking the user
 
   Scenario: A Muse Code workflow's request that cannot be approved for it asks the user
     Given the thread runs Muse Code in full access

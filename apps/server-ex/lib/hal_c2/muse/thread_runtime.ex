@@ -665,7 +665,11 @@ defmodule HalC2.Muse.ThreadRuntime do
     if owns?(state, id), do: completed_usage(state, usage), else: state
   end
 
-  defp notification("session/todoListChanged", %{"items" => items}, state) when is_list(items) do
+  # Cancelled entries are no longer part of the plan.
+  defp notification("session/todoListChanged", %{"items" => items}, state)
+       when is_list(items) and state.turn != nil do
+    items = Enum.reject(items, &(&1["status"] in ["cancelled", "canceled"]))
+
     steps =
       for {item, index} <- Enum.with_index(items, 1) do
         %{
@@ -1074,8 +1078,9 @@ defmodule HalC2.Muse.ThreadRuntime do
     child? = approval["subagentOrigin"] != nil
 
     cond do
-      # A newer requirement on an open prompt: the answer goes to it.
-      method == "approval/updated" ->
+      # A newer requirement on an open prompt: the answer goes to it. One for a request
+      # never stored (a workflow child's, accepted for it) is asked like a new one.
+      method == "approval/updated" and open?(state, id) ->
         requests =
           Map.new(state.requests, fn
             {rid, {:approval, %{"approvalId" => ^id}}} -> {rid, {:approval, approval}}
