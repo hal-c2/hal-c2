@@ -620,7 +620,7 @@ defmodule HalC2Plugins.Planner do
     send(self(), :poll)
 
     {:ok,
-     Map.merge(load(), %{
+     Map.merge(load(settings), %{
        settings: settings,
        problem: nil,
        unwatched: [],
@@ -1628,7 +1628,7 @@ defmodule HalC2Plugins.Planner do
 
   defp file, do: Path.join(Host.data_dir(@id), "plan.json")
 
-  defp load do
+  defp load(settings) do
     data =
       with {:ok, text} <- File.read(file()),
            {:ok, %{} = data} <- JSON.decode(text),
@@ -1652,8 +1652,18 @@ defmodule HalC2Plugins.Planner do
           entry
       end)
 
+    # Board items belong to the board the plan was saved with. Under another board they
+    # are forgotten, so a task's next date is pushed by adding it to the new board.
+    items =
+      if (data["board"] || "") == (settings["board"] || ""),
+        do: data["items"] || %{},
+        else:
+          Map.new(data["items"] || %{}, fn {id, item} ->
+            {id, Map.replace(item, "boardItemId", nil)}
+          end)
+
     %{
-      items: data["items"] || %{},
+      items: items,
       views: data["views"] || Plan.default_views(),
       updates: data["updates"] || [],
       plan_feedback: data["planFeedback"] || [],
@@ -1667,7 +1677,8 @@ defmodule HalC2Plugins.Planner do
       "views" => state.views,
       "updates" => state.updates,
       "planFeedback" => state.plan_feedback,
-      "runs" => state.runs
+      "runs" => state.runs,
+      "board" => state.settings["board"] || ""
     }
 
     tmp = file() <> ".tmp"

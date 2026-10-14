@@ -36,7 +36,8 @@ defmodule HalC2.PlannerPropTest do
     anything clears it, and a push in flight when the task was unlinked or the plugin
     restarted says nothing;
   - a linked task's board item is the one its latest push added: an older push, or one
-    answered after the task was unlinked, leaves it alone, and unlinking clears it;
+    answered after the task was unlinked, leaves it alone, and unlinking clears it, as
+    does saving the settings with another board, so the next push adds it to that one;
   - work that could not start leaves its task as it was, not started and linked to no
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
@@ -59,6 +60,7 @@ defmodule HalC2.PlannerPropTest do
   @due "2026-10-30"
   @moved "2026-11-06"
   @board "acme/3"
+  @other_board "acme/4"
   @concurrency 2
   @actions %{
     "propose" => %{
@@ -167,9 +169,10 @@ defmodule HalC2.PlannerPropTest do
   # push one at a time, numbered); `latest`: slot → {gen, push} for the push that says
   # whether the task synced, `:now` for one that took at once; `held`: push → {slot,
   # gen, :ok | :refused, adds} for the renames GitHub has not answered, how it will, and
-  # whether the push adds the task to the board.
+  # whether the push adds the task to the board. `board`: the board the settings name.
   def initial_state,
     do: %{
+      board: @board,
       items: %{},
       gens: %{},
       runs: %{},
@@ -189,6 +192,9 @@ defmodule HalC2.PlannerPropTest do
     started = for {k, %{started: true}} <- m.runs, do: k
     asked = Enum.to_list(1..max(m.asked, 1))
     linked = for {slot, %{linked: true}} <- m.items, do: slot
+    # Switching boards matters most once a task is on one.
+    switch = if Enum.any?(m.items, fn {_, item} -> item.board != nil end), do: 6, else: 1
+    other = if m.board == @board, do: @other_board, else: @board
 
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
@@ -201,7 +207,8 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item]}},
-       {1, {:call, __MODULE__, :restart, []}}
+       {1, {:call, __MODULE__, :restart, []}},
+       {switch, {:call, __MODULE__, :switch_board, [other]}}
      ] ++
        if(linked == [],
          do: [{4, {:call, __MODULE__, :link, [item]}}],
@@ -258,6 +265,7 @@ defmodule HalC2.PlannerPropTest do
     do: match?(%{linked: true}, m.items[slot]) and push > m.pushes
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
+  def precondition(m, {:call, _, :switch_board, [board]}), do: board != m.board
 
   def precondition(m, {:call, _, cmd, [k | _]}) when cmd in [:report, :turn_finished],
     do: match?(%{started: true}, m.runs[k])
@@ -466,6 +474,14 @@ defmodule HalC2.PlannerPropTest do
       end)
 
     {pump(%{m | runs: runs, latest: %{}}), :ok}
+  end
+
+  # Saving the settings with another board starts the plugin again, and the tasks' board
+  # items of the one before are forgotten.
+  defp step(m, {:call, _, :switch_board, [board]}) do
+    {m, :ok} = step(m, {:call, __MODULE__, :restart, []})
+    items = Map.new(m.items, fn {slot, item} -> {slot, %{item | board: nil}} end)
+    {%{m | board: board, items: items}, :ok}
   end
 
   defp put_run(m, k, run), do: %{m | runs: Map.put(m.runs, k, run)}
@@ -777,6 +793,14 @@ defmodule HalC2.PlannerPropTest do
   def restart do
     before = Process.whereis(@server)
     reply = reply(HalC2.Plugins.handle("restart", %{"id" => @id}))
+    if Process.whereis(@server) in [nil, before], do: problem("planner was not restarted")
+    observe(reply)
+  end
+
+  def switch_board(board) do
+    before = Process.whereis(@server)
+    input = %{"id" => @id, "settings" => %{"board" => board}}
+    reply = reply(HalC2.Plugins.handle("saveSettings", input))
     if Process.whereis(@server) in [nil, before], do: problem("planner was not restarted")
     observe(reply)
   end

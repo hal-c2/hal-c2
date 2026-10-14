@@ -719,6 +719,15 @@ Feature: Planner
         | makes wait for #5's task       | mark #7 as blocked by #5                       |
 
     @mc
+    Scenario: A task not on the board the plan switches to is added to it before its dates are set
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/4" holds #5 and not #7
+      When "planner" switches to the board "acme/4"
+      And the plugin looks at GitHub
+      And the user moves #7's task to end on "2026-11-09"
+      Then GitHub is asked to add #7 to "acme/4" and set its "Target date" to "2026-11-09"
+
+    @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways
       And the plan has "Docs" in "api"

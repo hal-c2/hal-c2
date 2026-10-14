@@ -1471,6 +1471,38 @@ defmodule HalC2.Steps.Planning.Planner do
     |> sync!()
   end
 
+  step "the board {string} holds \#{int} and not \#{int}",
+       %{args: [board, number, _absent]} = context do
+    GitHubIssues.board(context, board, ["Start date", "Target date"], [
+      %{"number" => number, "repository" => context.repository, "fields" => %{}}
+    ])
+  end
+
+  step "{string} switches to the board {string}", %{args: [@id, board]} = context do
+    save(context, %{"board" => board})
+  end
+
+  # The issue is added to `board` (the fake names every added item `#0`'s), and the date
+  # is set on that item, not on the one it had on the board before.
+  step "GitHub is asked to add \#{int} to {string} and set its {string} to {string}",
+       %{args: [_number, board, field, date]} = context do
+    [owner, n] = String.split(board, "/")
+    project = "PVT_#{owner}_#{n}"
+
+    assert [%{"project" => ^project}] =
+             GitHubIssues.graphql_calls(context, "addProjectV2ItemById")
+
+    expected = %{
+      "project" => project,
+      "item" => GitHubIssues.item_id(0),
+      "field" => GitHubIssues.field_id(field),
+      "value" => %{"date" => date}
+    }
+
+    assert [^expected] = GitHubIssues.graphql_calls(context, "updateProjectV2ItemFieldValue")
+    context
+  end
+
   step "{string} syncs {string} both ways", %{args: [@id, repository]} = context do
     context
     |> save(%{"repositories" => [repository], "sync" => "twoWay"})
@@ -1504,6 +1536,10 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "the user moves to end on {string} \#{int}'s task", %{args: [due, number]} = context do
+    update_task(context, number, %{"due" => due})
+  end
+
+  step "the user moves \#{int}'s task to end on {string}", %{args: [number, due]} = context do
     update_task(context, number, %{"due" => due})
   end
 
