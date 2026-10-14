@@ -59,8 +59,10 @@ defmodule HalC2.Slack.Socket do
 
   def handle_frame(_frame, state), do: {:ok, %{state | alive: true}}
 
+  # A pong echoes the ping's payload, as RFC 6455 asks.
   @impl true
-  def handle_ping(_ping, state), do: {:reply, :pong, %{state | alive: true}}
+  def handle_ping(:ping, state), do: {:reply, :pong, %{state | alive: true}}
+  def handle_ping({:ping, data}, state), do: {:reply, {:pong, data}, %{state | alive: true}}
 
   @impl true
   def handle_pong(_pong, state), do: {:ok, %{state | alive: true}}
