@@ -631,3 +631,14 @@ Feature: Integrations settings
     Scenario: The page shows how to make the Slack app
       When the user opens the Slack section
       Then it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs
+
+    # The MC turns the page down when HalC2.Slack is not running or the MC serving the
+    # environment is out of reach, and follows nothing for it until the user asks again.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The Slack section that could not load says why and tries again
+      Given Slack is connected
+      And the MC cannot reach the environment's Slack connection
+      When the user opens the Slack section
+      Then the user is told Slack could not load, and why
+      When the MC can reach it again and the user tries again
+      Then Slack shows as connected to the workspace "acme" as the bot "HAL"

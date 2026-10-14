@@ -6,20 +6,25 @@
 // says so. The tokens go to the MC in `slack.connect` and never come back;
 // the page learns only whether they are set.
 //
-// Publishes `slackSettings`: {open, loaded, editable, statusNote ("" unless
-// several environments are selected), state (off | connecting | connected |
-// reconnecting | failed), team, bot, error ("" or why the last change or the
-// connection failed, whichever came last), tokensSet, pending (connect | disconnect | manifest, ""
-// when idle)}.
+// Publishes `slackSettings`: {open, loaded, failed (the MC could not follow
+// Slack: HalC2.Slack is down, or the MC serving the environment is out of
+// reach; `error` says why), editable, statusNote ("" unless several
+// environments are selected), state (off | connecting | connected |
+// reconnecting | failed), team, bot, error ("" or why the last change, the
+// connection or loading failed, whichever came last), tokensSet, pending
+// (connect | disconnect | manifest, "" when idle)}.
 //
 // Actions (`slackSettings.`): `connect {botToken, appToken}`, `disconnect`,
-// `copyManifest` (the Slack app manifest onto the clipboard).
+// `copyManifest` (the Slack app manifest onto the clipboard), `retry` (follows
+// Slack again after it failed to load).
 
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonObject>
 #include <QPointer>
 #include <QVariantMap>
+
+#include <utility>
 
 #include "McClient.h"
 #include "NativeController.h"
@@ -57,6 +62,14 @@ public:
     if (!m_active || !action.startsWith(kKey + QLatin1Char('.'))) return false;
     const QString name = action.mid(kKey.size() + 1);
     if (!m_open || m_environmentId.isEmpty() || !m_pending.isEmpty()) return true;
+    if (name == QLatin1String("retry")) {
+      if (!m_failed) return true;
+      subscribe();
+      publish();
+      return true;
+    }
+    // Until Slack is followed, a call's answer would be a status nothing keeps current.
+    if (!m_loaded) return true;
     if (name == QLatin1String("connect")) {
       if (!editable()) return true;
       const QVariantMap input = payload.toMap();
@@ -94,23 +107,47 @@ private:
   void follow() {
     const QString environmentId = inspected();
     if (environmentId != m_environmentId) {
-      if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
-      m_subscription = -1;
       m_environmentId = environmentId;
-      m_status = {};
-      m_loaded = false;
-      m_error.clear();
-      // A call in flight answers for the old environment: the buttons are free again.
-      m_pending.clear();
-      ++m_generation;
-      if (!environmentId.isEmpty()) {
-        m_subscription = m_client->subscribe(
-            this, {{QStringLiteral("type"), QStringLiteral("slack")}, {QStringLiteral("mc"), m_store->mcServing(environmentId)}},
-            [this](const QJsonObject& frame) {
-              if (frame.value(QLatin1String("t")) == QLatin1String("slack")) take(frame.value(QLatin1String("status")).toObject());
-            });
-      }
+      subscribe();
     }
+    publish();
+  }
+
+  // Follows the inspected environment's Slack afresh, from loading. Frames of
+  // the old subscription stop with it: McClient drops them by id.
+  void subscribe() {
+    if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
+    m_subscription = -1;
+    reset();
+    if (!m_environmentId.isEmpty()) {
+      m_subscription = m_client->subscribe(
+          this, {{QStringLiteral("type"), QStringLiteral("slack")}, {QStringLiteral("mc"), m_store->mcServing(m_environmentId)}},
+          [this](const QJsonObject& frame) {
+            const QString type = frame.value(QLatin1String("t")).toString();
+            if (type == QLatin1String("slack")) take(frame.value(QLatin1String("status")).toObject());
+            else if (type == QLatin1String("error")) fail(frame.value(QLatin1String("reason")).toString());
+          });
+    }
+  }
+
+  // Forgets what was shown. A call in flight answers for that: the buttons are
+  // free again.
+  void reset() {
+    m_status = {};
+    m_loaded = false;
+    m_failed = false;
+    m_error.clear();
+    m_pending.clear();
+    ++m_generation;
+  }
+
+  // The MC could not follow Slack (on a sub, or its resend after a reconnect)
+  // and watches nothing for it: the page says why until the user retries.
+  void fail(const QString& reason) {
+    m_client->unsubscribe(std::exchange(m_subscription, -1));
+    reset();
+    m_failed = true;
+    m_error = reason;
     publish();
   }
 
@@ -182,6 +219,7 @@ private:
         kKey, QVariantMap{
                   {QStringLiteral("open"), true},
                   {QStringLiteral("loaded"), m_loaded},
+                  {QStringLiteral("failed"), m_failed},
                   {QStringLiteral("editable"), m_loaded && editable()},
                   {QStringLiteral("statusNote"),
                    targets.size() > 1 ? QStringLiteral("Slack for %1. Select one environment to connect or disconnect it.").arg(scope()->label(m_environmentId))
@@ -202,12 +240,13 @@ private:
   bool m_open = false;
   QString m_environmentId;
   int m_subscription = -1;
-  // Bumped when the inspected environment changes, so older answers are dropped.
+  // Bumped when Slack is followed afresh or fails to load, so older answers are dropped.
   int m_generation = 0;
   QJsonObject m_status;
   // Counts the statuses taken, so a call's answer can tell whether one came since it was made.
   int m_statuses = 0;
   bool m_loaded = false;
+  bool m_failed = false;
   QString m_error;
   QString m_pending;
 };

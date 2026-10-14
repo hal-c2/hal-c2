@@ -118,6 +118,18 @@ Item {
             verify(findChild(page, "slackError").visible);
             compare(findChild(page, "slackError").text, "Slack refused the bot token: invalid_auth");
             verify(!findChild(page, "slackDisconnect").visible);
+            verify(!findChild(page, "slackRetry").visible);
+        }
+
+        function test_a_slack_that_could_not_load_says_why_and_tries_again() {
+            Shell.state = { settingsScope: { editable: true }, deviceSettings: root.state({}),
+                            slackSettings: root.slack({ loaded: false, editable: false, failed: true, error: "MC unavailable: noconnection" }) };
+            const page = createTemporaryObject(pageComponent, root);
+            compare(findChild(page, "slackStatus").text, "Could not load Slack");
+            compare(findChild(page, "slackError").text, "MC unavailable: noconnection");
+            verify(!findChild(page, "slackConnect").enabled);
+            mouseClick(findChild(page, "slackRetry"));
+            compare(Shell.dispatchedActions[0].action, "slackSettings.retry");
         }
     }
 }
