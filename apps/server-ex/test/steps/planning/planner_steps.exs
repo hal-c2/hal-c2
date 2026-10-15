@@ -1672,14 +1672,14 @@ defmodule HalC2.Steps.Planning.Planner do
     assert [%{"project" => ^project}] =
              GitHubIssues.graphql_calls(context, "addProjectV2ItemById")
 
-    expected = %{
-      "project" => project,
-      "item" => GitHubIssues.item_id(0),
-      "field" => GitHubIssues.field_id(field),
-      "value" => %{"date" => date}
-    }
+    assert_board_set(context, project, field, date)
+    context
+  end
 
-    assert [^expected] = GitHubIssues.graphql_calls(context, "updateProjectV2ItemFieldValue")
+  step "its {string} on {string} is set to {string} too",
+       %{args: [field, board, date]} = context do
+    [owner, n] = String.split(board, "/")
+    assert_board_set(context, "PVT_#{owner}_#{n}", field, date)
     context
   end
 
@@ -2482,6 +2482,18 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  # `field` is set to `date` on the item the fake added, and every date set goes there.
+  defp assert_board_set(context, project, field, date) do
+    calls = GitHubIssues.graphql_calls(context, "updateProjectV2ItemFieldValue")
+    item = GitHubIssues.item_id(0)
+    assert Enum.all?(calls, &match?(%{"project" => ^project, "item" => ^item}, &1))
+
+    assert Enum.any?(
+             calls,
+             &(&1["field"] == GitHubIssues.field_id(field) and &1["value"] == %{"date" => date})
+           )
+  end
 
   # Issue `number` on `board` with its dates; a nil one is empty there.
   defp board_item(context, number, board, start, due) do

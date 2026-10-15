@@ -860,6 +860,17 @@ Feature: Planner
       And the user moves #7's task to end on "2026-11-09"
       Then GitHub is asked to add #7 to "acme/3" and set its "Target date" to "2026-11-09"
 
+    # A board item is empty when it is added, and what the board holds is what the next
+    # look reads, so it is given all of the task's dates, not only the one that changed.
+    @mc
+    Scenario: An issue added to the board is given all of its task's dates
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/3" holds #5 and not #7
+      When the plugin looks at GitHub
+      And the user moves #7's task to end on "2026-11-09"
+      Then GitHub is asked to add #7 to "acme/3" and set its "Target date" to "2026-11-09"
+      And its "Start date" on "acme/3" is set to "2026-10-20" too
+
     # Part of a board says nothing of the issues on the rest of it.
     @mc
     Scenario: An issue past the part of the board that was read keeps its place on it

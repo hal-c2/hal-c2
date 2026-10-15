@@ -752,13 +752,17 @@ defmodule HalC2Plugins.Planner.Sync do
         "number" => String.to_integer(number)
       }
 
-      sets =
+      dates =
         for {key, field} <- [{"start", settings["startField"]}, {"due", settings["targetField"]}],
-            differs.(key),
             is_binary(field) and field != "",
-            do:
-              {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]}),
-               &Map.put(&1, key, new[key])}
+            do: {key, field}
+
+      set = fn {key, field} ->
+        {"setBoardField", Map.merge(board, %{"field" => field, "value" => new[key]}),
+         &Map.put(&1, key, new[key])}
+      end
+
+      sets = for {key, _} = date <- dates, differs.(key), do: set.(date)
 
       cond do
         sets == [] ->
@@ -768,8 +772,12 @@ defmodule HalC2Plugins.Planner.Sync do
           for {m, input, took} <- sets,
               do: {m, Map.put(input, "itemId", new["boardItemId"]), took}
 
+        # A new board item holds none of the task's dates, so it is given each one the
+        # task has. GitHub has none of them until each is set, so one refused goes again.
         true ->
-          [{:board, Map.put(board, "item", Map.take(base, ~w(repository number))), & &1} | sets]
+          item = Map.put(board, "item", Map.take(base, ~w(repository number)))
+          unset = &Map.merge(&1, Map.new(dates, fn {key, _} -> {key, nil} end))
+          [{:board, item, unset} | for({key, _} = date <- dates, new[key], do: set.(date))]
       end
     else
       _ -> []
