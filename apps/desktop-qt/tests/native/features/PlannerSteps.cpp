@@ -265,7 +265,7 @@ QJsonObject& addRun(World& world, const QString& label, const QStringList& title
 void listThread(World& world, const QJsonObject& run) {
   const bool listed = state(world).settings.value(QLatin1String("display")) != QLatin1String("page");
   addPluginThread(world, run.value(QLatin1String("threadId")).toString(), run.value(QLatin1String("label")).toString(),
-                  {{QStringLiteral("id"), kId}, {QStringLiteral("kind"), QStringLiteral("action")}, {QStringLiteral("listed"), listed}});
+                  {{QStringLiteral("id"), kId}, {QStringLiteral("kind"), run.value(QLatin1String("kind"))}, {QStringLiteral("listed"), listed}});
 }
 
 // The run proposing that `title` ends on `due`.
@@ -1137,6 +1137,30 @@ const Steps steps([] {
                                                                  {QStringLiteral("fields"), QJsonObject{{QStringLiteral("due"), QStringLiteral("2026-11-06")}}}, {QStringLiteral("dismissed"), false}}});
     publish(world);
     marked(QStringLiteral("1 change"));
+  });
+
+  step(QStringLiteral("the work on %1 is done").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWhenEmpty(world);
+    QJsonObject& run = addRun(world, QStringLiteral("Start work"), {c[0]}, QStringLiteral("done"));
+    run.insert(QStringLiteral("kind"), QStringLiteral("work"));
+    listThread(world, run);
+    publish(world);
+    world.waitFor([&] {
+      QQuickItem* host = waitShownNamed(world, QStringLiteral("pluginRowMark"));
+      QQuickItem* mark = findNamed(host, QStringLiteral("plannerRowMark"));
+      return mark && drawsText(mark, QStringLiteral("Done"));
+    }, QStringLiteral("the row mark to say Done"));
+  });
+  step(QStringLiteral("its run is discarded"), [](World& world, const Captures&, const Table&) {
+    state(world).runs.removeLast();
+    publish(world);
+  });
+  step(QStringLiteral("its thread is listed with the mark %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      QQuickItem* host = waitShownNamed(world, QStringLiteral("pluginRowMark"));
+      QQuickItem* mark = findNamed(host, QStringLiteral("plannerRowMark"));
+      return mark && drawsText(mark, c[0]);
+    }, [&] { return QStringLiteral("the row mark to say %1").arg(c[0]); });
   });
 
   step(QStringLiteral("its mark says so when the run proposes only a status update"), [](World& world, const Captures&, const Table&) {

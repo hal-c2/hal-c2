@@ -13,6 +13,8 @@ Rectangle {
     property var threads: ({})
     readonly property var run: thread !== null ? (threads[thread.id] ?? null) : null
     readonly property string status: run?.status ?? ""
+    // The thread keeps its kind once its run is gone.
+    readonly property bool work: (run?.kind ?? thread?.plugin?.kind) === "work"
     readonly property int changes: run?.changes ?? 0
     readonly property color tone: {
         switch (status) {
@@ -35,7 +37,7 @@ Rectangle {
         case "queued":
             return qsTr("Queued");
         case "running":
-            return run?.kind === "work" ? qsTr("Working") : qsTr("Running");
+            return work ? qsTr("Working") : qsTr("Running");
         case "failed":
             return qsTr("Failed");
         case "proposed":
@@ -47,7 +49,7 @@ Rectangle {
         case "done":
             return qsTr("Done");
         default:
-            return run?.kind === "work" ? qsTr("Task") : qsTr("Planner");
+            return work ? qsTr("Task") : qsTr("Planner");
         }
     }
     property int watching: -1
