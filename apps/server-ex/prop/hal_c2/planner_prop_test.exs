@@ -45,7 +45,7 @@ defmodule HalC2.PlannerPropTest do
     or neither when either is not a milestone or it would wait for itself;
   - at most two runs run at once, the oldest queued starts first, and each run that
     started has a thread of its own; a run whose task was removed while it waited
-    fails instead of starting;
+    fails instead of starting, with no thread, even when it is a retry;
   - a report goes to an action that can still take one, changes wait for the user or
     apply at once as the action says, and a change to a task removed since is marked
     stale rather than applied;
@@ -799,11 +799,13 @@ defmodule HalC2.PlannerPropTest do
   # A report that links a task to two things at once is refused, whatever its run is in.
   defp step(m, {:call, _, :report, [_k, {:both, _slot}]}), do: {m, :error}
 
+  # A run retried after its task was removed failed without a thread, so the thread it
+  # had before reports to no run.
   defp step(m, {:call, _, :report, [k, kind]}) do
     run = m.runs[k]
 
     cond do
-      run.status not in [:running, :failed, :proposed] ->
+      run.status not in [:running, :failed, :proposed] or run.gone ->
         {m, :error}
 
       match?({:due, _}, kind) and not Map.has_key?(m.items, elem(kind, 1)) ->
