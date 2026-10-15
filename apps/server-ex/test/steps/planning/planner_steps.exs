@@ -1232,6 +1232,12 @@ defmodule HalC2.Steps.Planning.Planner do
     merge(context, number)
   end
 
+  # A repository no project checks out is not listed; its pull request is read alone.
+  step "\#{int} of {string} is merged", %{args: [number, repository]} = context do
+    pr = Shared.gh_pr(repository, number, %{"state" => "MERGED"})
+    World.cli_rules(context, [%{"args" => ["pr view #{number}", repository], "stdout" => pr}])
+  end
+
   step "{string} has {int} pull requests updated since \#{int}",
        %{args: [_repository, count, _number]} = context do
     pr_list(%{context | newer_prs: count})

@@ -647,6 +647,13 @@ Feature: Planner
       And the plugin read no page of "acme/api"'s pull requests past #12
 
     @mc
+    Scenario: A pull request linked from a repository no project checks out still moves its task when it merges
+      Given "API" is linked to #12 of "acme/web"
+      When #12 of "acme/web" is merged
+      And the plugin looks at GitHub
+      Then "API" is done
+
+    @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
       And "acme/api" has the open issue #7 "Rate limits" assigned to "dana" with the label "backend"

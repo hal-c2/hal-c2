@@ -245,31 +245,62 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp board_name(_), do: :error
 
+  # Linked pull requests of a repository a project checks out are read from its list,
+  # any other alone through a checkout on its host; a merged one stays merged.
   defp prs(found, items, github) do
-    wanted =
-      for {_, item} <- items, pr <- item["pullRequests"] || [], into: MapSet.new(), do: key(pr)
+    linked =
+      items
+      |> Enum.flat_map(fn {_, item} -> item["pullRequests"] || [] end)
+      |> Enum.uniq_by(&key/1)
 
-    linked = for {repository, _} <- wanted, uniq: true, do: repository
+    {listed, alone} = Enum.split_with(linked, &project_of(github, &1["repository"]))
 
-    ids =
-      for project <- github,
-          String.downcase(project["repository"]) in linked,
-          uniq: true,
-          do: project["id"]
+    found
+    |> listed_prs(listed, github)
+    |> lone_prs(Enum.reject(alone, &(&1["state"] == "merged")), github)
+  end
 
-    if ids == [] do
-      found
-    else
-      input = %{"projectIds" => ids, "state" => "all", "limit" => 500}
+  defp listed_prs(found, [], _github), do: found
 
-      case pr_pages(input, wanted, [], [], 20) do
-        {:ok, entries, errors} ->
-          prs = for entry <- entries, into: %{}, do: {key(entry), entry["state"]}
-          problem(%{found | prs: prs}, errors)
+  defp listed_prs(found, listed, github) do
+    ids = for pr <- listed, uniq: true, do: project_of(github, pr["repository"])["id"]
+    input = %{"projectIds" => ids, "state" => "all", "limit" => 500}
 
-        {:error, error} ->
-          problem(found, [message(error)])
+    case pr_pages(input, MapSet.new(listed, &key/1), [], [], 20) do
+      {:ok, entries, errors} ->
+        prs = for entry <- entries, into: found.prs, do: {key(entry), entry["state"]}
+        problem(%{found | prs: prs}, errors)
+
+      {:error, error} ->
+        problem(found, [message(error)])
+    end
+  end
+
+  defp lone_prs(found, [], _github), do: found
+
+  defp lone_prs(found, alone, github) do
+    read =
+      alone
+      |> Task.async_stream(&lone_pr(&1, github), max_concurrency: 4, timeout: :infinity)
+      |> Enum.map(fn {:ok, read} -> read end)
+
+    prs = for {:ok, key, state} <- read, into: found.prs, do: {key, state}
+    problem(%{found | prs: prs}, for({:error, error} <- read, do: error))
+  end
+
+  defp lone_pr(%{"repository" => repo, "number" => number} = pr, github) do
+    host = URI.parse(pr["url"] || "").host || "github.com"
+
+    if Enum.any?(github, &same?(&1["host"], host)) do
+      input = %{"host" => host, "repository" => repo, "number" => number}
+
+      case Host.pull_requests(@id, "summary", input) do
+        {:ok, %{"state" => state}} -> {:ok, key(pr), state}
+        {:error, error} -> {:error, "#{repo}##{number}: #{message(error)}"}
       end
+    else
+      {:error,
+       "#{repo}##{number}: no project on this MC has a GitHub remote on #{host} to read it through."}
     end
   end
 
