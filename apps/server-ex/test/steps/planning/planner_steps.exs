@@ -1370,6 +1370,59 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "\#{int} is moved on GitHub from \#{int} to {string} \#{int}, which the plan does not follow",
+       %{args: [sub, number, other, parent]} = context do
+    repository = context.repository
+    parent = %{"number" => parent, "repository" => %{"nameWithOwner" => other}}
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number),
+      Map.put(GitHubIssues.issue(repository, sub), "parent", parent)
+    ])
+  end
+
+  step "the tasks of \#{int} and \#{int} were imported, neither a subtask of the other",
+       %{args: numbers} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, Enum.map(numbers, &GitHubIssues.issue(repository, &1)))
+      |> sync!()
+
+    plan = plan!(context)
+    for number <- numbers, do: assert(%{"parent" => nil} = task_of(plan, number))
+    context
+  end
+
+  # The parent comes first in the list, so the look takes it before its sub-issue.
+  step "GitHub lists \#{int} as a sub-issue of \#{int} late", %{args: [sub, number]} = context do
+    repository = context.repository
+
+    late(
+      context,
+      listing([
+        GitHubIssues.issue(repository, number, %{"subIssues" => [sub]}),
+        GitHubIssues.issue(repository, sub, %{"parent" => number})
+      ])
+    )
+  end
+
+  step "the user puts \#{int}'s task under \#{int}'s while the plugin looks at GitHub",
+       %{args: [number, parent]} = context do
+    while_looking(context, fn context ->
+      update_task(context, number, %{"parent" => task_of(plan!(context), parent)["id"]})
+    end)
+  end
+
+  step "\#{int}'s task is a subtask of \#{int}'s, and \#{int}'s task is not a subtask",
+       %{args: [sub, number, number]} = context do
+    plan = plan!(context)
+    assert task_of(plan, sub)["parent"] == task_of(plan, number)["id"]
+    assert task_of(plan, number)["parent"] == nil
+    context
+  end
+
   step "the tasks of \#{int} and \#{int} were imported in the milestone {string}",
        %{args: [one, two, title]} = context do
     repository = context.repository
@@ -1917,31 +1970,17 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
-  # The next look's list of issues names #`number` `title`, once the scenario opens and
-  # closes the fifo it waits on; later looks no longer wait.
   step "GitHub lists \#{int} as {string} late", %{args: [number, title]} = context do
-    gate = Path.join(context.mc.home, "gh-gate")
-    {_, 0} = System.cmd("mkfifo", [gate])
-    wait = "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}'; fi"
-
-    context
-    |> World.cli_rules([Map.put(listed(context, number, title), "run", wait)])
-    |> Map.put(:gh_gate, gate)
+    late(context, listed(context, number, title))
   end
 
   step "the user renames \#{int}'s task to {string} while the plugin looks at GitHub",
        %{args: [number, title]} = context do
-    %{mc: mc} = context
-    call = %{"id" => @id, "method" => "sync", "input" => %{}}
-    looking = Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
-    # Opening the gate waits for the look's gh to read it, so the look has read the plan.
-    {:ok, gate} = :file.open(context.gh_gate, [:write, :raw])
-    context = update_task(context, number, %{"title" => title})
-    # GitHub has the rename now, for the looks after this one.
-    context = World.cli_rules(context, [listed(context, number, title)])
-    :ok = :file.close(gate)
-    assert {{:ok, _}, _} = Task.await(looking, 30_000)
-    context
+    while_looking(context, fn context ->
+      context = update_task(context, number, %{"title" => title})
+      # GitHub has the rename now, for the looks after this one.
+      World.cli_rules(context, [listed(context, number, title)])
+    end)
   end
 
   step "the user renames \#{int}'s task to {string}, then relinks it to {string} \#{int} before GitHub answers",
@@ -2786,7 +2825,12 @@ defmodule HalC2.Steps.Planning.Planner do
     issue =
       GitHubIssues.issue(context.repository, number, %{"title" => title, "body" => "First notes"})
 
-    page = %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => [issue]}
+    listing([issue])
+  end
+
+  # GitHub's list of the open issues: `issues`, as `GitHubIssues.issue/3` makes them.
+  defp listing(issues) do
+    page = %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => issues}
 
     %{
       "args" => ["api graphql"],
@@ -2837,6 +2881,29 @@ defmodule HalC2.Steps.Planning.Planner do
       plugin(context, "updateItem", %{"id" => item!(context, title)["id"], "fields" => fields})
 
     assert {:ok, %{"item" => _}} = reply
+    context
+  end
+
+  # The next look's gh answers with `rule` once the scenario opens and closes the fifo it
+  # waits on; later looks no longer wait.
+  defp late(context, rule) do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    wait = "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}'; fi"
+    context |> World.cli_rules([Map.put(rule, "run", wait)]) |> Map.put(:gh_gate, gate)
+  end
+
+  # Runs `change` while a look at GitHub that `late/2` holds has read the plan, then lets
+  # the look go on and waits for it.
+  defp while_looking(context, change) do
+    %{mc: mc} = context
+    call = %{"id" => @id, "method" => "sync", "input" => %{}}
+    looking = Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    # Opening the gate waits for the look's gh to read it, so the look has read the plan.
+    {:ok, gate} = :file.open(context.gh_gate, [:write, :raw])
+    context = change.(context)
+    :ok = :file.close(gate)
+    assert {{:ok, _}, _} = Task.await(looking, 30_000)
     context
   end
 

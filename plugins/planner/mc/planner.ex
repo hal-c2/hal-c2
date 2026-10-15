@@ -1233,7 +1233,7 @@ defmodule HalC2Plugins.Planner do
   # A task changed since the look read the plan, by the user or a push GitHub answered,
   # keeps its change, as does one with a push on the way, which GitHub may not have
   # taken when the look read it: the look is older news about it, and the next one
-  # catches it up.
+  # catches it up. The sync is told which, so what it gives other tasks fits them.
   defp apply_look(state, found) do
     kept =
       Map.filter(state.items, fn {id, item} ->
@@ -1242,7 +1242,7 @@ defmodule HalC2Plugins.Planner do
 
     items =
       state.items
-      |> Sync.apply(found, state.settings, now(), fn -> id("t") end)
+      |> Sync.apply(Map.put(found, :kept, kept), state.settings, now(), fn -> id("t") end)
       |> Map.merge(kept)
 
     state = %{

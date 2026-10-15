@@ -30,12 +30,14 @@ defmodule HalC2.PlannerPropTest do
   the board adds it there, and GitHub names the board item after the push. Someone takes
   a linked task's issue off the board, and the board grows past what a look reads whole
   and shrinks back. GitHub closes an issue of that repository as completed or not
-  planned, and reopens it. Work on a task starts on a project the MC does not have, or
-  on one whose worktree setup is not running so the launch exits, and its thread never
-  launches. After every step:
+  planned, and reopens it. Someone on GitHub makes a linked task's issue a sub-issue of
+  another, one a task has or one none has, or of none, and a client nests a task while a
+  look at GitHub is on its way, holding GitHub's list as it was before the nest. Work on
+  a task starts on a project the MC does not have, or on one whose worktree setup is not
+  running so the launch exits, and its thread never launches. After every step:
 
-  - nothing waits for itself, a removed task's subtasks move up to its parent and
-    nothing waits for it any more;
+  - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
+    up to its parent and nothing waits for it any more;
   - a task with no title, a change whose fields are not an object, or a link to a pull
     request and an issue at once, from a client or in an agent's report, is refused and
     changes nothing;
@@ -69,11 +71,14 @@ defmodule HalC2.PlannerPropTest do
     issue on GitHub once a push takes, and the relation goes with the next push of the
     task that no longer has it, even when the other task was removed or relinked since;
   - a look at GitHub brings a linked task's name up to date, drops the relations to
-    tasks with issues GitHub does not list, and moves its state when its issue's moved
-    since the plugin last read it: closed as not planned, the task is dropped, closed
-    otherwise, done, and reopened, a task done or dropped is to do again; a reason
-    changed on a closed issue counts as a move, a reason on an open one does not; none
-    of it when GitHub refused its last change or a push to it is on the way;
+    tasks with issues GitHub does not list, makes it the subtask of the task whose issue
+    GitHub names as its open issue's parent, and of none when GitHub names an issue no
+    task has, unless that would make it its own ancestor, and moves its state when its
+    issue's moved since the plugin last read it: closed as not planned, the task is
+    dropped, closed otherwise, done, and reopened, a task done or dropped is to do again;
+    a reason changed on a closed issue counts as a move, a reason on an open one does
+    not; none of it when GitHub refused its last change, a push to it is on the way, or
+    it changed while the look was on its way;
   - a linked task's board item is the one a push of its chain added, or, with no push of
     it on the way, the one a look found for its issue on the board, whether or not the
     task had one: a push answered after the task was unlinked or relinked leaves it
@@ -105,6 +110,8 @@ defmodule HalC2.PlannerPropTest do
   @elsewhere "acme/web"
   @elsewhere_from 20
   @issues %{"a" => 1, "b" => 2, "c" => 3}
+  # An issue of `@repository` no task is ever linked to.
+  @unplanned 4
   @bad_ref %{"repository" => 7, "number" => 1}
   @due "2026-10-30"
   @moved "2026-11-06"
@@ -235,13 +242,15 @@ defmodule HalC2.PlannerPropTest do
   # `board`: the board the settings name. `boards`: board → issue → the push that put it
   # there last (its board item, 0 for one that took at once). `full`: whether the boards
   # hold more than a look reads. `closed`: issue of `@repository` → why GitHub closed
-  # it, :completed or :not_planned; one not in it is open.
+  # it, :completed or :not_planned; one not in it is open. `parents`: issue of
+  # `@repository` → the issue GitHub has it as a sub-issue of.
   def initial_state,
     do: %{
       board: @board,
       boards: %{},
       full: false,
       closed: %{},
+      parents: %{},
       items: %{},
       gens: %{},
       runs: %{},
@@ -323,6 +332,24 @@ defmodule HalC2.PlannerPropTest do
           here?(n) and state in [:completed, :not_planned] and m.closed[n] == state,
           do: {n, if(state == :completed, do: :not_planned, else: :completed)}
 
+    # GitHub moving a sub-issue matters most once two tasks have issues to move between,
+    # and a nest while a look is on its way once it has moved one.
+    adopt =
+      cond do
+        length(pushed) < 2 -> 2
+        m.parents == %{} -> 16
+        true -> 4
+      end
+
+    looking = if m.parents == %{}, do: 1, else: 16
+    # Most of all a nest that goes against GitHub: the task of an issue GitHub has another
+    # under goes under the other's task.
+    against =
+      for {sub, parent} <- m.parents,
+          sub = slot_of(m, sub),
+          parent = slot_of(m, parent),
+          do: {:call, __MODULE__, :nest_while_looking, [parent, sub]}
+
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
@@ -386,6 +413,19 @@ defmodule HalC2.PlannerPropTest do
            {redate, {:call, __MODULE__, :redate, [elements(pushed), elements([@due, @moved])]}}
          ]
        ) ++
+       if(pushed == [],
+         do: [],
+         else: [
+           {adopt,
+            {:call, __MODULE__, :adopt,
+             [
+               elements(Enum.map(pushed, &issue_of(m, &1))),
+               elements([nil, @unplanned | Enum.map(pushed, &issue_of(m, &1))])
+             ]}},
+           {looking, {:call, __MODULE__, :nest_while_looking, [item, oneof([nil, item])]}}
+         ]
+       ) ++
+       if(against == [], do: [], else: [{40, oneof(against)}]) ++
        if(m.closed == %{},
          do: [],
          else: [{2, {:call, __MODULE__, :reopen, [elements(Map.keys(m.closed))]}}]
@@ -431,8 +471,12 @@ defmodule HalC2.PlannerPropTest do
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
 
   def precondition(m, {:call, _, cmd, [slot | _]})
-      when cmd in [:remove, :wait, :nest, :move, :work, :redate],
+      when cmd in [:remove, :wait, :nest, :nest_while_looking, :move, :work, :redate],
       do: Map.has_key?(m.items, slot)
+
+  # GitHub refuses a sub-issue under its own sub-issue.
+  def precondition(m, {:call, _, :adopt, [number, parent]}),
+    do: here?(number) and number not in issue_ancestors(m.parents, parent)
 
   def precondition(m, {:call, _, :run, [_action, slot]}),
     do: slot == nil or Map.has_key?(m.items, slot)
@@ -465,6 +509,9 @@ defmodule HalC2.PlannerPropTest do
 
   def next_state(m, _result, call), do: m |> step(call) |> elem(0)
 
+  defp issue_ancestors(_parents, nil), do: []
+  defp issue_ancestors(parents, n), do: [n | issue_ancestors(parents, parents[n])]
+
   def postcondition(before, call, observed) do
     {m, reply} = step(before, call)
 
@@ -487,7 +534,24 @@ defmodule HalC2.PlannerPropTest do
       end
     end
 
-    observed == expected and latest_on_github?(before, m, call, observed)
+    observed == expected and latest_on_github?(before, m, call, observed) and
+      not own_ancestor?(observed.items)
+  end
+
+  # Whether a task the plugin answers is its own ancestor.
+  defp own_ancestor?(items) do
+    Enum.any?(items, fn {slot, item} ->
+      climbs_to?(items, item.parent, slot, MapSet.new()) and
+        IO.puts("#{slot} is its own ancestor: #{inspect(items)}") == :ok
+    end)
+  end
+
+  defp climbs_to?(_items, nil, _slot, _seen), do: false
+  defp climbs_to?(_items, slot, slot, _seen), do: true
+
+  defp climbs_to?(items, parent, slot, seen) do
+    not MapSet.member?(seen, parent) and Map.has_key?(items, parent) and
+      climbs_to?(items, items[parent].parent, slot, MapSet.put(seen, parent))
   end
 
   # Once GitHub answers the last push of a task's chain and refuses none of it, GitHub
@@ -693,6 +757,22 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :look, []}), do: {looked(m), :ok}
 
+  # The look reads the plan before the nest and GitHub as it was before it too, and the
+  # task the nest changed keeps the change.
+  defp step(m, {:call, _, :nest_while_looking, [slot, parent]}) do
+    {nested, reply} = step(m, {:call, __MODULE__, :nest, [slot, parent]})
+    changed? = nested.items[slot] != m.items[slot] or nested.synced[slot] != m.synced[slot]
+    {looked(nested, if(changed?, do: [slot], else: [])), reply}
+  end
+
+  # GitHub makes an issue a sub-issue of another, or of none; the plan hears of it at the
+  # next look.
+  defp step(m, {:call, _, :adopt, [number, nil]}),
+    do: {%{m | parents: Map.delete(m.parents, number)}, :ok}
+
+  defp step(m, {:call, _, :adopt, [number, parent]}),
+    do: {put_in(m.parents[number], parent), :ok}
+
   # GitHub moves an issue; the plan hears of it at the next look.
   defp step(m, {:call, _, :close, [number, reason]}),
     do: {put_in(m.closed[number], reason), :ok}
@@ -843,6 +923,9 @@ defmodule HalC2.PlannerPropTest do
   defp linked?(m, slot), do: match?(%{issue: n} when n != nil, m.items[slot])
   defp issue_of(m, slot), do: m.items[slot].issue
 
+  defp slot_of(m, issue),
+    do: Enum.find_value(m.items, fn {s, i} -> if i.issue == issue, do: s end)
+
   # The issue a relink moves the task in `slot` to: the one it was not linked to of two.
   defp other_issue(m, slot),
     do: if(m.items[slot].issue == @issues[slot], do: @issues[slot] + 10, else: @issues[slot])
@@ -991,47 +1074,75 @@ defmodule HalC2.PlannerPropTest do
   defp clear(m, slot),
     do: %{put_in(m.items[slot].sync, nil) | synced: Map.delete(m.synced, slot)}
 
-  # A look at GitHub, which lists the open issues of `@repository` tasks are linked to and
-  # reads the closed ones alone, with no relations: such a task takes its issue's name and
-  # state, has all of it, waits for no task with an issue and is the subtask of none,
-  # unless GitHub refused its last change or a push to it is on the way. It reads the
-  # board too: a task with no push on the way takes the board item its issue has there,
-  # loses its own when a whole board has none, and keeps it when the board was read only
-  # in part. A task with a push on the way keeps all it has, its board item too, as the
-  # plugin keeps such a task whole when it applies a look; the push's answer sets the
-  # board item only when the push added one (`settle/3`).
-  defp looked(m) do
+  # A look at GitHub, which lists the open issues of `@repository` tasks are linked to,
+  # with the parent GitHub has each under, and reads the closed ones alone, with no
+  # relations: such a task takes its issue's name and state, has all of it, and then, in
+  # the order GitHub lists the issues, waits for no task with an issue and is the subtask
+  # of the task whose issue GitHub names as its parent, or of none when its parent has an
+  # issue, unless GitHub refused its last change, a push to it is on the way, or it is
+  # one of the `kept` tasks, changed while the look was on its way. It reads the board
+  # too: a task with no push on the way takes the board item its issue has there, loses
+  # its own when a whole board has none, and keeps it when the board was read only in
+  # part. A task with a push on the way, or kept, keeps all it has, its board item too,
+  # as the plugin keeps such a task whole when it applies a look; the push's answer sets
+  # the board item only when the push added one (`settle/3`).
+  defp looked(m, kept \\ []) do
     listed = Map.get(m.boards, m.board, %{})
+    whole? = &(Map.has_key?(m.flights, &1) or &1 in kept)
 
     items =
       Map.new(m.items, fn {slot, item} ->
         cond do
-          Map.has_key?(m.flights, slot) -> {slot, item}
+          whole?.(slot) -> {slot, item}
           is_map_key(listed, item.issue) -> {slot, %{item | board: listed[item.issue]}}
           m.full -> {slot, item}
           true -> {slot, %{item | board: nil}}
         end
       end)
 
-    Enum.reduce(items, %{m | items: items}, fn {slot, item}, acc ->
-      if here?(item.issue) and item.sync == nil and not Map.has_key?(acc.flights, slot) do
-        issue? = &(&1 != nil and m.items[&1].issue != nil)
+    synced =
+      for {slot, item} <- items, here?(item.issue), item.sync == nil, not whole?.(slot), do: slot
+
+    m =
+      Enum.reduce(synced, %{m | items: items}, fn slot, acc ->
+        item = acc.items[slot]
         state = Map.get(m.closed, item.issue, :open)
 
         item = %{
           item
           | name: "Issue #{item.issue}",
-            after: Enum.reject(item.after, issue?),
-            parent: if(issue?.(item.parent), do: nil, else: item.parent),
             status: status_after(item, state),
             state: state
         }
 
         %{put_in(acc.items[slot], item) | synced: Map.delete(acc.synced, slot)}
-      else
-        acc
+      end)
+
+    synced
+    |> Enum.sort_by(&{Map.has_key?(m.closed, m.items[&1].issue), &1})
+    |> Enum.reduce(m, &relate(&2, &1))
+  end
+
+  # The task in `slot` waits for no task with an issue and is the subtask of the task
+  # whose issue GitHub names as its open issue's parent, or else of none when its parent
+  # has an issue, unless that would make it its own ancestor, when neither changes.
+  defp relate(m, slot) do
+    item = m.items[slot]
+    issue? = &(&1 != nil and m.items[&1].issue != nil)
+    named = if not Map.has_key?(m.closed, item.issue), do: m.parents[item.issue]
+    by_github = named && slot_of(m, named)
+
+    parent =
+      cond do
+        by_github -> by_github
+        issue?.(item.parent) -> nil
+        true -> item.parent
       end
-    end)
+
+    if parent == slot or slot in ancestors(m.items, parent),
+      do: m,
+      else:
+        put_in(m.items[slot], %{item | parent: parent, after: Enum.reject(item.after, issue?)})
   end
 
   # The task's status once the plugin reads its issue in `state`: it moves only when the
@@ -1261,17 +1372,90 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # GitHub lists only the open issues of `@repository` a task is linked to, as if they
-  # alone had the planner's label, so a look adds no task and brings the linked one up to
-  # date; a closed one it answers when it is read alone (see `close/2`).
-  defp listed do
+  # alone had the planner's label, with the parent each is under, so a look adds no task
+  # and brings the linked one up to date; a closed one it answers when it is read alone
+  # (see `close/2`).
+  defp listed, do: gh_rule(listing())
+
+  defp listing do
+    parents = Process.get(:pl_parents)
+
     nodes =
       for {slot, _} <- Process.get(:pl_items),
           number = Process.get({:pl_issue, slot}),
           here?(number),
-          not Map.has_key?(Process.get(:pl_closed), number),
-          do: issue_node(number)
+          not Map.has_key?(Process.get(:pl_closed), number) do
+        parent = parents[number] && %{"number" => parents[number], "repository" => repo_ref()}
+        Map.put(issue_node(number), "parent", parent)
+      end
 
-    gh_rule(issue_list(nodes))
+    issue_list(nodes)
+  end
+
+  defp repo_ref, do: %{"nameWithOwner" => @repository}
+
+  # Someone on GitHub makes issue `number` a sub-issue of `parent`, or of none.
+  def adopt(number, parent) do
+    parents = Process.get(:pl_parents)
+    parents = if parent, do: Map.put(parents, number, parent), else: Map.delete(parents, number)
+    Process.put(:pl_parents, parents)
+    listed()
+    observe(:ok)
+  end
+
+  # A client nests the task in `slot` under `parent`, or under none, once a look has read
+  # the plan; GitHub holds the look's list, as it was before, on a fifo until the nest is
+  # in, then the case waits for the look.
+  def nest_while_looking(slot, parent) do
+    n = System.unique_integer([:positive])
+    gate = Path.join(Process.get(:pl_gh), "look-#{n}")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    hold = "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi"
+    gh_rule(Map.put(listing(), "run", hold))
+    case_pid = self()
+
+    holder =
+      spawn(fn ->
+        ref = Process.monitor(case_pid)
+        # Opening the fifo waits for the look's gh to read it.
+        {:ok, fd} = :file.open(gate, [:write, :raw])
+        send(case_pid, {:pl_looking, n})
+
+        receive do
+          :answer -> :file.close(fd)
+          {:DOWN, ^ref, :process, _, _} -> :file.close(fd)
+        end
+      end)
+
+    Process.put({:pl_holder, {:look, n}}, holder)
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        try do
+          call("sync", %{})
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+    receive do
+      {:pl_looking, ^n} -> :ok
+    after
+      15_000 -> problem("the look never reached GitHub")
+    end
+
+    fields = %{"parent" => parent && item_id(parent)}
+    reply = elem(call("updateItem", %{"id" => item_id(slot), "fields" => fields}), 0)
+    send(holder, :answer)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      15_000 -> problem("the look never finished")
+    end
+
+    listed()
+    observe(reply)
   end
 
   # Issue `number` of `@repository` as GitHub answers it: open, its reason "REOPENED" once
@@ -1985,6 +2169,7 @@ defmodule HalC2.PlannerPropTest do
 
     Process.put(:pl_items, %{})
     Process.put(:pl_closed, %{})
+    Process.put(:pl_parents, %{})
     Process.put(:pl_board, @board)
     Process.put(:pl_boards, %{})
     Process.put(:pl_full, false)

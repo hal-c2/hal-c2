@@ -309,7 +309,9 @@ defmodule HalC2Plugins.Planner.Sync do
   `items` with what `found` (`look/2`) holds: tasks for issues the plan does not
   have, linked tasks brought up to date, their subtasks and dependencies, a milestone
   for each issue milestone, board dates, and the pull requests' states. New items
-  get ids from `new_id`.
+  get ids from `new_id`. The tasks in `found.kept`, which the plan keeps as they are,
+  keep their subtasks and dependencies, so the ones given to others are checked
+  against them.
   """
   def apply(items, found, settings, now, new_id) do
     items =
@@ -324,7 +326,7 @@ defmodule HalC2Plugins.Planner.Sync do
             issue(items, issue, issue in listed, projects, now, new_id)
           end)
         )
-        |> relations(issues, now)
+        |> relations(issues, Map.get(found, :kept, %{}), now)
         |> milestones(issues, found.items, settings, projects, now, new_id)
         |> dates(found.board, now)
       else
@@ -445,10 +447,12 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # Sub-issues and blocking issues as subtasks and dependencies, once every issue has
-  # its task. One that would make a task its own subtask or wait for itself is left out.
-  defp relations(items, issues, now) do
+  # its task. One that would make a task its own subtask or wait for itself is left out,
+  # and a `kept` task's own are left as they are.
+  defp relations(items, issues, kept, now) do
     Enum.reduce(issues, items, fn issue, items ->
       with %{} = item <- linked(items, issue),
+           false <- is_map_key(kept, item["id"]),
            nil <- item["syncError"] do
         parent = issue["parent"] && linked(items, issue["parent"])
 
@@ -458,11 +462,11 @@ defmodule HalC2Plugins.Planner.Sync do
         # Dependencies on tasks with no issue are the plan's own and stay.
         own = Enum.reject(item["after"], &get_in(items, [&1, "issue"]))
 
-        # GitHub names the parent of a task with an issue; one with no issue is the plan's.
+        # GitHub names the parent of a task with an issue, so one it no longer names, or
+        # names an issue the plan has no task for, goes; one with no issue is the plan's.
         parent =
           cond do
             parent -> parent["id"]
-            issue["parent"] -> item["parent"]
             get_in(items, [item["parent"], "issue"]) -> nil
             true -> item["parent"]
           end

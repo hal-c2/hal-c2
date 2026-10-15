@@ -690,6 +690,22 @@ Feature: Planner
       Then #9's task is not a subtask
 
     @mc
+    Scenario: A sub-issue moved under an issue the plan does not follow leaves its old parent
+      Given "planner" follows the issues of "acme/api"
+      And #9's task was imported as a subtask of #7's
+      When #9 is moved on GitHub from #7 to "acme/web" #3, which the plan does not follow
+      And the plugin looks at GitHub
+      Then #9's task is not a subtask
+
+    @mc
+    Scenario: A task the user put under another while GitHub's answer was on its way never ends up under its own child
+      Given "planner" follows the issues of "acme/api"
+      And the tasks of #9 and #7 were imported, neither a subtask of the other
+      And GitHub lists #7 as a sub-issue of #9 late
+      When the user puts #9's task under #7's while the plugin looks at GitHub
+      Then #9's task is a subtask of #7's, and #7's task is not a subtask
+
+    @mc
     Scenario: An issue moved out of a milestone on GitHub stops holding it up
       Given "planner" follows the issues of "acme/api"
       And the tasks of #7 and #8 were imported in the milestone "Beta"
