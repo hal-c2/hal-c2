@@ -9,7 +9,9 @@ defmodule HalC2Plugins.Planner.Sync do
   GitHub refused (`syncError`): that one keeps the user's. A pushed task keeps what
   GitHub has of it (`synced`, see `synced/3`) until a push takes whole, and each push
   sends what the task has that GitHub has not, so a change refused goes again with the
-  task's next one and the mark clears once GitHub has all of it. A task's state follows
+  task's next one and the mark clears once GitHub has all of it. Pushes go one at a time
+  per task, not per issue, so a milestone's move of an issue can reach GitHub after
+  another milestone's; `reasserts/4` sets such an issue right. A task's state follows
   its issue only when the issue opens or closes, so a task the user marked doing stays
   doing while its issue stays open.
   """
@@ -806,12 +808,7 @@ defmodule HalC2Plugins.Planner.Sync do
   # one milestone to another is asked of GitHub once, by the one it moved to. Only an
   # issue of the milestone's repository can be in it.
   defp held_pushes(%{"milestone" => ref} = new, synced, items, projects) do
-    holds? = fn id ->
-      Enum.any?(items, fn {other, item} ->
-        other != new["id"] and is_map(item["milestone"]) and
-          same?(item["milestone"]["repository"], ref["repository"]) and id in item["after"]
-      end)
-    end
+    holds? = &(holders(items, ref["repository"], &1, new["id"]) != [])
 
     moves =
       for(
@@ -838,6 +835,43 @@ defmodule HalC2Plugins.Planner.Sync do
            }, took}
   end
 
+  # The numbers of the milestones of `repository` whose tasks hold the task `id`, but for
+  # the milestone `except`.
+  defp holders(items, repository, id, except \\ nil),
+    do:
+      for(
+        {other, %{"milestone" => %{} = ref} = item} <- items,
+        other != except,
+        same?(ref["repository"], repository),
+        id in item["after"],
+        do: ref["number"]
+      )
+
+  @doc """
+  What sets right the milestones of the issues a push moved (`moved`, see `run/2`) to
+  where the plan no longer has them: GitHub keeps the move it takes last, and a push
+  that took after another milestone's for the same issue, the task having moved on
+  meanwhile, left it behind. Each op moves an issue to the milestone holding its task,
+  or out of any, as `pushes/5` does; none goes for an issue the milestone's own `ops`
+  move, or whose last move is where the plan has it, so a move that sets one right is
+  only checked again, once it took.
+  """
+  def reasserts(moved, ops, items, projects) do
+    sent = for {"update", %{"milestone" => _} = input, _} <- ops, do: key(input)
+
+    for %{"milestone" => wrote} = issue <- moved |> Enum.reverse() |> Enum.uniq_by(&key/1),
+        key(issue) not in sent,
+        task = linked(items, issue),
+        task != nil,
+        held = holders(items, issue["repository"], task["id"]),
+        if(held == [], do: wrote != nil, else: wrote not in held),
+        project = project_id(Map.put(task, "issue", issue), projects),
+        is_binary(project),
+        do:
+          {"update", Map.merge(issue, %{"projectId" => project, "milestone" => List.first(held)}),
+           &unrelate(&1, "after", task["id"])}
+  end
+
   defp state("done"), do: %{"state" => "closed", "stateReason" => "completed"}
   defp state("dropped"), do: %{"state" => "closed", "stateReason" => "not_planned"}
   defp state("open"), do: %{"state" => "open"}
@@ -845,7 +879,8 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   Asks GitHub for `ops` (`pushes/5`) in order until one is refused: `{nil, extra}`
   when all took, `{message, extra}` when one did not. `extra` holds what the task
-  learnt: its board item, and what GitHub has of it, `synced` with what took.
+  learnt: its board item, what GitHub has of it, `synced` with what took, and the
+  issues it moved to a milestone or out of one, `moved`, in the order GitHub took them.
   """
   def run(ops, synced) do
     {error, extra, synced} =
@@ -860,7 +895,7 @@ defmodule HalC2Plugins.Planner.Sync do
             {:cont, {nil, Map.put(extra, "boardItemId", item), took.(synced)}}
 
           {:ok, _} when method != :board ->
-            {:cont, {nil, extra, took.(synced)}}
+            {:cont, {nil, moved(extra, method, input), took.(synced)}}
 
           {:error, error} ->
             {:halt, {message(error), extra, synced}}
@@ -869,6 +904,13 @@ defmodule HalC2Plugins.Planner.Sync do
 
     {error, Map.put(extra, "synced", synced)}
   end
+
+  defp moved(extra, "update", %{"milestone" => _} = input),
+    do: Map.update(extra, "moved", [move(input)], &(&1 ++ [move(input)]))
+
+  defp moved(extra, _method, _input), do: extra
+
+  defp move(input), do: Map.take(input, ~w(repository number milestone))
 
   defp ask(:board, input), do: Host.issues(@id, "addBoardItem", input)
 

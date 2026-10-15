@@ -940,20 +940,25 @@ defmodule HalC2Plugins.Planner do
   # has of the task and what the task learnt, such as its board item. The task keeps
   # what GitHub has, and the runner gets the task's next push, `{:push, ops, synced}`,
   # when the task changed while GitHub had this one; a refusal of a task that did not
-  # change stands until its next change. A push for an issue the task was unlinked or
-  # relinked from since, or for a task removed since, says nothing; the next look reads
-  # the board again.
+  # change stands until its next change, unless the push moved an issue to a milestone
+  # the plan has moved it on from, which the next push sets right (`Sync.reasserts/4`)
+  # with what was refused. A push for an issue the task was unlinked or relinked from
+  # since, or for a task removed since, says nothing; the next look reads the board again.
   def handle_call({:pushed, id, token, error, extra}, _from, state) do
     case state.pushing[id] do
       {^token, changed?} ->
+        {moved, extra} = Map.pop(extra, "moved", [])
         item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
+        stale? = Sync.reasserts(moved, [], state.items, state.projects) != []
 
         {next, state} =
           cond do
-            changed? -> next_push(state, id, item, item["synced"])
+            changed? or stale? -> next_push(state, id, item, item["synced"])
             error -> {nil, put_in(state.items[id], item)}
             true -> {nil, put_in(state.items[id], Map.put(item, "synced", nil))}
           end
+
+        {next, state} = reassert(state, id, moved, next)
 
         case next do
           {ops, synced} ->
@@ -1660,6 +1665,23 @@ defmodule HalC2Plugins.Planner do
 
       _ ->
         {nil, put_in(state.items[id], item)}
+    end
+  end
+
+  # `next`, the next push of the task `id`, with what sets right the issues its last
+  # push moved where the plan no longer has them, first, so a refusal of the rest does
+  # not hold it back.
+  defp reassert(state, id, moved, next) do
+    {ops, synced} = next || {[], nil}
+
+    case Sync.reasserts(moved, ops, state.items, state.projects) do
+      [] ->
+        {next, state}
+
+      again ->
+        item = state.items[id]
+        synced = synced || Sync.synced(item, item, state.items)
+        {{again ++ ops, synced}, put_in(state.items[id]["synced"], synced)}
     end
   end
 

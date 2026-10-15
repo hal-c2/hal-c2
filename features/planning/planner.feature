@@ -895,6 +895,16 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch"
       Then GitHub is asked once to move #7 to the milestone "Launch"
 
+    # GitHub keeps the move that reaches it last, which can be one the user has moved the
+    # task on from, so a move GitHub takes after the next one is set right.
+    @mc
+    Scenario: A task moved on again before GitHub takes its first move ends in the milestone it was moved to last
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Launch" late and to "Release" at once
+      When the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
+      Then GitHub has #7 in the milestone "Release" last
+
     @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways

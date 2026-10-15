@@ -295,9 +295,7 @@ defmodule HalC2.Steps.Planning.Planner do
   step "the user moves {string} from {string} to {string}",
        %{args: [title, from, to]} = context do
     context = ensure(context, to)
-    ids = Enum.map([title, from, to], &item!(context, &1)["id"])
-    input = Enum.zip(["id", "from", "to"], ids) |> Map.new()
-    {reply, context} = plugin(context, "moveToMilestone", input)
+    {reply, context} = plugin(context, "moveToMilestone", move_input(context, title, from, to))
     Map.put(context, :reply, reply)
   end
 
@@ -2026,16 +2024,67 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "\#{int} is in the milestone {string} and \#{int} in {string} on GitHub",
        %{args: [one, first, two, second]} = context do
-    repository = context.repository
-    milestone = &%{"number" => &1, "title" => &2, "dueOn" => "2026-11-30T00:00:00Z"}
+    in_milestones(context, [{one, first}, {two, second}])
+  end
+
+  step "\#{int} is in the milestone {string}, \#{int} in {string} and \#{int} in {string} on GitHub",
+       %{args: [one, first, two, second, three, third]} = context do
+    in_milestones(context, [{one, first}, {two, second}, {three, third}])
+  end
+
+  # GitHub takes moving #`number` to the milestone `late` once the scenario answers it,
+  # and to `soon` at once; it notes each milestone in the order it takes them.
+  step "GitHub takes moving \#{int} to {string} late and to {string} at once",
+       %{args: [number, late, soon]} = context do
+    gate = Path.join(context.mc.home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    taken = Path.join(context.mc.home, "gh-milestones")
+
+    move = fn title, wait ->
+      milestone = context.milestones[title]
+
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":#{milestone})],
+        "run" => wait <> "echo '#{milestone}' >> '#{taken}'",
+        "stdout" => %{"number" => number}
+      }
+    end
 
     context
-    |> GitHubIssues.answers(repository, [
-      GitHubIssues.issue(repository, one, %{"milestone" => milestone.(1, first)}),
-      GitHubIssues.issue(repository, two, %{"milestone" => milestone.(2, second)})
-    ])
-    |> sync!()
-    |> Map.put(:milestones, %{first => 1, second => 2})
+    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, "")])
+    |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
+  end
+
+  step "the user moves {string} from {string} to {string}, then to {string} before GitHub answers",
+       %{args: [title, from, first, second]} = context do
+    %{mc: mc} = context
+    input = move_input(context, title, from, first)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+
+    # The first move goes from a client of its own, as another window's would, so it can
+    # wait on GitHub while the scenario goes on.
+    moving =
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        item(plan, title)["id"] in (item(plan, first) || %{"after" => []})["after"]
+      end)
+
+    {reply, context} =
+      plugin(context, "moveToMilestone", move_input(context, title, first, second))
+
+    assert {:ok, _} = reply
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  step "GitHub has \#{int} in the milestone {string} last", %{args: [_number, title]} = context do
+    taken = context.gh_milestones |> File.read!() |> String.split("\n", trim: true)
+    assert List.last(taken) == to_string(context.milestones[title]), inspect(taken)
+    context
   end
 
   # One write for the move, not one for each milestone it touched.
@@ -2653,6 +2702,12 @@ defmodule HalC2.Steps.Planning.Planner do
     {renaming, context}
   end
 
+  defp move_input(context, title, from, to) do
+    plan = plan!(context)
+    ids = Enum.map([title, from, to], &(item(plan, &1) || flunk("the plan has no #{&1}"))["id"])
+    Enum.zip(["id", "from", "to"], ids) |> Map.new()
+  end
+
   defp update_task(context, number, fields) do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {reply, context} = plugin(context, "updateItem", %{"id" => task["id"], "fields" => fields})
@@ -2795,6 +2850,25 @@ defmodule HalC2.Steps.Planning.Planner do
       _ ->
         World.cli_rules(context, [first])
     end
+  end
+
+  # Each `{number, title}` is an issue in that milestone on GitHub, the milestones numbered
+  # from 1 in order, synced into the plan.
+  defp in_milestones(context, issues) do
+    repository = context.repository
+    numbers = issues |> Enum.with_index(1) |> Map.new(fn {{_, title}, n} -> {title, n} end)
+    milestone = &%{"number" => numbers[&1], "title" => &1, "dueOn" => "2026-11-30T00:00:00Z"}
+
+    context
+    |> GitHubIssues.answers(
+      repository,
+      for(
+        {number, title} <- issues,
+        do: GitHubIssues.issue(repository, number, %{"milestone" => milestone.(title)})
+      )
+    )
+    |> sync!()
+    |> Map.put(:milestones, numbers)
   end
 
   defp sync!(context) do
