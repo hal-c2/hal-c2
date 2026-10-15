@@ -712,6 +712,18 @@ defmodule HalC2Plugins.Planner.Sync do
     })
   end
 
+  @doc """
+  What GitHub has of a task once it made an issue of `sent` (`create_issue/2`), of
+  which it had `synced` (`synced/3`): the title, notes, owner and labels it was made
+  with, open, with no dates on the board, and the relations of `synced`, so a push
+  closes it, dates it and relates it as the task has it.
+  """
+  def created(synced, sent),
+    do:
+      synced
+      |> Map.merge(Map.take(sent, ~w(title notes owner labels)))
+      |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
+
   defp fields(item),
     do:
       item

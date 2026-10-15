@@ -2505,6 +2505,13 @@ defmodule HalC2.Steps.Planning.Planner do
     ensure(context, title, %{"projectId" => World.project(context, project).id})
   end
 
+  step "the plan has {string} in {string}, done", %{args: [title, project]} = context do
+    ensure(context, title, %{
+      "projectId" => World.project(context, project).id,
+      "status" => "done"
+    })
+  end
+
   step "the user creates an issue for {string} in {string}",
        %{args: [title, repository]} = context do
     context = GitHubIssues.answers(context, repository, [])

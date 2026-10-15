@@ -1204,6 +1204,29 @@ Feature: Planner
       When the user creates an issue for "Docs" in "acme/api"
       Then GitHub is asked to create the issue "Docs" labelled "docs"
 
+    # GitHub makes an issue open and on no board, so the plugin asks for the rest.
+    @mc
+    Scenario: An issue created for a done task is closed
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api", done
+      When the user creates an issue for "Docs" in "acme/api"
+      Then GitHub is asked to close #13 as completed
+
+    @mc
+    Scenario: An issue created for a dated task gets its dates on the board
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the plan has "Docs" in "api"
+      When the user creates an issue for "Docs" in "acme/api"
+      Then GitHub is asked to add #13 to "acme/3" and set its "Target date" to "2026-11-02"
+      And its "Start date" on "acme/3" is set to "2026-10-26" too
+
+    @mc
+    Scenario: With import only, an issue created for a done task stays as it was made
+      Given "planner" follows the issues of "acme/api" without syncing back
+      And the plan has "Docs" in "api", done
+      When the user creates an issue for "Docs" in "acme/api"
+      Then GitHub is not asked to change #13
+
     # GitHub relates a new issue to no other, so the plugin asks it to.
     @mc
     Scenario Outline: A task given an issue keeps the tasks it is tied to

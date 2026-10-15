@@ -242,7 +242,7 @@ defmodule HalC2Plugins.Planner do
   def call("createIssue", %{"itemId" => id, "repository" => repository}, context) do
     with {:ok, item} <- server({:item, id}),
          {:ok, issue} <- Sync.create_issue(item, repository),
-         do: change({:link, id, %{"issue" => issue}}, context.settings)
+         do: change({:created, id, issue, item}, context.settings)
   end
 
   def call("link", %{"itemId" => id} = input, context) do
@@ -975,25 +975,12 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  def handle_call({:link, id, fields}, caller, state) do
-    with %{} = item <- state.items[id] || {:error, "There is no task #{id}."},
-         :ok <- Plan.check_link(state.items, id, fields) do
-      item =
-        case fields do
-          %{"thread" => thread} ->
-            item
-            |> Map.update("threads", [thread], &Enum.uniq(&1 ++ [thread]))
-            |> Map.update!("projectId", &(&1 || fields["projectId"]))
+  def handle_call({:link, id, fields}, caller, state), do: link(state, id, fields, caller)
 
-          _ ->
-            Plan.link(item, fields, now())
-        end
-
-      edit(state, Map.put(state.items, id, item), %{"item" => item}, caller)
-    else
-      error -> {:reply, error, state}
-    end
-  end
+  # A task linked to the issue just made of `sent`, of which GitHub has only what making
+  # it wrote (`Sync.created/2`), so the push sends the rest.
+  def handle_call({:created, id, issue, sent}, caller, state),
+    do: link(state, id, %{"issue" => issue}, caller, %{id => sent})
 
   def handle_call({:unlink, id, kind, ref}, caller, state) do
     item = state.items[id]
@@ -1602,10 +1589,32 @@ defmodule HalC2Plugins.Planner do
 
   # --- state ----------------------------------------------------------------------------
 
+  # The task `id` linked to `fields` by the caller `from`, as `edit/5`.
+  defp link(state, id, fields, from, created \\ %{}) do
+    with %{} = item <- state.items[id] || {:error, "There is no task #{id}."},
+         :ok <- Plan.check_link(state.items, id, fields) do
+      item =
+        case fields do
+          %{"thread" => thread} ->
+            item
+            |> Map.update("threads", [thread], &Enum.uniq(&1 ++ [thread]))
+            |> Map.update!("projectId", &(&1 || fields["projectId"]))
+
+          _ ->
+            Plan.link(item, fields, now())
+        end
+
+      edit(state, Map.put(state.items, id, item), %{"item" => item}, from, created)
+    else
+      error -> {:reply, error, state}
+    end
+  end
+
   # A change to items by the caller `from`, answered with what it pushes to GitHub for
-  # the tasks it changed.
-  defp edit(state, items, reply, from) do
-    {pushes, state} = pushes(state, state.items, items, from)
+  # the tasks it changed; `created` maps a task given an issue just made to what it was
+  # made of.
+  defp edit(state, items, reply, from, created \\ %{}) do
+    {pushes, state} = pushes(state, state.items, items, from, created)
     {:reply, {:ok, reply, %{pushes: pushes}}, changed(state)}
   end
 
@@ -1617,8 +1626,9 @@ defmodule HalC2Plugins.Planner do
   # answers (`{:pushed, ...}`). A task unlinked from its issue, linked to another or
   # removed no longer hears from the push on the way to the one before. The tasks tied
   # to a task given an issue, linked to another or unlinked push too, moving their
-  # relations to the issue it has now.
-  defp pushes(state, before, items, from) do
+  # relations to the issue it has now. A task of `created` pushes what its new issue was
+  # not made with (`Sync.created/2`).
+  defp pushes(state, before, items, from, created \\ %{}) do
     gone =
       for {id, old} <- before,
           items[id] == nil or
@@ -1647,7 +1657,10 @@ defmodule HalC2Plugins.Planner do
           {pushes, put_in(state.pushing[id], put_elem(flight, 1, true))}
 
         true ->
-          case next_push(state, id, new, Sync.synced(old, new, before)) do
+          synced = Sync.synced(old, new, before)
+          synced = if sent = created[id], do: Sync.created(synced, sent), else: synced
+
+          case next_push(state, id, new, synced) do
             {nil, state} ->
               {pushes, state}
 

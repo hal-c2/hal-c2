@@ -21,7 +21,7 @@ defmodule HalC2.PlannerPropTest do
   runs, look at GitHub, and restart the plugin, which looks too. The plugin keeps
   `@kept_runs` finished runs. Any of the tasks is linked to an issue of a repository the
   plan syncs both ways, with a board, or has one made for it there, which GitHub relates
-  to nothing, is relinked to another issue, of that repository or of one no project on
+  to nothing and puts on no board, is relinked to another issue, of that repository or of one no project on
   the MC has, which is pushed nothing, and unlinked again, by a client that may still
   show the issue it had before, and a client links one to the issue another has; a
   client moves one's due date, which goes to GitHub at once when nothing of the task is
@@ -741,9 +741,22 @@ defmodule HalC2.PlannerPropTest do
     {m |> put_in([:items, slot], item) |> changed(slot, m) |> ties_moved(slot, m), :ok}
   end
 
-  # An issue made for the task, which GitHub relates to nothing, links it as linking an
-  # issue does.
-  defp step(m, {:call, _, :create, [slot]}), do: step(m, {:call, __MODULE__, :link, [slot]})
+  # An issue made for the task links it as linking an issue does, but it is open and on
+  # no board: the push closes it for a task done or dropped, which GitHub takes, and adds
+  # it to the board with the task's due date. The plugin takes it for open until a look
+  # reads it.
+  defp step(before, {:call, _, :create, [slot]}) do
+    n = @issues[slot]
+    item = %{before.items[slot] | issue: n, state: :open}
+    made = %{baseline(before, slot) | due: nil}
+    m = before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before)
+
+    case item.status do
+      :done -> {put_in(m.closed[n], :completed), :ok}
+      :dropped -> {put_in(m.closed[n], :not_planned), :ok}
+      _ -> {m, :ok}
+    end
+  end
 
   # The board item, sync error and what GitHub has of the issue before stay with it, and
   # the push to it on the way speaks for nobody, whether or not the relink pushes
@@ -1547,7 +1560,8 @@ defmodule HalC2.PlannerPropTest do
     |> Map.put(parent, sub)
   end
 
-  # GitHub makes an issue for the task in `slot`, numbered as the one it links to.
+  # GitHub makes an issue for the task in `slot`, numbered as the one it links to, open,
+  # and closes it with the reason the push for the task asks.
   def create(slot) do
     number = @issues[slot]
 
@@ -1556,10 +1570,26 @@ defmodule HalC2.PlannerPropTest do
       "stdout" => %{"number" => number}
     })
 
+    gh_rule(%{
+      "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
+      "stdin" => [~s("state":"closed")],
+      "stdout" => "{}"
+    })
+
     issue_read(number)
+    seen = length(gh_calls())
     input = %{"itemId" => item_id(slot), "repository" => @repository}
     {reply, _} = call("createIssue", input)
     if reply == :ok, do: Process.put({:pl_issue, slot}, number)
+
+    for line <- Enum.drop(gh_calls(), seen),
+        %{"args" => args, "stdin" => stdin} = JSON.decode!(line),
+        "repos/#{@repository}/issues/#{number}" in args,
+        {:ok, %{"state" => "closed", "state_reason" => reason}} <- [JSON.decode(stdin)] do
+      Process.put(:pl_closed, Map.put(Process.get(:pl_closed), number, String.to_atom(reason)))
+      issue_read(number)
+    end
+
     listed()
     observe(reply)
   end
