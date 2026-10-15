@@ -242,7 +242,7 @@ defmodule HalC2Plugins.Planner do
   def call("createIssue", %{"itemId" => id, "repository" => repository}, context) do
     with {:ok, item} <- server({:item, id}),
          {:ok, issue} <- Sync.create_issue(item, repository),
-         do: change({:created, id, issue}, context.settings)
+         do: change({:link, id, %{"issue" => issue}}, context.settings)
   end
 
   def call("link", %{"itemId" => id} = input, context) do
@@ -996,20 +996,6 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  # A task linked to the issue just made of it, which GitHub relates to nothing yet: it
-  # and the tasks tied to it push their relations (`Sync.created/2`).
-  def handle_call({:created, id, issue}, caller, state) do
-    case state.items[id] do
-      nil ->
-        {:reply, {:error, "There is no task #{id}."}, state}
-
-      item ->
-        item = Plan.link(item, %{"issue" => issue}, now())
-        items = Map.put(state.items, id, item)
-        edit(state, items, %{"item" => item}, caller, Sync.created(state.items, id))
-    end
-  end
-
   def handle_call({:unlink, id, kind, ref}, caller, state) do
     item = state.items[id]
 
@@ -1618,9 +1604,9 @@ defmodule HalC2Plugins.Planner do
   # --- state ----------------------------------------------------------------------------
 
   # A change to items by the caller `from`, answered with what it pushes to GitHub for
-  # the tasks it changed from `before`, the plan unless GitHub has less of it.
-  defp edit(state, items, reply, from, before \\ nil) do
-    {pushes, state} = pushes(state, before || state.items, items, from)
+  # the tasks it changed.
+  defp edit(state, items, reply, from) do
+    {pushes, state} = pushes(state, state.items, items, from)
     {:reply, {:ok, reply, %{pushes: pushes}}, changed(state)}
   end
 
@@ -1630,7 +1616,9 @@ defmodule HalC2Plugins.Planner do
   # GitHub has at most one push of a task at a time, so they reach it in order: a task
   # with one on the way pushes nothing, and its runner pushes the change once GitHub
   # answers (`{:pushed, ...}`). A task unlinked from its issue, linked to another or
-  # removed no longer hears from the push on the way to the one before.
+  # removed no longer hears from the push on the way to the one before. The tasks tied
+  # to a task given an issue, linked to another or unlinked push too, moving their
+  # relations to the issue it has now.
   defp pushes(state, before, items, from) do
     gone =
       for {id, old} <- before,
@@ -1638,13 +1626,22 @@ defmodule HalC2Plugins.Planner do
             (old["issue"] != nil and not Plan.same_ref?(old["issue"], items[id]["issue"])),
           do: id
 
+    relinked =
+      for {id, old} <- before,
+          new = items[id],
+          (old["issue"] || new["issue"]) && not Plan.same_ref?(old["issue"], new["issue"]),
+          do: id
+
+    tied? =
+      &(relinked != [] and Enum.any?([&1["parent"] | &1["after"]], fn id -> id in relinked end))
+
     state = %{state | items: items, pushing: forget(state.pushing, gone)}
 
     Enum.reduce(items, {[], state}, fn {id, new}, {pushes, state} ->
       old = before[id]
 
       cond do
-        old == nil or old == new ->
+        old == nil or (old == new and not tied?.(new)) ->
           {pushes, state}
 
         flight = state.pushing[id] ->

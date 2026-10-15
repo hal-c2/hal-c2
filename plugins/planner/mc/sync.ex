@@ -688,42 +688,28 @@ defmodule HalC2Plugins.Planner.Sync do
   knows: the `synced` a push left on it until a push took whole, or else what `old`
   had, GitHub having taken or given all of it. A task linked to another issue loses
   its `synced`, so what it had before stands for the new issue, which pushes only
-  what the change itself made. Its `"state"` is the issue's: open, done or dropped,
+  what the change itself made, but for its relations, which GitHub has on the issue
+  they were made on, its `"issue"`. Its `"state"` is the issue's: open, done or dropped,
   and its `"refs"` the issues of the tasks it waits for and of its parent in `before`,
-  the plan before the change, so a relation to a task removed since is still dropped on
-  GitHub. Its relations are only those to tasks with an issue, all GitHub can have: one to
-  a task given an issue since goes with the next push.
+  the plan before the change, so a relation to a task removed or linked to another
+  issue since is still dropped on GitHub. Its relations are only those to tasks with an
+  issue, all GitHub can have, and none for a task with no issue: one to a task given an
+  issue since goes with the next push.
   """
   def synced(old, new, before), do: new["synced"] || own(old, before)
 
   defp own(item, items) do
-    refs =
-      for id <- [item["parent"] | item["after"]], r = ref(items, id), into: %{}, do: {id, r}
+    ids = if item["issue"] || item["milestone"], do: [item["parent"] | item["after"]], else: []
+    refs = for id <- ids, r = ref(items, id), into: %{}, do: {id, r}
 
     item
     |> fields()
     |> Map.merge(%{
       "after" => Enum.filter(item["after"], &is_map_key(refs, &1)),
       "parent" => if(is_map_key(refs, item["parent"]), do: item["parent"]),
-      "refs" => refs
+      "refs" => refs,
+      "issue" => item["issue"] && Map.take(item["issue"], ~w(repository number))
     })
-  end
-
-  @doc """
-  The plan as GitHub has it once it made an issue for the task `id`, which it relates to
-  no other: the plan before (`items`) with no relations between the task and another, so
-  `pushes/5` sends the task's, those of the tasks waiting for it or under it, and those
-  of the milestones it holds up.
-  """
-  def created(items, id) do
-    Map.new(items, fn
-      {^id, item} ->
-        {id, %{item | "after" => [], "parent" => nil}}
-
-      {other, item} ->
-        parent = if item["parent"] == id, do: nil, else: item["parent"]
-        {other, %{item | "after" => List.delete(item["after"], id), "parent" => parent}}
-    end)
   end
 
   defp fields(item),
@@ -742,13 +728,16 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # The issue GitHub relates a task to the task `id` by: the one the relation was made
-  # with, which a task removed or relinked since no longer names, or else the task's.
+  # with, which a task removed, unlinked or relinked since no longer names, or else the
+  # task's.
   defp had(synced, items, id), do: (synced["refs"] || %{})[id] || ref(items, id)
 
   # What GitHub has of a task once it relates it, under `key`, to the task `id` of the
   # issue `ref`, or stops.
+  # A relation made again, as one GitHub was never asked to drop from an issue no project
+  # has, is had once.
   defp relate(synced, "after", id, ref),
-    do: synced |> Map.update!("after", &(&1 ++ [id])) |> remember(id, ref)
+    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref)
 
   defp relate(synced, "parent", id, ref), do: synced |> Map.put("parent", id) |> remember(id, ref)
 
@@ -810,26 +799,47 @@ defmodule HalC2Plugins.Planner.Sync do
         ],
         else: []
 
-    blocked =
-      for(
-        id <- new["after"] -- synced["after"],
-        r = ref(items, id),
-        do: {"addBlockedBy", Map.put(base, "blockedBy", r), &relate(&1, "after", id, r)}
-      ) ++
-        for id <- synced["after"] -- new["after"],
-            r = had(synced, items, id),
-            do: {"removeBlockedBy", Map.put(base, "blockedBy", r), &unrelate(&1, "after", id)}
-
+    # GitHub has the relations of `synced` on the issue they were made on, `was`: a task
+    # linked to another issue since drops them from that one and makes them anew on its
+    # own, and one to a task linked to another issue since goes from the issue it had to
+    # its new one. The drops go first: once a relation is made on the task's issue,
+    # GitHub has all the task's relations there. An issue of a repository no project has
+    # was never pushed, so it has nothing to drop.
     me = Map.take(base, ~w(repository number))
+    was = Map.get(synced, "issue", me)
+    moved? = not Plan.same_ref?(was, me)
+    on_was = was && Map.put(was, "projectId", project_id(Map.put(new, "issue", was), projects))
+    pushed = is_binary(on_was["projectId"]) && was
+    kept? = &(not moved? and Plan.same_ref?(had(synced, items, &1), ref(items, &1)))
+    kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
+    onto = &Map.put(&1, "issue", me)
+
+    unblock =
+      for id <- synced["after"] -- kept,
+          pushed,
+          r = had(synced, items, id),
+          do: {"removeBlockedBy", Map.put(on_was, "blockedBy", r), &unrelate(&1, "after", id)}
+
+    block =
+      for id <- new["after"] -- kept,
+          r = ref(items, id),
+          do:
+            {"addBlockedBy", Map.put(base, "blockedBy", r),
+             &(&1 |> relate("after", id, r) |> onto.())}
+
     {from, to} = {synced["parent"], new["parent"]}
 
     parent =
-      if from != to do
-        for {method, id, r, took} <- [
-              {"removeSubIssue", from, had(synced, items, from), &unrelate(&1, "parent", from)},
-              {"addSubIssue", to, ref(items, to), &relate(&1, "parent", to, ref(items, to))}
+      if from == to and (from == nil or kept?.(from)) do
+        []
+      else
+        for {method, id, r, sub, took} <- [
+              {"removeSubIssue", from, had(synced, items, from), pushed,
+               &unrelate(&1, "parent", from)},
+              {"addSubIssue", to, ref(items, to), me,
+               &(&1 |> relate("parent", to, ref(items, to)) |> onto.())}
             ],
-            r,
+            r && sub,
             project = project_id(Map.put(items[id] || %{}, "issue", r), projects),
             do:
               {method,
@@ -837,13 +847,13 @@ defmodule HalC2Plugins.Planner.Sync do
                  "projectId" => project,
                  "repository" => r["repository"],
                  "number" => r["number"],
-                 "subIssue" => me
+                 "subIssue" => sub
                }, took}
-      else
-        []
       end
 
-    update ++ blocked ++ parent ++ board_pushes(settings, base, differs, new)
+    {unsub, sub} = Enum.split_with(parent, &(elem(&1, 0) == "removeSubIssue"))
+
+    update ++ unblock ++ unsub ++ block ++ sub ++ board_pushes(settings, base, differs, new)
   end
 
   defp board_pushes(settings, base, differs, new) do
@@ -929,17 +939,21 @@ defmodule HalC2Plugins.Planner.Sync do
           holders(items, ref["repository"], id) == [],
           do: id
 
+    # A task linked to another issue since moves the issue it had out, whatever holds the
+    # task, and its new one in.
+    kept? = &Plan.same_ref?(had(synced, items, &1), ref(items, &1))
+    kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
+
     moves =
       for(
-        id <-
-          Enum.uniq((new["after"] -- synced["after"]) ++ Enum.filter(new["after"], elsewhere?)),
-        issue = ref(items, id),
-        do: {id, issue, ref["number"], &relate(&1, "after", id, issue)}
+        id <- Enum.uniq((synced["after"] -- kept) ++ left),
+        not holds?.(id) or not kept?.(id),
+        issue = had(synced, items, id),
+        do: {id, issue, nil, &unrelate(&1, "after", id)}
       ) ++
-        for id <- Enum.uniq((synced["after"] -- new["after"]) ++ left),
-            not holds?.(id),
-            issue = had(synced, items, id),
-            do: {id, issue, nil, &unrelate(&1, "after", id)}
+        for id <- Enum.uniq((new["after"] -- kept) ++ Enum.filter(new["after"], elsewhere?)),
+            issue = ref(items, id),
+            do: {id, issue, ref["number"], &relate(&1, "after", id, issue)}
 
     for {id, issue, milestone, took} <- moves,
         same?(issue["repository"], ref["repository"]),

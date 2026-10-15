@@ -79,7 +79,7 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   A new issue is `#13`. With `more`, every page of the listing says another follows.
   """
   def answers(context, repository, issues, more \\ false) do
-    numbers = Enum.uniq(Enum.map(issues, & &1["number"]) ++ [5, 7, 9, 12, 13])
+    numbers = Enum.uniq(Enum.map(issues, & &1["number"]) ++ [5, 7, 8, 9, 12, 13])
     new = Enum.find(issues, &(&1["number"] == 13)) || issue(repository, 13)
 
     context

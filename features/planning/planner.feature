@@ -1187,6 +1187,46 @@ Feature: Planner
         | puts "Docs" under "Issue 7"     | "Docs" is a subtask of "Issue 7" |
         | puts "Issue 7" under "Docs"     | "Issue 7" is a subtask of "Docs" |
 
+    # GitHub relates issues, not tasks, so the ties go from the issue a task had to the
+    # one it has now. The look names #7's task after #8, and #7, still open, comes back
+    # as a task of its own, tied to nothing.
+    @mc
+    Scenario Outline: A task linked to another issue moves its ties to it
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api"
+      And the user <ties>
+      And the user creates an issue for "Docs" in "acme/api"
+      When the user relinks #7's task to #8
+      Then GitHub is asked to <drop>
+      And GitHub is asked to <add>
+      When the plugin looks at GitHub, which has taken what it was asked
+      Then <tied>
+      And "Issue 7" is tied to no other task
+
+      Examples:
+        | ties                            | drop                | add              | tied                             |
+        | makes "Docs" wait for "Issue 7" | unblock #13 from #7 | block #13 by #8  | "Docs" still waits for "Issue 8" |
+        | makes "Issue 7" wait for "Docs" | unblock #7 from #13 | block #8 by #13  | "Issue 8" still waits for "Docs" |
+        | puts "Docs" under "Issue 7"     | take #13 out of #7  | put #13 under #8 | "Docs" is a subtask of "Issue 8" |
+        | puts "Issue 7" under "Docs"     | take #7 out of #13  | put #8 under #13 | "Issue 8" is a subtask of "Docs" |
+
+    # A task with no issue is in the plan alone, so what waits for it or sits under it
+    # leaves its old issue on GitHub.
+    @mc
+    Scenario Outline: A task unlinked from its issue takes its ties off it
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api"
+      And the user <ties>
+      And the user creates an issue for "Docs" in "acme/api"
+      When the user unlinks #7's task from its issue
+      Then GitHub is asked to <drop>
+      And <tied>
+
+      Examples:
+        | ties                            | drop                | tied                             |
+        | makes "Docs" wait for "Issue 7" | unblock #13 from #7 | "Docs" still waits for "Issue 7" |
+        | puts "Docs" under "Issue 7"     | take #13 out of #7  | "Docs" is a subtask of "Issue 7" |
+
     @mc
     Scenario: A repository with no project on the MC is reported
       Given "planner" follows the issues of "acme/web"

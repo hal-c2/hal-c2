@@ -1917,6 +1917,40 @@ defmodule HalC2.Steps.Planning.Planner do
     GitHubIssues.assert_related(context, "removeSubIssue", number, sub)
   end
 
+  step "GitHub is asked to block \#{int} by \#{int}", %{args: [number, blocker]} = context do
+    GitHubIssues.assert_related(context, "addBlockedBy", number, blocker)
+  end
+
+  step "GitHub is asked to put \#{int} under \#{int}", %{args: [sub, number]} = context do
+    GitHubIssues.assert_related(context, "addSubIssue", number, sub)
+  end
+
+  step "the user unlinks \#{int}'s task from its issue", %{args: [number]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    ref = Map.take(task["issue"], ~w(repository number))
+
+    {reply, context} =
+      plugin(context, "unlink", %{"itemId" => task["id"], "kind" => "issue", "ref" => ref})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} is tied to no other task", %{args: [title]} = context do
+    plan = plan!(context)
+    %{"id" => id} = item = item(plan, title) || flunk("the plan has no #{title}")
+    assert %{"after" => [], "parent" => nil} = item
+
+    assert [] ==
+             for(
+               other <- plan["items"],
+               other["parent"] == id or id in other["after"],
+               do: other["title"]
+             )
+
+    context
+  end
+
   # GitHub takes renaming #`number` to `late` once the scenario answers it, and to `soon`
   # at once; it notes each name in the order it takes them.
   step "GitHub takes renaming \#{int} to {string} late and to {string} at once",
@@ -2433,20 +2467,35 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
-  # GitHub lists #7 and the issue it made, #13, with the relations between them it was
-  # asked to add.
+  # GitHub lists #7, the issues of the plan's tasks and the one it made, #13, with the
+  # relations between them it was asked to add and not asked to drop since.
   step "the plugin looks at GitHub, which has taken what it was asked", context do
     repository = context.repository
-    [%{"title" => title}] = GitHubIssues.rest_calls(context, "POST", "/issues")
+
+    made =
+      for %{"title" => title} <- GitHubIssues.rest_calls(context, "POST", "/issues"),
+          into: %{},
+          do: {13, %{"title" => title}}
+
     number = fn "I_" <> n -> String.to_integer(n) end
 
     asked = fn mutation ->
-      for %{"issue" => issue, "other" => other} <- GitHubIssues.graphql_calls(context, mutation),
+      for %{"issue" => issue, "other" => other} <-
+            GitHubIssues.graphql_calls(context, mutation <> "(input"),
           do: {number.(issue), number.(other)}
     end
 
-    blocked = asked.("addBlockedBy(input")
-    subs = asked.("addSubIssue(input")
+    blocked = asked.("addBlockedBy") -- asked.("removeBlockedBy")
+    subs = asked.("addSubIssue") -- asked.("removeSubIssue")
+
+    numbers =
+      Enum.uniq([
+        7
+        | for(
+            %{"issue" => %{"repository" => ^repository, "number" => n}} <- plan!(context)["items"],
+            do: n
+          )
+      ])
 
     issue = fn n, fields ->
       parent = Enum.find_value(subs, fn {parent, sub} -> if sub == n, do: parent end)
@@ -2460,7 +2509,7 @@ defmodule HalC2.Steps.Planning.Planner do
     end
 
     context
-    |> GitHubIssues.answers(repository, [issue.(7, %{}), issue.(13, %{"title" => title})])
+    |> GitHubIssues.answers(repository, for(n <- numbers, do: issue.(n, made[n] || %{})))
     |> sync!()
   end
 

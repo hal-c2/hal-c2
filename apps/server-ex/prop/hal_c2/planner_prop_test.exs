@@ -71,8 +71,11 @@ defmodule HalC2.PlannerPropTest do
   - the relations GitHub has between issues are the ones the pushes made and dropped:
     a task waiting for, or a subtask of, another task with an issue is related to that
     issue on GitHub once a push takes, and the relation goes with the next push of the
-    task that no longer has it, even when the other task was removed or relinked since;
-    an issue made for a task is related to the issues of the tasks it is tied to at once;
+    task that no longer has it, even when the other task was removed since; a task
+    linked to an issue, made for it or not, or relinked to another, has its relations
+    made on that issue at once and dropped from the one before, and the tasks tied to it
+    move theirs to its new issue at once too, or drop them when it is unlinked, which
+    leaves its own on the issue it had;
   - a look at GitHub brings a linked task's name up to date, drops the relations to
     tasks with issues GitHub does not list, makes it the subtask of the task whose issue
     GitHub names as its open issue's parent, and of none when GitHub names an issue no
@@ -286,9 +289,13 @@ defmodule HalC2.PlannerPropTest do
     switch = if Enum.any?(m.items, fn {_, item} -> item.board != nil end), do: 6, else: 1
     other = if m.board == @board, do: @other_board, else: @board
     # So does relinking: the board item and the pushes in flight are the issue's, not
-    # the task's.
+    # the task's, and the relations of the tasks tied to it move with it.
+    tied_to = for slot <- linked, Enum.any?(m.items, fn {_, i} -> tied_to?(i, slot) end), do: slot
+
     relink =
-      if m.held != %{} or Enum.any?(linked, &(m.items[&1].board != nil)), do: 6, else: 1
+      if m.held != %{} or tied_to != [] or Enum.any?(linked, &(m.items[&1].board != nil)),
+        do: 6,
+        else: 1
 
     # And a change to a task GitHub refused, or has not answered yet, which sends what it
     # has not taken again.
@@ -420,7 +427,7 @@ defmodule HalC2.PlannerPropTest do
          else: [
            {relink,
             {:call, __MODULE__, :relink, [elements(linked), oneof([@repository, @elsewhere])]}},
-           {1,
+           {if(tied_to == [], do: 1, else: 3),
             {:call, __MODULE__, :unlink,
              [
                elements(linked),
@@ -712,36 +719,23 @@ defmodule HalC2.PlannerPropTest do
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
 
-  # Linking pushes nothing: GitHub is taken to have what the task had. The plugin takes
-  # the issue for open until a look reads it.
+  # GitHub is taken to have the task's name and due date, and none of its relations: the
+  # task pushes those to tasks with an issue, and the tasks tied to it push theirs to its
+  # issue (`ties_moved/3`). The plugin takes the issue for open until a look reads it.
   defp step(m, {:call, _, :link, [slot]}) do
     item = %{m.items[slot] | issue: @issues[slot], state: :open}
-    {m |> put_in([:items, slot], item) |> changed(slot, m), :ok}
+    {m |> put_in([:items, slot], item) |> changed(slot, m) |> ties_moved(slot, m), :ok}
   end
 
-  # An issue made for the task, which GitHub relates to nothing: the task pushes its
-  # relations to tasks with an issue, and the tasks waiting for it or under it, and the
-  # milestones it holds up, push theirs to it.
-  defp step(m, {:call, _, :create, [slot]}) do
-    unrelated =
-      Map.new(m.items, fn
-        {^slot, item} ->
-          {slot, %{item | after: [], parent: nil}}
-
-        {other, item} ->
-          parent = if item.parent == slot, do: nil, else: item.parent
-          {other, %{item | after: List.delete(item.after, slot), parent: parent}}
-      end)
-
-    m = put_in(m.items[slot], %{m.items[slot] | issue: @issues[slot], state: :open})
-    tied = for {other, item} <- m.items, item != unrelated[other], do: other
-    {Enum.reduce(tied, m, &changed(&2, &1, %{m | items: unrelated})), :ok}
-  end
+  # An issue made for the task, which GitHub relates to nothing, links it as linking an
+  # issue does.
+  defp step(m, {:call, _, :create, [slot]}), do: step(m, {:call, __MODULE__, :link, [slot]})
 
   # The board item, sync error and what GitHub has of the issue before stay with it, and
   # the push to it on the way speaks for nobody, whether or not the relink pushes
-  # anything itself. GitHub is taken to have of the new issue what the task had, so a
-  # rename GitHub has not answered yet is not pushed to it.
+  # anything itself. GitHub is taken to have of the new issue the name and due date the
+  # task had, so a rename GitHub has not answered yet is not pushed to it, but not its
+  # relations, which move from the issue before, and those of the tasks tied to it too.
   defp step(before, {:call, _, :relink, [slot, repository]}) do
     item = %{
       before.items[slot]
@@ -757,16 +751,17 @@ defmodule HalC2.PlannerPropTest do
         synced: Map.delete(before.synced, slot)
     }
 
-    {m |> put_in([:items, slot], item) |> changed(slot, m), :ok}
+    {m |> put_in([:items, slot], item) |> changed(slot, m) |> ties_moved(slot, m), :ok}
   end
 
-  # Nothing on the way speaks for a task no longer linked. A client that still shows an
-  # issue the task no longer has unlinks nothing.
+  # Nothing on the way speaks for a task no longer linked, and the tasks tied to it drop
+  # their relations to its issue; the relations of its own stay on the issue. A client
+  # that still shows an issue the task no longer has unlinks nothing.
   defp step(m, {:call, _, :unlink, [slot, number]}) do
     if m.items[slot].issue == number do
       item = %{m.items[slot] | issue: nil, sync: nil, board: nil, state: nil}
       m = %{m | flights: Map.delete(m.flights, slot), synced: Map.delete(m.synced, slot)}
-      {put_in(m.items[slot], item), :ok}
+      {m |> put_in([:items, slot], item) |> ties_moved(slot, m), :ok}
     else
       {m, :ok}
     end
@@ -993,6 +988,7 @@ defmodule HalC2.PlannerPropTest do
   end
 
   defp linked?(m, slot), do: match?(%{issue: n} when n != nil, m.items[slot])
+  defp tied_to?(item, slot), do: item.parent == slot or slot in item.after
   defp issue_of(m, slot), do: m.items[slot].issue
 
   defp slot_of(m, issue),
@@ -1023,6 +1019,14 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  # The tasks waiting for the task in `slot` or under it, and the milestones it holds up,
+  # once it is linked to another issue or none: each pushes its relation to the task
+  # anew, from the issue it had in `before` to the one it has now, as `changed/3`.
+  defp ties_moved(m, slot, before) do
+    tied = for {other, item} <- m.items, tied_to?(item, slot), do: other
+    Enum.reduce(tied, m, &changed(&2, &1, before))
+  end
+
   defp push_now(m, slot, b) do
     case ops(m, slot, b) do
       [] -> if m.items[slot].sync != nil or m.synced[slot] != nil, do: clear(m, slot), else: m
@@ -1036,21 +1040,22 @@ defmodule HalC2.PlannerPropTest do
 
   # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, the tasks
   # it waits for and its parent (`{slot, gen}`), of those with an issue, all GitHub can
-  # have, and the issues those had then (`refs`).
+  # have, the issues those had then (`refs`), and the issue it has them on, none when it
+  # has no issue.
   defp own(m, slot) do
     item = m.items[slot]
     after_keys = Enum.map(item.after, &key(m, &1))
     parent = key(m, item.parent)
-
-    refs =
-      for k <- [parent | after_keys], k != nil, r = issue_at(m, k), into: %{}, do: {k, r}
+    keys = if item.issue, do: [parent | after_keys], else: []
+    refs = for k <- keys, k != nil, r = issue_at(m, k), into: %{}, do: {k, r}
 
     %{
       name: item.name,
       due: item.due,
       after: Enum.filter(after_keys, &is_map_key(refs, &1)),
       parent: if(is_map_key(refs, parent), do: parent),
-      refs: refs
+      refs: refs,
+      issue: item.issue
     }
   end
 
@@ -1063,31 +1068,38 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # What a push of the task in `slot` asks GitHub, of which GitHub has `b`, in order: its
-  # name; the issues it waits for and no longer does, by the issue it had for the task
-  # when it can; the parent it leaves and the one it joins, of `@repository` only; the
-  # board, when it is not on it, and its due date there.
+  # name; the relations it drops, from the issue it had them on (`b.issue`) when that is
+  # of `@repository`, by the issue it had for the other task when it can: the issues it
+  # no longer waits for, the parent it leaves; then the relations it makes on its issue:
+  # the issues it waits for and the parent it joins, of `@repository` only; the board,
+  # when it is not on it, and its due date there. A relation to a task linked to another
+  # issue since, or of a task linked to another issue since, is dropped and made anew.
   defp ops(m, slot, b) do
     item = m.items[slot]
     n = item.issue
+    was = b.issue
     now_after = Enum.map(item.after, &key(m, &1))
     to = key(m, item.parent)
     had = &(b.refs[&1] || issue_at(m, &1))
+    kept? = &(was == n and had.(&1) != nil and had.(&1) == issue_at(m, &1))
+    kept = Enum.filter(b.after, &(&1 in now_after and kept?.(&1)))
     title = if b.name != item.name, do: [{:title, n, item.name}], else: []
-    blocks = for k <- now_after -- b.after, r = issue_at(m, k), do: {:block, {n, r}, k}
-    unblocks = for k <- b.after -- now_after, r = had.(k), do: {:unblock, {n, r}, k}
 
-    parent =
-      if b.parent != to,
-        do:
-          for(
-            {op, k, r} <- [
-              {:unsub, b.parent, b.parent && had.(b.parent)},
-              {:sub, to, to && issue_at(m, to)}
-            ],
-            here?(r),
-            do: {op, {r, n}, k}
-          ),
-        else: []
+    unblocks =
+      for k <- b.after -- kept, here?(was), r = had.(k), do: {:unblock, {was, r}, k}
+
+    blocks = for k <- now_after -- kept, r = issue_at(m, k), do: {:block, {n, r}, k}
+
+    {unsub, sub} =
+      if b.parent == to and (to == nil or kept?.(to)) do
+        {[], []}
+      else
+        r = b.parent && had.(b.parent)
+        s = to && issue_at(m, to)
+
+        {if(here?(was) and here?(r), do: [{:unsub, {r, was}, b.parent}], else: []),
+         if(here?(s), do: [{:sub, {s, n}, to}], else: [])}
+      end
 
     due =
       cond do
@@ -1096,12 +1108,13 @@ defmodule HalC2.PlannerPropTest do
         true -> [{:due, item.due}]
       end
 
-    title ++ blocks ++ unblocks ++ parent ++ due
+    title ++ unblocks ++ unsub ++ blocks ++ sub ++ due
   end
 
   # GitHub takes `ops` in order, of which it had `b`, until it refuses a name, a board
   # item it adds to the board `on` named after `board`: `{m with what GitHub has, %{error,
-  # b, board}}`, `b` with what took and `board` set when it added one.
+  # b, board}}`, `b` with what took and `board` set when it added one. Once a relation is
+  # made on the task's issue, GitHub has all of them there.
   defp land(m, ops, b, board, on) do
     Enum.reduce_while(ops, {m, %{error: nil, b: b, board: nil}}, fn op, {m, took} ->
       case op do
@@ -1111,8 +1124,14 @@ defmodule HalC2.PlannerPropTest do
             _ -> {:cont, {put_in(m.github[n], name), put_in(took.b.name, name)}}
           end
 
-        {:block, {_, r} = pair, k} ->
-          b = %{took.b | after: took.b.after ++ [k], refs: Map.put(took.b.refs, k, r)}
+        {:block, {n, r} = pair, k} ->
+          b = %{
+            took.b
+            | after: Enum.uniq(took.b.after ++ [k]),
+              refs: Map.put(took.b.refs, k, r),
+              issue: n
+          }
+
           {:cont, {%{m | rel: MapSet.put(m.rel, {:blocked, pair})}, %{took | b: b}}}
 
         {:unblock, pair, k} ->
@@ -1122,8 +1141,8 @@ defmodule HalC2.PlannerPropTest do
         {:unsub, pair, _k} ->
           {:cont, {%{m | rel: MapSet.delete(m.rel, {:sub, pair})}, put_in(took.b.parent, nil)}}
 
-        {:sub, {r, _} = pair, k} ->
-          b = %{took.b | parent: k, refs: Map.put(took.b.refs, k, r)}
+        {:sub, {r, n} = pair, k} ->
+          b = %{took.b | parent: k, refs: Map.put(took.b.refs, k, r), issue: n}
           {:cont, {%{m | rel: MapSet.put(m.rel, {:sub, pair})}, %{took | b: b}}}
 
         {:board, n} ->
