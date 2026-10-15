@@ -251,8 +251,8 @@ defmodule HalC2Plugins.Planner.Sync do
     linked =
       items
       |> Enum.flat_map(fn {_, item} -> item["pullRequests"] || [] end)
-      |> Enum.uniq_by(&key/1)
       |> Enum.reject(&(&1["state"] == "merged"))
+      |> Enum.uniq_by(&key/1)
 
     {listed, alone} = Enum.split_with(linked, &project_of(github, &1["repository"]))
 

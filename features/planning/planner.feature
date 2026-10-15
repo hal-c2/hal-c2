@@ -656,6 +656,15 @@ Feature: Planner
       And the plugin did not list "acme/api"'s pull requests again
 
     @mc
+    Scenario: A pull request one task saw merge still moves another task linked to it later
+      Given "API" is linked to #12 of "acme/api"
+      And #12 is merged
+      And the plugin looks at GitHub
+      When "Docs" is linked to the merged #12 of "acme/api"
+      And the plugin looks at GitHub
+      Then "Docs" is done
+
+    @mc
     Scenario: A pull request linked from a repository no project checks out still moves its task when it merges
       Given "API" is linked to #12 of "acme/web"
       When #12 of "acme/web" is merged

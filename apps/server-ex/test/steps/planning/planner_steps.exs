@@ -1232,6 +1232,13 @@ defmodule HalC2.Steps.Planning.Planner do
     |> merge(merged)
   end
 
+  # The plugin reads tasks in id order; one read after a task that saw the merge
+  # is the one whose open copy of the pull request was dropped.
+  step "{string} is linked to the merged \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    context |> add_last(title) |> link_prs(title, repository, [number]) |> merge(number)
+  end
+
   step "\#{int} is merged", %{args: [number]} = context do
     merge(context, number)
   end
@@ -3079,6 +3086,20 @@ defmodule HalC2.Steps.Planning.Planner do
       nil -> add!(context, Map.merge(sample(context, title), fields))
       _ when fields == %{} -> context
       _ -> update!(context, title, fields)
+    end
+  end
+
+  # Adds `title` again until its random id sorts after every other task's.
+  defp add_last(context, title) do
+    context = ensure(context, title)
+    %{"id" => id} = item!(context, title)
+
+    if Enum.any?(plan!(context)["items"], &(&1["id"] > id)) do
+      {reply, context} = plugin(context, "removeItem", %{"id" => id})
+      assert {:ok, _} = reply
+      add_last(context, title)
+    else
+      context
     end
   end
 
