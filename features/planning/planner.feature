@@ -853,6 +853,23 @@ Feature: Planner
       Then GitHub is asked to add #7 to "acme/4" and set its "Target date" to "2026-11-09"
 
     @mc
+    Scenario: An issue taken off the board is added back before its dates are set
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/3" holds #5 and not #7
+      When the plugin looks at GitHub
+      And the user moves #7's task to end on "2026-11-09"
+      Then GitHub is asked to add #7 to "acme/3" and set its "Target date" to "2026-11-09"
+
+    # Part of a board says nothing of the issues on the rest of it.
+    @mc
+    Scenario: An issue past the part of the board that was read keeps its place on it
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/3" has more items than the plugin reads, and #7 is past them
+      When the plugin looks at GitHub
+      And the user moves #7's task to end on "2026-11-09"
+      Then GitHub is asked to set "Target date" of #7 on "acme/3" to "2026-11-09"
+
+    @mc
     Scenario: A task relinked to another issue is added to the board before its dates are set
       Given "planner" syncs "acme/api" both ways with the board "acme/3"
       When the user relinks #7's task to #8

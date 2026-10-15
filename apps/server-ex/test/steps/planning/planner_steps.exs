@@ -1647,6 +1647,17 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  # Every page is full and says another follows, and none holds `number`.
+  step "the board {string} has more items than the plugin reads, and \#{int} is past them",
+       %{args: [board, number]} = context do
+    items =
+      for n <- 1001..1100,
+          n != number,
+          do: %{"number" => n, "repository" => context.repository, "fields" => %{}}
+
+    GitHubIssues.board(context, board, ["Start date", "Target date"], items, true)
+  end
+
   step "{string} switches to the board {string}", %{args: [@id, board]} = context do
     save(context, %{"board" => board})
   end

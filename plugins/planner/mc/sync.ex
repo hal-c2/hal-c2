@@ -156,7 +156,8 @@ defmodule HalC2Plugins.Planner.Sync do
               do: ["#{settings["board"]}: only its first 500 items were read."],
               else: []
 
-          problem(%{found | board: board}, cut)
+          # Only a complete read says an issue missing from it left the board.
+          problem(%{found | board: {board, read["truncated"] != true}}, cut)
 
         {:error, error} ->
           problem(found, ["#{settings["board"]}: #{message(error)}"])
@@ -552,9 +553,13 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp dates(items, nil, _now), do: items
 
-  defp dates(items, board, now) do
+  defp dates(items, {board, complete?}, now) do
     Enum.reduce(items, items, fn {id, item}, items ->
       case item["issue"] && board[key(item["issue"])] do
+        # Taken off the board: the next date pushed adds it back.
+        nil when complete? ->
+          Map.update!(items, id, &Map.replace(&1, "boardItemId", nil))
+
         nil ->
           items
 
