@@ -242,7 +242,7 @@ defmodule HalC2Plugins.Planner do
   def call("createIssue", %{"itemId" => id, "repository" => repository}, context) do
     with {:ok, item} <- server({:item, id}),
          {:ok, issue} <- Sync.create_issue(item, repository),
-         do: change({:link, id, %{"issue" => issue}}, context.settings)
+         do: change({:created, id, issue}, context.settings)
   end
 
   def call("link", %{"itemId" => id} = input, context) do
@@ -996,6 +996,20 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
+  # A task linked to the issue just made of it, which GitHub relates to nothing yet: it
+  # and the tasks tied to it push their relations (`Sync.created/2`).
+  def handle_call({:created, id, issue}, caller, state) do
+    case state.items[id] do
+      nil ->
+        {:reply, {:error, "There is no task #{id}."}, state}
+
+      item ->
+        item = Plan.link(item, %{"issue" => issue}, now())
+        items = Map.put(state.items, id, item)
+        edit(state, items, %{"item" => item}, caller, Sync.created(state.items, id))
+    end
+  end
+
   def handle_call({:unlink, id, kind, ref}, caller, state) do
     item = state.items[id]
 
@@ -1604,9 +1618,9 @@ defmodule HalC2Plugins.Planner do
   # --- state ----------------------------------------------------------------------------
 
   # A change to items by the caller `from`, answered with what it pushes to GitHub for
-  # the tasks it changed.
-  defp edit(state, items, reply, from) do
-    {pushes, state} = pushes(state, state.items, items, from)
+  # the tasks it changed from `before`, the plan unless GitHub has less of it.
+  defp edit(state, items, reply, from, before \\ nil) do
+    {pushes, state} = pushes(state, before || state.items, items, from)
     {:reply, {:ok, reply, %{pushes: pushes}}, changed(state)}
   end
 

@@ -153,6 +153,10 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :reply, reply)
   end
 
+  step "the user puts {string} under {string}", %{args: [title, parent]} = context do
+    update!(context, title, %{"parent" => item!(context, parent)["id"]})
+  end
+
   step "{string} is marked as starting before {string} ends", %{args: [title, other]} = context do
     assert item!(context, other)["id"] in item!(context, title)["early"]
     context
@@ -1387,6 +1391,18 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  # The issue moved comes first in the list, so the look takes it while its new parent is
+  # still under it.
+  step "\#{int} is moved on GitHub under \#{int}, which leaves it",
+       %{args: [number, sub]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"parent" => sub}),
+      GitHubIssues.issue(repository, sub, %{"subIssues" => [number]})
+    ])
+  end
+
   step "the tasks of \#{int} and \#{int} were imported, neither a subtask of the other",
        %{args: numbers} = context do
     repository = context.repository
@@ -2410,6 +2426,37 @@ defmodule HalC2.Steps.Planning.Planner do
 
     assert {:ok, _} = reply
     context
+  end
+
+  # GitHub lists #7 and the issue it made, #13, with the relations between them it was
+  # asked to add.
+  step "the plugin looks at GitHub, which has taken what it was asked", context do
+    repository = context.repository
+    [%{"title" => title}] = GitHubIssues.rest_calls(context, "POST", "/issues")
+    number = fn "I_" <> n -> String.to_integer(n) end
+
+    asked = fn mutation ->
+      for %{"issue" => issue, "other" => other} <- GitHubIssues.graphql_calls(context, mutation),
+          do: {number.(issue), number.(other)}
+    end
+
+    blocked = asked.("addBlockedBy(input")
+    subs = asked.("addSubIssue(input")
+
+    issue = fn n, fields ->
+      parent = Enum.find_value(subs, fn {parent, sub} -> if sub == n, do: parent end)
+      fields = Map.merge(fields, %{"blockedBy" => for({^n, b} <- blocked, do: b)})
+
+      GitHubIssues.issue(
+        repository,
+        n,
+        if(parent, do: Map.put(fields, "parent", parent), else: fields)
+      )
+    end
+
+    context
+    |> GitHubIssues.answers(repository, [issue.(7, %{}), issue.(13, %{"title" => title})])
+    |> sync!()
   end
 
   step "{string} is linked to the new issue", %{args: [title]} = context do

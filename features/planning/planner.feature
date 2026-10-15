@@ -713,6 +713,14 @@ Feature: Planner
       Then #9's task is a subtask of #7's, and #7's task is not a subtask
 
     @mc
+    Scenario: A parent and sub-issue swapped on GitHub swap in the plan in one look
+      Given "planner" follows the issues of "acme/api"
+      And #9's task was imported as a subtask of #7's
+      When #7 is moved on GitHub under #9, which leaves it
+      And the plugin looks at GitHub
+      Then #7's task is a subtask of #9's, and #9's task is not a subtask
+
+    @mc
     Scenario: An issue moved out of a milestone on GitHub stops holding it up
       Given "planner" follows the issues of "acme/api"
       And the tasks of #7 and #8 were imported in the milestone "Beta"
@@ -1152,6 +1160,23 @@ Feature: Planner
       Given the plan has "Docs" in "api" labelled "docs"
       When the user creates an issue for "Docs" in "acme/api"
       Then GitHub is asked to create the issue "Docs" labelled "docs"
+
+    # GitHub relates a new issue to no other, so the plugin asks it to.
+    @mc
+    Scenario Outline: A task given an issue keeps the tasks it is tied to
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api"
+      And the user <ties>
+      When the user creates an issue for "Docs" in "acme/api"
+      And the plugin looks at GitHub, which has taken what it was asked
+      Then <tied>
+
+      Examples:
+        | ties                            | tied                             |
+        | makes "Docs" wait for "Issue 7" | "Docs" still waits for "Issue 7" |
+        | makes "Issue 7" wait for "Docs" | "Issue 7" still waits for "Docs" |
+        | puts "Docs" under "Issue 7"     | "Docs" is a subtask of "Issue 7" |
+        | puts "Issue 7" under "Docs"     | "Issue 7" is a subtask of "Docs" |
 
     @mc
     Scenario: A repository with no project on the MC is reported

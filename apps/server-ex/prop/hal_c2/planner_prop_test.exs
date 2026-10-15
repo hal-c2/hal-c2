@@ -20,21 +20,23 @@ defmodule HalC2.PlannerPropTest do
   health, a link to two things at once), end turns, retry, dismiss, apply and discard
   runs, look at GitHub, and restart the plugin, which looks too. The plugin keeps
   `@kept_runs` finished runs. Any of the tasks is linked to an issue of a repository the
-  plan syncs both ways, with a board, relinked to another issue, of that repository or
-  of one no project on the MC has, which is pushed nothing, and unlinked again, by a
-  client that may still show the issue it had before; a client moves one's due date,
-  which goes to GitHub at once when nothing of the task is on the way, and renaming one
-  also moves its due date, pushing both to GitHub from a caller of its own, and
-  renaming it again before GitHub answers pushes nothing until it does. GitHub takes or
+  plan syncs both ways, with a board, or has one made for it there, which GitHub relates
+  to nothing, is relinked to another issue, of that repository or of one no project on
+  the MC has, which is pushed nothing, and unlinked again, by a client that may still
+  show the issue it had before; a client moves one's due date, which goes to GitHub at
+  once when nothing of the task is on the way, and renaming one also moves its due
+  date, pushing both to GitHub from a caller of its own, and renaming it again before
+  GitHub answers pushes nothing until it does. GitHub takes or
   refuses a name, and answers the pushes held in any order. A push for a task not yet on
   the board adds it there, and GitHub names the board item after the push. Someone takes
   a linked task's issue off the board, and the board grows past what a look reads whole
   and shrinks back. GitHub closes an issue of that repository as completed or not
   planned, and reopens it. Someone on GitHub makes a linked task's issue a sub-issue of
-  another, one a task has or one none has, or of none, and a client nests a task while a
-  look at GitHub is on its way, holding GitHub's list as it was before the nest. Work on
-  a task starts on a project the MC does not have, or on one whose worktree setup is not
-  running so the launch exits, and its thread never launches. After every step:
+  another, one a task has or one none has, or of none, or puts an issue under its own
+  sub-issue, which takes its place, and a client nests a task while a look at GitHub is
+  on its way, holding GitHub's list as it was before the nest. Work on a task starts on
+  a project the MC does not have, or on one whose worktree setup is not running so the
+  launch exits, and its thread never launches. After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
     up to its parent and nothing waits for it any more;
@@ -70,12 +72,14 @@ defmodule HalC2.PlannerPropTest do
     a task waiting for, or a subtask of, another task with an issue is related to that
     issue on GitHub once a push takes, and the relation goes with the next push of the
     task that no longer has it, even when the other task was removed or relinked since;
+    an issue made for a task is related to the issues of the tasks it is tied to at once;
   - a look at GitHub brings a linked task's name up to date, drops the relations to
     tasks with issues GitHub does not list, makes it the subtask of the task whose issue
     GitHub names as its open issue's parent, and of none when GitHub names an issue no
-    task has, unless that would make it its own ancestor, and moves its state when its
-    issue's moved since the plugin last read it: closed as not planned, the task is
-    dropped, closed otherwise, done, and reopened, a task done or dropped is to do again;
+    task has, unless that would make it its own ancestor once the others took theirs,
+    and moves its state when its issue's moved since the plugin last read it: closed as
+    not planned, the task is dropped, closed otherwise, done, and reopened, a task done
+    or dropped is to do again;
     a reason changed on a closed issue counts as a move, a reason on an open one does
     not; none of it when GitHub refused its last change, a push to it is on the way, or
     it changed while the look was on its way;
@@ -342,6 +346,35 @@ defmodule HalC2.PlannerPropTest do
       end
 
     looking = if m.parents == %{}, do: 1, else: 16
+    # An issue made for a task, which GitHub relates to nothing, matters once the task is
+    # tied to others; GitHub never makes a closed one.
+    fresh = for slot <- unlinked, not Map.has_key?(m.closed, @issues[slot]), do: slot
+
+    tied =
+      for slot <- fresh,
+          Enum.any?(linked, fn other ->
+            item = m.items[other]
+
+            item.parent == slot or slot in item.after or m.items[slot].parent == other or
+              other in m.items[slot].after
+          end),
+          do: slot
+
+    # And GitHub putting a parent under its own sub-issue, which takes the parent's place,
+    # as GitHub or the plan has them.
+    swaps =
+      for {sub, parent} <-
+            Enum.uniq(
+              for({sub, parent} <- m.parents, slot_of(m, parent), do: {sub, parent}) ++
+                for(
+                  slot <- pushed,
+                  parent = m.items[slot].parent,
+                  parent in pushed,
+                  do: {issue_of(m, slot), issue_of(m, parent)}
+                )
+            ),
+          do: {:call, __MODULE__, :swap, [sub, parent]}
+
     # Most of all a nest that goes against GitHub: the task of an issue GitHub has another
     # under goes under the other's task.
     against =
@@ -378,6 +411,9 @@ defmodule HalC2.PlannerPropTest do
      ] ++
        if(onboard == [], do: [], else: [{16, {:call, __MODULE__, :unboard, [elements(onboard)]}}]) ++
        if(unlinked == [], do: [], else: [{8, {:call, __MODULE__, :link, [elements(unlinked)]}}]) ++
+       if(fresh == [], do: [], else: [{2, {:call, __MODULE__, :create, [elements(fresh)]}}]) ++
+       if(tied == [], do: [], else: [{24, {:call, __MODULE__, :create, [elements(tied)]}}]) ++
+       if(swaps == [], do: [], else: [{16, oneof(swaps)}]) ++
        if(related == [], do: [], else: [{6, {:call, __MODULE__, :remove, [elements(related)]}}]) ++
        if(linked == [],
          do: [],
@@ -477,6 +513,16 @@ defmodule HalC2.PlannerPropTest do
   # GitHub refuses a sub-issue under its own sub-issue.
   def precondition(m, {:call, _, :adopt, [number, parent]}),
     do: here?(number) and number not in issue_ancestors(m.parents, parent)
+
+  def precondition(m, {:call, _, :swap, [sub, parent]}),
+    do:
+      here?(sub) and here?(parent) and sub != parent and
+        sub not in issue_ancestors(m.parents, parent)
+
+  def precondition(m, {:call, _, :create, [slot]}),
+    do:
+      Map.has_key?(m.items, slot) and m.items[slot].issue == nil and
+        not Map.has_key?(m.closed, @issues[slot])
 
   def precondition(m, {:call, _, :run, [_action, slot]}),
     do: slot == nil or Map.has_key?(m.items, slot)
@@ -673,6 +719,25 @@ defmodule HalC2.PlannerPropTest do
     {m |> put_in([:items, slot], item) |> changed(slot, m), :ok}
   end
 
+  # An issue made for the task, which GitHub relates to nothing: the task pushes its
+  # relations to tasks with an issue, and the tasks waiting for it or under it, and the
+  # milestones it holds up, push theirs to it.
+  defp step(m, {:call, _, :create, [slot]}) do
+    unrelated =
+      Map.new(m.items, fn
+        {^slot, item} ->
+          {slot, %{item | after: [], parent: nil}}
+
+        {other, item} ->
+          parent = if item.parent == slot, do: nil, else: item.parent
+          {other, %{item | after: List.delete(item.after, slot), parent: parent}}
+      end)
+
+    m = put_in(m.items[slot], %{m.items[slot] | issue: @issues[slot], state: :open})
+    tied = for {other, item} <- m.items, item != unrelated[other], do: other
+    {Enum.reduce(tied, m, &changed(&2, &1, %{m | items: unrelated})), :ok}
+  end
+
   # The board item, sync error and what GitHub has of the issue before stay with it, and
   # the push to it on the way speaks for nobody, whether or not the relink pushes
   # anything itself. GitHub is taken to have of the new issue what the task had, so a
@@ -772,6 +837,11 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :adopt, [number, parent]}),
     do: {put_in(m.parents[number], parent), :ok}
+
+  # GitHub puts `parent` under `sub`, and `sub` where `parent` was; the plan hears of it
+  # at the next look.
+  defp step(m, {:call, _, :swap, [sub, parent]}),
+    do: {%{m | parents: swapped(m.parents, sub, parent)}, :ok}
 
   # GitHub moves an issue; the plan hears of it at the next look.
   defp step(m, {:call, _, :close, [number, reason]}),
@@ -965,7 +1035,8 @@ defmodule HalC2.PlannerPropTest do
   defp baseline(m, slot), do: m.synced[slot] || own(m, slot)
 
   # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, the tasks
-  # it waits for and its parent (`{slot, gen}`), and the issues those had then (`refs`).
+  # it waits for and its parent (`{slot, gen}`), of those with an issue, all GitHub can
+  # have, and the issues those had then (`refs`).
   defp own(m, slot) do
     item = m.items[slot]
     after_keys = Enum.map(item.after, &key(m, &1))
@@ -974,7 +1045,13 @@ defmodule HalC2.PlannerPropTest do
     refs =
       for k <- [parent | after_keys], k != nil, r = issue_at(m, k), into: %{}, do: {k, r}
 
-    %{name: item.name, due: item.due, after: after_keys, parent: parent, refs: refs}
+    %{
+      name: item.name,
+      due: item.due,
+      after: Enum.filter(after_keys, &is_map_key(refs, &1)),
+      parent: if(is_map_key(refs, parent), do: parent),
+      refs: refs
+    }
   end
 
   defp key(_m, nil), do: nil
@@ -1120,14 +1197,27 @@ defmodule HalC2.PlannerPropTest do
         %{put_in(acc.items[slot], item) | synced: Map.delete(acc.synced, slot)}
       end)
 
-    synced
-    |> Enum.sort_by(&{Map.has_key?(m.closed, m.items[&1].issue), &1})
-    |> Enum.reduce(m, &relate(&2, &1))
+    relations(m, Enum.sort_by(synced, &{Map.has_key?(m.closed, m.items[&1].issue), &1}))
+  end
+
+  # The tasks in `slots` take their relations in order, and the ones refused go again
+  # once the others are in, while any more of them take, so a parent GitHub put under its
+  # sub-issue goes under it whichever GitHub lists first.
+  defp relations(m, slots) do
+    {m, refused} =
+      Enum.reduce(slots, {m, []}, fn slot, {m, refused} ->
+        case relate(m, slot) do
+          :refused -> {m, refused ++ [slot]}
+          m -> {m, refused}
+        end
+      end)
+
+    if refused != [] and length(refused) < length(slots), do: relations(m, refused), else: m
   end
 
   # The task in `slot` waits for no task with an issue and is the subtask of the task
   # whose issue GitHub names as its open issue's parent, or else of none when its parent
-  # has an issue, unless that would make it its own ancestor, when neither changes.
+  # has an issue, unless that would make it its own ancestor, when it is `:refused`.
   defp relate(m, slot) do
     item = m.items[slot]
     issue? = &(&1 != nil and m.items[&1].issue != nil)
@@ -1142,7 +1232,7 @@ defmodule HalC2.PlannerPropTest do
       end
 
     if parent == slot or slot in ancestors(m.items, parent),
-      do: m,
+      do: :refused,
       else:
         put_in(m.items[slot], %{item | parent: parent, after: Enum.reject(item.after, issue?)})
   end
@@ -1403,6 +1493,39 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_parents, parents)
     listed()
     observe(:ok)
+  end
+
+  # Someone on GitHub puts `parent` under `sub`, its sub-issue there or in the plan, and
+  # `sub` where `parent` was.
+  def swap(sub, parent) do
+    Process.put(:pl_parents, swapped(Process.get(:pl_parents), sub, parent))
+    listed()
+    observe(:ok)
+  end
+
+  defp swapped(parents, sub, parent) do
+    case parents[parent] do
+      nil -> Map.delete(parents, sub)
+      grand -> Map.put(parents, sub, grand)
+    end
+    |> Map.put(parent, sub)
+  end
+
+  # GitHub makes an issue for the task in `slot`, numbered as the one it links to.
+  def create(slot) do
+    number = @issues[slot]
+
+    gh_rule(%{
+      "args" => ["--method POST", "repos/#{@repository}/issues"],
+      "stdout" => %{"number" => number}
+    })
+
+    issue_read(number)
+    input = %{"itemId" => item_id(slot), "repository" => @repository}
+    {reply, _} = call("createIssue", input)
+    if reply == :ok, do: Process.put({:pl_issue, slot}, number)
+    listed()
+    observe(reply)
   end
 
   # A client nests the task in `slot` under `parent`, or under none, once a look has read

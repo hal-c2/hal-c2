@@ -479,39 +479,53 @@ defmodule HalC2Plugins.Planner.Sync do
 
   # Sub-issues and blocking issues as subtasks and dependencies, once every issue has
   # its task. One that would make a task its own subtask or wait for itself is left out,
-  # and a `kept` task's own are left as they are.
+  # and a `kept` task's own are left as they are. One left out goes again once the others
+  # are in, so issues GitHub swapped, a parent put under its sub-issue say, swap in the
+  # plan whatever order GitHub lists them in.
   defp relations(items, issues, kept, now) do
-    Enum.reduce(issues, items, fn issue, items ->
-      with %{} = item <- linked(items, issue),
-           false <- is_map_key(kept, item["id"]),
-           nil <- item["syncError"] do
-        parent = issue["parent"] && linked(items, issue["parent"])
-
-        blockers =
-          for ref <- issue["blockedBy"] || [], blocker = linked(items, ref), do: blocker["id"]
-
-        # Dependencies on tasks with no issue are the plan's own and stay.
-        own = Enum.reject(item["after"], &get_in(items, [&1, "issue"]))
-
-        # GitHub names the parent of a task with an issue, so one it no longer names, or
-        # names an issue the plan has no task for, goes; one with no issue is the plan's.
-        parent =
-          cond do
-            parent -> parent["id"]
-            get_in(items, [item["parent"], "issue"]) -> nil
-            true -> item["parent"]
-          end
-
-        fields = %{"after" => Enum.uniq(own ++ blockers), "parent" => parent}
-
-        case Plan.update(items, item["id"], fields, now) do
-          {:ok, items, _old, _new} -> items
-          {:error, _} -> items
+    {items, refused} =
+      Enum.reduce(issues, {items, []}, fn issue, {items, refused} ->
+        case issue_relations(items, issue, kept, now) do
+          {:ok, items} -> {items, refused}
+          :error -> {items, refused ++ [issue]}
         end
-      else
-        _ -> items
+      end)
+
+    if refused != [] and length(refused) < length(issues),
+      do: relations(items, refused, kept, now),
+      else: items
+  end
+
+  defp issue_relations(items, issue, kept, now) do
+    with %{} = item <- linked(items, issue),
+         false <- is_map_key(kept, item["id"]),
+         nil <- item["syncError"] do
+      parent = issue["parent"] && linked(items, issue["parent"])
+
+      blockers =
+        for ref <- issue["blockedBy"] || [], blocker = linked(items, ref), do: blocker["id"]
+
+      # Dependencies on tasks with no issue are the plan's own and stay.
+      own = Enum.reject(item["after"], &get_in(items, [&1, "issue"]))
+
+      # GitHub names the parent of a task with an issue, so one it no longer names, or
+      # names an issue the plan has no task for, goes; one with no issue is the plan's.
+      parent =
+        cond do
+          parent -> parent["id"]
+          get_in(items, [item["parent"], "issue"]) -> nil
+          true -> item["parent"]
+        end
+
+      fields = %{"after" => Enum.uniq(own ++ blockers), "parent" => parent}
+
+      case Plan.update(items, item["id"], fields, now) do
+        {:ok, items, _old, _new} -> {:ok, items}
+        {:error, _} -> :error
       end
-    end)
+    else
+      _ -> {:ok, items}
+    end
   end
 
   # A milestone of the plan for each issue milestone, waiting for the tasks it holds.
@@ -676,7 +690,8 @@ defmodule HalC2Plugins.Planner.Sync do
   what the change itself made. Its `"state"` is the issue's: open, done or dropped,
   and its `"refs"` the issues of the tasks it waits for and of its parent in `before`,
   the plan before the change, so a relation to a task removed since is still dropped on
-  GitHub.
+  GitHub. Its relations are only those to tasks with an issue, all GitHub can have: one to
+  a task given an issue since goes with the next push.
   """
   def synced(old, new, before), do: new["synced"] || own(old, before)
 
@@ -684,7 +699,30 @@ defmodule HalC2Plugins.Planner.Sync do
     refs =
       for id <- [item["parent"] | item["after"]], r = ref(items, id), into: %{}, do: {id, r}
 
-    item |> fields() |> Map.put("refs", refs)
+    item
+    |> fields()
+    |> Map.merge(%{
+      "after" => Enum.filter(item["after"], &is_map_key(refs, &1)),
+      "parent" => if(is_map_key(refs, item["parent"]), do: item["parent"]),
+      "refs" => refs
+    })
+  end
+
+  @doc """
+  The plan as GitHub has it once it made an issue for the task `id`, which it relates to
+  no other: the plan before (`items`) with no relations between the task and another, so
+  `pushes/5` sends the task's, those of the tasks waiting for it or under it, and those
+  of the milestones it holds up.
+  """
+  def created(items, id) do
+    Map.new(items, fn
+      {^id, item} ->
+        {id, %{item | "after" => [], "parent" => nil}}
+
+      {other, item} ->
+        parent = if item["parent"] == id, do: nil, else: item["parent"]
+        {other, %{item | "after" => List.delete(item["after"], id), "parent" => parent}}
+    end)
   end
 
   defp fields(item),
