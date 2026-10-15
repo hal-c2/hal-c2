@@ -67,7 +67,14 @@ defmodule HalC2.Steps.Planning.Planner do
     actions = Map.new(@defaults, fn {id, action} -> {id, gated(action, action["prompt"])} end)
 
     context
-    |> Map.merge(%{planner: true, actions: actions, prs: %{}, newer_prs: 0, watched: %{}})
+    |> Map.merge(%{
+      planner: true,
+      actions: actions,
+      prs: %{},
+      newer_prs: 0,
+      older_prs: 0,
+      watched: %{}
+    })
     |> save(%{
       "provider" => "codex",
       "model" => "fake/one",
@@ -1232,6 +1239,17 @@ defmodule HalC2.Steps.Planning.Planner do
     pr_list(%{context | newer_prs: count})
   end
 
+  step "{string} has {int} pull requests updated before \#{int}",
+       %{args: [_repository, count, _number]} = context do
+    pr_list(%{context | older_prs: count})
+  end
+
+  step "the plugin read no page of {string}'s pull requests past \#{int}",
+       %{args: [_repository, _number]} = context do
+    assert [_first] = World.cli_calls(context, "pr list")
+    context
+  end
+
   step "the plugin looks at GitHub", context do
     {reply, context} = plugin(context, "sync", %{})
     assert {:ok, %{"items" => _}} = reply
@@ -1439,10 +1457,23 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "\#{int} is closed on GitHub", %{args: [number]} = context do
+    close_issue(context, number, "COMPLETED")
+  end
+
+  step "\#{int} is closed on GitHub as not planned", %{args: [number]} = context do
+    close_issue(context, number, "NOT_PLANNED")
+  end
+
+  step "\#{int}'s task is dropped", %{args: [number]} = context do
+    assert task_of(plan!(context), number)["status"] == "dropped"
+    context
+  end
+
+  defp close_issue(context, number, reason) do
     repository = context.repository
 
     closed =
-      GitHubIssues.issue(repository, number, %{"state" => "CLOSED", "stateReason" => "COMPLETED"})
+      GitHubIssues.issue(repository, number, %{"state" => "CLOSED", "stateReason" => reason})
 
     context
     |> GitHubIssues.answers(repository, [closed])
@@ -2708,8 +2739,9 @@ defmodule HalC2.Steps.Planning.Planner do
   defp merge(context, number), do: pr_list(put_in(context.prs[number], "MERGED"))
 
   # The fake GitHub lists the linked pull requests in the states of `context.prs`,
-  # after `context.newer_prs` more recently updated ones; a list that runs past a
-  # page carries on from the oldest instant on it.
+  # after `context.newer_prs` more recently updated ones and before
+  # `context.older_prs` older ones; a list that runs past a page carries on from the
+  # oldest instant on it.
   defp pr_list(context) do
     prs =
       for {number, state} <- Enum.sort(context.prs),
@@ -2722,7 +2754,14 @@ defmodule HalC2.Steps.Planning.Planner do
         Shared.gh_pr(context.repository, 1000 + minutes, fields)
       end
 
-    rows = newer ++ prs
+    older =
+      for minutes <- 1..context.older_prs//1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], -minutes, :minute)
+
+        Shared.gh_pr(context.repository, 2000 + minutes, %{"updatedAt" => DateTime.to_iso8601(at)})
+      end
+
+    rows = newer ++ prs ++ older
     first = %{"args" => ["pr list"], "stdout" => Enum.take(rows, 501)}
 
     case Enum.at(rows, 499) do

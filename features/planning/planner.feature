@@ -638,6 +638,15 @@ Feature: Planner
       Then "API" is done
 
     @mc
+    Scenario: Following a task's pull request reads no further than the page it is on
+      Given "API" is linked to #12 of "acme/api"
+      And "acme/api" has 500 pull requests updated before #12
+      When #12 is merged
+      And the plugin looks at GitHub
+      Then "API" is done
+      And the plugin read no page of "acme/api"'s pull requests past #12
+
+    @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
       And "acme/api" has the open issue #7 "Rate limits" assigned to "dana" with the label "backend"
@@ -719,6 +728,15 @@ Feature: Planner
       When #7 is closed on GitHub
       And the plugin looks at GitHub
       Then #7's task is done
+
+    @mc
+    Scenario: A closed issue whose reason changes on GitHub moves its task between done and dropped
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      When #7 is closed on GitHub as not planned
+      And the plugin looks at GitHub
+      Then #7's task is dropped
 
     @mc
     Scenario: An issue edited on GitHub updates its task's title and notes

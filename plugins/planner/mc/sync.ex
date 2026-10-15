@@ -243,11 +243,10 @@ defmodule HalC2Plugins.Planner.Sync do
   defp board_name(_), do: :error
 
   defp prs(found, items, github) do
-    linked =
-      for {_, item} <- items,
-          pr <- item["pullRequests"] || [],
-          uniq: true,
-          do: String.downcase(pr["repository"] || "")
+    wanted =
+      for {_, item} <- items, pr <- item["pullRequests"] || [], into: MapSet.new(), do: key(pr)
+
+    linked = for {repository, _} <- wanted, uniq: true, do: repository
 
     ids =
       for project <- github,
@@ -258,7 +257,9 @@ defmodule HalC2Plugins.Planner.Sync do
     if ids == [] do
       found
     else
-      case pr_pages(%{"projectIds" => ids, "state" => "all", "limit" => 500}, [], [], 20) do
+      input = %{"projectIds" => ids, "state" => "all", "limit" => 500}
+
+      case pr_pages(input, wanted, [], [], 20) do
         {:ok, entries, errors} ->
           prs = for entry <- entries, into: %{}, do: {key(entry), entry["state"]}
           problem(%{found | prs: prs}, errors)
@@ -269,17 +270,23 @@ defmodule HalC2Plugins.Planner.Sync do
     end
   end
 
-  # Every page of the repositories' pull requests, carrying each repository on from
-  # where its last page stopped; a page that cannot be carried on from is the last.
-  defp pr_pages(input, entries, errors, pages) do
+  # The repositories' pull requests, page by page until every one `wanted` is read,
+  # carrying each repository on from where its last page stopped; a page that cannot be
+  # carried on from is the last.
+  defp pr_pages(input, wanted, entries, errors, pages) do
     with {:ok, list} <- Host.pull_requests(@id, "list", input) do
-      entries = entries ++ (list["entries"] || [])
+      page = list["entries"] || []
+      entries = entries ++ page
       errors = errors ++ Enum.map(list["errors"] || [], & &1["message"])
       next = list["nextCursors"] || %{}
+      wanted = MapSet.difference(wanted, MapSet.new(page, &key/1))
 
       cond do
+        MapSet.size(wanted) == 0 ->
+          {:ok, entries, errors}
+
         next != %{} and pages > 1 ->
-          pr_pages(Map.put(input, "cursors", next), entries, errors, pages - 1)
+          pr_pages(Map.put(input, "cursors", next), wanted, entries, errors, pages - 1)
 
         list["truncated"] ->
           {:ok, entries, errors ++ ["Not every pull request could be read."]}
@@ -357,11 +364,17 @@ defmodule HalC2Plugins.Planner.Sync do
         Map.put(items, item["id"], prs_of(item, issue, now))
 
       item ->
-        was = item["issue"]["state"]
+        # A closed issue's reason says done or dropped, so it counts as its state.
+        # A closed issue's reason, done or dropped, counts as part of its state.
+        was = item["issue"]
+
+        unchanged =
+          issue["state"] == was["state"] and
+            (issue["state"] != "closed" or issue["stateReason"] == was["stateReason"])
 
         status =
           cond do
-            issue["state"] == was ->
+            unchanged ->
               %{}
 
             issue["state"] == "closed" and issue["stateReason"] == "not_planned" ->
