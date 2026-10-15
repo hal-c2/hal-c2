@@ -122,6 +122,28 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   end
 
   @doc """
+  GitHub listing `issues` (see `answers/4`) from now on, leaving how it answers changes
+  as it was.
+  """
+  def lists(context, repository, issues) do
+    World.cli_rules(context, [
+      graphql(["issues(first: $first"], %{
+        "repository" => %{
+          "issues" => %{
+            "pageInfo" => %{"hasNextPage" => false, "endCursor" => false},
+            "nodes" => issues
+          }
+        }
+      })
+      | for issue <- issues do
+          graphql(["{ ...IssueFields", ~s("number":#{issue["number"]})], %{
+            "repository" => %{"issue" => issue}
+          })
+        end
+    ])
+  end
+
+  @doc """
   The board `owner/number` with `fields` (names; "Status" is a single select with
   "Todo", "Doing" and "Done", a name ending in "date" a date, anything else text)
   and `items` (`%{"number", "repository", "fields" => %{name => value}}`). With

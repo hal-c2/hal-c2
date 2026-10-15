@@ -325,7 +325,7 @@ defmodule HalC2Plugins.Planner.Sync do
           end)
         )
         |> relations(issues, now)
-        |> milestones(issues, projects, now, new_id)
+        |> milestones(issues, found.items, settings, projects, now, new_id)
         |> dates(found.board, now)
       else
         items
@@ -480,19 +480,29 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # A milestone of the plan for each issue milestone, waiting for the tasks it holds.
-  # A task whose listed issue left the milestone stops holding it up.
-  defp milestones(items, issues, projects, now, new_id) do
+  # A task whose listed issue left the milestone stops holding it up. Each task's issue
+  # keeps the number of the milestone GitHub has it in (`issue["milestone"]`): when the
+  # plan syncs both ways, a task whose issue GitHub has where it had it when the plan
+  # was read (`read`) stays where the user put it, its move on the way to GitHub or
+  # refused, so only the tasks whose issues GitHub moved since change milestone.
+  defp milestones(items, issues, read, settings, projects, now, new_id) do
     listed =
       Map.new(issues, fn issue ->
         {key(issue),
          issue["milestone"] && Map.put(issue["milestone"], "repository", issue["repository"])}
       end)
 
+    moved? = fn id, number ->
+      settings["sync"] != "twoWay" or
+        Map.get(get_in(read, [id, "issue"]) || %{}, "milestone", :none) != number
+    end
+
     left? = fn milestone, id ->
       issue = get_in(items, [id, "issue"])
 
       issue != nil and Map.has_key?(listed, key(issue)) and
-        not Plan.same_ref?(listed[key(issue)], milestone)
+        not Plan.same_ref?(listed[key(issue)], milestone) and
+        moved?.(id, listed[key(issue)]["number"])
     end
 
     # Every imported milestone, holding a listed issue or no longer, lets go first.
@@ -514,7 +524,7 @@ defmodule HalC2Plugins.Planner.Sync do
     |> Enum.group_by(&{String.downcase(&1["repository"]), &1["milestone"]["number"]})
     |> Enum.reduce(items, fn {_, [first | _] = held}, items ->
       ref = Map.put(first["milestone"], "repository", first["repository"])
-      tasks = for issue <- held, task = linked(items, issue), do: task["id"]
+      tasks = for issue <- held, task = linked(items, issue), do: task
 
       case Enum.find_value(items, fn {_, item} ->
              if Plan.same_ref?(item["milestone"], ref), do: item
@@ -526,7 +536,7 @@ defmodule HalC2Plugins.Planner.Sync do
             "kind" => "milestone",
             "title" => ref["title"],
             "due" => ref["dueOn"],
-            "after" => tasks,
+            "after" => Enum.map(tasks, & &1["id"]),
             "projectId" => project && project["id"]
           }
 
@@ -539,10 +549,12 @@ defmodule HalC2Plugins.Planner.Sync do
           items
 
         milestone ->
+          moved = for task <- tasks, moved?.(task["id"], ref["number"]), do: task["id"]
+
           fields = %{
             "title" => ref["title"],
             "due" => ref["dueOn"],
-            "after" => Enum.uniq(milestone["after"] ++ tasks)
+            "after" => Enum.uniq(milestone["after"] ++ moved)
           }
 
           case Plan.update(items, milestone["id"], fields, now) do
@@ -551,6 +563,20 @@ defmodule HalC2Plugins.Planner.Sync do
           end
       end
     end)
+    |> then(
+      &Enum.reduce(issues, &1, fn issue, items ->
+        case linked(items, issue) do
+          nil ->
+            items
+
+          task ->
+            put_in(
+              items[task["id"]]["issue"]["milestone"],
+              get_in(issue, ["milestone", "number"])
+            )
+        end
+      end)
+    )
   end
 
   defp dates(items, nil, _now), do: items
@@ -805,18 +831,38 @@ defmodule HalC2Plugins.Planner.Sync do
 
   # The tasks a milestone of GitHub's gained move their issues to it, and those it lost
   # leave it, unless another milestone of the repository holds them: a task moved from
-  # one milestone to another is asked of GitHub once, by the one it moved to. Only an
-  # issue of the milestone's repository can be in it.
+  # one milestone to another is asked of GitHub once, by the one it moved to. GitHub
+  # takes other milestones' moves while one waits on its push, and the one a task moved
+  # to can lose it before it asks, so where GitHub has each issue (`issue["milestone"]`)
+  # counts too: a task the milestone holds whose issue GitHub has elsewhere moves to it,
+  # and one no milestone holds whose issue GitHub has in one of the plan's leaves it.
+  # Only an issue of the milestone's repository can be in it.
   defp held_pushes(%{"milestone" => ref} = new, synced, items, projects) do
     holds? = &(holders(items, ref["repository"], &1, new["id"]) != [])
 
+    elsewhere? =
+      &(Map.get(items[&1]["issue"] || %{}, "milestone", ref["number"]) != ref["number"])
+
+    planned =
+      for {_, %{"milestone" => %{} = other}} <- items,
+          same?(other["repository"], ref["repository"]),
+          do: other["number"]
+
+    left =
+      for {id, %{"issue" => %{"milestone" => number} = issue}} <- items,
+          number in planned,
+          same?(issue["repository"], ref["repository"]),
+          holders(items, ref["repository"], id) == [],
+          do: id
+
     moves =
       for(
-        id <- new["after"] -- synced["after"],
+        id <-
+          Enum.uniq((new["after"] -- synced["after"]) ++ Enum.filter(new["after"], elsewhere?)),
         issue = ref(items, id),
         do: {id, issue, ref["number"], &relate(&1, "after", id, issue)}
       ) ++
-        for id <- synced["after"] -- new["after"],
+        for id <- Enum.uniq((synced["after"] -- new["after"]) ++ left),
             not holds?.(id),
             issue = had(synced, items, id),
             do: {id, issue, nil, &unrelate(&1, "after", id)}
@@ -870,6 +916,19 @@ defmodule HalC2Plugins.Planner.Sync do
         do:
           {"update", Map.merge(issue, %{"projectId" => project, "milestone" => List.first(held)}),
            &unrelate(&1, "after", task["id"])}
+  end
+
+  @doc """
+  `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on
+  their tasks' issues as a look reads them.
+  """
+  def landed(items, moved) do
+    Enum.reduce(moved, items, fn move, items ->
+      case linked(items, move) do
+        nil -> items
+        task -> put_in(items[task["id"]]["issue"]["milestone"], move["milestone"])
+      end
+    end)
   end
 
   defp state("done"), do: %{"state" => "closed", "stateReason" => "completed"}

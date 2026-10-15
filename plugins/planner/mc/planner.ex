@@ -942,12 +942,14 @@ defmodule HalC2Plugins.Planner do
   # when the task changed while GitHub had this one; a refusal of a task that did not
   # change stands until its next change, unless the push moved an issue to a milestone
   # the plan has moved it on from, which the next push sets right (`Sync.reasserts/4`)
-  # with what was refused. A push for an issue the task was unlinked or relinked from
+  # with what was refused. The tasks of the issues it moved keep where GitHub took them
+  # (`Sync.landed/2`). A push for an issue the task was unlinked or relinked from
   # since, or for a task removed since, says nothing; the next look reads the board again.
   def handle_call({:pushed, id, token, error, extra}, _from, state) do
     case state.pushing[id] do
       {^token, changed?} ->
         {moved, extra} = Map.pop(extra, "moved", [])
+        state = %{state | items: Sync.landed(state.items, moved)}
         item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
         stale? = Sync.reasserts(moved, [], state.items, state.projects) != []
 

@@ -10,13 +10,18 @@ defmodule HalC2.PlannerMilestonesPropTest do
   client moves the tasks of the first two issues from one milestone to another, into
   one when the task is in none and out of the one it is in, each move from a caller of
   its own, as another window's would, so it can wait on GitHub while the case goes on.
-  GitHub answers the moves it holds one at a time. After every step the plan has each
-  task in the milestone it was moved to last, and once GitHub has answered everything:
+  GitHub answers the moves it holds one at a time, and now and then refuses one, and the
+  plugin now and then looks at GitHub, which lists each issue in the milestone it took
+  for it last. After every step, a look's included, the plan has each task in the
+  milestone it was moved to last, and once GitHub has answered everything:
 
   - GitHub has each issue in the milestone its task is in, or in none, the move it took
     last being the one the plan kept, whichever order it took them in;
   - the moves end: GitHub is not asked to move issues for ever;
   - no milestone or task is marked as not synced or waiting on GitHub.
+
+  A refusal stands until the item's next change, so once GitHub has refused a move it
+  may end with an issue elsewhere than its task, but never without a mark saying so.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -100,6 +105,8 @@ defmodule HalC2.PlannerMilestonesPropTest do
          {:call, __MODULE__, :move, [n, m.at[n], to]}
        end},
       {4, {:call, __MODULE__, :answer, [integer(0, 3)]}},
+      {1, {:call, __MODULE__, :refuse, [integer(0, 3)]}},
+      {1, {:call, __MODULE__, :look, []}},
       {1, {:call, __MODULE__, :settle, []}}
     ])
   end
@@ -113,8 +120,11 @@ defmodule HalC2.PlannerMilestonesPropTest do
   def postcondition(m, {:call, _, :settle, []} = call, observed) do
     at = next_state(m, observed, call).at
 
-    observed.problems == [] and observed.at == at and observed.github == at and
-      observed.marked == []
+    observed.problems == [] and observed.at == at and
+      if(observed.refused,
+        do: observed.github == at or observed.marked != [],
+        else: observed.github == at and observed.marked == []
+      )
   end
 
   def postcondition(m, call, observed),
@@ -158,7 +168,12 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
   # GitHub answers the `k`th move it holds, counting round, if it holds any, and returns
   # once it holds the next move or the caller of the one it answered is done.
-  def answer(k) do
+  def answer(k), do: answer(k, "go")
+
+  # GitHub refuses the `k`th move it holds, as `answer/1` takes it.
+  def refuse(k), do: answer(k, "no")
+
+  defp answer(k, word) do
     case Process.get(:pl_held) do
       [] ->
         :ok
@@ -166,10 +181,19 @@ defmodule HalC2.PlannerMilestonesPropTest do
       held ->
         gate = Enum.at(held, rem(k, length(held)))
         Process.put(:pl_held, List.delete(held, gate))
-        File.write!(gate, "go\n", [:raw])
+        if word == "no", do: Process.put(:pl_refused, true)
+        File.write!(gate, word <> "\n", [:raw])
         await_github()
     end
 
+    observe()
+  end
+
+  # The plugin looks at GitHub, which lists each issue in the milestone it took for it
+  # last, and returns once the look is applied. The moves GitHub holds wait on.
+  def look do
+    rules(github())
+    {:ok, _} = call("sync", %{})
     observe()
   end
 
@@ -266,6 +290,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
       at: at,
       github: github(),
       marked: marked,
+      refused: Process.get(:pl_refused),
       problems: Process.put(:pl_problems, []) |> Enum.reverse()
     }
   end
@@ -359,7 +384,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     # GitHub tells the case of each move it holds by a line on the fifo `held`, naming a
     # fifo of the move's own that it waits on until the case writes to it, then writes
-    # the move down in `taken`. The reader, whose lines come to the case as messages,
+    # the move down in `taken`, or fails when the case wrote "no". The reader, whose lines come to the case as messages,
     # keeps `held` open for writing too, so it never sees its end, and stops at "stop".
     notify = Path.join(gh, "held")
     {_, 0} = System.cmd("mkfifo", [notify])
@@ -373,51 +398,11 @@ defmodule HalC2.PlannerMilestonesPropTest do
       ])
 
     Process.put(:pl_reader, {reader, notify})
-    taken = Path.join(gh, "taken")
-
-    moves =
-      for n <- @issues, milestone <- [nil | @milestones] do
-        value = JSON.encode!(milestone)
-
-        %{
-          "args" => ["--method PATCH", "repos/#{@repository}/issues/#{n} "],
-          "stdin" => [~s("milestone":#{value}})],
-          "run" =>
-            "g='#{gh}/move-'$$; mkfifo \"$g\"; echo \"$g\" > '#{notify}'; " <>
-              "read _ < \"$g\" || :; rm -f \"$g\"; echo '#{n} #{value}' >> '#{taken}'",
-          "stdout" => %{"number" => n}
-        }
-      end
-
-    reads =
-      for n <- @issues do
-        %{
-          "args" => ["api graphql"],
-          "stdin" => ["issue(number: $number) { ...IssueFields", ~s("number":#{n},)],
-          "stdout" => %{"data" => %{"repository" => %{"issue" => issue_node(n)}}}
-        }
-      end
-
-    list = %{
-      "args" => ["api graphql"],
-      "stdin" => ["issues(first: $first"],
-      "stdout" => %{
-        "data" => %{
-          "repository" => %{
-            "issues" => %{
-              "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
-              "nodes" => Enum.map(@issues, &issue_node/1)
-            }
-          }
-        }
-      }
-    }
-
-    File.write!(Path.join(gh, "rules.json"), JSON.encode!(moves ++ reads ++ [list]))
-
+    rules(Map.new(@issues, &{&1, &1}))
     Process.put(:pl_held, [])
     Process.put(:pl_callers, [])
     Process.put(:pl_problems, [])
+    Process.put(:pl_refused, false)
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -477,8 +462,60 @@ defmodule HalC2.PlannerMilestonesPropTest do
     Process.put(:pl_problems, [])
   end
 
-  # Issue `n` as GitHub lists it, in milestone `n`.
-  defp issue_node(n) do
+  # The fake GitHub's rules, with each issue in the milestone `github` has it in: a move
+  # waits on the case (see `begin_case/0`), and a read or list says where each issue is.
+  # They are replaced whole, as a gh running meanwhile reads them.
+  defp rules(github) do
+    gh = Process.get(:pl_gh)
+    {_, notify} = Process.get(:pl_reader)
+    taken = Path.join(gh, "taken")
+
+    moves =
+      for n <- @issues, milestone <- [nil | @milestones] do
+        value = JSON.encode!(milestone)
+
+        %{
+          "args" => ["--method PATCH", "repos/#{@repository}/issues/#{n} "],
+          "stdin" => [~s("milestone":#{value}})],
+          "run" =>
+            "g='#{gh}/move-'$$; mkfifo \"$g\"; echo \"$g\" > '#{notify}'; " <>
+              "read a < \"$g\" || :; rm -f \"$g\"; [ \"$a\" != no ] || exit 1; " <>
+              "echo '#{n} #{value}' >> '#{taken}'",
+          "stdout" => %{"number" => n}
+        }
+      end
+
+    reads =
+      for n <- @issues do
+        %{
+          "args" => ["api graphql"],
+          "stdin" => ["issue(number: $number) { ...IssueFields", ~s("number":#{n},)],
+          "stdout" => %{"data" => %{"repository" => %{"issue" => issue_node(n, github[n])}}}
+        }
+      end
+
+    list = %{
+      "args" => ["api graphql"],
+      "stdin" => ["issues(first: $first"],
+      "stdout" => %{
+        "data" => %{
+          "repository" => %{
+            "issues" => %{
+              "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+              "nodes" => Enum.map(@issues, &issue_node(&1, github[&1]))
+            }
+          }
+        }
+      }
+    }
+
+    path = Path.join(gh, "rules.json")
+    File.write!(path <> ".new", JSON.encode!(moves ++ reads ++ [list]))
+    File.rename!(path <> ".new", path)
+  end
+
+  # Issue `n` as GitHub lists it, in `milestone` or none.
+  defp issue_node(n, milestone) do
     %{
       "number" => n,
       "title" => "Issue #{n}",
@@ -487,7 +524,9 @@ defmodule HalC2.PlannerMilestonesPropTest do
       "stateReason" => nil,
       "url" => "https://github.com/#{@repository}/issues/#{n}",
       "repository" => %{"nameWithOwner" => @repository},
-      "milestone" => %{"number" => n, "title" => "M#{n}", "dueOn" => "2026-11-30T00:00:00Z"}
+      "milestone" =>
+        milestone &&
+          %{"number" => milestone, "title" => "M#{milestone}", "dueOn" => "2026-11-30T00:00:00Z"}
     }
   end
 

@@ -905,6 +905,59 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
       Then GitHub has #7 in the milestone "Release" last
 
+    # A move between milestones is asked of GitHub by the milestone the task moved to, so
+    # a task that leaves that one before it asks still leaves the one GitHub has it in.
+    @mc
+    Scenario: A task moved to a milestone and out of it before GitHub answers leaves the milestone it was in
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Release" late
+      When the user moves "Issue 7" from "Beta" to "Release", then "Issue 9" from "Launch" to "Release" and out of it, before GitHub answers
+      Then GitHub is asked once to move #9 out of its milestone
+
+    # GitHub takes other milestones' moves while a milestone's change is on its way, so a
+    # task moved out and back meanwhile is moved back on GitHub.
+    @mc
+    Scenario: A task moved out of a milestone and back while the milestone's change is on its way to GitHub moves back on GitHub
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #9 to "Beta" late
+      When the user moves "Issue 9" from "Launch" to "Beta", then "Issue 7" from "Beta" to "Release" and back, before GitHub answers
+      Then GitHub is asked last to move #7 to the milestone "Beta"
+
+    # GitHub has the issue where it was until it takes the move, which a look can read.
+    @mc
+    Scenario: A task moved to another milestone stays there when the plugin looks at GitHub before the move takes
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub takes moving #7 to "Launch" late
+      When the user moves "Issue 7" from "Beta" to "Launch" and the plugin looks at GitHub before GitHub answers
+      Then #7's task is in the milestone "Launch" and not "Beta"
+
+    # GitHub can take a task's first move after its move back, and the milestone it moved
+    # to first then asks GitHub to move it back again, so a look in between does not take
+    # the task out of the milestone it moved back to.
+    @mc
+    Scenario: A task moved back before GitHub takes its first move stays back when the plugin looks at GitHub in between
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub takes moving #7 to "Launch" late
+      And GitHub takes moving #7 to "Beta" late
+      When the user moves "Issue 7" from "Beta" to "Launch" and back, GitHub takes the move back first, and the plugin looks at GitHub once it takes the first move
+      Then #7's task is in the milestone "Beta" and not "Launch"
+
+    # A refused move stands until the milestone's next change, so a look does not put the
+    # task back in the milestone GitHub still has its issue in.
+    @mc
+    Scenario: A task GitHub refused to move to another milestone stays where the user moved it
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses changes to #7
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And the plugin looks at GitHub
+      Then #7's task is in the milestone "Launch" and not "Beta"
+      And the milestone "Launch" is marked as not synced
+
     @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways

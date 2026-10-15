@@ -2081,6 +2081,163 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # GitHub takes moving #`number` to the milestone `title` once the scenario answers it,
+  # through a gate of the move's own.
+  step "GitHub takes moving \#{int} to {string} late", %{args: [number, title]} = context do
+    gate = Path.join(context.mc.home, "gh-gate-#{number}-#{context.milestones[title]}")
+    {_, 0} = System.cmd("mkfifo", [gate])
+
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":#{context.milestones[title]})],
+        "run" => "cat '#{gate}' > /dev/null",
+        "stdout" => %{"number" => number}
+      }
+    ])
+    |> Map.merge(%{gh_gate: gate, gh_gates: Map.put(context[:gh_gates] || %{}, title, gate)})
+  end
+
+  step "the user moves {string} from {string} to {string}, then {string} from {string} to {string} and out of it, before GitHub answers",
+       %{args: [title, from, to, other, other_from, other_to]} = context do
+    %{mc: mc} = context
+    input = move_input(context, title, from, to)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+
+    # The first move goes from a client of its own, so it can wait on GitHub while the
+    # second task moves to the same milestone and out of it.
+    moving =
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        item(plan, title)["id"] in (item(plan, to) || %{"after" => []})["after"]
+      end)
+
+    {reply, context} =
+      plugin(context, "moveToMilestone", move_input(context, other, other_from, other_to))
+
+    assert {:ok, _} = reply
+    id = item!(context, other)["id"]
+    context = update!(context, other_to, %{"after" => item!(context, other_to)["after"] -- [id]})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  step "the user moves {string} from {string} to {string}, then {string} from {string} to {string} and back, before GitHub answers",
+       %{args: [title, from, to, other, other_from, other_to]} = context do
+    %{mc: mc} = context
+    input = move_input(context, title, from, to)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+
+    # The first move goes from a client of its own, so it can wait on GitHub while the
+    # second task moves out of the same milestone, GitHub takes that, and it moves back.
+    moving =
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        item(plan, title)["id"] in (item(plan, to) || %{"after" => []})["after"]
+      end)
+
+    context =
+      for {from, to} <- [{other_from, other_to}, {other_to, other_from}], reduce: context do
+        context ->
+          {reply, context} =
+            plugin(context, "moveToMilestone", move_input(context, other, from, to))
+
+          assert {:ok, _} = reply
+          context
+      end
+
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  step "the user moves {string} from {string} to {string} and back, GitHub takes the move back first, and the plugin looks at GitHub once it takes the first move",
+       %{args: [title, from, to]} = context do
+    %{mc: mc} = context
+
+    # Each move goes from a client of its own, as another window's would, so it can
+    # wait on GitHub while the scenario goes on.
+    move = fn from, to ->
+      call = %{
+        "id" => @id,
+        "method" => "moveToMilestone",
+        "input" => move_input(context, title, from, to)
+      }
+
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    end
+
+    in? = fn milestone ->
+      fn plan ->
+        item(plan, title)["id"] in (item(plan, milestone) || %{"after" => []})["after"]
+      end
+    end
+
+    moving = move.(from, to)
+    {_, context} = await_topic(context, "plan", in?.(to))
+    back = move.(to, from)
+    {_, context} = await_topic(context, "plan", in?.(from))
+    answer_late(context, from)
+    assert {{:ok, _}, _} = Task.await(back, 30_000)
+    answer_late(context, to)
+
+    # GitHub has taken the first move, and lists it, and the milestone the task moved to
+    # first asks it to move the task back again.
+    {number, context} =
+      await_topic(context, "plan", fn plan ->
+        issue = item(plan, title)["issue"]
+        issue["milestone"] == context.milestones[to] and issue["number"]
+      end)
+
+    issues = List.keystore(context.on_github, number, 0, {number, to})
+
+    context =
+      context
+      |> GitHubIssues.lists(context.repository, milestone_issues(context, issues))
+      |> sync!()
+
+    answer_late(context, from)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  step "the user moves {string} from {string} to {string} and the plugin looks at GitHub before GitHub answers",
+       %{args: [title, from, to]} = context do
+    %{mc: mc} = context
+    input = move_input(context, title, from, to)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+
+    # The move goes from a client of its own, so it can wait on GitHub during the look.
+    moving =
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        item(plan, title)["id"] in (item(plan, to) || %{"after" => []})["after"]
+      end)
+
+    context = sync!(context)
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  step "GitHub is asked once to move \#{int} out of its milestone", %{args: [number]} = context do
+    moves =
+      for patch <- GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}"),
+          Map.has_key?(patch, "milestone"),
+          do: patch["milestone"]
+
+    assert moves == [nil]
+    context
+  end
+
   step "GitHub has \#{int} in the milestone {string} last", %{args: [_number, title]} = context do
     taken = context.gh_milestones |> File.read!() |> String.split("\n", trim: true)
     assert List.last(taken) == to_string(context.milestones[title]), inspect(taken)
@@ -2096,6 +2253,32 @@ defmodule HalC2.Steps.Planning.Planner do
           do: patch["milestone"]
 
     assert moves == [context.milestones[title]]
+    context
+  end
+
+  step "GitHub is asked last to move \#{int} to the milestone {string}",
+       %{args: [number, title]} = context do
+    moves =
+      for patch <- GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}"),
+          Map.has_key?(patch, "milestone"),
+          do: patch["milestone"]
+
+    assert List.last(moves) == context.milestones[title], inspect(moves)
+    context
+  end
+
+  step "\#{int}'s task is in the milestone {string} and not {string}",
+       %{args: [number, to, from]} = context do
+    plan = plan!(context)
+    id = task_of(plan, number)["id"]
+    assert id in item(plan, to)["after"]
+    refute id in item(plan, from)["after"]
+    context
+  end
+
+  step "the milestone {string} is marked as not synced", %{args: [title]} = context do
+    error = item!(context, title)["syncError"]
+    assert is_binary(error) and error != "", "#{title} is marked as synced"
     context
   end
 
@@ -2661,6 +2844,7 @@ defmodule HalC2.Steps.Planning.Planner do
   # the file server, the open would hold every other file call until gh reads it, the
   # rename's own on its way to gh included.
   defp answer_late(context), do: File.write!(context.gh_gate, "answer", [:raw])
+  defp answer_late(context, title), do: File.write!(context.gh_gates[title], "answer", [:raw])
 
   # GitHub's answer to renaming #`number` to `title` (a fake gh rule's outcome) waits on
   # a fifo until the scenario answers it.
@@ -2855,20 +3039,25 @@ defmodule HalC2.Steps.Planning.Planner do
   # Each `{number, title}` is an issue in that milestone on GitHub, the milestones numbered
   # from 1 in order, synced into the plan.
   defp in_milestones(context, issues) do
-    repository = context.repository
     numbers = issues |> Enum.with_index(1) |> Map.new(fn {{_, title}, n} -> {title, n} end)
-    milestone = &%{"number" => numbers[&1], "title" => &1, "dueOn" => "2026-11-30T00:00:00Z"}
+    context = Map.merge(context, %{milestones: numbers, on_github: issues})
 
     context
-    |> GitHubIssues.answers(
-      repository,
-      for(
-        {number, title} <- issues,
-        do: GitHubIssues.issue(repository, number, %{"milestone" => milestone.(title)})
-      )
-    )
+    |> GitHubIssues.answers(context.repository, milestone_issues(context, issues))
     |> sync!()
-    |> Map.put(:milestones, numbers)
+  end
+
+  # The issue nodes for `issues`, each `{number, milestone title}`.
+  defp milestone_issues(context, issues) do
+    for {number, title} <- issues do
+      milestone = %{
+        "number" => context.milestones[title],
+        "title" => title,
+        "dueOn" => "2026-11-30T00:00:00Z"
+      }
+
+      GitHubIssues.issue(context.repository, number, %{"milestone" => milestone})
+    end
   end
 
   defp sync!(context) do
