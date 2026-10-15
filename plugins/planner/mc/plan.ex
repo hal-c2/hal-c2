@@ -624,22 +624,22 @@ defmodule HalC2Plugins.Planner.Plan do
         {:error, "A view needs a name."}
 
       view["layout"] not in @layouts ->
-        {:error, "#{view["layout"]} is not a layout a view can have."}
+        {:error, "#{shown(view["layout"])} is not a layout a view can have."}
 
       view["groupBy"] not in @group_by ->
-        {:error, "#{view["groupBy"]} is not something a view can group by."}
+        {:error, "#{shown(view["groupBy"])} is not something a view can group by."}
 
       view["sortBy"] not in @sort_by ->
-        {:error, "#{view["sortBy"]} is not something a view can sort by."}
+        {:error, "#{shown(view["sortBy"])} is not something a view can sort by."}
 
       view["zoom"] not in @zooms ->
-        {:error, "#{view["zoom"]} is not a zoom a view can have."}
+        {:error, "#{shown(view["zoom"])} is not a zoom a view can have."}
 
       not is_list(view["fields"]) ->
         {:error, "fields is a list of #{Enum.join(@view_fields, ", ")}."}
 
       bad = Enum.find(view["fields"], &(&1 not in @view_fields)) ->
-        {:error, "#{bad} is not a field a view can show."}
+        {:error, "#{shown(bad)} is not a field a view can show."}
 
       not is_binary(f["text"]) or not is_boolean(f["hideDone"]) or
           not Enum.all?(~w(statuses labels projects owners), &is_list(f[&1])) ->
@@ -654,6 +654,10 @@ defmodule HalC2Plugins.Planner.Plan do
   end
 
   def check_view(_input), do: {:error, "Give the view as an object."}
+
+  # A value a client sent, for the message that refuses it.
+  defp shown(value) when is_binary(value), do: value
+  defp shown(value), do: inspect(value)
 
   # --- prompts ------------------------------------------------------------------------------
 

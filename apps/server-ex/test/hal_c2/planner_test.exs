@@ -372,6 +372,16 @@ defmodule HalC2.PlannerTest do
       assert {:error, "notes is not a field a view can show."} =
                Plan.check_view(%{"name" => "Mine", "fields" => ["notes"]})
     end
+
+    test "a view naming an object where text belongs is refused, not a crash" do
+      for key <- ~w(layout groupBy sortBy zoom) do
+        assert {:error, message} = Plan.check_view(%{"name" => "Mine", key => %{"a" => 1}})
+        assert message =~ ~s(%{"a" => 1})
+      end
+
+      assert {:error, ~s(%{"a" => 1} is not a field a view can show.)} =
+               Plan.check_view(%{"name" => "Mine", "fields" => [%{"a" => 1}]})
+    end
   end
 
   describe "prompts" do

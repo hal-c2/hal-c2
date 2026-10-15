@@ -2,7 +2,9 @@ import QtQuick
 import HalC2.Shell
 
 // Beside a planner thread's row in the thread list: where its run is, or what it
-// proposes. Follows the plugin's `threads` topic, which every row's mark shares.
+// proposes. A thread whose run is gone, discarded or pruned, still came from the
+// planner, so its mark stays with the kind's name ("Planner" or "Task"). Follows the
+// plugin's `threads` topic, which every row's mark shares.
 Rectangle {
     id: mark
 
