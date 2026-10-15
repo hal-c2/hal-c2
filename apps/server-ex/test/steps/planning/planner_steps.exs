@@ -1258,6 +1258,11 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the plugin did not list {string}'s pull requests again", context do
+    assert [_first] = World.cli_calls(context, "pr list")
+    context
+  end
+
   step "the plugin looks at GitHub", context do
     {reply, context} = plugin(context, "sync", %{})
     assert {:ok, %{"items" => _}} = reply

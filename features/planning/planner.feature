@@ -647,6 +647,15 @@ Feature: Planner
       And the plugin read no page of "acme/api"'s pull requests past #12
 
     @mc
+    Scenario: A merged pull request is not looked for again
+      Given "API" is linked to #12 of "acme/api"
+      And #12 is merged
+      When the plugin looks at GitHub
+      And the plugin looks at GitHub
+      Then "API" is done
+      And the plugin did not list "acme/api"'s pull requests again
+
+    @mc
     Scenario: A pull request linked from a repository no project checks out still moves its task when it merges
       Given "API" is linked to #12 of "acme/web"
       When #12 of "acme/web" is merged
