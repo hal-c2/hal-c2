@@ -349,6 +349,8 @@ defmodule HalC2.PlannerMilestonesPropTest do
     Enum.filter(links, &(is_pid(&1) and &1 != parent))
   end
 
+  defp await_any([]), do: :ok
+
   defp await_any(kids) do
     refs = Enum.map(kids, &Process.monitor/1)
     receive do: ({:DOWN, ref, :process, _, _} when is_reference(ref) -> :ok)
