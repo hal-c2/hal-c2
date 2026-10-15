@@ -976,23 +976,22 @@ defmodule HalC2Plugins.Planner do
   end
 
   def handle_call({:link, id, fields}, caller, state) do
-    case state.items[id] do
-      nil ->
-        {:reply, {:error, "There is no task #{id}."}, state}
+    with %{} = item <- state.items[id] || {:error, "There is no task #{id}."},
+         :ok <- Plan.check_link(state.items, id, fields) do
+      item =
+        case fields do
+          %{"thread" => thread} ->
+            item
+            |> Map.update("threads", [thread], &Enum.uniq(&1 ++ [thread]))
+            |> Map.update!("projectId", &(&1 || fields["projectId"]))
 
-      item ->
-        item =
-          case fields do
-            %{"thread" => thread} ->
-              item
-              |> Map.update("threads", [thread], &Enum.uniq(&1 ++ [thread]))
-              |> Map.update!("projectId", &(&1 || fields["projectId"]))
+          _ ->
+            Plan.link(item, fields, now())
+        end
 
-            _ ->
-              Plan.link(item, fields, now())
-          end
-
-        edit(state, Map.put(state.items, id, item), %{"item" => item}, caller)
+      edit(state, Map.put(state.items, id, item), %{"item" => item}, caller)
+    else
+      error -> {:reply, error, state}
     end
   end
 

@@ -253,6 +253,16 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "a client links {string} to the issue \#{int}", %{args: [title, number]} = context do
+    context = ensure(context, title)
+    issue = %{"repository" => context.repository, "number" => number}
+
+    {reply, context} =
+      plugin(context, "link", %{"itemId" => item!(context, title)["id"], "issue" => issue})
+
+    Map.put(context, :reply, reply)
+  end
+
   step "a client that still shows \#{int} unlinks it from {string}",
        %{args: [number, title]} = context do
     ref = %{"repository" => context.repository, "number" => number}
@@ -876,6 +886,27 @@ defmodule HalC2.Steps.Planning.Planner do
       :tool_result,
       tool(context, "planner_report", %{"summary" => "Linked.", "changes" => [change]})
     )
+  end
+
+  step "its agent reports linking {string} to the issue \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    report = issue_link_report(context, title, number, repository)
+    Map.put(context, :tool_result, tool(context, "planner_report", report))
+  end
+
+  step "its agent proposes linking {string} to the issue \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    report = issue_link_report(context, title, number, repository)
+    assert %{"status" => "proposed"} = report!(context, report)
+    Map.put(context, :moved_ids, %{title => item!(context, title)["id"]})
+  end
+
+  step "the link of {string} is marked as no longer applicable, as {string} has the issue",
+       %{args: [title, holder]} = context do
+    change = Enum.find(run!(context)["changes"], &(&1["itemId"] == context.moved_ids[title]))
+    assert %{"outcome" => "stale", "staleReason" => reason} = change
+    assert reason =~ "#{holder} already has the issue"
+    context
   end
 
   step "the agent is told {string}", %{args: [message]} = context do
@@ -1918,6 +1949,20 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "GitHub is asked to unblock \#{int} from \#{int}", %{args: [number, blocker]} = context do
     GitHubIssues.assert_related(context, "removeBlockedBy", number, blocker)
+  end
+
+  # The relations GitHub was asked to add to #`number` and not asked to drop since.
+  step "GitHub has \#{int} blocked by no issue", %{args: [number]} = context do
+    id = GitHubIssues.issue_id(number)
+
+    asked = fn mutation ->
+      for %{"issue" => ^id, "other" => other} <-
+            GitHubIssues.graphql_calls(context, mutation <> "(input"),
+          do: other
+    end
+
+    assert asked.("addBlockedBy") -- asked.("removeBlockedBy") == []
+    context
   end
 
   step "GitHub is asked to take \#{int} out of \#{int}", %{args: [sub, number]} = context do
@@ -3348,6 +3393,18 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   defp report!(context, arguments), do: tool!(context, "planner_report", arguments)
+
+  defp issue_link_report(context, title, number, repository) do
+    issue = %{"repository" => repository, "number" => number}
+
+    change = %{
+      "op" => "link",
+      "itemId" => item!(context, title)["id"],
+      "fields" => %{"issue" => issue}
+    }
+
+    %{"summary" => "Linked.", "changes" => [change]}
+  end
 
   defp prompt(thread_id) do
     World.await_stream(thread_id, fn state ->

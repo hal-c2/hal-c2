@@ -481,7 +481,8 @@ defmodule HalC2Plugins.Planner.Plan do
               {:ok, remove(items, id)}
 
             "link" ->
-              {:ok, Map.put(items, id, link(item, change["fields"], now))}
+              with :ok <- check_link(items, id, change["fields"]),
+                   do: {:ok, Map.put(items, id, link(item, change["fields"], now))}
 
             "update" ->
               with {:ok, items, _, _} <-
@@ -555,6 +556,26 @@ defmodule HalC2Plugins.Planner.Plan do
   end
 
   def link(item, _fields, _now), do: item
+
+  @doc """
+  `:ok` when the task `id` of `items` may be linked as `fields` say, or `{:error, message}`
+  naming the task that has the issue already: an issue is one task's, the one its look
+  and pushes follow.
+  """
+  def check_link(items, id, %{"issue" => ref}) do
+    holder =
+      Enum.find_value(items, fn {other, item} ->
+        if other != id and same_ref?(item["issue"], ref), do: item
+      end)
+
+    if holder,
+      do:
+        {:error,
+         "#{holder["title"]} already has the issue #{ref["repository"]}##{ref["number"]}."},
+      else: :ok
+  end
+
+  def check_link(_items, _id, _fields), do: :ok
 
   def same_ref?(a, b) when is_map(a) and is_map(b),
     do:

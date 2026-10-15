@@ -87,6 +87,14 @@ Feature: Planner
       When a client that still shows #7 unlinks it from "Rate limits"
       Then "Rate limits" is linked to the issue #8
 
+    # A look and the pushes follow one task per issue.
+    @mc
+    Scenario: A task cannot be linked to an issue another task has
+      Given "Rate limits" is linked to the issue #7 of "acme/api"
+      When a client links "Docs" to the issue #7
+      Then the planner answers "Rate limits already has the issue acme/api#7."
+      And "Docs" is linked to no pull request and no issue
+
     @mc
     Scenario: A task moves from one milestone to another in one step
       Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
@@ -421,6 +429,23 @@ Feature: Planner
       When its agent reports linking "API" to the pull request #12 and the issue #7 of "acme/api" at once
       Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
       And the run is still running
+
+    @mc
+    Scenario: A proposal linking a task to an issue another task has goes back to the agent
+      Given "API" is linked to the issue #7 of "acme/api"
+      And the run of "Reschedule" is running
+      When its agent reports linking "Docs" to the issue #7 of "acme/api"
+      Then the agent is told "Change 1: API already has the issue acme/api#7."
+      And the run is still running
+
+    @mc
+    Scenario: A proposal linking an issue another task has is not applied
+      Given the run of "Reschedule" is running
+      And its agent proposes linking "Docs" to the issue #7 of "acme/api"
+      And "API" is linked to the issue #7 of "acme/api"
+      When the user applies the run
+      Then the link of "Docs" is marked as no longer applicable, as "API" has the issue
+      And "Docs" is linked to no pull request and no issue
 
     @mc
     Scenario: An action set to apply its changes applies them as it reports
@@ -1218,6 +1243,20 @@ Feature: Planner
         | makes "Issue 7" wait for "Docs" | unblock #7 from #13 | block #8 by #13  | "Issue 8" still waits for "Docs" |
         | puts "Docs" under "Issue 7"     | take #13 out of #7  | put #13 under #8 | "Docs" is a subtask of "Issue 8" |
         | puts "Issue 7" under "Docs"     | take #7 out of #13  | put #8 under #13 | "Issue 8" is a subtask of "Docs" |
+
+    @mc
+    Scenario: A dependency dropped after the task it waits for was relinked leaves the issue it has now
+      Given "planner" syncs "acme/api" both ways
+      And the plan has "Docs" in "api"
+      And the user creates an issue for "Docs" in "acme/api"
+      And the user makes "Docs" wait for "Issue 7"
+      And GitHub is asked to block #13 by #7
+      And the user relinks #7's task to #8
+      When the user makes #13's task wait for nothing
+      Then GitHub is asked to unblock #13 from #8
+      When the plugin looks at GitHub, which has taken what it was asked
+      Then GitHub has #13 blocked by no issue
+      And "Docs" waits for nothing
 
     # A task with no issue is in the plan alone, so what waits for it or sits under it
     # leaves its old issue on GitHub.

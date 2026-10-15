@@ -23,10 +23,11 @@ defmodule HalC2.PlannerPropTest do
   plan syncs both ways, with a board, or has one made for it there, which GitHub relates
   to nothing, is relinked to another issue, of that repository or of one no project on
   the MC has, which is pushed nothing, and unlinked again, by a client that may still
-  show the issue it had before; a client moves one's due date, which goes to GitHub at
-  once when nothing of the task is on the way, and renaming one also moves its due
-  date, pushing both to GitHub from a caller of its own, and renaming it again before
-  GitHub answers pushes nothing until it does. GitHub takes or
+  show the issue it had before, and a client links one to the issue another has; a
+  client moves one's due date, which goes to GitHub at once when nothing of the task is
+  on the way, and renaming one also moves its due date, pushing both to GitHub from a
+  caller of its own, and renaming it again before GitHub answers pushes nothing until it
+  does. GitHub takes or
   refuses a name, and answers the pushes held in any order. A push for a task not yet on
   the board adds it there, and GitHub names the board item after the push. Someone takes
   a linked task's issue off the board, and the board grows past what a look reads whole
@@ -42,7 +43,7 @@ defmodule HalC2.PlannerPropTest do
     up to its parent and nothing waits for it any more;
   - a task with no title, a change whose fields are not an object, or a link to a pull
     request and an issue at once, from a client or in an agent's report, is refused and
-    changes nothing;
+    changes nothing, as is a link to an issue another task has;
   - a task moved between milestones leaves the one and joins the other in one step,
     or neither when either is not a milestone or it would wait for itself;
   - at most two runs run at once, the oldest queued starts first, and each run that
@@ -367,6 +368,13 @@ defmodule HalC2.PlannerPropTest do
           end),
           do: slot
 
+    # A link to the issue another task has, which is refused.
+    taken =
+      for slot <- present,
+          other <- linked,
+          other != slot,
+          do: {:call, __MODULE__, :link_taken, [slot, issue_of(m, other)]}
+
     # And GitHub putting a parent under its own sub-issue, which takes the parent's place,
     # as GitHub or the plan has them.
     swaps =
@@ -421,6 +429,7 @@ defmodule HalC2.PlannerPropTest do
        if(fresh == [], do: [], else: [{2, {:call, __MODULE__, :create, [elements(fresh)]}}]) ++
        if(tied == [], do: [], else: [{24, {:call, __MODULE__, :create, [elements(tied)]}}]) ++
        if(swaps == [], do: [], else: [{16, oneof(swaps)}]) ++
+       if(taken == [], do: [], else: [{6, oneof(taken)}]) ++
        if(related == [], do: [], else: [{6, {:call, __MODULE__, :remove, [elements(related)]}}]) ++
        if(linked == [],
          do: [],
@@ -540,6 +549,9 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:relink, :unlink, :unboard],
     do: linked?(m, slot)
 
+  def precondition(m, {:call, _, :link_taken, [slot, number]}),
+    do: Map.has_key?(m.items, slot) and slot_of(m, number) not in [nil, slot]
+
   # A rename names its push, so the push's gate and name stay its own when shrinking, and
   # says whether GitHub holds a push of the task, which the rename then waits behind.
   def precondition(m, {:call, _, :rename, [slot, _outcome, push, flying]}),
@@ -647,6 +659,8 @@ defmodule HalC2.PlannerPropTest do
   end
 
   defp step(m, {:call, _, :malformed, [_what]}), do: {m, :error}
+  # An issue is one task's: a link to the one another task has is refused.
+  defp step(m, {:call, _, :link_taken, [_slot, _number]}), do: {m, :error}
 
   defp step(m, {:call, _, :wait, [slot, other]}) do
     after_slots = Enum.uniq(m.items[slot].after ++ [other])
@@ -1452,6 +1466,9 @@ defmodule HalC2.PlannerPropTest do
   end
 
   def link(slot), do: link_to(slot, @issues[slot])
+
+  # Links the task to the issue `number` another task has.
+  def link_taken(slot, number), do: link_to(slot, number)
 
   # Links the task to the issue of `@repository` of the two it is not linked to, or to its
   # issue of `@elsewhere`.
