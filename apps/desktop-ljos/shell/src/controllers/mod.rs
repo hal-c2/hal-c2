@@ -5,6 +5,7 @@ pub mod layout;
 pub mod licenses;
 pub mod navigation;
 pub mod theme;
+pub mod usage_prices;
 
 use crate::controller::{Registration, Scope};
 
@@ -16,5 +17,10 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<licenses::Licenses>("licenses", &["licenses"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
+        Registration::new::<usage_prices::UsagePrices>(
+            "usagePrices",
+            &["usagePrices"],
+            Scope::Window,
+        ),
     ]
 }
