@@ -634,6 +634,13 @@ Feature: Planner
       And "API" is not started and no thread is linked to it
 
     @mc
+    Scenario: Work whose thread start is killed fails rather than holding its turn
+      Given the MC's worktree setup holds every start
+      When the user starts work on "API" and its thread start is killed
+      Then the run is failed saying its thread could not start
+      And "API" is not started and no thread is linked to it
+
+    @mc
     Scenario: Work waiting its turn fails if its task is removed first
       Given "planner" runs one action at a time
       And the user started work on "API"

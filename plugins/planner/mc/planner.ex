@@ -672,7 +672,8 @@ defmodule HalC2Plugins.Planner do
        slack_at: nil,
        polling: nil,
        published: %{},
-       pushing: %{}
+       pushing: %{},
+       launching: %{}
      }), {:continue, :announce}}
   end
 
@@ -1138,6 +1139,8 @@ defmodule HalC2Plugins.Planner do
 
   # Only work whose thread started marks its task; work that could not start leaves it.
   def handle_cast({:started, id, thread_id}, state) do
+    state = launched(state, id, thread_id)
+
     case state.runs[id] do
       %{"threadId" => ^thread_id, "kind" => "work"} = run ->
         {:noreply, state |> working(run) |> changed()}
@@ -1148,6 +1151,8 @@ defmodule HalC2Plugins.Planner do
   end
 
   def handle_cast({:start_failed, id, thread_id, message}, state) do
+    state = launched(state, id, thread_id)
+
     case state.runs[id] do
       %{"threadId" => ^thread_id, "status" => "running"} = run ->
         run = Map.merge(run, %{"status" => "failed", "error" => message, "finishedAt" => now()})
@@ -1200,6 +1205,15 @@ defmodule HalC2Plugins.Planner do
       nil ->
         {:noreply, state}
     end
+  end
+
+  # A thread start that ended without saying how it went, killed from outside: its run
+  # fails rather than holding its place for good.
+  def handle_info({:EXIT, pid, reason}, %{launching: launching} = state)
+      when is_map_key(launching, pid) do
+    {id, thread_id} = launching[pid]
+    message = "The thread could not start: " <> Exception.format_exit(reason)
+    handle_cast({:start_failed, id, thread_id, message}, state)
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -1371,9 +1385,16 @@ defmodule HalC2Plugins.Planner do
       values = Plan.values(derived, on, today(), nil)
       action = actions(state.settings)[run["action"]]
       settings = state.settings
-      spawn_link(fn -> start(run, action, values, settings) end)
+      launcher = spawn_link(fn -> start(run, action, values, settings) end)
+      state = put_in(state.launching[launcher], {run["id"], run["threadId"]})
       put_run(state, run)
     end)
+  end
+
+  # The run `id`'s launcher told how its thread's start went, so its exit tells nothing.
+  defp launched(state, id, thread_id) do
+    launching = Map.reject(state.launching, fn {_, run} -> run == {id, thread_id} end)
+    %{state | launching: launching}
   end
 
   # The task work started on is in progress, and linked to the work's thread.

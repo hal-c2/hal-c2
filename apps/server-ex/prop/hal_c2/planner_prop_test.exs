@@ -40,7 +40,8 @@ defmodule HalC2.PlannerPropTest do
   around the dependency between two, and a client nests a task while a look at GitHub is
   on its way, holding GitHub's list as it was before the nest. Work on a task starts on
   a project the MC does not have, or on one whose worktree setup is not running so the
-  launch exits, and its thread never launches. After every step:
+  launch exits, or holds the launch until something kills it, and its thread never
+  launches. After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
     up to its parent and nothing waits for it any more;
@@ -484,6 +485,7 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item, oneof(["nowhere", "api"])]}},
+       {1, {:call, __MODULE__, :kill_launcher, [item]}},
        {1, {:call, __MODULE__, :restart, []}},
        {look, {:call, __MODULE__, :look, []}},
        {switch, {:call, __MODULE__, :switch_board, [other]}},
@@ -617,6 +619,12 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, cmd, [slot | _]})
       when cmd in [:remove, :wait, :nest, :nest_while_looking, :move, :work, :redate],
       do: Map.has_key?(m.items, slot)
+
+  # The work starts at once, so its launcher is there to kill.
+  def precondition(m, {:call, _, :kill_launcher, [slot]}),
+    do:
+      Map.has_key?(m.items, slot) and
+        Enum.count(m.runs, fn {_, run} -> run.status == :running end) < @concurrency
 
   # GitHub refuses a sub-issue under its own sub-issue.
   def precondition(m, {:call, _, :adopt, [number, parent]}),
@@ -848,6 +856,7 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
+  defp step(m, {:call, _, :kill_launcher, [slot]}), do: {ask(m, "work", slot), :ok}
 
   # GitHub is taken to have the task's name and due date, and none of its relations: the
   # task pushes those to tasks with an issue, and the tasks tied to it push theirs to its
@@ -1631,6 +1640,41 @@ defmodule HalC2.PlannerPropTest do
     input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => project}
     {reply, value} = call("run", input)
     if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+    observe(reply)
+  end
+
+  # Works on "api" with a worktree setup that holds the launch, then kills the launcher
+  # from outside, as an OOM killer or an operator would; its run must not hold its turn.
+  def kill_launcher(slot) do
+    test = self()
+
+    holder =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", {caller, _}, _} -> send(test, {:setup_held, caller})
+        end
+
+        receive do: (:done -> :ok)
+      end)
+
+    Process.register(holder, HalC2.WorktreeSetup)
+    input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "api"}
+    {reply, value} = call("run", input)
+
+    if reply == :ok do
+      Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+
+      receive do
+        {:setup_held, launcher} ->
+          ref = Process.monitor(launcher)
+          Process.exit(launcher, :kill)
+
+          receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+      end
+    end
+
+    Process.unregister(HalC2.WorktreeSetup)
+    send(holder, :done)
     observe(reply)
   end
 
