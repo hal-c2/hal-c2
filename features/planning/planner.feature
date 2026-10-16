@@ -851,6 +851,27 @@ Feature: Planner
       And #7's task is to do
 
     @mc
+    Scenario: An issue reopened after its closing pull request merged keeps its task to do
+      Given "planner" follows the issues of "acme/api"
+      And #7 is closed by the pull request #12
+      And the plugin looks at GitHub
+      When #12 is merged
+      And #7 is reopened on GitHub, still closed by #12
+      And the plugin looks at GitHub
+      Then #7's task is to do
+
+    @mc
+    Scenario: A pull request linked by hand to an open issue's task still makes it done when it merges
+      Given "planner" follows the issues of "acme/api"
+      And #7 is closed by the pull request #12
+      And the plugin looks at GitHub
+      And "Issue 7" is linked to #14 of "acme/api"
+      When #12 is merged
+      And #14 is merged
+      And the plugin looks at GitHub
+      Then #7's task is done
+
+    @mc
     Scenario: A pull request that no longer closes an issue leaves its task, one linked by hand stays
       Given "planner" follows the issues of "acme/api"
       And #7 is closed by the pull request #12

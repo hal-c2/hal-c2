@@ -405,26 +405,30 @@ defmodule HalC2Plugins.Planner.Sync do
   against them.
   """
   def apply(items, found, settings, now, new_id) do
-    items =
+    {items, open} =
       if settings["sync"] in ~w(import twoWay) do
         listed = found.issues
         issues = Enum.uniq_by(listed ++ found.details, &key/1)
         projects = found.projects || []
 
-        items
-        |> then(
-          &Enum.reduce(issues, &1, fn issue, items ->
-            issue(items, issue, issue in listed, projects, now, new_id)
-          end)
-        )
-        |> relations(issues, Map.get(found, :kept, %{}), now)
-        |> milestones(issues, found.items, settings, projects, now, new_id)
-        |> dates(found.board, now)
+        items =
+          items
+          |> then(
+            &Enum.reduce(issues, &1, fn issue, items ->
+              issue(items, issue, issue in listed, projects, now, new_id)
+            end)
+          )
+          |> relations(issues, Map.get(found, :kept, %{}), now)
+          |> milestones(issues, found.items, settings, projects, now, new_id)
+          |> dates(found.board, now)
+
+        open = for issue <- issues, issue["state"] == "open", into: MapSet.new(), do: key(issue)
+        {items, open}
       else
-        items
+        {items, MapSet.new()}
       end
 
-    pull_requests(items, found.prs, settings, now)
+    pull_requests(items, found.prs, settings, open, now)
   end
 
   # A task for an open issue the plan does not have, or the linked task brought up to date.
@@ -718,15 +722,23 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # The pull requests' states; a task whose last open one merged is done, when the
-  # planner is set to.
-  defp pull_requests(items, prs, _settings, _now) when prs == %{}, do: items
+  # planner is set to. One that closes the task's issue, while the look read the issue
+  # as `open`, does not make it done: the merge did not close the issue, or it was
+  # reopened since, and the issue has the say.
+  defp pull_requests(items, prs, _settings, _open, _now) when prs == %{}, do: items
 
-  defp pull_requests(items, prs, settings, now) do
+  defp pull_requests(items, prs, settings, open, now) do
     Map.new(items, fn {id, item} ->
       old = item["pullRequests"] || []
       new = Enum.map(old, &Map.put(&1, "state", prs[key(&1)] || &1["state"]))
       merged = new != [] and Enum.all?(new, &(&1["state"] == "merged"))
-      newly = merged and not Enum.all?(old, &(&1["state"] == "merged"))
+      open? = item["issue"] != nil and MapSet.member?(open, key(item["issue"]))
+
+      newly =
+        merged and
+          Enum.any?(old, fn pr ->
+            pr["state"] != "merged" and not (open? and pr["fromIssue"] == true)
+          end)
 
       item = if new == old, do: item, else: %{item | "pullRequests" => new, "updatedAt" => now}
 

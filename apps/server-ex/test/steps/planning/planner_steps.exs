@@ -1591,14 +1591,24 @@ defmodule HalC2.Steps.Planning.Planner do
   step "\#{int} is closed by the pull request \#{int}, which merged already",
        %{args: [number, pr]} = context do
     repository = context.repository
-
-    issue =
-      GitHubIssues.issue(repository, number, %{"pullRequests" => [pr]})
-      |> update_in(["closedByPullRequestsReferences", "nodes"], fn nodes ->
-        Enum.map(nodes, &Map.put(&1, "state", "MERGED"))
-      end)
-
+    issue = closed_by_merged(repository, number, pr)
     GitHubIssues.answers(context, repository, [issue])
+  end
+
+  # GitHub still names the merged pull request among those that close the issue it reopened.
+  step "\#{int} is reopened on GitHub, still closed by \#{int}",
+       %{args: [number, pr]} = context do
+    repository = context.repository
+    issue = closed_by_merged(repository, number, pr, %{"stateReason" => "REOPENED"})
+    GitHubIssues.answers(context, repository, [issue])
+  end
+
+  # The open issue `number` as GitHub answers it, closed by the pull request `pr`, merged.
+  defp closed_by_merged(repository, number, pr, fields \\ %{}) do
+    GitHubIssues.issue(repository, number, Map.put(fields, "pullRequests", [pr]))
+    |> update_in(["closedByPullRequestsReferences", "nodes"], fn nodes ->
+      Enum.map(nodes, &Map.put(&1, "state", "MERGED"))
+    end)
   end
 
   step "\#{int}'s task is to do", %{args: [number]} = context do
