@@ -365,9 +365,12 @@ ColumnLayout {
         id: count
 
         property string key
+        // What it counts, to name it to a screen reader and in a refusal.
+        property string label
 
         objectName: "plannerSetting:" + key
         implicitWidth: 100
+        Accessible.name: label
         inputMethodHints: Qt.ImhDigitsOnly
         validator: IntValidator {
             bottom: 1
@@ -532,8 +535,10 @@ ColumnLayout {
                 label: qsTr("Actions at once")
 
                 Count {
+                    id: concurrencyCount
+
                     key: "concurrency"
-                    Accessible.name: qsTr("Actions at once")
+                    label: qsTr("Actions at once")
                 }
             }
         }
@@ -877,8 +882,10 @@ ColumnLayout {
             label: qsTr("Look at GitHub every (minutes)")
 
             Count {
+                id: pollCount
+
                 key: "pollMinutes"
-                Accessible.name: qsTr("Look at GitHub every (minutes)")
+                label: qsTr("Look at GitHub every (minutes)")
             }
         }
 
@@ -978,7 +985,15 @@ ColumnLayout {
                 primary: true
                 text: settings.saving ? qsTr("Saving…") : qsTr("Save")
                 enabled: settings.dirty && !settings.saving
-                onClicked: settings.save(settings.changes())
+                // A count typed as something it cannot be is never set, so saving would
+                // keep the old one while the field shows another.
+                onClicked: {
+                    const wrong = [concurrencyCount, pollCount].find(count => !count.acceptableInput);
+                    if (wrong)
+                        settings.refusal = qsTr("%1 must be a whole number of at least 1.").arg(wrong.label);
+                    else
+                        settings.save(settings.changes());
+                }
             }
         }
     }

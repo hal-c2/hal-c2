@@ -1372,6 +1372,25 @@ const Steps steps([] {
     expect(!settings->property("dirty").toBool(),
            QStringLiteral("the settings were changed to %1 at once, every %2 minutes").arg(values.value(QStringLiteral("concurrency")).toString(), values.value(QStringLiteral("pollMinutes")).toString()));
   });
+  step(QStringLiteral("the user changes the prompt of %1, clears the actions at once and saves").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
+    world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
+    waitShownNamed(world, QStringLiteral("plannerActionPrompt:") + actionId(world, c[0]))->setProperty("text", QStringLiteral("My own reschedule prompt."));
+    QQuickItem* count = waitShownNamed(world, QStringLiteral("plannerSetting:concurrency"));
+    count->setProperty("text", QString());
+    expect(QMetaObject::invokeMethod(count, "textEdited"), QStringLiteral("the actions at once cannot be typed in"));
+    QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
+    world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
+    expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
+  });
+  step(QStringLiteral("nothing is saved, and the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = QStringLiteral("Not saved: ") + c[0];
+    world.waitFor([&] { return !hidden(world, QStringLiteral("plannerRefusal")) && textOf(world, QStringLiteral("plannerRefusal")) == wanted; },
+                  [&] { return QStringLiteral("the settings to say %1, not %2").arg(wanted, textOf(world, QStringLiteral("plannerRefusal"))); });
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      if (rpc.method == QLatin1String("plugins.saveSettings")) fail(QStringLiteral("the settings were saved as %1").arg(dump(rpc.payload.value(QLatin1String("settings")))));
+    }
+  });
   step(QStringLiteral("%1 can only be on a task, while %1 can be on a task or the plan").arg(q), [](World& world, const Captures& c, const Table&) {
     waitShownNamed(world, QStringLiteral("plannerActionScope:") + actionId(world, c[1]));
     expect(hidden(world, QStringLiteral("plannerActionScope:") + actionId(world, c[0])), QStringLiteral("%1 can be put on the plan").arg(c[0]));

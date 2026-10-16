@@ -600,6 +600,12 @@ Feature: Planner
       Then neither setting is changed
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The settings do not save while a count reads what it cannot be
+      Given the user opens the planner's settings
+      When the user changes the prompt of "Reschedule", clears the actions at once and saves
+      Then nothing is saved, and the settings say "Actions at once must be a whole number of at least 1."
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: Starting work is always on one task
       When the user opens the planner's settings
       Then "Start work" can only be on a task, while "Reschedule" can be on a task or the plan
