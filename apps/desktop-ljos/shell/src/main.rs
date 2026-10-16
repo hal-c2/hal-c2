@@ -217,21 +217,34 @@ fn run(app: App, options: Options) -> Result<(), String> {
             let handle = setup.handle();
             let engine = setup.engine().clone();
             report_warnings(&engine);
-            let mc: Rc<dyn Mc> = match &options.launch.mc_origin {
+            // One wake-up however much waits: the events themselves queue
+            // beside the inbox (see mc.rs, folders/watch.rs).
+            let folders_handle = handle.clone();
+            hal_c2_shell::folders::set_wake(&engine, move || {
+                let _ = folders_handle.send_coalesced(CoalesceKey(1), Wake);
+            });
+            let connection = match &options.launch.mc_origin {
                 Some(origin) => {
-                    // One wake-up however much waits: the events themselves
-                    // queue beside the inbox (see mc.rs).
                     let connection = Rc::new(Connection::spawn(move || {
                         let _ = handle.send_coalesced(CoalesceKey(1), Wake);
                     }));
                     connection.open(origin, &options.mc_token)?;
-                    let deliver = connection.clone();
-                    setup.on_message(move |engine: &Engine, Wake| {
-                        // A panic here would drop the rest of the inbox's batch.
-                        engine.turn(None, || deliver.deliver(engine));
-                    });
-                    connection
+                    Some(connection)
                 }
+                None => None,
+            };
+            let delivering = connection.clone();
+            setup.on_message(move |engine: &Engine, Wake| {
+                // A panic here would drop the rest of the inbox's batch.
+                engine.turn(None, || {
+                    if let Some(connection) = &delivering {
+                        connection.deliver(engine);
+                    }
+                    hal_c2_shell::folders::deliver(engine);
+                });
+            });
+            let mc: Rc<dyn Mc> = match connection {
+                Some(connection) => connection,
                 None => Rc::new(Disconnected::default()),
             };
             hal_c2_shell::start(&engine, &options.launch, mc);
