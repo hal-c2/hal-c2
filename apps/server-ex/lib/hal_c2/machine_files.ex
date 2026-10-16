@@ -184,6 +184,7 @@ defmodule HalC2.MachineFiles do
             Application.get_env(:hal_c2, :machine_files_timeout, @timeout)
           end),
         ttl_ms: Keyword.get(opts, :ttl_ms, 1_000),
+        backoff: Keyword.get(opts, :backoff_base, @backoff_base),
         environments: environments,
         members: %{},
         status: :idle,
@@ -345,7 +346,7 @@ defmodule HalC2.MachineFiles do
     {wait, delay} =
       cond do
         uptime >= @stable_uptime -> {0, 0}
-        state.delay == 0 -> {0, @backoff_base}
+        state.delay == 0 -> {0, state.backoff}
         true -> {state.delay, min(state.delay * 2, @backoff_max)}
       end
 
