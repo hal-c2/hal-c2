@@ -14,4 +14,6 @@ pub mod timeline;
 pub mod timeline_model;
 
 #[cfg(test)]
+mod timeline_prop;
+#[cfg(test)]
 mod timeline_tests;
