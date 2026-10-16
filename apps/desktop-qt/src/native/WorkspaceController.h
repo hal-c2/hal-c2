@@ -113,10 +113,26 @@ public:
   // (SettingsController::config()), or the one watched on the other machine
   // the route is on (empty until it arrives).
   QJsonObject environmentConfig() const;
-  // Opens `path` on the route's environment in `editorId` (the preferred one
-  // when empty), or shows it in the file manager (`reveal`). False when the
-  // environment has no such editor.
+  // The ServerConfig of this machine, whose editors and file manager open the
+  // route's files: environmentConfig() when the route runs here, else the
+  // shell's own (SettingsController::config()).
+  QJsonObject localConfig() const;
+  // Opens `path` of the route's environment in `editorId` of this machine
+  // (the preferred one when empty), or shows it in the file manager
+  // (`reveal`), through openHere(). False when this machine has no such editor.
   bool openInEditor(const QString& editorId, const QString& path, bool reveal = false);
+  // `path` on `environmentId` as a path on this machine, or nothing when its
+  // files cannot be reached from here. Every editor and file manager the shell
+  // starts goes through it: the place another machine's files, mounted here,
+  // become a local path.
+  std::optional<QString> localPathFor(const QString& environmentId, const QString& path) const;
+  // Starts `editor` (`file-manager` with `reveal`) on this machine at `path`
+  // of `environmentId`, through an MC that runs here; never on another
+  // machine. When localPathFor() has nothing it says the files are elsewhere.
+  // `failure` titles the toast of an MC that could not start it, and `done`
+  // hears its error (empty on success) instead when set.
+  void openHere(const QString& environmentId, const QString& path, const QString& editor, bool reveal,
+                const QString& failure, std::function<void(const std::optional<QString>&)> done = {});
 
 signals:
   // The route's thread, its root or worktree changed.

@@ -30,6 +30,7 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "ToastController.h"
@@ -1640,7 +1641,7 @@ bool ComposerController::attachToAnswer(const QString& requestId, QString questi
 // A folder is named by its path,
 // which only means something where the MC shares this machine's disk.
 bool ComposerController::attachFolders(const QString& target, const QVariantList& folders) {
-  if (!m_bridge->localFolders() || environmentOf(target) != m_client->environment()) {
+  if (!m_bridge->localFolderImportEnabled() || !thisMachine::hosts(*m_store, *m_client, environmentOf(target))) {
     toast(QStringLiteral("Folders can't be dropped into remote environments"), QStringLiteral("Type the folder path with @ instead."));
     return true;
   }

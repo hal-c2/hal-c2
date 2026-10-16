@@ -348,7 +348,7 @@ const Steps steps([] {
   // Folders.
   step(QStringLiteral("the environment is (local|remote)"), [](World& world, const Captures& c, const Table&) {
     // Remote: the MC the shell is connected to runs on another machine.
-    if (c[0] == QLatin1String("remote")) world.bridge().setMcOrigin(QUrl(QStringLiteral("https://mc.example.test")));
+    if (c[0] == QLatin1String("remote")) world.servedFrom(kOtherMachine);
     expect(world.bridge().localFolders() == (c[0] == QLatin1String("local")), QStringLiteral("the shell's MC is not %1").arg(c[0]));
   });
   const auto dropFolder = [](World& world, const QString& relative) {

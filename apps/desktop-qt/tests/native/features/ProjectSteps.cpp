@@ -275,7 +275,7 @@ const Steps steps([] {
     world.bridge().setLocalFolderImportEnabled(false);
   });
   step(QStringLiteral("the shell's MC runs on another machine"), [](World& world, const Captures&, const Table&) {
-    world.bridge().setMcOrigin(QUrl(QStringLiteral("https://mc-b.example.ts.net")));
+    world.servedFrom(kOtherMachine);
   });
   step(QStringLiteral("the user asks to add a project without a folder"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());

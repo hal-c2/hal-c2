@@ -3,6 +3,9 @@
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
 #   apps/server/src/workspace/WorkspaceFileSystem.ts, WorkspacePaths.ts (read limits, binary guard, path checks)
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
+#   apps/server-ex/lib/hal_c2/environment/machine.ex (platform.machineId: the machine an MC runs on)
+#   apps/desktop-qt/src/native/ThisMachine.cpp, WorkspaceController.cpp (localPathFor, openHere: editors and the file manager start only on this machine)
+#   apps/tui/src/thisMachine.ts, apps/tui/src/host/filesState.ts (the same for the terminal client)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
 #   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the MC)
@@ -404,10 +407,10 @@ Feature: Viewing and editing files
         | Linux where reveal runs through Windows (WSL) | Reveal in File Explorer |
 
     @desktop @tui
-    Scenario: A file opens in the user's editor on the environment
-      Given the environment has the editor "VS Code"
+    Scenario: A file opens in the user's editor when the thread runs on this computer
+      Given the thread runs on this computer, which has the editor "VS Code"
       When the user opens "src/app.ts" in "VS Code"
-      Then "VS Code" opens "src/app.ts" on the environment
+      Then "VS Code" opens "src/app.ts" on this computer
 
     @desktop
     Scenario: The thread's workspace opens in the preferred editor from the thread's details
@@ -453,6 +456,30 @@ Feature: Viewing and editing files
       Given the thread's environment is on another machine with no SSH route
       When the user looks at opening the thread's workspace in an editor
       Then opening is unavailable and the user is told no SSH route is known
+
+    # Another machine's paths name nothing on this computer, and an editor or
+    # file manager started on that machine opens where nobody is looking. Until
+    # its files can be reached from here, the user is told so instead.
+    @desktop
+    Scenario Outline: An editor or file manager never starts on another machine
+      Given the thread's files are on <where>
+      When the user <does>
+      Then nothing is started on that machine
+      And the user is told the files are on another machine and can't be opened here yet
+
+      Examples:
+        | where                     | does                                                                 |
+        | another MC of the cluster | reveals "src/app.ts" in the file manager                             |
+        | another MC of the cluster | follows the path "src/app.ts" in a terminal                          |
+        | another MC of the cluster | opens the thread's workspace in an editor from the thread's details |
+        | another MC of the cluster | opens the thread in their editor                                     |
+
+      @tui
+      Examples:
+        | where                                              | does                            |
+        | another MC of the cluster                          | opens "src/app.ts" in an editor |
+        | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
+        | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
 
   Rule: Editing
 

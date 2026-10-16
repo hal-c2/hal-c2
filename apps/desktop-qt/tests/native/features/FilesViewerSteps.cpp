@@ -217,14 +217,16 @@ const Steps steps([] {
   });
 
   // Editors.
-  step(QStringLiteral("the environment has the editor %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the thread runs on this computer, which has the editor %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.platform = {{QStringLiteral("machineId"), kThisMachine}};
+    world.mc.announceEnvironment();
     setConfig(world, {{QStringLiteral("availableEditors"), QJsonArray{editorId(c[0])}}});
   });
   step(QStringLiteral("the user opens %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     viewer(world).editorCallsBefore = editorCalls(world).size();
     choose(world, c[0], QStringLiteral("fileEntryEditor-") + editorId(c[1]));
   });
-  step(QStringLiteral("%1 opens %1 on the environment").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("%1 opens %1 on this computer").arg(q),[](World& world, const Captures& c, const Table&) {
     const QList<QJsonObject> calls = editorCalls(world).mid(viewer(world).editorCallsBefore);
     const QJsonObject wanted{{QStringLiteral("cwd"), workspaceRoot(world) + QLatin1Char('/') + c[1]}, {QStringLiteral("editor"), editorId(c[0])}};
     expect(calls.size() == 1 && calls.first() == wanted, QStringLiteral("the MC was asked %1").arg(show(QVariant::fromValue(calls))));
