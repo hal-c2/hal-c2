@@ -32,3 +32,7 @@ open = "5"
 serde_json.workspace = true
 # The MC origin, as hal_c2_mc takes it.
 url = "2"
+
+[dev-dependencies]
+# The state machine properties in tests/hub (settings, toasts).
+proptest = "1.11"

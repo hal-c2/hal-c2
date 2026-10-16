@@ -41,6 +41,13 @@ pub const STATE_KEYS: [&str; 8] = [
 /// Hands an action to whoever handles it; true when it did.
 pub type Interceptor = Rc<dyn Fn(&Engine, &str, &Json) -> bool>;
 type Watcher = Rc<dyn Fn(&Engine, &Json)>;
+type Deferred = Box<dyn FnOnce(&Engine)>;
+
+/// What waits for the running controllers to return.
+enum Queued {
+    Action(String, Json),
+    Call(Deferred),
+}
 type Opener = Rc<dyn Fn(&str)>;
 type ClipboardWriter = Rc<dyn Fn(&str)>;
 
@@ -240,7 +247,7 @@ struct BridgeState {
     held: Cell<usize>,
     /// The queued actions are running, one after another.
     draining: Cell<bool>,
-    queued: RefCell<VecDeque<(String, Json)>>,
+    queued: RefCell<VecDeque<Queued>>,
     opener: RefCell<Option<Opener>>,
     clipboard_writer: RefCell<Option<ClipboardWriter>>,
     mc_origin: RefCell<String>,
@@ -357,10 +364,27 @@ impl Bridge {
             state
                 .queued
                 .borrow_mut()
-                .push_back((action.to_owned(), payload));
+                .push_back(Queued::Action(action.to_owned(), payload));
             return;
         }
         self.deliver(engine, &state, action, &payload);
+    }
+
+    /// Runs `f` once no controller is running: at once when none is, else
+    /// right after the outermost returns, in order with the actions
+    /// dispatched meanwhile. What a controller hands back to its caller (a
+    /// toast's action, a menu's choice, a command) goes through here, so the
+    /// callback may call that controller again.
+    pub fn defer(self, engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
+        let state = BridgeState::of(engine);
+        if state.held.get() > 0 || state.draining.get() {
+            state
+                .queued
+                .borrow_mut()
+                .push_back(Queued::Call(Box::new(f)));
+            return;
+        }
+        f(engine);
     }
 
     fn deliver(self, engine: &Engine, state: &BridgeState, action: &str, payload: &Json) {
@@ -396,8 +420,13 @@ impl Bridge {
             let _draining = Reset(&state.draining);
             loop {
                 let next = state.queued.borrow_mut().pop_front();
-                let Some((action, payload)) = next else { break };
-                self.deliver(engine, &state, &action, &payload);
+                match next {
+                    Some(Queued::Action(action, payload)) => {
+                        self.deliver(engine, &state, &action, &payload)
+                    }
+                    Some(Queued::Call(f)) => f(engine),
+                    None => break,
+                }
             }
         }
         out

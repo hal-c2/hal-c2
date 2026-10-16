@@ -251,6 +251,19 @@ pub fn controller<C: Controller>(engine: &Engine) -> Option<Rc<RefCell<C>>> {
         .find_map(|e| e.any.clone().downcast::<RefCell<C>>().ok())
 }
 
+/// Runs `f` on the controller of type `C`, unless there is none or it is
+/// running now (a callback of its own that reached back into it): then
+/// `None`, where a `borrow_mut` would panic. What another controller calls,
+/// as `NativeShell::controller<T>()->...` does.
+pub fn with<C: Controller, R>(engine: &Engine, f: impl FnOnce(&mut C, &Engine) -> R) -> Option<R> {
+    let c = controller::<C>(engine)?;
+    // Held, so what it dispatches waits until it is free again.
+    Bridge::of(engine).hold(engine, || {
+        let mut c = c.try_borrow_mut().ok()?;
+        Some(f(&mut c, engine))
+    })
+}
+
 /// The names of the controllers, in the order they are offered actions.
 pub fn names(engine: &Engine) -> Vec<&'static str> {
     engine

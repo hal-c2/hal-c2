@@ -1750,6 +1750,7 @@ dependencies = [
  "ljos_render",
  "ljos_runtime",
  "open",
+ "proptest",
  "serde_json",
  "url",
 ]
