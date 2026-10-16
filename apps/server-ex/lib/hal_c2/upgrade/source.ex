@@ -53,6 +53,8 @@ defmodule HalC2.Upgrade.Source do
     File.mkdir_p!(Path.dirname(target))
     File.cp!(source_path, target)
     File.write!(target <> ".sha256", sha256(target))
+    # A bundle for the same version unpacked before is stale now.
+    File.rm_rf!(unpacked_dir(version, platform))
     :ok
   end
 
@@ -80,7 +82,7 @@ defmodule HalC2.Upgrade.Source do
       File.rename!(incoming, target)
       File.write!(target <> ".sha256", sum)
       # A bundle for the same version unpacked before is stale now.
-      File.rm_rf!(Path.join(cache_dir(version), "bundle-#{platform}"))
+      File.rm_rf!(unpacked_dir(version, platform))
       :ok
     else
       File.rm(incoming)
@@ -202,7 +204,7 @@ defmodule HalC2.Upgrade.Source do
   end
 
   defp unpack(version, platform) do
-    dir = Path.join(cache_dir(version), "bundle-#{platform}")
+    dir = unpacked_dir(version, platform)
 
     if HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
@@ -298,6 +300,9 @@ defmodule HalC2.Upgrade.Source do
 
   defp archive_path(version, platform),
     do: Path.join(cache_dir(version), file_name(version, platform))
+
+  defp unpacked_dir(version, platform),
+    do: Path.join(cache_dir(version), "bundle-#{platform}")
 
   defp sha256(path) do
     path

@@ -197,7 +197,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      pending = after_hot_update(hot, services)
+      pending = __MODULE__.after_hot_update(hot, services)
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
     end
   end
@@ -207,7 +207,10 @@ defmodule HalC2.Upgrade do
   # the plugins directory, and the GitHub CLI's sign-in.
   # `services` are the specs the application listed before the update; it returns
   # what still needs a restart (`start_new_services/1`).
-  defp after_hot_update(beams, services) do
+  # Called by name, never locally: the caller is the module version being replaced, and
+  # a local call would run its old copy of this step rather than the one just loaded.
+  @doc false
+  def after_hot_update(beams, services) do
     pending =
       if List.keymember?(beams, HalC2.Application, 0), do: start_new_services(services), else: []
 
@@ -524,7 +527,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, _report} <- HalC2.Hot.reload(beams) do
-      case after_hot_update(beams, services) do
+      case __MODULE__.after_hot_update(beams, services) do
         [] -> :ok
         pending -> {:error, {:restart_for, pending}}
       end

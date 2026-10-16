@@ -122,6 +122,27 @@ defmodule HalC2.UpgradeTest do
     assert {:error, _} = Source.receive_part("2.0.0", "darwin-arm64", {:finish, sum})
   end
 
+  test "putting a bundle again replaces the one unpacked for its version", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # The same version built again: its unpacked bundle is stale now.
+    second = tarball(dir, "second", %{"version" => "2.0.0", "marker" => "second"})
+    :ok = Source.put("2.0.0", "darwin-arm64", second)
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "second"
+  end
+
+  # A bundle archive whose manifest is `manifest`, packed as `mix hal_c2.bundle` does.
+  defp tarball(dir, name, manifest) do
+    archive = Path.join(dir, name <> ".tar.gz")
+    entry = {~c"releases/2.0.0/upgrade.json", JSON.encode!(manifest)}
+    :ok = :erl_tar.create(String.to_charlist(archive), [entry], [:compressed])
+    archive
+  end
+
   test "a code-only version's release is the running one with the bundle's own code", %{
     tmp_dir: dir
   } do
@@ -228,6 +249,16 @@ defmodule HalC2.UpgradeTest do
              "platform" => "darwin-arm64",
              "applications" => %{"hal_c2" => "2.0.0", "kernel" => "11.0.3", "exqlite" => "0.41.0"}
            } = JSON.decode!(File.read!(Path.join(new_rel, "upgrade.json")))
+  end
+
+  test "the step after a hot update is called by name, so the code that loads runs it" do
+    # A local call stays in the module version making it, the one being replaced; a
+    # call by name reaches the version the update just loaded.
+    {:ok, {HalC2.Upgrade, [imports: imports]}} =
+      :beam_lib.chunks(:code.which(HalC2.Upgrade), [:imports])
+
+    assert {HalC2.Upgrade, :after_hot_update, 2} in imports
+    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
   end
 
   test "a socket opened before an upgrade keeps its subscriptions" do
