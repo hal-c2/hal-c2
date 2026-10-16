@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   const runtime = buildTuiRuntime(options);
   // The other machines of a cluster are reached through this same MC, each by its environment id.
   const client = makeClusterClient(makeTuiClient(runtime, origin), (environmentId) =>
-    makeTuiClient(buildTuiRuntime({ ...options, environmentId }), origin),
+    makeTuiClient(buildTuiRuntime({ ...options, environmentId }), origin, false),
   );
 
   // A tmux pane can still be showing scrollback when this child starts. Return it

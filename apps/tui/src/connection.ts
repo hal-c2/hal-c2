@@ -134,6 +134,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
 import { makeTuiSettingsClient, type TuiSettingsClient } from "./settingsClient.ts";
+import { hostedHere, thisMachineId } from "./thisMachine.ts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
@@ -643,6 +644,13 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly listModels: () => Promise<ModelOption[]>;
   /** Current server settings, including new-thread workspace defaults. */
   readonly getServerConfig: () => Promise<ServerConfig>;
+  /**
+   * `path` of the MC that has it as a path on this machine, or null when its
+   * files cannot be reached from here. An editor starts only on a path it gives
+   * (filesState.ts): this is where another machine's files, mounted here, will
+   * become one.
+   */
+  readonly localPathFor: (path: string) => Promise<string | null>;
   /** Git refs available as base branches for a project's new worktree. */
   readonly listRefs: (cwd: string) => Promise<VcsListRefsResult>;
   /** Switch the selected checkout to a ref before creating a thread in it. */
@@ -723,7 +731,8 @@ interface WarmSubscriptionRef<S> {
 /** Number of recently-viewed threads whose live state we keep warm (LRU). */
 const THREAD_WARM_LIMIT = 8;
 
-export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
+/** `own` is false for another machine of the cluster, reached through the MC at `origin`. */
+export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): TuiClient {
   const attachmentImages = createAttachmentImageCache();
   // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
   const hostPlatform = process.platform;
@@ -1236,6 +1245,16 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       ),
 
     getServerConfig: () => runtime.runPromise(request(WS_METHODS.serverGetConfig, {})),
+
+    // Nothing is mounted yet: only an MC's own files, when it runs here.
+    localPathFor: async (path) => {
+      const [config, ours] = await Promise.all([
+        runtime.runPromise(request(WS_METHODS.serverGetConfig, {})).catch(() => null),
+        thisMachineId(),
+      ]);
+      const theirs = config?.environment.platform.machineId;
+      return hostedHere({ ours, theirs, own, origin }) ? path : null;
+    },
 
     listRefs: (cwd) =>
       runtime.runPromise(
