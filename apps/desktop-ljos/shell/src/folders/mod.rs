@@ -346,12 +346,9 @@ impl<'e> Model<'e> {
                 state(&state_of);
             }
         };
-        engine.watch(obj, LocalFolderModel::ROOT_PATH.index, {
-            let again = again;
-            move |e, v| {
-                let path = e.to_js_string(v).to_string();
-                again(e, &|m| m.write_root(&path));
-            }
+        engine.watch(obj, LocalFolderModel::ROOT_PATH.index, move |e, v| {
+            let path = e.to_js_string(v).to_string();
+            again(e, &|m| m.write_root(&path));
         })?;
         engine.watch(obj, LocalFolderModel::ENABLED.index, move |e, v| {
             let enabled = v.to_boolean();
