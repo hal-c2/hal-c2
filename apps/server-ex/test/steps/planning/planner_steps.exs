@@ -2901,8 +2901,16 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user added the action {string} on the whole plan", %{args: labels} = context do
+    plan_actions(context, labels)
+  end
+
   step "the user added the actions {string} and {string} on the whole plan",
        %{args: labels} = context do
+    plan_actions(context, labels)
+  end
+
+  defp plan_actions(context, labels) do
     actions =
       for label <- labels, into: context.actions do
         action = %{
@@ -2913,7 +2921,7 @@ defmodule HalC2.Steps.Planning.Planner do
           "prompt" => label <> @gate
         }
 
-        {label |> String.downcase() |> String.replace(" ", "-"), action}
+        {label |> String.trim() |> String.downcase() |> String.replace(" ", "-"), action}
       end
 
     save_actions(context, actions)

@@ -1458,6 +1458,12 @@ Feature: Planner
       And no run starts
 
     @mc
+    Scenario: An action saved with a space before its label still runs by its first word
+      Given the user added the action " Check risks" on the whole plan
+      When "dana" runs "/planner check" in Slack
+      Then a " Check risks" run of the plan starts
+
+    @mc
     Scenario: The slash command's answer names each action the way that runs it
       When "dana" runs "/planner nothing" in Slack
       And "dana" runs the line its answer gives for "Write status update"

@@ -124,5 +124,5 @@ defmodule HalC2Plugins.Planner.Slack do
     do: Enum.map_join(actions, "\n", &"#{command} run #{&1["id"]} — #{&1["label"]}")
 
   defp first_word(label),
-    do: label |> String.split(~r/\s+/, parts: 2) |> hd() |> String.downcase()
+    do: label |> String.trim() |> String.split(~r/\s+/, parts: 2) |> hd() |> String.downcase()
 end
