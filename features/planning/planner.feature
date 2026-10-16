@@ -877,6 +877,37 @@ Feature: Planner
       Then #7's task is dropped
 
     @mc
+    Scenario: A closed issue GitHub has not changed since the last look is not read again
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      When the plugin looks at GitHub again, with nothing there changed since
+      Then #7's task is done
+      And that look read no issue alone
+
+    @mc
+    Scenario: A closed issue renamed on GitHub since the last look is renamed from the issues changed since
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4"
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read no issue alone
+
+    @mc
+    Scenario: A closed issue reopened on GitHub without the planner label is to do again
+      Given "planner" follows the issues of "acme/api" labelled "roadmap"
+      And "acme/api" has the open issue #7 "Rate limits" assigned to "dana" with the label "roadmap"
+      And the plugin looks at GitHub
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      When #7 is reopened on GitHub without the label
+      And the plugin looks at GitHub again
+      Then #7's task is to do
+      And that look read no issue alone
+
+    @mc
     Scenario: An issue edited on GitHub updates its task's title and notes
       Given "planner" follows the issues of "acme/api"
       And #7's task was imported as "Rate limits"

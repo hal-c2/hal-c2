@@ -234,7 +234,8 @@ defmodule HalC2Plugins.Planner do
     do: change({:dismiss_feedback, input["itemId"], feedback}, context.settings)
 
   def call("sync", _input, context) do
-    :ok = server({:looked, look(context.settings, server(:items))})
+    {items, details} = server(:looking)
+    :ok = server({:looked, look(context.settings, items, details)})
     {:ok, server(:plan)}
   end
 
@@ -665,6 +666,7 @@ defmodule HalC2Plugins.Planner do
        unwatched: [],
        checked_at: nil,
        looked: nil,
+       details: nil,
        projects: [],
        slack: nil,
        slack_at: nil,
@@ -680,7 +682,7 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_call(:plan, _from, state), do: {:reply, plan(state), state}
   def handle_call(:runs, _from, state), do: {:reply, runs(state), state}
-  def handle_call(:items, _from, state), do: {:reply, state.items, state}
+  def handle_call(:looking, _from, state), do: {:reply, {state.items, state.details}, state}
 
   def handle_call({:item, id}, _from, state) do
     case state.items[id] do
@@ -1155,11 +1157,10 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_info(:poll, %{polling: nil} = state) do
     server = self()
-    settings = state.settings
-    items = state.items
+    %{settings: settings, items: items, details: details} = state
     # Linked, so turning the planner off calls off a look still waiting on GitHub.
-    {_pid, ref} =
-      Process.spawn(fn -> send(server, {:polled, look(settings, items)}) end, [:link, :monitor])
+    looking = fn -> send(server, {:polled, look(settings, items, details)}) end
+    {_pid, ref} = Process.spawn(looking, [:link, :monitor])
 
     {:noreply, %{state | polling: ref}}
   end
@@ -1202,8 +1203,10 @@ defmodule HalC2Plugins.Planner do
   # --- looking at GitHub and Slack ----------------------------------------------------------
 
   # The look keeps the plan it read, so applying it can tell the tasks changed since.
-  defp look(settings, items) do
-    found = settings |> Sync.look(items) |> Map.put(:items, items)
+  # `details` are what the look applied last had of linked issues missing from the list,
+  # which this one need not read again (see `Sync.look/3`).
+  defp look(settings, items, details) do
+    found = settings |> Sync.look(items, details) |> Map.put(:items, items)
 
     if String.trim(settings["slackChannel"] || "") != "",
       do: Map.put(found, :slack, connected?()),
@@ -1244,6 +1247,7 @@ defmodule HalC2Plugins.Planner do
         unwatched: found.unwatched,
         checked_at: now(),
         looked: found.at,
+        details: {found.started, found.details},
         projects: found.projects || state.projects
     }
 

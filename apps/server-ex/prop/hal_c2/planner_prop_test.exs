@@ -6,9 +6,9 @@ defmodule HalC2.PlannerPropTest do
   (`test/support/fake_gh.py`), which holds the first push of a rename of a linked task
   until the model answers it, answers a later push carrying the name the same at once,
   writes down each name it takes and each relation between issues it makes or drops,
-  and lists the open issues of the followed repository tasks are linked to and reads a
-  closed one alone, so a look at GitHub brings those tasks' names and states up to
-  date. It keeps each board's items, the issues pushes added to it, and lists them
+  and lists the open issues of the followed repository tasks are linked to, reads a
+  closed one alone and lists it among those changed since a time, so a look at GitHub
+  brings those tasks' names and states up to date. It keeps each board's items, the issues pushes added to it, and lists them
   when a look reads the board, as one page of what it holds or, once the board holds
   more than a look reads, as the first of more.
 
@@ -165,7 +165,11 @@ defmodule HalC2.PlannerPropTest do
          GIT_CONFIG_VALUE_0)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
-    apps = ~w(gh_command codex_command settings_check_ms home planner_today planner_kept_runs)a
+
+    apps =
+      ~w(gh_command codex_command settings_check_ms home planner_today planner_kept_runs
+         planner_skew_seconds)a
+
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
 
     for var <- ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0),
@@ -188,6 +192,9 @@ defmodule HalC2.PlannerPropTest do
     Application.put_env(:hal_c2, :settings_check_ms, nil)
     Application.put_env(:hal_c2, :planner_today, "2026-10-15")
     Application.put_env(:hal_c2, :planner_kept_runs, @kept_runs)
+    # The fake GitHub stamps changes by the MC's clock, so a look lists only what changed
+    # since the last one began.
+    Application.put_env(:hal_c2, :planner_skew_seconds, 0)
 
     on_exit(fn ->
       for {var, value} <- previous_vars,
@@ -1207,8 +1214,8 @@ defmodule HalC2.PlannerPropTest do
     do: %{put_in(m.items[slot].sync, nil) | synced: Map.delete(m.synced, slot)}
 
   # A look at GitHub, which lists the open issues of `@repository` tasks are linked to,
-  # with the parent GitHub has each under, and reads the closed ones alone, with no
-  # relations: such a task takes its issue's name and state, has all of it, and then, in
+  # with the parent GitHub has each under, and has the closed ones, with no relations,
+  # from those changed since the last look began, reading the rest alone: such a task takes its issue's name and state, has all of it, and then, in
   # the order GitHub lists the issues, waits for no task with an issue and is the subtask
   # of the task whose issue GitHub names as its parent, or of none when its parent has an
   # issue, unless GitHub refused its last change, a push to it is on the way, or it is
@@ -1524,22 +1531,48 @@ defmodule HalC2.PlannerPropTest do
   # GitHub lists only the open issues of `@repository` a task is linked to, as if they
   # alone had the planner's label, with the parent each is under, so a look adds no task
   # and brings the linked one up to date; a closed one it answers when it is read alone
-  # (see `close/2`).
-  defp listed, do: gh_rule(listing())
+  # (see `close/2`), and in a listing of every state among those changed since a time.
+  defp listed do
+    gh_rule(changed())
+    gh_rule(listing())
+  end
 
   defp listing do
+    nodes =
+      for {number, node} <- linked(), not Map.has_key?(Process.get(:pl_closed), number), do: node
+
+    rule = issue_list(nodes)
+    %{rule | "stdin" => rule["stdin"] ++ [~s("states":["OPEN"])]}
+  end
+
+  # The linked issues of every state, which the fake gh cuts to those changed since the
+  # listing's `since`.
+  defp changed do
+    rule = issue_list(Enum.map(linked(), &elem(&1, 1)))
+    Map.merge(rule, %{"stdin" => rule["stdin"] ++ [~s("states":null)], "since" => true})
+  end
+
+  # The issues of `@repository` tasks are linked to, open with the parent each is under,
+  # closed as read alone.
+  defp linked do
     parents = Process.get(:pl_parents)
 
-    nodes =
-      for {slot, _} <- Process.get(:pl_items),
-          number = Process.get({:pl_issue, slot}),
-          here?(number),
-          not Map.has_key?(Process.get(:pl_closed), number) do
+    for {slot, _} <- Process.get(:pl_items),
+        number = Process.get({:pl_issue, slot}),
+        here?(number) do
+      if Map.has_key?(Process.get(:pl_closed), number) do
+        {number, issue_node(number)}
+      else
         parent = parents[number] && %{"number" => parents[number], "repository" => repo_ref()}
-        Map.put(issue_node(number), "parent", parent)
+        {number, Map.put(issue_node(number), "parent", parent)}
       end
+    end
+  end
 
-    issue_list(nodes)
+  # GitHub stamps `numbers` as changed now.
+  defp touch(numbers) do
+    now = DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+    Process.put(:pl_updated, Map.merge(Process.get(:pl_updated), Map.new(numbers, &{&1, now})))
   end
 
   defp repo_ref, do: %{"nameWithOwner" => @repository}
@@ -1549,6 +1582,7 @@ defmodule HalC2.PlannerPropTest do
     parents = Process.get(:pl_parents)
     parents = if parent, do: Map.put(parents, number, parent), else: Map.delete(parents, number)
     Process.put(:pl_parents, parents)
+    touch([number])
     listed()
     observe(:ok)
   end
@@ -1557,6 +1591,7 @@ defmodule HalC2.PlannerPropTest do
   # `sub` where `parent` was.
   def swap(sub, parent) do
     Process.put(:pl_parents, swapped(Process.get(:pl_parents), sub, parent))
+    touch([sub, parent])
     listed()
     observe(:ok)
   end
@@ -1596,6 +1631,7 @@ defmodule HalC2.PlannerPropTest do
         "repos/#{@repository}/issues/#{number}" in args,
         {:ok, %{"state" => "closed", "state_reason" => reason}} <- [JSON.decode(stdin)] do
       Process.put(:pl_closed, Map.put(Process.get(:pl_closed), number, String.to_atom(reason)))
+      touch([number])
       issue_read(number)
     end
 
@@ -1659,7 +1695,7 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # Issue `number` of `@repository` as GitHub answers it: open, its reason "REOPENED" once
-  # it was closed, or closed with the reason it was closed for.
+  # it was closed, or closed with the reason it was closed for, and when it last changed.
   defp issue_node(number) do
     {state, reason} =
       case Process.get(:pl_closed)[number] do
@@ -1674,14 +1710,16 @@ defmodule HalC2.PlannerPropTest do
       "state" => state,
       "stateReason" => reason,
       "url" => "https://github.com/#{@repository}/issues/#{number}",
-      "repository" => %{"nameWithOwner" => @repository}
+      "repository" => %{"nameWithOwner" => @repository},
+      "updatedAt" => Map.get(Process.get(:pl_updated), number, "2026-10-01T00:00:00Z")
     }
   end
 
-  # GitHub closes issue `number` as `:completed` or `:not_planned`: it leaves the listing,
-  # which has only open issues, and is answered as closed when read alone.
+  # GitHub closes issue `number` as `:completed` or `:not_planned`: it leaves the listing
+  # of open issues, and is answered as closed when read alone.
   def close(number, reason) do
     Process.put(:pl_closed, Map.put(Process.get(:pl_closed), number, reason))
+    touch([number])
     issue_read(number)
     observe(:ok)
   end
@@ -1690,6 +1728,7 @@ defmodule HalC2.PlannerPropTest do
   def reopen(number) do
     Process.put(:pl_closed, Map.delete(Process.get(:pl_closed), number))
     Process.put({:pl_reopened, number}, true)
+    touch([number])
     issue_read(number)
     observe(:ok)
   end
@@ -2369,6 +2408,7 @@ defmodule HalC2.PlannerPropTest do
 
     Process.put(:pl_items, %{})
     Process.put(:pl_closed, %{})
+    Process.put(:pl_updated, %{})
     Process.put(:pl_parents, %{})
     Process.put(:pl_board, @board)
     Process.put(:pl_boards, %{})

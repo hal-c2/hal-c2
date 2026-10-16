@@ -1647,32 +1647,46 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
-  defp close_issue(context, number, reason) do
-    repository = context.repository
-
-    closed =
-      GitHubIssues.issue(repository, number, %{"state" => "CLOSED", "stateReason" => reason})
-
-    context
-    |> GitHubIssues.answers(repository, [closed])
-    # The listing only has open issues, so a closed one is read alone.
-    |> World.cli_rules([
-      %{
-        "args" => ["api graphql"],
-        "stdin" => ["issues(first: $first"],
-        "stdout" => %{
-          "data" => %{
-            "repository" => %{
-              "issues" => %{
-                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
-                "nodes" => []
-              }
-            }
-          }
-        }
-      }
-    ])
+  defp close_issue(context, number, reason, fields \\ %{}) do
+    fields = Map.merge(%{"state" => "CLOSED", "stateReason" => reason}, fields)
+    off_the_list(context, GitHubIssues.issue(context.repository, number, fields))
   end
+
+  # GitHub answering for `issue`, which has left the open issues: it is read alone and
+  # listed among the issues updated since a look, but not among the open ones.
+  defp off_the_list(context, issue) do
+    context
+    |> GitHubIssues.answers(context.repository, [issue])
+    |> World.cli_rules([listing([], ["OPEN"])])
+  end
+
+  step "the closed \#{int} is renamed on GitHub to {string} with the description {string}",
+       %{args: [number, title, body]} = context do
+    close_issue(context, number, "COMPLETED", %{"title" => title, "body" => body})
+  end
+
+  step "\#{int} is reopened on GitHub without the label", %{args: [number]} = context do
+    off_the_list(context, GitHubIssues.issue(context.repository, number))
+  end
+
+  step "the plugin looks at GitHub again", context do
+    context |> count_reads() |> sync!()
+  end
+
+  step "the plugin looks at GitHub again, with nothing there changed since", context do
+    context |> World.cli_rules([listing([], nil)]) |> count_reads() |> sync!()
+  end
+
+  step "that look read no issue alone", context do
+    assert reads(context) == context.reads
+    context
+  end
+
+  defp count_reads(context), do: Map.put(context, :reads, reads(context))
+
+  # How many issues were read one at a time so far.
+  defp reads(context),
+    do: length(GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields"))
 
   step "\#{int}'s task is done", %{args: [number]} = context do
     assert task_of(plan!(context), number)["status"] == "done"
@@ -3064,13 +3078,15 @@ defmodule HalC2.Steps.Planning.Planner do
     listing([issue])
   end
 
-  # GitHub's list of the open issues: `issues`, as `GitHubIssues.issue/3` makes them.
-  defp listing(issues) do
+  # GitHub's list of the open issues: `issues`, as `GitHubIssues.issue/3` makes them. With
+  # `states`, only the listing of those (`["OPEN"]`, or `nil` for every state) has them.
+  defp listing(issues, states \\ :any) do
     page = %{"pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}, "nodes" => issues}
+    states = if states == :any, do: [], else: [~s("states":) <> JSON.encode!(states)]
 
     %{
       "args" => ["api graphql"],
-      "stdin" => ["issues(first: $first"],
+      "stdin" => ["issues(first: $first" | states],
       "stdout" => %{"data" => %{"repository" => %{"issues" => page}}}
     }
   end

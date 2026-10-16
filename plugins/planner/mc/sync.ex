@@ -1,7 +1,7 @@
 defmodule HalC2Plugins.Planner.Sync do
   @moduledoc """
   The plan and GitHub: what a look at the followed repositories, the board and the
-  linked pull requests finds (`look/2`), how it changes the plan (`apply/5`), and
+  linked pull requests finds (`look/3`), how it changes the plan (`apply/5`), and
   what a change to a linked task asks of GitHub when the plan syncs both ways
   (`pushes/5`, run by `run/2`).
 
@@ -26,10 +26,18 @@ defmodule HalC2Plugins.Planner.Sync do
   the planner's label if one is set), `details` of linked issues not among them,
   the `board`'s items by issue, the `prs` linked tasks name by state, the
   repositories no project has (`unwatched`), the `problem` a part failed with and
-  the MC's `projects`. `at` orders looks that overlap.
+  the MC's `projects`. `at` orders looks that overlap; `started` is when the look
+  began by the clock.
+
+  `before` is `{started, details}` of the look applied last, or nil. A repository's
+  linked issues not among its open ones come from one listing of its issues updated
+  since that look began, and one not updated since is the detail that look had, so
+  only an issue neither has is read alone, or every one the listing lacks when it
+  fails or is cut short.
   """
-  def look(settings, items) do
+  def look(settings, items, before) do
     at = System.monotonic_time()
+    started = DateTime.utc_now()
 
     case Host.projects(@id) do
       {:ok, projects} ->
@@ -37,6 +45,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
         found = %{
           at: at,
+          started: started,
           problem: nil,
           unwatched: [],
           projects: projects,
@@ -48,7 +57,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
         found =
           if settings["sync"] in ~w(import twoWay),
-            do: found |> issues(settings, items, github) |> board(settings, github),
+            do: found |> issues(settings, items, github, before) |> board(settings, github),
             else: found
 
         prs(found, items, github)
@@ -56,6 +65,7 @@ defmodule HalC2Plugins.Planner.Sync do
       {:error, error} ->
         %{
           at: at,
+          started: started,
           problem: message(error),
           unwatched: [],
           projects: nil,
@@ -67,7 +77,7 @@ defmodule HalC2Plugins.Planner.Sync do
     end
   end
 
-  defp issues(found, settings, items, github) do
+  defp issues(found, settings, items, github, before) do
     label = String.trim(settings["issueLabel"] || "")
     repos = settings["repositories"] || []
     unwatched = Enum.reject(repos, &project_of(github, &1))
@@ -104,27 +114,76 @@ defmodule HalC2Plugins.Planner.Sync do
           end
       end
 
-    # A linked issue of a followed repository that left the list (closed, or its label
-    # taken off) is read alone.
-    {details, problems} =
-      for {_, %{"issue" => %{"repository" => repo, "number" => number}}} <- items,
+    # The linked issues of the followed repositories that left the list (closed, or their
+    # label taken off), by repository.
+    shown = MapSet.new(listed, &key/1)
+
+    missing =
+      for {_, %{"issue" => %{"repository" => repo, "number" => _} = ref}} <- items,
           Enum.any?(repos, &same?(&1, repo)),
-          not Enum.any?(listed, &Plan.same_ref?(&1, %{"repository" => repo, "number" => number})),
-          project = project_of(github, repo),
+          not MapSet.member?(shown, key(ref)),
+          project_of(github, repo),
+          do: Map.take(ref, ~w(repository number))
+
+    {details, problems} =
+      for {_, [%{"repository" => repo} | _] = refs} <-
+            Enum.group_by(missing, &String.downcase(&1["repository"])),
           reduce: {[], problems} do
         {details, problems} ->
-          case Host.issues(@id, "detail", %{
-                 "projectId" => project["id"],
-                 "repository" => repo,
-                 "number" => number
-               }) do
-            {:ok, issue} -> {[issue | details], problems}
-            {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+          project = project_of(github, repo)
+          {known, alone} = updated(project, repo, refs, before)
+
+          for %{"number" => number} <- alone, reduce: {known ++ details, problems} do
+            {details, problems} ->
+              case Host.issues(@id, "detail", %{
+                     "projectId" => project["id"],
+                     "repository" => repo,
+                     "number" => number
+                   }) do
+                {:ok, issue} -> {[issue | details], problems}
+                {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+              end
           end
       end
 
     problem(%{found | issues: listed, details: details, unwatched: unwatched}, problems)
   end
+
+  # Of the linked issues `refs` of `repo` missing from its open ones, those GitHub lists
+  # as updated since the look `before` began, those that look had and GitHub has not
+  # updated since, and the rest, to be read alone. A listing that fails or is cut short
+  # says nothing of the issues it lacks. GitHub stamps updates by its own clock, which
+  # the MC's may run ahead of, so the listing reaches back `skew_seconds` further.
+  defp updated(_project, _repo, refs, nil), do: {[], refs}
+
+  defp updated(project, repo, refs, {started, had}) do
+    since = started |> DateTime.add(-skew_seconds(), :second) |> DateTime.truncate(:millisecond)
+
+    input = %{
+      "projectId" => project["id"],
+      "repository" => repo,
+      "state" => "all",
+      "since" => DateTime.to_iso8601(since),
+      "limit" => 500
+    }
+
+    wanted = MapSet.new(refs, &key/1)
+
+    case Host.issues(@id, "list", input) do
+      {:ok, %{"issues" => issues} = list} ->
+        fresh = Enum.filter(issues, &MapSet.member?(wanted, key(&1)))
+        got = MapSet.new(fresh, &key/1)
+        rest = Enum.reject(refs, &MapSet.member?(got, key(&1)))
+        had = if list["truncated"], do: %{}, else: Map.new(had, &{key(&1), &1})
+        {same, alone} = Enum.split_with(rest, &is_map_key(had, key(&1)))
+        {fresh ++ Enum.map(same, &had[key(&1)]), alone}
+
+      {:error, _} ->
+        {[], refs}
+    end
+  end
+
+  defp skew_seconds, do: Application.get_env(:hal_c2, :planner_skew_seconds, 300)
 
   defp board(found, settings, github) do
     with {:ok, owner, number} <- board_name(settings["board"]),
@@ -338,7 +397,7 @@ defmodule HalC2Plugins.Planner.Sync do
     do: %{found | problem: Enum.join(Enum.reject([found.problem | more], &is_nil/1), " ")}
 
   @doc """
-  `items` with what `found` (`look/2`) holds: tasks for issues the plan does not
+  `items` with what `found` (`look/3`) holds: tasks for issues the plan does not
   have, linked tasks brought up to date, their subtasks and dependencies, a milestone
   for each issue milestone, board dates, and the pull requests' states. New items
   get ids from `new_id`. The tasks in `found.kept`, which the plan keeps as they are,
