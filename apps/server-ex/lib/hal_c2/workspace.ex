@@ -532,10 +532,15 @@ defmodule HalC2.Workspace do
     end
   end
 
-  defp within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
+  @doc "Whether `path` is `root` or under it; both absolute and normalized."
+  def within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
 
-  # The real path of `path`, or of its nearest existing ancestor joined with the rest.
-  defp real(path), do: real(Path.split(Path.expand(path)), "/", 0)
+  @doc """
+  The real path of `path`, or of its nearest existing ancestor joined with the rest:
+  what a path under a root must still be under once symlinks resolve
+  (`HalC2.MachineFiles.Share` holds another machine's reads to the same rule).
+  """
+  def real(path), do: real(Path.split(Path.expand(path)), "/", 0)
 
   # A link loop resolves no further than this.
   defp real(parts, acc, links) when links > 40, do: Path.join([acc | parts])
