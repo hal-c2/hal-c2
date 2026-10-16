@@ -2028,10 +2028,7 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "GitHub answers renaming \#{int} to {string} late, refusing it",
        %{args: [number, title]} = context do
-    answers_late(context, number, title, %{
-      "exit" => 1,
-      "stderr" => "HTTP 422: Validation Failed\n"
-    })
+    answers_late(context, number, title, %{"stdout" => %{"number" => number}}, true)
   end
 
   step "GitHub answers renaming \#{int} to {string} late, taking it",
@@ -2203,9 +2200,18 @@ defmodule HalC2.Steps.Planning.Planner do
     update_task(context, number, %{"owner" => owner})
   end
 
-  step "GitHub is asked to rename \#{int} to {string} and assign it to {string} at once",
+  step "GitHub is asked to rename \#{int} to {string} and to add {string} to its assignees",
        %{args: [number, title, owner]} = context do
-    GitHubIssues.assert_patched(context, number, %{"title" => title, "assignees" => [owner]})
+    context
+    |> GitHubIssues.assert_patched(number, %{"title" => title})
+    |> assert_assignees("POST", number, owner)
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees and to add {string}",
+       %{args: [old, number, owner]} = context do
+    context
+    |> assert_assignees("DELETE", number, old)
+    |> assert_assignees("POST", number, owner)
   end
 
   step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
@@ -2300,23 +2306,34 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "GitHub refuses changes to \#{int}", %{args: [number]} = context do
-    World.cli_rules(context, [
-      %{
-        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
-        "exit" => 1,
-        "stderr" =>
-          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/issues#update-an-issue)\n"
-      }
-    ])
+    World.cli_rules(
+      context,
+      for args <- [
+            ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+            ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+            ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"]
+          ] do
+        %{
+          "args" => args,
+          "exit" => 1,
+          "stderr" =>
+            "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/issues#update-an-issue)\n"
+        }
+      end
+    )
   end
 
   step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
-    World.cli_rules(context, [
-      %{
-        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
-        "stdout" => %{"number" => number}
-      }
-    ])
+    World.cli_rules(
+      context,
+      for args <- [
+            ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+            ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+            ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"]
+          ] do
+        %{"args" => args, "stdout" => %{"number" => number, "assignees" => []}}
+      end
+    )
   end
 
   step "the user labels \#{int}'s task {string}", %{args: [number, label]} = context do
@@ -2331,6 +2348,34 @@ defmodule HalC2.Steps.Planning.Planner do
   step "GitHub is never asked to change \#{int}'s assignees", %{args: [number]} = context do
     changes = GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}")
     refute Enum.any?(changes, &Map.has_key?(&1, "assignees")), inspect(changes)
+
+    for method <- ~w(POST DELETE) do
+      assert GitHubIssues.rest_calls(context, method, "/issues/#{number}/assignees") == []
+    end
+
+    context
+  end
+
+  step "GitHub is never asked to set \#{int}'s assignees outright", %{args: [number]} = context do
+    changes = GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}")
+    refute Enum.any?(changes, &Map.has_key?(&1, "assignees")), inspect(changes)
+    context
+  end
+
+  step "\#{int} is assigned to {string} and {string} on GitHub",
+       %{args: [number, first, second]} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, [
+        GitHubIssues.issue(repository, number, %{
+          "assignees" => %{"nodes" => [%{"login" => first}, %{"login" => second}]}
+        })
+      ])
+      |> sync!()
+
+    assert task_of(plan!(context), number)["owner"] == first
     context
   end
 
@@ -3155,6 +3200,15 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # GitHub's list of the open issues: #`number`, named `title`.
+  defp assert_assignees(context, method, number, login) do
+    calls = GitHubIssues.rest_calls(context, method, "/issues/#{number}/assignees")
+
+    assert %{"assignees" => [login]} in calls,
+           "GitHub was not asked to #{method} #{login} on ##{number}: #{inspect(calls)}"
+
+    context
+  end
+
   defp listed(context, number, title) do
     issue =
       GitHubIssues.issue(context.repository, number, %{"title" => title, "body" => "First notes"})
@@ -3251,15 +3305,19 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # GitHub's answer to renaming #`number` to `title` (a fake gh rule's outcome) waits on
   # a fifo until the scenario answers it.
-  defp answers_late(context, number, title, outcome) do
+  # Only the first change to the title waits, and is refused when `refusing?`: the one
+  # after it, with whatever else the task gained, goes through.
+  defp answers_late(context, number, title, outcome, refusing? \\ false) do
     gate = Path.join(context.mc.home, "gh-gate")
     {_, 0} = System.cmd("mkfifo", [gate])
+    refuse = if refusing?, do: " echo 'HTTP 422: Validation Failed' >&2; exit 1;", else: ""
 
     rule =
       Map.merge(outcome, %{
         "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
         "stdin" => [JSON.encode!(%{"title" => title})],
-        "run" => "cat '#{gate}' > /dev/null"
+        "run" =>
+          "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}';#{refuse} fi"
       })
 
     context |> World.cli_rules([rule]) |> Map.put(:gh_gate, gate)
