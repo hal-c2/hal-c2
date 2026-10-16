@@ -33,7 +33,8 @@ defmodule HalC2.Attachments do
   }
   @image_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .avif .ico)
   # What a media URL may serve from outside a project.
-  @media_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .avif .ico .mp4 .webm .mov .m4v .html .htm .pdf)
+  @media_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .avif .ico .mp4 .webm .mov .m4v
+                       .mp3 .wav .ogg .oga .opus .m4a .aac .flac .html .htm .pdf)
 
   # --- uploads ---------------------------------------------------------------------
 
@@ -479,7 +480,7 @@ defmodule HalC2.Attachments do
         error("AssetWorkspaceAssetNotFoundError", resource, "Media file was not found.")
 
       true ->
-        {:ok, full, MIME.from_path(full), Path.basename(full)}
+        {:ok, full, media_type(full), Path.basename(full)}
     end
   end
 
@@ -491,6 +492,15 @@ defmodule HalC2.Attachments do
         "#{tag} files are not served by this MC yet."
       )
 
+  # The mime library lacks these audio types, which would otherwise serve as
+  # application/octet-stream.
+  @audio_types %{".ogg" => "audio/ogg", ".m4a" => "audio/mp4", ".flac" => "audio/flac"}
+
+  defp media_type(path) do
+    extension = String.downcase(Path.extname(path))
+    Map.get_lazy(@audio_types, extension, fn -> MIME.from_path(path) end)
+  end
+
   defp project_file(resource, nil, _relative),
     do: error("AssetWorkspaceContextNotFoundError", resource, "Workspace context was not found.")
 
@@ -498,7 +508,7 @@ defmodule HalC2.Attachments do
     case HalC2.Workspace.resolve(root, relative) do
       {:ok, full} ->
         if File.regular?(full),
-          do: {:ok, full, MIME.from_path(full), Path.basename(full)},
+          do: {:ok, full, media_type(full), Path.basename(full)},
           else:
             error("AssetWorkspaceAssetNotFoundError", resource, "Workspace file was not found.")
 
