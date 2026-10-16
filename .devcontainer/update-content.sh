@@ -12,3 +12,4 @@ for dir in "$HOME/.cache" "$HOME/.cache/pnpm" node_modules; do
 done
 
 CI=true vp i
+mise run install:mc

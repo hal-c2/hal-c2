@@ -83,9 +83,10 @@ request that cannot run.
 
 ## Tool Surface
 
-This page describes the orchestration tools. The full set the MC advertises is in
-`priv/mcp_tools.json` and `priv/mcp_mc_tools.json`, and only the tools `HalC2.Mcp.Tools` implements
-are listed to agents.
+This page describes the orchestration tools. Each tool's description and input schema are in
+[`priv/mcp_tools.json`](../../apps/server-ex/priv/mcp_tools.json), which is the source; the full set
+the MC advertises is there and in `priv/mcp_mc_tools.json`. Only the tools `HalC2.Mcp.Tools`
+implements are listed to agents.
 
 ### `orchestrator_capabilities`
 
@@ -104,24 +105,6 @@ Unavailable providers include model-visible constraints such as disabled state, 
 Creates a HAL-C2-owned child thread and immediately dispatches the supplied task
 prompt.
 
-```ts
-type DelegateTaskInput = {
-  task: string;
-  target?: {
-    providerInstanceId?: string;
-    driverKind?: string;
-    model?: string;
-  };
-  title?: string;
-  role?: "implementation" | "research" | "review" | "design" | "test" | "general";
-  mode?: "async" | "wait";
-  timeoutMs?: number;
-  clientRequestId?: string;
-  runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
-  interactionMode?: "inherit" | "plan" | "default";
-};
-```
-
 Provider, model, runtime mode, and interaction mode inherit from the parent
 when omitted. A driver-only target inherits the parent's provider instance
 when it can run child tasks, and otherwise selects an available instance of
@@ -136,28 +119,8 @@ provider session. The request becomes the
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
-`waitTimedOut: true`, and the caller can continue with `task_status`.
-
-```ts
-type DelegateTaskResult = {
-  taskId: string;
-  childThreadId: string;
-  childRunId: string | null;
-  childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
-  workState: "working" | "waiting_for_children" | "result_available";
-  hasPendingChildRuns: boolean;
-  providerInstanceId: string;
-  model: string | null;
-  summary: string | null;
-  resultContextTransferId: string | null;
-  latestTerminalRunId: string | null;
-  latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
-  latestTerminalSummary: string | null;
-  latestTerminalResultContextTransferId: string | null;
-  waitTimedOut: boolean;
-};
-```
+`waitTimedOut: true`, and the caller can continue with `task_status`. The result is assembled in
+[`delegation.ex`](../../apps/server-ex/lib/hal_c2/orchestration/delegation.ex).
 
 ### `task_status`
 
@@ -179,23 +142,6 @@ reason. Use `hal_c2_thread_interrupt` to interrupt a later follow-up run.
 ### `create_threads`
 
 Creates between one and twenty ordinary top-level HAL-C2 threads:
-
-```ts
-type CreateThreadsInput = {
-  threads: Array<{
-    prompt?: string;
-    title?: string;
-    target?: {
-      providerInstanceId?: string;
-      driverKind?: string;
-      model?: string;
-    };
-    runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
-    interactionMode?: "inherit" | "plan" | "default";
-  }>;
-  clientRequestId?: string;
-};
-```
 
 Each entry independently resolves provider, model, and modes. The new threads
 inherit the parent's project, branch, and worktree path, but they have no

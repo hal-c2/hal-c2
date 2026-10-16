@@ -24,6 +24,18 @@ rm -f "$installer"
 test -x "$VP_BIN_DIR/vp"
 sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 
+# mise pins Erlang, Elixir, Node and Bun in mise.toml, which the MC needs
+# (`mise run mc`). Erlang compiles from source, so it needs its build deps.
+installer=$(mktemp)
+curl -fsSL https://mise.run -o "$installer"
+sh "$installer"
+rm -f "$installer"
+sudo ln -sf "$HOME/.local/bin/mise" /usr/local/bin/mise
+sudo apt-get update
+sudo apt-get install -y build-essential autoconf m4 libncurses-dev libssl-dev libssh-dev
+mise trust
+mise install
+
 # First-run terminal notice, rendered by the devcontainers base image.
 sudo mkdir -p /usr/local/etc/vscode-dev-containers
 sudo tee /usr/local/etc/vscode-dev-containers/first-run-notice.txt >/dev/null <<'EOF'
