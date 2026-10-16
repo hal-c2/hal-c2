@@ -114,7 +114,7 @@ pub(crate) fn tls() -> Arc<rustls::ClientConfig> {
     Arc::new(config)
 }
 
-fn agent(timeout: Option<Duration>) -> Agent {
+pub(crate) fn agent(timeout: Option<Duration>) -> Agent {
     Agent::config_builder()
         .timeout_global(timeout)
         .http_status_as_error(false)

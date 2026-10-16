@@ -24,6 +24,7 @@ mod client;
 mod core;
 mod driver;
 mod http;
+pub mod pairing;
 #[cfg(test)]
 mod prop;
 
