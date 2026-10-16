@@ -9,7 +9,15 @@ defmodule HalC2.Environment do
 
   @protocol 3
 
-  @doc "The descriptor served at `/.well-known/hal-c2/environment`."
+  @doc """
+  The descriptor served at `/.well-known/hal-c2/environment`, without the
+  machine's id: anyone may ask for it.
+  """
+  @spec public_descriptor() :: map
+  def public_descriptor,
+    do: Map.update!(descriptor(), "platform", &Map.delete(&1, "machineId"))
+
+  @doc "This MC's environment as signed-in clients see it."
   @spec descriptor() :: map
   def descriptor do
     base = %{
@@ -302,12 +310,15 @@ defmodule HalC2.Environment do
   end
 
   defp platform do
-    base = %{"os" => os(), "arch" => arch()}
-
-    case HalC2.Environment.Machine.kind() do
-      nil -> base
-      machine -> Map.put(base, "machine", machine)
-    end
+    # `machineId` tells a client whether it runs on this machine: only then may it
+    # start an editor or a file manager here (`HalC2.Editors`).
+    for {key, value} <- [
+          {"machine", HalC2.Environment.Machine.kind()},
+          {"machineId", HalC2.Environment.Machine.id()}
+        ],
+        value != nil,
+        into: %{"os" => os(), "arch" => arch()},
+        do: {key, value}
   end
 
   defp os do
