@@ -36,7 +36,8 @@ defmodule HalC2.PlannerPropTest do
   and shrinks back. GitHub closes an issue of that repository as completed or not
   planned, and reopens it. Someone on GitHub makes a linked task's issue a sub-issue of
   another, one a task has or one none has, or of none, or puts an issue under its own
-  sub-issue, which takes its place, and a client nests a task while a look at GitHub is
+  sub-issue, which takes its place, marks one blocked by another, or by none, or turns
+  around the dependency between two, and a client nests a task while a look at GitHub is
   on its way, holding GitHub's list as it was before the nest. Work on a task starts on
   a project the MC does not have, or on one whose worktree setup is not running so the
   launch exits, and its thread never launches. After every step:
@@ -79,10 +80,12 @@ defmodule HalC2.PlannerPropTest do
     made on that issue at once and dropped from the one before, and the tasks tied to it
     move theirs to its new issue at once too, or drop them when it is unlinked, which
     leaves its own on the issue it had;
-  - a look at GitHub brings a linked task's name up to date, drops the relations to
-    tasks with issues GitHub does not list, makes it the subtask of the task whose issue
-    GitHub names as its open issue's parent, and of none when GitHub names an issue no
-    task has, unless that would make it its own ancestor once the others took theirs,
+  - a look at GitHub brings a linked task's name up to date, makes it wait for the tasks
+    whose issues GitHub has its open issue blocked by and for no other task with an
+    issue, and the subtask of the task whose issue GitHub names as its open issue's
+    parent, and of none when GitHub names an issue no task has, all of the tasks'
+    together when that makes no task its own ancestor or wait for itself, and otherwise
+    each unless that would once the others took theirs,
     and moves its state when its issue's moved since the plugin last read it or a push
     of the task moved it, closing the issue made for a done task, say: closed as
     not planned, the task is dropped, closed otherwise, done, and reopened, a task done
@@ -261,7 +264,8 @@ defmodule HalC2.PlannerPropTest do
   # there last (its board item, 0 for one that took at once). `full`: whether the boards
   # hold more than a look reads. `closed`: issue of `@repository` → why GitHub closed
   # it, :completed or :not_planned; one not in it is open. `parents`: issue of
-  # `@repository` → the issue GitHub has it as a sub-issue of.
+  # `@repository` → the issue GitHub has it as a sub-issue of. `blockers`: issue of
+  # `@repository` → the issues GitHub has it blocked by, in the order GitHub lists them.
   def initial_state,
     do: %{
       board: @board,
@@ -269,6 +273,7 @@ defmodule HalC2.PlannerPropTest do
       full: false,
       closed: %{},
       parents: %{},
+      blockers: %{},
       items: %{},
       gens: %{},
       runs: %{},
@@ -337,10 +342,13 @@ defmodule HalC2.PlannerPropTest do
     unboarded =
       Enum.any?(m.items, fn {_, i} -> i.board != nil and not is_map_key(listed, i.issue) end)
 
+    # Or once GitHub has issues blocked by others, and relations the tasks do not.
+    unheard = m.blockers != %{} and Enum.any?(pushed, &(related(m, &1) != m.items[&1]))
+
     look =
       cond do
         unboarded -> 30
-        moved -> 10
+        moved or unheard -> 10
         m.held != %{} -> 4
         true -> 1
       end
@@ -355,11 +363,12 @@ defmodule HalC2.PlannerPropTest do
           do: {n, if(state == :completed, do: :not_planned, else: :completed)}
 
     # GitHub moving a sub-issue matters most once two tasks have issues to move between,
-    # and a nest while a look is on its way once it has moved one.
+    # so the first move comes almost at once, and a nest while a look is on its way once
+    # it has moved one.
     adopt =
       cond do
         length(pushed) < 2 -> 2
-        m.parents == %{} -> 16
+        m.parents == %{} -> 400
         true -> 4
       end
 
@@ -422,6 +431,30 @@ defmodule HalC2.PlannerPropTest do
             ),
           do: {:call, __MODULE__, :swap, [sub, parent]}
 
+    # And GitHub marking a parent blocked by its own sub-issue, and turning a dependency
+    # around: most of all, once a task waits for its own subtask, the swap and the turn
+    # of their issues, which together turn both around and either alone meets the other's
+    # old one in a loop.
+    crossed =
+      for {sub, parent} <- m.parents,
+          slot_of(m, sub),
+          slot_of(m, parent),
+          sub not in Map.get(m.blockers, parent, []),
+          do: {:call, __MODULE__, :block, [parent, sub]}
+
+    turns =
+      for {number, blockers} <- m.blockers,
+          blocker <- blockers,
+          slot_of(m, number),
+          slot_of(m, blocker),
+          do: {:call, __MODULE__, :turn, [number, blocker]}
+
+    turning =
+      for {:call, _, _, issues} = call <- swaps ++ turns,
+          [sub, parent] = Enum.map(issues, &slot_of(m, &1)),
+          sub && parent && crossed?(m.items, sub, parent),
+          do: call
+
     # Most of all a nest that goes against GitHub: the task of an issue GitHub has another
     # under goes under the other's task.
     against =
@@ -478,6 +511,9 @@ defmodule HalC2.PlannerPropTest do
        ) ++
        if(shut == [], do: [], else: [{8, {:call, __MODULE__, :reopen, [elements(shut)]}}]) ++
        if(swaps == [], do: [], else: [{16, oneof(swaps)}]) ++
+       if(crossed == [], do: [], else: [{400, oneof(crossed)}]) ++
+       if(turns == [], do: [], else: [{16, oneof(turns)}]) ++
+       if(turning == [], do: [], else: [{400, oneof(turning)}]) ++
        if(taken == [], do: [], else: [{6, oneof(taken)}]) ++
        if(related == [], do: [], else: [{6, {:call, __MODULE__, :remove, [elements(related)]}}]) ++
        if(linked == [],
@@ -520,6 +556,12 @@ defmodule HalC2.PlannerPropTest do
          else: [
            {adopt,
             {:call, __MODULE__, :adopt,
+             [
+               elements(Enum.map(pushed, &issue_of(m, &1))),
+               elements([nil, @unplanned | Enum.map(pushed, &issue_of(m, &1))])
+             ]}},
+           {adopt,
+            {:call, __MODULE__, :block,
              [
                elements(Enum.map(pushed, &issue_of(m, &1))),
                elements([nil, @unplanned | Enum.map(pushed, &issue_of(m, &1))])
@@ -585,6 +627,19 @@ defmodule HalC2.PlannerPropTest do
       here?(sub) and here?(parent) and sub != parent and
         sub not in issue_ancestors(m.parents, parent)
 
+  # GitHub refuses a dependency loop, and one it already has.
+  def precondition(_m, {:call, _, :block, [number, nil]}), do: here?(number)
+
+  def precondition(m, {:call, _, :block, [number, blocker]}),
+    do:
+      here?(number) and here?(blocker) and blocker not in Map.get(m.blockers, number, []) and
+        not issue_waits?(m.blockers, blocker, number)
+
+  def precondition(m, {:call, _, :turn, [number, blocker]}),
+    do:
+      blocker in Map.get(m.blockers, number, []) and
+        not issue_waits?(unblocked(m.blockers, number, blocker), number, blocker)
+
   def precondition(m, {:call, _, :create, [slot]}),
     do:
       Map.has_key?(m.items, slot) and m.items[slot].issue == nil and
@@ -627,6 +682,16 @@ defmodule HalC2.PlannerPropTest do
 
   defp issue_ancestors(_parents, nil), do: []
   defp issue_ancestors(parents, n), do: [n | issue_ancestors(parents, parents[n])]
+
+  # Whether issue `n` waits on GitHub, through what it waits for, for issue `target`.
+  defp issue_waits?(blockers, n, target, seen \\ []) do
+    n == target or
+      (n not in seen and
+         Enum.any?(Map.get(blockers, n, []), &issue_waits?(blockers, &1, target, [n | seen])))
+  end
+
+  defp unblocked(blockers, number, blocker),
+    do: Map.update(blockers, number, [], &List.delete(&1, blocker))
 
   def postcondition(before, call, observed) do
     {m, reply} = step(before, call)
@@ -924,6 +989,17 @@ defmodule HalC2.PlannerPropTest do
   defp step(m, {:call, _, :swap, [sub, parent]}),
     do: {%{m | parents: swapped(m.parents, sub, parent)}, :ok}
 
+  # GitHub marks an issue blocked by another too, or by none, or turns the dependency on
+  # `blocker` around; the plan hears of it at the next look.
+  defp step(m, {:call, _, :block, [number, nil]}),
+    do: {%{m | blockers: Map.delete(m.blockers, number)}, :ok}
+
+  defp step(m, {:call, _, :block, [number, blocker]}),
+    do: {%{m | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))}, :ok}
+
+  defp step(m, {:call, _, :turn, [number, blocker]}),
+    do: {%{m | blockers: turned(m.blockers, number, blocker)}, :ok}
+
   # GitHub moves an issue; the plan hears of it at the next look.
   defp step(m, {:call, _, :close, [number, reason]}),
     do: {put_in(m.closed[number], reason), :ok}
@@ -1075,6 +1151,14 @@ defmodule HalC2.PlannerPropTest do
 
   defp linked?(m, slot), do: match?(%{issue: n} when n != nil, m.items[slot])
   defp tied_to?(item, slot), do: item.parent == slot or slot in item.after
+
+  # Whether one of the tasks in `a` and `b` is the other's subtask and the other waits
+  # for it.
+  defp crossed?(items, a, b),
+    do:
+      (items[a].parent == b and a in items[b].after) or
+        (items[b].parent == a and b in items[a].after)
+
   defp issue_of(m, slot), do: m.items[slot].issue
 
   defp slot_of(m, issue),
@@ -1305,29 +1389,39 @@ defmodule HalC2.PlannerPropTest do
     relations(m, Enum.sort_by(synced, &{Map.has_key?(m.closed, m.items[&1].issue), &1}))
   end
 
-  # The tasks in `slots` take their relations in order, and the ones refused go again
-  # once the others are in, while any more of them take, so a parent GitHub put under its
-  # sub-issue goes under it whichever GitHub lists first.
+  # The tasks in `slots` take their relations all at once when the plan they make has no
+  # task its own ancestor or waiting for itself. Otherwise they take them in order, and
+  # the ones refused go again once the others are in, while any more of them take, so a
+  # parent GitHub put under its sub-issue goes under it whichever GitHub lists first.
   defp relations(m, slots) do
-    {m, refused} =
-      Enum.reduce(slots, {m, []}, fn slot, {m, refused} ->
-        case relate(m, slot) do
-          :refused -> {m, refused ++ [slot]}
-          m -> {m, refused}
-        end
-      end)
-
-    if refused != [] and length(refused) < length(slots), do: relations(m, refused), else: m
+    together = Enum.reduce(slots, m, &put_in(&2.items[&1], related(m, &1)))
+    if Enum.any?(slots, &looped?(together.items, &1)), do: one_by_one(m, slots), else: together
   end
 
-  # The task in `slot` waits for no task with an issue and is the subtask of the task
-  # whose issue GitHub names as its open issue's parent, or else of none when its parent
-  # has an issue, unless that would make it its own ancestor, when it is `:refused`.
-  defp relate(m, slot) do
+  defp one_by_one(m, slots) do
+    {m, refused} =
+      Enum.reduce(slots, {m, []}, fn slot, {m, refused} ->
+        related = put_in(m.items[slot], related(m, slot))
+        if looped?(related.items, slot), do: {m, refused ++ [slot]}, else: {related, refused}
+      end)
+
+    if refused != [] and length(refused) < length(slots), do: one_by_one(m, refused), else: m
+  end
+
+  # The task in `slot` waiting for the tasks whose issues GitHub has its open issue blocked
+  # by and no other task with an issue, and the subtask of the task whose issue GitHub
+  # names as its open issue's parent, or else of none when its parent has an issue.
+  defp related(m, slot) do
     item = m.items[slot]
     issue? = &(&1 != nil and m.items[&1].issue != nil)
-    named = if not Map.has_key?(m.closed, item.issue), do: m.parents[item.issue]
+    open? = not Map.has_key?(m.closed, item.issue)
+    named = if open?, do: m.parents[item.issue]
     by_github = named && slot_of(m, named)
+
+    blockers =
+      for n <- if(open?, do: Map.get(m.blockers, item.issue, []), else: []),
+          blocker = slot_of(m, n),
+          do: blocker
 
     parent =
       cond do
@@ -1336,11 +1430,14 @@ defmodule HalC2.PlannerPropTest do
         true -> item.parent
       end
 
-    if parent == slot or slot in ancestors(m.items, parent),
-      do: :refused,
-      else:
-        put_in(m.items[slot], %{item | parent: parent, after: Enum.reject(item.after, issue?)})
+    %{item | parent: parent, after: Enum.uniq(Enum.reject(item.after, issue?) ++ blockers)}
   end
+
+  # Whether the task in `slot` is its own ancestor or waits for itself.
+  defp looped?(items, slot),
+    do:
+      climbs_to?(items, items[slot].parent, slot, MapSet.new()) or
+        reaches?(items, items[slot].after, slot)
 
   # The task's status once the plugin reads its issue in `state`: it moves only when the
   # issue's state moved since the plugin last read it.
@@ -1600,10 +1697,11 @@ defmodule HalC2.PlannerPropTest do
     Map.merge(rule, %{"stdin" => rule["stdin"] ++ [~s("states":null)], "since" => true})
   end
 
-  # The issues of `@repository` tasks are linked to, open with the parent each is under,
-  # closed as read alone.
+  # The issues of `@repository` tasks are linked to, open with the parent each is under
+  # and the issues it is blocked by, closed as read alone.
   defp linked do
     parents = Process.get(:pl_parents)
+    blockers = Process.get(:pl_blockers)
 
     for {slot, _} <- Process.get(:pl_items),
         number = Process.get({:pl_issue, slot}),
@@ -1611,8 +1709,13 @@ defmodule HalC2.PlannerPropTest do
       if Map.has_key?(Process.get(:pl_closed), number) do
         {number, issue_node(number)}
       else
-        parent = parents[number] && %{"number" => parents[number], "repository" => repo_ref()}
-        {number, Map.put(issue_node(number), "parent", parent)}
+        ref = &%{"number" => &1, "repository" => repo_ref()}
+
+        {number,
+         Map.merge(issue_node(number), %{
+           "parent" => parents[number] && ref.(parents[number]),
+           "blockedBy" => %{"nodes" => Enum.map(Map.get(blockers, number, []), ref)}
+         })}
       end
     end
   end
@@ -1643,6 +1746,36 @@ defmodule HalC2.PlannerPropTest do
     listed()
     observe(:ok)
   end
+
+  # Someone on GitHub marks issue `number` blocked by `blocker` too, or by none.
+  def block(number, blocker) do
+    blockers = Process.get(:pl_blockers)
+
+    blockers =
+      if blocker,
+        do: Map.update(blockers, number, [blocker], &(&1 ++ [blocker])),
+        else: Map.delete(blockers, number)
+
+    Process.put(:pl_blockers, blockers)
+    touch([number])
+    listed()
+    observe(:ok)
+  end
+
+  # Someone on GitHub turns around issue `number` being blocked by `blocker`: `blocker` is
+  # blocked by `number` instead.
+  def turn(number, blocker) do
+    Process.put(:pl_blockers, turned(Process.get(:pl_blockers), number, blocker))
+    touch([number, blocker])
+    listed()
+    observe(:ok)
+  end
+
+  defp turned(blockers, number, blocker),
+    do:
+      blockers
+      |> unblocked(number, blocker)
+      |> Map.update(blocker, [number], &(&1 ++ [number]))
 
   defp swapped(parents, sub, parent) do
     case parents[parent] do
@@ -2458,6 +2591,7 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_closed, %{})
     Process.put(:pl_updated, %{})
     Process.put(:pl_parents, %{})
+    Process.put(:pl_blockers, %{})
     Process.put(:pl_board, @board)
     Process.put(:pl_boards, %{})
     Process.put(:pl_full, false)

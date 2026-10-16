@@ -542,25 +542,51 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # Sub-issues and blocking issues as subtasks and dependencies, once every issue has
-  # its task. One that would make a task its own subtask or wait for itself is left out,
-  # and a `kept` task's own are left as they are. One left out goes again once the others
-  # are in, so issues GitHub swapped, a parent put under its sub-issue say, swap in the
-  # plan whatever order GitHub lists them in.
+  # its task, a `kept` task's own left as they are. GitHub's are judged together first,
+  # so issues GitHub swapped, a parent put under its sub-issue and the dependency between
+  # them turned around say, swap in the plan though either taken alone meets the other's
+  # old ones in a loop. When GitHub's together would make a task its own subtask or wait
+  # for itself, they go one at a time instead: one that would is left out, and one left
+  # out goes again once the others are in.
   defp relations(items, issues, kept, now) do
-    {items, refused} =
-      Enum.reduce(issues, {items, []}, fn issue, {items, refused} ->
-        case issue_relations(items, issue, kept, now) do
-          {:ok, items} -> {items, refused}
-          :error -> {items, refused ++ [issue]}
+    wanted = for issue <- issues, one = issue_relations(items, issue, kept), do: one
+
+    target =
+      Enum.reduce(wanted, items, fn {id, fields}, acc ->
+        Map.update!(acc, id, &Map.merge(&1, fields))
+      end)
+
+    # Each task is checked going from its old ones to its new ones with every other task
+    # already holding its new ones, so the tasks pass together only if the plan GitHub's
+    # make has no loop.
+    together =
+      Enum.reduce_while(wanted, target, fn {id, fields}, acc ->
+        case Plan.update(Map.put(acc, id, items[id]), id, fields, now) do
+          {:ok, acc, _old, _new} -> {:cont, acc}
+          {:error, _} -> {:halt, nil}
         end
       end)
 
-    if refused != [] and length(refused) < length(issues),
-      do: relations(items, refused, kept, now),
+    together || one_at_a_time(items, wanted, now)
+  end
+
+  defp one_at_a_time(items, wanted, now) do
+    {items, refused} =
+      Enum.reduce(wanted, {items, []}, fn {id, fields} = one, {items, refused} ->
+        case Plan.update(items, id, fields, now) do
+          {:ok, items, _old, _new} -> {items, refused}
+          {:error, _} -> {items, refused ++ [one]}
+        end
+      end)
+
+    if refused != [] and length(refused) < length(wanted),
+      do: one_at_a_time(items, refused, now),
       else: items
   end
 
-  defp issue_relations(items, issue, kept, now) do
+  # `{task id, fields}` with the subtask and dependencies GitHub gives the issue's task,
+  # or nil when the issue has no task the look may change.
+  defp issue_relations(items, issue, kept) do
     with %{} = item <- linked(items, issue),
          false <- is_map_key(kept, item["id"]),
          nil <- item["syncError"] do
@@ -581,14 +607,9 @@ defmodule HalC2Plugins.Planner.Sync do
           true -> item["parent"]
         end
 
-      fields = %{"after" => Enum.uniq(own ++ blockers), "parent" => parent}
-
-      case Plan.update(items, item["id"], fields, now) do
-        {:ok, items, _old, _new} -> {:ok, items}
-        {:error, _} -> :error
-      end
+      {item["id"], %{"after" => Enum.uniq(own ++ blockers), "parent" => parent}}
     else
-      _ -> {:ok, items}
+      _ -> nil
     end
   end
 

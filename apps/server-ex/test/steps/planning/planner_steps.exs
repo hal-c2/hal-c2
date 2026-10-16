@@ -1490,6 +1490,34 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  step "\#{int}'s task was imported as a subtask of \#{int}'s, and \#{int}'s task waits for \#{int}'s",
+       %{args: [sub, number, number, sub]} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, [
+        GitHubIssues.issue(repository, number, %{"subIssues" => [sub], "blockedBy" => [sub]}),
+        GitHubIssues.issue(repository, sub, %{"parent" => number, "blocking" => [number]})
+      ])
+      |> sync!()
+
+    plan = plan!(context)
+    assert task_of(plan, sub)["parent"] == task_of(plan, number)["id"]
+    assert task_of(plan, number)["after"] == [task_of(plan, sub)["id"]]
+    context
+  end
+
+  step "\#{int} is moved on GitHub under \#{int}, and \#{int} is blocked by \#{int} instead",
+       %{args: [number, sub, sub, number]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"parent" => sub, "blocking" => [sub]}),
+      GitHubIssues.issue(repository, sub, %{"subIssues" => [number], "blockedBy" => [number]})
+    ])
+  end
+
   step "the tasks of \#{int} and \#{int} were imported, neither a subtask of the other",
        %{args: numbers} = context do
     repository = context.repository

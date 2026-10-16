@@ -817,6 +817,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is a subtask of #9's, and #9's task is not a subtask
 
+    # Taken one at a time, each issue's new relations meet the other's old ones and make
+    # a loop, so the look judges them together.
+    @mc
+    Scenario: A parent and sub-issue swapped on GitHub along with the dependency between them swap in the plan in one look
+      Given "planner" follows the issues of "acme/api"
+      And #9's task was imported as a subtask of #7's, and #7's task waits for #9's
+      When #7 is moved on GitHub under #9, and #9 is blocked by #7 instead
+      And the plugin looks at GitHub
+      Then #7's task is a subtask of #9's, and #9's task waits for #7's
+
     @mc
     Scenario: An issue moved out of a milestone on GitHub stops holding it up
       Given "planner" follows the issues of "acme/api"
