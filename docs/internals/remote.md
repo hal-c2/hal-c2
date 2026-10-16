@@ -47,3 +47,24 @@ MCs outlive several client releases. Clients must use advertised capabilities
 absence, rather than assume their own version describes the MC. Process
 replacement belongs to the MC's [update protocol](./server-updates.md); the
 connection layer handles the resulting disconnect.
+
+## Another machine's files are a folder here
+
+A client opens a cluster member's file with this machine's own apps by asking its MC
+where that file is here (`files.localPath`). The MC mounts the members under its state
+directory, one folder per member mirroring its absolute paths
+([`HalC2.MachineFiles`](../../apps/server-ex/lib/hal_c2/machine_files.ex)). The kernel's
+requests reach the MC as 9P2000.L from a small FUSE helper
+([`native/machine-files`](../../native/machine-files)) on the port's stdin and stdout, and
+the MC answers each one by calling
+[`Share`](../../apps/server-ex/lib/hal_c2/machine_files/share.ex) on the member over the
+cluster's Erlang distribution. That keeps the helper free of policy and of credentials:
+the link is the cluster's mTLS one, what is shared (a member's project roots and thread
+worktrees, nothing above or beside them) is decided on the member, and nothing is started
+or listened on for it. Every call has a timeout and runs in a process of its own, so a
+member that stops answering fails that request with EHOSTDOWN and never blocks the kernel
+or the other folders (`proof/models/machine_files.maude`). The mount is never
+`allow_other` and sits in a 0700 directory: the files are as reachable as the member's
+MC, so only the user the MC runs as may see them. A helper killed outright leaves a mount
+that answers ENOTCONN; the MC lazily unmounts it before mounting again. There are no change
+notices, so the helper keeps attribute and entry caches to about a second.
