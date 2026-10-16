@@ -104,6 +104,15 @@ Feature: Preview across MCs and devices
     When the user opens a browser tab at "http://localhost:3000" for a thread on that MC
     Then the client listens on its own machine and carries the page over its connection to the MC
 
+  # Until then a forward through an MC on another machine would listen on that machine.
+  @desktop
+  Scenario: A desktop whose MC is on another machine opens a dev server's address as it is
+    Given the desktop's MC runs on another machine and is in a cluster with a second MC
+    And a thread on the second MC has a browser tab at "http://localhost:3000"
+    When the user opens the tab
+    Then the system browser opens "http://localhost:3000"
+    And nothing is forwarded
+
   # A dev server on the thread's machine is usually reachable only from that machine, and
   # its pages, cookies and sign-in callbacks expect the address "localhost". The MC on the
   # user's machine forwards the port over the cluster, so the user's browser opens the same

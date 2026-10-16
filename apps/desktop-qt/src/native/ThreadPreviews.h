@@ -7,6 +7,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <utility>
 
 class McClient;
 
@@ -57,6 +58,8 @@ public:
   // The pages this device opened last, newest first: read, and written.
   using Recents = std::function<QStringList()>;
   using Remember = std::function<void(const QStringList& urls)>;
+  // Whether the MC the shell is connected to runs on this machine.
+  using Here = std::function<bool()>;
   static constexpr int maxRecents = 10;
 
   ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent = nullptr);
@@ -70,6 +73,9 @@ public:
   // The preview addresses the thread's project configures (its scripts' previewUrl).
   void setConfigured(const QStringList& urls);
   void setRecents(Recents read, Remember write);
+  // Only a connected MC on this machine forwards to this machine's loopback;
+  // without one every MC counts as here.
+  void setConnectedHere(Here here) { m_connectedHere = std::move(here); }
   QVariantList suggestions() const;
   QString emptyTab() const;
 
@@ -111,6 +117,7 @@ private:
   McClient* m_client;
   Notify m_notify;
   Open m_open;
+  Here m_connectedHere;
   QString m_environment;
   QString m_thread;
   QString m_mc;

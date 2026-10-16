@@ -471,6 +471,23 @@ const Steps steps([] {
     world.mc.join(kPeer, kPeerEnvironment);
     world.sync();
   });
+  step(QStringLiteral("the desktop's MC runs on another machine and is in a cluster with a second MC"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakePreviews>().looking = true;
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
+                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.connect();
+    world.servedFrom(kOtherMachine);
+    world.mc.join(kPeer, kPeerEnvironment);
+    world.sync();
+  });
+  step(QStringLiteral("the system browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !world.openedUrls.isEmpty(); }, QStringLiteral("the browser to open"));
+    expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(show(QVariant::fromValue(world.openedUrls))));
+  });
+  step(QStringLiteral("nothing is forwarded"), [](World& world, const Captures&, const Table&) {
+    const FakePreviews& fake = world.mc.part<FakePreviews>();
+    expect(fake.forwards.isEmpty(), QStringLiteral("%1 forwards were asked for").arg(fake.forwards.size()));
+  });
   step(QStringLiteral("a dev server on the second MC's machine listens on port 3000 for that machine only"), [](World& world, const Captures&, const Table&) {
     // Port 3000 is taken on this machine, so the forward's port differs and shows.
     world.mc.part<FakePreviews>().forwardPort = 3001;

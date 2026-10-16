@@ -249,8 +249,11 @@ void ThreadPreviews::openAddress(const QString& address) {
 
 void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) {
   const QString connected = m_client->environment();
-  // A thread on the connected MC, or on none the cluster knows, opens as it is.
-  if (!loopback(url) || threadId.isEmpty() || mc.isEmpty() || connected.isEmpty() || environmentId == connected) {
+  // A thread on the connected MC, or on none the cluster knows, opens as it is,
+  // and so does any when the connected MC is on another machine: its forward
+  // would listen there.
+  if (!loopback(url) || threadId.isEmpty() || mc.isEmpty() || connected.isEmpty() || environmentId == connected ||
+      (m_connectedHere && !m_connectedHere())) {
     m_open(url);
     return;
   }
