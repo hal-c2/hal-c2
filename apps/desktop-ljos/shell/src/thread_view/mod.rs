@@ -7,4 +7,10 @@
 //! its row changes, and a thin `QmlObject` over it that is the model QML
 //! binds (`ItemModel`) and forwards those changes as Ljós's row signals.
 
+pub mod cache;
 pub mod summary;
+pub mod time;
+pub mod timeline;
+
+#[cfg(test)]
+mod timeline_tests;
