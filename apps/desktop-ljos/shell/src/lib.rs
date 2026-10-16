@@ -10,6 +10,7 @@ pub mod mc;
 pub mod project;
 pub mod provider;
 pub mod qml;
+pub mod qr;
 pub mod render;
 pub mod runtime;
 pub mod theme;
