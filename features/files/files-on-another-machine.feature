@@ -19,7 +19,7 @@ Feature: Files on another machine
   other machine of the cluster.
 
   Background:
-    Given the client is connected to the MC on its own machine
+    Given the client is connected to the MC on the user's machine
     And that MC is in a cluster with "devbox"
     And "devbox" has the project "shop" at "/home/me/shop"
 

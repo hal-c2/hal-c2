@@ -22,7 +22,7 @@ defmodule HalC2.Steps.Files.FilesOnAnotherMachine do
   # --- background ----------------------------------------------------------------------
 
   # The client connects with its first call, to the MC as the cluster restarted it.
-  step("the client is connected to the MC on its own machine", context, do: context)
+  step("the client is connected to the MC on the user's machine", context, do: context)
 
   step "that MC is in a cluster with {string}", %{args: [label]} = context do
     context = Machines.cluster(context, "laptop", [label])

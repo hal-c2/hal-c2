@@ -81,7 +81,7 @@ QStringList toastTitles(World& world) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("the client is connected to the MC on its own machine"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the client is connected to the MC on the user's machine"), [](World& world, const Captures&, const Table&) {
     world.mc.part<MachineFolders>().answers = true;
     world.connect();
     world.servedFrom(kThisMachine);

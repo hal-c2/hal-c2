@@ -26,7 +26,7 @@ const rootOf = (ctx: MachinesWorld, machine: string, project: string) => {
   return root;
 };
 
-step("the client is connected to the MC on its own machine", () => {});
+step("the client is connected to the MC on the user's machine", () => {});
 
 step("that MC is in a cluster with {string}", (ctx: MachinesWorld, machine: string) => {
   ctx.machines = { ...ctx.machines, [machine]: {} };
