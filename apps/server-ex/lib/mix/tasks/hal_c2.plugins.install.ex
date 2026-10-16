@@ -15,6 +15,7 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
 
   use Mix.Task
 
+  # Where the packages come from; a test points it at a checkout of its own.
   @checkout Path.expand("../../../../..", __DIR__)
 
   @impl true
@@ -26,7 +27,8 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
     if opts[:release] && Application.get_env(:hal_c2, :home) == :dev,
       do: Application.delete_env(:hal_c2, :home)
 
-    source = Path.join(@checkout, "plugins")
+    checkout = Application.get_env(:hal_c2, :plugins_install_checkout, @checkout)
+    source = Path.join(checkout, "plugins")
     ids = if ids == [], do: packages(source), else: ids
 
     for id <- ids,
@@ -35,7 +37,7 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
 
     plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
     File.mkdir_p!(plugins)
-    Enum.each(ids, &install(&1, plugins))
+    Enum.each(ids, &install(&1, plugins, checkout))
 
     case HalC2.Cluster.Command.request(:post, "/api/plugins/rescan", %{}, 90_000) do
       {:ok, %{"plugins" => listed}} ->
@@ -60,7 +62,7 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
   end
 
   # Staged beside the plugins directory, where a rescan does not see it, then swapped in.
-  defp install(id, plugins) do
+  defp install(id, plugins, checkout) do
     staged = Path.join(Path.dirname(plugins), ".plugin-#{id}.partial")
     old = Path.join(Path.dirname(plugins), ".plugin-#{id}.old")
     target = Path.join(plugins, id)
@@ -70,10 +72,10 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
       System.cmd(
         "git",
         ~w(ls-files -z --cached --others --exclude-standard) ++ ["plugins/#{id}"],
-        cd: @checkout
+        cd: checkout
       )
 
-    package = Path.join(@checkout, "plugins/#{id}")
+    package = Path.join(checkout, "plugins/#{id}")
 
     # A link that leads out of the package is left out, as `HalC2.Plugins.Package.copy/2` does.
     for file <- String.split(files, <<0>>, trim: true),
