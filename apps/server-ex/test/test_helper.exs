@@ -4,6 +4,13 @@
 # HalC2.Projection.ShellParityTest.
 ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
 
+# An agent inside an MC runs this with the MC's git include in its environment
+# (GIT_CONFIG_COUNT/KEY_n/VALUE_n, `HalC2.Git.use_gh_for_github/0`). It would rewrite
+# the fake remotes the scenarios push to into real GitHub HTTPS ones.
+for {name, _} <- System.get_env(),
+    name =~ ~r/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/,
+    do: System.delete_env(name)
+
 # The Gherkin specification runs only when asked for (`mix features`, or
 # `HAL_C2_FEATURES=threads/*.feature mix test --only cucumber`), so a plain
 # `mix test <file>` stays quick. `@backlog` and `@backlog-mc` scenarios are left out unless
