@@ -126,6 +126,7 @@ defmodule HalC2.MachineFiles.Share do
   @spec read(String.t(), non_neg_integer, non_neg_integer) :: {:ok, binary} | {:error, atom}
   def read(path, offset, count) when is_binary(path) and offset >= 0 and count >= 0 do
     with {:ok, _} <- real(path, roots()),
+         :ok <- regular(path),
          {:ok, fd} <- :file.open(path, [:read, :binary, :raw]) do
       try do
         case :file.pread(fd, offset, min(count, @max_read)) do
@@ -143,6 +144,7 @@ defmodule HalC2.MachineFiles.Share do
   @spec write(String.t(), non_neg_integer, binary) :: {:ok, non_neg_integer} | {:error, atom}
   def write(path, offset, data) when is_binary(path) and offset >= 0 and is_binary(data) do
     with {:ok, _} <- real(path, roots()),
+         :ok <- regular(path),
          {:ok, fd} <- :file.open(path, [:read, :write, :binary, :raw]) do
       try do
         with :ok <- :file.pwrite(fd, offset, data), do: {:ok, byte_size(data)}
@@ -304,6 +306,17 @@ defmodule HalC2.MachineFiles.Share do
 
       {:error, _} ->
         nil
+    end
+  end
+
+  # Only regular files are read and written: opening a fifo or a device would wait
+  # for someone else, or do something other than read a file.
+  defp regular(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular}} -> :ok
+      {:ok, %File.Stat{type: :directory}} -> {:error, :eisdir}
+      {:ok, _other} -> {:error, :eacces}
+      {:error, reason} -> {:error, reason}
     end
   end
 

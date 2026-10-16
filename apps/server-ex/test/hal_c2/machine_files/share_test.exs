@@ -87,6 +87,15 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert [{"cart-link.ts", :regular, _}, {"src", :directory, _}] = entries
   end
 
+  test "only regular files are opened, so nothing waits on a fifo", ctx do
+    fifo = Path.join(ctx.shop, "pipe")
+    {_, 0} = System.cmd("mkfifo", [fifo])
+
+    assert Share.read(fifo, 0, 10) == {:error, :eacces}
+    assert Share.write(fifo, 0, "x") == {:error, :eacces}
+    assert Share.read(Path.join(ctx.shop, "src"), 0, 10) == {:error, :eisdir}
+  end
+
   test "the directories above the roots show only the way to them", ctx do
     assert {:ok, [{first, :directory, _}]} = Share.list("/")
     assert first == ctx.dir |> Path.split() |> Enum.at(1)
