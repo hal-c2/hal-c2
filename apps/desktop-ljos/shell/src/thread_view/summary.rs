@@ -24,7 +24,10 @@ pub fn text<'a>(object: &'a Obj, field: &str) -> &'a str {
 
 /// An object field, or an empty one (QJsonValue::toObject).
 pub fn object<'a>(object: &'a Obj, field: &str) -> &'a Obj {
-    object.get(field).and_then(Json::as_object).unwrap_or(&EMPTY)
+    object
+        .get(field)
+        .and_then(Json::as_object)
+        .unwrap_or(&EMPTY)
 }
 
 /// A value as an object, or an empty one.
@@ -99,7 +102,9 @@ fn read_result(value: Option<&Json>, depth: u32) -> ToolResult {
     }
     match value {
         Some(Json::String(s)) => match serde_json::from_str::<Json>(s) {
-            Ok(parsed @ (Json::Array(_) | Json::Object(_))) => read_result(Some(&parsed), depth + 1),
+            Ok(parsed @ (Json::Array(_) | Json::Object(_))) => {
+                read_result(Some(&parsed), depth + 1)
+            }
             Ok(_) => read_result(Some(&Json::Object(Obj::new())), depth + 1),
             Err(_) => ToolResult::default(),
         },
@@ -649,7 +654,8 @@ pub fn notice_of(item: &Obj) -> Option<Notice> {
     match text(item, "createdBy") {
         "agent" => {
             // A message another agent sent names its thread, or came in over MCP.
-            if text(item, "creationSource") != "provider" || !text(item, "senderThreadId").is_empty()
+            if text(item, "creationSource") != "provider"
+                || !text(item, "senderThreadId").is_empty()
             {
                 return None;
             }
@@ -707,16 +713,26 @@ mod tests {
             json!({"type": "file_change", "fileName": "a.rs", "status": "completed"}),
             json!({"type": "web_search", "status": "completed"}),
         ]);
-        assert_eq!(s.text, "Ran 1 command, changed 1 file, and performed 2 other actions");
+        assert_eq!(
+            s.text,
+            "Ran 1 command, changed 1 file, and performed 2 other actions"
+        );
         assert!(!s.failed);
     }
 
     #[test]
     fn thinking_alone_is_thought() {
         assert_eq!(summary_of(vec![]).text, "");
-        assert_eq!(summary_of(vec![json!({"type": "reasoning"})]).text, "Thought");
         assert_eq!(
-            summary_of(vec![json!({"type": "reasoning"}), json!({"type": "reasoning"})]).text,
+            summary_of(vec![json!({"type": "reasoning"})]).text,
+            "Thought"
+        );
+        assert_eq!(
+            summary_of(vec![
+                json!({"type": "reasoning"}),
+                json!({"type": "reasoning"})
+            ])
+            .text,
             "Thought (×2)"
         );
     }
@@ -766,7 +782,10 @@ mod tests {
             json!({"type": "todo_list"}),
             json!({"type": "file_change", "status": "completed"}),
         ]);
-        assert_eq!(s.text, "Read 2 files, changed 1 file, and performed 1 other action");
+        assert_eq!(
+            s.text,
+            "Read 2 files, changed 1 file, and performed 1 other action"
+        );
     }
 
     #[test]
@@ -781,15 +800,24 @@ mod tests {
     fn subagent_detail_prefers_result_once_settled() {
         assert_eq!(subagent_detail(true, "working", "done"), "done");
         assert_eq!(subagent_detail(false, "working", "done"), "working");
-        assert_eq!(subagent_detail(true, "", "Child task ended with status failed"), "");
+        assert_eq!(
+            subagent_detail(true, "", "Child task ended with status failed"),
+            ""
+        );
         assert!(subagent_settled("idle"));
         assert!(!subagent_settled("waiting"));
     }
 
     #[test]
     fn command_display_text_unwraps_shells() {
-        assert_eq!(command_display_text("/bin/bash -lc 'bun test cart'"), "bun test cart");
-        assert_eq!(command_display_text(r#"sh -c "echo \"hi\"""#), r#"echo "hi""#);
+        assert_eq!(
+            command_display_text("/bin/bash -lc 'bun test cart'"),
+            "bun test cart"
+        );
+        assert_eq!(
+            command_display_text(r#"sh -c "echo \"hi\"""#),
+            r#"echo "hi""#
+        );
         assert_eq!(command_display_text("zsh -c ls"), "ls");
         assert_eq!(command_display_text("bash -lc 'it'\\''s'"), "it's");
         assert_eq!(command_display_text("git  status\nmore"), "git status");
@@ -798,17 +826,31 @@ mod tests {
 
     #[test]
     fn notices_of_the_mc_and_of_old_threads() {
-        let n = notice_of(&obj(json!({"type": "notification", "summary": " Task done ", "outcome": "completed"})));
+        let n = notice_of(&obj(
+            json!({"type": "notification", "summary": " Task done ", "outcome": "completed"}),
+        ));
         assert_eq!(n.unwrap().summary, "Task done");
         let n = notice_of(&obj(json!({"type": "user_message", "createdBy": "system",
             "text": "<delegated_task_result taskId=\"t\" title=\"Fix it\" status=\"cancelled\" childThreadId=\"c\">\nno"})))
         .unwrap();
-        assert_eq!(n, Notice { summary: "Fix it stopped".into(), outcome: "cancelled".into() });
-        let n = notice_of(&obj(json!({"createdBy": "agent", "creationSource": "provider"}))).unwrap();
+        assert_eq!(
+            n,
+            Notice {
+                summary: "Fix it stopped".into(),
+                outcome: "cancelled".into()
+            }
+        );
+        let n = notice_of(&obj(
+            json!({"createdBy": "agent", "creationSource": "provider"}),
+        ))
+        .unwrap();
         assert_eq!(n.summary, "Background activity updated");
         assert!(notice_of(&obj(json!({"createdBy": "agent", "creationSource": "mcp"}))).is_none());
         assert!(notice_of(&obj(json!({"type": "assistant_message"}))).is_none());
-        let n = notice_of(&obj(json!({"notification": {"summary": "Queued", "outcome": "x"}}))).unwrap();
+        let n = notice_of(&obj(
+            json!({"notification": {"summary": "Queued", "outcome": "x"}}),
+        ))
+        .unwrap();
         assert_eq!(n.summary, "Queued");
     }
 }
