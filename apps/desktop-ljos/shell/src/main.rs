@@ -42,11 +42,16 @@ struct Options {
 fn usage() -> ExitCode {
     eprintln!(
         "usage: hal-c2-ljos [--mc-origin URL --mc-token TOKEN] [--config-dir DIR] [--qml-dir DIR]\n\
-         \x20                  [--allow-local-folder-import] [--action NAME]...\n\
+         \x20                  [--licenses MANIFEST] [--allow-local-folder-import] [--action NAME]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]"
     );
     ExitCode::from(2)
+}
+
+/// The staged license manifest, in `licenses/` beside the QML directory.
+fn licenses_beside(qml_dir: &std::path::Path) -> std::path::PathBuf {
+    qml_dir.join("../licenses/third-party-licenses.json")
 }
 
 fn parse() -> Result<Options, String> {
@@ -55,6 +60,8 @@ fn parse() -> Result<Options, String> {
             mc_origin: std::env::var("HAL_C2_MC_ORIGIN")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            // `vp run licenses` stages it in apps/desktop-qt/licenses.
+            licenses_manifest: Some(licenses_beside(&Roots::checkout().bricks)),
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
@@ -81,7 +88,11 @@ fn parse() -> Result<Options, String> {
             "--mc-origin" => o.launch.mc_origin = Some(value()?),
             "--mc-token" => o.mc_token = value()?,
             "--config-dir" => o.launch.config_dir = Some(value()?.into()),
-            "--qml-dir" => o.roots = Roots::one(value()?.into()),
+            "--qml-dir" => {
+                o.roots = Roots::one(value()?.into());
+                o.launch.licenses_manifest = Some(licenses_beside(&o.roots.bricks));
+            }
+            "--licenses" => o.launch.licenses_manifest = Some(value()?.into()),
             "--allow-local-folder-import" => o.launch.allow_local_folder_import = true,
             "--action" => o.actions.push(value()?),
             "--check" => o.check = true,

@@ -53,6 +53,8 @@ pub struct Launch {
     pub mc_origin: Option<String>,
     /// Local folders may be imported from a remote MC too.
     pub allow_local_folder_import: bool,
+    /// The third-party license manifest the Open source licenses page reads.
+    pub licenses_manifest: Option<PathBuf>,
     /// Why the shell could not load what it was asked to, for `Runtime`.
     pub last_error: String,
 }
@@ -72,6 +74,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     );
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
+    if let Some(manifest) = &launch.licenses_manifest {
+        controllers::licenses::set_manifest_path(engine, manifest);
+    }
     controller::start(engine, mc, controllers::registrations());
     // desktop-qt activates on the store's first snapshot; there is no store
     // yet, so at once.
