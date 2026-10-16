@@ -281,8 +281,10 @@ defmodule HalC2.PlannerMilestonesPropTest do
         end
       end)
 
+    {items, _details} = GenServer.call(@server, :looking)
+
     marked =
-      for {_, item} <- GenServer.call(@server, :items),
+      for {_, item} <- items,
           item["synced"] != nil or item["syncError"] != nil,
           do: item["title"]
 
