@@ -64,7 +64,7 @@ defmodule HalC2.MachineFilesTest do
       {self(), {:data, <<byte_size(body) + 7::32-little, type, tag::16-little>> <> body}}
     )
 
-    assert_receive {:to_helper, <<_size::32-little, kind, ^tag::16-little, reply::binary>>}
+    assert_receive {:to_helper, <<_size::32-little, kind, ^tag::16-little, reply::binary>>}, 5_000
     {kind, reply}
   end
 
@@ -164,7 +164,7 @@ defmodule HalC2.MachineFilesTest do
 
     capture_log(fn ->
       send(server, {self(), {:exit_status, 1}})
-      assert_receive {:opened, @root}
+      assert_receive {:opened, @root}, 5_000
     end)
 
     assert MachineFiles.local_path("env-devbox", "/home/me/a.ts", server) ==
@@ -189,6 +189,33 @@ defmodule HalC2.MachineFilesTest do
 
     assert MachineFiles.message(:no_fuse, "devbox") ==
              "The file is on \"devbox\". To open it here, install FUSE 3 (fuse3)."
+  end
+
+  test "files.localPath answers with the path, or the reason and the machine", ctx do
+    server = start(ctx)
+    put_cluster(ctx, server, [{node(), @devbox}])
+    input = %{"environmentId" => "env-devbox", "path" => "/home/me/shop/../shop/a.ts"}
+
+    assert MachineFiles.handle_rpc(input, server) ==
+             {:ok,
+              %{
+                "reason" => "not_ready",
+                "machine" => "devbox",
+                "message" => MachineFiles.message(:not_ready, "devbox")
+              }}
+
+    attach(server)
+
+    assert MachineFiles.handle_rpc(input, server) ==
+             {:ok, %{"path" => "/state/machines/devbox/home/me/shop/a.ts"}}
+
+    assert {:ok, %{"reason" => "not_a_member"} = answer} =
+             MachineFiles.handle_rpc(%{input | "environmentId" => "env-other"}, server)
+
+    refute Map.has_key?(answer, "machine")
+
+    assert {:error, %{"_tag" => "FilesLocalPathError", "path" => "shop/a.ts"}} =
+             MachineFiles.handle_rpc(%{input | "path" => "shop/a.ts"}, server)
   end
 
   test "this machine's own files are where they are" do

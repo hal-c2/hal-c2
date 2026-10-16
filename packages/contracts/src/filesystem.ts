@@ -65,3 +65,46 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     } as any);
   }
 }
+
+/** A path on the machine of environment `environmentId`, to open on this one. */
+export const FilesLocalPathInput = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+});
+export type FilesLocalPathInput = typeof FilesLocalPathInput.Type;
+
+/**
+ * Why a file on another machine has no path on this one: that machine is not in
+ * this machine's cluster, this platform cannot show it yet, FUSE or the helper is
+ * missing, its folder is still mounting, or the machine is not answering.
+ */
+export const FilesLocalPathReason = Schema.Literals([
+  "not_a_member",
+  "unsupported",
+  "no_fuse",
+  "no_helper",
+  "not_ready",
+  "unavailable",
+]);
+export type FilesLocalPathReason = typeof FilesLocalPathReason.Type;
+
+/**
+ * The path this machine's apps open (the path itself for this machine's own files,
+ * the one under its folder for another member's), or why there is none, with the
+ * machine's label and what to tell the user.
+ */
+export const FilesLocalPathResult = Schema.Union([
+  Schema.Struct({ path: TrimmedNonEmptyString }),
+  Schema.Struct({
+    reason: FilesLocalPathReason,
+    machine: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+  }),
+]);
+export type FilesLocalPathResult = typeof FilesLocalPathResult.Type;
+
+/** The path is not absolute. */
+export class FilesLocalPathError extends Schema.TaggedError<FilesLocalPathError>()(
+  "FilesLocalPathError",
+  { path: Schema.String, message: TrimmedNonEmptyString },
+) {}

@@ -65,6 +65,33 @@ defmodule HalC2.MachineFiles do
     :exit, _ -> {:error, :not_ready, label(environment_id)}
   end
 
+  @doc """
+  The `files.localPath` RPC: `local_path/2` as the contract's result, the path or
+  the reason with the machine's label and what to tell the user.
+  """
+  def handle_rpc(input, server \\ __MODULE__)
+
+  def handle_rpc(%{"environmentId" => environment_id, "path" => "/" <> _ = path}, server)
+      when is_binary(environment_id) do
+    case local_path(environment_id, Path.expand(path), server) do
+      {:ok, local} ->
+        {:ok, %{"path" => local}}
+
+      {:error, reason, nil} ->
+        {:ok, %{"reason" => Atom.to_string(reason), "message" => message(reason, nil)}}
+
+      {:error, reason, label} ->
+        answer = %{"reason" => Atom.to_string(reason), "message" => message(reason, label)}
+        {:ok, Map.put(answer, "machine", label)}
+    end
+  end
+
+  def handle_rpc(input, _server) do
+    path = if is_map(input) and is_binary(input["path"]), do: input["path"], else: ""
+    message = "the path must be absolute"
+    {:error, %{"_tag" => "FilesLocalPathError", "path" => path, "message" => message}}
+  end
+
   @doc "What the user is told for `reason`, about a file on the machine `label`."
   @spec message(reason, String.t() | nil) :: String.t()
   def message(:not_a_member, _label),

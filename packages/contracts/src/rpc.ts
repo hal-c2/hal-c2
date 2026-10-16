@@ -52,6 +52,9 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  FilesLocalPathError,
+  FilesLocalPathInput,
+  FilesLocalPathResult,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -353,6 +356,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesLocalPath: "files.localPath",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -1173,6 +1177,13 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+// Answered by the client's own MC: where a file on a cluster member is on its machine.
+const WsFilesLocalPathRpc = Rpc.make(WS_METHODS.filesLocalPath, {
+  payload: FilesLocalPathInput,
+  success: FilesLocalPathResult,
+  error: Schema.Union([FilesLocalPathError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1788,6 +1799,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesLocalPathRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
