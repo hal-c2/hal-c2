@@ -1043,7 +1043,7 @@ ShellWindow {
                                                     return "";
                                                 }
                                                 if (root.attentionCount > 0) {
-                                                    return qsTr("%n request(s) waiting on you", "", root.attentionCount);
+                                                    return root.attentionCount === 1 ? qsTr("%n request waiting on you", "", 1) : qsTr("%n requests waiting on you", "", root.attentionCount);
                                                 }
                                                 if (root.composerState.isRunning) {
                                                     return qsTr("Working");

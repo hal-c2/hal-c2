@@ -1064,7 +1064,7 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
       auto* navigation = shell->controller<NavigationController>();
       const QString first = progress->first;
       shell->controller<ToastController>()->show(
-          QStringLiteral("success"), tr("Started %n thread(s) in background", nullptr, int(progress->started)), {},
+          QStringLiteral("success"), progress->started == 1 ? tr("Started %n thread in background", nullptr, 1) : tr("Started %n threads in background", nullptr, int(progress->started)), {},
           ToastController::Action{QStringLiteral("Open"), [navigation, first] { navigation->open(NavigationController::Route::thread(first)); }});
       return;
     }
