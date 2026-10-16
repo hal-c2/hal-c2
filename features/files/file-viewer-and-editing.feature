@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
+#   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
 #   apps/server/src/workspace/WorkspaceFileSystem.ts, WorkspacePaths.ts (read limits, binary guard, path checks)
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
@@ -22,6 +23,7 @@
 #   packages/shared/src/filePreview.ts (preview kinds: image, pdf, markdown, html, text, media)
 #   packages/shared/src/delimitedPreview.ts (table preview limits, quoting, delimiter by type or name)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (draft attachments listed, not opened)
+#   apps/desktop-qt/src/native/WorkspaceFiles.cpp, qml/HalC2/Bricks/FilesPanel.qml (media previewed from the address the thread's MC signs)
 #   apps/tui/src/components/FilesView.tsx
 #   apps/tui/src/features.backlog.test.ts (workspace-file-actions)
 #   apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
@@ -146,40 +148,51 @@ Feature: Viewing and editing files
         | assets/a.dat  | contains null bytes                      | This file contains binary data and cannot be shown as text.            |
         | notes/old.txt | is written in a non-UTF-8 text encoding  | This file is not UTF-8 text. Open it in another app to view its contents. |
 
-    @backlog @desktop @mobile
+    # The mobile client has no Files tab yet.
+    @desktop @mobile @backlog-mobile
     Scenario Outline: Media files are previewed instead of shown as text
       When the user opens "<path>"
       Then the file is previewed as <kind>
 
       Examples:
-        | path             | kind     |
-        | assets/logo.png  | an image |
-        | media/intro.mp4  | a video  |
-        | media/theme.mp3  | audio    |
-        | docs/manual.pdf  | a document |
+        | path            | kind     |
+        | assets/logo.png | an image |
+
+      # The desktop links neither Qt Multimedia (whose FFmpeg is not bundled)
+      # nor Qt PDF, so it offers a video, audio or a PDF to open in the
+      # browser, and shows an HTML page's text and markup.
+      @backlog
+      Examples: Not yet on any surface
+        | path              | kind       |
+        | media/intro.mp4   | a video    |
+        | media/theme.mp3   | audio      |
+        | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
-    # The bytes come from the thread's MC by a signed address, never from this machine's disk,
-    # so a preview looks the same whichever machine the thread runs on.
-    @backlog @desktop @mobile
-    Scenario Outline: Media files of a thread on another machine are previewed
-      Given the thread runs on <where>
+    @desktop @mobile @backlog-mobile
+    Scenario: Media files of a thread on another machine are previewed
+      Given the thread is on another machine of the cluster
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
-      And nothing is read from this machine's disk
+      And the image comes from the machine the thread is on
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A media preview that fails to load can be retried
+      Given loading "<path>" fails once
+      When the user opens "<path>"
+      Then the user is told the <kind> could not be loaded
+      When the user retries
+      Then the <kind> <result>
 
       Examples:
-        | where                                              |
-        | another MC of the cluster                          |
-        | an MC on another machine the client is paired with |
+        | path            | kind  | result   |
+        | assets/logo.png | image | is shown |
 
-    @backlog @desktop @mobile
-    Scenario: A media preview that fails to load can be retried
-      Given loading "media/theme.mp3" fails once
-      When the user opens "media/theme.mp3"
-      Then the user is told the audio could not be loaded
-      When the user retries
-      Then the audio plays
+      # No audio player on the desktop yet (see above).
+      @backlog
+      Examples: Not yet on any surface
+        | path            | kind  | result |
+        | media/theme.mp3 | audio | plays  |
 
     @desktop @tui
     Scenario Outline: Rendered files can be switched to their source and back

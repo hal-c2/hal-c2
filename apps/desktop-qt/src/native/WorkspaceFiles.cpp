@@ -1,10 +1,12 @@
 #include "WorkspaceFiles.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QTimeZone>
 
 #include <functional>
 
@@ -89,7 +91,8 @@ WorkspaceFiles::WorkspaceFiles(McClient* client, QObject* parent) : QObject(pare
   });
 }
 
-void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root) {
+void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root, const QString& threadId) {
+  m_thread = threadId;
   if (environmentId == m_environment && root == m_root) return;
   // An edit of the workspace being left is written there.
   save(true);
@@ -122,6 +125,8 @@ void WorkspaceFiles::setActive(bool active) {
   } else if (m_active && std::exchange(m_stale, false)) {
     m_tree.refresh();
   }
+  // The preview loads again when the tab shows, so needs a URL that works.
+  if (m_active && m_fileStatus == QLatin1String("ready") && mediaExpired()) reloadFile();
 }
 
 void WorkspaceFiles::setTimeline(TimelineModel* timeline) {
@@ -247,7 +252,7 @@ void WorkspaceFiles::openFile(const QString& path, int line) {
     if (std::exchange(m_editing, false)) emit renderedChanged();
   }
   m_openLine = line;
-  if (path == m_openPath && m_fileStatus == QLatin1String("ready")) {
+  if (path == m_openPath && m_fileStatus == QLatin1String("ready") && !mediaExpired()) {
     // Already here: just go to the line.
     m_revealLine = line > 0 ? std::clamp(line, 1, std::max(1, m_lines.rowCount())) : 0;
     emit revealRequested();
@@ -266,7 +271,9 @@ void WorkspaceFiles::reloadFile() {
   m_fileProblem.clear();
   m_truncatedNotice.clear();
   m_truncated = false;
+  m_mediaUrl.clear();
   emit fileChanged();
+  if (!mediaKind().isEmpty()) return signMedia(request);
   m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
@@ -292,6 +299,67 @@ void WorkspaceFiles::reloadFile() {
                  });
 }
 
+void WorkspaceFiles::signMedia(int request) {
+  // A path in the workspace is the thread's file; a full path is served only
+  // as a media file. With no thread, the workspace folder names itself.
+  const bool outside = m_openPath.startsWith(QLatin1Char('/')) || m_openPath.contains(QLatin1String(":\\"));
+  QJsonObject resource{{QStringLiteral("path"), m_openPath}};
+  if (m_thread.isEmpty()) {
+    resource.insert(QStringLiteral("_tag"), QStringLiteral("draft-workspace-file"));
+    resource.insert(QStringLiteral("cwd"), m_root);
+  } else {
+    resource.insert(QStringLiteral("_tag"), outside ? QStringLiteral("media-file") : QStringLiteral("workspace-file"));
+    resource.insert(QStringLiteral("threadId"), m_thread);
+  }
+  m_client->call(this, m_environment, QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), resource}},
+                 [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (request != m_fileRequest) return;
+                   const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   setText({});
+                   if (error || relative.isEmpty()) {
+                     m_fileStatus = QStringLiteral("error");
+                     m_fileProblem = error && !error->isEmpty() ? *error : QStringLiteral("Unable to load this file.");
+                     emit fileChanged();
+                     return;
+                   }
+                   // The cluster hands the address to the member that signed
+                   // it. It stops working a minute before the MC says, so a
+                   // preview asked for at the last moment still loads.
+                   m_mediaUrl = m_client->origin().resolved(QUrl(relative));
+                   m_mediaExpires = QDateTime::fromMSecsSinceEpoch(
+                       qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble()) - 60'000, QTimeZone::UTC);
+                   m_fileStatus = QStringLiteral("ready");
+                   emit fileChanged();
+                   if (std::exchange(m_openOnSign, 0) == request) emit mediaOpened(m_mediaUrl);
+                 });
+}
+
+void WorkspaceFiles::openMedia() {
+  if (mediaKind().isEmpty()) return;
+  if (m_fileStatus == QLatin1String("ready") && !mediaExpired()) {
+    emit mediaOpened(m_mediaUrl);
+    return;
+  }
+  reloadFile();
+  m_openOnSign = m_fileRequest;
+}
+
+bool WorkspaceFiles::mediaExpired() const {
+  return !mediaKind().isEmpty() && (m_mediaUrl.isEmpty() || QDateTime::currentDateTimeUtc() >= m_mediaExpires);
+}
+
+void WorkspaceFiles::mediaFailed(const QUrl& url) {
+  if (url.isEmpty() || url != m_mediaUrl || m_fileStatus != QLatin1String("ready")) return;
+  static const QHash<QString, QString> nouns{{QStringLiteral("image"), QStringLiteral("image")},
+                                             {QStringLiteral("video"), QStringLiteral("video")},
+                                             {QStringLiteral("audio"), QStringLiteral("audio")},
+                                             {QStringLiteral("pdf"), QStringLiteral("document")}};
+  m_mediaUrl.clear();
+  m_fileStatus = QStringLiteral("error");
+  m_fileProblem = tr("The %1 could not be loaded.").arg(nouns.value(mediaKind()));
+  emit fileChanged();
+}
+
 void WorkspaceFiles::closeFile() {
   // What the user typed is written before the file goes.
   save(true);
@@ -305,6 +373,7 @@ void WorkspaceFiles::closeFile() {
   m_fileProblem.clear();
   m_truncatedNotice.clear();
   m_truncated = false;
+  m_mediaUrl.clear();
   setText({});
   if (!m_saveProblem.isEmpty()) {
     m_saveProblem.clear();
@@ -426,6 +495,22 @@ QString WorkspaceFiles::renderKind() const {
       {QStringLiteral("htm"), QStringLiteral("html")},
   };
   return m_fileStatus == QLatin1String("ready") ? kinds.value(extensionOf(m_openPath)) : QString();
+}
+
+QString WorkspaceFiles::mediaKindOf(const QString& path) {
+  // What the MC serves as media (its media extensions), less HTML, which renders as text.
+  static const QHash<QString, QString> kinds = [] {
+    QHash<QString, QString> kinds;
+    const auto add = [&kinds](const char* kind, std::initializer_list<const char*> extensions) {
+      for (const char* extension : extensions) kinds.insert(QLatin1String(extension), QLatin1String(kind));
+    };
+    add("image", {"png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"});
+    add("video", {"mp4", "webm", "mov", "m4v"});
+    add("audio", {"mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac"});
+    add("pdf", {"pdf"});
+    return kinds;
+  }();
+  return kinds.value(extensionOf(path));
 }
 
 bool WorkspaceFiles::rendered() const {
