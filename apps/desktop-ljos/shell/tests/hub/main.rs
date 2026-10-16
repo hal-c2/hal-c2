@@ -5,6 +5,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod menus;
 mod toasts;
 
 use std::rc::Rc;
