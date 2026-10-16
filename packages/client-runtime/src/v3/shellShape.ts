@@ -13,9 +13,15 @@ const decodeItem = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2Sh
  * The cluster shell carries every MC's rows; each environment keeps only its own
  * MC's. Sequences are local to this fold: a snapshot resets them and every later
  * row is numbered after it, which is all the shell reducer compares.
+ *
+ * A `shell.rows` frame the MC marks `reset` carries all of that MC's rows, so the ones
+ * it does not name are gone (the MC restarted with a new epoch, or could not resume
+ * this client): the fold removes them, as the desktop's shell store does.
  */
 export class ShellShapeFold {
   private sequence = 0;
+  // The rows held, by kind and id, with where each thread sits.
+  private readonly held = new Map<string, "project" | "active" | "archive">();
   private readonly mc: string;
 
   constructor(mc: string) {
@@ -26,12 +32,17 @@ export class ShellShapeFold {
     const projects: Array<unknown> = [];
     const threads: Array<unknown> = [];
     const archivedThreads: Array<unknown> = [];
-    for (const [mc, , kind, row] of rows) {
+    this.held.clear();
+    for (const [mc, id, kind, row] of rows) {
       if (mc !== this.mc) continue;
       if (kind === "project") {
-        if (row.deletedAt == null) projects.push(row);
+        if (row.deletedAt == null) {
+          projects.push(row);
+          this.held.set(`project:${id}`, "project");
+        }
       } else if (kind === "thread" && row.deletedAt == null) {
         (row.archivedAt == null ? threads : archivedThreads).push(row);
+        this.held.set(`thread:${id}`, row.archivedAt == null ? "active" : "archive");
       }
     }
     this.sequence++;
@@ -53,18 +64,54 @@ export class ShellShapeFold {
   rows(
     mc: string,
     rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+    reset = false,
   ): ReadonlyArray<OrchestrationV2ShellStreamItem> {
     if (mc !== this.mc) return [];
-    return rows.map(([id, kind, row]) => {
+    const items: Array<OrchestrationV2ShellStreamItem> = [];
+    if (reset) {
+      const named = new Set(rows.map(([id, kind]) => `${kind}:${id}`));
+      for (const [key, place] of this.held) {
+        if (named.has(key)) continue;
+        this.held.delete(key);
+        const sequence = ++this.sequence;
+        items.push(
+          place === "project"
+            ? decodeItem({
+                kind: "project.removed",
+                sequence,
+                projectId: key.slice("project:".length),
+              })
+            : decodeItem({
+                kind: "thread.removed",
+                sequence,
+                location: place,
+                threadId: key.slice("thread:".length),
+              }),
+        );
+      }
+    }
+    for (const [id, kind, row] of rows) {
       const sequence = ++this.sequence;
-      if (kind === "project")
-        return row.deletedAt == null
-          ? decodeItem({ kind: "project.updated", sequence, project: row })
-          : decodeItem({ kind: "project.removed", sequence, projectId: id });
+      const key = `${kind}:${id}`;
+      if (kind === "project") {
+        if (row.deletedAt == null) {
+          this.held.set(key, "project");
+          items.push(decodeItem({ kind: "project.updated", sequence, project: row }));
+        } else {
+          this.held.delete(key);
+          items.push(decodeItem({ kind: "project.removed", sequence, projectId: id }));
+        }
+        continue;
+      }
       const location = row.archivedAt == null ? "active" : "archive";
-      return row.deletedAt == null
-        ? decodeItem({ kind: "thread.updated", sequence, location, thread: row })
-        : decodeItem({ kind: "thread.removed", sequence, location, threadId: id });
-    });
+      if (row.deletedAt == null) {
+        this.held.set(key, location);
+        items.push(decodeItem({ kind: "thread.updated", sequence, location, thread: row }));
+      } else {
+        this.held.delete(key);
+        items.push(decodeItem({ kind: "thread.removed", sequence, location, threadId: id }));
+      }
+    }
+    return items;
   }
 }
