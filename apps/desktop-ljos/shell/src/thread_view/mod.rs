@@ -8,6 +8,8 @@
 //! binds (`ItemModel`) and forwards those changes as Ljós's row signals.
 
 pub mod cache;
+pub mod diff;
+pub mod rows;
 pub mod summary;
 pub mod time;
 pub mod timeline;

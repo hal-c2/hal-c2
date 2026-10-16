@@ -68,6 +68,13 @@ pub fn register(engine: &Engine) {
             <thread_view::timeline_model::TimelineModel as ljos_engine::QmlType>::static_meta(),
         ),
     );
+    use ljos_engine::QmlType;
+    for meta in [
+        thread_view::timeline_model::TimelineModel::static_meta(),
+        thread_view::diff::DiffModel::static_meta(),
+    ] {
+        engine.register_type(MODULE, v, ljos_engine::MetaRef::Static(meta));
+    }
     bridge::Bridge::of(engine);
 }
 
