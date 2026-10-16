@@ -11,6 +11,7 @@ pub mod cache;
 pub mod summary;
 pub mod time;
 pub mod timeline;
+pub mod timeline_model;
 
 #[cfg(test)]
 mod timeline_tests;
