@@ -30,7 +30,10 @@ impl StreamingMc {
     /// What the store resumes from, as a connection sends it on subscribing.
     fn have(&self) -> Json {
         let mut slot = self.subscription.borrow_mut();
-        let resume = slot.as_mut().and_then(|(_, r)| r.as_mut()).expect("a resume");
+        let resume = slot
+            .as_mut()
+            .and_then(|(_, r)| r.as_mut())
+            .expect("a resume");
         resume()["have"].clone()
     }
 
