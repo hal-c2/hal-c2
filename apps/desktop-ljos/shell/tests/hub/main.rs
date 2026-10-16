@@ -8,6 +8,7 @@ mod common;
 mod commands;
 mod keybindings;
 mod menus;
+mod quit;
 mod settings;
 mod toasts;
 

@@ -5,6 +5,7 @@ pub mod keybindings;
 pub mod layout;
 pub mod menus;
 pub mod navigation;
+pub mod quit;
 pub mod settings;
 pub mod settings_scope;
 pub mod theme;
@@ -20,6 +21,7 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<quit::QuitController>("quit", &["quitHint"], Scope::Shared),
         Registration::new::<settings::SettingsController>("settings", &[], Scope::Shared),
         Registration::new::<settings_scope::SettingsScopeController>(
             "settingsScope",
