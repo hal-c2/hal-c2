@@ -1776,6 +1776,7 @@ dependencies = [
  "open",
  "proptest",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "url",

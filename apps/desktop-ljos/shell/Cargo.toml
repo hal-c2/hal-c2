@@ -29,6 +29,8 @@ ljos_runtime.workspace = true
 hal_c2_mc.workspace = true
 # The system's handler for links (Ljós has no openUrlExternally yet).
 open = "5"
+# The kept session (src/session.rs).
+serde.workspace = true
 serde_json.workspace = true
 # The MC origin, as hal_c2_mc takes it.
 url = "2"

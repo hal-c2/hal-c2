@@ -11,6 +11,7 @@ pub mod mc;
 pub mod qml;
 pub mod render;
 pub mod runtime;
+pub mod session;
 pub mod sidebar_model;
 pub mod storage;
 pub mod store;
