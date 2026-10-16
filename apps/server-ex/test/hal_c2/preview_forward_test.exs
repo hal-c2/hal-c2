@@ -121,6 +121,21 @@ defmodule HalC2.PreviewForwardTest do
       # The forward goes on.
       assert round_trip(port, "again") == "again"
     end
+
+    # Found by proof/hal_c2/preview_forward_proof_test.exs: a pipe that ended when its
+    # app refused a chunk lost what the app wrote before it closed.
+    test "a chunk an app that has closed refuses is dropped, and the pipe reads on" do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false])
+      {:ok, port} = :inet.port(listen)
+      {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
+      :ok = :gen_tcp.close(socket)
+      state = %{side: :dial, socket: socket, peer: self(), unacked: 0, armed: true}
+
+      assert {:noreply, ^state} =
+               HalC2.PreviewForward.Pipe.handle_info({:preview_forward, :data, "x"}, state)
+
+      assert_received {:preview_forward, :ack}
+    end
   end
 
   describe "a forward closes" do
