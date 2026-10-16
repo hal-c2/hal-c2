@@ -5,6 +5,7 @@
 pub mod bridge;
 pub mod controller;
 pub mod controllers;
+pub mod device_screen;
 pub mod folders;
 pub mod highlighter;
 pub mod json;
@@ -38,6 +39,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
     folders::register(engine, v);
     highlighter::register(engine, v);
+    device_screen::register(engine, v);
     bridge::Bridge::of(engine);
 }
 
