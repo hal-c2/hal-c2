@@ -2,7 +2,8 @@
 #   docs/user/remote-access.md (Pair over a LAN or private network, Manage or revoke access)
 #   docs/operations/development.md (vp run dev --share pairing URL, Reusable dev credential)
 #   docs/internals/environment-auth.md (Authority survives transport changes)
-#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
+#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex, apps/server-ex/lib/hal_c2/pair.ex,
+#     apps/server-ex/rel/overlays/bin/hal-c2-service (pair)
 #   apps/server-ex/lib/hal_c2/auth.ex, apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, pairing links,
 #     /pair: the page a phone's camera app opens)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
@@ -42,6 +43,12 @@ Feature: Pairing a client with an environment
   @mc
   Scenario: A pairing link names the address the operator gives it
     When an operator asks for a pairing link for "https://box.tailnet.ts.net"
+    Then the printed link starts with that address
+
+  # The single file's `pair` runs the same code as the Mix task, in the release with no Mix.
+  @mc
+  Scenario: An installed MC prints a pairing link from its single file
+    When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
     Then the printed link starts with that address
 
   @backlog @mc
