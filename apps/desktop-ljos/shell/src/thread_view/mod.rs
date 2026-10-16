@@ -10,6 +10,7 @@
 pub mod cache;
 pub mod diff;
 pub mod file_tree;
+pub mod previews;
 pub mod rows;
 pub mod summary;
 pub mod time;
