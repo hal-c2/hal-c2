@@ -1,0 +1,33 @@
+[package]
+name = "hal_c2_mc"
+description = "The desktop's protocol-3 connection to its MC. No UI: events go to whoever runs it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# The socket is read and written at once while timers run, so its thread runs a
+# single-threaded runtime. The HTTP requests (descriptor, ticket, posts) are
+# blocking ureq calls on the runtime's blocking pool, as Ljós's own fetcher.
+tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+  "connect",
+  "handshake",
+  "rustls-tls-native-roots",
+] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
+# One TLS policy for socket and HTTP: the system's trust store, as the Qt client.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+url = "2"
+getrandom = "0.4"
+
+[dev-dependencies]
+proptest = "1.11"
+# The fake MC in tests/ reads and writes its HTTP by hand.
+tokio = { version = "1.53", features = ["io-util"] }

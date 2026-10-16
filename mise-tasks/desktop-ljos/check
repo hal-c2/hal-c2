@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Compile desktop-ljos's QML (with desktop-qt's bricks) on Ljós; LJOS_BIN overrides the binary"
-#MISE dir="{{config_root}}"
+#MISE description="Compile desktop-qt's bricks and desktop-ljos's QML against HalC2.Shell on Ljós; fails when a file does not"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
-exec apps/desktop-ljos/scripts/ljos.sh check "$@"
+exec mise exec -- cargo run --release -q -p hal_c2_shell -- --check "$@"

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Render the desktop shell on Ljós to .hal-c2/desktop-ljos.png without a window (--out, --size, --settle)"
-#MISE dir="{{config_root}}"
+#MISE description="Render the desktop shell on Ljós without a window to .hal-c2/desktop-ljos.png (--render FILE, --size WxH, --settle MS, --action NAME)"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
-exec apps/desktop-ljos/scripts/ljos.sh render "$@"
+root="$(cd ../.. && pwd)"
+args=("$@")
+# The usage page by default: home is empty until the shell has an MC.
+[[ " $* " == *" --render"* ]] || args=(--render "$root/.hal-c2/desktop-ljos.png" "${args[@]+"${args[@]}"}")
+[[ " $* " == *" --action"* ]] || args+=(--action usage.open)
+exec mise exec -- cargo run --release -q -p hal_c2_shell -- "${args[@]}"

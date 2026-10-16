@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Open the desktop shell on Ljós (--mc-origin URL --mc-token TOKEN, or HAL_C2_MC_ORIGIN/HAL_C2_MC_TOKEN; none runs disconnected)"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+# There is no pairing yet: the origin and session token are given as host/main.ts
+# would hand them to desktop-qt.
+exec mise exec -- cargo run --release -q -p hal_c2_shell -- "$@"

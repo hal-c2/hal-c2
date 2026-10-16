@@ -1,0 +1,34 @@
+[package]
+name = "hal_c2_shell"
+description = "The HAL-C2 desktop shell on Ljós: the native HalC2.Shell module and its controllers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hal-c2-ljos"
+path = "src/main.rs"
+
+[dependencies]
+# dev-qml: the shell compiles its QML at start-up (see src/qml.rs for why).
+# No `media`: the bricks play nothing.
+ljos = { workspace = true, features = ["shell", "dev-qml"] }
+# The system colour scheme's type, which ljos_quick returns but does not name.
+ljos_a11y.workspace = true
+ljos_compiler.workspace = true
+ljos_controls.workspace = true
+# For the paths the QmlObject derive generates (see the workspace manifest).
+ljos_engine.workspace = true
+# The clipboard's mode, which the facade does not name.
+ljos_platform.workspace = true
+ljos_quick.workspace = true
+ljos_render.workspace = true
+ljos_runtime.workspace = true
+hal_c2_mc.workspace = true
+# The system's handler for links (Ljós has no openUrlExternally yet).
+open = "5"
+serde_json.workspace = true
+# The MC origin, as hal_c2_mc takes it.
+url = "2"

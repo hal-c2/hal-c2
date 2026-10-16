@@ -1,0 +1,42 @@
+[workspace]
+members = ["shell", "mc"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
+# add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
+# .cargo/config.toml rather than editing this line.
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124", default-features = false }
+# Behind the facade, for what it does not offer yet (shell/src/qml.rs and
+# shell/src/render.rs say what for). Same rev as `ljos`.
+ljos_compiler = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+# The QmlObject derive and qml_impl name `::ljos_engine`, which a `pub use`
+# through the facade does not make resolve: only a direct dependency does.
+ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+ljos_a11y = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+ljos_render = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124", default-features = false }
+ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+hal_c2_mc = { path = "mc" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Ljós parses QML with a fork of oxc_parser it vendors and swaps in with its
+# own [patch.crates-io], which Cargo does not carry over to a git dependent.
+# Same rev as `ljos`; drop this when Ljós publishes the fork under its own name.
+[patch.crates-io]
+oxc_parser = { git = "https://github.com/hal-c2/ljos-ui", rev = "e5eecf5032950955e2a20af36595b37bc45ce124" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

@@ -1,0 +1,3 @@
+# Ljós needs this Rust; `mise install` from here installs it.
+[tools]
+rust = { version = "1.98.1", components = "rustfmt,clippy" }

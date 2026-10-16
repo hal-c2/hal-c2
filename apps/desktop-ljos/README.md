@@ -1,41 +1,41 @@
 # desktop-ljos
 
-An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) run on
-[Ljós](https://github.com/olafura/ljos-ui), a Rust QML runtime. QML only, no Rust crate yet. It reuses
-`apps/desktop-qt/qml/HalC2/Bricks` as is and stands a pure-QML `HalC2.Shell` in for the native module, so
-the shell draws with an empty state (no MC connection).
+An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+as they are and puts a Rust `HalC2.Shell` under them.
 
-## Build the ljos CLI
+- `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
+  controllers behind `Shell.state` (desktop-qt's NativeController and NativeShell), and the seam to the MC.
+- `mc/` is the MC client, desktop-qt's McClient in Rust.
+- `qml/` is the entry (`Main.qml`) and the QML half of `HalC2.Shell`: stubs for what is not ported yet, each
+  naming the C++ class it stands in for, holding only what the bricks read.
 
-Ljós needs rustc 1.98; its `mise.toml` pins it. Build with a target directory under this checkout so
-nothing is written in the Ljós tree:
+Both QML trees are compiled when the app starts (`shell/src/qml.rs` says why not ahead of time). A file that
+does not compile fails only where it is made, as in Qt.
 
-```sh
-cd ~/dev/ljos-ui
-CARGO_TARGET_DIR=<checkout>/.hal-c2/ljos-target mise exec -- cargo build --release -p ljos_cli
-```
+## Run, check and render
 
-The tasks use `.hal-c2/ljos-target/release/ljos`; set `LJOS_BIN` to use another binary.
-
-## Check and render
+Ljós needs rustc 1.98; `mise.toml` here pins it.
 
 ```sh
-mise-tasks/desktop-ljos/check            # ljos check over the staged project
-mise-tasks/desktop-ljos/render           # headless PNG at .hal-c2/desktop-ljos.png (--out, --size, --settle)
+mise run desktop-ljos                                   # the window; --mc-origin URL --mc-token TOKEN
+mise run desktop-ljos:check                             # compile the QML; fails when a file does not
+mise run desktop-ljos:render                            # .hal-c2/desktop-ljos.png without a window
+mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mode":"dark"}'
 ```
 
-(or `mise run desktop-ljos:check` / `desktop-ljos:render` once the repo's mise.toml is trusted.) Neither
-opens a window or needs an MC.
+There is no pairing yet: the window takes the MC's origin and a session token (also
+`HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`), and runs disconnected without them. The render is always
+disconnected; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
-`ljos` does not follow symlinks, so `scripts/ljos.sh` stages the Bricks and `qml/` into the gitignored
-`.hal-c2/desktop-ljos-stage/` first. The stage also drops `default` from five `default property alias`
-lines to get around a Ljós bug; see the comment in the script (`LJOS_KEEP_DEFAULT_ALIAS=1` turns that off).
-`check` exits 1 for the Bricks that need native types Ljós has not got (`Terminal`, `DeviceScreen`,
-`LocalFolderModel`, `TreeView`); `render` is not blocked by them.
+`check` fails today on the five bricks that need native types not ported yet: `Terminal`, `DeviceScreen`
+and `LocalFolderModel`.
 
-## Stubs in `qml/HalC2/Shell`
+## Tests
 
-Each file names the C++ class it stands in for: `Shell` (ShellBridge), `Theme` (ThemeStore), `Runtime`
-(ShellRuntime), `Keybindings`, `Terminals`, `PaletteModel`, `Themes`, `Settings`, `Panel`, `Threads`,
-`Onboarding` (their controllers), and the `ComposerHighlighter` type. They hold only the members the bricks
-read, with the empty values the app shows before anything is published.
+```sh
+cd apps/desktop-ljos && mise exec -- cargo test -p hal_c2_shell
+```
+
+They build the app headlessly through `ljos::App`, compile QML written in the test, and drive time with a
+virtual clock.
