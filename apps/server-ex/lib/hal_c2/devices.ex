@@ -459,7 +459,7 @@ defmodule HalC2.Devices do
   defp os_type, do: Application.get_env(:hal_c2, :os_type) || :os.type()
 
   defp android_sdk do
-    home = System.user_home() || ""
+    home = HalC2.Paths.user_home()
 
     explicit =
       Enum.find_value(["ANDROID_HOME", "ANDROID_SDK_ROOT"], fn name ->
