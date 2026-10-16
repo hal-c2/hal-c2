@@ -54,11 +54,16 @@ pub struct Launch {
     pub allow_local_folder_import: bool,
     /// Why the shell could not load what it was asked to, for `Runtime`.
     pub last_error: String,
+    /// Where the client cache keeps what the MC last sent
+    /// ([`storage::StoragePaths::cache`]); none keeps nothing.
+    pub cache_dir: Option<PathBuf>,
 }
 
-/// Gives the registered module what the launch says, then starts and
-/// activates the controllers over `mc`. Before the root is made: what the
-/// bricks bind on first is published by then.
+/// Gives the registered module what the launch says, then starts the
+/// controllers over `mc`. Before the root is made: what the bricks bind on
+/// first is published by then. Without an MC they activate at once; with
+/// one, the shell store subscribes to it and they activate on its first
+/// snapshot, previewing what the cache kept until then.
 pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     let bridge = bridge::Bridge::of(engine);
     if let Some(origin) = &launch.mc_origin {
@@ -71,8 +76,51 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     );
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
-    controller::start(engine, mc, controllers::registrations());
-    // desktop-qt activates on the store's first snapshot; there is no store
-    // yet, so at once.
+    controller::start(engine, mc.clone(), controllers::registrations());
+    match &launch.mc_origin {
+        Some(origin) => {
+            // NativeShell: what the cache kept of this MC shows while the
+            // socket opens; the controllers activate on its first snapshot.
+            let cache = launch
+                .cache_dir
+                .as_deref()
+                .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
+            store::install(engine, &mc, cache);
+            store::on_changed(engine, update);
+            store::open(engine, origin);
+        }
+        // No MC to wait for: what the shell shows is all there is.
+        None => {
+            engine.extension::<Active>().0.set(true);
+            controller::activate(engine);
+        }
+    }
+}
+
+/// Whether the controllers are active, once the store first synchronized.
+#[derive(Default)]
+struct Active(std::cell::Cell<bool>);
+
+/// NativeShell::update: until the MC's first snapshot, the windows preview
+/// what the cache kept; on it, the controllers activate, once.
+fn update(engine: &Engine) {
+    let active = engine.extension::<Active>();
+    if active.0.get() {
+        return;
+    }
+    let (synchronized, previewing) = store::with(engine, |s| (s.synchronized(), s.previewing()));
+    if !synchronized {
+        if previewing {
+            controller::preview(engine);
+        }
+        return;
+    }
+    active.0.set(true);
     controller::activate(engine);
+}
+
+/// Whether the controllers are active: at once without an MC, else once its
+/// first snapshot is in.
+pub fn active(engine: &Engine) -> bool {
+    engine.extension::<Active>().0.get()
 }

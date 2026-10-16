@@ -14,6 +14,8 @@ use proptest::prelude::*;
 use serde_json::{Map, Value, json};
 
 type Entities = BTreeMap<String, (Option<i64>, i64)>;
+/// mc -> (rev, row id -> n)
+type Mcs = BTreeMap<String, (i64, BTreeMap<String, i64>)>;
 
 #[derive(Clone, Debug)]
 enum Op {
@@ -132,8 +134,8 @@ fn to_entities(put: &[(usize, Option<i64>, i64)]) -> Vec<Entity> {
 #[derive(Default, Debug)]
 struct Model {
     threads: BTreeMap<String, (Cursor, Entities)>,
-    /// origin -> mc -> (rev, rows id -> n)
-    shells: BTreeMap<String, BTreeMap<String, (i64, BTreeMap<String, i64>)>>,
+    /// origin -> its MCs
+    shells: BTreeMap<String, Mcs>,
 }
 
 fn load(cache: &LocalCache, key: &str) -> Thread {
@@ -227,7 +229,7 @@ proptest! {
                 }
                 Op::ReadShell { origin } => {
                     let shell = cache.shell(origin.map_or("", |o| ORIGINS[o]));
-                    let read: BTreeMap<String, (i64, BTreeMap<String, i64>)> = shell.mcs.iter().map(|mc| (
+                    let read: Mcs = shell.mcs.iter().map(|mc| (
                         mc.mc.clone(),
                         (mc.rev, mc.rows.iter().map(|r| (r.id.clone(), r.fields["n"].as_i64().unwrap())).collect()),
                     )).collect();
