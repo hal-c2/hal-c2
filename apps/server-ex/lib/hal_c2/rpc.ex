@@ -139,6 +139,7 @@ defmodule HalC2.Rpc do
   def handle("preview.refresh", input), do: HalC2.Preview.refresh(input)
   def handle("preview.close", input), do: HalC2.Preview.close(input)
   def handle("preview.list", input), do: HalC2.Preview.list(input)
+  def handle("preview.forward", input), do: HalC2.PreviewForward.request(input)
 
   def handle("previewAutomation.respond", input) do
     :ok = HalC2.PreviewAutomation.respond(input)

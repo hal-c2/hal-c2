@@ -9,7 +9,13 @@
  * @module Preview
  */
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
@@ -297,13 +303,54 @@ export const PreviewEvent = Schema.Union([
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
 
+const Port = Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536));
+
+/**
+ * Asks the client's own MC for the port its loopback reaches a dev server of
+ * a thread at: the same port for its own threads, else one it forwards to the
+ * thread's MC while one of the thread's tabs names that port.
+ */
+export const PreviewForwardInput = Schema.Struct({
+  /** The thread's environment, not the MC the request is sent to. */
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  port: Port,
+});
+export type PreviewForwardInput = typeof PreviewForwardInput.Type;
+
+export const PreviewForwardResult = Schema.Struct({
+  /** Where `localhost` on the client's machine reaches the dev server. */
+  port: Port,
+});
+export type PreviewForwardResult = typeof PreviewForwardResult.Type;
+
+export class PreviewForwardError extends Schema.TaggedError<PreviewForwardError>()(
+  "PreviewForwardError",
+  {
+    /**
+     * `not_open`: none of the thread's tabs names the port; `reserved`: the
+     * port is the thread's MC's own; `unavailable`: that MC did not answer.
+     */
+    reason: Schema.Literals([
+      "invalid",
+      "unknown_environment",
+      "unavailable",
+      "reserved",
+      "not_open",
+      "closed",
+      "failed",
+    ]),
+    message: Schema.String,
+  },
+) {}
+
 /**
  * A localhost server detected by the port scanner. Used to populate the
  * "Local" recommendations in the empty-state of the preview panel.
  */
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
-  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
+  port: Port,
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
