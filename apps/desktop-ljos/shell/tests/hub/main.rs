@@ -7,6 +7,7 @@ mod common;
 
 mod commands;
 mod menus;
+mod settings;
 mod toasts;
 
 use std::rc::Rc;
@@ -26,6 +27,12 @@ pub struct Hub {
     pub engine: Engine,
     pub clock: Arc<VirtualClock>,
     pub mc: Rc<FakeMc>,
+}
+
+impl Default for Hub {
+    fn default() -> Hub {
+        Hub::new()
+    }
 }
 
 impl Hub {

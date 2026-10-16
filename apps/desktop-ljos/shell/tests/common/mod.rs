@@ -135,6 +135,15 @@ impl FakeMc {
         (0..calls.len()).find(|&i| calls[i].1 == method && replies[i].is_some())
     }
 
+    /// The index of the oldest call to `method` on `environment` not
+    /// answered yet.
+    pub fn pending_on(&self, environment: &str, method: &str) -> Option<usize> {
+        let calls = self.calls.borrow();
+        let replies = self.replies.borrow();
+        (0..calls.len())
+            .find(|&i| calls[i].0 == environment && calls[i].1 == method && replies[i].is_some())
+    }
+
     /// Answers the oldest unanswered call to `method`; panics without one.
     pub fn answer(
         &self,

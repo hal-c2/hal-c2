@@ -4,6 +4,8 @@ pub mod client_activity;
 pub mod layout;
 pub mod menus;
 pub mod navigation;
+pub mod settings;
+pub mod settings_scope;
 pub mod theme;
 pub mod toasts;
 
@@ -16,6 +18,12 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<settings::SettingsController>("settings", &[], Scope::Shared),
+        Registration::new::<settings_scope::SettingsScopeController>(
+            "settingsScope",
+            &["settingsScope"],
+            Scope::Window,
+        ),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
         Registration::new::<toasts::Toasts>("toasts", &["toasts"], Scope::Window),
     ]

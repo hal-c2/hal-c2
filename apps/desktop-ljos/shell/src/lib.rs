@@ -6,6 +6,7 @@ pub mod bridge;
 pub mod commands;
 pub mod controller;
 pub mod controllers;
+pub mod environment_settings;
 pub mod json;
 pub mod keybindings;
 pub mod mc;
@@ -36,6 +37,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<bridge::ShellBridge>(MODULE, v);
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
+    engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     bridge::Bridge::of(engine);
 }
 
@@ -70,6 +72,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
     controller::start(engine, mc, controllers::registrations());
+    controllers::settings::Settings::of(engine).set_device_path(
+        engine,
+        launch
+            .config_dir
+            .as_ref()
+            .map(|dir| dir.join("preferences.json")),
+    );
     // desktop-qt activates on the store's first snapshot; there is no store
     // yet, so at once.
     controller::activate(engine);

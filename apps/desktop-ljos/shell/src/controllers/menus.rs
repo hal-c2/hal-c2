@@ -201,7 +201,8 @@ impl Menus {
     }
 
     /// Asks; `accepted` runs on yes only, `declined` (when given) on no.
-    /// Returns the request id.
+    /// Returns the request id. The arguments are ConfirmationRequest's.
+    #[allow(clippy::too_many_arguments)]
     pub fn confirm(
         &mut self,
         engine: &Engine,
