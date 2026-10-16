@@ -5,7 +5,7 @@ defmodule HalC2.OrchestrationPropTest do
   starts a turn, waits in the queue, steers the running turn or restarts it; have the
   MC send the agent a message of its own (a `notification`, as a delegated task's
   result is); send a message again with its message id, as a client retrying after a
-  reconnect does;
+  reconnect does, or send the same steer twice at once;
   cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
@@ -24,7 +24,9 @@ defmodule HalC2.OrchestrationPropTest do
   threads' streams until nothing is starting and the runs the command ended have
   ended, then compares each thread's projection with the model: thread state, runs
   and their statuses in order, the queue's order and positions, at most one active
-  run, and every user message exactly once, in the run it belongs to. A message of the
+  run, and every user message exactly once, in the run it belongs to. A message that
+  steered a turn reached Codex once (the fake logs every `turn/steer`) and is in the
+  transcript ahead of the answer it got. A message of the
   MC's own is in the transcript as a notification, never as a user message, and while
   it is queued it cannot be edited or made to steer.
   """
@@ -53,7 +55,16 @@ defmodule HalC2.OrchestrationPropTest do
         File.mkdir_p!(work)
         {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
         Process.put(:work, work)
-        Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+        log = Path.join(home, "codex-requests.log")
+        Process.put(:codex_log, log)
+
+        Application.put_env(:hal_c2, :codex_command, [
+          "env",
+          "FAKE_CODEX_LOG=#{log}",
+          "python3",
+          "-u",
+          @fake_codex
+        ])
 
         HalC2.Prop.start_services([
           {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -119,6 +130,7 @@ defmodule HalC2.OrchestrationPropTest do
           oneof([:queue, :queue, :auto, :restart, :notice, :limit, :limit]),
           oneof(@instances)
         ]}},
+      {2, {:call, __MODULE__, :steer_twice, [tid, msg, oneof(@instances)]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
@@ -150,7 +162,7 @@ defmodule HalC2.OrchestrationPropTest do
           {2,
            let(
              [{t, m} <- oneof(sent), k <- range(1, 3)],
-             do: {:call, __MODULE__, :edit, [t, m, "wait edit #{k}"]}
+             do: {:call, __MODULE__, :edit, [t, m, "wait #{m} edit #{k}"]}
            )},
           {2,
            let(
@@ -208,6 +220,10 @@ defmodule HalC2.OrchestrationPropTest do
       _ -> state
     end
   end
+
+  # The second of two identical sends finds the first: they are one send.
+  def next_state(state, result, {:call, m, :steer_twice, [tid, msg, instance]}),
+    do: next_state(state, result, {:call, m, :send, [tid, msg, :auto, instance]})
 
   # A message the thread already has was sent: sending it again changes nothing, in
   # whatever state the first one is now (running, queued, steered, cancelled, edited).
@@ -486,7 +502,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :create, [tid]),
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
-  defp expected_reply(state, :send, [tid | _]), do: refusal(state, tid, :send) || :ok
+  defp expected_reply(state, fun, [tid | _]) when fun in [:send, :steer_twice],
+    do: refusal(state, tid, :send) || :ok
+
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
   defp expected_reply(state, fun, [tid])
@@ -687,7 +705,8 @@ defmodule HalC2.OrchestrationPropTest do
         Map.new(thread.messages, fn {id, m} ->
           shown = if m.shown, do: {m.run, if(m.notice, do: "notification", else: "user_message")}
           {id, {m.text, m.run, shown}}
-        end)
+        end),
+      steered: for({id, m} <- thread.messages, m.run != id, do: m.text) |> Enum.sort()
     }
   end
 
@@ -723,6 +742,22 @@ defmodule HalC2.OrchestrationPropTest do
         true -> []
       end
     )
+  end
+
+  # The same steer sent twice at once, as a client retrying while the first is still on
+  # its way. Both are answered alike.
+  def steer_twice(tid, msg, instance) do
+    steers = active_runs(tid, instance)
+    command = message(tid, msg, :auto, instance)
+    tasks = for _ <- 1..2, do: Task.async(fn -> Orchestration.dispatch(command) end)
+
+    result =
+      case tasks |> Task.await_many(@wait_ms) |> Enum.uniq_by(&outcome/1) do
+        [one] -> one
+        both -> {:unexpected, both}
+      end
+
+    reply(result, if(match?({:ok, _}, result), do: steers, else: []))
   end
 
   # The same message again, as first sent; a message the thread has ends no run.
@@ -917,16 +952,14 @@ defmodule HalC2.OrchestrationPropTest do
 
   # The command's reply, and every thread as it is once the command's effects landed.
   defp reply(result, ending) do
-    reply =
-      case result do
-        {:ok, %{}} -> :ok
-        {:error, message} -> {:error, message}
-        other -> {:unexpected, other}
-      end
-
+    reply = outcome(result)
     deadline = System.monotonic_time(:millisecond) + @wait_ms
     {reply, Map.new(@threads, &{&1, settled(&1, ending, deadline)})}
   end
+
+  defp outcome({:ok, %{}}), do: :ok
+  defp outcome({:error, message}), do: {:error, message}
+  defp outcome(other), do: {:unexpected, other}
 
   # Waits on the thread's stream until no run is starting and the runs in `ending` have
   # ended. A run's end starts the next queued one off the runtime's process, so when
@@ -1010,9 +1043,13 @@ defmodule HalC2.OrchestrationPropTest do
                {:bad_positions,
                 Enum.map(runs, &{&1["userMessageId"], &1["status"], &1["queuePosition"]})}
 
+        user_messages =
+          for {id, %{"role" => "user"} = m} <- StreamState.get(state, "message"), do: {id, m}
+
         messages =
-          for {id, %{"role" => "user"} = m} <- StreamState.get(state, "message"), into: %{} do
+          for {id, m} <- user_messages, into: %{} do
             item = items["turn-item:user:#{id}"]
+            steered? = by_id[m["runId"]]["userMessageId"] != rename.(id)
 
             # Where the transcript has the message, and as what; a notification says
             # what the message reports and none of its text.
@@ -1026,6 +1063,10 @@ defmodule HalC2.OrchestrationPropTest do
 
                 item["type"] == "notification" and Map.has_key?(item, "text") ->
                   {:bad_item, item}
+
+                # The fake answers a steer in the turn it joined, after it.
+                steered? and not answered_after?(items, item, m["text"]) ->
+                  {:unanswered, item}
 
                 true ->
                   {by_id[item["runId"]]["userMessageId"], item["type"]}
@@ -1051,8 +1092,36 @@ defmodule HalC2.OrchestrationPropTest do
                  run["providerInstanceId"]}
             ),
           queue: queue,
-          messages: messages
+          messages: messages,
+          steered: provider_steers(Enum.map(user_messages, fn {_, m} -> m["text"] end))
         }
     end
+  end
+
+  defp answered_after?(items, item, text) do
+    Enum.any?(Map.values(items), fn answer ->
+      answer["text"] == "steered: " <> text and answer["runId"] == item["runId"] and
+        answer["ordinal"] > item["ordinal"]
+    end)
+  end
+
+  # The texts of the `turn/steer` requests Codex was sent for these messages, once for
+  # every request.
+  defp provider_steers(texts) do
+    log = Process.get(:codex_log)
+    texts = MapSet.new(texts)
+
+    steers =
+      if File.exists?(log) do
+        for line <- File.stream!(log),
+            %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
+            text = hd(params["input"])["text"],
+            MapSet.member?(texts, text),
+            do: text
+      else
+        []
+      end
+
+    Enum.sort(steers)
   end
 end
