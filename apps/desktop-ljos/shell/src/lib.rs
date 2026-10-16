@@ -72,6 +72,7 @@ pub fn register(engine: &Engine) {
     for meta in [
         thread_view::timeline_model::TimelineModel::static_meta(),
         thread_view::diff::DiffModel::static_meta(),
+        thread_view::file_tree::FileTreeModel::static_meta(),
     ] {
         engine.register_type(MODULE, v, ljos_engine::MetaRef::Static(meta));
     }

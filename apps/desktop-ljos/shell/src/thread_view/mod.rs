@@ -9,6 +9,7 @@
 
 pub mod cache;
 pub mod diff;
+pub mod file_tree;
 pub mod rows;
 pub mod summary;
 pub mod time;
