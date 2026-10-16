@@ -62,15 +62,13 @@ defmodule HalC2.PreviewForward.Pipe do
     {:noreply, arm(%{state | unacked: state.unacked + length(chunks), armed: false})}
   end
 
+  # An app that has closed its end refuses the chunk, which is dropped: the pipe ends
+  # when it reads the close, after what the app wrote before it (a pipe that ended on
+  # the refusal would drop those bytes, such as a dev server's last response).
   def handle_info({:preview_forward, :data, chunk}, state) do
-    case :gen_tcp.send(state.socket, chunk) do
-      :ok ->
-        send(state.peer, {:preview_forward, :ack})
-        {:noreply, state}
-
-      {:error, _} ->
-        {:stop, :normal, state}
-    end
+    _ = :gen_tcp.send(state.socket, chunk)
+    send(state.peer, {:preview_forward, :ack})
+    {:noreply, state}
   end
 
   def handle_info({:preview_forward, :ack}, state),
