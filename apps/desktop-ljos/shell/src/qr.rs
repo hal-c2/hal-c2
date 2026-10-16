@@ -87,8 +87,8 @@ pub fn image(code: &Code, scale: usize) -> Option<Bitmap> {
             }
             for row in (y + QUIET) * scale..(y + QUIET + 1) * scale {
                 let start = (row * side + (x + QUIET) * scale) * 4;
-                for pixel in rgba[start..start + scale * 4].chunks_exact_mut(4) {
-                    pixel.copy_from_slice(&[0, 0, 0, 255]);
+                for pixel in rgba[start..start + scale * 4].as_chunks_mut::<4>().0 {
+                    *pixel = [0, 0, 0, 255];
                 }
             }
         }
