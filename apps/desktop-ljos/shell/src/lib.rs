@@ -3,9 +3,11 @@
 //! the bricks in apps/desktop-qt/qml.
 
 pub mod bridge;
+pub mod commands;
 pub mod controller;
 pub mod controllers;
 pub mod json;
+pub mod keybindings;
 pub mod mc;
 pub mod qml;
 pub mod render;
