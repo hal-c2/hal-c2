@@ -283,6 +283,21 @@ QJsonObject& propose(World& world, const QString& label, const QString& title, c
   return run;
 }
 
+// The MC's live subscriptions to the planner's `plan`, and every one the client made.
+qsizetype planWatches(World& world) {
+  const QList<int> live = world.mc.subscribers(QStringLiteral("plugin"));
+  return std::ranges::count_if(live, [&](int id) {
+    const QJsonObject shape = world.mc.shapeOf(id);
+    return shape.value(QLatin1String("id")) == kId && shape.value(QLatin1String("topic")) == QLatin1String("plan");
+  });
+}
+qsizetype planSubscriptions(World& world) {
+  return std::ranges::count_if(world.mc.subscriptions, [](const QJsonObject& sub) {
+    const QJsonObject shape = sub.value(QLatin1String("shape")).toObject();
+    return shape.value(QLatin1String("id")) == kId && shape.value(QLatin1String("topic")) == QLatin1String("plan");
+  });
+}
+
 // The run of the action `label`.
 QJsonObject runOf(World& world, const QString& label) {
   for (const QJsonObject& run : std::as_const(state(world).runs)) {
@@ -1161,6 +1176,45 @@ const Steps steps([] {
       QQuickItem* mark = findNamed(host, QStringLiteral("plannerRowMark"));
       return mark && drawsText(mark, c[0]);
     }, [&] { return QStringLiteral("the row mark to say %1").arg(c[0]); });
+  });
+
+  step(QStringLiteral("the agent works on %1 in its thread, which shows the task above the conversation").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWhenEmpty(world);
+    QJsonObject& run = addRun(world, QStringLiteral("Start work"), {c[0]}, QStringLiteral("running"));
+    run.insert(QStringLiteral("kind"), QStringLiteral("work"));
+    listThread(world, run);
+    publish(world);
+    openPluginThread(world, run.value(QLatin1String("threadId")).toString());
+    QQuickItem* header = waitShownNamed(world, QStringLiteral("plannerHeader"));
+    // The task's status and progress come from the plan alone.
+    world.waitFor([&] { return findNamed(header, QStringLiteral("plannerHeaderTask"))->isVisible(); }, QStringLiteral("the header to show the task"));
+    expect(planWatches(world) == 1, QStringLiteral("the client follows the plan %1 times").arg(planWatches(world)));
+  });
+  step(QStringLiteral("the user opens the thread of a run of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject run = addRun(world, c[0], {}, QStringLiteral("running"));
+    listThread(world, run);
+    publish(world);
+    openPluginThread(world, run.value(QLatin1String("threadId")).toString());
+    QQuickItem* header = waitShownNamed(world, QStringLiteral("plannerHeader"));
+    world.waitFor([&] { return findNamed(header, QStringLiteral("plannerHeaderTitle"))->property("text") == c[0]; },
+                  [&] { return QStringLiteral("the header to be %1's, not %2's").arg(c[0], findNamed(header, QStringLiteral("plannerHeaderTitle"))->property("text").toString()); });
+  });
+  step(QStringLiteral("the work on %1 is discarded").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonValue id = item(world, c[0]).value(QLatin1String("id"));
+    const auto removed = state(world).runs.removeIf([&](const QJsonObject& run) {
+      return run.value(QLatin1String("kind")) == QLatin1String("work") && run.value(QLatin1String("itemIds")).toArray().contains(id);
+    });
+    expect(removed == 1, QStringLiteral("%1 work runs on %2").arg(removed).arg(c[0]));
+    publish(world);
+    world.sync();
+  });
+  step(QStringLiteral("the header no longer follows the plan"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return planWatches(world) == 0; }, [&] { return QStringLiteral("the client to stop following the plan, %1 watches left").arg(planWatches(world)); });
+    // What the plan publishes next draws no new watch of it.
+    const qsizetype made = planSubscriptions(world);
+    publish(world);
+    world.sync();
+    expect(planWatches(world) == 0 && planSubscriptions(world) == made, QStringLiteral("the client follows the plan again"));
   });
 
   step(QStringLiteral("its mark says so when the run proposes only a status update"), [](World& world, const Captures&, const Table&) {

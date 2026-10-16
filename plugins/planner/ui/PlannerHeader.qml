@@ -49,9 +49,16 @@ Rectangle {
         header.watching = header.plugin.watch("threads", value => header.threads = value ?? {}, environment || undefined);
     }
 
+    // Follows `plan` only while the header shows a task: a thread switch on the same
+    // MC or a discarded run ends the watch, as the snapshots are the whole plan.
     function followPlan() {
-        if (header.work && header.watchingPlan < 0)
+        if (header.work && header.watchingPlan < 0) {
             header.watchingPlan = header.plugin.watch("plan", value => header.plan = value ?? null, header.followed || undefined);
+        } else if (!header.work && header.watchingPlan >= 0) {
+            header.plugin.unwatch(header.watchingPlan);
+            header.watchingPlan = -1;
+            header.plan = null;
+        }
     }
 
     function apply() {

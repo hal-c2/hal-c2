@@ -553,6 +553,17 @@ Feature: Planner
       Then its thread is listed with the mark "Task"
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: A task's thread stops following the plan once it no longer shows the task
+      Given the agent works on "API" in its thread, which shows the task above the conversation
+      When <change>
+      Then the header no longer follows the plan
+
+      Examples:
+        | change                                             |
+        | the user opens the thread of a run of "Reschedule" |
+        | the work on "API" is discarded                     |
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings edit each action's prompt and reset it
       Given the user opens the settings of "planner"
       When the user changes the prompt of "Reschedule" and resets "Give feedback"
