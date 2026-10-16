@@ -37,6 +37,7 @@ use crate::controller::{Controller, Init, Me};
 use crate::environment_settings::{EnvironmentSettings, same_json};
 use crate::json::Json;
 use crate::mc::{Mc, McError};
+use crate::store;
 
 const OVERRIDES: &str = "usagePriceOverrides";
 /// How often a write refused as stale is read and edited again.
@@ -81,14 +82,12 @@ pub struct Environment {
     pub online: bool,
 }
 
-/// The environments the shell knows, until the store is ported: a test (and
-/// one day the store) says; none says is the MC's own alone.
-// TODO(port): ShellStore::environments / servesEnvironment / environmentOnline /
-// environment(id).label / changed, in place of this and `known`.
+/// The environments a test says the shell knows, in place of the store's.
 #[derive(Default)]
 struct Known(RefCell<Option<Vec<Environment>>>);
 
-/// Says which environments exist, in place of the MC's own alone.
+/// Says which environments exist, in place of the store's (or, without a
+/// store, the MC's own alone).
 pub fn set_environments(engine: &Engine, environments: Vec<Environment>) {
     *engine.extension::<Known>().0.borrow_mut() = Some(environments);
 }
@@ -151,6 +150,10 @@ impl Controller for UsagePrices {
         self.mc.on_ready_changed(Box::new(move |engine, _| {
             me.run(engine, |c, engine| c.environments_changed(engine));
         }));
+        let me = self.me.clone();
+        store::on_changed(engine, move |engine| {
+            me.run(engine, |c, engine| c.environments_changed(engine));
+        });
         self.publish(engine);
     }
 
@@ -212,6 +215,23 @@ impl UsagePrices {
     fn environments(&self, engine: &Engine) -> Vec<Environment> {
         if let Some(known) = engine.extension::<Known>().0.borrow().clone() {
             return known;
+        }
+        if store::get(engine).is_some() {
+            return store::with(engine, |s| {
+                s.environments()
+                    .into_iter()
+                    .map(|id| Environment {
+                        label: s
+                            .environment(&id)
+                            .get("label")
+                            .and_then(|l| l.as_str())
+                            .unwrap_or_default()
+                            .to_owned(),
+                        online: s.environment_online(&id),
+                        id,
+                    })
+                    .collect()
+            });
         }
         match self.mc.environment() {
             id if id.is_empty() => Vec::new(),

@@ -162,3 +162,29 @@ fn a_later_start_previews_what_the_cache_kept() {
     assert!(hal_c2_shell::active(&engine));
     assert_eq!(titles(&engine).len(), 2);
 }
+
+#[test]
+fn usage_prices_for_every_environment_the_cluster_serves() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, mc) = start(dir.path());
+    let mut frame = snapshot(&[]);
+    frame["mcs"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"mc": "mc-b",
+        "environment": {"environmentId": "env-b", "label": "Studio", "capabilities": {}},
+        "online": true, "epoch": "e1", "rev": 1}));
+    mc.send(&engine, frame);
+    Bridge::of(&engine).dispatch(&engine, "usagePrices.open", json!({}));
+    let targets = Bridge::of(&engine)
+        .published(&engine, "usagePrices")
+        .unwrap()["targets"]
+        .clone();
+    let labels: Vec<&str> = targets
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, ["This machine", "Studio"]);
+}
