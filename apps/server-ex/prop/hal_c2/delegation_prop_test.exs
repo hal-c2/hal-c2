@@ -16,7 +16,9 @@ defmodule HalC2.DelegationPropTest do
     with that run's answer;
   - a report of a run that ended settles the task as that run ended;
   - a restart, or a report of a run since rolled back, settles it only once the child
-    has nothing running or queued, and a restart always does then.
+    has nothing running or queued, and a restart always does then;
+  - a delegation without a task prompt is refused, whatever the task is doing, and
+    starts nothing.
   """
 
   use ExUnit.Case, async: false
@@ -72,7 +74,10 @@ defmodule HalC2.DelegationPropTest do
     held = for [id, _] = args <- reported, id in state.held, do: args
 
     frequency(
-      [{1, {:call, __MODULE__, :restart, []}}] ++
+      [
+        {1, {:call, __MODULE__, :restart, []}},
+        {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}}
+      ] ++
         if(running == [], do: [], else: [{1, {:call, __MODULE__, :restart_unresumed, []}}]) ++
         if(working?(state), do: [], else: [{4, {:call, __MODULE__, :start, [next(state)]}}]) ++
         if(running != [] and queued == [],
@@ -98,6 +103,18 @@ defmodule HalC2.DelegationPropTest do
         ) ++
         if(ended == [], do: [], else: [{2, {:call, __MODULE__, :roll_back, [oneof(ended)]}}])
     )
+  end
+
+  # What an agent that mislabels or forgets the prompt sends as `delegate_task`'s input.
+  defp blank_task do
+    oneof([
+      %{"prompt" => "Write the migration"},
+      %{"title" => "Migration"},
+      %{"task" => ""},
+      %{"task" => " \n "},
+      %{"task" => nil},
+      %{"task" => 7}
+    ])
   end
 
   defp next(state), do: "run-#{length(state.runs) + 1}"
@@ -145,6 +162,8 @@ defmodule HalC2.DelegationPropTest do
     do: update(state, id, &%{&1 | status: "rolled_back"})
 
   def next_state(state, _result, {:call, _, :restart, []}), do: state
+
+  def next_state(state, _result, {:call, _, :delegate_blank, _}), do: state
 
   def next_state(state, _result, {:call, _, :restart_unresumed, []}) do
     runs =
@@ -279,6 +298,16 @@ defmodule HalC2.DelegationPropTest do
          "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => @parent}
        }}
     ])
+  end
+
+  # A delegation without a task prompt is refused and starts nothing (hal-c2/hal-c2#258).
+  def delegate_blank(input) do
+    observe(fn ->
+      assert {:error, "invalid_task", _} =
+               Delegation.delegate(%{"id" => @parent}, "codex", input)
+
+      assert Enum.map(StreamState.list(stream(@parent), "subagent"), & &1["id"]) == [@task]
+    end)
   end
 
   def start(id), do: observe(fn -> commit(@child, [{"run", id, run(id, "running")}]) end)
