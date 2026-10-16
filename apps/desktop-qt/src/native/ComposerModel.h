@@ -137,10 +137,12 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
 // task's result or the provider's wake-up (`runId`, `summary`, `outcome`), which
 // is not the user's to edit, steer with or remove. A run whose message has not
 // arrived yet is in neither: which it is, and what it says, comes with the
-// message.
+// message. `held` is the MC keeping the queue for the user (after a restart or a
+// usage limit) until it is resumed.
 struct Queued {
   QVariantList queue;
   QVariantList waiting;
+  bool held = false;
 };
 Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages);
 

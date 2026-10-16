@@ -56,7 +56,8 @@ class TimelineModel;
 //      [{label, description}], multiSelect, allowCustomAnswer}], canRespond,
 //      responding, problem}],
 //    plan: {id, title, markdown} | null,  // offered while the thread is idle
-//    queue: [{runId, text}]}
+//    queue: [{runId, text}], waiting: [{runId, summary, outcome}],
+//    queueHeld, queueResuming}  // the MC keeps the queue until it is resumed
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
 // sending} with nothing pending; `sending` while its first send
@@ -92,7 +93,8 @@ class TimelineModel;
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
-// composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
+// composer.queue.edit.cancel, composer.queue.resume (a held queue),
+// composer.stash, composer.stash.restore {id},
 // composer.stash.delete {id}, composer.stash.menu {open?} (toggles without),
 // composer.history.step {direction: "backward" | "forward"}.
 //
@@ -364,6 +366,7 @@ private:
   QVariantMap stashState() const;
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
+  bool resumeQueue();
   bool editQueued(const QString& target, QString runId);
   bool saveQueuedEdit(const QString& target, const QString& text);
   // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
@@ -455,6 +458,8 @@ private:
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.
   QHash<QString, QList<Send>> m_queues;
+  // The threads whose `queue.resume` the MC has not answered.
+  QSet<QString> m_resuming;
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;
