@@ -553,22 +553,24 @@ defmodule HalC2Plugins.Planner.Plan do
     end
   end
 
+  # The issue a task has already keeps what its looks last saw of it, so a closed one
+  # linked again does not read as newly closed.
   def link(item, %{"issue" => %{"repository" => repository, "number" => number} = ref}, now) do
-    issue = %{
-      "repository" => repository,
-      "number" => number,
-      "url" => ref["url"] || "https://github.com/#{repository}/issues/#{number}",
-      "state" => ref["state"] || "open"
-    }
+    if same_ref?(item["issue"], ref) do
+      item
+    else
+      issue = %{
+        "repository" => repository,
+        "number" => number,
+        "url" => ref["url"] || "https://github.com/#{repository}/issues/#{number}",
+        "state" => ref["state"] || "open"
+      }
 
-    # The board row, the failure and what GitHub has of the task belong to the issue the
-    # task was linked to before.
-    stale =
-      if same_ref?(item["issue"], ref),
-        do: %{},
-        else: %{"boardItemId" => nil, "syncError" => nil, "synced" => nil}
-
-    item |> Map.merge(stale) |> Map.merge(%{"issue" => issue, "updatedAt" => now})
+      # The board row, the failure and what GitHub has of the task belong to the issue
+      # the task was linked to before.
+      stale = %{"boardItemId" => nil, "syncError" => nil, "synced" => nil}
+      item |> Map.merge(stale) |> Map.merge(%{"issue" => issue, "updatedAt" => now})
+    end
   end
 
   def link(item, _fields, _now), do: item

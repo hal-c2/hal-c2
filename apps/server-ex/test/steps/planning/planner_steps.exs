@@ -1624,6 +1624,18 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user reopens \#{int}'s task", %{args: [number]} = context do
+    update_task(context, number, %{"status" => "todo"})
+  end
+
+  step "a client links \#{int}'s task to \#{int} again", %{args: [number, again]} = context do
+    issue = %{"repository" => context.repository, "number" => again}
+    input = %{"itemId" => task_of(plan!(context), number)["id"], "issue" => issue}
+    {reply, context} = plugin(context, "link", input)
+    assert {:ok, _} = reply
+    context
+  end
+
   step "\#{int}'s task is in progress", %{args: [number]} = context do
     context =
       context

@@ -23,7 +23,8 @@ defmodule HalC2.PlannerPropTest do
   plan syncs both ways, with a board, by a client whose link may say a state of its own,
   closed or not text, or has one made for it there, which GitHub relates
   to nothing and puts on no board, is relinked to another issue, of that repository or of one no project on
-  the MC has, which is pushed nothing, and unlinked again, by a client that may still
+  the MC has, which is pushed nothing, or to the one it has, which changes nothing, and
+  unlinked again, by a client that may still
   show the issue it had before, and a client links one to the issue another has; a
   client moves one's due date, which goes to GitHub at once when nothing of the task is
   on the way, and renaming one also moves its due date, pushing both to GitHub from a
@@ -449,6 +450,7 @@ defmodule HalC2.PlannerPropTest do
          else: [
            {relink,
             {:call, __MODULE__, :relink, [elements(linked), oneof([@repository, @elsewhere])]}},
+           {4, {:call, __MODULE__, :link_again, [elements(linked)]}},
            {if(tied_to == [], do: 1, else: 3),
             {:call, __MODULE__, :unlink,
              [
@@ -559,8 +561,9 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, :link, [slot, _state]}),
     do: Map.has_key?(m.items, slot) and m.items[slot].issue == nil
 
-  def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:relink, :unlink, :unboard],
-    do: linked?(m, slot)
+  def precondition(m, {:call, _, cmd, [slot | _]})
+      when cmd in [:relink, :link_again, :unlink, :unboard],
+      do: linked?(m, slot)
 
   def precondition(m, {:call, _, :link_taken, [slot, number]}),
     do: Map.has_key?(m.items, slot) and slot_of(m, number) not in [nil, slot]
@@ -771,6 +774,10 @@ defmodule HalC2.PlannerPropTest do
       _ -> {m, :ok}
     end
   end
+
+  # Linking a task to the issue it has changes nothing: the plugin keeps what it last
+  # read of the issue.
+  defp step(m, {:call, _, :link_again, [_slot]}), do: {m, :ok}
 
   # The board item, sync error and what GitHub has of the issue before stay with it, and
   # the push to it on the way speaks for nobody, whether or not the relink pushes
@@ -1494,6 +1501,9 @@ defmodule HalC2.PlannerPropTest do
 
   # Links the task to its issue, the link saying `state` when it is not nil.
   def link(slot, state), do: link_to(slot, @issues[slot], state)
+
+  # Links the task to the issue it has.
+  def link_again(slot), do: link_to(slot, Process.get({:pl_issue, slot}))
 
   # Links the task to the issue `number` another task has.
   def link_taken(slot, number), do: link_to(slot, number)

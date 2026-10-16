@@ -908,6 +908,16 @@ Feature: Planner
       And that look read no issue alone
 
     @mc
+    Scenario: A task linked again to the closed issue it has stays as the user set it
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      When the user reopens #7's task
+      And a client links #7's task to #7 again
+      And the plugin looks at GitHub
+      Then #7's task is to do
+
+    @mc
     Scenario: An issue edited on GitHub updates its task's title and notes
       Given "planner" follows the issues of "acme/api"
       And #7's task was imported as "Rate limits"
