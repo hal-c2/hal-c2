@@ -13,6 +13,7 @@ pub mod mc;
 pub mod qml;
 pub mod render;
 pub mod runtime;
+pub mod terminal;
 pub mod theme;
 
 use std::path::PathBuf;
@@ -40,6 +41,7 @@ pub fn register(engine: &Engine) {
     folders::register(engine, v);
     highlighter::register(engine, v);
     device_screen::register(engine, v);
+    terminal::register(engine);
     bridge::Bridge::of(engine);
 }
 

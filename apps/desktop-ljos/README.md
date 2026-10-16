@@ -28,8 +28,9 @@ There is no pairing yet: the window takes the MC's origin and a session token (a
 `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`), and runs disconnected without them. The render is always
 disconnected; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
-`check` fails today on the five bricks that need native types not ported yet: `Terminal`, `DeviceScreen`
-and `LocalFolderModel`.
+`check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
+`DeviceScreen` (a frame the decoder hands it; no decoder here) and `Terminal` (`import Ghostty`, on the `vt100`
+crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
 
 ## Tests
 

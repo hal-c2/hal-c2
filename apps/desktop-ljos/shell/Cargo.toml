@@ -26,6 +26,9 @@ ljos_platform.workspace = true
 ljos_quick.workspace = true
 ljos_render.workspace = true
 ljos_runtime.workspace = true
+# The layout of a run of terminal cells (LayoutParams, which ljos_quick does
+# not re-export).
+ljos_text.workspace = true
 hal_c2_mc.workspace = true
 # The system's handler for links (Ljós has no openUrlExternally yet).
 open = "5"
@@ -35,6 +38,8 @@ url = "2"
 notify = "8"
 trash = "5"
 fancy-regex = "0.19"
+# The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
+vt100 = "0.16"
 
 [dev-dependencies]
 tempfile = "3"
