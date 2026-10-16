@@ -1,0 +1,179 @@
+sload model-checker
+
+--- Another machine's folder on this one (HalC2.MachineFiles): the kernel's requests
+--- through the machine-files helper, the MC on B answering them by calling Share on A
+--- over the cluster link, through A's MC crashing, the link cutting, A leaving the
+--- cluster, the kernel giving up on a request and the helper exiting, at any step.
+--- proof/hal_c2/machine_files_proof_test.exs maps it to the code and checks it.
+
+mod MACHINE-FILES is
+  protecting NAT .
+
+  sorts Where Answer HState Item Conf Sys .
+  subsort Item < Conf .
+
+  --- Where a path asked for is on A: under a shared root, outside every root, under a
+  --- root by name but through `..`, or through a symlink that leaves the roots.
+  ops inside outside dotdot escaping : -> Where [ctor] .
+  ops data enoent ehostdown : -> Answer [ctor] .
+  --- A request as the kernel sees it: waiting for its reply, given up on and waiting
+  --- for the Rflush, flushed, ended with the helper's connection, or answered. `late`
+  --- is a reply to a request that was already over: answered, flushed or lost.
+  ops sent flushing flushed lost late : -> HState [ctor] .
+  op got : Answer -> HState [ctor] .
+
+  --- What the kernel will ask, and each request it asked.
+  op todo : Nat Where -> Item [ctor] .
+  op h : Nat Where HState -> Item [ctor] .
+  --- On the helper's side of the port, not yet read by the MC: a request, a flush.
+  op treq : Nat Where -> Item [ctor] .
+  op tflush : Nat -> Item [ctor] .
+  --- The MC's pending entry for a request, and the process it spawned to call A.
+  op pending : Nat -> Item [ctor] .
+  op caller : Nat -> Item [ctor] .
+  --- The :erpc call on its way to A, A's answer on its way back, and the caller's
+  --- {:answer, ref, _} in the MC's mailbox.
+  op toA : Nat Where -> Item [ctor] .
+  op fromA : Nat Answer -> Item [ctor] .
+  op answer : Nat Answer -> Item [ctor] .
+  --- The helper: running, or exited and about to be started again.
+  ops helper-up helper-down : -> Item [ctor] .
+  --- A is a member of the cluster; A's MC is running; the link between B and A is up.
+  op member : Bool -> Item [ctor] .
+  op peer : Bool -> Item [ctor] .
+  op link : Bool -> Item [ctor] .
+  --- The faults still to come.
+  op faults : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars I F : Nat .
+  var W : Where .
+  var A : Answer .
+  var S : HState .
+  vars P L : Bool .
+  var C : Conf .
+
+  --- What the kernel hears when a reply for a request reaches it.
+  op hear : HState Answer -> HState .
+  eq hear(sent, A) = got(A) .
+  eq hear(flushing, A) = got(A) .
+  eq hear(S, A) = late [owise] .
+
+  --- Share on A: a `.` or `..` component, or a path that resolves outside every root,
+  --- is not there; what is under a root is read.
+  op share : Where -> Answer .
+  eq share(inside) = data .
+  eq share(W) = enoent [owise] .
+
+  op hasTreq : Nat Conf -> Bool .
+  eq hasTreq(I, treq(I, W) C) = true .
+  eq hasTreq(I, C) = false [owise] .
+
+  op hasPending : Nat Conf -> Bool .
+  eq hasPending(I, pending(I) C) = true .
+  eq hasPending(I, C) = false [owise] .
+
+  --- the kernel ------------------------------------------------------------------------
+
+  --- The kernel asks while the helper is mounted.
+  rl [ask] : todo(I, W) helper-up => h(I, W, sent) treq(I, W) helper-up .
+  --- The kernel gives up on a request (the program reading was interrupted).
+  rl [interrupt] : h(I, W, sent) helper-up faults(s F) => h(I, W, flushing) tflush(I) helper-up faults(F) .
+
+  --- request/2 and call/6 ---------------------------------------------------------------
+
+  --- The folder of a machine that left the cluster is not there.
+  rl [request-gone] : treq(I, W) h(I, W, S) member(false)
+    => h(I, W, hear(S, enoent)) member(false) .
+  --- A member the MC is not connected to fails at once. The MC may still think it is
+  --- connected after A went (until the link's tick notices), so request-call can
+  --- happen then too.
+  crl [request-down] : treq(I, W) h(I, W, S) member(true) peer(P) link(L)
+    => h(I, W, hear(S, ehostdown)) member(true) peer(P) link(L) if not (P and L) .
+  rl [request-call] : treq(I, W) member(true) => pending(I) caller(I) toA(I, W) member(true) .
+
+  --- A Tflush is read after the request it names. The MC forgets the request, so its
+  --- answer is replied no more; a reply already sent reached the kernel first.
+  crl [flush] : { tflush(I) C } => { flush(I, C) } if not hasTreq(I, C) .
+  op flush : Nat Conf -> Conf .
+  eq flush(I, pending(I) C) = flush(I, C) .
+  eq flush(I, h(I, W, flushing) C) = h(I, W, flushed) C .
+  eq flush(I, C) = C [owise] .
+
+  --- remote/4 and handle_info({:answer, _, _}) --------------------------------------------
+
+  --- Share answers on A.
+  rl [share] : toA(I, W) peer(true) link(true) => fromA(I, share(W)) peer(true) link(true) .
+  --- :erpc returns A's answer, or gives up when its timeout passes or the link to A
+  --- goes; either way the caller tells the MC.
+  rl [remote] : caller(I) fromA(I, A) => answer(I, A) .
+  rl [remote-timeout] : caller(I) => answer(I, ehostdown) .
+  --- An answer for a pending request is its reply; one the MC forgot is dropped.
+  rl [answer] : answer(I, A) pending(I) h(I, W, S) => h(I, W, hear(S, A)) .
+  crl [answer-dropped] : { answer(I, A) C } => { C } if not hasPending(I, C) .
+
+  --- the helper exiting, exited/1 and restart_later/1 ----------------------------------
+
+  --- The helper exits: the kernel's requests end with the connection, and the MC drops
+  --- what the old helper sent and what it had pending. Callers still running answer
+  --- into nothing.
+  rl [helper-exit] : { helper-up faults(s F) C } => { helper-down faults(F) exit(C) } .
+  rl [restart] : helper-down => helper-up .
+  op exit : Conf -> Conf .
+  eq exit(h(I, W, sent) C) = h(I, W, lost) exit(C) .
+  eq exit(h(I, W, flushing) C) = h(I, W, lost) exit(C) .
+  eq exit(treq(I, W) C) = exit(C) .
+  eq exit(tflush(I) C) = exit(C) .
+  eq exit(pending(I) C) = exit(C) .
+  eq exit(C) = C [owise] .
+
+  --- members/1, and the cluster around it -----------------------------------------------
+
+  rl [leave] : member(true) faults(s F) => member(false) faults(F) .
+  rl [join] : member(false) faults(s F) => member(true) faults(F) .
+  --- A's MC stops, or the link cuts: what is on its way between them is lost.
+  rl [peer-crash] : { peer(true) faults(s F) C } => { peer(false) faults(F) lose(C) } .
+  rl [peer-start] : peer(false) => peer(true) .
+  rl [partition] : { link(true) faults(s F) C } => { link(false) faults(F) lose(C) } .
+  rl [heal] : link(false) => link(true) .
+  op lose : Conf -> Conf .
+  eq lose(toA(I, W) C) = lose(C) .
+  eq lose(fromA(I, A) C) = lose(C) .
+  eq lose(C) = C [owise] .
+
+  --- states ------------------------------------------------------------------------------
+
+  --- A member's folder mounted, the kernel about to read a file under a root and paths
+  --- that leave it, and F faults to come.
+  op start : Nat -> Sys .
+  eq start(F) = { helper-up member(true) peer(true) link(true) faults(F)
+                  todo(1, inside) todo(2, escaping) } .
+  op outside-start : Nat -> Sys .
+  eq outside-start(F) = { helper-up member(true) peer(true) link(true) faults(F)
+                          todo(1, outside) todo(2, dotdot) } .
+
+  --- Something outside a root read, or a reply to a request that was already over.
+  ops leaked replied-late : Sys -> Bool .
+  ceq leaked({ h(I, W, got(data)) C }) = true if W =/= inside .
+  eq leaked({ C }) = false [owise] .
+  eq replied-late({ h(I, W, late) C }) = true .
+  eq replied-late({ C }) = false [owise] .
+endm
+
+mod MACHINE-FILES-PROPS is
+  including MACHINE-FILES .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- A request the kernel is waiting on: no reply, no Rflush, no end of its connection.
+  ops waiting : -> Prop [ctor] .
+  var I : Nat .
+  var W : Where .
+  var C : Conf .
+  eq { h(I, W, sent) C } |= waiting = true .
+  eq { h(I, W, flushing) C } |= waiting = true .
+  eq { C } |= waiting = false [owise] .
+endm
