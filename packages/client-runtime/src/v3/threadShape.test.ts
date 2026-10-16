@@ -212,3 +212,55 @@ describe("ThreadShapeFold turn item order", () => {
     ).toEqual(["first", "middle", "late"]);
   });
 });
+
+describe("ThreadShapeFold window", () => {
+  const older = (ordinal: number): ShapeRow => [
+    "turn-item",
+    `item-${ordinal}`,
+    { ...message(`Turn ${ordinal}`), id: `item-${ordinal}`, ordinal },
+  ];
+
+  it("says where the window starts, and grows it with the page that arrives", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    const [first] = shape.snapshot({
+      rows: [["thread", v2ThreadId, thread], older(5), older(6)],
+      part: 0,
+      done: true,
+      offset: 9,
+      at: 1,
+      floor: 3,
+    });
+    expect(first).toMatchObject({ historyCursor: "3", hasMoreHistory: true });
+
+    // A page is the runs before the window, in as many parts as the MC sends.
+    expect(shape.page({ rows: [older(2)], done: false, offset: 9, floor: 1 })).toEqual([]);
+    const [grown] = shape.page({
+      rows: [older(1), older(5)],
+      done: true,
+      offset: 9,
+      floor: null,
+    });
+    expect(grown).toMatchObject({ historyCursor: null, hasMoreHistory: false });
+    if (grown?.kind !== "snapshot") throw new Error("expected a snapshot");
+    // Rows the window already held are not doubled, and the thread reads oldest first.
+    expect(grown.projection.turnItems.map((item) => item.id)).toEqual([
+      "item-1",
+      "item-2",
+      "item-5",
+      "item-6",
+    ]);
+  });
+
+  it("leaves the history meta off a thread that has no window", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    const [item] = shape.snapshot({
+      rows: [["thread", v2ThreadId, thread]],
+      part: 0,
+      done: true,
+      offset: 9,
+      at: 1,
+    });
+    expect(item).not.toHaveProperty("historyCursor");
+    expect(item).not.toHaveProperty("hasMoreHistory");
+  });
+});

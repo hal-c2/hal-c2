@@ -4,7 +4,6 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   TurnItemId,
-  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadStreamItem,
@@ -13,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -69,8 +67,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     readonly closed: Deferred.Deferred<void>;
   }>();
   const olderLoads = yield* Queue.unbounded<{
-    readonly cursor: string | null;
-    readonly response: Deferred.Deferred<OrchestrationV2ThreadHistoryPage>;
+    readonly threadId: string;
+    readonly response: Deferred.Deferred<void>;
     readonly closed: Deferred.Deferred<void>;
   }>();
   const snapshot = options?.snapshot ?? SNAPSHOT;
@@ -109,6 +107,15 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
+    // The request to the MC is out until `response` is completed.
+    loadEarlierThread: (threadId) =>
+      Effect.gen(function* () {
+        const response = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined));
+        yield* Queue.offer(olderLoads, { threadId, response, closed });
+        yield* Deferred.await(response);
+      }).pipe(Effect.scoped),
   };
   const supervisor = EnvironmentSupervisor.of({
     target: TARGET,
@@ -154,20 +161,9 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   const historyController = yield* Effect.service(ThreadHistoryController).pipe(
     Effect.provide(threadHistoryControllerLayer),
   );
-  const historyHttpClient = HttpClient.make((request, url) =>
-    Effect.gen(function* () {
-      const response = yield* Deferred.make<OrchestrationV2ThreadHistoryPage>();
-      const closed = yield* Deferred.make<void>();
-      yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined));
-      yield* Queue.offer(olderLoads, { cursor: url.searchParams.get("cursor"), response, closed });
-      const page = yield* Deferred.await(response);
-      return HttpClientResponse.fromWeb(request, Response.json(page));
-    }).pipe(Effect.scoped),
-  );
   const runtime = Atom.runtime(
     Layer.mergeAll(
       Layer.succeed(ThreadHistoryController, historyController),
-      Layer.succeed(HttpClient.HttpClient, historyHttpClient),
       Layer.succeed(EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
         EnvironmentCacheStore,
@@ -404,7 +400,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
       expect(h.registry.get(h.stateAtom).history.loading).toBe(false);
       const retrying = yield* h.loadEarlier().pipe(Effect.forkScoped);
       const retried = yield* Queue.take(h.olderLoads);
-      expect(retried.cursor).toBe("older-1");
+      expect(retried.threadId).toBe(THREAD_ID);
       expect(h.counts().httpLoads).toBe(1);
       remount();
       yield* Deferred.await(next.closed);
@@ -414,7 +410,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
   );
 
   it.effect(
-    "merges older history after an HTTP failure falls back to a bounded socket snapshot",
+    "shows the longer thread the MC answers an earlier-turns request with on the socket",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness({ snapshotUnavailable: true });
@@ -440,7 +436,8 @@ describe("createEnvironmentThreadStateAtoms", () => {
 
         const loading = yield* h.loadEarlier().pipe(Effect.forkScoped);
         const request = yield* Queue.take(h.olderLoads);
-        expect(request.cursor).toBe("socket-older-1");
+        expect(request.threadId).toBe(THREAD_ID);
+        expect(h.registry.get(h.stateAtom).history.loading).toBe(true);
         const olderItem = {
           id: TurnItemId.make("socket-fallback-older-item"),
           type: "command_execution" as const,
@@ -461,23 +458,35 @@ describe("createEnvironmentThreadStateAtoms", () => {
           completedAt: THREAD.thread.createdAt,
           updatedAt: THREAD.thread.createdAt,
         };
-        yield* Deferred.succeed(request.response, {
+        yield* Deferred.succeed(request.response, undefined);
+        expect(yield* Fiber.join(loading)).toEqual({ _tag: "loaded" });
+        // Asked, not answered: the thread stays loading until the longer snapshot arrives.
+        expect(h.registry.get(h.stateAtom).history.loading).toBe(true);
+
+        yield* Queue.offer(subscription.events, {
+          kind: "snapshot",
           snapshotSequence: 12,
-          items: [
-            {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: THREAD_ID,
-              sourceItemId: olderItem.id,
-              item: olderItem,
-            },
-          ],
-          nextCursor: null,
+          projection: {
+            ...THREAD,
+            turnItems: [olderItem],
+            visibleTurnItems: [
+              {
+                position: 0,
+                visibility: "local",
+                sourceThreadId: THREAD_ID,
+                sourceItemId: olderItem.id,
+                item: olderItem,
+              },
+            ],
+          },
+          historyCursor: null,
           hasMoreHistory: false,
         });
-        expect(yield* Fiber.join(loading)).toEqual({ _tag: "loaded" });
-
-        const state = h.registry.get(h.stateAtom);
+        const state = yield* observeState(
+          h.registry,
+          h.stateAtom,
+          (value) => !value.history.hasMoreHistory,
+        );
         expect(
           Option.getOrThrow(state.data).visibleTurnItems.map((row) => row.sourceItemId),
         ).toEqual([olderItem.id]);
@@ -486,8 +495,6 @@ describe("createEnvironmentThreadStateAtoms", () => {
           hasMoreHistory: false,
           loading: false,
           error: null,
-          expanded: true,
-          latestLocalTurnOrdinal: 4,
         });
         expect(h.counts().httpLoads).toBe(1);
 

@@ -6,6 +6,7 @@ import {
 } from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -46,6 +47,11 @@ import { connectV3Session } from "../v3/session.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
+/** Why the earlier turns of a thread cannot be asked for right now. */
+export class EarlierTurnsUnavailableError extends Data.TaggedError("EarlierTurnsUnavailableError")<{
+  readonly message: string;
+}> {}
+
 export interface RpcSession {
   readonly client: WsRpcProtocolClient;
   readonly initialConfig: Effect.Effect<ServerConfig, ConnectionAttemptError>;
@@ -60,6 +66,14 @@ export interface RpcSession {
    * fails with the MC's message. Absent on a TypeScript server's session.
    */
   readonly mcCall?: (method: string, payload: unknown) => Effect.Effect<unknown, Error>;
+  /**
+   * Asks for the turns before the window of an open thread subscription. They arrive
+   * on that subscription as a snapshot of the longer thread. Only protocol-3
+   * sessions have it.
+   */
+  readonly loadEarlierThread?: (
+    threadId: string,
+  ) => Effect.Effect<void, EarlierTurnsUnavailableError>;
   /**
    * `mcCall` on the MC serving another environment (a cluster member or a linked
    * environment), reached through this one. Only protocol-3 sessions have it.
