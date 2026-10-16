@@ -76,10 +76,10 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   @doc """
   GitHub answering for `issues` (GraphQL issue nodes, see `issue/3`): their listing,
   each one read, and the changes `HalC2.Issues` makes to them, which it accepts.
-  A new issue is `#13`.
+  A new issue is `#13`. With `more`, every page of the listing says another follows.
   """
-  def answers(context, repository, issues) do
-    numbers = Enum.uniq(Enum.map(issues, & &1["number"]) ++ [5, 7, 9, 12, 13])
+  def answers(context, repository, issues, more \\ false) do
+    numbers = Enum.uniq(Enum.map(issues, & &1["number"]) ++ [5, 7, 8, 9, 12, 13])
     new = Enum.find(issues, &(&1["number"] == 13)) || issue(repository, 13)
 
     context
@@ -88,7 +88,7 @@ defmodule HalC2.Steps.Support.GitHubIssues do
         graphql(["issues(first: $first"], %{
           "repository" => %{
             "issues" => %{
-              "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+              "pageInfo" => %{"hasNextPage" => more, "endCursor" => more && "next"},
               "nodes" => issues
             }
           }
@@ -122,11 +122,34 @@ defmodule HalC2.Steps.Support.GitHubIssues do
   end
 
   @doc """
+  GitHub listing `issues` (see `answers/4`) from now on, leaving how it answers changes
+  as it was.
+  """
+  def lists(context, repository, issues) do
+    World.cli_rules(context, [
+      graphql(["issues(first: $first"], %{
+        "repository" => %{
+          "issues" => %{
+            "pageInfo" => %{"hasNextPage" => false, "endCursor" => false},
+            "nodes" => issues
+          }
+        }
+      })
+      | for issue <- issues do
+          graphql(["{ ...IssueFields", ~s("number":#{issue["number"]})], %{
+            "repository" => %{"issue" => issue}
+          })
+        end
+    ])
+  end
+
+  @doc """
   The board `owner/number` with `fields` (names; "Status" is a single select with
   "Todo", "Doing" and "Done", a name ending in "date" a date, anything else text)
-  and `items` (`%{"number", "repository", "fields" => %{name => value}}`).
+  and `items` (`%{"number", "repository", "fields" => %{name => value}}`). With
+  `more`, every page of items says another follows.
   """
-  def board(context, board, fields, items) do
+  def board(context, board, fields, items, more \\ false) do
     [owner, number] = String.split(board, "/")
     number = String.to_integer(number)
 
@@ -179,7 +202,7 @@ defmodule HalC2.Steps.Support.GitHubIssues do
       "url" => "https://github.com/orgs/#{owner}/projects/#{number}",
       "fields" => %{"nodes" => field_nodes},
       "items" => %{
-        "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+        "pageInfo" => %{"hasNextPage" => more, "endCursor" => more && "next"},
         "nodes" => item_nodes
       }
     }
@@ -207,19 +230,46 @@ defmodule HalC2.Steps.Support.GitHubIssues do
     ])
   end
 
+  @doc """
+  `owner`'s boards, as `%{"number", "title", "closed"}` maps, listed in one page.
+  """
+  def boards(context, owner, boards) do
+    nodes =
+      for board <- boards do
+        Map.merge(
+          %{"url" => "https://github.com/orgs/#{owner}/projects/#{board["number"]}"},
+          board
+        )
+      end
+
+    World.cli_rules(context, [
+      graphql(["projectsV2(first: 100", ~s("owner":"#{owner}")], %{
+        "repositoryOwner" => %{
+          "projectsV2" => %{
+            "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+            "nodes" => nodes
+          }
+        }
+      })
+    ])
+  end
+
   @doc "gh's login lacks the `project` scope: every board query is refused as GitHub refuses it."
   def without_project_scope(context) do
-    World.cli_rules(context, [
-      %{
-        "args" => ["api graphql"],
-        "stdin" => ["projectV2"],
-        "exit" => 1,
-        "stderr" =>
-          "gh: Your token has not been granted the required scopes to execute this query. " <>
-            "The 'projectV2' field requires one of the following scopes: ['read:project'], " <>
-            "but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.\n"
-      }
-    ])
+    World.cli_rules(
+      context,
+      for field <- ~w(projectV2 projectsV2) do
+        %{
+          "args" => ["api graphql"],
+          "stdin" => [field],
+          "exit" => 1,
+          "stderr" =>
+            "gh: Your token has not been granted the required scopes to execute this query. " <>
+              "The '#{field}' field requires one of the following scopes: ['read:project'], " <>
+              "but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.\n"
+        }
+      end
+    )
   end
 
   @doc "The REST calls with `method` to a path ending in `suffix`, with their decoded input."

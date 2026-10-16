@@ -126,7 +126,8 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onShape(QStringLiteral("plugin"), [&mc](int id, const QJsonObject& shape) {
     const QString topic = shape.value(QLatin1String("topic")).toString();
     if (const auto part = mc.part<FakeMcPlugins>().parts.find(shape.value(QLatin1String("id")).toString()); part != mc.part<FakeMcPlugins>().parts.end()) {
-      if (part->topics.contains(topic)) mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), id}, {QStringLiteral("topic"), topic}, {QStringLiteral("value"), part->topics.value(topic)}});
+      const QHash<QString, QJsonValue> topics = part->topicsOn.value(environmentOf(mc, shape.value(QLatin1String("environment")).toString()), part->topics);
+      if (topics.contains(topic)) mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), id}, {QStringLiteral("topic"), topic}, {QStringLiteral("value"), topics.value(topic)}});
       return;
     }
     if (topic != QLatin1String("reviews")) return;
@@ -1016,11 +1017,20 @@ FakePluginPart& fakePluginPart(World& world, const QString& id) {
   return fake(world).parts[id];
 }
 
+void runFakePluginOn(World& world, const QString& environment, const QJsonObject& entry) {
+  const QString id = entry.value(QLatin1String("id")).toString();
+  fake(world).plugins[environment] = {entry};
+  world.mc.join(environment);
+  world.waitFor([&] { return listed(world, id, environment).value(QStringLiteral("status")) == QLatin1String("running"); },
+                [&] { return describe(world); });
+}
+
 void publishTopic(World& world, const QString& id, const QString& topic) {
-  const QJsonValue value = fakePluginPart(world, id).topics.value(topic);
+  const FakePluginPart& part = fakePluginPart(world, id);
   for (const int subscriber : world.mc.subscribers(QStringLiteral("plugin"))) {
     const QJsonObject shape = world.mc.shapeOf(subscriber);
     if (shape.value(QLatin1String("id")) != id || shape.value(QLatin1String("topic")) != topic) continue;
+    const QJsonValue value = part.topicsOn.value(environmentOf(world.mc, shape.value(QLatin1String("environment")).toString()), part.topics).value(topic);
     world.mc.send({{QStringLiteral("t"), QStringLiteral("plugin")}, {QStringLiteral("id"), subscriber}, {QStringLiteral("topic"), topic}, {QStringLiteral("value"), value}});
   }
 }

@@ -305,10 +305,14 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   end
 
   step "the user retries it", context do
-    {reply, context} =
-      World.call(context, "projectClone.retry", %{"projectId" => context.clone_id})
+    if context[:planner] do
+      HalC2.Steps.Planning.Planner.retry(context)
+    else
+      {reply, context} =
+        World.call(context, "projectClone.retry", %{"projectId" => context.clone_id})
 
-    Map.put(context, :reply, reply)
+      Map.put(context, :reply, reply)
+    end
   end
 
   step "the clone starts again into the same project", context do

@@ -917,6 +917,10 @@ defmodule HalC2.Steps.Common do
       "hal-c2 pair" ->
         HalC2.Test.Storage.pair(context)
 
+      # The planner's steps compile after this file.
+      _ when is_map_key(context, :planner) ->
+        apply(HalC2.Steps.Planning.Planner, :run, [context, label])
+
       _ ->
         action = @git_actions[label] || flunk("no git action is labelled #{inspect(label)}")
         extra = context[:git_action_input] || %{}

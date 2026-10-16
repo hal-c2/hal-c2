@@ -316,6 +316,45 @@ defmodule HalC2.Steps.Plugins.HostIssues do
     context
   end
 
+  step "{string} has more open issues, and the board {string} more items, than a plugin asks for",
+       %{args: [repository, board]} = context do
+    issues = for n <- [1, 2], do: GitHubIssues.issue(repository, n)
+    items = for n <- [1, 2], do: %{"number" => n, "repository" => repository}
+
+    context
+    |> GitHubIssues.answers(repository, issues, true)
+    |> GitHubIssues.board(board, ["Start date"], items, true)
+  end
+
+  step "a plugin granted {string} lists {int} open issues of {string} and {int} items of {string}",
+       %{args: [permission, issues, repository, items, board]} = context do
+    [owner, number] = String.split(board, "/")
+    context = PluginHost.granted(context, [permission])
+
+    list =
+      PluginHost.call(context, "issues", "list", %{
+        "projectId" => project_id(repository),
+        "repository" => repository,
+        "state" => "open",
+        "limit" => issues
+      })
+
+    list
+    |> PluginHost.call("issues", "board", %{
+      "projectId" => project_id(repository),
+      "owner" => owner,
+      "number" => String.to_integer(number),
+      "limit" => items
+    })
+    |> Map.put(:replies, [list.reply])
+  end
+
+  step "both answers say more were left unread", context do
+    assert [{:ok, %{"issues" => [_, _], "truncated" => true}}] = context.replies
+    assert {:ok, %{"items" => [_, _], "truncated" => true}} = context.reply
+    context
+  end
+
   step "it sets {string} of \#{int} on the board {string} to {string}",
        %{args: [field, number, board, value]} = context do
     [owner, board_number] = String.split(board, "/")

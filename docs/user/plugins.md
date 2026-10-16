@@ -60,8 +60,9 @@ app does not have is listed as loaded and shows nothing.
 ## Plugins that run on your MC
 
 Some plugins do work on a machine rather than in one app, such as
-[agent code review](code-review.md). They are folders with a `plugin.json`, and
-each MC runs its own: put the folder in `plugins` under the MC's data directory
+[agent code review](code-review.md) and the [planner](planner.md). They are
+folders with a `plugin.json`, and each MC runs its own: put the folder in
+`plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
 them under the machine that has them, with what they do, who made them and
 screenshots. A folder you put there later shows up after **Look for plugins**

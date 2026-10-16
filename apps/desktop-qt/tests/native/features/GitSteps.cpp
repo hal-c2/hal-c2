@@ -24,6 +24,7 @@
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "NavigationController.h"
+#include "SharedSteps.h"
 #include "World.h"
 
 namespace {
@@ -726,6 +727,8 @@ const Steps steps([] {
 
   // The default branch.
   step(QStringLiteral("the user runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // An action of the planner plugin, when the MC runs it.
+    if (runPluginAction(world, c[0])) return;
     world.sync();
     // From an open command palette: its entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {

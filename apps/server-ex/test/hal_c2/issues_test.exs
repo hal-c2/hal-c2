@@ -47,7 +47,7 @@ defmodule HalC2.IssuesTest do
         "limit" => 3
       })
 
-    assert {:ok, %{"issues" => issues}} = Issues.handle("list", input)
+    assert {:ok, %{"issues" => issues, "truncated" => false}} = Issues.handle("list", input)
     assert Enum.map(issues, & &1["number"]) == [1, 2, 3]
 
     assert [first, second] = graphql_calls(dir)
@@ -55,6 +55,15 @@ defmodule HalC2.IssuesTest do
 
     assert first["filter"] == %{"milestoneNumber" => "4", "since" => "2026-10-01T00:00:00Z"}
     assert %{"first" => 1, "after" => "c1"} = second
+  end
+
+  test "a listing that stops at its limit with more on GitHub says it was cut short", %{dir: dir} do
+    rules!(dir, [graphql(["issues(first: $first"], issues_page([issue(1), issue(2)], true, "c1"))])
+
+    assert {:ok, %{"issues" => [_, _], "truncated" => true}} =
+             Issues.handle("list", Map.put(@input, "limit", 2))
+
+    assert [_] = graphql_calls(dir)
   end
 
   test "an issue is answered in the host-neutral shape", %{dir: dir} do
@@ -305,6 +314,7 @@ defmodule HalC2.IssuesTest do
     assert {:ok, read} = Issues.handle("board", input)
 
     assert %{"owner" => "acme", "number" => 3, "title" => "Roadmap", "url" => "board-url"} = read
+    assert read["truncated"] == false
 
     assert [
              %{"name" => "Title", "type" => "other"},
@@ -334,6 +344,14 @@ defmodule HalC2.IssuesTest do
            }
 
     assert %{"content" => %{"kind" => "draft", "number" => nil}, "fields" => %{}} = draft
+  end
+
+  test "a board that stops at its limit with more items on GitHub says it was cut short", %{
+    dir: dir
+  } do
+    rules!(dir, [graphql(["items(first: $first"], board([issue_item()], true, "c1"))])
+    input = %{"projectId" => "p1", "owner" => "acme", "number" => 3, "limit" => 1}
+    assert {:ok, %{"items" => [_], "truncated" => true}} = Issues.handle("board", input)
   end
 
   test "a board field is set by its name, an option by name and an iteration by title", %{

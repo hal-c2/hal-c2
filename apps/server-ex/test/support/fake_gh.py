@@ -7,8 +7,20 @@
 # symlinked as glab, tea, az, ... so one rules file serves every host CLI).
 # A rule with "run" (a /bin/sh script) runs it in the call's cwd first, for commands
 # such as `gh pr checkout` whose effect is on the checkout.
+# A rule with "since" answering a GraphQL issue listing keeps only the issues whose
+# "updatedAt" is at or after the listing's `filter.since`, as GitHub's `filterBy` does.
 # Every call is appended to $FAKE_GH_LOG as a JSON line {"cmd", "args", "stdin", "cwd"}.
 import json, os, subprocess, sys, time
+from datetime import datetime
+
+
+def since(out, stdin):
+    after = json.loads(stdin).get("variables", {}).get("filter", {}).get("since")
+    if not after:
+        return out
+    issues = out["data"]["repository"]["issues"]
+    nodes = [n for n in issues["nodes"] if datetime.fromisoformat(n["updatedAt"]) >= datetime.fromisoformat(after)]
+    return {"data": {"repository": {"issues": {**issues, "nodes": nodes}}}}
 
 cmd = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
@@ -26,6 +38,8 @@ for rule in rules:
             subprocess.run(["/bin/sh", "-c", rule["run"]], check=True, stdout=sys.stderr)
         time.sleep(rule.get("sleep", 0))
         out = rule.get("stdout", "")
+        if rule.get("since"):
+            out = since(out, stdin)
         try:
             sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
             sys.stderr.write(rule.get("stderr", ""))
