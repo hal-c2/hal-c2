@@ -64,7 +64,7 @@ defmodule HalC2.Import.PreviousInstall do
             "updatedAt" => thread.updated_at,
             "subagents" => length(family(index, thread.id)) - 1,
             "settled" => thread.settled,
-            "imported" => MapSet.member?(here, thread.id)
+            "imported" => todo(index, thread.id, here) == []
           }
         end
 
@@ -102,9 +102,14 @@ defmodule HalC2.Import.PreviousInstall do
   def import_threads(_, _), do: {:error, "Name the install and the threads to import."}
 
   # `report` hears how far the thread is: its events read, then its threads finished.
+  # A thread whose streams are here but whose files were not all brought (the import
+  # failed or the MC stopped in `finish/3`) is marked unfinished in the store, so a retry
+  # finishes it rather than answering "already here".
   defp import_thread(path, index, files, id, report) do
+    here = here()
+
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
-         [_ | _] = missing <- family(index, id) -- MapSet.to_list(here()),
+         [_ | _] = missing <- todo(index, id, here),
          {:ok, project, target} <- target(index.projects[thread.project]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
@@ -112,12 +117,17 @@ defmodule HalC2.Import.PreviousInstall do
       events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
       threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
 
-      {:ok, _} =
-        HalC2.Import.V2.run(database(path), Store,
-          only: missing,
-          rewrite: rewrite,
-          progress: events
-        )
+      fresh = Enum.reject(missing, &MapSet.member?(here, &1))
+      for id <- fresh, do: :ok = Store.put_meta(unfinished_key(id), "unfinished")
+
+      if fresh != [] do
+        {:ok, _} =
+          HalC2.Import.V2.run(database(path), Store,
+            only: fresh,
+            rewrite: rewrite,
+            progress: events
+          )
+      end
 
       threads.(0)
 
@@ -125,6 +135,7 @@ defmodule HalC2.Import.PreviousInstall do
       |> Enum.with_index(1)
       |> Enum.each(fn {id, n} ->
         finish(path, files, id)
+        :ok = Store.put_meta(unfinished_key(id), "finished")
         threads.(n)
       end)
     else
@@ -181,8 +192,14 @@ defmodule HalC2.Import.PreviousInstall do
         }
 
         case Projects.mutate(input) do
-          {:ok, local} -> {:ok, project, local}
-          {:error, _} -> {:error, "Its project folder #{root} is no longer on this machine."}
+          {:ok, local} ->
+            # The project's row is written a moment after the commit; a retry of a failed
+            # import must find the project it made, not try to make it again.
+            HalC2.Streams.flush_shell(id)
+            {:ok, project, local}
+
+          {:error, _} ->
+            {:error, "Its project folder #{root} is no longer on this machine."}
         end
     end
   end
@@ -192,6 +209,14 @@ defmodule HalC2.Import.PreviousInstall do
     do: [id | Enum.flat_map(Map.get(index.children, id, []), &family(index, &1))]
 
   defp here, do: MapSet.new(Store.list_streams(Store.path()), & &1.id)
+
+  # The threads of a family still to bring: absent here, or here without their files.
+  defp todo(index, id, here),
+    do: Enum.filter(family(index, id), &(not MapSet.member?(here, &1) or unfinished?(&1)))
+
+  defp unfinished?(id), do: Store.meta(Store.path(), unfinished_key(id)) == "unfinished"
+
+  defp unfinished_key(id), do: "import.thread." <> id
 
   defp ls(dir) do
     case File.ls(dir) do

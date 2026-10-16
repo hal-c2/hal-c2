@@ -2861,14 +2861,48 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "that install offers {string} as imported", %{args: [title]} = context do
+    assert for(t <- t3_offered(context), t["imported"], do: t["title"]) == [title]
+    context
+  end
+
+  step "that install does not offer {string} as imported", %{args: [title]} = context do
+    offered = t3_offered(context)
+    assert for(t <- offered, t["imported"], do: t["title"]) == []
+    assert title in for(t <- offered, do: t["title"])
+    context
+  end
+
+  step "the attachment of {string} cannot be read", %{args: [title]} = context do
+    File.chmod!(t3_attachment(context, title), 0o000)
+    context
+  end
+
+  step "the attachment of {string} can be read again", %{args: [title]} = context do
+    File.chmod!(t3_attachment(context, title), 0o644)
+    context
+  end
+
+  step "the user is told {string} could not be imported", %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    assert message =~ "It could not be read"
+    context
+  end
+
+  defp t3_offered(context) do
     {:ok, %{"threads" => offered}} =
       HalC2.Cluster.Command.request(:post, "/api/previous-installs/threads", %{
         "source" => context.t3.dir
       })
 
-    assert for(t <- offered, t["imported"], do: t["title"]) == [title]
-    context
+    offered
   end
+
+  defp t3_attachment(context, title),
+    do: Path.join([context.t3.dir, "attachments", "#{context.t3.ids[title]}-img.png"])
 
   step "the project {string} is at the folder that install worked in",
        %{args: [title]} = context do
