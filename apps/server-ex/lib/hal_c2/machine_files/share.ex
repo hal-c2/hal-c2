@@ -197,8 +197,8 @@ defmodule HalC2.MachineFiles.Share do
 
   @doc """
   Changes what `changes` names of `path`: `:size` truncates or extends it, `:mode`
-  sets its permissions, `:mtime` (or `:atime` alone) sets its times. The new
-  attributes.
+  sets its permissions, `:mtime` (or `:atime` alone) sets its times, to a POSIX
+  time or `:now`. The new attributes.
   """
   @spec setattr(String.t(), map) :: {:ok, attr} | {:error, atom}
   def setattr(path, changes) when is_binary(path) and is_map(changes) do
@@ -357,5 +357,6 @@ defmodule HalC2.MachineFiles.Share do
   defp chmod(path, mode) when is_integer(mode), do: File.chmod(path, Bitwise.band(mode, 0o7777))
 
   defp touch(_path, nil), do: :ok
+  defp touch(path, :now), do: File.touch(path)
   defp touch(path, time) when is_integer(time), do: File.touch(path, time)
 end
