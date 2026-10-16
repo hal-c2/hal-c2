@@ -133,6 +133,20 @@ Feature: Queueing, steering and restarting
     And "Also" is neither queued nor added to the running turn
 
   @mc
+  Scenario: A steer sent twice at once reaches the provider once
+    Given "t1" has a running turn on "codex"
+    When the user's client sends the steer "Also" to "t1" twice at once
+    Then both sends succeed
+    And Codex is asked to take "Also" once
+    And "Also" is in the running turn once
+
+  @mc
+  Scenario: A steer the provider takes as its turn ends is shown before its answer
+    Given "t1" has a running turn on "codex" that ends as it takes a steer
+    When the user sends "Also" to "t1" as a steer
+    Then "Also" is in the turn ahead of the answer to it
+
+  @mc
   Scenario Outline: A steer carries the message's files and images to the provider
     Given "t1" has a running turn on "<provider>"
     When the user steers "t1" with "Look at this" and an attached screenshot
