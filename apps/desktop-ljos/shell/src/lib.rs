@@ -10,6 +10,7 @@ pub mod mc;
 pub mod qml;
 pub mod render;
 pub mod runtime;
+pub mod storage;
 pub mod theme;
 
 use std::path::PathBuf;
