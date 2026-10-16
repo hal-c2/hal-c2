@@ -24,6 +24,10 @@ class McClient;
 // while the list shows), the project's configured preview addresses and the
 // pages this device opened last. navigate(tabId, url) is `preview.navigate`,
 // and opens the page in the browser.
+//
+// A page opens with openAddress(): a dev server's loopback address on a
+// thread of another cluster MC opens through the port the connected MC
+// forwards to it (`preview.forward`), its path, query and fragment kept.
 class ThreadPreviews : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -80,6 +84,9 @@ public:
   Q_INVOKABLE void newTab();
   // Points the tab at `url` and opens the page in the browser.
   Q_INVOKABLE void navigate(const QString& tabId, const QString& url);
+  // Opens `url` in the browser, for the thread: through the connected MC's
+  // forward when it is a dev server on the thread's machine, another MC's.
+  Q_INVOKABLE void openAddress(const QString& url);
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -94,6 +101,7 @@ signals:
 private:
   void follow();
   void unfollow();
+  void openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc);
   void onEvent(const QJsonObject& event);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;

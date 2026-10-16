@@ -6,6 +6,8 @@
 #   apps/server-ex/lib/hal_c2/local_servers.ex
 #   apps/server-ex/lib/hal_c2/preview_forward.ex, preview_forward/ (preview.forward: listener, grant, pipes)
 #   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link a forward rides on)
+#   apps/desktop-qt/src/native/ThreadPreviews.cpp (openAddress: a loopback page of another MC's thread opens through its forward)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (thread.openAddress, link.menu's Open link)
 #   apps/web/src/components/preview/usePreviewSession.ts, useDiscoveredLocalServers.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp, apps/desktop-qt/src/ShellBridge.cpp (tabs open in the system browser)
@@ -163,13 +165,13 @@ Feature: Preview across MCs and devices
       Then nothing is forwarded
       And the tab's address stays "http://localhost:3000"
 
-    @backlog @desktop
+    @desktop
     Scenario: The desktop opens a dev server on another machine through the forward
       Given a thread on the second MC has a browser tab at "http://localhost:3000"
       When the user opens the tab
       Then the system browser opens the address the desktop's MC forwards to the dev server
 
-    @backlog @desktop
+    @desktop
     Scenario: A dev server link in a reply opens through the forward
       Given the agent of a thread on the second MC writes "http://localhost:3000/cart"
       When the user opens the link

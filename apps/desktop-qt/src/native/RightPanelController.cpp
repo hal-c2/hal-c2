@@ -238,7 +238,7 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
         map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url, file](const QString& id) {
           if (id == QLatin1String("open")) {
             if (file.path.isEmpty()) {
-              m_bridge->openExternal(QUrl(url));
+              openAddress(url);
             } else {
               open(QStringLiteral("files"), {{QStringLiteral("path"), file.path}, {QStringLiteral("line"), file.line}});
             }
@@ -280,6 +280,9 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
     open(map.value(QStringLiteral("tab")).toString(), map);
+  } else if (action == QLatin1String("thread.openAddress")) {
+    // A web address in the conversation (ThreadView's openLink).
+    openAddress(map.value(QStringLiteral("url")).toString());
   } else {
     return false;
   }
@@ -498,6 +501,16 @@ void RightPanelController::closeTabIn(const QString& threadKey, const QString& i
   if (m_onThread && threadKey == m_thread) return closeTab(id);
   const auto found = m_panels.find(threadKey);
   if (found != m_panels.end() && removeTab(*found, id)) save();
+}
+
+// A dev server on the thread's machine opens through the connected MC's
+// forward to it (ThreadPreviews::openAddress); anything else as it is.
+void RightPanelController::openAddress(const QString& url) {
+  if (m_onThread) {
+    m_previews.openAddress(url);
+  } else {
+    m_bridge->openExternal(QUrl(url));
+  }
 }
 
 void RightPanelController::closeTab(const QString& id) {
