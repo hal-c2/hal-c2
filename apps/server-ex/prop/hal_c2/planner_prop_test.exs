@@ -83,7 +83,8 @@ defmodule HalC2.PlannerPropTest do
     tasks with issues GitHub does not list, makes it the subtask of the task whose issue
     GitHub names as its open issue's parent, and of none when GitHub names an issue no
     task has, unless that would make it its own ancestor once the others took theirs,
-    and moves its state when its issue's moved since the plugin last read it: closed as
+    and moves its state when its issue's moved since the plugin last read it or a push
+    of the task moved it, closing the issue made for a done task, say: closed as
     not planned, the task is dropped, closed otherwise, done, and reopened, a task done
     or dropped is to do again;
     a reason changed on a closed issue counts as a move, a reason on an open one does
@@ -377,6 +378,28 @@ defmodule HalC2.PlannerPropTest do
           end),
           do: slot
 
+    # And one made for a task done or dropped, whose push closes it, so GitHub reopening it
+    # before a look moves the task. Such a task comes unlinked from the issue it was done
+    # by, and reopening matters once a task has its issue closed, or the issue one would
+    # be made for is closed.
+    finished = for slot <- fresh, m.items[slot].status in [:done, :dropped], do: slot
+    done = for slot <- linked, m.items[slot].status in [:done, :dropped], do: slot
+
+    shut =
+      Enum.uniq(
+        for(
+          {_, %{issue: n, state: state}} <- m.items,
+          state in [:completed, :not_planned] and m.closed[n] == state,
+          do: n
+        ) ++
+          for(
+            slot <- unlinked,
+            m.items[slot].status in [:done, :dropped],
+            Map.has_key?(m.closed, @issues[slot]),
+            do: @issues[slot]
+          )
+      )
+
     # A link to the issue another task has, which is refused.
     taken =
       for slot <- present,
@@ -442,6 +465,18 @@ defmodule HalC2.PlannerPropTest do
        ) ++
        if(fresh == [], do: [], else: [{2, {:call, __MODULE__, :create, [elements(fresh)]}}]) ++
        if(tied == [], do: [], else: [{24, {:call, __MODULE__, :create, [elements(tied)]}}]) ++
+       if(finished == [],
+         do: [],
+         else: [{24, {:call, __MODULE__, :create, [elements(finished)]}}]
+       ) ++
+       if(done == [],
+         do: [],
+         else: [
+           {6,
+            oneof(for slot <- done, do: {:call, __MODULE__, :unlink, [slot, issue_of(m, slot)]})}
+         ]
+       ) ++
+       if(shut == [], do: [], else: [{8, {:call, __MODULE__, :reopen, [elements(shut)]}}]) ++
        if(swaps == [], do: [], else: [{16, oneof(swaps)}]) ++
        if(taken == [], do: [], else: [{6, oneof(taken)}]) ++
        if(related == [], do: [], else: [{6, {:call, __MODULE__, :remove, [elements(related)]}}]) ++
@@ -760,19 +795,22 @@ defmodule HalC2.PlannerPropTest do
 
   # An issue made for the task links it as linking an issue does, but it is open and on
   # no board: the push closes it for a task done or dropped, which GitHub takes, and adds
-  # it to the board with the task's due date. The plugin takes it for open until a look
-  # reads it.
+  # it to the board with the task's due date. The plugin takes it to be as the push left
+  # it until a look reads it, so GitHub reopening it since moves the task.
   defp step(before, {:call, _, :create, [slot]}) do
     n = @issues[slot]
-    item = %{before.items[slot] | issue: n, state: :open}
+
+    state =
+      case before.items[slot].status do
+        :done -> :completed
+        :dropped -> :not_planned
+        _ -> :open
+      end
+
+    item = %{before.items[slot] | issue: n, state: state}
     made = %{baseline(before, slot) | due: nil}
     m = before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before)
-
-    case item.status do
-      :done -> {put_in(m.closed[n], :completed), :ok}
-      :dropped -> {put_in(m.closed[n], :not_planned), :ok}
-      _ -> {m, :ok}
-    end
+    {if(state == :open, do: m, else: put_in(m.closed[n], state)), :ok}
   end
 
   # Linking a task to the issue it has changes nothing: the plugin keeps what it last

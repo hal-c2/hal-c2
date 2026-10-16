@@ -1097,8 +1097,9 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   Asks GitHub for `ops` (`pushes/5`) in order until one is refused: `{nil, extra}`
   when all took, `{message, extra}` when one did not. `extra` holds what the task
-  learnt: its board item, what GitHub has of it, `synced` with what took, and the
-  issues it moved to a milestone or out of one, `moved`, in the order GitHub took them.
+  learnt: its board item, what GitHub has of it, `synced` with what took, the state
+  and reason its issue took, `stated`, and the issues it moved to a milestone or out
+  of one, `moved`, in the order GitHub took them.
   """
   def run(ops, synced) do
     {error, extra, synced} =
@@ -1113,7 +1114,7 @@ defmodule HalC2Plugins.Planner.Sync do
             {:cont, {nil, Map.put(extra, "boardItemId", item), took.(synced)}}
 
           {:ok, _} when method != :board ->
-            {:cont, {nil, moved(extra, method, input), took.(synced)}}
+            {:cont, {nil, extra |> moved(method, input) |> stated(method, input), took.(synced)}}
 
           {:error, error} ->
             {:halt, {message(error), extra, synced}}
@@ -1127,6 +1128,11 @@ defmodule HalC2Plugins.Planner.Sync do
     do: Map.update(extra, "moved", [move(input)], &(&1 ++ [move(input)]))
 
   defp moved(extra, _method, _input), do: extra
+
+  defp stated(extra, "update", %{"state" => state} = input),
+    do: Map.put(extra, "stated", %{"state" => state, "stateReason" => input["stateReason"]})
+
+  defp stated(extra, _method, _input), do: extra
 
   defp move(input), do: Map.take(input, ~w(repository number milestone))
 

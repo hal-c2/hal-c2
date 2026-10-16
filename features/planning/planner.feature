@@ -1022,6 +1022,31 @@ Feature: Planner
         | moves to end on "2026-11-09"   | set "Target date" of #7 on "acme/3" to "2026-11-09" |
         | makes wait for #5's task       | mark #7 as blocked by #5                       |
 
+    # The plan keeps the state a push gave the issue, so a move on GitHub after it moves
+    # the task.
+    @mc
+    Scenario Outline: A task <status> here whose issue is reopened on GitHub before the next look is to do again
+      Given "planner" syncs "acme/api" both ways
+      And the user marks #7's task as <status>
+      When #7 is reopened on GitHub
+      And the plugin looks at GitHub
+      Then #7's task is to do
+
+      Examples:
+        | status  |
+        | done    |
+        | dropped |
+
+    @mc
+    Scenario: A task reopened here whose issue is closed again on GitHub before the next look is done again
+      Given "planner" syncs "acme/api" both ways
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the user reopens #7's task
+      When #7 is closed on GitHub
+      And the plugin looks at GitHub
+      Then #7's task is done
+
     @mc
     Scenario: A task not on the board the plan switches to is added to it before its dates are set
       Given "planner" syncs "acme/api" both ways with the board "acme/3"

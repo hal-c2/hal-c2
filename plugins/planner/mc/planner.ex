@@ -951,14 +951,18 @@ defmodule HalC2Plugins.Planner do
   # change stands until its next change, unless the push moved an issue to a milestone
   # the plan has moved it on from, which the next push sets right (`Sync.reasserts/4`)
   # with what was refused. The tasks of the issues it moved keep where GitHub took them
-  # (`Sync.landed/2`). A push for an issue the task was unlinked or relinked from
-  # since, or for a task removed since, says nothing; the next look reads the board again.
+  # (`Sync.landed/2`), and its issue the state GitHub took, so the next look moves the
+  # task only for a change made on GitHub since. A push for an issue the task was
+  # unlinked or relinked from since, or for a task removed since, says nothing; the next
+  # look reads the board again.
   def handle_call({:pushed, id, token, error, extra}, _from, state) do
     case state.pushing[id] do
       {^token, changed?} ->
         {moved, extra} = Map.pop(extra, "moved", [])
+        {stated, extra} = Map.pop(extra, "stated")
         state = %{state | items: Sync.landed(state.items, moved)}
         item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
+        item = if stated, do: %{item | "issue" => Map.merge(item["issue"], stated)}, else: item
         stale? = Sync.reasserts(moved, [], state.items, state.projects) != []
 
         {next, state} =

@@ -1915,8 +1915,16 @@ defmodule HalC2.Steps.Planning.Planner do
     update_task(context, number, %{"status" => "done"})
   end
 
-  step "the user marks \#{int}'s task as done", %{args: [number]} = context do
-    update_task(context, number, %{"status" => "done"})
+  step "the user marks \#{int}'s task as {word}", %{args: [number, status]} = context do
+    update_task(context, number, %{"status" => status})
+  end
+
+  step "\#{int} is reopened on GitHub", %{args: [number]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"stateReason" => "REOPENED"})
+    ])
   end
 
   step "the user renames to {string} \#{int}'s task", %{args: [title, number]} = context do
