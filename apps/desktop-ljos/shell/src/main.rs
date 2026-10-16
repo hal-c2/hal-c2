@@ -1,32 +1,48 @@
 //! `hal-c2-ljos`: the HAL-C2 desktop shell on Ljós.
 //!
-//!   hal-c2-ljos [--mc-origin URL --mc-token TOKEN] [--config-dir DIR]
+//!   hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK]
+//!               [--home-dir DIR] [--dev] [--config-dir DIR]
 //!               [--qml-dir DIR] [--allow-local-folder-import]
 //!               [--action NAME]... [--render PNG [--size WxH] [--settle MS]]
 //!   hal-c2-ljos --check [--qml-dir DIR]
 //!
 //! The MC is the one host/main.ts would hand desktop-qt: its origin and
-//! token, also read from HAL_C2_MC_ORIGIN and HAL_C2_MC_TOKEN. With none the
-//! shell runs disconnected. `--action` dispatches a shell action once the
+//! token, also read from HAL_C2_MC_ORIGIN and HAL_C2_MC_TOKEN. `--pair`
+//! spends a pairing link (`mix hal_c2.pair`) on a session and keeps it, so a
+//! later start without an MC named reconnects to it. With none of these the
+//! shell runs disconnected.
+//!
+//! What the shell keeps (the session, the client cache) is under
+//! `--home-dir`, or the XDG directories (`hal-c2-dev` ones with `--dev`),
+//! one `desktop-ljos` level down (src/storage.rs). `--action` dispatches a shell action once the
 //! controllers are up, its JSON payload after a space
 //! (`settings.open`, `theme.mode {"mode":"dark"}`), for a render of a given
 //! place.
-//! `--render` writes a picture without opening a window. `--check` only
+//! `--render` writes a picture without opening a window, once the MC's
+//! first snapshot is in when there is one. `--check` only
 //! compiles the QML, and fails when a file does not compile.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
+use hal_c2_mc::pairing;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::mc::{Connection, Disconnected, Mc};
 use hal_c2_shell::qml::{self, Roots};
-use hal_c2_shell::{Launch, render};
+use hal_c2_shell::session::{self, Session};
+use hal_c2_shell::storage::{Profile, StoragePaths};
+use hal_c2_shell::{Launch, render, store};
 use ljos::prelude::Engine;
 use ljos::{App, ShellConfig};
 use ljos_runtime::CoalesceKey;
 
 const ROOT: &str = "Main";
+/// How long a render waits for the MC's first snapshot before it shows what
+/// the cache kept.
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Options {
     launch: Launch,
@@ -37,12 +53,16 @@ struct Options {
     render: Option<PathBuf>,
     size: (u32, u32),
     settle_ms: u64,
+    home_dir: Option<PathBuf>,
+    dev: bool,
+    pair: Option<String>,
 }
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: hal-c2-ljos [--mc-origin URL --mc-token TOKEN] [--config-dir DIR] [--qml-dir DIR]\n\
-         \x20                  [--licenses MANIFEST] [--allow-local-folder-import] [--action NAME]...\n\
+        "usage: hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK] [--home-dir DIR] [--dev]\n\
+         \x20                  [--config-dir DIR] [--qml-dir DIR] [--licenses MANIFEST]\n\
+         \x20                  [--allow-local-folder-import] [--action NAME]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]"
     );
@@ -71,6 +91,9 @@ fn parse() -> Result<Options, String> {
         render: None,
         size: (1280, 800),
         settle_ms: 1500,
+        home_dir: None,
+        dev: false,
+        pair: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -87,6 +110,9 @@ fn parse() -> Result<Options, String> {
         match name.as_str() {
             "--mc-origin" => o.launch.mc_origin = Some(value()?),
             "--mc-token" => o.mc_token = value()?,
+            "--pair" => o.pair = Some(value()?),
+            "--home-dir" => o.home_dir = Some(value()?.into()),
+            "--dev" => o.dev = true,
             "--config-dir" => o.launch.config_dir = Some(value()?.into()),
             "--qml-dir" => {
                 o.roots = Roots::one(value()?.into());
@@ -119,13 +145,19 @@ fn parse() -> Result<Options, String> {
 }
 
 fn main() -> ExitCode {
-    let options = match parse() {
+    let mut options = match parse() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
             return usage();
         }
     };
+    if !options.check
+        && let Err(e) = connect_to(&mut options)
+    {
+        eprintln!("hal-c2-ljos: {e}");
+        return ExitCode::FAILURE;
+    }
     let loaded = match qml::load(&options.roots) {
         Ok(l) => l,
         Err(e) => {
@@ -164,6 +196,95 @@ fn main() -> ExitCode {
     }
 }
 
+/// Which MC the shell connects to and where it keeps what it was sent: the
+/// one named, else the one `--pair` pairs with, else the one paired last.
+fn connect_to(options: &mut Options) -> Result<(), String> {
+    let profile = if options.dev {
+        Profile::Development
+    } else {
+        Profile::Installed
+    };
+    let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
+    if let Some(link) = &options.pair {
+        let kept = pair(link, &paths.data)?;
+        options.launch.mc_origin = Some(kept.origin);
+        options.mc_token = kept.token;
+    } else if options.launch.mc_origin.is_none()
+        && let Some(kept) = session::load(&paths.data)
+    {
+        options.launch.mc_origin = Some(kept.origin);
+        options.mc_token = kept.token;
+    }
+    options.launch.cache_dir = Some(paths.cache);
+    Ok(())
+}
+
+/// Spends `link` on a session with its MC and keeps it in `data_dir`.
+fn pair(link: &str, data_dir: &Path) -> Result<Session, String> {
+    let parsed = pairing::read_invitation(link)
+        .and_then(|i| pairing::read_link(&i.link))
+        .or_else(|| pairing::read_link(link))
+        .ok_or_else(|| format!("{link:?} is not a pairing link"))?;
+    let client = pairing::Client {
+        label: format!("HAL-C2 desktop on {}", host_name()),
+        device_type: "desktop".into(),
+        os: match std::env::consts::OS {
+            "linux" => "Linux",
+            "macos" => "macOS",
+            "windows" => "Windows",
+            other => other,
+        }
+        .into(),
+    };
+    let result = pairing::exchange(&parsed, &client);
+    let said = |key: &str| {
+        result
+            .descriptor
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    match result.outcome {
+        pairing::Outcome::Paired => {}
+        pairing::Outcome::Unreachable => {
+            return Err(format!("no MC answered at {}", result.origin));
+        }
+        pairing::Outcome::NotMc => return Err(format!("{} is not an MC", result.origin)),
+        pairing::Outcome::Incompatible => {
+            return Err(format!(
+                "the MC at {} speaks another protocol; update one of them",
+                result.origin
+            ));
+        }
+        pairing::Outcome::Refused => {
+            return Err(format!(
+                "the MC at {} refused the link: it was used or expired",
+                result.origin
+            ));
+        }
+    }
+    let kept = Session {
+        origin: result.origin.clone(),
+        token: result.token.clone(),
+        label: said("label"),
+        environment_id: said("environmentId"),
+    };
+    session::save(data_dir, &kept).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    eprintln!("hal-c2-ljos: paired with {} at {}", kept.label, kept.origin);
+    Ok(kept)
+}
+
+fn host_name() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .map(|h| h.trim().to_owned())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "this computer".into())
+}
+
 /// What the QML says that is wrong, on stderr, each message once.
 fn report_warnings(engine: &Engine) {
     let seen = std::cell::RefCell::new(std::collections::HashSet::new());
@@ -194,20 +315,55 @@ fn dispatch_actions(engine: &Engine, actions: &[String]) {
     }
 }
 
-/// A picture without a window, and so without an MC: the shell as it shows
-/// disconnected.
+/// A picture without a window: the shell once its MC's first snapshot is in
+/// (what the cache kept, when the MC does not answer in time), or as it
+/// shows disconnected.
 fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     let engine = app.build_engine();
     let clock = render::prepare(&engine);
     report_warnings(&engine);
-    let mc = Rc::new(Disconnected::default());
-    hal_c2_shell::start(&engine, &options.launch, mc.clone());
-    dispatch_actions(&engine, &options.actions);
-    let root = engine
-        .create_from_url(ROOT, None, Vec::new())
-        .map_err(|e| e.to_string())?;
-    mc.deliver(&engine);
+    let root = match &options.launch.mc_origin {
+        Some(origin) => {
+            let (woken, wakes) = mpsc::channel();
+            let connection = Rc::new(Connection::spawn(move || {
+                let _ = woken.send(());
+            }));
+            connection.open(origin, &options.mc_token)?;
+            hal_c2_shell::start(&engine, &options.launch, connection.clone());
+            dispatch_actions(&engine, &options.actions);
+            let root = engine
+                .create_from_url(ROOT, None, Vec::new())
+                .map_err(|e| e.to_string())?;
+            let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
+            while !hal_c2_shell::active(&engine) {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero()
+                    || wakes.recv_timeout(left) == Err(mpsc::RecvTimeoutError::Disconnected)
+                {
+                    let status = connection.client().status();
+                    eprintln!(
+                        "hal-c2-ljos: no snapshot from {origin} ({:?} {}), so what the cache kept",
+                        status.phase, status.failure
+                    );
+                    break;
+                }
+                engine.turn(None, || connection.deliver(&engine));
+            }
+            root
+        }
+        None => {
+            let mc = Rc::new(Disconnected::default());
+            hal_c2_shell::start(&engine, &options.launch, mc.clone());
+            dispatch_actions(&engine, &options.actions);
+            let root = engine
+                .create_from_url(ROOT, None, Vec::new())
+                .map_err(|e| e.to_string())?;
+            mc.deliver(&engine);
+            root
+        }
+    };
     let png = render::picture(&engine, &clock, root, options.size, options.settle_ms)?;
+    store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }

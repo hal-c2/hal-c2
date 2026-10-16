@@ -29,6 +29,8 @@ ljos_runtime.workspace = true
 hal_c2_mc.workspace = true
 # The system's handler for links (Ljós has no openUrlExternally yet).
 open = "5"
+# The kept session (src/session.rs).
+serde.workspace = true
 serde_json.workspace = true
 # The MC origin, as hal_c2_mc takes it.
 url = "2"
@@ -38,3 +40,11 @@ qrcodegen = "1"
 interprocess = "2"
 unicode-general-category = "1"
 unicode-normalization = "0.1"
+# The client cache (src/cache.rs), as desktop-qt's LocalCache over QtSql's SQLite.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# The sidebar's times (src/sidebar_model.rs): ISO dates and local wall clocks.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+proptest = "1.11"
+tempfile = "3"

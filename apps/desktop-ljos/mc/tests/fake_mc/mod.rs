@@ -20,6 +20,8 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 pub const TOKEN: &str = "secret";
+/// The pairing token `/oauth/token` spends once, for [`TOKEN`].
+pub const PAIRING_TOKEN: &str = "pair-once";
 
 /// One thing that happened, on the connection's side or the MC's.
 #[derive(Debug)]
@@ -51,6 +53,10 @@ pub enum Seen {
     Closed {
         socket: u64,
     },
+    /// A pairing exchange, its form as sent.
+    Exchange {
+        form: String,
+    },
 }
 
 enum Control {
@@ -73,6 +79,7 @@ struct Shared {
     token_on_socket: AtomicBool,
     refuse_tickets: AtomicBool,
     tickets: Mutex<Vec<String>>,
+    paired: AtomicBool,
     sockets: Mutex<HashMap<u64, UnboundedSender<Control>>>,
     next_socket: AtomicU64,
 }
@@ -89,6 +96,7 @@ impl FakeMc {
             token_on_socket: AtomicBool::new(true),
             refuse_tickets: AtomicBool::new(false),
             tickets: Mutex::default(),
+            paired: AtomicBool::new(false),
             sockets: Mutex::default(),
             next_socket: AtomicU64::new(1),
         });
@@ -261,6 +269,25 @@ fn answer(path: &str, request: &str, shared: &Shared) -> (u16, String) {
                 200,
                 json!({"ticket": ticket, "expiresAt": "2026-10-16T00:00:00Z"}).to_string(),
             )
+        }
+        "/oauth/token" => {
+            let form = request
+                .split_once("\r\n\r\n")
+                .map(|(_, body)| body.to_owned())
+                .unwrap_or_default();
+            shared.saw(Seen::Exchange { form: form.clone() });
+            let offered = form
+                .split('&')
+                .any(|pair| pair == format!("subject_token={PAIRING_TOKEN}"));
+            if offered && !shared.paired.swap(true, Ordering::SeqCst) {
+                (
+                    200,
+                    json!({"access_token": TOKEN, "token_type": "Bearer", "expires_in": 3600})
+                        .to_string(),
+                )
+            } else {
+                (400, json!({"error": "invalid_grant"}).to_string())
+            }
         }
         _ => (404, "{}".to_owned()),
     }
