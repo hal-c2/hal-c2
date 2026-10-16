@@ -10,7 +10,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
 
-use common::{call, shell, text};
+use common::{call, shell, shell_with, text};
 use hal_c2_shell::folders::{deliver, set_trash, set_wake};
 use hal_c2_shell::mc::Disconnected;
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
@@ -493,4 +493,115 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     deliver(&f.engine);
     f.settle();
     assert_eq!(f.rows(), "a/-|  made-elsewhere/+");
+}
+
+/// The tree the way FolderExplorer builds it: a ListView-based `TreeView`
+/// over the model, its `TreeViewDelegate`s and an `ItemSelectionModel`.
+const TREE: &str = r#"
+import QtQuick
+import HalC2.Shell
+
+Item {
+    id: root
+    property string path: ""
+    property string selected: ""
+    readonly property alias folders: folders
+    LocalFolderModel { id: folders; enabled: root.path.length > 0; rootPath: root.path }
+    TreeView {
+        id: tree
+        width: 300
+        height: 400
+        model: folders.enabled ? folders : null
+        selectionModel: ItemSelectionModel {
+            model: tree.model
+            onCurrentChanged: root.selected = folders.pathForIndex(currentIndex)
+        }
+        delegate: TreeViewDelegate {
+            required property string fileName
+            width: tree.width
+            height: 20
+            text: fileName
+        }
+    }
+    function names() {
+        var out = []
+        for (var i = 0; i < tree.count; i++) out.push(tree.itemAtIndex(i).text + (tree.itemAtIndex(i).expanded ? "-" : ""))
+        return out.join("|")
+    }
+    function toggleArrow(i) { tree.itemAtIndex(i).toggle() }
+    function click(i) { tree.itemAtIndex(i).clicked() }
+}
+"#;
+
+#[test]
+fn the_tree_view_shim_opens_folders_and_selects_rows() {
+    let root_dir = plain_temp();
+    fs::create_dir_all(root_dir.path().join("a/inner")).unwrap();
+    fs::write(root_dir.path().join("a/file.txt"), "").unwrap();
+    let shim = |name: &str| {
+        std::fs::read_to_string(format!(
+            "{}/../qml/HalC2/Shell/{name}.qml",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("shim")
+    };
+    let qmldir = std::fs::read_to_string(format!(
+        "{}/../qml/HalC2/Shell/qmldir",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let files = [
+        ("HalC2/Shell/TreeView", shim("TreeView")),
+        ("HalC2/Shell/TableView", shim("TableView")),
+        ("HalC2/Shell/TreeViewDelegate", shim("TreeViewDelegate")),
+        ("HalC2/Shell/ItemSelectionModel", shim("ItemSelectionModel")),
+        ("Main", TREE.to_owned()),
+    ];
+    let files: Vec<(&str, &str)> = files.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    // Only the shims: the rest of the module's QML needs the whole shell.
+    let qmldir: String = qmldir
+        .lines()
+        .filter(|l| {
+            l.starts_with("module")
+                || [
+                    "TreeView ",
+                    "TreeViewDelegate ",
+                    "TableView ",
+                    "ItemSelectionModel ",
+                ]
+                .iter()
+                .any(|n| l.starts_with(n))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (engine, root) = shell_with(
+        &files,
+        &[("HalC2/Shell", &qmldir)],
+        Rc::new(Disconnected::default()),
+    );
+    Platform::of(&engine).finish(&engine);
+    engine
+        .write_by_name(
+            root,
+            "path",
+            Value::string(&*root_dir.path().to_string_lossy()),
+        )
+        .unwrap();
+    Platform::of(&engine).finish(&engine);
+    assert_eq!(text_of(&engine, root, "names"), "a");
+    call(&engine, root, "toggleArrow", &[Value::Int(0)]);
+    Platform::of(&engine).finish(&engine);
+    assert_eq!(text_of(&engine, root, "names"), "a-|inner|file.txt");
+    call(&engine, root, "click", &[Value::Int(2)]);
+    assert_eq!(
+        text(&engine, root, "selected"),
+        root_dir.path().join("a/file.txt").to_string_lossy()
+    );
+    call(&engine, root, "toggleArrow", &[Value::Int(0)]);
+    assert_eq!(text_of(&engine, root, "names"), "a");
+}
+
+fn text_of(engine: &Engine, obj: ObjectId, function: &str) -> String {
+    let value = call(engine, obj, function, &[]);
+    engine.to_js_string(&value).to_string()
 }

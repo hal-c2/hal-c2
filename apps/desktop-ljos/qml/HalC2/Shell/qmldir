@@ -8,3 +8,7 @@ singleton Panel 1.0 Panel.qml
 singleton Threads 1.0 Threads.qml
 singleton Onboarding 1.0 Onboarding.qml
 ComposerHighlighter 1.0 ComposerHighlighter.qml
+TreeView 1.0 TreeView.qml
+TreeViewDelegate 1.0 TreeViewDelegate.qml
+TableView 1.0 TableView.qml
+ItemSelectionModel 1.0 ItemSelectionModel.qml

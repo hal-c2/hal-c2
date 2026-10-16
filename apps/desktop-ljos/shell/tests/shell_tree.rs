@@ -35,8 +35,8 @@ fn native_and_qml_singletons_share_the_module() {
 #[test]
 fn the_desktop_shell_loads_from_the_checkout() {
     let loaded = qml::load(&Roots::checkout()).expect("the QML loads");
-    // The native types not ported yet (Terminal, DeviceScreen,
-    // LocalFolderModel) fail their files only.
+    // The native types not ported yet (Terminal, DeviceScreen) fail their
+    // files only.
     assert!(
         loaded.compiled * 10 >= loaded.files * 9,
         "{} of {}: {:?}",

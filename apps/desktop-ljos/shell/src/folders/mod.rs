@@ -272,9 +272,16 @@ impl QmlListModel for Rows {
     }
 
     fn role_names(&self) -> Vec<Atom> {
-        ["fileName", "filePath", "isDirectory", "depth", "expanded"]
-            .map(Atom::from)
-            .to_vec()
+        [
+            "fileName",
+            "filePath",
+            "isDirectory",
+            "hasChildren",
+            "depth",
+            "expanded",
+        ]
+        .map(Atom::from)
+        .to_vec()
     }
 
     fn data(&self, row: usize, role: &str) -> Value {
@@ -285,7 +292,7 @@ impl QmlListModel for Rows {
         match role {
             "fileName" => Value::from(row.node.name.as_str()),
             "filePath" => Value::from(row.node.path.as_str()),
-            "isDirectory" => Value::Bool(row.node.is_dir),
+            "isDirectory" | "hasChildren" => Value::Bool(row.node.is_dir),
             "depth" => Value::Int(row.depth as i32),
             "expanded" => Value::Bool(row.node.is_dir && tree.expanded.contains(&row.node.path)),
             _ => Value::Undefined,
