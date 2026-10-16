@@ -20,7 +20,8 @@ defmodule HalC2.PlannerPropTest do
   health, a link to two things at once), end turns, retry, dismiss, apply and discard
   runs, look at GitHub, and restart the plugin, which looks too. The plugin keeps
   `@kept_runs` finished runs. Any of the tasks is linked to an issue of a repository the
-  plan syncs both ways, with a board, or has one made for it there, which GitHub relates
+  plan syncs both ways, with a board, by a client whose link may say a state of its own,
+  closed or not text, or has one made for it there, which GitHub relates
   to nothing and puts on no board, is relinked to another issue, of that repository or of one no project on
   the MC has, which is pushed nothing, and unlinked again, by a client that may still
   show the issue it had before, and a client links one to the issue another has; a
@@ -425,7 +426,12 @@ defmodule HalC2.PlannerPropTest do
        {if(onboard == [], do: 1, else: 3), {:call, __MODULE__, :crowd, [not m.full]}}
      ] ++
        if(onboard == [], do: [], else: [{16, {:call, __MODULE__, :unboard, [elements(onboard)]}}]) ++
-       if(unlinked == [], do: [], else: [{8, {:call, __MODULE__, :link, [elements(unlinked)]}}]) ++
+       if(unlinked == [],
+         do: [],
+         else: [
+           {8, {:call, __MODULE__, :link, [elements(unlinked), oneof([nil, "closed", %{}])]}}
+         ]
+       ) ++
        if(fresh == [], do: [], else: [{2, {:call, __MODULE__, :create, [elements(fresh)]}}]) ++
        if(tied == [], do: [], else: [{24, {:call, __MODULE__, :create, [elements(tied)]}}]) ++
        if(swaps == [], do: [], else: [{16, oneof(swaps)}]) ++
@@ -543,7 +549,7 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, :run, [_action, slot]}),
     do: slot == nil or Map.has_key?(m.items, slot)
 
-  def precondition(m, {:call, _, :link, [slot]}),
+  def precondition(m, {:call, _, :link, [slot, _state]}),
     do: Map.has_key?(m.items, slot) and m.items[slot].issue == nil
 
   def precondition(m, {:call, _, cmd, [slot | _]}) when cmd in [:relink, :unlink, :unboard],
@@ -735,8 +741,9 @@ defmodule HalC2.PlannerPropTest do
 
   # GitHub is taken to have the task's name and due date, and none of its relations: the
   # task pushes those to tasks with an issue, and the tasks tied to it push theirs to its
-  # issue (`ties_moved/3`). The plugin takes the issue for open until a look reads it.
-  defp step(m, {:call, _, :link, [slot]}) do
+  # issue (`ties_moved/3`). The plugin takes the issue for open until a look reads it,
+  # whatever state the link says.
+  defp step(m, {:call, _, :link, [slot, _state]}) do
     item = %{m.items[slot] | issue: @issues[slot], state: :open}
     {m |> put_in([:items, slot], item) |> changed(slot, m) |> ties_moved(slot, m), :ok}
   end
@@ -1478,7 +1485,8 @@ defmodule HalC2.PlannerPropTest do
     observe(reply)
   end
 
-  def link(slot), do: link_to(slot, @issues[slot])
+  # Links the task to its issue, the link saying `state` when it is not nil.
+  def link(slot, state), do: link_to(slot, @issues[slot], state)
 
   # Links the task to the issue `number` another task has.
   def link_taken(slot, number), do: link_to(slot, number)
@@ -1504,8 +1512,9 @@ defmodule HalC2.PlannerPropTest do
     observe(reply)
   end
 
-  defp link_to(slot, number) do
+  defp link_to(slot, number, state \\ nil) do
     issue = %{"repository" => repository_of(number), "number" => number}
+    issue = if state, do: Map.put(issue, "state", state), else: issue
     {reply, _} = call("link", %{"itemId" => item_id(slot), "issue" => issue})
     if reply == :ok, do: Process.put({:pl_issue, slot}, number)
     listed()

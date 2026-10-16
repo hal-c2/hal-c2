@@ -901,6 +901,14 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :moved_ids, %{title => item!(context, title)["id"]})
   end
 
+  step "its agent proposes linking {string} to the issue \#{int} of {string} with a state that is not text",
+       %{args: [title, number, repository]} = context do
+    report = issue_link_report(context, title, number, repository)
+    report = put_in(report, ["changes", Access.at(0), "fields", "issue", "state"], %{})
+    assert %{"status" => "proposed"} = report!(context, report)
+    context
+  end
+
   step "the link of {string} is marked as no longer applicable, as {string} has the issue",
        %{args: [title, holder]} = context do
     change = Enum.find(run!(context)["changes"], &(&1["itemId"] == context.moved_ids[title]))
@@ -1214,6 +1222,23 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "its agent links the pull request \#{int} of {string} with a state that is not text",
+       %{args: [number, repository]} = context do
+    pr = %{"repository" => repository, "number" => number, "state" => %{}}
+    tool!(context, "planner_progress", %{"pullRequest" => pr})
+    context
+  end
+
+  step "its thread is told {string} is linked to the open pull request \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    told(context, title, "pull requests #{repository}##{number} open")
+  end
+
+  step "its thread is told {string} is linked to the open issue \#{int} of {string}",
+       %{args: [title, number, repository]} = context do
+    told(context, title, "issue #{repository}##{number} open")
+  end
+
   step "{string} is linked to \#{int}", %{args: [title, number]} = context do
     assert number in Enum.map(item!(context, title)["pullRequests"], & &1["number"])
     context
@@ -1253,6 +1278,25 @@ defmodule HalC2.Steps.Planning.Planner do
   step "{string} is linked to \#{int} of {string}",
        %{args: [title, number, repository]} = context do
     context |> ensure(title) |> link_prs(title, repository, [number])
+  end
+
+  step "{string} is linked to \#{int} of {string} as merged",
+       %{args: [title, number, repository]} = context do
+    context |> ensure(title) |> link_prs(title, repository, [number], %{"state" => "merged"})
+  end
+
+  step "{string} is linked to \#{int} of {string} with a state that is not text",
+       %{args: [title, number, repository]} = context do
+    context |> ensure(title) |> link_prs(title, repository, [number], %{"state" => %{}})
+  end
+
+  step "the user reopens {string}", %{args: [title]} = context do
+    update!(context, title, %{"status" => "todo"})
+  end
+
+  step "{string} is to do", %{args: [title]} = context do
+    assert item!(context, title)["status"] == "todo"
+    context
   end
 
   step "{string} is linked to \#{int} and \#{int} of {string}, and \#{int} is merged",
@@ -1542,6 +1586,24 @@ defmodule HalC2.Steps.Planning.Planner do
     GitHubIssues.answers(context, repository, [
       GitHubIssues.issue(repository, number, %{"pullRequests" => [pr]})
     ])
+  end
+
+  step "\#{int} is closed by the pull request \#{int}, which merged already",
+       %{args: [number, pr]} = context do
+    repository = context.repository
+
+    issue =
+      GitHubIssues.issue(repository, number, %{"pullRequests" => [pr]})
+      |> update_in(["closedByPullRequestsReferences", "nodes"], fn nodes ->
+        Enum.map(nodes, &Map.put(&1, "state", "MERGED"))
+      end)
+
+    GitHubIssues.answers(context, repository, [issue])
+  end
+
+  step "\#{int}'s task is to do", %{args: [number]} = context do
+    assert task_of(plan!(context), number)["status"] == "todo"
+    context
   end
 
   step "\#{int} is no longer closed by \#{int} on GitHub", %{args: [number, _pr]} = context do
@@ -3230,12 +3292,13 @@ defmodule HalC2.Steps.Planning.Planner do
     {update, context}
   end
 
-  defp link_prs(context, title, repository, numbers) do
+  # Links `title` to each of `numbers`, the link also giving `given`, open on GitHub.
+  defp link_prs(context, title, repository, numbers, given \\ %{}) do
     id = item!(context, title)["id"]
 
     context =
       Enum.reduce(numbers, context, fn number, context ->
-        pr = %{"repository" => repository, "number" => number}
+        pr = Map.merge(given, %{"repository" => repository, "number" => number})
         {reply, context} = plugin(context, "link", %{"itemId" => id, "pullRequest" => pr})
         assert {:ok, _} = reply
         context
@@ -3411,6 +3474,13 @@ defmodule HalC2.Steps.Planning.Planner do
     }
 
     %{"summary" => "Linked.", "changes" => [change]}
+  end
+
+  # The plan's line for `title` in the prompt of `context.thread` says `text`.
+  defp told(context, title, text) do
+    line = context.thread |> prompt() |> String.split("\n") |> Enum.find(&(&1 =~ "] #{title} ("))
+    assert line =~ text, inspect(line)
+    context
   end
 
   defp prompt(thread_id) do

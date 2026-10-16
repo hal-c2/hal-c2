@@ -448,6 +448,14 @@ Feature: Planner
       And "Docs" is linked to no pull request and no issue
 
     @mc
+    Scenario: An issue a proposal links with a state that is not text is still told to the next action
+      Given the run of "Reschedule" is running
+      And its agent proposes linking "Docs" to the issue #7 of "acme/api" with a state that is not text
+      And the user applies the run
+      When the user runs "Reschedule"
+      Then its thread is told "Docs" is linked to the open issue #7 of "acme/api"
+
+    @mc
     Scenario: An action set to apply its changes applies them as it reports
       Given "Validate progress" applies its changes without asking
       And the run of "Validate progress" on "API" is running
@@ -629,6 +637,13 @@ Feature: Planner
       Then "API" is linked to #12
 
     @mc
+    Scenario: A pull request the agent links with a state that is not text is still told to the next action
+      Given the user started work on "API"
+      And its agent links the pull request #12 of "acme/api" with a state that is not text
+      When the user runs "Reschedule"
+      Then its thread is told "API" is linked to the open pull request #12 of "acme/api"
+
+    @mc
     Scenario: A thread not linked to the plan gets no planner tools
       When an agent in a thread "planner" did not start lists its tools
       Then no planner tool is offered
@@ -647,6 +662,28 @@ Feature: Planner
       When #12 is merged
       And the plugin looks at GitHub
       Then "API" is done
+
+    @mc
+    Scenario: A pull request linked as merged moves its task when the plugin looks
+      Given "API" is linked to #12 of "acme/api" as merged
+      And #12 is merged
+      When the plugin looks at GitHub
+      Then "API" is done
+
+    @mc
+    Scenario: A task the user reopens after its pull request merged stays open
+      Given "API" is linked to #12 of "acme/api"
+      And #12 is merged
+      And the plugin looks at GitHub
+      When the user reopens "API"
+      And the plugin looks at GitHub
+      Then "API" is to do
+
+    @mc
+    Scenario: A pull request linked with a state that is not text is still told to the next action
+      Given "API" is linked to #12 of "acme/api" with a state that is not text
+      When the user runs "Reschedule"
+      Then its thread is told "API" is linked to the open pull request #12 of "acme/api"
 
     @mc
     Scenario: A task's progress counts its merged pull requests
@@ -785,6 +822,16 @@ Feature: Planner
       And #7 is closed by the pull request #12
       When the plugin looks at GitHub
       Then #7's task is linked to #12
+
+    # The issue is GitHub's word on its task: still open after the pull request merged,
+    # it was reopened or is not done, and a task done would close it again.
+    @mc
+    Scenario: An open issue whose closing pull request merged already becomes a task to do
+      Given "planner" follows the issues of "acme/api"
+      And #7 is closed by the pull request #12, which merged already
+      When the plugin looks at GitHub
+      Then #7's task is linked to #12
+      And #7's task is to do
 
     @mc
     Scenario: A pull request that no longer closes an issue leaves its task, one linked by hand stays

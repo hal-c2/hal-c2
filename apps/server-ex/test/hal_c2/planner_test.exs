@@ -287,7 +287,12 @@ defmodule HalC2.PlannerTest do
           do: assert({:error, ^refused} = Plan.check_changes(items, [link.(fields)]))
 
       kinds = ~w(pullRequest issue threadId)
-      assert {:ok, "threadId"} = Plan.link_target(%{"threadId" => "t1"}, kinds)
+      assert {:ok, %{"threadId" => "t1"}} = Plan.link_target(%{"threadId" => "t1"}, kinds)
+      given = %{"repository" => "acme/api", "number" => 4, "state" => %{}, "url" => 1}
+
+      assert Plan.link_target(%{"pullRequest" => given}, kinds) ==
+               {:ok, %{"pullRequest" => %{"repository" => "acme/api", "number" => 4}}}
+
       assert :error = Plan.link_target(%{"pullRequest" => pr, "threadId" => "t1"}, kinds)
       assert :error = Plan.link_target(%{"issue" => %{"repository" => 7, "number" => 1}}, kinds)
     end

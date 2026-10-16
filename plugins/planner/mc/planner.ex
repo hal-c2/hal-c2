@@ -250,11 +250,11 @@ defmodule HalC2Plugins.Planner do
 
     fields =
       case Plan.link_target(Map.take(input, kinds), kinds) do
-        {:ok, "threadId"} ->
-          thread(input["threadId"])
+        {:ok, %{"threadId" => thread_id}} ->
+          thread(thread_id)
 
-        {:ok, kind} ->
-          {:ok, %{kind => input[kind]}}
+        {:ok, ref} ->
+          {:ok, ref}
 
         :error ->
           {:error,
@@ -267,7 +267,7 @@ defmodule HalC2Plugins.Planner do
   def call("unlink", %{"itemId" => id, "kind" => kind} = input, context) do
     named = %{"pullRequest" => "pull request", "issue" => "issue"}[kind]
 
-    if named && not ref?(input["ref"]),
+    if named && Plan.ref(input["ref"]) == :error,
       do: {:error, "unlink gives the #{named} as {repository, number}."},
       else: change({:unlink, id, kind, input["ref"] || input["threadId"]}, context.settings)
   end
@@ -496,9 +496,15 @@ defmodule HalC2Plugins.Planner do
   defp progress(arguments) do
     progress = arguments["progress"]
 
+    pr =
+      if is_nil(arguments["pullRequest"]),
+        do: {:ok, nil},
+        else: Plan.ref(arguments["pullRequest"])
+
     taken =
       arguments
-      |> Map.take(~w(itemId progress status note pullRequest))
+      |> Map.take(~w(itemId progress status note))
+      |> Map.put("pullRequest", with({:ok, ref} <- pr, do: ref, else: (_ -> nil)))
       |> Map.reject(fn {_, v} -> is_nil(v) end)
 
     cond do
@@ -511,7 +517,7 @@ defmodule HalC2Plugins.Planner do
       not (is_nil(arguments["note"]) or is_binary(arguments["note"])) ->
         {:error, "note is text."}
 
-      not (is_nil(arguments["pullRequest"]) or ref?(arguments["pullRequest"])) ->
+      pr == :error ->
         {:error, "pullRequest is {repository, number}."}
 
       Map.drop(taken, ["itemId"]) == %{} ->
@@ -1903,11 +1909,6 @@ defmodule HalC2Plugins.Planner do
 
   defp repository?(value), do: is_binary(value) and value =~ ~r{^[\w.-]+/[\w.-]+$}
   defp board?(value), do: value == "" or (is_binary(value) and value =~ ~r{^[\w.-]+/\d+$})
-
-  defp ref?(%{"repository" => repository, "number" => number}),
-    do: is_binary(repository) and is_integer(number)
-
-  defp ref?(_), do: false
 
   defp message(%{"message" => message}) when is_binary(message), do: message
   defp message(message) when is_binary(message), do: message

@@ -366,6 +366,7 @@ defmodule HalC2Plugins.Planner.Plan do
   defp change(%{"op" => op} = change, i) when op in ~w(update add remove link) do
     fields = change["fields"] || %{}
     reason = change["reason"]
+    link = is_map(fields) and op == "link" and link_target(fields, ~w(pullRequest issue))
 
     cond do
       op != "add" and not is_binary(change["itemId"]) ->
@@ -380,7 +381,7 @@ defmodule HalC2Plugins.Planner.Plan do
       op == "add" and not is_binary(fields["title"]) ->
         {:error, "a task it adds needs a title."}
 
-      op == "link" and link_target(fields, ~w(pullRequest issue)) == :error ->
+      link == :error ->
         {:error,
          "link gives in fields just one of: a pullRequest or an issue as {repository, number}."}
 
@@ -394,7 +395,12 @@ defmodule HalC2Plugins.Planner.Plan do
            "op" => op,
            "itemId" => if(op != "add", do: change["itemId"]),
            "ref" => if(op == "add", do: change["ref"] || "new-#{i}"),
-           "fields" => if(op == "remove", do: %{}, else: fields),
+           "fields" =>
+             case op do
+               "remove" -> %{}
+               "link" -> elem(link, 1)
+               _ -> fields
+             end,
            "reason" => reason,
            "dismissed" => false,
            "outcome" => nil
@@ -405,23 +411,33 @@ defmodule HalC2Plugins.Planner.Plan do
   defp change(_change, _i), do: {:error, "op is update, add, remove or link."}
 
   @doc """
-  `{:ok, kind}` when `given` names just one thing to link to, of `kinds`, and names it
-  well: a pullRequest or an issue as {repository, number}, a threadId as text. Anything
-  else in it, a second one included, is `:error`, so no part of a link is dropped.
+  `{:ok, %{kind => target}}` when `given` names just one thing to link to, of `kinds`,
+  and names it well: a pullRequest or an issue as {repository, number} (`ref/1`), a
+  threadId as text. Anything else in it, a second one included, is `:error`, so no part
+  of a link is dropped.
   """
   def link_target(given, kinds) do
     case Map.reject(given, fn {_, value} -> is_nil(value) end) |> Map.to_list() do
-      [{kind, value}] -> if kind in kinds and target?(kind, value), do: {:ok, kind}, else: :error
+      [{kind, value}] -> if kind in kinds, do: target(kind, value), else: :error
       _ -> :error
     end
   end
 
-  defp target?("threadId", value), do: is_binary(value)
+  defp target("threadId", value) when is_binary(value), do: {:ok, %{"threadId" => value}}
+  defp target("threadId", _value), do: :error
+  defp target(kind, value), do: with({:ok, ref} <- ref(value), do: {:ok, %{kind => ref}})
 
-  defp target?(_kind, %{"repository" => repository, "number" => number}),
-    do: is_binary(repository) and is_integer(number)
+  @doc """
+  `{:ok, ref}` with what the plan takes of a pull request or an issue a client or an
+  agent names as {repository, number}, or `:error`. The rest it gives is dropped: the
+  state is GitHub's, so a link starts open and the next look reads it, and a pull
+  request linked once it merged moves its task as one seen to merge.
+  """
+  def ref(%{"repository" => repository, "number" => number})
+      when is_binary(repository) and is_integer(number),
+      do: {:ok, %{"repository" => repository, "number" => number}}
 
-  defp target?(_kind, _value), do: false
+  def ref(_value), do: :error
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
