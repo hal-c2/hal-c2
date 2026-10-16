@@ -8,6 +8,7 @@ import { createCliRenderer } from "@opentui/core";
 import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
+import { bundledAppVersion, resolveAppVersion } from "./appVersion.ts";
 import { makeClusterClient } from "./clusterClient.ts";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
@@ -219,8 +220,8 @@ async function main(): Promise<void> {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();
     },
-    // `HAL_C2_TUI_APP_VERSION` names the HAL-C2 release this client is; servers behind it are offered an update.
-    appVersion: process.env.HAL_C2_TUI_APP_VERSION?.trim() || null,
+    // The HAL-C2 release this client is; servers behind it are offered an update.
+    appVersion: resolveAppVersion(process.env, bundledAppVersion),
     dismissedUpdates: fileMutedThreads(NodePath.join(configDir, "dismissed-updates.json")),
     // Plugins turned off, and where downloaded ones came from, are this device's too.
     pluginStore: filePluginStore(NodePath.join(configDir, PLUGIN_RECORDS_FILE)),
