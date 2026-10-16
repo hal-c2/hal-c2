@@ -41,7 +41,7 @@ use ljos_quick::keys::{
 };
 use ljos_quick::{
     Item, ItemPaint, KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerItem, WheelEvent,
-    register_paint_item, register_pointer_item, text_engine, text_style,
+    register_hover_move, register_paint_item, register_pointer_item, text_engine, text_style,
 };
 use ljos_render::{DisplayListBuilder, kurbo};
 
@@ -78,6 +78,9 @@ pub fn register(engine: &Engine) {
             hover: |_, _, _| {},
         },
     );
+    // Motion with no button held reaches only this hook, and only without
+    // modifiers or time.
+    register_hover_move(engine, meta(), hover_moved);
     register_wheel_item(engine, meta(), WheelItem { wheel });
     register_text_input_client(engine, meta(), Rc::new(Ime));
 }
@@ -96,6 +99,8 @@ struct State {
     drag: Option<Pos>,
     /// The button whose press was sent to the program as a mouse report.
     reported: Option<u8>,
+    /// The cell last reported to a program that asked for any motion.
+    hovered: Option<(u16, u16)>,
     /// A fraction of a wheel step, kept for the next event.
     wheel_remainder: f64,
 }
@@ -723,6 +728,21 @@ fn pointer_moved(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) 
         if moved.is_some() {
             sync(e, me);
         }
+    }
+}
+
+/// The pointer moved over the item with no button down: a program that asked
+/// for any motion hears of each new cell (button 3 is "none").
+fn hover_moved(e: &Engine, me: ObjectId, at: kurbo::Point) {
+    let cell = cell_at(e, me, at);
+    let Ok(idle) = e.with_mut::<Terminal, _>(me, |t| {
+        let idle = t.state.drag.is_none() && t.state.reported.is_none();
+        idle && t.state.hovered.replace(cell) != Some(cell)
+    }) else {
+        return;
+    };
+    if idle && vt_mut(e, me, |vt| vt.mouse_any_motion()).unwrap_or(false) {
+        report(e, me, MouseAction::Motion, 3, Modifiers::empty(), cell);
     }
 }
 

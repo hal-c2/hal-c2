@@ -220,6 +220,11 @@ impl Vt {
         )
     }
 
+    /// Whether the program wants every move, with no button held too.
+    pub fn mouse_any_motion(&self) -> bool {
+        self.screen().mouse_protocol_mode() == vt100::MouseProtocolMode::AnyMotion
+    }
+
     pub fn mouse_encoding(&self) -> super::keys::MouseEncoding {
         use super::keys::MouseEncoding as E;
         match self.screen().mouse_protocol_encoding() {

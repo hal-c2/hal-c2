@@ -414,6 +414,28 @@ fn a_program_that_asks_for_the_mouse_gets_reports() {
 }
 
 #[test]
+fn any_motion_reports_each_new_cell_the_pointer_enters() {
+    let mut rig = Rig::new();
+    let hover = |rig: &mut Rig, row, col| {
+        let (x, y) = rig.centre(row, col);
+        rig.scene.scene.pointer_event(
+            &rig.engine,
+            &PointerEvent::moved(x, y, MouseButtons::empty(), Time::ZERO),
+        );
+    };
+    // Button-only tracking hears nothing of a move with no button.
+    rig.write("\x1b[?1002h\x1b[?1006h");
+    hover(&mut rig, 1, 1);
+    assert_eq!(rig.typed(), "");
+    rig.write("\x1b[?1003h");
+    hover(&mut rig, 1, 2);
+    hover(&mut rig, 1, 2);
+    hover(&mut rig, 2, 2);
+    // Button 3 (none) plus 32 for motion is 35.
+    assert_eq!(rig.typed(), "\u{1b}[<35;3;2M\u{1b}[<35;3;3M");
+}
+
+#[test]
 fn the_wheel_is_arrow_keys_on_an_alternate_screen() {
     let mut rig = Rig::new();
     rig.write("\x1b[?1049h");
