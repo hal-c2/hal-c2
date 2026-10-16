@@ -6,7 +6,10 @@ pub mod bridge;
 pub mod cache;
 pub mod controller;
 pub mod controllers;
+pub mod device_screen;
 pub mod environment_settings;
+pub mod folders;
+pub mod highlighter;
 pub mod json;
 pub mod mc;
 pub mod project;
@@ -20,6 +23,7 @@ pub mod sidebar_model;
 pub mod single_instance;
 pub mod storage;
 pub mod store;
+pub mod terminal;
 pub mod theme;
 
 use std::path::PathBuf;
@@ -44,6 +48,10 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<bridge::ShellBridge>(MODULE, v);
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
+    folders::register(engine, v);
+    highlighter::register(engine, v);
+    device_screen::register(engine, v);
+    terminal::register(engine);
     bridge::Bridge::of(engine);
 }
 

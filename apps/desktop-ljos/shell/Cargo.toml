@@ -26,6 +26,9 @@ ljos_platform.workspace = true
 ljos_quick.workspace = true
 ljos_render.workspace = true
 ljos_runtime.workspace = true
+# The layout of a run of terminal cells (LayoutParams, which ljos_quick does
+# not re-export).
+ljos_text.workspace = true
 hal_c2_mc.workspace = true
 # The system's handler for links (Ljós has no openUrlExternally yet).
 open = "5"
@@ -44,6 +47,13 @@ unicode-normalization = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # The sidebar's times (src/sidebar_model.rs): ISO dates and local wall clocks.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The local folder browser (src/folders): watching folders and moving files to the trash.
+notify = "8"
+trash = "5"
+# The composer's Markdown markers (src/highlighter.rs), as desktop-qt's QRegularExpression.
+fancy-regex = "0.19"
+# The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
+vt100 = "0.16"
 
 [dev-dependencies]
 proptest = "1.11"
