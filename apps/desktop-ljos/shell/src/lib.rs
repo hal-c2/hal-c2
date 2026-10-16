@@ -5,6 +5,7 @@
 pub mod bridge;
 pub mod controller;
 pub mod controllers;
+pub mod environment_settings;
 pub mod json;
 pub mod mc;
 pub mod project;
