@@ -1,18 +1,20 @@
 import OpenTUI
 
 // Alerts for threads the user is not looking at (Shell.state.notifications),
-// newest first. Clicking the title opens the thread; × dismisses.
+// newest first. [Open] opens the thread; × dismisses. Only the newest few
+// rows show; the rest are one click (or the "Notifications…" command) away.
 Item {
     id: stack
     objectName: "notifications"
     readonly property var items: Shell.state.notifications ? Shell.state.notifications.items : []
+    readonly property int shown: 3
 
     visible: items.length > 0
     flexDirection: "column"
     flexShrink: 0
 
     Repeater {
-        model: stack.items
+        model: stack.items.slice(0, stack.shown)
         delegate: Item {
             id: card
             readonly property var note: modelData
@@ -47,5 +49,13 @@ Item {
                 onMouseDown: Shell.dispatch("notification.dismiss", { id: card.note.id })
             }
         }
+    }
+
+    Text {
+        objectName: "notificationsMore"
+        visible: stack.items.length > stack.shown
+        text: "+" + (stack.items.length - stack.shown) + " more alerts"
+        color: Theme.colors.accent
+        onMouseDown: Shell.dispatch("reach.notifications", {})
     }
 }

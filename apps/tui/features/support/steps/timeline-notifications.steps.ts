@@ -100,3 +100,35 @@ step("an alert for {string} is raised", async (ctx: World, title: string) => {
   expect(alertFor(ctx, title)).toMatchObject({ title: "Thread completed" });
   expect(await snapshot(ctx)).toContain(`Thread completed · ${title}`);
 });
+
+// More alerts than the stack has rows for.
+step("{int} threads have finished in the background", async (ctx: World, count: number) => {
+  addThread(ctx, VIEWED);
+  for (let at = 1; at <= count; at += 1) {
+    addThread(ctx, `Thread ${at}`, { session: { status: "running" }, latestTurn: turn("running") });
+  }
+  change(ctx, () => {});
+  await ui(ctx);
+  await selectThread(ctx, VIEWED);
+  for (let at = 1; at <= count; at += 1) await finish(ctx, `Thread ${at}`);
+});
+
+step("all {int} alerts are kept", (ctx: World, count: number) => {
+  expect(alerts(ctx).map((alert) => alert.description)).toEqual(
+    Array.from({ length: count }, (_, at) => `Thread ${count - at}`),
+  );
+});
+
+step("{int} alerts are shown with {string}", async (ctx: World, shown: number, summary: string) => {
+  const screen = await snapshot(ctx);
+  expect(screen.match(/Thread completed · Thread \d/g)).toHaveLength(shown);
+  expect(screen).toContain(summary);
+});
+
+step("the notifications list offers all {int} alerts", (ctx: World, count: number) => {
+  const options = (ctx.host!.state.get("select") as { options: Array<{ label: string }> }).options;
+  const open = options.filter((option) => option.label.startsWith("Open: "));
+  expect(open.map((option) => option.label)).toEqual(
+    Array.from({ length: count }, (_, at) => `Open: Thread completed · Thread ${count - at}`),
+  );
+});
