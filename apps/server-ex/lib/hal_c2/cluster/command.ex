@@ -88,7 +88,15 @@ defmodule HalC2.Cluster.Command do
         members ->
           for m <- members do
             state = if m["connected"], do: "connected", else: "not connected"
-            "  #{m["label"]} (#{m["id"]}): #{state}"
+
+            hint =
+              cond do
+                m["compatible"] == false -> " Update your machines to connect."
+                m["updateRecommended"] -> " Please update your machines."
+                true -> ""
+              end
+
+            "  #{m["label"]} (#{m["id"]}): #{state} #{m["version"]}#{hint}"
           end
       end
 

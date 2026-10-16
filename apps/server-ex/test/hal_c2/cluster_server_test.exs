@@ -34,6 +34,41 @@ defmodule HalC2.ClusterServerTest do
     :ok
   end
 
+  test "API-compatible releases join and a version announcement preserves connections" do
+    entry = %{
+      "id" => "mixed",
+      "fingerprint" => String.duplicate("b", 64),
+      "version" => "999.0.0",
+      "protocol" => 1
+    }
+
+    assert {:ok, _} = Cluster.admit(entry)
+    member = Cluster.mc_name("mixed")
+    Application.put_env(:hal_c2, :fake_connected, [member])
+    previous = :persistent_term.get({HalC2.Upgrade, :version}, nil)
+    on_exit(fn -> :persistent_term.put({HalC2.Upgrade, :version}, previous) end)
+    :persistent_term.put({HalC2.Upgrade, :version}, "999.1.0")
+    Cluster.version_changed()
+    assert [%{"connected" => true, "updateRecommended" => true}] = Cluster.status()["members"]
+    assert_received {:sent, ^member, {:merge, members}}
+    own = Cluster.status()["id"]
+    assert members[own]["version"] == "999.1.0"
+  end
+
+  test "incompatible and unknown protocols require an update before admission" do
+    for protocol <- [nil, 2, "1"] do
+      entry = %{
+        "id" => "other",
+        "fingerprint" => String.duplicate("b", 64),
+        "version" => HalC2.Upgrade.version(),
+        "protocol" => protocol
+      }
+
+      assert {:error, {:incompatible_protocol, ^protocol, 1}} = Cluster.admit(entry)
+      assert Cluster.status()["members"] == []
+    end
+  end
+
   test "a machine that connects but is no member is cut off and not told the members" do
     stranger = Cluster.mc_name("stranger")
     Application.put_env(:hal_c2, :fake_connected, [stranger])
@@ -45,7 +80,14 @@ defmodule HalC2.ClusterServerTest do
 
     # A member that connects is told them.
     fp = String.duplicate("a", 64)
-    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+
+    entry = %{
+      "id" => "m1",
+      "fingerprint" => fp,
+      "version" => HalC2.Upgrade.version(),
+      "protocol" => Cluster.protocol()
+    }
+
     {:ok, _} = Cluster.admit(entry)
     member = Cluster.mc_name("m1")
     Application.put_env(:hal_c2, :fake_connected, [member])
@@ -57,7 +99,14 @@ defmodule HalC2.ClusterServerTest do
 
   test "connected members are sent the table now and then, so one that missed a change learns it" do
     fp = String.duplicate("a", 64)
-    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+
+    entry = %{
+      "id" => "m1",
+      "fingerprint" => fp,
+      "version" => HalC2.Upgrade.version(),
+      "protocol" => Cluster.protocol()
+    }
+
     {:ok, _} = Cluster.admit(entry)
     member = Cluster.mc_name("m1")
     stranger = Cluster.mc_name("stranger")
@@ -79,7 +128,14 @@ defmodule HalC2.ClusterServerTest do
 
     assert Cluster.status()["addresses"] == ["127.0.0.1:4999"]
     fp = String.duplicate("a", 64)
-    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+
+    entry = %{
+      "id" => "m1",
+      "fingerprint" => fp,
+      "version" => HalC2.Upgrade.version(),
+      "protocol" => Cluster.protocol()
+    }
+
     assert {:ok, %{"port" => 4999}} = Cluster.admit(entry)
   end
 
