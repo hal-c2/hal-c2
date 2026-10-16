@@ -289,16 +289,16 @@ pub fn every(
     f: impl Fn(&Engine) + 'static,
 ) -> Option<ObjectId> {
     use ljos_engine::Timer;
-    let mut native = Timer::default();
-    native.interval = interval_ms;
-    native.repeat = true;
-    native.running = true;
+    let native = Timer {
+        interval: interval_ms,
+        repeat: true,
+        running: true,
+        ..Timer::default()
+    };
     let timer = engine.create_native(native, owner).ok()?;
     engine
         .connect_by_name(timer, "triggered", move |engine, _| f(engine))
         .ok()?;
-    // A Timer arms on completion, as in a component; one made here has none.
-    engine.complete(timer).ok()?;
     Some(timer)
 }
 

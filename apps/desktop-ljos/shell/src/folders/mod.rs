@@ -549,9 +549,11 @@ impl<'e> Model<'e> {
             let path = path.clone();
             move || list_directory(&path)
         };
-        let done = move |engine: &Engine, entries: Vec<Node>| {
+        // A read that panicked (a fault the engine reports) lists as a
+        // folder that could not be read: empty.
+        let done = move |engine: &Engine, entries: Result<Vec<Node>, ljos::task::TaskPanic>| {
             if state.generation.get() == generation && engine.is_alive(obj) {
-                Model::new(engine, obj, state).listed(&path, entries);
+                Model::new(engine, obj, state).listed(&path, entries.unwrap_or_default());
             }
         };
         if let Err(_full) = ljos::task::spawn(self.engine, read, done) {
