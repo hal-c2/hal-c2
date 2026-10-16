@@ -1759,6 +1759,7 @@ dependencies = [
 name = "hal_c2_shell"
 version = "0.1.0"
 dependencies = [
+ "fancy-regex",
  "hal_c2_mc",
  "ljos",
  "ljos_a11y",
