@@ -5,7 +5,7 @@ import { expect } from "bun:test";
 import { DEFAULT_SERVER_SETTINGS, EDITORS } from "@hal-c2/contracts";
 
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
-import { hostedHere } from "../../../src/thisMachine.ts";
+import { FILES_ELSEWHERE, hostedHere } from "../../../src/thisMachine.ts";
 import { step } from "../../steps.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
@@ -23,14 +23,16 @@ const CHANGE = "// tuned ";
 const WORKSPACE = "/home/sam/shop";
 const files = (ctx: World) => ctx.host!.state.get("files") as TuiFilesState;
 const viewer = (ctx: World) => files(ctx).viewer!;
-const status = (ctx: World) => ctx.host!.state.get("status") as { kind: string; text: string };
-const statusLabel = (ctx: World) => (ctx.host!.state.get("statusRow") as { label: string }).label;
-const mcCalls = (ctx: World, method: string) =>
+export const status = (ctx: World) =>
+  ctx.host!.state.get("status") as { kind: string; text: string };
+export const statusLabel = (ctx: World) =>
+  (ctx.host!.state.get("statusRow") as { label: string }).label;
+export const mcCalls = (ctx: World, method: string) =>
   ctx.fake!.settings.callsTo(method).map((call) => call.payload as Record<string, unknown>);
 const editorText = (ctx: World) => String(findObject(ctx, "fileEditor").get("text") ?? "");
 
 /** Run `setup` on the fake client the files steps make, right before the client starts. */
-const beforeBoot = (ctx: World, setup: () => void) => {
+export const beforeBoot = (ctx: World, setup: () => void) => {
   const previous = ctx.prepare;
   ctx.prepare = () => {
     previous?.();
@@ -82,7 +84,7 @@ step("the user switches back", async (ctx: World) => {
 // --- The environment's editor ---------------------------------------------------------
 
 /** The MC offers the editor `label`; asked to start one, it does. */
-const hasEditor = (ctx: World, label: string) => {
+export const hasEditor = (ctx: World, label: string) => {
   const editor = EDITORS.find((candidate) => candidate.label === label)!;
   beforeBoot(ctx, () => {
     ctx.fake!.override("getServerConfig", (async () => ({
@@ -103,7 +105,6 @@ step(
 const HERE = "5e1f00000000000000000000000000000000000000000000000000000000c0de";
 const ELSEWHERE = "a1".repeat(32);
 const ELSEWHERES = {
-  "another MC of the cluster": { theirs: null, own: false, origin: "ws://127.0.0.1:3773" },
   "an MC on another machine the client is paired with": {
     theirs: ELSEWHERE,
     own: true,
@@ -117,12 +118,12 @@ const ELSEWHERES = {
 } as const;
 
 step(
-  /^the thread's files are on (another MC of the cluster|an MC on another machine the client is paired with|an MC reached through an SSH port forward)$/,
+  /^the thread's files are on (an MC on another machine the client is paired with|an MC reached through an SSH port forward)$/,
   (ctx: World, where: keyof typeof ELSEWHERES) => {
     hasEditor(ctx, "VS Code");
     beforeBoot(ctx, () => {
       ctx.fake!.override("localPathFor", async (path) =>
-        hostedHere({ ours: HERE, ...ELSEWHERES[where] }) ? path : null,
+        hostedHere({ ours: HERE, ...ELSEWHERES[where] }) ? { path } : { problem: FILES_ELSEWHERE },
       );
     });
   },

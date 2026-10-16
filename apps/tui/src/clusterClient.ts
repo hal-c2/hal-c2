@@ -302,11 +302,18 @@ export function makeClusterClient(
     readFile: (cwd, relativePath) => clientForPath(cwd).readFile(cwd, relativePath),
     readFileBase64: (cwd, relativePath) => clientForPath(cwd).readFileBase64(cwd, relativePath),
     // The editor starts through this machine's MC (`mcCall`), so it must run here too.
+    // Another member's files are in the folder that MC keeps for it.
     localPathFor: async (path) => {
       const owner = clientForPath(path);
+      if (owner === home) return home.localPathFor(path);
       const local = await owner.localPathFor(path);
-      if (local === null || owner === home) return local;
-      return (await home.localPathFor(local)) === null ? null : local;
+      if ("path" in local) {
+        // A member on this machine: its own path, if the MC here can start one.
+        const through = await home.localPathFor(local.path);
+        return "path" in through ? local : through;
+      }
+      const id = [...members.values()].find((machine) => machine.client === owner)?.id;
+      return id === undefined ? local : home.localPathFor(path, id);
     },
     dispose: async () => {
       stopHome?.();

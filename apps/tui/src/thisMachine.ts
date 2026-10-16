@@ -99,3 +99,9 @@ export function hostedHere(input: {
     return false;
   }
 }
+
+/** Where a file is on this machine: its path, or what the user is told when it has none. */
+export type LocalPath = { readonly path: string } | { readonly problem: string };
+
+/** What the user is told about a file on a machine that keeps no folder here. */
+export const FILES_ELSEWHERE = "The files are on another machine and can't be opened here yet.";
