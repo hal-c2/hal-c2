@@ -14,6 +14,7 @@ mix local.hex --force --if-missing
 mix local.rebar --force --if-missing
 mix deps.get --only prod
 # Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
-rm -rf _build/prod/rel/hal_c2
+# Mix keeps the version of an app it has compiled, so the app's build goes too.
+rm -rf _build/prod/rel/hal_c2 _build/prod/lib/hal_c2
 mix release --overwrite
 mix hal_c2.bundle ../../release

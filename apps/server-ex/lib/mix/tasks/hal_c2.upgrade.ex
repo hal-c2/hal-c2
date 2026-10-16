@@ -6,7 +6,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
       mix hal_c2.upgrade MC [MC ...] [--cookie COOKIE]
       mix hal_c2.upgrade --dev [MC ...] [--cookie COOKIE]
-      mix hal_c2.upgrade --release
+      mix hal_c2.upgrade --release [--home ROOT]
 
   Without `--dev`, builds the prod release and its bundle, sends the bundle to the
   first MC, and has each named MC update to it; the others fetch it over HTTP
@@ -22,7 +22,8 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   With `--release`, builds the prod release under this commit's local version and has the
   installed MC on this machine update to it (`mise run mc:reload --release`), over
   its HTTP port with its access token as well. That MC is the one in the user's
-  `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set. The MCs clustered with
+  `hal-c2` profile, in `HAL_C2_MC_HOME` when that is set, or under `--home ROOT`, the
+  root its `HAL_C2_HOME` names. The MCs clustered with
   it update to the build too, whatever their platform, when it only changes code.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
@@ -38,17 +39,22 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   @impl true
   def run(args) do
     {opts, mcs} =
-      OptionParser.parse!(args, strict: [dev: :boolean, release: :boolean, cookie: :string])
+      OptionParser.parse!(args,
+        strict: [dev: :boolean, release: :boolean, cookie: :string, home: :string]
+      )
 
     mcs = Enum.map(mcs, &String.to_atom/1)
 
     cond do
+      opts[:home] && !(opts[:release] && mcs == []) ->
+        Mix.raise("--home names the root of the installed MC: use it with --release alone")
+
       opts[:release] && mcs == [] ->
         # The commit's version, as `mise run release:mc` builds it: an MC refuses the
         # version it already runs, and clusters only with MCs on its own.
         {version, 0} = System.cmd(Path.expand("scripts/local-version"), [])
         build(String.trim(version))
-        local_release(Mix.Tasks.HalC2.Bundle.bundle())
+        local_release(Mix.Tasks.HalC2.Bundle.bundle(), opts[:home])
 
       opts[:dev] && mcs == [] ->
         Mix.Task.run("compile")
@@ -71,7 +77,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   defp build(version \\ nil) do
     # Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
+    # Mix does not recompile the app when only HAL_C2_MC_VERSION changes, so its .app would
+    # keep an earlier version: its build goes too.
     File.rm_rf!("_build/prod/rel/hal_c2")
+    File.rm_rf!("_build/prod/lib/hal_c2")
 
     {_, 0} =
       System.cmd("mix", ~w(release --overwrite),
@@ -135,15 +144,17 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   end
 
   # The installed MC on this machine, through `POST /api/dev/reload` with a bundle.
-  defp local_release(path) do
+  defp local_release(path, root) do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    # A checkout's own home is the dev profile; the installed MC's is the user's.
+    # `--home` names the installed MC's root. Otherwise a checkout's own home is the dev
+    # profile, and the installed MC's is the user's.
     home =
-      case Application.get_env(:hal_c2, :home) do
-        :dev -> nil
-        home -> home
+      cond do
+        root -> {:root, Path.expand(root)}
+        Application.get_env(:hal_c2, :home) == :dev -> nil
+        true -> Application.get_env(:hal_c2, :home)
       end
 
     dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
