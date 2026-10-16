@@ -13,6 +13,7 @@ pub mod render;
 pub mod runtime;
 pub mod sidebar_model;
 pub mod storage;
+pub mod store;
 pub mod theme;
 
 use std::path::PathBuf;
