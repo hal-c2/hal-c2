@@ -53,6 +53,25 @@ defmodule HalC2.Steps.SourceControl.Errors do
     Map.put(context, :head_before, World.git!(context.cwd, ~w(rev-parse HEAD)))
   end
 
+  step "GitHub refuses the push because the sign-in lacks the workflow scope", context do
+    hook = Path.join([context.bare, "hooks", "pre-receive"])
+
+    File.write!(hook, """
+    #!/bin/sh
+    echo 'refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope' >&2
+    exit 1
+    """)
+
+    File.chmod!(hook, 0o755)
+    File.write!(Path.join(context.cwd, "cart.ts"), "export const cart = []\n")
+    context
+  end
+
+  step "the failure tells the user to run {string}", %{args: [command]} = context do
+    assert World.failure(context) =~ "Run `#{command}`"
+    context
+  end
+
   step "the commit is kept and the status shows the branch ahead of its upstream", context do
     refute World.git!(context.cwd, ~w(rev-parse HEAD)) == context.head_before
     {status, context} = World.call!(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
