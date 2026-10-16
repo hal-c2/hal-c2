@@ -1321,6 +1321,25 @@ Feature: Planner
       Then GitHub names #7 "Rate limits" last
       And #7's task is named "Rate limits" and marked as synced
 
+    # A restart of the plugin keeps the changes GitHub has, so it still hears how they
+    # went and the next change still waits for them.
+    @mc
+    Scenario: A rename made after a restart of the plugin while an earlier one waits on GitHub is the one GitHub keeps
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" at once
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted and the user renames it to "Rate limits" before GitHub answers
+      Then GitHub names #7 "Rate limits" last
+      And #7's task is named "Rate limits" and marked as synced
+
+    @mc
+    Scenario: A change GitHub takes after a restart of the plugin clears the mark of one it refused
+      Given "planner" syncs "acme/api" both ways
+      And GitHub refuses changes to #7
+      And the user renames #7's task to "Rate limiting"
+      And GitHub answers renaming #7 to "Rate limits" late, taking it
+      When the user renames #7's task to "Rate limits", then "planner" is restarted before GitHub answers
+      Then #7's task is named "Rate limits" and marked as synced
+
     @mc
     Scenario: A change GitHub answers after its task was unlinked does not mark the task
       Given "planner" syncs "acme/api" both ways

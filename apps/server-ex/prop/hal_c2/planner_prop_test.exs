@@ -66,8 +66,10 @@ defmodule HalC2.PlannerPropTest do
     reached it last, and a chain of pushes that ends without a refusal leaves GitHub
     with the task's latest name;
   - a linked task's sync error is what the last push of its chain answered, and a push
-    on the way when the task was removed, unlinked, relinked or the plugin restarted
-    says nothing, though GitHub still takes it;
+    on the way when the task was removed, unlinked or relinked says nothing, though
+    GitHub still takes it; one on the way when the plugin restarted, or the settings
+    were saved with another board, still says how it went, and a change made since
+    still waits for it;
   - a push sends what the task has that GitHub has not, as far as the plugin knows, and
     only that: a change to a task whose rename GitHub refused sends the name again, as
     GitHub then answers, along with its due date and relations when GitHub does not have
@@ -99,7 +101,8 @@ defmodule HalC2.PlannerPropTest do
     task had one: a push answered after the task was unlinked or relinked leaves it
     alone, though GitHub still puts the issue it named on the board, and unlinking or
     relinking clears it, as does saving the settings with another board, so the next
-    push adds it to that one; a look that reads the whole board
+    push adds it to that one, and a push answered after that leaves it alone, though
+    GitHub still puts the issue on the board before; a look that reads the whole board
     without the task's issue clears it too, so the next push of a date adds the issue
     back, and one that reads only part of the board leaves it as it was;
   - an unlink naming an issue the task no longer has leaves it linked, and one naming no
@@ -955,10 +958,12 @@ defmodule HalC2.PlannerPropTest do
   # GitHub takes the push held, as far as it does, whoever it speaks for, on the board the
   # settings named when it was made. When its task still waits on it, the task hears how
   # it went and, when it changed meanwhile, its caller pushes what GitHub lacks of it now,
-  # which GitHub answers at once.
+  # which GitHub answers at once. A task whose settings name another board since does not
+  # take the board item the push added.
   defp step(m, {:call, _, :answer, [push]}) do
     {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
     {m, took} = land(%{m | held: held}, ops, b, push, on)
+    took = if on == m.board, do: took, else: %{took | board: nil}
 
     case m.flights[slot] do
       %{gen: ^gen, push: ^push, changed: changed?} ->
@@ -1099,16 +1104,16 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
-  # Starts again from what it saved: what ran is failed, and what waits starts. It does
-  # not know the pushes on the way, so their answers no longer say whether a task synced,
-  # though GitHub still takes them, and it looks at GitHub.
+  # Starts again from what it saved: what ran is failed, and what waits starts. The pushes
+  # on the way stay, as their callers do, so their answers still say whether a task
+  # synced and a change made meanwhile still waits for them. It looks at GitHub.
   defp step(m, {:call, _, :restart, []}) do
     runs =
       Map.new(m.runs, fn {k, run} ->
         {k, if(run.status == :running, do: %{run | status: :failed}, else: run)}
       end)
 
-    {%{m | runs: runs, flights: %{}} |> pump() |> looked(), :ok}
+    {%{m | runs: runs} |> pump() |> looked(), :ok}
   end
 
   # Saving the settings with another board starts the plugin again, the tasks' board

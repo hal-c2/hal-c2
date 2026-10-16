@@ -42,6 +42,7 @@ defmodule HalC2Plugins.Planner do
   }
   @healths ~w(on-track at-risk off-track)
   @not_connected "Slack is not connected on this MC."
+  @push_stopped "The push to GitHub stopped before GitHub answered."
   @read_tool "planner_read"
   @report_tool "planner_report"
   @progress_tool "planner_progress"
@@ -672,7 +673,6 @@ defmodule HalC2Plugins.Planner do
        slack_at: nil,
        polling: nil,
        published: %{},
-       pushing: %{},
        launching: %{}
      }), {:continue, :announce}}
   end
@@ -955,10 +955,13 @@ defmodule HalC2Plugins.Planner do
   # (`Sync.landed/2`), and its issue the state GitHub took, so the next look moves the
   # task only for a change made on GitHub since. A push for an issue the task was
   # unlinked or relinked from since, or for a task removed since, says nothing; the next
-  # look reads the board again.
+  # look reads the board again. A push the planner took on from before a restart under
+  # another board (`load/1`) added the task to that board, which the task forgets.
   def handle_call({:pushed, id, token, error, extra}, _from, state) do
     case state.pushing[id] do
-      {^token, changed?} ->
+      %{token: ^token, changed: changed?} = flight ->
+        board = state.settings["board"] || ""
+        extra = if flight.board == board, do: extra, else: Map.delete(extra, "boardItemId")
         {moved, extra} = Map.pop(extra, "moved", [])
         {stated, extra} = Map.pop(extra, "stated")
         state = %{state | items: Sync.landed(state.items, moved)}
@@ -977,7 +980,8 @@ defmodule HalC2Plugins.Planner do
 
         case next do
           {ops, synced} ->
-            {:reply, {:push, ops, synced}, changed(put_in(state.pushing[id], {token, false}))}
+            flight = %{flight | changed: false, board: board}
+            {:reply, {:push, ops, synced}, changed(put_in(state.pushing[id], flight))}
 
           nil ->
             {:reply, :ok, changed(%{state | pushing: forget(state.pushing, [id])})}
@@ -1195,12 +1199,11 @@ defmodule HalC2Plugins.Planner do
 
   # A push whose runner stopped before telling how it went, which GitHub may or may not
   # have: the task is marked, and its next change sends what GitHub lacks again.
-  def handle_info({:DOWN, token, :process, _pid, _reason}, state) do
-    case Enum.find(state.pushing, &match?({_, {^token, _}}, &1)) do
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Enum.find(state.pushing, &match?({_, %{monitor: ^ref}}, &1)) do
       {id, _} ->
         state = %{state | pushing: Map.delete(state.pushing, id)}
-        error = "The push to GitHub stopped before GitHub answered."
-        {:noreply, changed(put_in(state.items[id]["syncError"], error))}
+        {:noreply, changed(put_in(state.items[id]["syncError"], @push_stopped))}
 
       nil ->
         {:noreply, state}
@@ -1688,8 +1691,8 @@ defmodule HalC2Plugins.Planner do
         old == nil or (old == new and not tied?.(new)) ->
           {pushes, state}
 
-        flight = state.pushing[id] ->
-          {pushes, put_in(state.pushing[id], put_elem(flight, 1, true))}
+        state.pushing[id] ->
+          {pushes, put_in(state.pushing[id].changed, true)}
 
         true ->
           synced = Sync.synced(old, new, before)
@@ -1702,7 +1705,9 @@ defmodule HalC2Plugins.Planner do
             {{ops, synced}, state} ->
               {runner, _} = from
               token = Process.monitor(runner)
-              state = put_in(state.pushing[id], {token, false})
+              board = state.settings["board"] || ""
+              flight = %{token: token, monitor: token, runner: runner, changed: false, board: board}
+              state = put_in(state.pushing[id], flight)
               {[{id, token, ops, synced} | pushes], state}
           end
       end
@@ -1748,7 +1753,7 @@ defmodule HalC2Plugins.Planner do
   # `pushing` without the pushes of the tasks `ids`, whose runners it no longer watches.
   defp forget(pushing, ids) do
     {gone, pushing} = Map.split(pushing, ids)
-    for {_, {token, _}} <- gone, do: Process.demonitor(token, [:flush])
+    for {_, flight} <- gone, do: Process.demonitor(flight.monitor, [:flush])
     pushing
   end
 
@@ -1901,13 +1906,58 @@ defmodule HalC2Plugins.Planner do
             {id, Map.replace(item, "boardItemId", nil)}
           end)
 
+    # The pushes GitHub had when the plugin stopped. Their runners outlive a restart of
+    # the plugin and tell this server how they went, so a task's next push still waits
+    # for its runner and cannot overtake it on GitHub. A runner of an earlier MC run is
+    # gone, as if it stopped before GitHub answered.
+    {pushing, items} =
+      Enum.reduce(data["pushing"] || %{}, {%{}, items}, fn
+        {id, saved}, {pushing, items} when is_map_key(items, id) ->
+          case runner(saved["runner"]) do
+            {runner, token} ->
+              flight = %{
+                token: token,
+                monitor: Process.monitor(runner),
+                runner: runner,
+                changed: saved["changed"] == true,
+                board: saved["board"] || ""
+              }
+
+              {Map.put(pushing, id, flight), items}
+
+            nil ->
+              {pushing, put_in(items[id]["syncError"], @push_stopped)}
+          end
+
+        _, acc ->
+          acc
+      end)
+
     %{
+      pushing: pushing,
       items: items,
       views: data["views"] || Plan.default_views(),
       updates: data["updates"] || [],
       plan_feedback: data["planFeedback"] || [],
       runs: prune(runs)
     }
+  end
+
+  # The runner and token of a push `save/1` wrote, if this MC run wrote it: a pid an
+  # earlier run wrote may name another process now.
+  defp runner(saved) do
+    os_pid = System.pid()
+
+    with true <- is_binary(saved),
+         {:ok, binary} <- Base.decode64(saved),
+         {^os_pid, runner, token} when is_pid(runner) and is_reference(token) <-
+           :erlang.binary_to_term(binary, [:safe]) do
+      {runner, token}
+    else
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
   end
 
   defp save(state) do
@@ -1917,7 +1967,13 @@ defmodule HalC2Plugins.Planner do
       "updates" => state.updates,
       "planFeedback" => state.plan_feedback,
       "runs" => state.runs,
-      "board" => state.settings["board"] || ""
+      "board" => state.settings["board"] || "",
+      "pushing" =>
+        Map.new(state.pushing, fn {id, flight} ->
+          runner = {System.pid(), flight.runner, flight.token}
+          runner = runner |> :erlang.term_to_binary() |> Base.encode64()
+          {id, %{"runner" => runner, "changed" => flight.changed, "board" => flight.board}}
+        end)
     }
 
     tmp = file() <> ".tmp"

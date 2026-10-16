@@ -2205,6 +2205,27 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted and the user renames it to {string} before GitHub answers",
+       %{args: [number, first, id, second]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    context = update_task(context, number, %{"title" => second})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
   step "the user renames \#{int}'s task to {string}, then makes {string} its owner before GitHub answers",
        %{args: [number, title, owner]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
