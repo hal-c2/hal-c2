@@ -102,6 +102,7 @@ import { ComposerDock, type ComposerDockContext } from "./ComposerDock.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import type { ImageDecoder } from "../host/composerState.ts";
 import { ImageLightbox, type ExpandedImagePreview } from "./ImageLightbox.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
@@ -182,9 +183,12 @@ type ThreadRow = Extract<Row, { kind: "thread" }>;
 export function ChatView({
   client,
   onExit,
+  decodeImage,
 }: {
   readonly client: TuiClient;
   readonly onExit: () => void;
+  /** Replaces the native image decoder; tests use it to control when a pasted image finishes. */
+  readonly decodeImage?: ImageDecoder;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
   const renderer = useRenderer();
@@ -2278,7 +2282,7 @@ export function ChatView({
     const name = `clipboard-image-${clipboardImageSequenceRef.current}.${extension}`;
     clipboardImageLoadsRef.current += 1;
     store.setStatus("Adding pasted image…", "busy");
-    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes)
+    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes, decodeImage)
       .then((image) => {
         updateActiveComposerImages((current) =>
           current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ? current : [...current, image],
@@ -2350,12 +2354,13 @@ export function ChatView({
                 imagePath,
                 mimeType,
                 await NodeFSP.readFile(imagePath),
+                decodeImage,
               );
             })()
           : await (async () => {
               const file = await client.readFileBase64(composerCwd, imagePath);
               if (!file) throw new Error("Could not read the pasted image path.");
-              return prepareComposerImage(imagePath, file);
+              return prepareComposerImage(imagePath, file, decodeImage);
             })();
         updateActiveComposerImages((current) => {
           if (

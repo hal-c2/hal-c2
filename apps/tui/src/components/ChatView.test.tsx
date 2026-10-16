@@ -1097,10 +1097,28 @@ describe("ChatView acknowledged submissions", () => {
         calls.push(args);
       },
     });
-    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-      width: 110,
-      height: 28,
+    // The decode is native and its duration varies, so the test holds it open and
+    // releases it once the busy status shows, instead of racing a frame budget.
+    let finishDecode: () => void = () => {};
+    const decodeFinished = new Promise<void>((resolve) => {
+      finishDecode = resolve;
     });
+    const preview = {
+      source: Uint8Array.from(Buffer.from(PNG_BASE64, "base64")),
+      imageWidth: 1,
+      imageHeight: 1,
+    } satisfies ImagePreview;
+    const setup = await testRender(
+      <ChatView
+        client={fake.client}
+        onExit={() => {}}
+        decodeImage={async () => {
+          await decodeFinished;
+          return preview;
+        }}
+      />,
+      { width: 110, height: 28 },
+    );
 
     await selectThread(setup, fake.connect);
     await React.act(async () => {
@@ -1110,6 +1128,11 @@ describe("ChatView acknowledged submissions", () => {
         mimeType: "image/png",
       });
       await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
+    await React.act(async () => {
+      finishDecode();
+      await decodeFinished;
     });
     await setup.waitForFrame(
       (frame) => frame.includes("explain this screenshot") && frame.includes("clipboard-i"),
