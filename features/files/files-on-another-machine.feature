@@ -2,6 +2,8 @@
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor starts the editor on the MC's own machine)
 #   apps/server-ex/lib/hal_c2/workspace.ex (what a project lets a client read and write)
 #   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link the share rides on)
+#   apps/server-ex/lib/hal_c2/machine_files.ex (the folders, files.localPath), machine_files/share.ex (what a member answers), machine_files/helper.ex (the mount)
+#   native/machine-files (the FUSE helper, a 9P2000.L client of the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp, FileActionsController.cpp, TerminalController.cpp
 #   apps/web/src/remoteOpen.ts (upstream opened a remote environment's files over SSH instead)
 #   Cross-domain: connections/ owns clustering; file-viewer-and-editing.feature owns opening on this machine.
@@ -9,7 +11,8 @@
 # The MC serves its projects' files to the cluster over 9P, as WSL does to Windows, and the
 # MC on the user's machine shows each member's share as a folder of its own through FUSE.
 # The user's own editor and file manager open a file of another machine from that folder.
-@backlog
+# Linux only for now: on macOS (FUSE-T or macFUSE) and Windows (WinFsp) files.localPath
+# answers that opening another machine's files is not supported yet.
 Feature: Files on another machine
   A thread's files live on the machine its MC runs on. The user's own editor, file manager
   and terminal links open them all the same, from a folder this machine keeps for each
@@ -70,7 +73,7 @@ Feature: Files on another machine
     When "devbox" is removed from the cluster
     Then this machine no longer keeps a folder for "devbox"
 
-  @desktop @tui
+  @backlog @desktop @tui
   Scenario Outline: A file of a thread on another machine opens in this machine's apps
     Given a thread of "shop" runs on "devbox"
     When the user <action> "src/cart.ts"
@@ -83,7 +86,7 @@ Feature: Files on another machine
       | reveals                      | the file manager |
       | follows a terminal's path to | the editor       |
 
-  @desktop @tui
+  @backlog @desktop @tui
   Scenario: A machine that cannot show the folder says what it needs
     Given this machine has no way to show another machine's folder
     And a thread of "shop" runs on "devbox"

@@ -82,7 +82,7 @@ defmodule HalC2.MachineFiles.Helper do
   @doc """
   Readies `root` to mount at: clears a mount left by a helper that did not get to
   unmount (one the kernel still lists, or one that answers ENOTCONN), then makes it
-  and its parents readable only by this user.
+  and the directory it sits in this user's alone.
   """
   def prepare(root) do
     if mounted?(root) or File.stat(root) == {:error, :enotconn} do
@@ -91,6 +91,7 @@ defmodule HalC2.MachineFiles.Helper do
     end
 
     HalC2.Paths.mkdir_private!(root)
+    File.chmod!(Path.dirname(Path.expand(root)), 0o700)
   rescue
     e in File.Error -> {:error, Exception.message(e)}
   end
