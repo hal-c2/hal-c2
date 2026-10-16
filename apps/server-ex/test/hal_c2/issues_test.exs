@@ -151,6 +151,33 @@ defmodule HalC2.IssuesTest do
     refute Map.has_key?(patch, "title")
   end
 
+  test "assignees are added and removed one login at a time, the others kept", %{dir: dir} do
+    rules!(dir, [
+      %{
+        "args" => ["--method POST", "repos/acme/widgets/issues/9/assignees"],
+        "stdout" => %{"number" => 9, "assignees" => [%{"login" => "alice"}, %{"login" => "dana"}]}
+      },
+      %{
+        "args" => ["--method DELETE", "repos/acme/widgets/issues/9/assignees"],
+        "stdout" => %{"number" => 9, "assignees" => [%{"login" => "bob"}]}
+      }
+    ])
+
+    input = Map.merge(@input, %{"number" => 9, "assignees" => ["dana"]})
+
+    assert {:ok, %{"number" => 9, "assignees" => ["alice", "dana"]}} =
+             Issues.handle("addAssignees", input)
+
+    input = Map.put(input, "assignees", ["alice"])
+    assert {:ok, %{"assignees" => ["bob"]}} = Issues.handle("removeAssignees", input)
+
+    assert [%{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+    assert [%{"assignees" => ["alice"]}] = rest_inputs(dir, "DELETE")
+
+    assert {:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", []))
+    assert length(calls(dir)) == 2
+  end
+
   test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do
     rules!(dir, [
       %{

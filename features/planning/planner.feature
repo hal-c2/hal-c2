@@ -1278,13 +1278,22 @@ Feature: Planner
       Then #7's task is marked as synced
 
     @mc
+    Scenario: A new owner replaces only the old owner among an issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user makes "dana" the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and to add "dana"
+      And GitHub is never asked to set #7's assignees outright
+      And #7's task is marked as synced
+
+    @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways
       And GitHub refuses changes to #7
       And the user makes "dana" the owner of #7's task
       And GitHub takes changes to #7 again
       When the user renames #7's task to "Rate limiting"
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     @mc
@@ -1301,7 +1310,7 @@ Feature: Planner
       Given "planner" syncs "acme/api" both ways
       And GitHub answers renaming #7 to "Rate limiting" late, refusing it
       When the user renames #7's task to "Rate limiting", then makes "dana" its owner before GitHub answers
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     # GitHub keeps the change that reaches it last, so a change waits for GitHub to answer

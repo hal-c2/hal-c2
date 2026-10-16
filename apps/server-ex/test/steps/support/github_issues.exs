@@ -104,6 +104,12 @@ defmodule HalC2.Steps.Support.GitHubIssues do
         for n <- numbers do
           rest(["--method PATCH", "repos/#{repository}/issues/#{n} "], %{"number" => n})
         end ++
+        for n <- numbers, method <- ~w(POST DELETE) do
+          rest(["--method #{method}", "repos/#{repository}/issues/#{n}/assignees"], %{
+            "number" => n,
+            "assignees" => []
+          })
+        end ++
         for n <- numbers do
           rest(["repos/#{repository}/issues/#{n}/comments"], %{
             "html_url" => "https://github.com/#{repository}/issues/#{n}#issuecomment-1"

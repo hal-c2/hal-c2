@@ -39,13 +39,15 @@ Feature: Issues, milestones and boards for MC plugins
     Then GitHub is asked to <effect>
 
     Examples:
-      | change                         | effect                               |
-      | creates the issue "Add limits" | create the issue "Add limits"        |
-      | closes it as completed         | close #7 as completed                |
-      | sets its labels to "backend"   | set the labels of #7 to "backend"    |
-      | adds #9 as a sub-issue         | add #9 as a sub-issue of #7          |
-      | marks it blocked by #5         | mark #7 as blocked by #5             |
-      | comments "On track"            | comment "On track" on #7             |
+      | change                          | effect                               |
+      | creates the issue "Add limits"  | create the issue "Add limits"        |
+      | closes it as completed          | close #7 as completed                |
+      | sets its labels to "backend"    | set the labels of #7 to "backend"    |
+      | adds "dana" to its assignees    | add "dana" to the assignees of #7    |
+      | takes "alice" off its assignees | take "alice" off the assignees of #7 |
+      | adds #9 as a sub-issue          | add #9 as a sub-issue of #7          |
+      | marks it blocked by #5          | mark #7 as blocked by #5             |
+      | comments "On track"             | comment "On track" on #7             |
 
   @mc
   Scenario: A plugin reads a board and the fields of its items
