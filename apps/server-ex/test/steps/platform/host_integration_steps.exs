@@ -507,6 +507,8 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     # gh in a directory with a space, as under a home or install path that has one.
     dir = Mc.tmp_dir(context.mc, "gh cli")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    # The host has no SSH agent unless a step gives it one (the developer's has).
+    World.put_os_env("SSH_AUTH_SOCK", nil)
     gh = Path.join(dir, "gh")
 
     File.write!(gh, """
@@ -522,6 +524,38 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     World.put_os_env("GH_CONFIG_DIR", config)
     Map.put(context, :gh_config, config)
+  end
+
+  step ~r/^an SSH agent on the host (?<state>answers for GitHub|holds no key GitHub accepts)$/,
+       %{args: [state]} = context do
+    dir = Mc.tmp_dir(context.mc, "ssh")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    World.put_os_env("SSH_AUTH_SOCK", Path.join(dir, "agent.sock"))
+
+    greeting =
+      if state == "answers for GitHub",
+        do:
+          "Hi acme! You've successfully authenticated, but GitHub does not provide shell access.",
+        else: "git@github.com: Permission denied (publickey)."
+
+    File.write!(Path.join(dir, "ssh-add"), "#!/bin/sh\necho '256 SHA256:x key (ED25519)'\n")
+    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\necho \"#{greeting}\" >&2\nexit 1\n")
+    for program <- ~w(ssh-add ssh), do: File.chmod!(Path.join(dir, program), 0o755)
+    context
+  end
+
+  step ~r/^the user's own git config sends "(?<url>[^"]+)" to SSH$/,
+       %{args: ["https://github.com/"]} = context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+
+    File.write!(config, """
+    [url "git@github.com:"]
+    \tinsteadOf = https://github.com/
+    \tpushInsteadOf = https://github.com/
+    """)
+
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
   end
 
   step "the MC sets up the git it starts", context do
@@ -575,6 +609,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
         else: url
 
     assert String.trim(fetched) == expected
+    context
+  end
+
+  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
+    repo = Mc.tmp_dir(context.mc, "push")
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
+    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+
+    assert String.trim(pushed) == url
     context
   end
 

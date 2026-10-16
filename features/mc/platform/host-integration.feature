@@ -315,6 +315,28 @@ Feature: The MC working with its host machine
     Then git fetches "git@github.com:acme/shop.git" over SSH
 
   @mc
+  Scenario: Git stays on SSH where an SSH agent answers for GitHub
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent on the host answers for GitHub
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over SSH
+
+  @mc
+  Scenario: An SSH agent that GitHub does not answer to leaves git on the GitHub CLI's sign-in
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent on the host holds no key GitHub accepts
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over HTTPS
+
+  @mc
+  Scenario: A user's own rule sending HTTPS to SSH does not send git back to SSH
+    Given the GitHub CLI on the host is signed in to github.com
+    And the user's own git config sends "https://github.com/" to SSH
+    When the MC sets up the git it starts
+    Then git fetches "https://github.com/acme/shop.git" over HTTPS
+    And git pushes to "https://github.com/acme/shop.git" over HTTPS
+
+  @mc
   Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update
     Given the GitHub CLI on the host is <before>
     And the MC sets up the git it starts
