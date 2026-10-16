@@ -21,7 +21,12 @@ defmodule HalC2.MixProject do
         hal_c2: [
           include_executables_for: [:unix],
           strip_beams: true,
-          steps: [:assemble, &stage_cursor_acp/1, &write_upgrade_manifest/1]
+          steps: [
+            :assemble,
+            &stage_cursor_acp/1,
+            &stage_machine_files/1,
+            &write_upgrade_manifest/1
+          ]
         ]
       ]
     ]
@@ -92,6 +97,24 @@ defmodule HalC2.MixProject do
         ["--outfile=#{target}/main.mjs"],
       package
     )
+
+    release
+  end
+
+  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper) in
+  # priv/bin. It is Linux-only for now; elsewhere the MC says it is not supported.
+  defp stage_machine_files(release) do
+    if :os.type() == {:unix, :linux} do
+      root = Path.expand("../..", __DIR__)
+      manifest = Path.join(root, "native/machine-files/Cargo.toml")
+      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+
+      target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
+      File.mkdir_p!(target)
+      built = Path.join(root, "native/machine-files/target/release/hal-c2-machine-files")
+      File.cp!(built, Path.join(target, "hal-c2-machine-files"))
+      File.chmod!(Path.join(target, "hal-c2-machine-files"), 0o755)
+    end
 
     release
   end

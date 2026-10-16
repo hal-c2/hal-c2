@@ -550,9 +550,14 @@ defmodule HalC2.Workspace do
   defp real([part | rest], acc, links) do
     next = Path.join(acc, part)
 
-    case File.read_link(next) do
-      {:ok, target} -> real(Path.split(Path.expand(target, acc)) ++ rest, "/", links + 1)
-      {:error, _} -> real(rest, next, links)
+    # Not through the file server (`HalC2.MachineFiles.Share` runs this).
+    case :prim_file.read_link(next) do
+      {:ok, target} ->
+        target = IO.chardata_to_string(target)
+        real(Path.split(Path.expand(target, acc)) ++ rest, "/", links + 1)
+
+      {:error, _} ->
+        real(rest, next, links)
     end
   end
 

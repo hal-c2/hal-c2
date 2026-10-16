@@ -113,7 +113,9 @@ defmodule HalC2.MachineFiles.Share do
         {:ok, entries}
 
       {:real, real_root} ->
-        with {:ok, names} <- File.ls(path) do
+        with {:ok, names} <- :prim_file.list_dir(path) do
+          names = Enum.map(names, &IO.chardata_to_string/1)
+
           {:ok, for(name <- Enum.sort(names), entry = entry(path, name, real_root), do: entry)}
         end
 
@@ -162,7 +164,7 @@ defmodule HalC2.MachineFiles.Share do
     with {:ok, _} <- under_root(path, roots),
          {:ok, fd} <- :file.open(path, [:write, :exclusive, :raw]) do
       :file.close(fd)
-      _ = File.chmod(path, Bitwise.band(mode, 0o7777))
+      _ = chmod(path, mode)
       stat(path, roots)
     end
   end
@@ -173,8 +175,8 @@ defmodule HalC2.MachineFiles.Share do
     roots = roots()
 
     with {:ok, _} <- under_root(path, roots),
-         :ok <- File.mkdir(path) do
-      _ = File.chmod(path, Bitwise.band(mode, 0o7777))
+         :ok <- :prim_file.make_dir(path) do
+      _ = chmod(path, mode)
       stat(path, roots)
     end
   end
@@ -183,7 +185,7 @@ defmodule HalC2.MachineFiles.Share do
   @spec remove(String.t(), :file | :dir) :: :ok | {:error, atom}
   def remove(path, kind) when is_binary(path) and kind in [:file, :dir] do
     with {:ok, _} <- under_root(path, roots()) do
-      if kind == :dir, do: File.rmdir(path), else: File.rm(path)
+      if kind == :dir, do: :prim_file.del_dir(path), else: :prim_file.delete(path)
     end
   end
 
@@ -194,7 +196,7 @@ defmodule HalC2.MachineFiles.Share do
 
     with {:ok, _} <- under_root(from, roots),
          {:ok, _} <- under_root(to, roots),
-         do: File.rename(from, to)
+         do: :prim_file.rename(from, to)
   end
 
   @doc """
@@ -293,7 +295,7 @@ defmodule HalC2.MachineFiles.Share do
   defp entry(dir, name, real_root) do
     path = child(dir, name)
 
-    case File.lstat(path, time: :posix) do
+    case lstat(path) do
       {:ok, %File.Stat{type: :symlink}} ->
         with true <- Workspace.within?(real_root, Workspace.real(path)),
              {:ok, attr} <- real_stat(path),
@@ -312,7 +314,7 @@ defmodule HalC2.MachineFiles.Share do
   # Only regular files are read and written: opening a fifo or a device would wait
   # for someone else, or do something other than read a file.
   defp regular(path) do
-    case File.stat(path) do
+    case file_stat(path) do
       {:ok, %File.Stat{type: :regular}} -> :ok
       {:ok, %File.Stat{type: :directory}} -> {:error, :eisdir}
       {:ok, _other} -> {:error, :eacces}
@@ -321,7 +323,7 @@ defmodule HalC2.MachineFiles.Share do
   end
 
   defp real_stat(path) do
-    with {:ok, stat} <- File.stat(path, time: :posix), do: {:ok, attr(stat)}
+    with {:ok, stat} <- file_stat(path), do: {:ok, attr(stat)}
   end
 
   defp attr(%File.Stat{} = stat) do
@@ -367,9 +369,38 @@ defmodule HalC2.MachineFiles.Share do
   end
 
   defp chmod(_path, nil), do: :ok
-  defp chmod(path, mode) when is_integer(mode), do: File.chmod(path, Bitwise.band(mode, 0o7777))
+
+  defp chmod(path, mode) when is_integer(mode),
+    do: write_info(path, %File.Stat{mode: Bitwise.band(mode, 0o7777)})
 
   defp touch(_path, nil), do: :ok
-  defp touch(path, :now), do: File.touch(path)
-  defp touch(path, time) when is_integer(time), do: File.touch(path, time)
+  defp touch(path, :now), do: touch(path, System.os_time(:second))
+
+  defp touch(path, time) when is_integer(time),
+    do: write_info(path, %File.Stat{atime: time, mtime: time})
+
+  # Every file call goes straight to the OS (`raw`, `:prim_file`), never through
+  # this VM's file server: a process of this VM that reads through a member's folder
+  # holds that server until its answer comes, which may be from here.
+  defp file_stat(path) do
+    with {:ok, info} <- :file.read_file_info(path, [:raw, time: :posix]),
+         do: {:ok, File.Stat.from_record(info)}
+  end
+
+  defp lstat(path) do
+    with {:ok, info} <- :file.read_link_info(path, [:raw, time: :posix]),
+         do: {:ok, File.Stat.from_record(info)}
+  end
+
+  # The fields `stat` leaves nil are not changed.
+  defp write_info(path, stat) do
+    info =
+      stat
+      |> File.Stat.to_record()
+      |> Tuple.to_list()
+      |> Enum.map(&if(&1 == nil, do: :undefined, else: &1))
+      |> List.to_tuple()
+
+    :file.write_file_info(path, info, [:raw, time: :posix])
+  end
 end

@@ -153,10 +153,8 @@ mod linux {
                 }
                 ExitCode::SUCCESS
             }
-            Ok(Event::Unmounted) => {
-                eprintln!("machine-files: the folder was unmounted");
-                ExitCode::FAILURE
-            }
+            // The MC unmounts it on the way down; anyone else is a reason to start again.
+            Ok(Event::Unmounted) => ExitCode::FAILURE,
         }
     }
 }
