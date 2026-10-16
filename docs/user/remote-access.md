@@ -115,6 +115,15 @@ and so do links to it in the desktop app.
 To copy a thread between machines that are not in one cluster, see
 [Copying a thread to another machine](./thread-migration.md#copying-a-thread-to-another-machine).
 
+### Dev servers on another machine
+
+A thread on another machine runs its dev servers there. When you open one of its browser
+tabs in your own browser from the desktop app, or a `localhost` link in its replies, the
+machine you are connected to forwards that port, so the page opens on this machine's
+`localhost`, on the same port when it is free here. Only a port one of the thread's browser
+tabs has open is forwarded. The forward closes with the thread's last tab at that port, or
+when the other machine stops answering.
+
 ### Balance new threads across machines
 
 Load balancing is off by default. Once the cluster has two or more machines, turn it on
