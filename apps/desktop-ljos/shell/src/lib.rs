@@ -31,6 +31,7 @@ pub mod storage;
 pub mod store;
 pub mod terminal;
 pub mod theme;
+pub mod thread_view;
 
 use std::path::PathBuf;
 use std::rc::Rc;
