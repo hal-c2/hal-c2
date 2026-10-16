@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::toasts::{Action, DEFAULT_TIMEOUT_MS, Run, Toasts};
 use ljos::prelude::Engine;
 use proptest::prelude::*;
@@ -541,6 +542,14 @@ impl World {
                 let name = format!("u{}", self.next_action);
                 let run: Run = Rc::new(logging(&self.log, &name));
                 let title = format!("{group} one");
+                // The keymap names the undo key.
+                let hint =
+                    Keymap::of(&self.hub.engine).shortcut_label(&self.hub.engine, "thread.undo");
+                let description = if hint.is_empty() {
+                    String::new()
+                } else {
+                    format!("{hint} to undo")
+                };
                 let m = &mut self.model;
                 self.hub
                     .with_controller::<Toasts, _>(|t, e| t.show_undo(e, group, &title, run));
@@ -555,6 +564,7 @@ impl World {
                     let mut runs = vec![name];
                     runs.extend(newest.actions[0].runs.clone());
                     newest.title = format!("{group} {count} threads");
+                    newest.description = description;
                     newest.actions = vec![ModelAction {
                         label: "Undo",
                         group: group.into(),
@@ -570,7 +580,7 @@ impl World {
                         id: format!("native:{}", m.next_id),
                         kind: "success".into(),
                         title,
-                        description: String::new(),
+                        description,
                         actions: vec![ModelAction {
                             label: "Undo",
                             group: group.into(),
@@ -711,16 +721,7 @@ impl World {
     }
 
     fn check(&self) {
-        let mut published = self.hub.published("toasts");
-        // The undo hint is the keymap's to say.
-        for item in published["items"].as_array_mut().unwrap() {
-            item["description"] = serde_json::Value::Null;
-        }
-        let mut expected = self.model.published();
-        for item in expected["items"].as_array_mut().unwrap() {
-            item["description"] = serde_json::Value::Null;
-        }
-        assert_eq!(published, expected);
+        assert_eq!(self.hub.published("toasts"), self.model.published());
         assert_eq!(*self.log.borrow(), self.model.log);
     }
 }

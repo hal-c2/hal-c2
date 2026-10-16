@@ -517,6 +517,6 @@ impl Toasts {
 }
 
 /// The undo shortcut's label, as the toast names it.
-fn undo_hint(_engine: &Engine) -> String {
-    String::new()
+fn undo_hint(engine: &Engine) -> String {
+    crate::controllers::keybindings::Keymap::of(engine).shortcut_label(engine, "thread.undo")
 }

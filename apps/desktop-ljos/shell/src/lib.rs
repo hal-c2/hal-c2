@@ -38,6 +38,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
+    engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
     bridge::Bridge::of(engine);
 }
 

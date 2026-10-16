@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use hal_c2_shell::commands::{Choice, Commands, Row};
+use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::menus::Menus;
 use ljos::prelude::Engine;
 
@@ -17,10 +18,20 @@ fn logged(log: &Log, entry: &str) -> impl Fn(&Engine) + 'static {
     move |_| log.borrow_mut().push(entry.clone())
 }
 
+/// The registry without the keymap's native commands.
+fn empty(hub: &Hub) -> Commands {
+    let commands = Commands::of(&hub.engine);
+    for row in commands.rows() {
+        commands.remove(&hub.engine, &row.command);
+    }
+    assert!(commands.is_empty());
+    commands
+}
+
 #[test]
 fn a_command_runs_by_its_id_and_an_unknown_one_says_so() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     let log = Log::default();
     commands.add(
         &hub.engine,
@@ -37,7 +48,7 @@ fn a_command_runs_by_its_id_and_an_unknown_one_says_so() {
 #[test]
 fn a_replaced_command_keeps_how_it_is_presented() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     let log = Log::default();
     commands.add(
         &hub.engine,
@@ -55,6 +66,8 @@ fn a_replaced_command_keeps_how_it_is_presented() {
         [Row {
             command: "theme.select".into(),
             title: "Theme".into(),
+            // The keymap's label for it.
+            shortcut: Keymap::of(&hub.engine).shortcut_label(&hub.engine, "theme.select"),
             description: "Pick one".into(),
             terms: vec!["colour".into()],
             ..Row::default()
@@ -73,7 +86,7 @@ fn a_replaced_command_keeps_how_it_is_presented() {
 #[test]
 fn a_command_run_from_a_controller_runs_once_the_controller_is_done() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     let log = Log::default();
     // The command reaches back into the controller that ran it.
     let reached = log.clone();
@@ -91,7 +104,7 @@ fn a_command_run_from_a_controller_runs_once_the_controller_is_done() {
 #[test]
 fn ran_failed_and_menu_hooks_follow_a_run() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     let log = Log::default();
     let (ran, failed, menu) = (log.clone(), log.clone(), log.clone());
     commands.on_ran(move |_, c| ran.borrow_mut().push(format!("ran {c}")));
@@ -121,7 +134,7 @@ fn ran_failed_and_menu_hooks_follow_a_run() {
 #[test]
 fn a_qml_command_runs_its_callback_and_goes_with_its_owner() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     js_value(&hub.engine, "globalThis.runs = 0");
     let callback = js_value(&hub.engine, "(() => { globalThis.runs += 1 })");
     let owner = hub
@@ -154,7 +167,7 @@ fn a_qml_command_runs_its_callback_and_goes_with_its_owner() {
 #[test]
 fn shortcuts_label_each_row_now_and_later() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     let changes = Rc::new(RefCell::new(0));
     let counted = changes.clone();
     commands.add(&hub.engine, "sidebar.toggle", "Toggle sidebar", |_| {});
@@ -190,7 +203,7 @@ fn shortcuts_label_each_row_now_and_later() {
 #[test]
 fn qml_reads_the_registry_as_a_model_with_a_count() {
     let hub = Hub::new();
-    let commands = Commands::of(&hub.engine);
+    let commands = empty(&hub);
     commands.add(&hub.engine, "a", "A", |_| {});
     commands.add(&hub.engine, "b", "B", |_| {});
     let obj = commands.object().expect("the registry's object");

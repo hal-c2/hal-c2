@@ -410,6 +410,15 @@ impl Commands {
         }
     }
 
+    /// How many commands are registered (owners gone or not).
+    pub fn len(&self) -> usize {
+        self.0.entries.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn contains(&self, engine: &Engine, command: &str) -> bool {
         self.prune(engine);
         self.index_of(command).is_some()

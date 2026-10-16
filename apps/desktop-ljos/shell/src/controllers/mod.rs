@@ -1,6 +1,7 @@
 //! The controllers ported so far, each a desktop-qt NativeController.
 
 pub mod client_activity;
+pub mod keybindings;
 pub mod layout;
 pub mod menus;
 pub mod navigation;
@@ -15,6 +16,7 @@ use crate::controller::{Registration, Scope};
 pub fn registrations() -> Vec<Registration> {
     vec![
         Registration::new::<client_activity::ClientActivity>("clientActivity", &[], Scope::Window),
+        Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),

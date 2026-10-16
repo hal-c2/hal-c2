@@ -6,6 +6,7 @@
 mod common;
 
 mod commands;
+mod keybindings;
 mod menus;
 mod settings;
 mod toasts;
