@@ -7,6 +7,8 @@ pub mod controller;
 pub mod controllers;
 pub mod json;
 pub mod mc;
+pub mod project;
+pub mod provider;
 pub mod qml;
 pub mod render;
 pub mod runtime;
