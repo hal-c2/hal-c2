@@ -73,20 +73,25 @@ Feature: Files on another machine
     When "devbox" is removed from the cluster
     Then this machine no longer keeps a folder for "devbox"
 
-  @backlog @desktop @tui
+  # The TUI opens files only in an editor: it has no file manager or terminal links to follow.
+  @desktop
   Scenario Outline: A file of a thread on another machine opens in this machine's apps
     Given a thread of "shop" runs on "devbox"
-    When the user <action> "src/cart.ts"
-    Then <app> on this machine opens it from the folder kept for "devbox"
+    When the user <does>
+    Then <app> on this machine opens "src/cart.ts" from the folder kept for "devbox"
     And nothing is started on "devbox"
 
     Examples:
-      | action                       | app              |
-      | opens in "VS Code"           | "VS Code"        |
-      | reveals                      | the file manager |
-      | follows a terminal's path to | the editor       |
+      | does                                         | app              |
+      | reveals "src/cart.ts" in the file manager    | the file manager |
+      | follows the path "src/cart.ts" in a terminal | the editor       |
 
-  @backlog @desktop @tui
+    @tui
+    Examples:
+      | does                             | app       |
+      | opens "src/cart.ts" in "VS Code" | "VS Code" |
+
+  @desktop @tui
   Scenario: A machine that cannot show the folder says what it needs
     Given this machine has no way to show another machine's folder
     And a thread of "shop" runs on "devbox"

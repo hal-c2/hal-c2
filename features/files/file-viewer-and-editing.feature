@@ -442,8 +442,10 @@ Feature: Viewing and editing files
       Then opening is unavailable and the user is told no SSH route is known
 
     # Another machine's paths name nothing on this computer, and an editor or
-    # file manager started on that machine opens where nobody is looking. Until
-    # its files can be reached from here, the user is told so instead.
+    # file manager started on that machine opens where nobody is looking. A
+    # cluster member's files open from the folder this machine keeps for it
+    # (files-on-another-machine.feature); an MC paired directly or reached
+    # through an SSH forward has none here, so the user is told so instead.
     @desktop
     Scenario Outline: An editor or file manager never starts on another machine
       Given the thread's files are on <where>
@@ -453,10 +455,6 @@ Feature: Viewing and editing files
 
       Examples:
         | where                                              | does                                                                 |
-        | another MC of the cluster                          | reveals "src/app.ts" in the file manager                             |
-        | another MC of the cluster                          | follows the path "src/app.ts" in a terminal                          |
-        | another MC of the cluster                          | opens the thread's workspace in an editor from the thread's details |
-        | another MC of the cluster                          | opens the thread in their editor                                     |
         | an MC on another machine the client is paired with | reveals "src/app.ts" in the file manager                             |
         | an MC reached through an SSH port forward          | follows the path "src/app.ts" in a terminal                          |
         | an MC on another machine the client is paired with | opens the thread's workspace in an editor from the thread's details |
@@ -465,7 +463,6 @@ Feature: Viewing and editing files
       @tui
       Examples:
         | where                                              | does                            |
-        | another MC of the cluster                          | opens "src/app.ts" in an editor |
         | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
         | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
 
