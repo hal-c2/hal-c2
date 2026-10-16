@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Compile desktop-ljos's QML (with desktop-qt's bricks) on Ljós; LJOS_BIN overrides the binary"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec apps/desktop-ljos/scripts/ljos.sh check "$@"
