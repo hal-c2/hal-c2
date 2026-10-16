@@ -1804,6 +1804,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "vt100",
+ "zbus",
 ]
 
 [[package]]

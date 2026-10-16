@@ -129,7 +129,7 @@ impl Fixture {
     }
 
     fn browse(&self) {
-        self.set("rootPath", Value::string(&self.root_path()));
+        self.set("rootPath", Value::string(self.root_path()));
         self.set("enabled", Value::Bool(true));
         self.settle();
     }
@@ -186,7 +186,7 @@ impl Fixture {
 #[test]
 fn a_disabled_model_neither_browses_nor_changes_anything() {
     let f = Fixture::new();
-    f.set("rootPath", Value::string(&f.root_path()));
+    f.set("rootPath", Value::string(f.root_path()));
     f.settle();
     assert_eq!(f.rows(), "");
     assert_eq!(common::number(&f.engine, f.root, "rootIndex"), -1.0);
@@ -387,7 +387,7 @@ fn a_root_that_is_not_a_plain_folder_is_not_taken() {
         assert_ne!(f.error(), "");
     }
     // A good root is taken again, and the failure forgotten.
-    f.set("rootPath", Value::string(&f.root_path()));
+    f.set("rootPath", Value::string(f.root_path()));
     f.settle();
     assert_eq!(f.error(), "");
     assert_eq!(common::number(&f.engine, f.root, "rootIndex"), 0.0);
@@ -470,7 +470,7 @@ fn trash_needs_the_exact_path_and_keeps_the_folder_when_it_fails() {
         fs::remove_dir_all(path).is_ok()
     });
     assert!(f.truth("trash", &[&victim, &victim]));
-    assert_eq!(&*trashed.borrow(), &[victim.clone()]);
+    assert_eq!(&*trashed.borrow(), std::slice::from_ref(&victim));
     assert!(!Path::new(&victim).exists());
     assert_eq!(f.rows(), "");
     assert_eq!(f.error(), "");

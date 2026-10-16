@@ -92,6 +92,10 @@ pub struct FakeMc {
     pub calls: RefCell<Vec<(String, String, Json)>>,
     on_ready: RefCell<Vec<OnReady>>,
     next: Cell<u64>,
+    /// Each call's reply, by its index in `calls`, until answered.
+    replies: RefCell<Vec<Option<Reply>>>,
+    /// The subscriptions still followed: id, shape, handler.
+    subs: RefCell<Vec<(SubId, Json, Option<OnFrame>)>>,
 }
 
 impl FakeMc {
@@ -101,6 +105,97 @@ impl FakeMc {
             .iter()
             .map(|(_, m, _)| m.clone())
             .collect()
+    }
+
+    /// Answers call `index` (of `calls`); false when it was answered before.
+    pub fn reply(
+        &self,
+        engine: &Engine,
+        index: usize,
+        result: Result<Json, hal_c2_shell::mc::McError>,
+    ) -> bool {
+        let reply = self
+            .replies
+            .borrow_mut()
+            .get_mut(index)
+            .and_then(Option::take);
+        match reply {
+            Some(reply) => {
+                reply(engine, result);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The index of the oldest call to `method` not answered yet.
+    pub fn pending(&self, method: &str) -> Option<usize> {
+        let calls = self.calls.borrow();
+        let replies = self.replies.borrow();
+        (0..calls.len()).find(|&i| calls[i].1 == method && replies[i].is_some())
+    }
+
+    /// The index of the oldest call to `method` on `environment` not
+    /// answered yet.
+    pub fn pending_on(&self, environment: &str, method: &str) -> Option<usize> {
+        let calls = self.calls.borrow();
+        let replies = self.replies.borrow();
+        (0..calls.len())
+            .find(|&i| calls[i].0 == environment && calls[i].1 == method && replies[i].is_some())
+    }
+
+    /// Answers the oldest unanswered call to `method`; panics without one.
+    pub fn answer(
+        &self,
+        engine: &Engine,
+        method: &str,
+        result: Result<Json, hal_c2_shell::mc::McError>,
+    ) {
+        let index = self
+            .pending(method)
+            .unwrap_or_else(|| panic!("no unanswered {method}"));
+        self.reply(engine, index, result);
+    }
+
+    /// The shapes followed now, with their ids.
+    pub fn subscriptions(&self) -> Vec<(SubId, Json)> {
+        self.subs
+            .borrow()
+            .iter()
+            .map(|(id, shape, _)| (*id, shape.clone()))
+            .collect()
+    }
+
+    /// Sends `frame` (an object with `t`) to every subscription whose shape
+    /// is `{type: kind}` for `environment` (any, when empty).
+    pub fn frame(&self, engine: &Engine, kind: &str, environment: &str, frame: Json) {
+        let Json::Object(frame) = frame else {
+            panic!("a frame is an object")
+        };
+        let ids: Vec<SubId> = self
+            .subscriptions()
+            .into_iter()
+            .filter(|(_, shape)| {
+                shape.get("type").and_then(Json::as_str) == Some(kind)
+                    && (environment.is_empty()
+                        || shape.get("environment").and_then(Json::as_str) == Some(environment))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            let handler = self
+                .subs
+                .borrow_mut()
+                .iter_mut()
+                .find(|(i, _, _)| *i == id)
+                .and_then(|(_, _, h)| h.take());
+            let Some(mut handler) = handler else { continue };
+            handler(engine, &frame);
+            // Back, unless the frame unsubscribed it.
+            if let Some(slot) = self.subs.borrow_mut().iter_mut().find(|(i, _, _)| *i == id) {
+                slot.2 = Some(handler);
+            }
+        }
     }
 
     /// The MC says hello (or drops), as a delivery would tell it.
@@ -123,18 +218,23 @@ impl Mc for FakeMc {
         "env-1".into()
     }
 
-    fn call(&self, environment: &str, method: &str, payload: Json, _reply: Reply) {
+    fn call(&self, environment: &str, method: &str, payload: Json, reply: Reply) {
         self.calls
             .borrow_mut()
             .push((environment.into(), method.into(), payload));
+        self.replies.borrow_mut().push(Some(reply));
     }
 
-    fn subscribe(&self, _: Json, _: OnFrame, _: Option<Resume>) -> SubId {
+    fn subscribe(&self, shape: Json, on_frame: OnFrame, _: Option<Resume>) -> SubId {
         self.next.set(self.next.get() + 1);
-        SubId(self.next.get())
+        let id = SubId(self.next.get());
+        self.subs.borrow_mut().push((id, shape, Some(on_frame)));
+        id
     }
 
-    fn unsubscribe(&self, _: SubId) {}
+    fn unsubscribe(&self, id: SubId) {
+        self.subs.borrow_mut().retain(|(i, _, _)| *i != id);
+    }
 
     fn more(&self, _: SubId, _: u32) {}
 

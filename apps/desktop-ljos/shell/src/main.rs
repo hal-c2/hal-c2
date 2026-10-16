@@ -30,7 +30,11 @@ use std::time::{Duration, Instant};
 
 use hal_c2_mc::pairing;
 use hal_c2_shell::bridge::Bridge;
+use hal_c2_shell::controller;
+use hal_c2_shell::controllers::alerts::AlertController;
 use hal_c2_shell::mc::{Connection, Disconnected, Mc};
+#[cfg(all(unix, not(target_os = "macos")))]
+use hal_c2_shell::notifications::NativeNotifications;
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::session::{self, Session};
 use hal_c2_shell::storage::{Profile, StoragePaths};
@@ -372,14 +376,20 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-/// The I/O thread has events for [`Connection::deliver`].
-struct Wake;
+/// What other threads tell the window's.
+enum Message {
+    /// The I/O thread has events for [`Connection::deliver`].
+    Wake,
+    /// A system notification for this thread was clicked.
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    Activated(String),
+}
 
 /// The window, until it closes.
 fn run(app: App, options: Options) -> Result<(), String> {
     let config = ShellConfig::new("HAL-C2").with_size(options.size.0 as f32, options.size.1 as f32);
     app.shell_config(config)
-        .on_message(|_: &Engine, _: Wake| {})
+        .on_message(|_: &Engine, _: Message| {})
         .run_with(move |setup| {
             let handle = setup.handle();
             let engine = setup.engine().clone();
@@ -388,33 +398,50 @@ fn run(app: App, options: Options) -> Result<(), String> {
             // beside the inbox (see mc.rs, folders/watch.rs).
             let folders_handle = handle.clone();
             hal_c2_shell::folders::set_wake(&engine, move || {
-                let _ = folders_handle.send_coalesced(CoalesceKey(1), Wake);
+                let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
-            let connection = match &options.launch.mc_origin {
+            let (mc, connection): (Rc<dyn Mc>, _) = match &options.launch.mc_origin {
                 Some(origin) => {
+                    let wake = handle.clone();
                     let connection = Rc::new(Connection::spawn(move || {
-                        let _ = handle.send_coalesced(CoalesceKey(1), Wake);
+                        let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
                     }));
                     connection.open(origin, &options.mc_token)?;
-                    Some(connection)
+                    (connection.clone(), Some(connection))
                 }
-                None => None,
+                None => (Rc::new(Disconnected::default()), None),
             };
-            let delivering = connection.clone();
-            setup.on_message(move |engine: &Engine, Wake| {
-                // A panic here would drop the rest of the inbox's batch.
-                engine.turn(None, || {
-                    if let Some(connection) = &delivering {
-                        connection.deliver(engine);
-                    }
-                    hal_c2_shell::folders::deliver(engine);
-                });
+            setup.on_message(move |engine: &Engine, message| match message {
+                Message::Wake => {
+                    // A panic here would drop the rest of the inbox's batch.
+                    engine.turn(None, || {
+                        if let Some(connection) = &connection {
+                            connection.deliver(engine);
+                        }
+                        hal_c2_shell::folders::deliver(engine);
+                    });
+                }
+                Message::Activated(key) => {
+                    engine.turn(None, || {
+                        controller::with::<AlertController, _>(engine, |alerts, engine| {
+                            alerts.open_thread(engine, &key)
+                        });
+                    });
+                }
             });
-            let mc: Rc<dyn Mc> = match connection {
-                Some(connection) => connection,
-                None => Rc::new(Disconnected::default()),
-            };
             hal_c2_shell::start(&engine, &options.launch, mc);
+            // Alerts reach the desktop's notification service; a click shows
+            // its thread.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let clicked = handle.clone();
+                let notifications = NativeNotifications::session(move |key| {
+                    let _ = clicked.send(Message::Activated(key));
+                });
+                controller::with::<AlertController, _>(&engine, |alerts, _| {
+                    alerts.set_presenter(Rc::new(notifications))
+                });
+            }
             dispatch_actions(&engine, &options.actions);
             engine
                 .create_from_url(ROOT, None, Vec::new())

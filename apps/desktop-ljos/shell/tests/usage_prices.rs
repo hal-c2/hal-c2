@@ -121,6 +121,16 @@ impl World {
         World::new(&[("env-1", "", overrides)])
     }
 
+    /// What the usage page subscribes to, without the Settings singleton's
+    /// own config subscription.
+    fn followed(&self) -> Vec<Json> {
+        self.mc
+            .subscribed()
+            .into_iter()
+            .filter(|shape| shape.get("usageLimitsCommand").is_none())
+            .collect()
+    }
+
     fn act(&self, action: &str, payload: Json) {
         dispatch(&self.engine, action, payload);
     }
@@ -206,10 +216,10 @@ fn it_is_closed_until_opened_and_follows_the_chosen_environments() {
     // Edits to a closed dialog are taken and ignored.
     w.edit("m", INPUT, "1");
     assert_eq!(prices(&w.engine)["rows"], json!([]));
-    assert!(w.mc.subscribed().is_empty());
+    assert!(w.followed().is_empty());
 
     w.act("usagePrices.open", json!({}));
-    assert_eq!(w.mc.subscribed(), [shape("env-1")]);
+    assert_eq!(w.followed(), [shape("env-1")]);
     let state = prices(&w.engine);
     assert_eq!(state["open"], true);
     assert_eq!(
@@ -218,7 +228,7 @@ fn it_is_closed_until_opened_and_follows_the_chosen_environments() {
     );
 
     w.act("usagePrices.close", json!({}));
-    assert!(w.mc.subscribed().is_empty());
+    assert!(w.followed().is_empty());
     assert_eq!(prices(&w.engine)["open"], false);
 }
 
@@ -547,11 +557,11 @@ fn a_save_while_saving_is_ignored_and_closing_forgets_the_drafts() {
 fn an_environment_that_comes_back_is_followed_afresh() {
     let w = World::one(json!({}));
     w.open();
-    assert_eq!(w.mc.subscribed().len(), 1);
+    assert_eq!(w.followed().len(), 1);
     w.mc.set_ready(&w.engine, false);
     w.mc.set_ready(&w.engine, true);
     // Online is the same set again here, so it is not resubscribed.
-    assert_eq!(w.mc.subscribed().len(), 1);
+    assert_eq!(w.followed().len(), 1);
 
     // A machine paired while the dialog is open joins it.
     set_environments(
@@ -570,7 +580,7 @@ fn an_environment_that_comes_back_is_followed_afresh() {
         ],
     );
     w.mc.set_ready(&w.engine, false);
-    assert_eq!(w.mc.subscribed().len(), 2);
+    assert_eq!(w.followed().len(), 2);
     assert_eq!(prices(&w.engine)["targets"].as_array().unwrap().len(), 2);
 }
 

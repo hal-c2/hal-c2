@@ -347,7 +347,7 @@ impl<'e> Model<'e> {
             }
         };
         engine.watch(obj, LocalFolderModel::ROOT_PATH.index, {
-            let again = again.clone();
+            let again = again;
             move |e, v| {
                 let path = e.to_js_string(v).to_string();
                 again(e, &|m| m.write_root(&path));

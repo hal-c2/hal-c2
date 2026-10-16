@@ -4,6 +4,7 @@
 
 pub mod bridge;
 pub mod cache;
+pub mod commands;
 pub mod controller;
 pub mod controllers;
 pub mod device_screen;
@@ -11,9 +12,14 @@ pub mod environment_settings;
 pub mod folders;
 pub mod highlighter;
 pub mod json;
+pub mod keybindings;
 pub mod mc;
 pub mod project;
 pub mod provider;
+// The desktop's notification service is D-Bus's; elsewhere system
+// notifications stay quiet (desktop-qt's need HAL_C2_HAS_DBUS too).
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod notifications;
 pub mod qml;
 pub mod qr;
 pub mod render;
@@ -52,6 +58,8 @@ pub fn register(engine: &Engine) {
     highlighter::register(engine, v);
     device_screen::register(engine, v);
     terminal::register(engine);
+    engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
+    engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
     bridge::Bridge::of(engine);
 }
 
@@ -96,6 +104,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         controllers::licenses::set_manifest_path(engine, manifest);
     }
     controller::start(engine, mc.clone(), controllers::registrations());
+    controllers::settings::Settings::of(engine).set_device_path(
+        engine,
+        launch
+            .config_dir
+            .as_ref()
+            .map(|dir| dir.join("preferences.json")),
+    );
     match &launch.mc_origin {
         Some(origin) => {
             // NativeShell: what the cache kept of this MC shows while the

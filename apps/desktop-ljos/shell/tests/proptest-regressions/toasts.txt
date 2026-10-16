@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 65ce6d6c940f8607d5355591a2d13bdc99de71cd48d994058ab02e9b1d71a42e # shrinks to ops = [ShowUndo { group: "" }, Update { index: 0, same: true }]

@@ -55,6 +55,15 @@ fancy-regex = "0.19"
 # The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
 vt100 = "0.16"
 
+# System notifications (src/notifications.rs). Already built for Ljós's
+# accessibility; notify-rust's one-handle-per-notification wait cannot hear
+# a click on an older notification, nor close them all.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
 [dev-dependencies]
+# The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"
+# The fake notification service's signal bodies (tests/notifications.rs).
+serde.workspace = true
 tempfile = "3"
