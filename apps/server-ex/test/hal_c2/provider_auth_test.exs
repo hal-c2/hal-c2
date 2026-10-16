@@ -43,6 +43,13 @@ defmodule HalC2.ProviderAuthTest do
     %{auth_file: auth_file}
   end
 
+  # A socket's unsubscribe can arrive after the test's registry has stopped (scenario teardown).
+  test "unsubscribing once the registry has stopped is a no-op" do
+    stop_supervised!(HalC2.ProviderAuth.Registry)
+
+    assert :ok = HalC2.ProviderAuth.unsubscribe("opencode", self())
+  end
+
   # The provider list says whether the agent is signed in, probing it when needed.
   defp auth_status do
     :ok = HalC2.Settings.watch(self())

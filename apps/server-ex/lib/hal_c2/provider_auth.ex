@@ -74,6 +74,10 @@ defmodule HalC2.ProviderAuth do
       [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid})
       [] -> :ok
     end
+  rescue
+    # The registry is gone with the services it belongs to (a scenario's teardown):
+    # nothing is subscribed any more.
+    ArgumentError -> :ok
   end
 
   defp call(instance, message) do
