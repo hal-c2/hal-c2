@@ -84,13 +84,15 @@ defmodule HalC2.Test.DevServer do
     port
   end
 
+  # Until the server stops, which closes `listen`.
   defp accept(listen, owner) do
-    {:ok, socket} = :gen_tcp.accept(listen)
-    conn = spawn(fn -> receive(do: ({:socket, socket} -> echo(socket, owner))) end)
-    :ok = :gen_tcp.controlling_process(socket, conn)
-    send(conn, {:socket, socket})
-    send(owner, {:dev_server, :accepted, conn})
-    accept(listen, owner)
+    with {:ok, socket} <- :gen_tcp.accept(listen) do
+      conn = spawn(fn -> receive(do: ({:socket, socket} -> echo(socket, owner))) end)
+      :ok = :gen_tcp.controlling_process(socket, conn)
+      send(conn, {:socket, socket})
+      send(owner, {:dev_server, :accepted, conn})
+      accept(listen, owner)
+    end
   end
 
   defp echo(socket, owner) do
