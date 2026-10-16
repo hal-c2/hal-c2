@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Render the desktop shell on Ljós to .hal-c2/desktop-ljos.png without a window (--out, --size, --settle)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec apps/desktop-ljos/scripts/ljos.sh render "$@"
