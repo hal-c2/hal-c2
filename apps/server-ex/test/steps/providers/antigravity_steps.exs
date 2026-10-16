@@ -1170,7 +1170,9 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
-  step "the request is refused", context do
+  @doc false
+  # `the request is refused` (common steps) for Antigravity's file request.
+  def refused(context) do
     assert [%{"error" => %{"code" => -32002}}, %{"error" => %{"code" => -32002}}] =
              answers = FakeAcp.answers(context)
 

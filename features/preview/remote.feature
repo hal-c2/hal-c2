@@ -4,9 +4,10 @@
 #   apps/server-ex/lib/hal_c2/preview.ex (serverEpoch per MC run, watcher monitoring)
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host stream ends on eviction, dropped on socket exit)
 #   apps/server-ex/lib/hal_c2/local_servers.ex
+#   apps/server-ex/lib/hal_c2/preview_forward.ex, preview_forward/ (preview.forward: listener, grant, pipes)
+#   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link a forward rides on)
 #   apps/web/src/components/preview/usePreviewSession.ts, useDiscoveredLocalServers.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
-#   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link a forward rides on)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp, apps/desktop-qt/src/ShellBridge.cpp (tabs open in the system browser)
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (web links in a reply)
 #   apps/web/src/browser/browserTargetResolver.ts (upstream rewrote localhost to the environment's host,
@@ -112,26 +113,26 @@ Feature: Preview across MCs and devices
       And that MC is in a cluster with a second MC on another machine
       And a dev server on the second MC's machine listens on port 3000 for that machine only
 
-    @backlog @mc
+    @mc
     Scenario: Opening a tab for a dev server on another MC forwards its port
       When the client opens a browser tab at "http://localhost:3000" for a thread on the second MC
       Then the client's MC listens on port 3000 for its own machine only
       And a page asked of that port is answered by the second MC's dev server
 
-    @backlog @mc
+    @mc
     Scenario: A forwarded dev server keeps its live connections
       Given the client's MC forwards port 3000 for a thread on the second MC
       When a page from the forward opens a websocket to the dev server
       Then messages pass both ways until either side closes it
 
-    @backlog @mc
+    @mc
     Scenario: A port already in use on the client's machine is forwarded on another one
       Given port 3000 is in use on the client's machine
       When the client opens a browser tab at "http://localhost:3000" for a thread on the second MC
       Then the client's MC forwards the dev server on a free port of its own machine
       And the client is told the address it forwards to
 
-    @backlog @mc
+    @mc
     Scenario Outline: Only a dev server a thread has a tab for is forwarded
       When the client asks to forward <port> of the second MC's machine for a thread
       Then the request is refused
@@ -143,20 +144,20 @@ Feature: Preview across MCs and devices
         | the second MC's own port, even when a tab names it |
         | the cluster's port, even when a tab names it       |
 
-    @backlog @mc
+    @mc
     Scenario: A forward closes with the last tab that uses it
       Given the client's MC forwards port 3000 for a thread on the second MC
       When the thread's last tab at port 3000 is closed
       Then the client's MC stops listening on port 3000
 
-    @backlog @mc
+    @mc
     Scenario: A forward to an MC that stops answering closes
       Given the client's MC forwards port 3000 for a thread on the second MC
       When the second MC stops answering
       Then the client's MC stops listening on port 3000
       And connections through it are closed rather than left hanging
 
-    @backlog @mc
+    @mc
     Scenario: A dev server on the client's own MC is not forwarded
       When the client opens a browser tab at "http://localhost:3000" for a thread on its own MC
       Then nothing is forwarded
