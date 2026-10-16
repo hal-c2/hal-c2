@@ -5,6 +5,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod alerts;
 mod commands;
 mod keybindings;
 mod menus;

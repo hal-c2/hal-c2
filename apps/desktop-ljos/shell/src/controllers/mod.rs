@@ -1,5 +1,6 @@
 //! The controllers ported so far, each a desktop-qt NativeController.
 
+pub mod alerts;
 pub mod client_activity;
 pub mod keybindings;
 pub mod layout;
@@ -16,6 +17,7 @@ use crate::controller::{Registration, Scope};
 /// Every controller the shell runs, as NativeControllerRegistrar lists them.
 pub fn registrations() -> Vec<Registration> {
     vec![
+        Registration::new::<alerts::AlertController>("alerts", &[], Scope::Shared),
         Registration::new::<client_activity::ClientActivity>("clientActivity", &[], Scope::Window),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),

@@ -432,6 +432,15 @@ impl Bridge {
         out
     }
 
+    /// Asks the window to do something to itself ("raise", "minimize"), as
+    /// the bricks' `Shell.windowCommand` does: `windowCommandRequested`.
+    pub fn window_command(self, engine: &Engine, command: &str) {
+        let _ = ShellBridge::emit_window_command_requested(
+            &Cx::new(engine, self.0),
+            Atom::new(command),
+        );
+    }
+
     /// Opens a link: the app's own (`hal-c2:`) as `link.open`, a web or mail
     /// link in the system's handler; anything else is ignored.
     pub fn open_external(self, engine: &Engine, url: &str) {
