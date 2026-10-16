@@ -13,6 +13,7 @@ pub mod qml;
 pub mod qr;
 pub mod render;
 pub mod runtime;
+pub mod single_instance;
 pub mod theme;
 
 use std::path::PathBuf;

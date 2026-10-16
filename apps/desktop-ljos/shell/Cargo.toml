@@ -34,5 +34,7 @@ serde_json.workspace = true
 url = "2"
 # Project and provider helpers: names, monograms, instance ids and the QR code of a pairing link.
 qrcodegen = "1"
+# One running shell per home (src/single_instance.rs): a local socket.
+interprocess = "2"
 unicode-general-category = "1"
 unicode-normalization = "0.1"
