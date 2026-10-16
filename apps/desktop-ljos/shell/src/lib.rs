@@ -3,6 +3,7 @@
 //! the bricks in apps/desktop-qt/qml.
 
 pub mod bridge;
+pub mod cache;
 pub mod controller;
 pub mod controllers;
 pub mod json;
