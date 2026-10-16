@@ -276,6 +276,7 @@ struct Collapse : Command {
 struct Answer : Command {
   QString path;
   bool ok = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
+  bool twice = *rc::gen::weightedElement<bool>({{1, true}, {4, false}});  // the listing names an entry twice
   explicit Answer(const Model& model) {
     RC_PRE(!model.pending.isEmpty());
     path = *oneOf(model.pending);
@@ -287,7 +288,9 @@ struct Answer : Command {
     apply(expected);
     sut.fetched.removeOne(path);
     if (ok) {
-      sut.tree.setListing(path, before.listing(path));
+      QList<FileTreeModel::Entry> listing = before.listing(path);
+      if (twice && !listing.isEmpty()) listing.append(listing.first());
+      sut.tree.setListing(path, listing);
     } else {
       sut.tree.setFailed(path, QStringLiteral("no such folder"));
     }
