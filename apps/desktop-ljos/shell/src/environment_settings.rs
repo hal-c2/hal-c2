@@ -76,6 +76,7 @@ struct State {
     followed: HashMap<String, Target>,
 }
 
+type Done = Box<dyn FnOnce(&Engine, Outcome)>;
 type ChangedListener = Rc<dyn Fn(&Engine)>;
 type FrameListener = Rc<dyn Fn(&Engine, &str, &Frame)>;
 
@@ -235,7 +236,7 @@ impl EnvironmentSettings {
         struct Pending {
             waiting: usize,
             outcome: Outcome,
-            done: Option<Box<dyn FnOnce(&Engine, Outcome)>>,
+            done: Option<Done>,
         }
         let pending = Rc::new(RefCell::new(Pending {
             waiting: reachable.len(),
