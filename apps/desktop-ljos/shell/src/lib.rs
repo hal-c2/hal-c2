@@ -10,6 +10,10 @@ pub mod environment_settings;
 pub mod json;
 pub mod keybindings;
 pub mod mc;
+// The desktop's notification service is D-Bus's; elsewhere system
+// notifications stay quiet (desktop-qt's need HAL_C2_HAS_DBUS too).
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod notifications;
 pub mod qml;
 pub mod render;
 pub mod runtime;

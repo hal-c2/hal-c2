@@ -1751,8 +1751,10 @@ dependencies = [
  "ljos_runtime",
  "open",
  "proptest",
+ "serde",
  "serde_json",
  "url",
+ "zbus",
 ]
 
 [[package]]
