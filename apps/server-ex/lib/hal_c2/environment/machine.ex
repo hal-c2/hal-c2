@@ -4,6 +4,9 @@ defmodule HalC2.Environment.Machine do
   product names on macOS, DMI on Linux. Every probe
   may fail; `nil` means no signal, and clients draw a generic server until the
   user picks an icon. Detected once per MC.
+
+  Also the host's identity (`platform.machineId`), which tells a client whether
+  this MC runs on the machine the user sits at.
   """
 
   # SMBIOS System Enclosure types; shapes that are not machines fall through.
@@ -47,6 +50,78 @@ defmodule HalC2.Environment.Machine do
 
       kind ->
         kind
+    end
+  end
+
+  @doc """
+  `platform.machineId`: the lowercase hex SHA-256 of the host's machine id, read as
+  Qt's `QSysInfo::machineUniqueId()` reads it, so a desktop on this machine hashes
+  the same bytes. `nil` when the host has none. Read once per MC.
+  """
+  def id do
+    case :persistent_term.get({__MODULE__, :id}, :unknown) do
+      :unknown ->
+        id = hash(raw_id())
+        :persistent_term.put({__MODULE__, :id}, id)
+        id
+
+      id ->
+        id
+    end
+  end
+
+  @doc false
+  def hash(raw) when is_binary(raw) and raw != "",
+    do: :crypto.hash(:sha256, raw) |> Base.encode16(case: :lower)
+
+  def hash(_), do: nil
+
+  # qsysinfo.cpp: IOPlatformUUID on macOS, MachineGuid in the registry's 64-bit view
+  # on Windows, D-Bus's machine id elsewhere. Qt does not read /etc/machine-id,
+  # which D-Bus's usually links to.
+  defp raw_id do
+    case :os.type() do
+      {:unix, :darwin} ->
+        with text when is_binary(text) <- probe("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]),
+             [_, uuid] <- Regex.run(~r/"IOPlatformUUID"\s*=\s*"([^"]+)"/, text) do
+          uuid
+        else
+          _ -> nil
+        end
+
+      {:win32, _} ->
+        key = "HKLM\\SOFTWARE\\Microsoft\\Cryptography"
+
+        with text when is_binary(text) <-
+               probe("reg", ["query", key, "/v", "MachineGuid", "/reg:64"]),
+             [_, guid] <- Regex.run(~r/MachineGuid\s+REG_SZ\s+(\S+)/, text) do
+          guid
+        else
+          _ -> nil
+        end
+
+      {:unix, _} ->
+        dbus_id(["/var/lib/dbus/machine-id", "/usr/local/var/lib/dbus/machine-id"])
+    end
+  end
+
+  @doc false
+  # As Qt reads it: the first of `paths` that exists (one that cannot be opened ends
+  # the search), its first 32 bytes as they are.
+  def dbus_id([]), do: nil
+
+  def dbus_id([path | rest]) do
+    case File.open(path, [:read, :binary]) do
+      {:ok, file} ->
+        bytes = IO.binread(file, 32)
+        File.close(file)
+        if is_binary(bytes), do: bytes
+
+      {:error, :enoent} ->
+        dbus_id(rest)
+
+      {:error, _} ->
+        nil
     end
   end
 

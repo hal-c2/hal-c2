@@ -31,7 +31,7 @@ private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
     bridge.setLocalFolderImportEnabled(true);
-    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localProjects", QVariantList{}}});
+    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localFolders", true}, {"localProjects", QVariantList{}}});
     theme = std::make_unique<ThemeStore>(directory.path());
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", &bridge);
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
@@ -116,7 +116,7 @@ private slots:
     click(cancel);
 
     QVERIFY(explorer->property("canModifySelection").toBool());
-    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localProjects", QVariantList{
+    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localFolders", true}, {"localProjects", QVariantList{
       QVariantMap{{"workspaceRoot", directory.filePath("archive/design")}, {"displayName", "Design"}},
       QVariantMap{{"workspaceRoot", directory.path()}, {"displayName", "Workspace"}}
     }}});
@@ -125,7 +125,7 @@ private slots:
     QVERIFY(picker);
     QCOMPARE(picker->property("currentIndex").toInt(), 1);
     QCOMPARE(picker->property("displayText").toString(), QString("Workspace"));
-    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localProjects", QVariantList{}}});
+    bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localFolders", true}, {"localProjects", QVariantList{}}});
     QTRY_VERIFY(explorer->property("canModifySelection").toBool());
   }
 

@@ -1,10 +1,11 @@
 // The file viewer beyond reading (files/file-viewer-and-editing.feature):
-// rendered files and their source, opening a file in the environment's
-// editor, and editing with saves that follow the typing.
+// rendered files and their source, opening a file in an editor on this computer,
+// and editing with saves that follow the typing.
 import { expect } from "bun:test";
 import { DEFAULT_SERVER_SETTINGS, EDITORS } from "@hal-c2/contracts";
 
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
+import { hostedHere } from "../../../src/thisMachine.ts";
 import { step } from "../../steps.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
@@ -80,7 +81,8 @@ step("the user switches back", async (ctx: World) => {
 
 // --- The environment's editor ---------------------------------------------------------
 
-step("the environment has the editor {string}", (ctx: World, label: string) => {
+/** The MC offers the editor `label`; asked to start one, it does. */
+const hasEditor = (ctx: World, label: string) => {
   const editor = EDITORS.find((candidate) => candidate.label === label)!;
   beforeBoot(ctx, () => {
     ctx.fake!.override("getServerConfig", (async () => ({
@@ -89,7 +91,42 @@ step("the environment has the editor {string}", (ctx: World, label: string) => {
     })) as never);
     ctx.fake!.settings.on("shell.openInEditor", () => null);
   });
-});
+};
+
+step(
+  "the thread runs on this computer, which has the editor {string}",
+  (ctx: World, label: string) => hasEditor(ctx, label),
+);
+
+// Where the MC serving the thread is, as the client tells (thisMachine.ts):
+// by the machine ids where both are known, else by being its own MC on loopback.
+const HERE = "5e1f00000000000000000000000000000000000000000000000000000000c0de";
+const ELSEWHERE = "a1".repeat(32);
+const ELSEWHERES = {
+  "another MC of the cluster": { theirs: null, own: false, origin: "ws://127.0.0.1:3773" },
+  "an MC on another machine the client is paired with": {
+    theirs: ELSEWHERE,
+    own: true,
+    origin: "ws://192.168.1.20:3773",
+  },
+  "an MC reached through an SSH port forward": {
+    theirs: ELSEWHERE,
+    own: true,
+    origin: "ws://127.0.0.1:3773",
+  },
+} as const;
+
+step(
+  /^the thread's files are on (another MC of the cluster|an MC on another machine the client is paired with|an MC reached through an SSH port forward)$/,
+  (ctx: World, where: keyof typeof ELSEWHERES) => {
+    hasEditor(ctx, "VS Code");
+    beforeBoot(ctx, () => {
+      ctx.fake!.override("localPathFor", async (path) =>
+        hostedHere({ ours: HERE, ...ELSEWHERES[where] }) ? path : null,
+      );
+    });
+  },
+);
 
 step("the user opens {string} in {string}", async (ctx: World, path: string, editor: string) => {
   await openFile(ctx, path);
@@ -97,8 +134,30 @@ step("the user opens {string} in {string}", async (ctx: World, path: string, edi
   await settle(ctx);
 });
 
+step("the user opens {string} in an editor", async (ctx: World, path: string) => {
+  await openFile(ctx, path);
+  await chooseCommand(ctx, "Open file in VS Code");
+  await settle(ctx);
+});
+
+step("nothing is started on that machine", (ctx: World) => {
+  expect(mcCalls(ctx, "shell.openInEditor")).toEqual([]);
+});
+
 step(
-  "{string} opens {string} on the environment",
+  "the user is told the files are on another machine and can't be opened here yet",
+  async (ctx: World) => {
+    const screen = await settle(ctx);
+    expect(status(ctx)).toEqual({
+      kind: "error",
+      text: "The files are on another machine and can't be opened here yet.",
+    });
+    expect(screen).toContain(statusLabel(ctx));
+  },
+);
+
+step(
+  "{string} opens {string} on this computer",
   async (ctx: World, label: string, path: string) => {
     const screen = await settle(ctx);
     const editor = EDITORS.find((candidate) => candidate.label === label)!;

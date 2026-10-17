@@ -191,6 +191,8 @@ private:
   // The ids shell-windows.json lists, oldest first.
   QStringList savedWindows() const;
   QString windowDir(const QString& id) const;
+  // ShellBridge::setMcHere: whether the MC the shell is connected to runs here.
+  std::function<bool()> mcHere();
 
   // Before the store and the windows that write to it, so it goes after them.
   LocalCache m_cache;

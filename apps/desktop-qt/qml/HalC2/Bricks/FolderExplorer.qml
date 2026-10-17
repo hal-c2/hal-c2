@@ -13,7 +13,7 @@ Pane {
     property string selectedPath: ""
     property string statusText: ""
     readonly property var localProjects: Shell.state.sidebar?.localProjects ?? []
-    readonly property bool localAccess: Shell.localFolderImportEnabled && (Shell.state.sidebar?.localEnvironmentId ?? null) !== null
+    readonly property bool localAccess: Shell.localFolderImportEnabled && (Shell.state.sidebar?.localFolders ?? false)
     readonly property string actionPath: selectedPath.length > 0 ? selectedPath : rootPath
     readonly property bool directorySelected: {
         folders.enabled;

@@ -301,6 +301,13 @@ export function makeClusterClient(
     listEntries: (cwd) => clientForPath(cwd).listEntries(cwd),
     readFile: (cwd, relativePath) => clientForPath(cwd).readFile(cwd, relativePath),
     readFileBase64: (cwd, relativePath) => clientForPath(cwd).readFileBase64(cwd, relativePath),
+    // The editor starts through this machine's MC (`mcCall`), so it must run here too.
+    localPathFor: async (path) => {
+      const owner = clientForPath(path);
+      const local = await owner.localPathFor(path);
+      if (local === null || owner === home) return local;
+      return (await home.localPathFor(local)) === null ? null : local;
+    },
     dispose: async () => {
       stopHome?.();
       stopConnection?.();

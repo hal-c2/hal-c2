@@ -159,6 +159,7 @@ const UNRECORDED = new Set([
   "subscribeTerminalMetadata",
   "subscribeTerminal",
   "getServerConfig",
+  "localPathFor",
   "listModels",
   "listTerminalIds",
   "clusterStatus",
@@ -228,6 +229,8 @@ export function fakeClient({
     }) as never,
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
+  // The fake MC runs on this machine.
+  localPathFor = async (path: string) => path,
   listModels = providers
     ? async () => flattenModelOptions(providers)
     : async () =>
@@ -287,6 +290,7 @@ export function fakeClient({
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly getServerConfig?: TuiClient["getServerConfig"];
+  readonly localPathFor?: TuiClient["localPathFor"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
   readonly implementPlan?: TuiClient["implementPlan"];
@@ -576,6 +580,7 @@ export function fakeClient({
     listTerminalIds,
     listModels,
     getServerConfig,
+    localPathFor,
     listRefs,
     switchRef,
     getAttachmentUrl,

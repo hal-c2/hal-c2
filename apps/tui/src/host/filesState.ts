@@ -72,7 +72,7 @@ export interface TuiFilesState {
 
 export interface FilesControllerOptions {
   readonly client: Pick<TuiClient, "listEntries" | "readFile"> &
-    Partial<Pick<TuiClient, "mcCall" | "getServerConfig" | "writeFile">>;
+    Partial<Pick<TuiClient, "mcCall" | "getServerConfig" | "writeFile" | "localPathFor">>;
   /** The status row's message (saves, the editor that was opened). */
   readonly status?: (text: string, kind?: StatusKind) => void;
   /** The editor opened or closed: it has the keys while open. */
@@ -504,15 +504,25 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       return;
     }
     const { path } = viewer;
+    const mcCall = client.mcCall;
+    const failed = (error: unknown) =>
+      options.status?.(`Could not open ${path} in ${editor.label}: ${errorText(error)}`, "error");
+    // Never on the machine the files are on unless the user sits at it.
+    const local = client.localPathFor ? client.localPathFor(cwd) : Promise.resolve(null);
     track(
-      client.mcCall("shell.openInEditor", { cwd: `${cwd}/${path}`, editor: editor.id }).then(
-        () => options.status?.(`Opened ${path} in ${editor.label}.`, "success"),
-        (error: unknown) =>
+      local.then((root) => {
+        if (root === null) {
           options.status?.(
-            `Could not open ${path} in ${editor.label}: ${errorText(error)}`,
+            "The files are on another machine and can't be opened here yet.",
             "error",
-          ),
-      ),
+          );
+          return;
+        }
+        return mcCall("shell.openInEditor", { cwd: `${root}/${path}`, editor: editor.id }).then(
+          () => options.status?.(`Opened ${path} in ${editor.label}.`, "success"),
+          failed,
+        );
+      }, failed),
     );
   };
 
