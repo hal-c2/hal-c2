@@ -69,10 +69,3 @@ virtual clock.
 
 The shell is an application of the `ljos` facade alone (`App`, `#[derive(QmlObject)]`, `ljos::item`,
 `ljos::keys`, `ljos::system`, `ljos::window`, `ljos::dev`, `ljos::render`), and its tests of `ljos::testing`.
-
-What the shell still works around, each where it does so:
-
-- Ljós's stream decoder keeps a live stream's newest picture until more video comes (#71), so a
-  device's screen finishes the decoder after each batch: `shell/src/device/decoder.rs`.
-- The compiler warns on `popup.scale` and `popup.transformOrigin` set through a `ComboBox`'s `popup` (#61), which
-  `GitActions.qml` does and Qt accepts; the warning is the only harm.

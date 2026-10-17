@@ -287,8 +287,6 @@ fn work(shared: &Shared) {
         let mut failed = false;
         // No decoder to decode with: nothing later will do better.
         let mut unusable = None;
-        // Units given to the decoder since the newest still.
-        let mut fed = false;
         for unit in batch {
             if unit.epoch != epoch {
                 continue;
@@ -296,7 +294,6 @@ fn work(shared: &Shared) {
             if unit.jpeg {
                 if let Some((size, still)) = jpeg(&unit.data, limit) {
                     newest = Some(Newest::Still(size, still));
-                    fed = false;
                 }
                 continue;
             }
@@ -317,7 +314,6 @@ fn work(shared: &Shared) {
             };
             match decoder.push(unit.data.get(unit.offset..).unwrap_or_default()) {
                 Ok(mut frames) => {
-                    fed = true;
                     if let Some(frame) = frames.pop() {
                         newest = Some(Newest::Video(frame));
                     }
@@ -326,23 +322,6 @@ fn work(shared: &Shared) {
                     failed = true;
                     break;
                 }
-            }
-        }
-        // TODO(ljos#71): the decoder holds a unit until the next one begins, and
-        // a picture until its reorder window fills, which a screen that sends
-        // nothing while it is still may never do. Finishing the batch hands
-        // out every picture now; the stream decodes on after it.
-        if fed
-            && !failed
-            && let Some((decoder, _)) = video.as_mut()
-        {
-            match decoder.finish() {
-                Ok(mut frames) => {
-                    if let Some(frame) = frames.pop() {
-                        newest = Some(Newest::Video(frame));
-                    }
-                }
-                Err(_) => failed = true,
             }
         }
         if failed {
@@ -382,7 +361,8 @@ fn work(shared: &Shared) {
     }
 }
 
-/// A decoder for a stream with `avcc` (None: Annex-B). Err(None) for an
+/// A decoder for a stream with `avcc` (None: Annex-B), each unit a whole
+/// picture, so it is handed out by the push that brings it. Err(None) for an
 /// avcC record no decoder starts from (every unit fails, as broken video),
 /// Err(Some(why)) when this build cannot decode H.264 at all.
 fn open(avcc: Option<&[u8]>) -> Result<media::Decoder, Option<String>> {
@@ -392,7 +372,7 @@ fn open(avcc: Option<&[u8]>) -> Result<media::Decoder, Option<String>> {
             config: config.to_vec(),
         },
     };
-    media::Decoder::new(&format).map_err(|why| match why {
+    media::Decoder::live(&format).map_err(|why| match why {
         DecodeError::Codec(_) => None,
         _ => Some("This build has no H.264 decoder.".to_owned()),
     })
@@ -401,7 +381,7 @@ fn open(avcc: Option<&[u8]>) -> Result<media::Decoder, Option<String>> {
 /// A decoded picture as RGBA, scaled down to `limit`, with its own size.
 fn scaled(frame: VideoFrame, limit: (u32, u32)) -> Option<((u32, u32), Picture)> {
     let size = (frame.width(), frame.height());
-    fitted(frame.into_rgba()?, size, limit)
+    fitted(frame.into_rgba().ok()?, size, limit)
 }
 
 /// A JPEG as RGBA, scaled down to `limit`, with its own size.
