@@ -157,6 +157,20 @@ impl FakeMc {
         self.reply(engine, index, result);
     }
 
+    /// Answers the oldest unanswered call to `method` on `environment`.
+    pub fn answer_on(
+        &self,
+        engine: &Engine,
+        environment: &str,
+        method: &str,
+        result: Result<Json, hal_c2_shell::mc::McError>,
+    ) {
+        let index = self
+            .pending_on(environment, method)
+            .unwrap_or_else(|| panic!("no unanswered {method} on {environment}"));
+        self.reply(engine, index, result);
+    }
+
     /// The shapes followed now, with their ids.
     pub fn subscriptions(&self) -> Vec<(SubId, Json)> {
         self.subs

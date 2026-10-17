@@ -17,9 +17,21 @@ use crate::json::Json;
 pub const CLUSTER_SECTION: &str = "/settings/cluster";
 pub const KEYBINDINGS_SECTION: &str = "/settings/keybindings";
 pub const CONNECTIONS_SECTION: &str = "/settings/connections";
+pub const PROVIDERS_SECTION: &str = "/settings/providers";
+pub const ARCHIVED_SECTION: &str = "/settings/archived";
 const THREADS_TAB: &str = "threads";
 /// Enough to walk back through a session, not a history log.
 const BACK_STACK_LIMIT: usize = 50;
+
+/// Whether a published `route` is `kind` (`usage`, `pullRequests`).
+pub fn at_kind(route: &Json, kind: &str) -> bool {
+    route.get("kind").and_then(Json::as_str) == Some(kind)
+}
+
+/// Whether a published `route` is the settings page at `section`.
+pub fn at_section(route: &Json, section: &str) -> bool {
+    at_kind(route, "settings") && route.get("section").and_then(Json::as_str) == Some(section)
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Route {

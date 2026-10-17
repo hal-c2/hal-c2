@@ -47,6 +47,9 @@ unicode-normalization = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # The sidebar's times (src/sidebar_model.rs): ISO dates and local wall clocks.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+iana-time-zone = "0.1"
+# The plugins' files the MC sends (controllers/mc_plugin.rs).
+base64 = "0.23"
 # The local folder browser (src/folders): watching folders and moving files to the trash.
 notify = "8"
 trash = "5"

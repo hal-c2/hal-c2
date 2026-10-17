@@ -6,12 +6,21 @@
 mod common;
 
 mod alerts;
+mod archived_threads;
 mod commands;
+mod connection_health;
+mod connections;
+mod device_settings;
 mod keybindings;
+mod mc_plugin;
 mod menus;
+mod plugin;
+mod provider_update_notice;
+mod pull_request_list;
 mod quit;
 mod settings;
 mod toasts;
+mod usage;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -41,6 +50,15 @@ impl Default for Hub {
 impl Hub {
     pub fn new() -> Hub {
         Hub::with(Launch::default())
+    }
+
+    /// A hub that follows the cluster: the shell store is installed and the
+    /// controllers wait for the first `shell` frame, which the test sends.
+    pub fn clustered() -> Hub {
+        Hub::with(Launch {
+            mc_origin: Some("http://127.0.0.1:1".into()),
+            ..Launch::default()
+        })
     }
 
     pub fn with(launch: Launch) -> Hub {

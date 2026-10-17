@@ -60,6 +60,7 @@ pub fn register(engine: &Engine) {
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
+    engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
     bridge::Bridge::of(engine);
 }
 
@@ -81,6 +82,34 @@ pub struct Launch {
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
+    /// Where the session an in-app pairing makes is kept
+    /// ([`storage::StoragePaths::data`]); none keeps nothing.
+    pub data_dir: Option<PathBuf>,
+}
+
+/// Where [`open`] keeps the session it is given.
+#[derive(Default)]
+struct Kept(std::cell::RefCell<Option<PathBuf>>);
+
+/// Connects to the MC `session` names, as NativeShell::open does: its rows
+/// (what the cache kept of it) show while the socket opens, and the session
+/// is kept for the next start. The shell's drafts, rows and route stay as
+/// they are. An error says why the connection could not be opened; nothing
+/// has changed then.
+///
+/// TODO(port): NativeShell::open on a shell that started without an MC: the
+/// store is installed over the MC the shell starts with, so it cannot be
+/// opened later.
+pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
+    let mc = controller::mc(engine).ok_or("the shell is not started")?;
+    mc.open(&session.origin, &session.token)?;
+    bridge::Bridge::of(engine).set_mc_origin(engine, &session.origin);
+    store::open(engine, &session.origin);
+    if let Some(dir) = engine.extension::<Kept>().0.borrow().as_deref() {
+        // Not being able to keep it only loses the next start's reconnect.
+        let _ = session::save(dir, session);
+    }
+    Ok(())
 }
 
 /// Gives the registered module what the launch says, then starts the
@@ -98,10 +127,15 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         engine,
         launch.mc_origin.is_none() || launch.allow_local_folder_import,
     );
+    *engine.extension::<Kept>().0.borrow_mut() = launch.data_dir.clone();
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
     if let Some(manifest) = &launch.licenses_manifest {
         controllers::licenses::set_manifest_path(engine, manifest);
+    }
+    controllers::plugin::install(engine, launch.config_dir.clone());
+    if let Some(cache) = &launch.cache_dir {
+        controllers::mc_plugin::set_cache_dir(engine, cache.join("mc-plugins"));
     }
     controller::start(engine, mc.clone(), controllers::registrations());
     controllers::settings::Settings::of(engine).set_device_path(
