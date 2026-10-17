@@ -734,12 +734,17 @@ impl Drop for ShellStore {
 
 type Listener = Rc<dyn Fn(&Engine, Changes)>;
 
+/// Work waiting for the store ([`when_installed`]).
+type Waiting = Box<dyn FnOnce(&Engine)>;
+
 /// The engine's store, its subscription and who is told of its changes.
 #[derive(Default)]
 struct Slot {
     store: RefCell<Option<Rc<RefCell<ShellStore>>>>,
     listeners: RefCell<Vec<Listener>>,
     subscription: Cell<Option<SubId>>,
+    /// What waits for the store to be installed ([`when_installed`]).
+    installed: RefCell<Vec<Waiting>>,
     /// The pending flush, desktop-qt's single-shot timer.
     flush: Cell<Option<TimerId>>,
 }
@@ -774,6 +779,27 @@ pub fn install(engine: &Engine, mc: &Rc<dyn Mc>, cache: Option<Rc<LocalCache>>) 
         Some(resume),
     );
     slot.subscription.set(Some(id));
+    let waiting = std::mem::take(&mut *slot.installed.borrow_mut());
+    for f in waiting {
+        f(engine);
+    }
+}
+
+/// Runs `f` once the store is installed: now when it is. For what is given
+/// to the store's parts at start-up (the cache's wake) in a shell that may
+/// have no MC yet and get its store when [`crate::open`] pairs it. A
+/// listener ([`on_changed`]) needs no such hook: it is kept by the engine
+/// and hears of a store that comes later.
+pub fn when_installed(engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
+    if get(engine).is_some() {
+        f(engine);
+    } else {
+        engine
+            .extension::<Slot>()
+            .installed
+            .borrow_mut()
+            .push(Box::new(f));
+    }
 }
 
 /// The store, once installed.

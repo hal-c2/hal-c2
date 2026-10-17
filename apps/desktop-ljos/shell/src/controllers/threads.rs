@@ -129,11 +129,15 @@ fn tell(engine: &Engine, listeners: Vec<Listener>) {
 }
 
 /// Hands the cache the event loop's wake, called (on any thread) when a
-/// thread's copy has loaded; the loop then calls [`deliver`].
+/// thread's copy has loaded; the loop then calls [`deliver`]. A shell that
+/// has no MC yet has no cache either: the wake is given to the one it makes
+/// when it is opened at one.
 pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
-    if let Some(cache) = store::cache(engine) {
-        cache.set_wake(wake);
-    }
+    store::when_installed(engine, move |engine| {
+        if let Some(cache) = store::cache(engine) {
+            cache.set_wake(wake);
+        }
+    });
 }
 
 /// Shows the copies the cache has loaded, and follows their threads.

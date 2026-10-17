@@ -52,13 +52,20 @@ pub fn read_link(entered: &str) -> Option<Link> {
     } else {
         vec!["https".to_owned(), "http".to_owned()]
     };
+    // A port is written once and means the same for each scheme tried, but a
+    // URL drops its own scheme's default (`:443` over https), so what was
+    // written is read off whichever scheme keeps it.
+    let port = url.port().or_else(|| {
+        let other = text.replacen("https://", "http://", 1);
+        Url::parse(&other).ok()?.port()
+    });
     let origins = schemes
         .into_iter()
         .filter_map(|scheme| {
             let mut origin = url.clone();
             origin.set_scheme(&scheme).ok()?;
             // The port the user wrote stays, even the other scheme's default.
-            origin.set_port(url.port()).ok()?;
+            origin.set_port(port).ok()?;
             Some(origin.origin().ascii_serialization())
         })
         .collect();
@@ -319,6 +326,14 @@ mod tests {
         assert_eq!(read_invitation(app).unwrap().link, full);
         let unicode = read_invitation("https://bücher.example/pair#token=t").unwrap();
         assert_eq!(unicode.address, "https://xn--bcher-kva.example");
+    }
+
+    #[test]
+    fn a_port_typed_without_a_scheme_stays_on_both_origins() {
+        let link = read_link("10.0.0.2:443/pair#token=t").unwrap();
+        assert_eq!(link.origins, ["https://10.0.0.2", "http://10.0.0.2:443"]);
+        let link = read_link("10.0.0.2:80/pair#token=t").unwrap();
+        assert_eq!(link.origins, ["https://10.0.0.2:80", "http://10.0.0.2"]);
     }
 
     #[test]
