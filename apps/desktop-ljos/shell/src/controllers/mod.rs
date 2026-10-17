@@ -2,6 +2,7 @@
 
 pub mod alerts;
 pub mod archived_threads;
+pub mod attachment_viewer;
 pub mod background_activity;
 pub mod client_activity;
 pub mod cluster;
@@ -56,6 +57,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<archived_threads::ArchivedThreads>(
             "archivedThreads",
             &["archivedThreads"],
+            Scope::Window,
+        ),
+        Registration::new::<attachment_viewer::AttachmentViewer>(
+            "attachmentViewer",
+            &["attachmentViewer"],
             Scope::Window,
         ),
         Registration::new::<background_activity::BackgroundActivity>(
