@@ -220,6 +220,7 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         options.mc_token = kept.token;
     }
     options.launch.cache_dir = Some(paths.cache);
+    options.launch.data_dir = Some(paths.data);
     Ok(())
 }
 

@@ -79,6 +79,22 @@ pub trait Mc {
     fn more(&self, id: SubId, items: u32);
     /// Runs `f` whenever the MC becomes ready or stops being so.
     fn on_ready_changed(&self, f: OnReady);
+
+    /// `orchestration.dispatchCommand` where `environment` is served, with
+    /// a fresh commandId: `command` is `{type, threadId, ...}`.
+    fn dispatch_command(&self, environment: &str, command: Json, reply: Reply) {
+        let mut command = match command {
+            Json::Object(command) => command,
+            _ => Frame::new(),
+        };
+        command.insert("commandId".into(), hal_c2_mc::new_uuid().into());
+        self.call(
+            environment,
+            "orchestration.dispatchCommand",
+            Json::Object(command),
+            reply,
+        );
+    }
 }
 
 /// What the I/O thread said, waiting for the UI thread. Unbounded: Ljós's

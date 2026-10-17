@@ -81,6 +81,9 @@ pub struct Launch {
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
+    /// Where the shell keeps what is the user's and not the MC's (the
+    /// drafts, `shell-drafts.json`); none keeps nothing.
+    pub data_dir: Option<PathBuf>,
 }
 
 /// Gives the registered module what the launch says, then starts the
@@ -103,6 +106,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     if let Some(manifest) = &launch.licenses_manifest {
         controllers::licenses::set_manifest_path(engine, manifest);
     }
+    controllers::drafts::set_path(
+        engine,
+        launch
+            .data_dir
+            .as_ref()
+            .map(|dir| dir.join("shell-drafts.json")),
+    );
     controller::start(engine, mc.clone(), controllers::registrations());
     controllers::settings::Settings::of(engine).set_device_path(
         engine,

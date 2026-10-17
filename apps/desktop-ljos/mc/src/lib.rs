@@ -176,7 +176,7 @@ pub(crate) fn new_trace_id() -> String {
 }
 
 /// A fresh random (v4) UUID, as `orchestration.dispatchCommand` takes for its commandId.
-pub(crate) fn new_uuid() -> String {
+pub fn new_uuid() -> String {
     let mut bytes = random::<16>();
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
