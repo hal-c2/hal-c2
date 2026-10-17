@@ -20,6 +20,7 @@ use ljos::prelude::{
 };
 use ljos_platform::ClipboardMode;
 
+use crate::attachment_files;
 use crate::json::{self, Json};
 
 /// The keys the bricks bind before any controller declares them: main.cpp's
@@ -163,21 +164,45 @@ impl ShellBridge {
             .unwrap_or_default()
     }
 
-    // Not ported yet: reading files and pictures for the composer. Empty,
-    // as when nothing usable was dropped or pasted.
+    /// Images for the composer: [{name, mimeType, base64}], skipping
+    /// anything that is not an image or is over the attachment size limit.
     #[qml(invokable)]
-    fn read_image_files(&self, _urls: Value) -> Vec<Value> {
-        Vec::new()
+    fn read_image_files(cx: &Cx, urls: Value) -> Vec<Value> {
+        file_urls(cx.engine, &urls)
+            .iter()
+            .filter_map(|url| local_path(url))
+            .filter_map(|path| attachment_files::read_image(&path))
+            .map(|file| json::to_value(cx.engine, &file))
+            .collect()
     }
 
+    /// Files for the composer: an image as readImageFiles has it, any other
+    /// file as {name, mimeType, path}; folders, empty files and ones over
+    /// the limits are skipped.
     #[qml(invokable)]
-    fn read_attachment_files(&self, _urls: Value) -> Vec<Value> {
-        Vec::new()
+    fn read_attachment_files(cx: &Cx, urls: Value) -> Vec<Value> {
+        file_urls(cx.engine, &urls)
+            .iter()
+            .filter_map(|url| local_path(url))
+            .filter_map(|path| attachment_files::read_attachment(&path))
+            .map(|file| json::to_value(cx.engine, &file))
+            .collect()
     }
 
+    /// What the composer's own paste attaches: a copied picture as
+    /// "image.png". Empty when the paste is text.
+    ///
+    /// desktop-qt first takes copied files (the clipboard's URLs); Ljós's
+    /// clipboard holds no URL list, so a file copied in a file manager
+    /// pastes as its path's text here.
     #[qml(invokable)]
-    fn clipboard_files(&self) -> Vec<Value> {
-        Vec::new()
+    fn clipboard_files(cx: &Cx) -> Vec<Value> {
+        let Some(image) = Platform::of(cx.engine).clipboard().image() else {
+            return Vec::new();
+        };
+        attachment_files::pasted_image(image.width, image.height, image.rgba)
+            .map(|file| vec![json::to_value(cx.engine, &file)])
+            .unwrap_or_default()
     }
 }
 

@@ -64,6 +64,9 @@ vt100 = "0.16"
 # and QTextDocument's markdown as text.
 regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
+# The composer's attachment thumbnails (controllers/composer/attachments.rs),
+# as desktop-qt's QImage: the pictures a prompt carries are PNG or JPEG.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # System notifications (src/notifications.rs). Already built for Ljós's
 # accessibility; notify-rust's one-handle-per-notification wait cannot hear

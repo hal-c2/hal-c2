@@ -314,6 +314,7 @@ fn the_composer_keys_reach_the_composer_brick() {
     ] {
         assert!(keymap.press(&hub.engine, sequence, COMPOSER), "{sequence}");
     }
+    // The steer key's composer.queue.steer is the composer controller's.
     assert!(keymap.press(&hub.engine, "Ctrl+Shift+Return", CHROME));
     assert_eq!(
         *log.borrow(),
@@ -323,7 +324,6 @@ fn the_composer_keys_reach_the_composer_brick() {
             "bricks:composer.modelPicker.toggle null",
             r#"bricks:composer.control.open {"command":"composer.effort"}"#,
             "bricks:composer.queue.editLast null",
-            "composer.queue.steer null",
         ]
     );
 }

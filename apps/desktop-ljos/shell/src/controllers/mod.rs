@@ -5,6 +5,7 @@ pub mod archived_threads;
 pub mod background_activity;
 pub mod client_activity;
 pub mod cluster;
+pub mod composer;
 pub mod connection_health;
 pub mod connections;
 pub mod device_settings;
@@ -64,6 +65,11 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<client_activity::ClientActivity>("clientActivity", &[], Scope::Window),
         Registration::new::<cluster::Cluster>("cluster", &["cluster"], Scope::Window),
+        Registration::new::<composer::Composer>(
+            "composer",
+            &["turn", "composer", "modelPicker", "composerStash"],
+            Scope::Window,
+        ),
         Registration::new::<connection_health::ConnectionHealth>(
             "connectionHealth",
             &["connection"],
