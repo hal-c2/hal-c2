@@ -54,7 +54,7 @@ Item {
     Text {
         objectName: "notificationsMore"
         visible: stack.items.length > stack.shown
-        text: "+" + (stack.items.length - stack.shown) + " more alerts"
+        text: "+" + (stack.items.length - stack.shown) + (stack.items.length - stack.shown === 1 ? " more alert" : " more alerts")
         color: Theme.colors.accent
         onMouseDown: Shell.dispatch("reach.notifications", {})
     }

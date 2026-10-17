@@ -121,7 +121,7 @@ step("all {int} alerts are kept", (ctx: World, count: number) => {
 
 step("{int} alerts are shown with {string}", async (ctx: World, shown: number, summary: string) => {
   const screen = await snapshot(ctx);
-  expect(screen.match(/Thread completed · Thread \d/g)).toHaveLength(shown);
+  expect(screen.match(/Thread completed · Thread \d+/g)).toHaveLength(shown);
   expect(screen).toContain(summary);
 });
 
