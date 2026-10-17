@@ -304,6 +304,8 @@ export function makeClusterClient(
     // A member on this machine starts the editor itself (`mcCall` to its environment), so
     // the client's own MC may be on another machine. Another member's files are in the
     // folder the client's own MC keeps for it, and that MC starts it.
+    // Its config comes in on the member's own socket: the MC has no method that reads it.
+    getServerConfig: (cwd) => clientForPath(cwd).getServerConfig(),
     localPathFor: async (path) => {
       const owner = clientForPath(path);
       if (owner === home) return home.localPathFor(path);

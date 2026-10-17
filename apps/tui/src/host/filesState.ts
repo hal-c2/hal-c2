@@ -483,7 +483,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   /** The editors the MC that starts one for the workspace can launch, by `EDITORS` id and label. */
   let editors: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
   const loadEditors = (token: number, workspace: string) => {
-    const { getServerConfig, localPathFor, mcCall } = client;
+    const { getServerConfig, localPathFor } = client;
     if (!getServerConfig) return;
     const where: Promise<LocalPath | null> = localPathFor
       ? localPathFor(workspace)
@@ -492,14 +492,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       where
         .then((local) => {
           // A cluster member on this machine offers its own (localPathFor).
-          const environmentId = local && "path" in local ? local.environmentId : undefined;
-          return environmentId !== undefined && mcCall
-            ? mcCall<{ readonly availableEditors?: ReadonlyArray<string> }>(
-                "server.getConfig",
-                {},
-                environmentId,
-              )
-            : getServerConfig();
+          const member = local !== null && "path" in local && local.environmentId !== undefined;
+          return member ? getServerConfig(workspace) : getServerConfig();
         })
         .then(
           (config) => {

@@ -83,14 +83,17 @@ step("the user switches back", async (ctx: World) => {
 
 // --- The environment's editor ---------------------------------------------------------
 
+const offering = (id: string) =>
+  ({ settings: DEFAULT_SERVER_SETTINGS, availableEditors: [id] }) as never;
+/** The editor the client's own MC offers, for a member's step to keep. */
+const ownEditor = new WeakMap<World, string>();
+
 /** The MC offers the editor `label`; asked to start one, it does. */
 export const hasEditor = (ctx: World, label: string) => {
   const editor = EDITORS.find((candidate) => candidate.label === label)!;
+  ownEditor.set(ctx, editor.id);
   beforeBoot(ctx, () => {
-    ctx.fake!.override("getServerConfig", (async () => ({
-      settings: DEFAULT_SERVER_SETTINGS,
-      availableEditors: [editor.id],
-    })) as never);
+    ctx.fake!.override("getServerConfig", async () => offering(editor.id));
     ctx.fake!.settings.on("shell.openInEditor", () => null);
   });
 };
@@ -143,8 +146,9 @@ step(
   "the thread runs on a cluster member on this computer, which has the editor {string}",
   (ctx: World, label: string) => {
     beforeBoot(ctx, () => {
-      ctx.fake!.settings.on("server.getConfig", (_payload, environmentId) =>
-        environmentId === MEMBER ? { availableEditors: [labelled(label).id] } : null,
+      // Asked for a workspace's config, the client answers with its member's.
+      ctx.fake!.override("getServerConfig", async (cwd) =>
+        offering(cwd === undefined ? ownEditor.get(ctx)! : labelled(label).id),
       );
       ctx.fake!.override("localPathFor", async (path) => ({ path, environmentId: MEMBER }));
     });

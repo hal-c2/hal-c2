@@ -58,6 +58,10 @@ function machine(name: string, status?: () => ClusterStatus) {
       calls.push(`interrupt ${threadId}`);
       return Promise.resolve();
     },
+    getServerConfig: () => {
+      calls.push("getServerConfig");
+      return Promise.resolve({ availableEditors: [] });
+    },
     listRefs: (cwd: string) => {
       calls.push(`listRefs ${cwd}`);
       return Promise.resolve([]);
@@ -343,6 +347,12 @@ describe("makeClusterClient", () => {
       });
       expect(desktop.calls).toEqual(["localPathFor /home/sam/shop"]);
       expect(laptop.calls).toEqual([]);
+
+      // The editors it offers are its own, from the config its socket brought.
+      await client.getServerConfig("/home/sam/shop");
+      expect(desktop.calls).toEqual(["localPathFor /home/sam/shop", "getServerConfig"]);
+      await client.getServerConfig();
+      expect(laptop.calls).toEqual(["getServerConfig"]);
     });
 
     it("Given a member on this machine and a client whose own MC is on another machine, when its checkout is opened, then the member still starts the editor", async () => {

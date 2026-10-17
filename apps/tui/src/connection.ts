@@ -642,8 +642,11 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
-  /** Current server settings, including new-thread workspace defaults. */
-  readonly getServerConfig: () => Promise<ServerConfig>;
+  /**
+   * Current server settings, including new-thread workspace defaults. With `cwd`, those
+   * of the cluster member whose workspace it is (clusterClient.ts), this MC's otherwise.
+   */
+  readonly getServerConfig: (cwd?: string) => Promise<ServerConfig>;
   /**
    * `path` of the MC that has it as a path on this machine, or why its files
    * cannot be reached from here. An editor starts only on a path it gives
