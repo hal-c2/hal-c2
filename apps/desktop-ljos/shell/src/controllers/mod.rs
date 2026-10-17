@@ -38,6 +38,7 @@ pub mod toasts;
 pub mod usage;
 pub mod usage_prices;
 pub mod workspace;
+pub mod worktree_setup;
 
 use crate::controller::{Registration, Scope};
 
@@ -150,5 +151,10 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<workspace::Workspace>("workspace", &["workspace"], Scope::Window),
+        Registration::new::<worktree_setup::WorktreeSetup>(
+            "worktreeSetup",
+            &["worktreeSetup"],
+            Scope::Window,
+        ),
     ]
 }
