@@ -163,6 +163,7 @@ struct Inner {
     state: RefCell<State>,
     threads: RefCell<Option<Threads>>,
     jump_hints: RefCell<Vec<JumpHints>>,
+    bindings_changed: RefCell<Vec<Rc<dyn Fn(&Engine)>>>,
 }
 
 #[derive(Default)]
@@ -382,6 +383,13 @@ impl Keymap {
         *self.0.threads.borrow_mut() = Some(threads);
     }
 
+    /// Runs `f` once no controller is running whenever the keymap in force
+    /// is rebuilt (the rules or the platform changed): what reads
+    /// [`Keymap::bindings`] reads it again.
+    pub fn on_bindings_changed(&self, f: impl Fn(&Engine) + 'static) {
+        self.0.bindings_changed.borrow_mut().push(Rc::new(f));
+    }
+
     /// Told when the sidebar's jump keys show or hide.
     pub fn on_jump_hints(&self, f: impl Fn(&Engine, &[String], bool) + 'static) {
         self.0.jump_hints.borrow_mut().push(Rc::new(f));
@@ -482,6 +490,10 @@ impl Keymap {
         let changed = self.refresh_rows();
         if changed || self.0.state.borrow().rules.len() != count {
             self.show_bindings(engine);
+        }
+        let hooks = self.0.bindings_changed.borrow().clone();
+        for hook in hooks {
+            Bridge::of(engine).defer(engine, move |engine| hook(engine));
         }
     }
 
