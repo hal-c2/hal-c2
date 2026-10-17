@@ -106,7 +106,6 @@ import {
   makeEnvironmentShellState,
 } from "@hal-c2/client-runtime/state/shell";
 import {
-  boundedThreadSnapshotLoaderLayer,
   type EnvironmentThreadState,
   makeEnvironmentThreadState,
   ThreadHistoryController,
@@ -471,12 +470,14 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
     Layer.provideMerge(services),
   );
 
-  // The first snapshot can fall back to the socket, but older thread pages are
-  // HTTP-only. Keep the bounded thread loader plus the history controller so
-  // long conversations can page past the initial window. The shell has no
-  // paging, so it keeps using the socket-embedded snapshot.
+  // Both snapshots come over the socket, and so do older thread pages (the
+  // thread's window grows on its subscription), so the HTTP loaders answer
+  // `unavailable` and `none`. The history controller serializes the page requests.
   const snapshotLoaders = Layer.mergeAll(
-    boundedThreadSnapshotLoaderLayer,
+    Layer.succeed(
+      ThreadSnapshotLoader,
+      ThreadSnapshotLoader.of({ load: () => Effect.succeed({ _tag: "unavailable" }) }),
+    ),
     threadHistoryControllerLayer,
     Layer.succeed(ShellSnapshotLoader, ShellSnapshotLoader.of({ load: () => Effect.succeedNone })),
   ).pipe(Layer.provideMerge(remoteHttpClientLayer(globalThis.fetch)));

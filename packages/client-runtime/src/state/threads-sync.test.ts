@@ -22,7 +22,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -73,10 +72,16 @@ type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
 
 function testSession(
   client: WsRpcProtocolClient,
-  config?: { readonly completionMarker?: boolean },
+  config?: {
+    readonly completionMarker?: boolean;
+    readonly loadEarlierThread?: RpcSession.RpcSession["loadEarlierThread"];
+  },
 ): RpcSession.RpcSession {
   return {
     client,
+    ...(config?.loadEarlierThread === undefined
+      ? {}
+      : { loadEarlierThread: config.loadEarlierThread }),
     initialConfig: Effect.succeed(
       config?.completionMarker === true
         ? ({ threadResumeCompletionMarker: true } as never)
@@ -112,8 +117,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
   readonly loadCached?: Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
-  readonly historyPaging?: "enabled" | "no-http" | "no-controller";
-  readonly historyHttpClient?: HttpClient.HttpClient;
+  readonly historyPaging?: "enabled" | "no-controller";
+  /** What the MC sends on the thread's subscription once asked for earlier turns. */
+  readonly earlier?: OrchestrationV2ThreadStreamItem;
+  readonly earlierFailure?: RpcSession.EarlierTurnsUnavailableError;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -121,9 +128,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const earlierRequests = yield* Ref.make<ReadonlyArray<string>>([]);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
+  const lastHistoryCursor = yield* Ref.make<string | null | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -141,6 +150,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
+      readonly historyCursor?: string | null;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -149,12 +159,27 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
+          Effect.andThen(Ref.set(lastHistoryCursor, input.historyCursor)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
   } as unknown as WsRpcProtocolClient;
+  const session = testSession(client, {
+    ...options,
+    loadEarlierThread: (threadId) =>
+      Ref.update(earlierRequests, (current) => [...current, threadId]).pipe(
+        Effect.andThen(
+          options?.earlierFailure !== undefined
+            ? Effect.fail(options.earlierFailure)
+            : options?.earlier === undefined
+              ? Effect.void
+              : Queue.offer(inputs, options.earlier),
+        ),
+        Effect.asVoid,
+      ),
+  });
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client, options)),
+    Option.some(session),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -226,15 +251,6 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
     ),
   );
-  if (options?.historyPaging !== "no-http") {
-    makeThreadState = makeThreadState.pipe(
-      Effect.provideService(
-        HttpClient.HttpClient,
-        options?.historyHttpClient ??
-          HttpClient.make(() => Effect.die("Unexpected history HTTP request")),
-      ),
-    );
-  }
   const historyController = yield* ThreadHistoryController.pipe(
     Effect.provide(threadHistoryControllerLayer),
   );
@@ -260,18 +276,17 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     retryCount,
     subscriptionCount,
     loaderCalls,
+    earlierRequests,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
+    lastHistoryCursor,
     supervisorState,
     supervisorSession,
     savedThreads,
     removedThreads,
     wakeups,
-    replaceSession: SubscriptionRef.set(
-      supervisorSession,
-      Option.some(testSession(client, options)),
-    ),
+    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(session)),
   };
 });
 
@@ -731,10 +746,10 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("keeps progressive history metadata from a bounded socket fallback", () =>
+  it.effect("asks the socket for earlier turns and takes the longer snapshot it answers with", () =>
     Effect.gen(function* () {
       const olderItem = {
-        id: "item:older",
+        id: TurnItemId.make("item:older"),
         threadId: THREAD_ID,
         runId: null,
         nodeId: null,
@@ -745,37 +760,26 @@ describe("EnvironmentThreads", () => {
         ordinal: 1,
         status: "completed",
         title: null,
-        startedAt: "2026-06-20T00:00:00.000Z",
-        completedAt: "2026-06-20T00:00:00.000Z",
-        updatedAt: "2026-06-20T00:00:00.000Z",
+        startedAt: BASE_PROJECTION.thread.createdAt,
+        completedAt: BASE_PROJECTION.thread.createdAt,
+        updatedAt: BASE_PROJECTION.thread.createdAt,
         type: "command_execution",
         input: "pwd",
         output: "older history",
         exitCode: 0,
+      } as const;
+      const longer: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        turnItems: [olderItem, ...BASE_PROJECTION.turnItems],
       };
       const harness = yield* makeHarness({
-        historyHttpClient: HttpClient.make((request, url) => {
-          expect(url.searchParams.get("cursor")).toBe("socket-history-cursor");
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              Response.json({
-                snapshotSequence: 14,
-                items: [
-                  {
-                    position: 0,
-                    visibility: "local",
-                    sourceThreadId: THREAD_ID,
-                    sourceItemId: olderItem.id,
-                    item: olderItem,
-                  },
-                ],
-                nextCursor: null,
-                hasMoreHistory: false,
-              }),
-            ),
-          );
-        }),
+        earlier: {
+          kind: "snapshot",
+          snapshotSequence: 14,
+          projection: longer,
+          historyCursor: null,
+          hasMoreHistory: false,
+        },
       });
       yield* Queue.offer(harness.inputs, {
         kind: "snapshot",
@@ -800,8 +804,6 @@ describe("EnvironmentThreads", () => {
         expanded: false,
         latestLocalTurnOrdinal: 47,
       });
-      // A transient cold HTTP failure still requests a bounded socket snapshot.
-      // Its cursor remains available for a later history request.
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
       expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
 
@@ -814,11 +816,56 @@ describe("EnvironmentThreads", () => {
         latestLocalTurnOrdinal: 47,
       });
       expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
-      const expanded = yield* SubscriptionRef.get(harness.threadState);
+      expect(yield* Ref.get(harness.earlierRequests)).toEqual([THREAD_ID]);
+      // The request is answered by the snapshot that grows the thread, not by its return.
+      const expanded = yield* awaitThreadState(
+        harness.observed,
+        (value) => !value.history.hasMoreHistory && !value.history.loading,
+      );
       expect(
         Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
       ).toBe(true);
-      expect(expanded.history.hasMoreHistory).toBe(false);
+      // The longer timeline stays out of the cache, and a replacement session
+      // keeps it: it opens where the paged turns start (here, the thread's start).
+      expect(expanded.history.expanded).toBe(true);
+      expect(yield* Ref.get(harness.lastHistoryCursor)).toBeUndefined();
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastHistoryCursor)).toBeNull();
+    }),
+  );
+
+  it.effect("keeps the cursor and shows the error when the socket cannot page earlier turns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        earlierFailure: new RpcSession.EarlierTurnsUnavailableError({ message: "Socket closed." }),
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "socket-history-cursor",
+        hasMoreHistory: true,
+        payloadBudgetExceeded: false,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.history.historyCursor === "socket-history-cursor",
+      );
+
+      const result = yield* harness.loadEarlier();
+      expect(result._tag).toBe("error");
+      const state = yield* SubscriptionRef.get(harness.threadState);
+      expect(state.history).toMatchObject({
+        historyCursor: "socket-history-cursor",
+        hasMoreHistory: true,
+        loading: false,
+        error: expect.any(String),
+      });
     }),
   );
 
@@ -1076,7 +1123,7 @@ describe("EnvironmentThreads", () => {
     );
   }
 
-  for (const historyPaging of ["no-http", "no-controller"] as const) {
+  for (const historyPaging of ["no-controller"] as const) {
     it.effect(`does not negotiate bounded fallbacks with ${historyPaging}`, () =>
       Effect.gen(function* () {
         for (const source of ["cache", "http"] as const) {
