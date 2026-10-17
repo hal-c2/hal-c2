@@ -7,7 +7,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { startFakeMc, type FakeMc } from "./fakeMc.ts";
+import * as XtermHeadless from "@xterm/headless";
+
+import { startFakeMc, type FakeMc, type FakeMcOptions } from "./fakeMc.ts";
 import type { World } from "./world.ts";
 
 const TUI_DIR = NodePath.resolve(import.meta.dir, "../..");
@@ -33,6 +35,8 @@ export interface LaunchSetup {
   /** The terminal's environment; `undefined` removes a key the test process has. */
   env: Record<string, string | undefined>;
 }
+
+const { Terminal } = XtermHeadless;
 
 export interface ProcessRun {
   readonly code: number | null;
@@ -70,6 +74,39 @@ function home(ctx: LaunchWorld): string {
   return ctx.launchHome;
 }
 
+function orderPath(ctx: LaunchWorld): string {
+  return NodePath.join(home(ctx), "order.log");
+}
+
+/**
+ * What the client did to its surroundings, one line per event in the order they
+ * happened: each `tmux` call, and `draw` once the renderer holds the alternate
+ * screen (written by `orderPreload`, so `startDirect` needs it for the draw).
+ * Appends from different processes are ordered by the file, not by clocks.
+ */
+export function orderLog(ctx: LaunchWorld): string[] {
+  return readText(orderPath(ctx)).split("\n").filter(Boolean);
+}
+
+/**
+ * A preload that notes `draw` in the order log. `process.once("SIGINT", …)` is the
+ * client's first call after the renderer entered the alternate screen, as in `faultPreload`.
+ */
+export function orderPreload(ctx: LaunchWorld): string {
+  const path = NodePath.join(home(ctx), "order.ts");
+  NodeFS.writeFileSync(
+    path,
+    `import { appendFileSync } from "node:fs";
+const once = process.once.bind(process);
+process.once = ((event, listener) => {
+  if (event === "SIGINT") appendFileSync(process.env.HAL_C2_TEST_ORDER!, "draw\\n");
+  return once(event, listener);
+}) as typeof process.once;
+`,
+  );
+  return path;
+}
+
 /** The test process's env minus anything that would point at real state or a real tmux. */
 function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   const env: Record<string, string> = {};
@@ -84,6 +121,16 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   env.HOME = dir;
   env.HAL_C2_TUI_LOG = NodePath.join(dir, "client.log");
   env.HAL_C2_TUI_SHELL_DIR = NodePath.join(dir, "shell");
+  // A `tmux` that only writes down its call, ahead of any real one, so the
+  // client can never reach the tester's tmux (see `orderLog`).
+  const bin = NodePath.join(dir, "bin");
+  NodeFS.mkdirSync(bin, { recursive: true });
+  const tmux = NodePath.join(bin, "tmux");
+  NodeFS.writeFileSync(tmux, '#!/bin/sh\necho "tmux $*" >> "$HAL_C2_TEST_ORDER"\n', {
+    mode: 0o755,
+  });
+  env.PATH = `${bin}${NodePath.delimiter}${env.PATH ?? ""}`;
+  env.HAL_C2_TEST_ORDER = orderPath(ctx);
   return env;
 }
 
@@ -101,6 +148,8 @@ interface Spawned {
   /** True once the first frame is on screen, false if the process exits first. */
   readonly drawn: Promise<boolean>;
   readonly exited: Promise<number>;
+  /** The terminal the client's output draws, as the user would see it. */
+  readonly screen: { text(): string; until(text: string): Promise<void> };
 }
 
 function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Spawned {
@@ -120,12 +169,40 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     markDrawn = resolve;
   });
   const decoder = new TextDecoder();
+  const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true });
+  ctx.cleanups.push(() => terminal.dispose());
+  const screenWaiters = new Set<() => void>();
+  const screenText = () => {
+    const buffer = terminal.buffer.active;
+    const lines: string[] = [];
+    for (let y = 0; y < terminal.rows; y++) {
+      lines.push(buffer.getLine(buffer.viewportY + y)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n");
+  };
   const readOut = (async () => {
     for await (const chunk of proc.stdout) {
       output.stdout += decoder.decode(chunk, { stream: true });
+      // Parsed asynchronously: the screen is ready, and waiters re-check, when xterm is done.
+      terminal.write(chunk, () => {
+        for (const waiter of screenWaiters) waiter();
+      });
       if (output.stdout.includes(ENTER_ALT_SCREEN)) markDrawn(true);
     }
   })();
+  const screen = {
+    text: screenText,
+    until: (text: string) =>
+      new Promise<void>((resolve) => {
+        const waiter = () => {
+          if (!screenText().includes(text)) return;
+          screenWaiters.delete(waiter);
+          resolve();
+        };
+        screenWaiters.add(waiter);
+        waiter();
+      }),
+  };
   const readErr = (async () => {
     output.stderr += await new Response(proc.stderr).text();
   })();
@@ -135,7 +212,7 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     markDrawn(false);
     return code;
   })();
-  return { proc, output, drawn, exited };
+  return { proc, output, drawn, exited, screen };
 }
 
 async function within<T>(promise: Promise<T>, ms: number, what: string, spawned: Spawned) {
@@ -184,9 +261,9 @@ export function clientLog(ctx: LaunchWorld): string {
 }
 
 /** A fake MC on this machine, recorded under the `--base-dir`; started once per scenario. */
-export function runningMc(ctx: LaunchWorld): FakeMc {
+export function runningMc(ctx: LaunchWorld, options: FakeMcOptions = {}): FakeMc {
   if (ctx.mc) return ctx.mc;
-  const running = fakeMc(ctx);
+  const running = fakeMc(ctx, options);
   writeMcRecord(ctx, {
     pid: process.pid,
     origin: running.origin,
@@ -245,7 +322,7 @@ export function baseDir(ctx: LaunchWorld): string {
   return home(ctx);
 }
 
-export function fakeMc(ctx: LaunchWorld, options: { pairingToken?: string } = {}): FakeMc {
+export function fakeMc(ctx: LaunchWorld, options: FakeMcOptions = {}): FakeMc {
   const mc = startFakeMc(options);
   ctx.cleanups.push(() => mc.stop());
   ctx.mc = mc;
@@ -301,9 +378,14 @@ export interface DirectLaunch {
  * Start the client's entry with `args`. A client that draws stays open in
  * `ctx.direct`; one that exits first is finished into `ctx.client`.
  */
-export async function startDirect(ctx: LaunchWorld, args: ReadonlyArray<string>): Promise<void> {
+export async function startDirect(
+  ctx: LaunchWorld,
+  args: ReadonlyArray<string>,
+  options: { preload?: string } = {},
+): Promise<void> {
   const env = withTerminal(cleanEnv(ctx), launchSetup(ctx).env);
-  const spawned = spawn(ctx, [process.execPath, CLIENT_ENTRY, ...args], env);
+  const preload = options.preload ? ["--preload", options.preload] : [];
+  const spawned = spawn(ctx, [process.execPath, ...preload, CLIENT_ENTRY, ...args], env);
   const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "the client", spawned);
   if (drew) {
     ctx.direct = { spawned };
