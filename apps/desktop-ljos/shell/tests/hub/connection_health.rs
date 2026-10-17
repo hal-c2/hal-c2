@@ -336,6 +336,19 @@ fn versions_compare_by_core_and_nightlies_whole() {
     assert!(!server_behind("abc", "abc"));
 }
 
+/// The shell is not ahead of the MC it is built beside. A shell version past
+/// `apps/server-ex/VERSION` makes every MC of this checkout "older than this
+/// app", and the version-mismatch strip takes room off the window foot.
+#[test]
+fn the_shell_is_not_ahead_of_the_mc_it_ships_with() {
+    let mc = include_str!("../../../../server-ex/VERSION").trim();
+    assert!(
+        !server_behind(env!("CARGO_PKG_VERSION"), mc),
+        "the shell ({}) is ahead of the MC ({mc})",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
 #[test]
 fn a_remote_mc_is_not_tried_without_a_network_and_woken_when_it_returns() {
     let rig = Rig::new("network");
