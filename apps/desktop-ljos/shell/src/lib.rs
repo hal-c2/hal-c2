@@ -74,6 +74,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::panel::PanelObject>(MODULE, v);
     engine.register_singleton::<controllers::terminals::TerminalsObject>(MODULE, v);
     engine.register_singleton::<controllers::onboarding::OnboardingObject>(MODULE, v);
+    engine.register_singleton::<controllers::palette::PaletteObject>(MODULE, v);
     thread_view::register(engine);
     bridge::Bridge::of(engine);
 }

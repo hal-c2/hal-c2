@@ -35,6 +35,7 @@ use crate::commands::{Choice, Commands};
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::drafts;
 use crate::controllers::navigation::{self, Navigation, Route};
+use crate::controllers::palette;
 use crate::controllers::project_clone;
 use crate::controllers::sidebar;
 use crate::controllers::toasts::Toasts;
@@ -379,11 +380,17 @@ fn label_of(engine: &Engine, environment_id: &str) -> String {
 /// starts: Local folder, then the clones.
 fn sources(engine: &Engine, settings: &EnvironmentSettings, environment_id: &str) -> Vec<Choice> {
     settings.set_targets(&[environment_id.to_owned()]);
-    let mut folder = Choice::new("local-folder", "Local folder", |_| {
-        // TODO(port): CommandPaletteController::browse — browse the
-        // environment's folders from `browse_start(engine, environment_id)`
-        // with submit "Add", then `add_folder(engine, environment_id, path,
-        // "Failed to add project", false)` on the path chosen.
+    let environment = environment_id.to_owned();
+    let mut folder = Choice::new("local-folder", "Local folder", move |engine| {
+        let to = environment.clone();
+        let options = palette::BrowseOptions {
+            query: browse_start(engine, &environment),
+            ..Default::default()
+        };
+        let add = move |engine: &Engine, path: &str| {
+            add_folder(engine, &to, path, "Failed to add project", false);
+        };
+        palette::browse(engine, &environment, add, options);
     });
     folder.description = "Browse a folder on disk".into();
     folder.terms = ["folder", "directory", "browse"].map(String::from).to_vec();
