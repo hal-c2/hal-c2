@@ -41,6 +41,7 @@ pub mod settings;
 pub mod settings_scope;
 pub mod sidebar;
 pub mod slack_settings;
+pub mod snap_shot;
 pub mod source_control_settings;
 pub mod stage;
 pub mod storage_settings;
@@ -182,6 +183,7 @@ pub fn registrations() -> Vec<Registration> {
             &["slackSettings"],
             Scope::Window,
         ),
+        Registration::new::<snap_shot::SnapShot>("snapShot", &["snapShot"], Scope::Shared),
         Registration::new::<source_control_settings::SourceControlSettings>(
             "sourceControlSettings",
             &["sourceControlSettings"],
