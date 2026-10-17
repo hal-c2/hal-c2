@@ -31,6 +31,8 @@
 #   packages/client-runtime/src/state/projectCommands.ts (optimisticFile)
 #   packages/contracts/src/rpc.ts (projects.readFile, projects.writeFile, shell.openInEditor, assets.createUrl)
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp (openFile, truncatedNotice, revealLine, wrap)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp, FileActionsController.cpp, TerminalController.cpp (editor and reveal on the environment)
+#   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: workspace-file, media-file)
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
@@ -156,6 +158,20 @@ Feature: Viewing and editing files
         | media/theme.mp3  | audio    |
         | docs/manual.pdf  | a document |
         | public/index.html | a web page |
+
+    # The bytes come from the thread's MC by a signed address, never from this machine's disk,
+    # so a preview looks the same whichever machine the thread runs on.
+    @backlog @desktop @mobile
+    Scenario Outline: Media files of a thread on another machine are previewed
+      Given the thread runs on <where>
+      When the user opens "assets/logo.png"
+      Then the file is previewed as an image
+      And nothing is read from this machine's disk
+
+      Examples:
+        | where                                              |
+        | another MC of the cluster                          |
+        | an MC on another machine the client is paired with |
 
     @backlog @desktop @mobile
     Scenario: A media preview that fails to load can be retried
@@ -392,6 +408,22 @@ Feature: Viewing and editing files
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
+
+    # Today the MC starts the editor on its own machine and reports success, so a user on
+    # another computer sees nothing happen.
+    @backlog @desktop @tui
+    Scenario Outline: An editor or file manager is never started on another machine unseen
+      Given the thread runs on <where>
+      When the user looks at <action> for "src/app.ts"
+      Then it is unavailable and the user is told the files are on another machine
+
+      Examples:
+        | where                                              | action                           |
+        | another MC of the cluster                          | opening it in an editor          |
+        | another MC of the cluster                          | revealing it                     |
+        | another MC of the cluster                          | following its path in a terminal |
+        | an MC on another machine the client is paired with | opening it in an editor          |
+        | an MC reached through an SSH port forward          | opening it in an editor          |
 
     # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors)
     @backlog @desktop
