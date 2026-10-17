@@ -128,9 +128,36 @@ Item {
                                targetVersion: null, strong: false };
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, updating: true })] }) };
             const page = createTemporaryObject(settingsComponent, root);
-            const update = findChild(findChild(page, "provider_claudeAgent_work"), "update");
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const update = findChild(card, "update");
             verify(update.visible);
             verify(!update.enabled);
+        }
+
+        // The card shows an icon; the title, the detail and the actions open from it.
+        function test_an_update_advisory_opens_from_an_icon_on_the_card() {
+            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+                               targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            verify(button.visible);
+            verify(button.iconOnly);
+            compare(button.Accessible.name, "Update available");
+            const popover = findChild(card, "advisory");
+            verify(!popover.visible, "the details stay closed until asked for");
+            mouseClick(button);
+            tryCompare(popover, "opened", true);
+            mouseClick(findChild(card, "update"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.update");
+        }
+
+        function test_a_provider_without_an_advisory_has_no_icon() {
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({})] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            verify(!findChild(findChild(page, "provider_claudeAgent_work"), "advisoryButton").visible);
         }
 
         // The update command is copied from a button; its path is not printed on the card.
@@ -140,6 +167,7 @@ Item {
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
             const copy = findChild(card, "copyUpdateCommand");
             verify(copy.visible);
             verify(copy.iconOnly);
@@ -148,7 +176,7 @@ Item {
                 if (item.visible && typeof item.text === "string") shown.push(item.text);
                 for (const child of item.children) visit(child);
             };
-            visit(findChild(card, "advisory"));
+            visit(findChild(card, "advisory").contentItem);
             verify(!shown.some(text => text.includes("/opt/mise")), shown.join("|"));
         }
 
