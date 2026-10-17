@@ -7,6 +7,7 @@ pub mod cache;
 pub mod commands;
 pub mod controller;
 pub mod controllers;
+pub mod device;
 pub mod device_screen;
 pub mod environment_settings;
 pub mod folders;

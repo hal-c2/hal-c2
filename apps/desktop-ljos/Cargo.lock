@@ -1784,6 +1784,7 @@ dependencies = [
  "hal_c2_mc",
  "iana-time-zone",
  "interprocess",
+ "libloading",
  "ljos",
  "ljos_a11y",
  "ljos_controls",
@@ -1808,6 +1809,7 @@ dependencies = [
  "url",
  "vt100",
  "zbus",
+ "zune-jpeg",
 ]
 
 [[package]]
