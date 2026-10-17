@@ -53,8 +53,7 @@ mod requests;
 mod send;
 mod state;
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -72,6 +71,7 @@ use crate::controllers::keybindings::Keymap;
 use crate::controllers::navigation::{self, Route};
 use crate::controllers::settings::Settings;
 use crate::controllers::sidebar::{self, Sidebar};
+use crate::controllers::threads;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
@@ -229,7 +229,8 @@ impl Controller for Composer {
         self.active = true;
         let follow = hook(&self.me, Composer::follow);
         self.bridge.watch(engine, "route", move |e, _| follow(e));
-        on_timelines_changed(engine, hook(&self.me, Composer::follow));
+        // The thread's timeline exists once the store has followed it.
+        threads::on_active_changed(engine, hook(&self.me, Composer::follow));
         // A draft opened, renewed or promoted.
         drafts::on_changed(engine, hook(&self.me, Composer::publish));
         // The row says whether a turn runs, which decides follow-ups and
@@ -305,7 +306,7 @@ impl Composer {
         let timeline = if thread.is_empty() {
             None
         } else {
-            timeline_of(engine, &thread)
+            threads::timeline_of(engine, &thread)
         };
         if timeline != self.timeline {
             self.timeline = timeline;
@@ -670,58 +671,6 @@ pub fn attachment_preview(engine: &Engine, id: &str) -> Option<Json> {
 /// composer is busy or there is none.
 pub fn current_selection(engine: &Engine) -> Obj {
     controller::with::<Composer, _>(engine, |c, e| c.current_selection(e)).unwrap_or_default()
-}
-
-// TODO(port): ThreadStore, the threads' controller another port owns. Its
-// `threads::timeline_of(engine, key) -> Option<ObjectId>` (the
-// TimelineModel of a thread the window follows), `threads::timeline(engine)`
-// (the route thread's) and `threads::on_active_changed(engine, f)`
-// (desktop-qt's ThreadStore::activeThreadChanged) replace this registry:
-// until then whoever makes a thread's TimelineModel hands it here.
-
-type Hook = Rc<dyn Fn(&Engine)>;
-
-#[derive(Default)]
-struct Timelines {
-    by_thread: RefCell<BTreeMap<String, ObjectId>>,
-    changed: RefCell<Vec<Hook>>,
-}
-
-/// The TimelineModel of `thread_key`, or none: what the composer reads the
-/// thread's requests, plan, queue and messages from.
-pub fn provide_timeline(engine: &Engine, thread_key: &str, timeline: Option<ObjectId>) {
-    let timelines = engine.extension::<Timelines>();
-    let changed = {
-        let mut by_thread = timelines.by_thread.borrow_mut();
-        match timeline {
-            Some(obj) => by_thread.insert(thread_key.to_owned(), obj) != Some(obj),
-            None => by_thread.remove(thread_key).is_some(),
-        }
-    };
-    if !changed {
-        return;
-    }
-    let hooks = timelines.changed.borrow().clone();
-    for hook in hooks {
-        hook(engine);
-    }
-}
-
-fn timeline_of(engine: &Engine, thread_key: &str) -> Option<ObjectId> {
-    engine
-        .extension::<Timelines>()
-        .by_thread
-        .borrow()
-        .get(thread_key)
-        .copied()
-}
-
-fn on_timelines_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
-    engine
-        .extension::<Timelines>()
-        .changed
-        .borrow_mut()
-        .push(Rc::new(f));
 }
 
 /// The kept attachment `id` of any draft or question's answer.

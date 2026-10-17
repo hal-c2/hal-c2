@@ -406,3 +406,32 @@ fn the_stash_keeps_a_draft_and_gives_it_back() {
     assert_eq!(draft(&hub, "t1"), "for later");
     assert_eq!(hub.published("composerStash")["entries"], json!([]));
 }
+
+#[test]
+fn the_composer_reads_the_open_threads_timeline() {
+    let hub = on_threads(&["t1"]);
+    assert_eq!(hub.published("turn")["approvals"], json!([]));
+    let (id, _) = hub
+        .mc
+        .subscriptions()
+        .into_iter()
+        .find(|(_, shape)| shape["type"] == "stream" && shape["stream"] == "t1")
+        .expect("the thread is followed");
+    hub.mc.frame_to(
+        &hub.engine,
+        id,
+        json!({"t": "snapshot", "part": 0, "done": true, "offset": 0, "handle": "log-1", "rows": [
+            ["runtime-request", "request-1", {"id": "request-1", "status": "pending"}],
+            ["turn-item", "ask-1", {"id": "ask-1", "type": "approval_request", "ordinal": 1,
+                "requestId": "request-1", "requestKind": "command", "prompt": "Run rm -rf dist?"}],
+        ]}),
+    );
+    hub.mc.frame_to(
+        &hub.engine,
+        id,
+        json!({"t": "live", "offset": 0, "handle": "log-1"}),
+    );
+    let approvals = hub.published("turn")["approvals"].clone();
+    assert_eq!(approvals[0]["requestId"], "request-1");
+    assert_eq!(approvals[0]["detail"], "Run rm -rf dist?");
+}
