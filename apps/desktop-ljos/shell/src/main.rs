@@ -517,12 +517,14 @@ fn render_to(
                 // What ShellErrorOverlay shows.
                 Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
             }
-            if !capture.play_after_snapshot {
-                play(&engine, &capture.steps);
-            }
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
+            // Once the bricks are there, as with an MC: what opens on a
+            // signal (the palette's popup) misses one sent before.
+            if !capture.play_after_snapshot {
+                play(&engine, &capture.steps);
+            }
             mc.deliver(&engine);
             root
         }
