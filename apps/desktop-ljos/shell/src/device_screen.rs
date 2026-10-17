@@ -3,18 +3,17 @@
 //! stretched over the item.
 //!
 //! Where Qt's item pulls pictures from a `DeviceStream`'s decoder, this one
-//! is pushed them: whatever decodes (the stream is not ported yet) calls
-//! [`show_frame`] with RGBA pixels and [`drop_frame`] when the picture no
-//! longer shows the device (a reconnect, a new target). A frame reaches the
-//! screen as an image in the item's display list, like a `VideoOutput`'s, so
-//! the renderer owns the texture and uploads only what changed.
+//! is pushed them: a [`DeviceStream`](crate::device::stream::DeviceStream)
+//! set as `stream` hands it each picture ([`show_image`]) and drops it
+//! ([`drop_frame`]) when the picture no longer shows the device (a
+//! reconnect, a new target). A frame reaches the screen as an image in the
+//! item's display list, like a `VideoOutput`'s, so the renderer owns the
+//! texture and uploads only what changed.
 //!
-//! `stream` is kept as written, an object or null; the Bricks only hand it
-//! on. Setting it drops the frame, as Qt's `setStream` does.
-//!
-//! Not done: telling the decoder how large a picture to make (Qt's
-//! `limit()`: the item's size in device pixels). The decoder will read the
-//! item's `width` and `height` itself.
+//! `stream` is kept as written, an object or null. Setting it drops the
+//! frame, as Qt's `setStream` does, and shows the new stream's newest
+//! picture. How large a picture to make (Qt's `limit()`: the item's size in
+//! device pixels) the stream reads off the item itself.
 
 use std::fmt;
 use std::rc::Rc;
@@ -25,6 +24,8 @@ use ljos::prelude::{Cx, Engine, EngineError, ObjectId, QmlObject, QmlType, Value
 use ljos_engine::{MetaRef, NodeId};
 use ljos_quick::{Item, ItemPaint};
 use ljos_render::{DisplayListBuilder, ImageHandle, kurbo};
+
+use crate::device::stream;
 
 /// Adds the type to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
@@ -55,6 +56,9 @@ pub struct DeviceScreen {
     /// Moves when the frame does, so the scene repaints the item.
     #[qml(skip)]
     serial: Option<NodeId>,
+    /// The `DeviceStream` this item shows, when `stream` is one.
+    #[qml(skip)]
+    attached: Option<ObjectId>,
 }
 
 impl fmt::Debug for DeviceScreen {
@@ -73,6 +77,7 @@ impl Default for DeviceScreen {
             has_frame: false,
             frame: None,
             serial: None,
+            attached: None,
         }
     }
 }
@@ -85,9 +90,25 @@ impl DeviceScreen {
         let scope = e.object_scope(me).unwrap_or_else(|| e.graph().root());
         let serial = e.graph().property(scope, Value::Int(0)).ok();
         e.with_mut::<DeviceScreen, _>(me, |s| s.serial = serial)?;
-        e.watch(me, Self::STREAM.index, move |e, _| drop_frame(e, me))?;
+        e.watch(me, Self::STREAM.index, move |e, _| stream_changed(e, me))?;
+        stream_changed(e, me);
         Ok(())
     }
+}
+
+/// `stream` was set: the picture goes, and the new stream's comes.
+fn stream_changed(engine: &Engine, screen: ObjectId) {
+    drop_frame(engine, screen);
+    let Ok((stream, old)) =
+        engine.with::<DeviceScreen, _>(screen, |s| (s.stream.as_object(), s.attached))
+    else {
+        return;
+    };
+    if let Some(old) = old {
+        stream::detach_screen(engine, old, screen);
+    }
+    let attached = stream.filter(|s| stream::attach_screen(engine, *s, screen));
+    let _ = engine.with_mut::<DeviceScreen, _>(screen, |s| s.attached = attached);
 }
 
 /// Shows a picture of `width` by `height` pixels, `rgba` bytes in row
@@ -100,12 +121,17 @@ pub fn show_frame(
     height: u32,
     rgba: Vec<u8>,
 ) -> bool {
+    match ImageHandle::from_straight(width, height, rgba) {
+        Ok(image) => show_image(engine, screen, image),
+        Err(_) => false,
+    }
+}
+
+/// Shows `image` stretched over `screen`; false when `screen` is gone.
+pub fn show_image(engine: &Engine, screen: ObjectId, image: ImageHandle) -> bool {
     if !engine.is_alive(screen) {
         return false;
     }
-    let Ok(image) = ImageHandle::from_straight(width, height, rgba) else {
-        return false;
-    };
     let Ok(serial) = engine.with_mut::<DeviceScreen, _>(screen, |s| {
         s.frame = Some(image);
         s.serial

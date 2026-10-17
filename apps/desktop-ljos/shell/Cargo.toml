@@ -64,6 +64,11 @@ vt100 = "0.16"
 # and QTextDocument's markdown as text.
 regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
+# The Device tab's screen (src/device): FFmpeg is loaded at run time, never
+# linked or bundled (it is GPL), and serve-sim's JPEG seed is decoded as Ljós's
+# Image does.
+libloading = "0.8"
+zune-jpeg = "0.5"
 
 # The transcription helper's session and its signals (src/local_transcriber).
 [target.'cfg(unix)'.dependencies]

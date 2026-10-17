@@ -10,11 +10,17 @@
 //! Every callback runs on the UI thread, with the engine, and never inside
 //! the call that registered it, so a controller can register one while it
 //! holds itself.
+//!
+//! Besides RPC, the MC's origin serves streams the socket does not carry (a
+//! device's screen and input through `/api/device-hub`): [`Mc::open_stream`]
+//! opens one with the access token, and its events reach the UI the same way.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use hal_c2_mc::stream::Stream;
+pub use hal_c2_mc::stream::{StreamEnd, StreamEvent};
 use hal_c2_mc::{McClient, McEvent};
 pub use hal_c2_mc::{Phase, Status};
 use ljos::prelude::Engine;
@@ -59,9 +65,21 @@ pub type OnFrame = Box<dyn FnMut(&Engine, &Frame)>;
 pub type Resume = Box<dyn FnMut() -> Frame>;
 pub type OnReady = Box<dyn FnMut(&Engine, bool)>;
 pub type OnStatus = Box<dyn FnMut(&Engine, &Status)>;
+/// A stream's events, in order, the last an [`StreamEvent::Ended`].
+pub type OnStream = Box<dyn FnMut(&Engine, StreamEvent)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SubId(pub u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StreamId(pub u64);
+
+/// What a websocket stream sends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StreamMessage {
+    Text(String),
+    Binary(Vec<u8>),
+}
 
 /// The MC as a controller sees it: desktop-qt's `McClient` without its
 /// QObject context (a controller keeps a `Weak` to itself instead).
@@ -123,6 +141,26 @@ pub trait Mc {
         }
         self.call(environment, "orchestration.dispatchCommand", command, reply);
     }
+
+    // Streams on the MC's origin, beside the socket (a device's screen). A
+    // fake without them has no origin to open one at.
+
+    /// Opens a GET for `path` and `query` (both percent-encoded) on the MC's
+    /// origin with its access token, its body handed over as it arrives; with
+    /// `socket`, a websocket there instead. None before the MC was opened.
+    fn open_stream(
+        &self,
+        _path: &str,
+        _query: &str,
+        _socket: bool,
+        _on_event: OnStream,
+    ) -> Option<StreamId> {
+        None
+    }
+    /// Sends `message` on a websocket stream; nothing on a GET or once it ended.
+    fn send_on_stream(&self, _id: StreamId, _message: StreamMessage) {}
+    /// Aborts a stream: no event reaches its handler after this.
+    fn close_stream(&self, _id: StreamId) {}
 }
 
 /// What the I/O thread said, waiting for the UI thread. Only the wake-up
@@ -162,26 +200,62 @@ fn with_delivering(f: impl FnOnce(&Engine)) {
     }
 }
 
+/// The streams' events waiting for the UI thread, each with its stream's id;
+/// woken as [`McQueue`].
+#[derive(Clone, Default)]
+struct StreamQueue(Arc<Mutex<VecDeque<(u64, StreamEvent)>>>);
+
+impl StreamQueue {
+    fn push(&self, id: u64, event: StreamEvent) -> bool {
+        let mut queue = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        queue.push_back((id, event));
+        queue.len() == 1
+    }
+
+    fn take(&self) -> VecDeque<(u64, StreamEvent)> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+type Wake = Arc<Mutex<Box<dyn Fn() + Send>>>;
+
+/// An open stream and its handler, out of the map while it runs.
+struct OpenStream {
+    stream: Stream,
+    on_event: Option<OnStream>,
+}
+
 /// The real MC, over `hal_c2_mc`.
 pub struct Connection {
     client: McClient,
     queue: McQueue,
+    wake: Wake,
+    stream_queue: StreamQueue,
+    streams: RefCell<HashMap<u64, OpenStream>>,
+    next_stream: Cell<u64>,
 }
 
 impl Connection {
-    /// Starts the I/O thread; `wake` runs on it whenever events wait for
-    /// [`Connection::deliver`] (the shell posts to its inbox).
+    /// Starts the I/O thread; `wake` runs on it (or a stream's thread)
+    /// whenever events wait for [`Connection::deliver`] (the shell posts to
+    /// its inbox).
     pub fn spawn(wake: impl Fn() + Send + 'static) -> Connection {
+        let wake: Wake = Arc::new(Mutex::new(Box::new(wake)));
         let queue = McQueue::default();
         let sink = queue.clone();
+        let waking = wake.clone();
         let handle = hal_c2_mc::spawn(move |event| {
             if sink.push(event) {
-                wake();
+                (waking.lock().unwrap_or_else(|e| e.into_inner()))();
             }
         });
         Connection {
             client: McClient::new(handle),
             queue,
+            wake,
+            stream_queue: StreamQueue::default(),
+            streams: RefCell::default(),
+            next_stream: Cell::new(0),
         }
     }
 
@@ -197,17 +271,41 @@ impl Connection {
         Ok(())
     }
 
-    /// Hands what the I/O thread said to the callbacks, in order.
+    /// Hands what the I/O thread and the streams said to the callbacks, in
+    /// order.
     pub fn deliver(&self, engine: &Engine) {
         let events = self.queue.take();
-        if events.is_empty() {
+        if !events.is_empty() {
+            let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
+            for event in events {
+                self.client.deliver(event);
+            }
+            DELIVERING.with(|d| *d.borrow_mut() = outer);
+        }
+        for (id, event) in self.stream_queue.take() {
+            self.deliver_stream(engine, id, event);
+        }
+    }
+
+    /// Runs a stream's handler with the map free, so it may open or close
+    /// streams (its own too); one that ended is forgotten.
+    fn deliver_stream(&self, engine: &Engine, id: u64, event: StreamEvent) {
+        let ended = matches!(event, StreamEvent::Ended(_));
+        let handler = self
+            .streams
+            .borrow_mut()
+            .get_mut(&id)
+            .and_then(|open| open.on_event.take());
+        let Some(mut handler) = handler else {
             return;
+        };
+        handler(engine, event);
+        let mut streams = self.streams.borrow_mut();
+        if ended {
+            streams.remove(&id);
+        } else if let Some(open) = streams.get_mut(&id) {
+            open.on_event = Some(handler);
         }
-        let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
-        for event in events {
-            self.client.deliver(event);
-        }
-        DELIVERING.with(|d| *d.borrow_mut() = outer);
     }
 }
 
@@ -285,6 +383,47 @@ impl Mc for Connection {
 
     fn open(&self, origin: &str, token: &str) -> Result<(), String> {
         Connection::open(self, origin, token)
+    }
+
+    fn open_stream(
+        &self,
+        path: &str,
+        query: &str,
+        socket: bool,
+        on_event: OnStream,
+    ) -> Option<StreamId> {
+        let request = self.client.request(path, query, socket)?;
+        let id = self.next_stream.get() + 1;
+        self.next_stream.set(id);
+        let (queue, wake) = (self.stream_queue.clone(), self.wake.clone());
+        let stream = hal_c2_mc::stream::open(request, socket, move |event| {
+            if queue.push(id, event) {
+                (wake.lock().unwrap_or_else(|e| e.into_inner()))();
+            }
+        });
+        self.streams.borrow_mut().insert(
+            id,
+            OpenStream {
+                stream,
+                on_event: Some(on_event),
+            },
+        );
+        Some(StreamId(id))
+    }
+
+    fn send_on_stream(&self, id: StreamId, message: StreamMessage) {
+        if let Some(open) = self.streams.borrow().get(&id.0) {
+            match message {
+                StreamMessage::Text(text) => open.stream.send_text(text),
+                StreamMessage::Binary(bytes) => open.stream.send_binary(bytes),
+            }
+        }
+    }
+
+    fn close_stream(&self, id: StreamId) {
+        // Dropped outside the borrow: dropping a stream aborts it.
+        let closed = self.streams.borrow_mut().remove(&id.0);
+        drop(closed);
     }
 }
 

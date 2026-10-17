@@ -1768,6 +1768,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "ureq",
  "url",
@@ -1784,6 +1785,7 @@ dependencies = [
  "iana-time-zone",
  "interprocess",
  "libc",
+ "libloading",
  "ljos",
  "ljos_a11y",
  "ljos_controls",
@@ -1808,6 +1810,7 @@ dependencies = [
  "url",
  "vt100",
  "zbus",
+ "zune-jpeg",
 ]
 
 [[package]]

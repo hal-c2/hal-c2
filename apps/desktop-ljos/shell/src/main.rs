@@ -531,6 +531,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::folders::set_wake(&engine, move || {
                 let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let devices_handle = handle.clone();
+            hal_c2_shell::device::set_wake(&engine, move || {
+                let _ = devices_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             let plugins_handle = handle.clone();
             hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
                 let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
@@ -556,6 +560,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                         connection.deliver(engine);
                     }
                     hal_c2_shell::folders::deliver(engine);
+                    hal_c2_shell::device::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
                     hal_c2_shell::local_transcriber::deliver(engine);
                 }
