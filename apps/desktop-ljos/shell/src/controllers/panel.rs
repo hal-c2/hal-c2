@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::LazyLock;
 
 use ljos::prelude::{Engine, ObjectId, QmlObject, Value};
@@ -30,15 +31,17 @@ use crate::commands::Commands;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::keybindings::Keymap;
 use crate::controllers::layout;
-use crate::controllers::menus::{Item, Menus};
+use crate::controllers::menus::{Answer, Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::settings::Settings;
+use crate::controllers::terminals::{self, Terminals};
 use crate::controllers::threads;
 use crate::controllers::toasts::{self, Toasts};
 use crate::json::{self, Json};
 use crate::keybindings::command_label;
 use crate::sidebar_model;
 use crate::store;
+use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
 use crate::thread_view::previews::ThreadPreviews;
 use crate::thread_view::thread_diff::ThreadDiff;
@@ -255,6 +258,7 @@ pub struct RightPanel {
     published_open: bool,
     diff: Option<ObjectId>,
     previews: Option<ObjectId>,
+    agents: Option<ObjectId>,
     /// The thread's checkout, for the Files tab.
     files_root: String,
 }
@@ -296,7 +300,8 @@ impl Controller for RightPanel {
         let previews = ThreadPreviews::create(engine, owner, init.mc.clone(), toast, |e, url| {
             Bridge::of(e).open_external(e, url)
         });
-        let (diff, previews) = (diff.ok(), previews.ok());
+        let agents = AgentsModel::create(engine, owner, Default::default());
+        let (diff, previews, agents) = (diff.ok(), previews.ok(), agents.ok());
         if let Some(obj) = owner {
             let value = |obj: Option<ObjectId>| obj.map_or(Value::Null, Value::Object);
             warn(
@@ -306,6 +311,10 @@ impl Controller for RightPanel {
             warn(
                 engine,
                 engine.set_internal(obj, PanelObject::PREVIEWS, value(previews)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::AGENTS, value(agents)),
             );
         }
         if let Some(previews) = previews {
@@ -367,6 +376,7 @@ impl Controller for RightPanel {
             published_open: false,
             diff,
             previews,
+            agents,
             files_root: String::new(),
         };
         let path = engine.extension::<StorePath>().0.borrow().clone();
@@ -421,8 +431,9 @@ impl Controller for RightPanel {
                 );
             }
         }
-        // TODO(port): TerminalController::changed — its panel groups come
-        // and go with their terminals (`update`).
+        // Its panel groups come and go with their terminals.
+        let me = self.me.clone();
+        terminals::on_changed(engine, move |e| later(e, &me, Self::update));
         self.add_commands(engine);
         self.retarget(engine);
     }
@@ -638,7 +649,9 @@ impl RightPanel {
                 ThreadDiff::set_thread(engine, diff, environment, &thread_id, timeline);
                 ThreadDiff::update(engine, diff, |t| t.set_checkout(&root));
             }
-            // TODO(port): AgentsModel::setThread(environment, timeline).
+            if let Some(agents) = self.agents {
+                AgentsModel::set_thread(engine, agents, environment, timeline);
+            }
             // TODO(port): WorkspaceFiles::setTarget(environment, root) and
             // setTimeline(timeline).
             self.files_root = root;
@@ -749,10 +762,10 @@ impl RightPanel {
         0
     }
 
-    // TODO(port): TerminalController::panelGroups(thread) — the thread's
-    // terminal groups the panel shows.
-    fn terminal_groups(&self) -> Vec<String> {
-        Vec::new()
+    /// The shown thread's terminal groups in the panel; none while the
+    /// terminals are busy.
+    fn terminal_groups(&self, engine: &Engine) -> Option<Vec<String>> {
+        controller::with::<Terminals, _>(engine, |t, _| t.panel_groups(&self.thread))
     }
 
     // --- Tabs ----------------------------------------------------------------------
@@ -822,7 +835,7 @@ impl RightPanel {
         if !self.on_thread || id.is_empty() {
             return;
         }
-        let groups = self.terminal_groups();
+        let groups = self.terminal_groups(engine).unwrap_or_default();
         let state = self.panel();
         let allowed = match kind_of(id) {
             "terminal" => groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..]),
@@ -870,11 +883,31 @@ impl RightPanel {
         if closing.is_empty() || !state.tabs.contains(&closing) {
             return;
         }
-        // TODO(port): TerminalController::confirmClose / closeGroup — a
-        // terminal tab's terminals go too, asked once for all of them.
-        if remove_tab(state, &closing) {
-            self.update(engine);
+        if kind_of(&closing) != "terminal" {
+            if remove_tab(state, &closing) {
+                self.update(engine);
+            }
+            return;
         }
+        // Its terminals go too: asked once for all of them.
+        let group = closing[TERMINAL_TAB.len()..].to_owned();
+        let thread = self.thread.clone();
+        let me = self.me.clone();
+        let closed = group.clone();
+        let accepted: Answer = Rc::new(move |engine| {
+            let (thread, closing, group) = (thread.clone(), closing.clone(), closed.clone());
+            me.run(engine, move |p, e| {
+                if !p.on_thread || thread != p.thread || !remove_tab(p.panel(), &closing) {
+                    return;
+                }
+                controller::with::<Terminals, _>(e, |t, e| t.close_group(e, &group));
+                p.update(e);
+            });
+        });
+        controller::with::<Terminals, _>(engine, |t, e| {
+            let ids = t.group_terminals(&group);
+            t.confirm_close(e, &ids, accepted);
+        });
     }
 
     pub fn add_tab(&mut self, engine: &Engine, kind: &str) {
@@ -882,9 +915,19 @@ impl RightPanel {
             return;
         }
         match kind {
-            // TODO(port): TerminalController::addPanelGroup — a new terminal
-            // of its own, beside the drawer's.
-            "terminal" => {}
+            "terminal" => {
+                // A new terminal of its own, beside the drawer's.
+                let thread = self.thread.clone();
+                let group = controller::with::<Terminals, _>(engine, |t, e| {
+                    (t.thread_key() == thread)
+                        .then(|| t.add_panel_group(e))
+                        .flatten()
+                })
+                .flatten();
+                if let Some(group) = group {
+                    self.show_tab(engine, &format!("{TERMINAL_TAB}{group}"));
+                }
+            }
             "browser" => {
                 // A new browser tab: an empty one on the MC, filled from the
                 // Previews tab.
@@ -1060,14 +1103,17 @@ impl RightPanel {
 
     fn update(&mut self, engine: &Engine) {
         if self.on_thread {
-            let groups = self.terminal_groups();
+            let groups = self.terminal_groups(engine);
             let state = self.panel();
             // A terminal tab whose terminals all ended (here, in another
             // client, or the MC's) goes: the next one shows.
             let before = state.tabs.clone();
-            state.tabs.retain(|id| {
-                kind_of(id) != "terminal" || groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..])
-            });
+            if let Some(groups) = groups {
+                state.tabs.retain(|id| {
+                    kind_of(id) != "terminal"
+                        || groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..])
+                });
+            }
             if kind_of(&state.active) == "terminal" && !state.tabs.contains(&state.active) {
                 let at = before.iter().position(|t| *t == state.active).unwrap_or(0);
                 state.active = match state.tabs.len() {
@@ -1092,8 +1138,10 @@ impl RightPanel {
                 p.set_active(open && active == "previews")
             });
         }
-        // TODO(port): WorkspaceFiles::setActive, AgentsModel::setActive,
-        // ThreadDevices::setTab, and PullRequestReview::setOnline /
+        if let Some(agents) = self.agents {
+            AgentsModel::set_active(engine, agents, open && active == "agents");
+        }
+        // TODO(port): WorkspaceFiles::setActive, ThreadDevices::setTab, and PullRequestReview::setOnline /
         // setPullRequest / setActive for a review tab.
         Keymap::of(engine).set_preview_open(engine, open && active == "previews");
         self.publish(engine);
@@ -1122,9 +1170,12 @@ impl RightPanel {
             .iter()
             .map(|id| json!({"id": id, "kind": kind_of(id), "title": title_of(id)}))
             .collect();
-        // TODO(port): TerminalController::available / threadKey — terminals
-        // need the thread's place.
-        let can_terminal = false;
+        // Terminals need the thread's place.
+        let thread = &self.thread;
+        let can_terminal = controller::with::<Terminals, _>(engine, |t, _| {
+            t.available() && t.thread_key() == thread
+        })
+        .unwrap_or(false);
         let files = !self.files_root.is_empty();
         let pull_requests = self.pull_request_count() > 0;
         let reason = |ok: bool, why: &str| if ok { String::new() } else { why.to_owned() };
@@ -1364,8 +1415,8 @@ pub struct PanelObject {
     // TODO(port): WorkspaceFiles — the Files tab's (its FileTreeModel).
     #[qml(readonly)]
     files: Value,
-    // TODO(port): AgentsModel — the Agents tab's.
-    #[qml(readonly)]
+    /// The Agents tab's AgentsModel.
+    #[qml(notify, readonly)]
     agents: Value,
     // TODO(port): PullRequestReview — a review tab's.
     #[qml(readonly)]

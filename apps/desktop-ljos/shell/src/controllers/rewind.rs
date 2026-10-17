@@ -24,6 +24,7 @@ use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::navigation::{self, Route};
 use crate::controllers::threads;
 use crate::controllers::toasts::Toasts;
+use crate::controllers::workspace;
 use crate::json::Json;
 use crate::mc::Mc;
 use crate::store;
@@ -108,11 +109,26 @@ impl Rewind {
             return;
         }
         // The thread's provider may be unable to forget what came after.
-        // TODO(port): WorkspaceController::environmentConfig — refuse when
-        // the thread's modelSelection.instanceId provider says
-        // supportsConversationRollback false: "This provider does not
-        // support reverting conversation history. Start a new thread
-        // instead."
+        let instance = store::with(engine, |s| {
+            s.thread_row(&thread)
+                .and_then(|row| row.get("modelSelection"))
+                .and_then(|m| m.get("instanceId"))
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_owned()
+        });
+        let config = workspace::environment_config(engine);
+        let providers = config.get("providers").and_then(Json::as_array);
+        let forgets = providers.into_iter().flatten().any(|status| {
+            status.get("instanceId").and_then(Json::as_str) == Some(instance.as_str())
+                && status.get("supportsConversationRollback").and_then(Json::as_bool) == Some(false)
+        });
+        if forgets {
+            return refuse(
+                engine,
+                "This provider does not support reverting conversation history. Start a new thread instead.",
+            );
+        }
         if !store::with(engine, |s| s.thread_online(&thread)) {
             return refuse(engine, "Reconnect the environment before reverting checkpoints.");
         }
