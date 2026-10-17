@@ -333,6 +333,11 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     Map.put(context, :sent, text)
   end
 
+  step "the run for {string} has ordinal {int}", %{args: [text, ordinal]} = context do
+    assert %{"ordinal" => ^ordinal} = run_for(context, text)
+    context
+  end
+
   step "its user message turn item is marked as a queued turn", context do
     assert %{"runId" => run_id} = user_item(context, context.sent, "queued_turn")
     assert run_id == run_for(context, context.sent)["id"]
@@ -582,7 +587,13 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   step "another run of {string} ends", %{args: [thread]} = context do
     context = World.dispatch_message(context, thread, "Something else")
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
-    World.await_latest_run(context, thread, "completed")
+    # Its own run: the held one waits behind it with a higher ordinal.
+    %{"runId" => run_id} = message(%{context | thread: thread}, "Something else")
+
+    World.await_state(context, thread, fn state ->
+      match?(%{"status" => "completed"}, HalC2.StreamState.get(state, "run")[run_id])
+    end)
+
     # Its end asks for the next queued message, as the runtime does.
     :ok = HalC2.Orchestration.start_next(World.thread_id(context, thread))
     context
