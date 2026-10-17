@@ -61,19 +61,19 @@ fn a_frame_is_stretched_over_the_item_and_dropping_it_clears_the_item() {
     let s = screen(&engine, root);
     let mut scene = Scene::new(&engine, root, (200.0, 100.0));
     assert_eq!(read(&engine, root, "shown"), Value::Bool(false));
-    assert!(images(&scene.ops(&engine, s)).is_empty());
+    assert!(images(&scene.ops(s)).is_empty());
 
     assert!(show_frame(&engine, s, 4, 8, frame(4, 8)));
     assert_eq!(read(&engine, root, "shown"), Value::Bool(true));
-    assert_eq!(images(&scene.ops(&engine, s)), [(4, 8, (200.0, 100.0))]);
+    assert_eq!(images(&scene.ops(s)), [(4, 8, (200.0, 100.0))]);
 
     // The next picture replaces it, whatever its size.
     assert!(show_frame(&engine, s, 8, 4, frame(8, 4)));
-    assert_eq!(images(&scene.ops(&engine, s)), [(8, 4, (200.0, 100.0))]);
+    assert_eq!(images(&scene.ops(s)), [(8, 4, (200.0, 100.0))]);
 
     drop_frame(&engine, s);
     assert_eq!(read(&engine, root, "shown"), Value::Bool(false));
-    assert!(images(&scene.ops(&engine, s)).is_empty());
+    assert!(images(&scene.ops(s)).is_empty());
 }
 
 #[test]

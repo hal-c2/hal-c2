@@ -46,12 +46,6 @@ pub struct DeviceScreen {
     /// the frame was last dropped.
     #[qml(notify, readonly)]
     pub has_frame: bool,
-    /// Counts the frames shown and dropped; the paint reads it, so each
-    /// one repaints the item. Not Qt's: Ljós repaints an item only when a
-    /// property its paint read changes, and has no private property for
-    /// it (hal-c2/ljos-ui#62), so the counter shows in QML.
-    #[qml(notify, readonly)]
-    pub frames: i32,
     #[qml(skip)]
     frame: Option<ImageHandle>,
     /// The `DeviceStream` this item shows, when `stream` is one.
@@ -73,7 +67,6 @@ impl Default for DeviceScreen {
             item: Item::default(),
             stream: Value::Undefined,
             has_frame: false,
-            frames: 0,
             frame: None,
             attached: None,
         }
@@ -133,10 +126,8 @@ pub fn show_image(engine: &Engine, screen: ObjectId, image: ImageHandle) -> bool
     {
         return false;
     }
-    engine.batch(|| {
-        let _ = engine.set_internal(screen, DeviceScreen::HAS_FRAME, true);
-        repaint(engine, screen);
-    });
+    let _ = engine.set_internal(screen, DeviceScreen::HAS_FRAME, true);
+    item::repaint(engine, screen);
     true
 }
 
@@ -148,18 +139,10 @@ pub fn drop_frame(engine: &Engine, screen: ObjectId) {
     let Ok(had) = engine.with_mut::<DeviceScreen, _>(screen, |s| s.frame.take().is_some()) else {
         return;
     };
-    engine.batch(|| {
-        let _ = engine.set_internal(screen, DeviceScreen::HAS_FRAME, false);
-        if had {
-            repaint(engine, screen);
-        }
-    });
-}
-
-/// Moves `frames`, which the paint reads.
-fn repaint(engine: &Engine, screen: ObjectId) {
-    let frames = engine.get(screen, DeviceScreen::FRAMES).unwrap_or(0);
-    let _ = engine.set_internal(screen, DeviceScreen::FRAMES, frames.wrapping_add(1));
+    let _ = engine.set_internal(screen, DeviceScreen::HAS_FRAME, false);
+    if had {
+        item::repaint(engine, screen);
+    }
 }
 
 /// What a screen paints: its frame over the whole item.
@@ -178,9 +161,8 @@ impl ItemPaint for FramePaint {
     }
 }
 
-/// Read tracked: `frames` moving repaints the item.
+/// What `screen` shows; [`show_image`] and [`drop_frame`] paint it again.
 fn read_paint(engine: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
-    item::prop(engine, me, DeviceScreen::FRAMES);
     let frame = engine
         .with::<DeviceScreen, _>(me, |s| s.frame.clone())
         .ok()

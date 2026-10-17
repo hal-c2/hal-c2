@@ -17,14 +17,11 @@ path = "src/main.rs"
 ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
 # Below the facade, for what it does not name yet (the README's Ljós
 # section has the issues):
-# - ljos_quick: the Terminal's pointer, hover and input method hooks and the
-#   scene's text engine and font styles.
-# - ljos_engine: the MetaRef those hooks take, the `Prop<T>` handle type and
-#   `Engine::connect`'s ConnectionId.
+# - ljos_engine: the MetaRef the `Screen` attached object is found by, and
+#   names the prelude also has.
 # - ljos_platform and ljos_controls: the Downloads folder (`Location`) and
 #   an item's device pixel ratio (the `Screen` attached object).
 ljos_engine.workspace = true
-ljos_quick.workspace = true
 ljos_platform.workspace = true
 ljos_controls.workspace = true
 hal_c2_mc.workspace = true
@@ -78,9 +75,13 @@ libc = "0.2"
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [dev-dependencies]
-# What the tests drive that the facade does not name: a window's scene and
-# the test text engine (ljos_quick), the engine's virtual clock
+# `testing`: a window without a platform, on a virtual clock, to show items
+# in and hand them input.
+ljos = { workspace = true, features = ["testing"] }
+# What the tests drive below `ljos::testing`: the hub's window and the
+# highlighter's spans (ljos_quick), the engine's virtual clock
 # (ljos_runtime) and the application's activity (ljos_controls, above).
+ljos_quick.workspace = true
 ljos_runtime.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"

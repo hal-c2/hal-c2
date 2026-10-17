@@ -9,12 +9,9 @@ use std::rc::Rc;
 use common::{Scene, call, number, read, shell, text};
 use hal_c2_shell::mc::Disconnected;
 use ljos::item::WheelEvent;
+use ljos::item::{DrawOp, MouseButtons, Paint, PointerEvent, Rgba, kurbo};
 use ljos::keys::{KeyEvent, KeyKind, Modifiers, key};
-use ljos::prelude::{ClipboardMode, Platform, Time};
-use ljos::prelude::{Color, Engine, ObjectId, Value};
-// Pointer events, which the facade does not name.
-use ljos::item::{DrawOp, Paint, Rgba, kurbo};
-use ljos_quick::{MouseButtons, PointerEvent};
+use ljos::prelude::{ClipboardMode, Color, Engine, ObjectId, Platform, Value};
 
 const MAIN: &str = r##"
 import QtQuick
@@ -115,33 +112,31 @@ impl Rig {
     fn type_key(&mut self, ev: KeyEvent) -> bool {
         let mut up = ev.clone();
         up.kind = KeyKind::Release;
-        let taken = self.scene.scene.key_event(&self.engine, &ev);
-        self.scene.scene.key_event(&self.engine, &up);
+        let taken = self.scene.window.key(&ev);
+        self.scene.window.key(&up);
         taken
     }
 
     fn drag(&mut self, from: (u16, u16), to: (u16, u16)) {
         let (x0, y0) = self.centre(from.0, from.1);
         let (x1, y1) = self.centre(to.0, to.1);
-        let s = &mut self.scene.scene;
-        s.pointer_event(&self.engine, &PointerEvent::press(x0, y0, Time::ZERO));
-        s.pointer_event(
-            &self.engine,
-            &PointerEvent::moved(x1, y1, MouseButtons::LEFT, Time::ZERO),
-        );
-        s.pointer_event(&self.engine, &PointerEvent::release(x1, y1, Time::ZERO));
+        let w = &mut self.scene.window;
+        let now = w.now();
+        w.pointer(&PointerEvent::press(x0, y0, now));
+        w.pointer(&PointerEvent::moved(x1, y1, MouseButtons::LEFT, now));
+        w.pointer(&PointerEvent::release(x1, y1, now));
     }
 
     fn wheel(&mut self, notches: f64) -> bool {
         let (x, y) = self.centre(1, 1);
-        self.scene.scene.wheel_event(
-            &self.engine,
-            &WheelEvent::notches(x, y, 0.0, notches, Time::ZERO),
-        )
+        let now = self.scene.window.now();
+        self.scene
+            .window
+            .wheel(&WheelEvent::notches(x, y, 0.0, notches, now))
     }
 
     fn ops(&mut self) -> Vec<DrawOp> {
-        self.scene.ops(&self.engine, self.term)
+        self.scene.ops(self.term)
     }
 }
 
@@ -198,6 +193,15 @@ fn the_grid_follows_the_item_and_says_so() {
         format!("{cols}x{rows} ")
     );
     assert!(rig.cw > 1.0 && rig.ch > 1.0);
+}
+
+#[test]
+fn the_cells_follow_the_systems_text_size() {
+    let rig = Rig::new();
+    let columns = rig.num("columns");
+    ljos::testing::update_system_prefs(&rig.engine, |p| p.font_scale = 2.0);
+    assert!(rig.num("cellWidth") > rig.cw, "wider cells");
+    assert!(rig.num("columns") < columns, "fewer of them");
 }
 
 #[test]
@@ -314,6 +318,21 @@ fn keys_become_input() {
     assert_eq!(rig.typed(), "\u{1b}OA");
     // A modifier alone is not a key.
     assert!(!rig.type_key(KeyEvent::press(key::SHIFT).with_modifiers(Modifiers::SHIFT)));
+}
+
+#[test]
+fn the_input_method_types_at_the_cursor() {
+    let mut rig = Rig::new();
+    rig.write("ab");
+    assert_eq!(rig.scene.window.input_method_item(), Some(rig.term));
+    // Its candidate window goes over the cursor's cell.
+    let cursor = rig.scene.window.input_method_cursor().expect("a cursor");
+    assert_eq!(
+        cursor,
+        kurbo::Rect::new(PAD + 2.0 * rig.cw, PAD, PAD + 3.0 * rig.cw, PAD + rig.ch)
+    );
+    assert!(rig.scene.window.commit("é"));
+    assert_eq!(rig.typed(), "é");
 }
 
 #[test]
@@ -438,10 +457,10 @@ fn any_motion_reports_each_new_cell_the_pointer_enters() {
     let mut rig = Rig::new();
     let hover = |rig: &mut Rig, row, col| {
         let (x, y) = rig.centre(row, col);
-        rig.scene.scene.pointer_event(
-            &rig.engine,
-            &PointerEvent::moved(x, y, MouseButtons::empty(), Time::ZERO),
-        );
+        let now = rig.scene.window.now();
+        rig.scene
+            .window
+            .pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now));
     };
     // Button-only tracking hears nothing of a move with no button.
     rig.write("\x1b[?1002h\x1b[?1006h");

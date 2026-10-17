@@ -33,21 +33,12 @@ use std::rc::Rc;
 
 use ljos::item::{
     self, DisplayListBuilder, FocusReason, Font, Item, ItemPaint, KeyEvent, KeyItem, Modifiers,
-    TextEngine, TextStyle, WheelEvent, WheelItem, force_active_focus, key, kurbo,
+    MouseButtons, PointerEvent, PointerItem, Surrounding, TextEngine, TextInputClient, TextStyle,
+    WheelEvent, WheelItem, force_active_focus, key, kurbo,
 };
 use ljos::prelude::{
-    Atom, ClipboardMode, Color, Cx, Engine, EngineError, ObjectId, Platform, QmlObject, QmlType,
+    Atom, ClipboardMode, Color, Cx, Engine, EngineError, ObjectId, Platform, Prop, QmlObject,
     QmlValue, Value, qml_impl,
-};
-// ljos::item has no pointer items, no hover motion, no input method client
-// and no way to the scene's text engine or a font's text style, so the
-// Terminal takes those from ljos_quick, which speaks ljos_engine's MetaRef
-// and Prop (hal-c2/ljos-ui facade gaps; see the README).
-use ljos_engine::{MetaRef, Prop};
-use ljos_quick::keys::{Surrounding, TextInputClient, register_text_input_client};
-use ljos_quick::{
-    MouseButtons, PointerEvent, PointerItem, register_hover_move, register_pointer_item,
-    text_engine, text_style,
 };
 
 use keys::{MouseAction, encode_key, encode_mouse};
@@ -57,7 +48,6 @@ use vt::{Pos, Vt};
 /// Adds `Terminal` to module `Ghostty`.
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("Ghostty" 1.0 => [Terminal]));
-    let meta = || MetaRef::Static(Terminal::static_meta());
     item::register_paint_item::<Terminal>(engine, read_paint);
     item::register_key_item::<Terminal>(
         engine,
@@ -67,9 +57,8 @@ pub fn register(engine: &Engine) {
             release: |_, _, _| false,
         },
     );
-    register_pointer_item(
+    item::register_pointer_item::<Terminal>(
         engine,
-        meta(),
         PointerItem {
             press: pointer_press,
             moved: pointer_moved,
@@ -80,9 +69,9 @@ pub fn register(engine: &Engine) {
     );
     // Motion with no button held reaches only this hook, and only without
     // modifiers or time.
-    register_hover_move(engine, meta(), hover_moved);
+    item::register_hover_move::<Terminal>(engine, hover_moved);
     item::register_wheel_item::<Terminal>(engine, WheelItem { wheel });
-    register_text_input_client(engine, meta(), Rc::new(Ime));
+    item::register_text_input_client::<Terminal>(engine, Rc::new(Ime));
 }
 
 /// What the item keeps besides its properties.
@@ -154,12 +143,6 @@ pub struct Terminal {
     pub scroll_offset: f64,
     #[qml(notify, readonly)]
     pub at_bottom: bool,
-    /// Moves when the cells do; the paint reads it, so each change
-    /// repaints the item. Not qml-ghostty's: Ljós repaints an item only
-    /// when a property its paint read changes, and has no private
-    /// property for it, so the counter shows in QML.
-    #[qml(notify, readonly)]
-    pub revision: i32,
     #[qml(skip)]
     state: State,
 }
@@ -195,7 +178,6 @@ impl Default for Terminal {
             scroll_total: 24.0,
             scroll_offset: 0.0,
             at_bottom: true,
-            revision: 0,
             state: State::default(),
         }
     }
@@ -218,13 +200,14 @@ impl Terminal {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
-        // The grid follows the item's size and font.
+        // The grid follows the item's size, its font and the system's text
+        // size.
         e.effect_in(me, move |e| {
             let w = e.read(me, Item::WIDTH.index).to_number();
             let h = e.read(me, Item::HEIGHT.index).to_number();
-            let font = e.read(me, Self::FONT.index);
+            let style = font_style(e, me);
             let padding = e.read(me, Self::PADDING.index).to_number();
-            e.untrack(|| relayout(e, me, (w, h), &font, padding));
+            e.untrack(|| relayout(e, me, (w, h), &style, padding));
         })?;
         Ok(())
     }
@@ -351,7 +334,7 @@ fn put<T: PartialEq + QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
 }
 
 /// Brings the scroll, selection and size properties in line with the vt and
-/// asks for a repaint.
+/// paints the cells again.
 fn sync(e: &Engine, me: ObjectId) {
     let Some((total, top, at_bottom, selected, (rows, cols))) = vt_mut(e, me, |vt| {
         (
@@ -371,9 +354,8 @@ fn sync(e: &Engine, me: ObjectId) {
         put(e, me, Terminal::HAS_SELECTION, selected);
         put(e, me, Terminal::ROWS, i32::from(rows));
         put(e, me, Terminal::COLUMNS, i32::from(cols));
-        let revision = e.get(me, Terminal::REVISION).unwrap_or(0);
-        let _ = e.set_internal(me, Terminal::REVISION, revision.wrapping_add(1));
     });
+    item::repaint(e, me);
 }
 
 fn bytes_of(data: &Value) -> Vec<u8> {
@@ -454,22 +436,18 @@ fn paste_bytes(text: &str, bracketed: bool) -> Option<Vec<u8>> {
 
 // The grid follows the item.
 
-fn font_style(font: &Value) -> TextStyle {
-    match font {
-        Value::Font(f) => text_style(f),
-        _ => text_style(&Font::default()),
-    }
+/// The `font` as a `Text` lays it out. Tracked: it follows the font and the
+/// system's text size.
+fn font_style(e: &Engine, me: ObjectId) -> TextStyle {
+    item::text_style(e, &item::prop(e, me, Terminal::FONT))
 }
 
 /// Sizes the grid to the item: as many whole cells as fit inside the
 /// padding. A grid with nothing to show on, an item of no size, keeps its
 /// last size.
-fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), font: &Value, padding: f64) {
-    let style = font_style(font);
-    let (cw, ch) = {
-        let te = text_engine();
-        let mut te = te.borrow_mut();
-        paint::cell_size(&mut te, &style)
+fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), style: &TextStyle, padding: f64) {
+    let Some((cw, ch)) = item::with_text_engine(|te| paint::cell_size(te, style)) else {
+        return;
     };
     put(e, me, Terminal::CELL_WIDTH, cw);
     put(e, me, Terminal::CELL_HEIGHT, ch);
@@ -542,18 +520,19 @@ impl ItemPaint for Screen {
     }
 }
 
-/// Read tracked: the cells (`revision`), the colours, the font and the
-/// focus repaint the item.
+/// Read tracked: the colours, the font, the system's text size and the
+/// focus repaint the item; [`sync`] repaints it when the cells change.
 fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
-    item::prop(e, me, Terminal::REVISION);
-    let style = font_style(&e.read(me, Terminal::FONT.index));
-    let te = text_engine();
-    let cell = paint::cell_size(&mut te.borrow_mut(), &style);
+    let style = font_style(e, me);
+    let cell = item::with_text_engine(|te| paint::cell_size(te, &style)).unwrap_or((0.0, 0.0));
     let look = look(e, me, style, cell);
     let background = look.background;
     // The engine's store is borrowed in `vt_mut`, and the text engine must
     // be free for anything that reads properties: lay out last.
-    let painted = vt_mut(e, me, |vt| paint::build(vt, &look, &mut te.borrow_mut()));
+    let painted = vt_mut(e, me, |vt| {
+        item::with_text_engine(|te| paint::build(vt, &look, te))
+    })
+    .flatten();
     Rc::new(Screen(painted.unwrap_or_else(|| Painted {
         background,
         ..Default::default()
