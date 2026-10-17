@@ -25,6 +25,7 @@ mod mc_plugin;
 mod menus;
 mod page;
 mod palette;
+mod palette_search_prop;
 mod panel;
 mod plan;
 mod plugin;
