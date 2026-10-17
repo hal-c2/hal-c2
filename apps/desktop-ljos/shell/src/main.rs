@@ -52,7 +52,6 @@ use hal_c2_shell::session::{self, Session};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::{Launch, store};
 use ljos::CoalesceKey;
-use ljos::dev::OnError;
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ShellConfig};
@@ -203,17 +202,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let source = match qml::compile(&options.roots, OnError::Record) {
-        Ok(source) => source,
+    // A brick with an error fails only what makes an object of it, as in Qt.
+    let app = match options.roots.dirs().and_then(|dirs| {
+        App::new("HAL-C2")
+            .register(hal_c2_shell::register)
+            .qml_dirs(dirs, ROOT)
+    }) {
+        Ok(app) => app,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let app = App::new("HAL-C2")
-        .register(hal_c2_shell::register)
-        .source(source)
-        .root(ROOT);
     if let Some(out) = &options.screenshot {
         // ScriptedRun's codes: 0 for a picture, 2 for none, or for the
         // picture of a start that failed.
@@ -239,18 +239,29 @@ fn main() -> ExitCode {
     }
 }
 
-/// `--check`: whether every QML file compiles, each error on a line.
+/// `--check`: whether every QML file compiles, what the compiler said a
+/// line each, then how many of the files compiled.
 fn check(roots: &Roots) -> ExitCode {
-    let files = qml::count(roots);
-    match qml::compile(roots, OnError::Fail).and(files) {
-        Ok(files) => {
-            eprintln!("hal-c2-ljos: {files} of {files} QML files compiled");
-            ExitCode::SUCCESS
-        }
+    let compiled = match qml::compile(roots) {
+        Ok(compiled) => compiled,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+    for d in &compiled.diagnostics {
+        eprintln!("{d}");
+    }
+    let failed = compiled.source.failures().count();
+    let files = compiled.source.keys().count() + failed;
+    eprintln!(
+        "hal-c2-ljos: {} of {files} QML files compiled",
+        files - failed
+    );
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

@@ -10,7 +10,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::mc::Disconnected;
 use hal_c2_shell::qml::{self, Roots};
 use ljos::App;
-use ljos::dev::OnError;
+use ljos::dev::Severity;
 use ljos::render::{Fonts, Picture, set_fonts};
 
 #[test]
@@ -36,7 +36,19 @@ fn native_and_qml_singletons_share_the_module() {
 
 #[test]
 fn the_desktop_shell_loads_from_the_checkout() {
-    let source = qml::compile(&Roots::checkout(), OnError::Fail).expect("every QML file compiles");
+    let compiled = qml::compile(&Roots::checkout()).expect("the roots are there");
+    let errors: Vec<String> = compiled
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .map(ToString::to_string)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "every QML file compiles:\n{}",
+        errors.join("\n")
+    );
+    let source = compiled.source;
     set_fonts(Fonts::Bundled);
     let engine = App::new("test")
         .register(hal_c2_shell::register)
