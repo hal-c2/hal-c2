@@ -14,6 +14,9 @@ defmodule HalC2.Subprocess do
   `{:subprocess_stderr, reader, lines}`. The rest never leaves the reader, since an
   agent's stderr can carry credentials.
 
+  Exile stops the program when its owner exits, but not when the VM dies;
+  `HalC2.Subprocess.Orphans` records each program so the next boot kills those.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
@@ -35,6 +38,8 @@ defmodule HalC2.Subprocess do
     stderr = if prefix, do: :consume, else: :disable
 
     with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)) do
+      {:ok, os_pid} = Proc.os_pid(proc)
+      :ok = HalC2.Subprocess.Orphans.track(proc.pid, os_pid)
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)

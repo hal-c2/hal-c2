@@ -6,6 +6,8 @@
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
+#   apps/server-ex/lib/hal_c2/subprocess/orphans.ex
+#   https://github.com/hal-c2/hal-c2/issues/254 (provider CLIs left running by an MC that died)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (commands left running in background terminals)
@@ -25,9 +27,10 @@
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
 #   docs/user/ (continuing threads after an update)
 Feature: Recovering from restarts and releasing idle sessions
-  Provider processes die with the MC. At boot the engine ends every turn that
-  was cut off, so no thread is stuck running, and can ask cut-off threads to
-  continue. While the MC runs, a turn whose runtime crashes ends as failed, and
+  Provider processes stop with the MC, and ones an MC that died left running are
+  killed at its next boot, before any thread goes on. At boot the engine ends
+  every turn that was cut off, so no thread is stuck running, and can ask cut-off
+  threads to continue. While the MC runs, a turn whose runtime crashes ends as failed, and
   stopping a turn nothing drives any more ends it. The MC also stops provider
   processes that sat idle.
 
@@ -42,6 +45,12 @@ Feature: Recovering from restarts and releasing idle sessions
     And the running command item is interrupted
     And the answer stops streaming
     And the provider thread of "t1" is idle
+
+  @mc
+  Scenario: A provider process an MC that died left running is killed at its next boot
+    Given a provider process with a command in the background was running when the MC died
+    When the MC restarts
+    Then the provider process and its background command have been killed
 
   @mc
   Scenario: A native subagent thread left running by a restart is settled
