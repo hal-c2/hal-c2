@@ -129,6 +129,43 @@ step(
   },
 );
 
+// The client's own MC offers `own`, the member on this machine `member`: the fake
+// settings MC answers each by the environment a call names (none: the client's own).
+const MEMBER = "env-member";
+const labelled = (label: string) => EDITORS.find((candidate) => candidate.label === label)!;
+
+step(
+  "the client is connected to an MC on another machine, which has the editor {string}",
+  (ctx: World, label: string) => hasEditor(ctx, label),
+);
+
+step(
+  "the thread runs on a cluster member on this computer, which has the editor {string}",
+  (ctx: World, label: string) => {
+    beforeBoot(ctx, () => {
+      ctx.fake!.settings.on("server.getConfig", (_payload, environmentId) =>
+        environmentId === MEMBER ? { availableEditors: [labelled(label).id] } : null,
+      );
+      ctx.fake!.override("localPathFor", async (path) => ({ path, environmentId: MEMBER }));
+    });
+  },
+);
+
+step(
+  "{string} opens {string} on this computer through that member",
+  async (ctx: World, label: string, path: string) => {
+    await settle(ctx);
+    expect(ctx.fake!.settings.callsTo("shell.openInEditor")).toEqual([
+      {
+        method: "shell.openInEditor",
+        payload: { cwd: `${WORKSPACE}/${path}`, editor: labelled(label).id },
+        environmentId: MEMBER,
+      },
+    ]);
+    expect(status(ctx)).toEqual({ kind: "success", text: `Opened ${path} in ${label}.` });
+  },
+);
+
 step("the user opens {string} in {string}", async (ctx: World, path: string, editor: string) => {
   await openFile(ctx, path);
   await chooseCommand(ctx, `Open file in ${editor}`);

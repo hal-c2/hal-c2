@@ -334,12 +334,25 @@ describe("makeClusterClient", () => {
       expect(await client.localPathFor("/home/sam/shop")).toEqual({ problem: "elsewhere" });
     });
 
-    it("Given a member on this machine, when its checkout is opened, then its own path is used", async () => {
-      const { laptop, client } = await withShop();
+    it("Given a member on this machine, when its checkout is opened, then its own path is used and it starts the editor", async () => {
+      const { laptop, desktop, client } = await withShop();
 
-      expect(await client.localPathFor("/home/sam/shop")).toEqual({ path: "/home/sam/shop" });
-      // Checked against the MC the editor starts through, not mapped into a folder.
-      expect(laptop.calls).toEqual(["localPathFor /home/sam/shop"]);
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({
+        path: "/home/sam/shop",
+        environmentId: "env-desktop",
+      });
+      expect(desktop.calls).toEqual(["localPathFor /home/sam/shop"]);
+      expect(laptop.calls).toEqual([]);
+    });
+
+    it("Given a member on this machine and a client whose own MC is on another machine, when its checkout is opened, then the member still starts the editor", async () => {
+      const { laptop, client } = await withShop();
+      laptop.local.here = false;
+
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({
+        path: "/home/sam/shop",
+        environmentId: "env-desktop",
+      });
     });
   });
 

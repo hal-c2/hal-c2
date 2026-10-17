@@ -303,7 +303,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     viewer = null;
     options.setOpen(true);
     publish();
-    loadEditors();
+    loadEditors(token, workspace);
     track(
       client.listEntries(workspace).then(
         (entries) => {
@@ -480,20 +480,37 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
   };
 
-  /** The editors the environment can launch, by `EDITORS` id and label. */
+  /** The editors the MC that starts one for the workspace can launch, by `EDITORS` id and label. */
   let editors: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
-  const loadEditors = () => {
-    if (!client.getServerConfig) return;
+  const loadEditors = (token: number, workspace: string) => {
+    const { getServerConfig, localPathFor, mcCall } = client;
+    if (!getServerConfig) return;
+    const where: Promise<LocalPath | null> = localPathFor
+      ? localPathFor(workspace)
+      : Promise.resolve(null);
     track(
-      client.getServerConfig().then(
-        (config) => {
-          editors = (config.availableEditors ?? []).flatMap((id) => {
-            const known = EDITORS.find((editor) => editor.id === id);
-            return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
-          });
-        },
-        () => {},
-      ),
+      where
+        .then((local) => {
+          // A cluster member on this machine offers its own (localPathFor).
+          const environmentId = local && "path" in local ? local.environmentId : undefined;
+          return environmentId !== undefined && mcCall
+            ? mcCall<{ readonly availableEditors?: ReadonlyArray<string> }>(
+                "server.getConfig",
+                {},
+                environmentId,
+              )
+            : getServerConfig();
+        })
+        .then(
+          (config) => {
+            if (token !== generation) return;
+            editors = (config.availableEditors ?? []).flatMap((id) => {
+              const known = EDITORS.find((editor) => editor.id === id);
+              return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
+            });
+          },
+          () => {},
+        ),
     );
   };
 
@@ -518,10 +535,11 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           options.status?.(root.problem, "error");
           return;
         }
-        return mcCall("shell.openInEditor", {
-          cwd: `${root.path}/${path}`,
-          editor: editor.id,
-        }).then(() => options.status?.(`Opened ${path} in ${editor.label}.`, "success"), failed);
+        return mcCall(
+          "shell.openInEditor",
+          { cwd: `${root.path}/${path}`, editor: editor.id },
+          root.environmentId,
+        ).then(() => options.status?.(`Opened ${path} in ${editor.label}.`, "success"), failed);
       }, failed),
     );
   };

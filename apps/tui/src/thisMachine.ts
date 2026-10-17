@@ -100,8 +100,14 @@ export function hostedHere(input: {
   }
 }
 
-/** Where a file is on this machine: its path, or what the user is told when it has none. */
-export type LocalPath = { readonly path: string } | { readonly problem: string };
+/**
+ * Where a file is on this machine: its path, or what the user is told when it has none.
+ * `environmentId` names the MC on this machine that starts an app for it when that is
+ * a cluster member rather than the client's own MC.
+ */
+export type LocalPath =
+  | { readonly path: string; readonly environmentId?: string }
+  | { readonly problem: string };
 
 /** What the user is told about a file on a machine that keeps no folder here. */
 export const FILES_ELSEWHERE = "The files are on another machine and can't be opened here yet.";

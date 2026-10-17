@@ -412,6 +412,16 @@ Feature: Viewing and editing files
       When the user opens "src/app.ts" in "VS Code"
       Then "VS Code" opens "src/app.ts" on this computer
 
+    # The client's own MC can be on another machine while its cluster has one here:
+    # that member starts the editor, from the editors it has. The desktop's is proved
+    # by tests/prop/tst_WorkspaceOpenHereProp.cpp.
+    @tui
+    Scenario: A file of a cluster member on this computer opens through that member
+      Given the client is connected to an MC on another machine, which has the editor "VS Code"
+      And the thread runs on a cluster member on this computer, which has the editor "Zed"
+      When the user opens "src/app.ts" in "Zed"
+      Then "Zed" opens "src/app.ts" on this computer through that member
+
     @desktop
     Scenario: The thread's workspace opens in the preferred editor from the thread's details
       Given the user has picked "VS Code" as their preferred editor
