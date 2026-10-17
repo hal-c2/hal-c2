@@ -6,11 +6,19 @@
 mod common;
 
 mod alerts;
+mod background_activity;
+mod cluster;
 mod commands;
+mod diagnostics;
 mod keybindings;
 mod menus;
+mod page;
 mod quit;
+mod scheduled_tasks;
 mod settings;
+mod simple_pages;
+mod slack;
+mod source_control;
 mod toasts;
 
 use std::rc::Rc;

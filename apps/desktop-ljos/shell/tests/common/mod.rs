@@ -128,6 +128,14 @@ impl FakeMc {
         }
     }
 
+    /// Whether call `index` (of `calls`) is still unanswered.
+    pub fn is_pending(&self, index: usize) -> bool {
+        self.replies
+            .borrow()
+            .get(index)
+            .is_some_and(Option::is_some)
+    }
+
     /// The index of the oldest call to `method` not answered yet.
     pub fn pending(&self, method: &str) -> Option<usize> {
         let calls = self.calls.borrow();
