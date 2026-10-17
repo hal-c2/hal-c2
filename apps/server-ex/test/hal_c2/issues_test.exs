@@ -151,7 +151,7 @@ defmodule HalC2.IssuesTest do
     refute Map.has_key?(patch, "title")
   end
 
-  test "assignees are added and removed one login at a time, the others kept", %{dir: dir} do
+  test "assignees are added and removed by login, the others kept", %{dir: dir} do
     rules!(dir, [
       %{
         "args" => ["--method POST", "repos/acme/widgets/issues/9/assignees"],
@@ -176,6 +176,10 @@ defmodule HalC2.IssuesTest do
 
     assert {:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", []))
     assert length(calls(dir)) == 2
+
+    # The endpoint takes several logins in one request.
+    assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
+    assert [_, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
   end
 
   test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do
