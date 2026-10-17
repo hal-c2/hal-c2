@@ -146,6 +146,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         launch.mc_origin.is_none() || launch.allow_local_folder_import,
     );
     *engine.extension::<Kept>().0.borrow_mut() = launch.data_dir.clone();
+    platform_window::install(engine);
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
     if let Some(manifest) = &launch.licenses_manifest {
