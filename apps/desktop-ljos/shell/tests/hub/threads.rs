@@ -528,6 +528,9 @@ impl Server {
 struct Expected {
     /// The route's thread: the store opens a thread as the route changes.
     route: String,
+    /// Navigation has seen the route's thread listed, so its going away
+    /// takes the route home.
+    route_seen: bool,
     active: String,
     /// Most recently opened first.
     recent: Vec<String>,
@@ -568,6 +571,7 @@ impl Expected {
     fn route_to(&mut self, thread: &str) {
         if self.route != thread {
             thread.clone_into(&mut self.route);
+            self.route_seen = self.listed.contains(thread);
             self.open(thread);
         }
     }
@@ -613,6 +617,12 @@ impl Expected {
             .collect();
         for thread in gone {
             self.close(&thread);
+        }
+        // Navigation leaves a thread it saw go away, closed by the store or not.
+        if self.listed.contains(&self.route) {
+            self.route_seen = true;
+        } else if self.route_seen {
+            self.route_to("");
         }
     }
 }

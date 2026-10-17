@@ -573,7 +573,10 @@ impl DraftController {
     /// through (Navigation), so the draft takes its place rather than
     /// stacking on it.
     pub fn land(&mut self, engine: &Engine) {
-        if !self.lands_on_draft || !self.active || !store::with(engine, |s| s.synchronized()) {
+        // Until Navigation has published the route (restored or not), Home
+        // is only the absence of one.
+        let routed = Bridge::of(engine).published(engine, "route").is_some();
+        if !self.lands_on_draft || !self.active || !routed || !store::with(engine, |s| s.synchronized()) {
             return;
         }
         if navigation::shown(engine) != Route::Home {
