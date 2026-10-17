@@ -5,6 +5,10 @@
 set -euo pipefail
 
 drivers="${1:?sqldrivers directory}"
+if [ ! -d "${drivers}" ]; then
+  echo "error: ${drivers} is not a directory; the bundle has no sqldrivers directory" >&2
+  exit 1
+fi
 if ! compgen -G "${drivers}/libqsqlite*" > /dev/null; then
   echo "error: ${drivers} has no libqsqlite*; the bundle would have no SQLite driver" >&2
   exit 1
