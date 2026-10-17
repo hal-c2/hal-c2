@@ -36,6 +36,12 @@ mod MACHINE-FILES is
   op toA : Nat Where -> Item [ctor] .
   op fromA : Nat Answer -> Item [ctor] .
   op answer : Nat Answer -> Item [ctor] .
+  --- A file under a root opened on A is held there for B's MC (Share.open/2) by its pin,
+  --- claimed or not yet; B's session holds the pin (`held`) until the kernel closes the
+  --- file; a :claim or :release on its way from B's MC to the pin.
+  op pin : Nat Bool -> Item [ctor] .
+  op held : Nat -> Item [ctor] .
+  ops claim release : Nat -> Item [ctor] .
   --- The helper: running, or exited and about to be started again.
   ops helper-up helper-down : -> Item [ctor] .
   --- A is a member of the cluster; A's MC is running; the link between B and A is up.
@@ -53,7 +59,7 @@ mod MACHINE-FILES is
   var W : Where .
   var A : Answer .
   var S : HState .
-  vars P L : Bool .
+  vars P L B : Bool .
   var C : Conf .
 
   --- What the kernel hears when a reply for a request reaches it.
@@ -71,6 +77,23 @@ mod MACHINE-FILES is
   op hasTreq : Nat Conf -> Bool .
   eq hasTreq(I, treq(I, W) C) = true .
   eq hasTreq(I, C) = false [owise] .
+
+  op hasHeld : Nat Conf -> Bool .
+  eq hasHeld(I, held(I) C) = true .
+  eq hasHeld(I, C) = false [owise] .
+
+  op hasPin : Nat Conf -> Bool .
+  eq hasPin(I, pin(I, B) C) = true .
+  eq hasPin(I, C) = false [owise] .
+
+  --- What A holds for an answer, B's MC claims when it is the reply, or lets go of.
+  ops pins claims releases : Nat Answer -> Conf .
+  eq pins(I, data) = pin(I, false) .
+  eq pins(I, A) = empty [owise] .
+  eq claims(I, data) = claim(I) held(I) .
+  eq claims(I, A) = empty [owise] .
+  eq releases(I, data) = release(I) .
+  eq releases(I, A) = empty [owise] .
 
   op hasPending : Nat Conf -> Bool .
   eq hasPending(I, pending(I) C) = true .
@@ -105,27 +128,46 @@ mod MACHINE-FILES is
 
   --- remote/4 and handle_info({:answer, _, _}) --------------------------------------------
 
-  --- Share answers on A.
-  rl [share] : toA(I, W) peer(true) link(true) => fromA(I, share(W)) peer(true) link(true) .
+  --- Share answers on A, holding open what it opened.
+  rl [share] : toA(I, W) peer(true) link(true)
+    => fromA(I, share(W)) pins(I, share(W)) peer(true) link(true) .
   --- :erpc returns A's answer, or gives up when its timeout passes or the link to A
   --- goes; either way the caller tells the MC.
   rl [remote] : caller(I) fromA(I, A) => answer(I, A) .
   rl [remote-timeout] : caller(I) => answer(I, ehostdown) .
-  --- An answer for a pending request is its reply, stale once A left the folder; one
-  --- the MC forgot is dropped.
+  --- An answer for a pending request is its reply, and what it opened is claimed; it is
+  --- stale once A left the folder, and one the MC forgot is dropped, what they opened
+  --- let go.
   rl [answer] : answer(I, A) pending(I) h(I, W, S) member(true)
-    => h(I, W, hear(S, A)) member(true) .
+    => h(I, W, hear(S, A)) claims(I, A) member(true) .
   rl [answer-left] : answer(I, A) pending(I) h(I, W, S) member(false)
-    => h(I, W, hear(S, estale)) member(false) .
-  crl [answer-dropped] : { answer(I, A) C } => { C } if not hasPending(I, C) .
+    => h(I, W, hear(S, estale)) releases(I, A) member(false) .
+  crl [answer-dropped] : { answer(I, A) C } => { releases(I, A) C } if not hasPending(I, C) .
+  --- The kernel closes the file: the session lets go of its pin.
+  rl [close] : held(I) => release(I) .
+
+  --- the pin on A (Share.open/2) ----------------------------------------------------------
+
+  --- Claimed, it is held until it is let go; never claimed, as when :erpc gave up on the
+  --- call that made it, only so long. What reaches a pin that is gone is dropped.
+  rl [claimed] : claim(I) pin(I, false) peer(true) link(true) => pin(I, true) peer(true) link(true) .
+  rl [released] : release(I) pin(I, B) peer(true) link(true) => peer(true) link(true) .
+  rl [unclaimed] : pin(I, false) => empty .
+  crl [pin-gone] : { claim(I) peer(true) link(true) C } => { peer(true) link(true) C }
+    if not hasPin(I, C) .
+  crl [pin-gone] : { release(I) peer(true) link(true) C } => { peer(true) link(true) C }
+    if not hasPin(I, C) .
 
   --- the helper exiting, exited/1 and restart_later/1 ----------------------------------
 
   --- The helper exits: the kernel's requests end with the connection, and the MC drops
   --- what the old helper sent and what it had pending. Callers still running answer
-  --- into nothing.
+  --- into nothing. Started again, the old session's files are let go.
   rl [helper-exit] : { helper-up faults(s F) C } => { helper-down faults(F) exit(C) } .
-  rl [restart] : helper-down => helper-up .
+  rl [restart] : { helper-down C } => { helper-up let-go(C) } .
+  op let-go : Conf -> Conf .
+  eq let-go(held(I) C) = release(I) let-go(C) .
+  eq let-go(C) = C [owise] .
   op exit : Conf -> Conf .
   eq exit(h(I, W, sent) C) = h(I, W, lost) exit(C) .
   eq exit(h(I, W, flushing) C) = h(I, W, lost) exit(C) .
@@ -138,7 +180,8 @@ mod MACHINE-FILES is
 
   rl [leave] : member(true) faults(s F) => member(false) faults(F) .
   rl [join] : member(false) faults(s F) => member(true) faults(F) .
-  --- A's MC stops, or the link cuts: what is on its way between them is lost.
+  --- A's MC stops, or the link cuts: what is on its way between them is lost, and the
+  --- pins go, A's with it or each told B's MC is down.
   rl [peer-crash] : { peer(true) faults(s F) C } => { peer(false) faults(F) lose(C) } .
   rl [peer-start] : peer(false) => peer(true) .
   rl [partition] : { link(true) faults(s F) C } => { link(false) faults(F) lose(C) } .
@@ -146,6 +189,9 @@ mod MACHINE-FILES is
   op lose : Conf -> Conf .
   eq lose(toA(I, W) C) = lose(C) .
   eq lose(fromA(I, A) C) = lose(C) .
+  eq lose(pin(I, B) C) = lose(C) .
+  eq lose(claim(I) C) = lose(C) .
+  eq lose(release(I) C) = lose(C) .
   eq lose(C) = C [owise] .
 
   --- states ------------------------------------------------------------------------------
@@ -173,10 +219,14 @@ mod MACHINE-FILES-PROPS is
   subsort Sys < State .
 
   --- A request the kernel is waiting on: no reply, no Rflush, no end of its connection.
-  ops waiting : -> Prop [ctor] .
+  --- A file held open on A that B's session no longer holds.
+  ops waiting orphaned : -> Prop [ctor] .
   var I : Nat .
   var W : Where .
+  var B : Bool .
   var C : Conf .
+  ceq { pin(I, B) C } |= orphaned = true if not hasHeld(I, C) .
+  eq { C } |= orphaned = false [owise] .
   eq { h(I, W, sent) C } |= waiting = true .
   eq { h(I, W, flushing) C } |= waiting = true .
   eq { C } |= waiting = false [owise] .

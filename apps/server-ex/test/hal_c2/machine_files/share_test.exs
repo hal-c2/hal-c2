@@ -182,6 +182,55 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert Share.read(cart, 0, 6, new) == {:ok, "export"}
   end
 
+  # Removed, a file's inode number may be another's next; held open, it is not.
+  test "a file held open for another MC is stale once let go, even at its own inode", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    owner = spawn(fn -> receive(do: (:stop -> :ok)) end)
+    {:ok, %{id: id, pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    assert Share.read(cart, 0, 6, {id, pin}) == {:ok, "export"}
+    assert Share.write(cart, 0, "e", {id, pin}) == {:ok, 1}
+
+    File.rm!(cart)
+    File.write!(cart, "new")
+    assert {:ok, %{id: new}} = Share.stat(cart)
+    assert new != id
+    assert Share.write(cart, 0, "x", {id, pin}) == {:error, :estale}
+    assert File.read!(cart) == "new"
+
+    {:ok, %{id: ^new, pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    ref = Process.monitor(pin)
+    send(pin, :release)
+    assert_receive {:DOWN, ^ref, :process, ^pin, _}
+    # The same number, but no longer held: it may name another file by now.
+    assert Share.read(cart, 0, 3, {new, pin}) == {:error, :estale}
+    assert Share.setattr(cart, %{size: 0}, {new, pin}) == {:error, :estale}
+    assert File.read!(cart) == "new"
+  end
+
+  test "a file is held while its owner is there, and not unless it can be", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    owner = spawn(fn -> receive(do: (:stop -> :ok)) end)
+    {:ok, %{pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    ref = Process.monitor(pin)
+    send(owner, :stop)
+    assert_receive {:DOWN, ^ref, :process, ^pin, _}
+
+    {:ok, %{pin: created}} = Share.create(Path.join(ctx.shop, "src/new.ts"), 0o644, nil, owner)
+    assert is_pid(created)
+
+    # Directories, files it may not read and calls with no owner are only looked at.
+    refute Map.has_key?(elem(Share.open(Path.join(ctx.shop, "src"), owner), 1), :pin)
+    refute Map.has_key?(elem(Share.open(cart, nil), 1), :pin)
+    File.chmod!(cart, 0o200)
+    assert {:ok, attr} = Share.open(cart, self())
+    refute Map.has_key?(attr, :pin)
+    assert Share.append(cart, "x", attr.id) == {:ok, 1}
+    assert Share.open(Path.join(ctx.home, "notes.txt"), self()) == {:error, :enoent}
+  end
+
   test "a directory renamed away and made again is stale to whoever stood in it", ctx do
     src = Path.join(ctx.shop, "src")
     cart = Path.join(src, "cart.ts")

@@ -18,7 +18,10 @@ defmodule HalC2.MachineFiles.Session do
   that directory, or lists, fails as stale once the path names another directory.
   A fid opened on a file keeps that file's id (`opened`), and its reads, writes
   and fsyncs fail as stale once the path names another file, as when an editor
-  there saves by renaming a new file over it. One opened to append (`appends`)
+  there saves by renaming a new file over it. The file's machine holds it open for
+  the session's `owner` meanwhile (its pin, `HalC2.MachineFiles.Share.open/2`); a
+  pin no fid holds any more is in `released` until the owner takes it
+  (`released/1`) and lets it go. One opened to append (`appends`)
   writes at the file's end as it is on its machine, not where the kernel here
   last saw it.
   """
@@ -53,14 +56,16 @@ defmodule HalC2.MachineFiles.Session do
   # Linux's O_APPEND, as lopen and lcreate pass it.
   @o_append 0o2000
 
-  defstruct msize: 8192,
+  defstruct owner: nil,
+            msize: 8192,
             fids: %{},
             ids: %{},
             dirs: %{},
             opened: %{},
             appends: MapSet.new(),
             qids: %{},
-            next: 2
+            next: 2,
+            released: []
 
   @type t :: %__MODULE__{}
   @typedoc """
@@ -73,16 +78,27 @@ defmodule HalC2.MachineFiles.Session do
           {:reply, tuple, t}
           | {:call, String.t(), atom, list, (t, term -> {tuple, t}), t}
 
-  def new, do: %__MODULE__{}
+  @doc "A session whose files are held open for `owner`, the process that runs its calls."
+  def new(owner \\ nil), do: %__MODULE__{owner: owner}
+
+  @doc "The pins no fid holds any more, and the session without them."
+  @spec released(t) :: {[pid], t}
+  def released(s), do: {s.released, %{s | released: []}}
+
+  @doc "Every pin the session has, held or not: all of them are let go when it ends."
+  @spec pins(t) :: [pid]
+  def pins(s), do: s.released ++ for({_, {_id, pin}} <- s.opened, do: pin)
 
   @doc "Answers the T-message `msg` (from `NineP.decode/2`); `folders` are the machines' folders now."
   @spec handle(t, tuple, [String.t()]) :: step
   def handle(s, msg, folders)
 
-  def handle(_s, {:version, msize, version}, _folders) do
+  def handle(s, {:version, msize, version}, _folders) do
     msize = min(msize, @max_msize)
     spoken = if version == NineP.version(), do: version, else: "unknown"
-    {:reply, {:version, msize, spoken}, %__MODULE__{msize: msize}}
+
+    {:reply, {:version, msize, spoken},
+     %__MODULE__{owner: s.owner, msize: msize, released: pins(s)}}
   end
 
   def handle(s, {:attach, fid}, _folders),
@@ -196,7 +212,7 @@ defmodule HalC2.MachineFiles.Session do
   end
 
   defp on(s, {:lopen, fid, flags}, {folder, path} = at, _folders) do
-    call(s, folder, :stat, [path], fn s, {:ok, attr} ->
+    call(s, folder, :open, [path, s.owner], fn s, {:ok, attr} ->
       {qid, s} = qid(s, folder, attr)
       {{:lopen, qid, 0}, s |> put_fid(fid, at, attr.id) |> open(fid, attr, flags)}
     end)
@@ -281,7 +297,7 @@ defmodule HalC2.MachineFiles.Session do
     named(s, [name], fn ->
       path = join(dir, name)
 
-      call(s, folder, :create, [path, mode, s.ids[fid]], fn s, {:ok, attr} ->
+      call(s, folder, :create, [path, mode, s.ids[fid], s.owner], fn s, {:ok, attr} ->
         {qid, s} = qid(s, folder, attr)
         {{:lcreate, qid, 0}, s |> put_fid(fid, {folder, path}, attr.id) |> open(fid, attr, flags)}
       end)
@@ -382,9 +398,16 @@ defmodule HalC2.MachineFiles.Session do
   end
 
   defp forget(s, fid) do
+    released =
+      case s.opened do
+        %{^fid => {_id, pin}} -> [pin | s.released]
+        _ -> s.released
+      end
+
     %{
       s
-      | fids: Map.delete(s.fids, fid),
+      | released: released,
+        fids: Map.delete(s.fids, fid),
         ids: Map.delete(s.ids, fid),
         dirs: Map.delete(s.dirs, fid),
         opened: Map.delete(s.opened, fid),
@@ -395,7 +418,8 @@ defmodule HalC2.MachineFiles.Session do
   # A directory's listing is taken when it is read, so only a file keeps its id.
   defp open(s, _fid, %{type: :directory}, _flags), do: s
 
-  defp open(s, fid, %{id: id}, flags) do
+  defp open(s, fid, %{id: id} = attr, flags) do
+    id = if attr[:pin], do: {id, attr.pin}, else: id
     s = %{s | opened: Map.put(s.opened, fid, id)}
     if band(flags, @o_append) != 0, do: %{s | appends: MapSet.put(s.appends, fid)}, else: s
   end

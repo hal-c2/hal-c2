@@ -17,7 +17,7 @@ defmodule HalC2.MachineFilesProofTest do
     ],
     covers: %{
       "HalC2.MachineFiles handle_info {_, {:data, _}}" =>
-        ~w(request-gone request-down request-call flush),
+        ~w(request-gone request-down request-call flush close),
       "HalC2.MachineFiles handle_info {:answer, _, _}" => ~w(answer answer-left answer-dropped),
       "HalC2.MachineFiles handle_info {_, {:exit_status, _}}" => "helper-exit",
       "HalC2.MachineFiles handle_info :restart" => "restart",
@@ -29,7 +29,8 @@ defmodule HalC2.MachineFilesProofTest do
       "HalC2.MachineFiles.Share.write/4" => "share",
       "HalC2.MachineFiles.Share.append/3" => "share",
       "HalC2.MachineFiles.Share.fsync/2" => "share",
-      "HalC2.MachineFiles.Share.create/3" => "share",
+      "HalC2.MachineFiles.Share.open/2" => ~w(share claimed released unclaimed pin-gone),
+      "HalC2.MachineFiles.Share.create/4" => ~w(share claimed released unclaimed pin-gone),
       "HalC2.MachineFiles.Share.mkdir/3" => "share",
       "HalC2.MachineFiles.Share.remove/3" => "share",
       "HalC2.MachineFiles.Share.rename/4" => "share",
@@ -76,7 +77,8 @@ defmodule HalC2.MachineFilesProofTest do
   # The code's own steps, and the cluster coming back after a fault: a step that can
   # be taken all along is taken in the end. The kernel asking and the faults are not.
   @fair ~w(request-gone request-down request-call flush remote remote-timeout share answer
-           answer-left answer-dropped restart peer-start heal)
+           answer-left answer-dropped restart peer-start heal claimed released unclaimed
+           pin-gone)
 
   for init <- ["start(2)", "outside-start(2)"] do
     test "nothing outside a shared root is read, from #{init}", %{proof: proof} do
@@ -90,5 +92,9 @@ defmodule HalC2.MachineFilesProofTest do
 
   test "no request waits forever, whatever fails", %{proof: proof} do
     assert_ltl(proof, "start(2)", "<> [] ~ waiting", fair: @fair)
+  end
+
+  test "nothing stays open on A that no fid on B holds, whatever fails", %{proof: proof} do
+    assert_ltl(proof, "start(2)", "<> [] ~ orphaned", fair: @fair)
   end
 end

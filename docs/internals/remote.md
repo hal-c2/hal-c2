@@ -63,7 +63,11 @@ the link is the cluster's mTLS one, what is shared (a member's project roots and
 worktrees, nothing above or beside them) is decided on the member, and nothing is started
 or listened on for it. Every call has a timeout and runs in a process of its own, so a
 member that stops answering fails that request with EHOSTDOWN and never blocks the kernel
-or the other folders (`proof/models/machine_files.maude`). The mount is never
+or the other folders (`proof/models/machine_files.maude`). A file the kernel has open
+here is held open on the member meanwhile, by a process of `Share`'s that goes with the
+fid, the helper's connection, this MC or the link: a file is told apart from the next by
+its inode number, which the member's filesystem may give to a new file once the old one
+is removed and no longer open. The mount is never
 `allow_other` and sits in a 0700 directory: the files are as reachable as the member's
 MC, so only the user the MC runs as may see them. A helper killed outright leaves a mount
 that answers ENOTCONN; the MC lazily unmounts it before mounting again. There are no change

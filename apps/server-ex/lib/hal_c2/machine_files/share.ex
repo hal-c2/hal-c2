@@ -13,9 +13,13 @@ defmodule HalC2.MachineFiles.Share do
   Symlinks are followed and never shown as links: one that stays inside a root
   reads as what it points at, one that leaves every root is not listed.
 
-  Nothing here keeps state or starts anything: each call opens, reads or writes,
-  and closes. Every function takes an absolute path and answers `{:ok, value}` or
-  `{:error, posix}`.
+  Each call opens, reads or writes, and closes. Every function takes an absolute
+  path and answers `{:ok, value}` or `{:error, posix}`.
+
+  The one thing kept is a file another MC has open (`open/2`, `create/4`): a pin, a
+  process here that holds it open until that MC is done with it (`:release`) or
+  gone. Its id then names the pin too, so a file that took its inode number once
+  it was removed is never taken for it.
 
   A call that names a file in a directory may take the id that directory had when
   the other MC reached it (`dir`), and is `:estale` once the directory's path names
@@ -25,6 +29,8 @@ defmodule HalC2.MachineFiles.Share do
 
   alias HalC2.Workspace
 
+  # A pin no one claims, as when the call that made it timed out, is let go by then.
+  @unclaimed 60_000
   # A read never returns more than this, whatever it asks for.
   @max_read 1_048_576
   # The directories above the roots: listed and entered, never changed.
@@ -32,9 +38,11 @@ defmodule HalC2.MachineFiles.Share do
 
   @typedoc """
   A file's attributes. `id` tells files apart across calls: `{device, inode}`, or
-  `{:dir, path}` for a directory above the roots.
+  `{:dir, path}` for a directory above the roots. A file opened with an owner may
+  also have its `pin`: pass `{id, pin}` as the id of the calls that use it.
   """
   @type attr :: %{
+          optional(:pin) => pid,
           type: :directory | :regular | :other,
           mode: non_neg_integer,
           size: non_neg_integer,
@@ -108,6 +116,23 @@ defmodule HalC2.MachineFiles.Share do
   @doc "The attributes of `path`."
   @spec stat(String.t()) :: {:ok, attr} | {:error, atom}
   def stat(path) when is_binary(path), do: stat(path, roots())
+
+  @doc """
+  The attributes of `path`, held open for `owner` when it is a file: its `pin` is
+  let go once told `:release`, when `owner` exits, or unless told `:claim` soon.
+  A file that cannot be read is not held.
+  """
+  @spec open(String.t(), pid | nil) :: {:ok, attr} | {:error, atom}
+  def open(path, owner) when is_binary(path) and (is_pid(owner) or owner == nil),
+    do: open(path, owner, roots())
+
+  defp open(path, owner, roots) do
+    with {:ok, attr} <- stat(path, roots) do
+      if attr.type == :regular and owner != nil,
+        do: {:ok, with({:ok, pinned} <- pin(path, owner), do: pinned, else: (_ -> attr))},
+        else: {:ok, attr}
+    end
+  end
 
   @doc "The entries of the directory `path` as `{name, type, id}`."
   @spec list(String.t(), term) :: {:ok, [{String.t(), atom, term}]} | {:error, atom}
@@ -185,9 +210,9 @@ defmodule HalC2.MachineFiles.Share do
   @spec fsync(String.t(), term) :: :ok | {:error, atom}
   def fsync(path, id) when is_binary(path), do: opened(path, id, [:read], &:file.sync/1)
 
-  @doc "Creates the file `path`, which must not exist yet, with `mode`."
-  @spec create(String.t(), non_neg_integer, term) :: {:ok, attr} | {:error, atom}
-  def create(path, mode, dir \\ nil) when is_binary(path) and is_integer(mode) do
+  @doc "Creates the file `path`, which must not exist yet, with `mode`; opened as `open/2`."
+  @spec create(String.t(), non_neg_integer, term, pid | nil) :: {:ok, attr} | {:error, atom}
+  def create(path, mode, dir \\ nil, owner \\ nil) when is_binary(path) and is_integer(mode) do
     roots = roots()
 
     with {:ok, _} <- under_root(path, roots),
@@ -195,7 +220,7 @@ defmodule HalC2.MachineFiles.Share do
          {:ok, fd} <- :file.open(path, [:write, :exclusive, :raw]) do
       :file.close(fd)
       _ = chmod(path, mode)
-      stat(path, roots)
+      open(path, owner, roots)
     end
   end
 
@@ -379,21 +404,62 @@ defmodule HalC2.MachineFiles.Share do
   defp still(_path, nil), do: :ok
 
   defp still(path, id) do
-    with {:ok, stat} <- file_stat(path) do
-      if {stat.major_device, stat.inode} == id, do: :ok, else: {:error, :estale}
-    end
+    with {:ok, stat} <- file_stat(path), do: is(stat, id)
   end
 
   defp same(_fd, nil), do: :ok
 
   defp same(fd, id) do
-    case :file.read_file_info(fd, [:raw]) do
-      {:ok, info} ->
-        stat = File.Stat.from_record(info)
-        if {stat.major_device, stat.inode} == id, do: :ok, else: {:error, :estale}
+    with {:ok, info} <- :file.read_file_info(fd, [:raw]), do: is(File.Stat.from_record(info), id)
+  end
 
-      {:error, reason} ->
-        {:error, reason}
+  # While its pin holds the file, no other can have its inode number.
+  defp is(stat, {{_, _} = id, pin}), do: with(:ok <- is(stat, id), do: held(pin))
+
+  defp is(stat, id),
+    do: if({stat.major_device, stat.inode} == id, do: :ok, else: {:error, :estale})
+
+  # A pin of this MC before it restarted is not of this node any more.
+  defp held(pin) do
+    if node(pin) == node() and Process.alive?(pin), do: :ok, else: {:error, :estale}
+  rescue
+    ArgumentError -> {:error, :estale}
+  end
+
+  # The file `path` held open by a new process, with the attributes of what it holds.
+  defp pin(path, owner) do
+    caller = self()
+    {pin, ref} = spawn_monitor(fn -> hold(path, owner, caller) end)
+
+    receive do
+      {^pin, answer} ->
+        Process.demonitor(ref, [:flush])
+        answer
+
+      {:DOWN, ^ref, :process, ^pin, _reason} ->
+        {:error, :eio}
+    end
+  end
+
+  defp hold(path, owner, caller) do
+    with {:ok, fd} <- :file.open(path, [:read, :raw, :binary]),
+         {:ok, info} <- :file.read_file_info(fd, [:raw, time: :posix]) do
+      ref = Process.monitor(owner)
+      send(caller, {self(), {:ok, Map.put(attr(File.Stat.from_record(info)), :pin, self())}})
+      wait(ref, @unclaimed)
+    else
+      error -> send(caller, {self(), error})
+    end
+  end
+
+  # Until it is released or its owner exits; only so long until it is claimed.
+  defp wait(ref, timeout) do
+    receive do
+      :claim -> wait(ref, :infinity)
+      :release -> :ok
+      {:DOWN, ^ref, :process, _owner, _reason} -> :ok
+    after
+      timeout -> :ok
     end
   end
 

@@ -10,9 +10,11 @@ defmodule HalC2.MachineFilesPropTest do
   leaves; a request into the folder of a member that is down fails with EHOSTDOWN at
   once, and is answered again when it is back; a fid in a folder whose member
   left, or that another machine took the name of, is stale (ESTALE) and never
-  reaches the machine there now; nothing outside a shared root is answered (the member here shares none);
-  a helper that exits is started again with a fresh connection, its old fids gone;
-  and `local_path/3` says where a member's file is here, or why it is not.
+  reaches the machine there now; nothing outside a shared root is answered (the member
+  here shares one project); a file opened there is held open on its machine exactly
+  while a fid here has it open, and never after the helper's connection ends; a helper
+  that exits is started again with a fresh connection, its old fids gone; and
+  `local_path/3` says where a member's file is here, or why it is not.
 
   A member that is up is this MC (its Share answers over a local `:erpc`); one that
   is down is a node no one is connected to.
@@ -23,15 +25,25 @@ defmodule HalC2.MachineFilesPropTest do
   use PropCheck.StateM
 
   alias HalC2.MachineFiles
+  alias HalC2.MachineFiles.{Session, Share}
+  alias HalC2.{Shell, Store}
 
   @moduletag timeout: :infinity
 
   @root "/state/machines"
   @names ["devbox", "lab"]
   @fids [1, 2, 3]
+  # Fids walked on to the shared file and opened.
+  @files [4, 5]
   # Nothing is shared under it: the member here has no projects at that path.
   @outside "nowhere-machine-files-prop"
   @reply_timeout 5_000
+
+  defmodule QuietWire do
+    @moduledoc false
+    def connected, do: []
+    def cast(_peer, _message), do: :ok
+  end
 
   defmodule FakeHelper do
     @moduledoc false
@@ -66,6 +78,12 @@ defmodule HalC2.MachineFilesPropTest do
   end
 
   defp setup do
+    home = HalC2.Prop.scratch_home("machine-files")
+    shop = Path.join(home, "shop")
+    File.mkdir_p!(shop)
+    File.write!(Path.join(shop, "a.ts"), "a")
+    Process.put(:file, Path.join(shop, "a.ts"))
+    Application.put_env(:hal_c2, :shell_transport, QuietWire)
     Application.put_env(:hal_c2, :machine_files_prop, self())
     {:ok, cluster} = Agent.start(fn -> %{} end)
     Process.put(:cluster, cluster)
@@ -78,6 +96,8 @@ defmodule HalC2.MachineFilesPropTest do
     end
 
     HalC2.Prop.start_services([
+      {Store, path: Path.join(home, "hal-c2.sqlite")},
+      Shell,
       {
         MachineFiles,
         # Restarted at once every time, so a case with many crashes does not wait.
@@ -90,16 +110,22 @@ defmodule HalC2.MachineFilesPropTest do
         environments: environments
       }
     ])
+
+    Shell.put_row("shop", {"project", %{"id" => "shop", "workspaceRoot" => shop}})
+    :ok = Shell.sync()
   end
 
   defp teardown do
     HalC2.Prop.stop_services()
     Agent.stop(Process.delete(:cluster))
     Application.delete_env(:hal_c2, :machine_files_prop)
+    Application.delete_env(:hal_c2, :shell_transport)
+    File.rm_rf!(Application.fetch_env!(:hal_c2, :home))
   end
 
   defp server do
-    [{_, pid, _, _}] = Supervisor.which_children(Process.get({HalC2.Prop, :services}))
+    children = Supervisor.which_children(Process.get({HalC2.Prop, :services}))
+    {_, pid, _, _} = List.keyfind(children, MachineFiles, 0)
     pid
   end
 
@@ -107,8 +133,9 @@ defmodule HalC2.MachineFilesPropTest do
 
   # members: name => %{up, env}, env the machine with that label now; opened: the
   # helper has started; fids: fid => the folder it was walked to on the helper's
-  # current connection, or :gone once that folder's machine left it.
-  def initial_state, do: %{members: %{}, opened: false, fids: %{}}
+  # current connection, or :gone once that folder's machine left it; files: the fids
+  # that have the shared file open on that connection.
+  def initial_state, do: %{members: %{}, opened: false, fids: %{}, files: MapSet.new()}
 
   def command(state) do
     members = Map.keys(state.members)
@@ -130,6 +157,8 @@ defmodule HalC2.MachineFilesPropTest do
           do: [
             {3, {:call, __MODULE__, :open_folder, [oneof(@fids), oneof(@names)]}},
             {4, {:call, __MODULE__, :read_in, [oneof(@fids)]}},
+            {3, {:call, __MODULE__, :open_file, [oneof(@fids), oneof(@files)]}},
+            {2, {:call, __MODULE__, :close_file, [oneof(@files)]}},
             {1, {:call, __MODULE__, :crash, []}}
           ],
           else: []
@@ -143,8 +172,9 @@ defmodule HalC2.MachineFilesPropTest do
   def precondition(state, {:call, _, cmd, [name | _]}) when cmd in [:leave, :replace, :set_up],
     do: Map.has_key?(state.members, name)
 
-  def precondition(state, {:call, _, cmd, _}) when cmd in [:open_folder, :read_in, :crash],
-    do: state.opened
+  def precondition(state, {:call, _, cmd, _})
+      when cmd in [:open_folder, :read_in, :open_file, :close_file, :crash],
+      do: state.opened
 
   def precondition(_state, _call), do: true
 
@@ -168,7 +198,19 @@ defmodule HalC2.MachineFilesPropTest do
       else: state
   end
 
-  def next_state(state, _result, {:call, _, :crash, []}), do: %{state | fids: %{}}
+  def next_state(state, _result, {:call, _, :open_file, [fid, file]}) do
+    case opens(state, fid) do
+      :opened -> %{state | files: MapSet.put(state.files, file)}
+      _ -> state
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :close_file, [file]}),
+    do: %{state | files: MapSet.delete(state.files, file)}
+
+  def next_state(state, _result, {:call, _, :crash, []}),
+    do: %{state | fids: %{}, files: MapSet.new()}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :open_folder, [_fid, name]}, result) do
@@ -185,6 +227,19 @@ defmodule HalC2.MachineFilesPropTest do
     end
   end
 
+  # What is held open on the member is what fids here have open: no more, no less.
+  def postcondition(state, {:call, _, :open_file, [fid, file]} = call, {result, held}) do
+    result == opens(state, fid) and
+      held == MapSet.size(next_state(state, nil, call).files) and
+      (result != :opened or MapSet.member?(next_state(state, nil, call).files, file))
+  end
+
+  def postcondition(state, {:call, _, :close_file, [file]}, held),
+    do: held == MapSet.size(MapSet.delete(state.files, file))
+
+  def postcondition(_state, {:call, _, :crash, []}, {result, held}),
+    do: result == :ok and held == 0
+
   # Asked by the environment id the label's first machine has.
   def postcondition(state, {:call, _, :local_path, [name]}, result) do
     first = "env-#{name}"
@@ -197,6 +252,15 @@ defmodule HalC2.MachineFilesPropTest do
   end
 
   def postcondition(_state, _call, result), do: result == :ok
+
+  # What opening the shared file from `fid` gets.
+  defp opens(state, fid) do
+    case Map.fetch(state.fids, fid) do
+      :error -> {:error, 9}
+      {:ok, :gone} -> {:error, 116}
+      {:ok, folder} -> if state.members[folder].up, do: :opened, else: {:error, 112}
+    end
+  end
 
   defp left(state, name),
     do: %{
@@ -230,9 +294,57 @@ defmodule HalC2.MachineFilesPropTest do
 
   def local_path(name), do: MachineFiles.local_path("env-#{name}", "/home/me/a.ts", server())
 
+  def open_file(fid, file) do
+    names = Process.get(:file) |> Path.split() |> tl()
+
+    result =
+      case walk(fid, file, names) do
+        {111, _qids} ->
+          case t(3, 12, <<file::32-little, 0::32-little>>) do
+            {13, _qid_iounit} -> :opened
+            other -> errno(other)
+          end
+
+        other ->
+          errno(other)
+      end
+
+    {result, held()}
+  end
+
+  def close_file(file) do
+    {121, ""} = t(4, 120, <<file::32-little>>)
+    held()
+  end
+
   def crash do
     send(server(), {self(), {:exit_status, 1}})
-    connect()
+    result = connect()
+    {result, held()}
+  end
+
+  # The files held open on the member once what was let go is gone: those the
+  # session holds, and an extra one for each pin nothing holds that stays.
+  defp held do
+    pins = Session.pins(:sys.get_state(server()).session)
+    stray = for pin <- pins_alive() -- pins, not gone?(pin), do: pin
+    length(pins) + length(stray)
+  end
+
+  defp pins_alive do
+    for pid <- Process.list(),
+        Process.info(pid, :current_function) == {:current_function, {Share, :wait, 2}},
+        do: pid
+  end
+
+  defp gone?(pin) do
+    ref = Process.monitor(pin)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pin, _} -> true
+    after
+      @reply_timeout -> Process.demonitor(ref, [:flush]) && false
+    end
   end
 
   # The cluster changes as `HalC2.Shell` would tell of it.

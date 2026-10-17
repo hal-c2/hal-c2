@@ -200,7 +200,7 @@ defmodule HalC2.MachineFiles do
         started_at: nil,
         delay: 0,
         buffer: "",
-        session: Session.new(),
+        session: Session.new(self()),
         pending: %{},
         unavailable: MapSet.new(),
         waiting: []
@@ -256,18 +256,25 @@ defmodule HalC2.MachineFiles do
   end
 
   def handle_info({:answer, ref, answer}, state) do
+    pin = with {:ok, %{pin: pin}} <- answer, do: pin, else: (_ -> nil)
+
     case Map.pop(state.pending, ref) do
+      # Flushed, or for a helper that exited: what it opened is let go.
       {nil, _} ->
+        let_go([pin])
         {:noreply, state}
 
       {{tag, folder, environment, finish}, pending} ->
-        # From a machine that has since left its folder: the fid it was for is stale.
-        answer =
-          if state.members[folder][:environment] == environment,
-            do: answer,
-            else: {:error, :estale}
+        state = %{state | pending: pending}
 
-        {:noreply, answer(%{state | pending: pending}, tag, folder, finish, answer)}
+        # From a machine that has since left its folder: the fid it was for is stale.
+        if state.members[folder][:environment] == environment do
+          if pin, do: send(pin, :claim)
+          {:noreply, answer(state, tag, folder, finish, answer)}
+        else
+          let_go([pin])
+          {:noreply, answer(state, tag, folder, finish, {:error, :estale})}
+        end
     end
   end
 
@@ -326,6 +333,8 @@ defmodule HalC2.MachineFiles do
   # --- the helper ---------------------------------------------------------------------
 
   defp start(state) do
+    let_go(Session.pins(state.session))
+
     with :ok <- state.helper.available(),
          :ok <- state.helper.prepare(state.root),
          {:ok, port, os_pid} <- state.helper.open(state.root, ttl_ms: state.ttl_ms) do
@@ -338,7 +347,7 @@ defmodule HalC2.MachineFiles do
           os_pid: os_pid,
           started_at: System.monotonic_time(:millisecond),
           buffer: "",
-          session: Session.new(),
+          session: Session.new(self()),
           pending: %{}
       }
     else
@@ -394,14 +403,14 @@ defmodule HalC2.MachineFiles do
 
     case Session.handle(state.session, msg, Map.keys(state.members)) do
       {:reply, reply, session} ->
-        state = reply(%{state | session: session}, tag, reply)
+        state = reply(put_session(state, session), tag, reply)
 
         if match?({:attach, _}, msg) and state.status == :starting,
           do: settle(%{state | status: :ready}),
           else: state
 
       {:call, folder, fun, args, finish, session} ->
-        call(%{state | session: session}, tag, folder, fun, args, finish)
+        call(put_session(state, session), tag, folder, fun, args, finish)
     end
   end
 
@@ -437,8 +446,17 @@ defmodule HalC2.MachineFiles do
   defp answer(state, tag, folder, finish, answer) do
     state = available(state, folder, answer != {:error, :ehostdown})
     {reply, session} = finish.(state.session, answer)
-    reply(%{state | session: session}, tag, reply)
+    reply(put_session(state, session), tag, reply)
   end
+
+  # The files the session no longer holds open are let go on their machines.
+  defp put_session(state, session) do
+    {pins, session} = Session.released(session)
+    let_go(pins)
+    %{state | session: session}
+  end
+
+  defp let_go(pins), do: for(pin when is_pid(pin) <- pins, do: send(pin, :release))
 
   # Said once each time a member stops or starts answering, not once per request.
   defp available(state, folder, true) do

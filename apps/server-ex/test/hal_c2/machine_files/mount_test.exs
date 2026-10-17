@@ -5,7 +5,7 @@ defmodule HalC2.MachineFiles.MountTest do
   import ExUnit.CaptureLog
 
   alias HalC2.MachineFiles
-  alias HalC2.MachineFiles.Helper
+  alias HalC2.MachineFiles.{Helper, Session}
   alias HalC2.{Shell, Store}
 
   case Helper.available() do
@@ -161,6 +161,32 @@ defmodule HalC2.MachineFiles.MountTest do
     # d is renamed away and made again while the shell stands in the old one.
     in_shop.(~s(cd "$1/d" && mv "$2/d" "$2/d-old" && mkdir "$2/d" && echo new > "$2/d/x" && rm x))
     assert File.read!(Path.join(ctx.shop, "d/x")) == "new\n"
+  end
+
+  # Held open there, the file's inode number is never another's while it is open here.
+  test "a file open through the folder is held open on its machine until it closes", ctx do
+    cart = through(ctx, Path.join(ctx.shop, "src/cart.ts"))
+    {:ok, file} = File.open(cart, [:read])
+    assert [pin] = Session.pins(:sys.get_state(ctx.server).session)
+    ref = Process.monitor(pin)
+    File.close(file)
+    assert_receive {:DOWN, ^ref, :process, ^pin, _}, 5_000
+
+    # A helper that is gone has nothing open.
+    {:ok, file} = File.open(cart, [:read])
+    assert [pin] = Session.pins(:sys.get_state(ctx.server).session)
+    ref = Process.monitor(pin)
+    %{port: port, os_pid: os_pid} = :sys.get_state(ctx.server)
+    port_ref = Port.monitor(port)
+
+    capture_log(fn ->
+      {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)])
+      assert_receive {:DOWN, ^port_ref, :port, ^port, _}, 5_000
+      assert_receive {:DOWN, ^ref, :process, ^pin, _}, 5_000
+      :ok = MachineFiles.await_ready(ctx.server)
+    end)
+
+    File.close(file)
   end
 
   test "a member removed from the cluster has no folder", ctx do

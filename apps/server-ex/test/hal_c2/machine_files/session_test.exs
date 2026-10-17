@@ -14,6 +14,7 @@ defmodule HalC2.MachineFiles.SessionTest do
   defp devbox(:walk, ["/home/me/shop", _, {1, 99}]), do: {:error, :estale}
   defp devbox(:stat, ["/home/me/shop/cart.ts"]), do: {:ok, file(13, 5)}
   defp devbox(:stat, ["/home/me/shop"]), do: {:ok, dir(12)}
+  defp devbox(:open, [path, owner]), do: pinned(devbox(:stat, [path]), owner)
   # cart.ts is file 13 until it is saved over, as an editor there would.
   defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, 13}]), do: {:ok, "cart\n"}
   defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, _}]), do: {:error, :estale}
@@ -25,7 +26,9 @@ defmodule HalC2.MachineFiles.SessionTest do
     do: {:ok, [{"cart.ts", :regular, {1, 13}}, {"src", :directory, {1, 14}}]}
 
   defp devbox(:list, ["/home/me/shop", {1, 99}]), do: {:error, :estale}
-  defp devbox(:create, ["/home/me/shop/new.ts", 0o644, {1, 12}]), do: {:ok, file(15, 0)}
+
+  defp devbox(:create, ["/home/me/shop/new.ts", 0o644, {1, 12}, owner]),
+    do: pinned({:ok, file(15, 0)}, owner)
 
   defp devbox(:rename, ["/home/me/shop/cart.ts", "/home/me/shop/basket.ts", {1, 12}, {1, 12}]),
     do: :ok
@@ -35,6 +38,12 @@ defmodule HalC2.MachineFiles.SessionTest do
 
   defp devbox(:setattr, [path, changes, id]),
     do: send(self(), {:setattr, path, changes, id}) && {:ok, file(13, 0)}
+
+  # A file opened for an owner is held open there by a pin of its own.
+  defp pinned({:ok, %{type: :regular} = attr}, owner) when is_pid(owner),
+    do: {:ok, Map.put(attr, :pin, spawn(fn -> :ok end))}
+
+  defp pinned(answer, _owner), do: answer
 
   defp dir(inode), do: attr(:directory, inode, 0)
   defp file(inode, size), do: attr(:regular, inode, size)
@@ -65,14 +74,16 @@ defmodule HalC2.MachineFiles.SessionTest do
     end
   end
 
-  defp attached do
-    {{:version, 8192, "9P2000.L"}, s} = step(Session.new(), {:version, 8192, "9P2000.L"})
+  defp attached(owner \\ nil) do
+    {{:version, 8192, "9P2000.L"}, s} = step(Session.new(owner), {:version, 8192, "9P2000.L"})
     {{:attach, {:dir, 0, 1}}, s} = step(s, {:attach, 0})
     s
   end
 
-  defp at_shop do
-    {{:walk, [_, _, _, _]}, s} = step(attached(), {:walk, 0, 1, ["devbox", "home", "me", "shop"]})
+  defp at_shop(owner \\ nil) do
+    {{:walk, [_, _, _, _]}, s} =
+      step(attached(owner), {:walk, 0, 1, ["devbox", "home", "me", "shop"]})
+
     s
   end
 
@@ -146,6 +157,33 @@ defmodule HalC2.MachineFiles.SessionTest do
     refute_received {:fsync, _, _}
     assert {{:clunk}, s} = step(s, {:clunk, 2})
     refute Map.has_key?(s.opened, 2)
+  end
+
+  test "a file stays held open on its machine until no fid has it open" do
+    s = at_shop(self())
+    {{:walk, [_]}, s} = step(s, {:walk, 1, 2, ["cart.ts"]})
+    {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 0})
+    assert [pin] = Session.pins(s)
+
+    assert {:call, _, :read, [_, 0, _, {{1, 13}, ^pin}], _, _} =
+             Session.handle(s, {:read, 2, 0, 5}, @folders)
+
+    assert {[], s} = Session.released(s)
+
+    # Opened again, the fid holds the new one; clunked, nothing.
+    {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 0})
+    assert {[^pin], s} = Session.released(s)
+    assert [again] = Session.pins(s)
+    {{:clunk}, s} = step(s, {:clunk, 2})
+    assert {[^again], s} = Session.released(s)
+
+    # A new connection lets go of all the old one held, and holds for the same owner.
+    {{:lcreate, _, 0}, s} = step(s, {:lcreate, 1, "new.ts", 0o102, 0o644})
+    assert [created] = Session.pins(s)
+    {{:version, 8192, "9P2000.L"}, s} = step(s, {:version, 8192, "9P2000.L"})
+    assert {[^created], s} = Session.released(s)
+    assert s.owner == self()
+    assert Session.pins(s) == []
   end
 
   test "a machine that does not answer fails each call with its reason" do
