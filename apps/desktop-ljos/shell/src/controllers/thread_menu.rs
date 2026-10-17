@@ -1369,14 +1369,18 @@ fn pull_request_url(engine: &Engine, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// TODO(port): NavigationController::Route::projectKey — `Route` has no
-/// project yet. desktop-qt puts the thread's project key in the route, and
-/// nothing there reads it back: the projects page opens on the scope's.
+/// Opens the projects page for the thread's logical project (the route's
+/// `projectKey`, empty when the thread's project is in no group).
 fn open_project_settings(engine: &Engine, key: &str) {
-    if thread(engine, key).is_none() {
+    let Some(thread) = thread(engine, key) else {
         return;
-    }
-    open_route(engine, Route::Settings(PROJECT_SETTINGS.into()));
+    };
+    let project_key =
+        sidebar::logical_project_key(engine, &thread.environment_id, &thread.project_id)
+            .unwrap_or_default();
+    controller::with::<Navigation, _>(engine, |n, e| {
+        n.open_for_project(e, Route::Settings(PROJECT_SETTINGS.into()), project_key)
+    });
 }
 
 /// The thread's worktree, else its project's folder.
