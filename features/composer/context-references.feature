@@ -348,7 +348,7 @@ Feature: Referencing files, skills, commands and context
 
   @desktop
   Scenario: A bare @ opens the menu and says nothing matches
-    Given the composer shows "env-a:t1"
+    Given a project with an open thread
     When the user types "@" into the composer
     Then the suggestion list says "No matching files or folders."
 
