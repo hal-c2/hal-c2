@@ -26,6 +26,8 @@ mod driver;
 mod http;
 pub mod pairing;
 #[cfg(test)]
+mod pairing_exchange_prop;
+#[cfg(test)]
 mod pairing_prop;
 #[cfg(test)]
 mod prop;
