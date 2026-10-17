@@ -126,7 +126,7 @@ fn ran_failed_and_menu_hooks_follow_a_run() {
             "menu theme.select",
             "ran theme.select",
             "ran broken",
-            "failed broken ''"
+            "failed broken 'no'"
         ]
     );
 }
@@ -160,8 +160,14 @@ fn a_qml_command_runs_its_callback_and_goes_with_its_owner() {
     assert!(commands.run(&hub.engine, "panel.toggle"));
     assert_eq!(js_value(&hub.engine, "runs").to_number(), 1.0);
     hub.engine.destroy_now(owner);
+    // At once: the model loses its row as the owner goes.
+    assert!(commands.rows().iter().all(|r| r.command != "panel.toggle"));
     assert!(!commands.contains(&hub.engine, "panel.toggle"));
     assert!(!commands.run(&hub.engine, "panel.toggle"));
+    // An owner already gone adds nothing.
+    let callback = js_value(&hub.engine, "(() => {})");
+    commands.add_js(&hub.engine, "late", "Late", callback, Some(owner));
+    assert!(!commands.contains(&hub.engine, "late"));
 }
 
 #[test]

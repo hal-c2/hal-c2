@@ -14,12 +14,12 @@ Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native 
 whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
 fails only where it is made, as in Qt. It takes about a second in a debug build.
 
-Not ahead of time: at the pinned Ljós, `ljos::build` would compile them in a build script only if the native
-types moved to a crate of their own. Every QML edit would also mean a rebuild where a restart does now, a file
-that does not compile would fail the build, and `--qml-dir` would still need the compiler. A second at start-up
-does not pay for that. The next Ljós (hal-c2/ljos-ui#6, f5d77b6) drops the crate split: a test writes
-`ljostypes.json` with `ljos::types::check_file` and the build compiles against it with
-`ljos::build::compile_dirs_with_types`. Take that path after the bump, if the rebuild per edit is worth it.
+Not ahead of time. At the pinned Ljós it could be (hal-c2/ljos-ui#6): a test would write `ljostypes.json` from
+the shell's types with `ljos::types::check_file`, and a build script would compile both trees against it with
+`ljos::build::compile_dirs_with_types`, running none of the shell's code. It would catch nothing `--check` does
+not, as the compiler checks a native type's members either way. Every QML edit would mean a rebuild where a
+restart does now, a file that does not compile would fail the build, and `--qml-dir` would still need the
+compiler. A second at start-up does not pay for that.
 
 ## Run, check and render
 
@@ -57,20 +57,24 @@ The shell is an application of the `ljos` facade (`App`, `#[derive(QmlObject)]`,
 except where the facade has no way yet, which `shell/Cargo.toml` names crate by crate:
 
 - Custom items (`Terminal`, `DeviceScreen`, `ComposerHighlighter`) paint and take keys through `ljos_quick`'s
-  hooks, in `ljos_engine`'s and `ljos_render`'s types.
-- Some types the facade hands out are not named by it: `CoalesceKey` (`UiHandle::send_coalesced`),
+  hooks, in `ljos_engine`'s and `ljos_render`'s types (hal-c2/ljos-ui#52).
+- Some types the facade hands out are not named by it (#51): `CoalesceKey` (`UiHandle::send_coalesced`),
   `Time`/`TimerId`, `ClipboardMode`, and `Application` (the window's focus). The system's colour scheme is
   `ljos_quick::color_scheme`.
 
 What the shell still works around, each where it does so:
 
-- Compiled QML gets no base URL from `App::qml_dirs`, so `shell/src/qml.rs` compiles with `ljos::dev` and sets
-  one; and a compiled source does not say what it holds, so `--check` counts the files itself.
-- No application-wide key filter (hal-c2/ljos-ui#43) or Rust `request_quit` (#44): `controllers/quit.rs`.
-- No destroyed signal (#41), and `call_js` neither says why a call threw nor whether a value is callable (#42):
-  `commands.rs`.
-- No badge (#45): `notifications.rs`. No tree models (#27): `qml/HalC2/Shell/TreeView.qml`.
-- A record (`Value::Map`, `Value::List`) becomes a new script object on every read, a copy of the whole tree
-  that is never `===` itself, so state QML binds to is handed through a script function once; and a typed `Json`
-  parameter throws the whole call for one field that is not data, so `Shell.dispatch` and `Shell.publish` read
-  a `Value` leniently. Both in `shell/src/json.rs`, whose module doc is how a controller passes JSON.
+- Compiled QML gets no base URL from `App::qml_dirs` (#49), so `shell/src/qml.rs` compiles with `ljos::dev` and
+  sets one; and a compiled source does not say what it holds, so `--check` counts the files itself.
+- No application-wide key filter (hal-c2/ljos-ui#43): `controllers/quit.rs` and `controllers/keybindings.rs`.
+- `JsError::Thrown` holds what a thrown value prints as, not the value, so `commands.rs` takes the error's name
+  back off to say its `message`.
+- `ClipboardService::set_text` says nothing of a failure (#54), so a copy always says it was copied:
+  `controllers/thread_menu.rs`.
+- `ItemTree` has no `hasChildren` or `fetchMore`, and `row_count` is given no engine, so `folders/mod.rs` reads
+  a folder when a view counts its rows, through the platform's inbox, and an empty folder shows no arrow.
+- A record (`Value::Map`, `Value::List`) becomes a new script object on every read (#47), a copy of the whole
+  tree that is never `===` itself, so state QML binds to is handed through a script function once; and a typed
+  `Json` parameter throws the whole call for one field that is not data (#48), so `Shell.dispatch` and
+  `Shell.publish` read a `Value` leniently. Both in `shell/src/json.rs`, whose module doc is how a controller
+  passes JSON.

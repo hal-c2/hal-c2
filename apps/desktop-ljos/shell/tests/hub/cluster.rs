@@ -6,6 +6,7 @@ use std::rc::Rc;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::cluster::Cluster;
+use hal_c2_shell::controllers::drafts;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -128,6 +129,25 @@ fn a_removed_machine_is_announced_to_whoever_keeps_its_drafts() {
     hub.dispatch("cluster.remove", json!({"id": "id-b"}));
     answer(&hub, "env-1", "cluster.remove", Ok(members(&[])));
     assert_eq!(*removed.borrow(), ["id-b"]);
+}
+
+#[test]
+fn a_removed_machines_drafts_go_with_it_once_the_mc_agrees() {
+    let hub = opened();
+    let kept = drafts::start(&hub.engine, "env-1", "p1").unwrap();
+    drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    let environments = || {
+        let all = drafts::all(&hub.engine).into_iter();
+        all.map(|d| d.environment_id).collect::<Vec<_>>()
+    };
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    answer(&hub, "env-1", "cluster.remove", Err(failure("no")));
+    assert_eq!(environments(), ["env-1", "id-b", "id-b"]);
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    answer(&hub, "env-1", "cluster.remove", Ok(members(&[])));
+    assert_eq!(environments(), ["env-1"]);
+    assert!(drafts::draft(&hub.engine, &kept).is_some());
 }
 
 #[derive(Clone, Debug)]

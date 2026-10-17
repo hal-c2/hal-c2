@@ -1,7 +1,7 @@
 //! `alerts`: what a thread's change tells the user, and how
 //! (features/timeline/notifications.feature,
 //! settings/notifications.feature). The store's threads go in as the store
-//! hands them over; the platform is a fake presenter.
+//! hands them over; the platform is a fake presenter and badge.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use hal_c2_shell::controllers::alerts::{
 };
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
+use ljos::prelude::{BadgeService, Platform};
 use serde_json::json;
 
 use crate::Hub;
@@ -46,7 +47,10 @@ impl Presenter for Fake {
     fn permitted(&self) -> Option<bool> {
         self.permitted.get()
     }
-    fn badge(&self, count: u32) {
+}
+
+impl BadgeService for Fake {
+    fn show(&self, count: u32) {
         self.calls.borrow_mut().push(format!("badge {count}"));
     }
 }
@@ -72,6 +76,7 @@ fn alerts(test: &str, mode: &str, in_app: bool) -> Alerts {
     });
     let fake = Rc::new(Fake::default());
     let presenter: Rc<dyn Presenter> = fake.clone();
+    Platform::of(&hub.engine).set_badge(fake.clone());
     hub.with_controller::<AlertController, _>(|alerts, engine| {
         alerts.set_presenter(presenter);
         alerts.set_focused(engine, false);
@@ -386,6 +391,7 @@ fn the_presenter_starts_as_the_mode_says() {
     let a = alerts("presenter", "notifications", false);
     let fake = Rc::new(Fake::default());
     let presenter: Rc<dyn Presenter> = fake.clone();
+    Platform::of(&a.hub.engine).set_badge(fake.clone());
     a.hub
         .with_controller::<AlertController, _>(|alerts, _| alerts.set_presenter(presenter));
     assert_eq!(*fake.calls.borrow(), ["enabled true"]);

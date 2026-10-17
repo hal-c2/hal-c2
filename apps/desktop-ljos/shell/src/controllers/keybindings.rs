@@ -297,8 +297,8 @@ impl Keymap {
         // A reload of keybindings.json is confirmed, at most once every two
         // seconds.
         settings.on_keybindings_pushed(|engine| Keymap::of(engine).pushed(engine));
-        // TODO(port): TerminalController::changed / isOpen — the terminal
-        // calls `set_terminal_open`.
+        // The terminals controller calls `set_terminal_open` as its drawer
+        // opens and closes.
         // TODO(port): CommandPaletteController::openChanged — the palette
         // calls `set_palette_open`.
         // TODO(port): RightPanelController::isOpen / activeTab — the panel
@@ -614,7 +614,6 @@ impl Keymap {
     /// shell's with that focus.
     fn refresh_shortcuts(&self, engine: &Engine) {
         let commands = Commands::of(engine);
-        commands.prune(engine);
         let focuses = [
             Focus::default(),
             Focus {
@@ -1186,9 +1185,9 @@ impl Keymap {
                 }),
             );
         }
-        // TODO(port): TerminalController::supported — the terminal's port
-        // calls `add_terminal_commands` in a build that has one.
-        //
+        if crate::controllers::terminals::supported(engine) {
+            self.add_terminal_commands(engine);
+        }
         // The route thread's running turn stops, as the composer's stop
         // button does.
         add(

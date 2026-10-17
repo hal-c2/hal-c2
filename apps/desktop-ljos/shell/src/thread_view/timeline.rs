@@ -811,6 +811,11 @@ impl Timeline {
         self.workspace_root = root;
     }
 
+    /// The device's timestampFormat the rows' times read in.
+    pub fn timestamp_format(&self) -> &str {
+        &self.timestamp_format
+    }
+
     /// The device's timestampFormat (locale, 12-hour, 24-hour); a change
     /// redraws every row's time.
     pub fn set_timestamp_format(&mut self, format: &str) {

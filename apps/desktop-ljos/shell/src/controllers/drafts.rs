@@ -101,12 +101,14 @@ impl Draft {
 }
 
 type Hook = Rc<dyn Fn(&Engine)>;
+type StartedHook = Rc<dyn Fn(&Engine, &str)>;
 
 #[derive(Default)]
 struct Kept {
     drafts: RefCell<Vec<Draft>>,
     path: RefCell<Option<PathBuf>>,
     changed: RefCell<Vec<Hook>>,
+    started: RefCell<Vec<StartedHook>>,
 }
 
 fn kept(engine: &Engine) -> Rc<Kept> {
@@ -155,6 +157,13 @@ pub fn preview(engine: &Engine, id: &str) -> Option<String> {
 /// moves.
 pub fn on_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
     kept(engine).changed.borrow_mut().push(Rc::new(f));
+}
+
+/// Runs `f` with the draft's id once no controller is running whenever a
+/// thread is asked for in a project, whether its draft is new or the one
+/// from before.
+pub fn on_started(engine: &Engine, f: impl Fn(&Engine, &str) + 'static) {
+    kept(engine).started.borrow_mut().push(Rc::new(f));
 }
 
 fn changed(engine: &Engine) {
@@ -234,6 +243,11 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
         }
     };
     open(engine, Route::Draft(id.clone()));
+    let hooks = kept.started.borrow().clone();
+    for hook in hooks {
+        let id = id.clone();
+        Bridge::of(engine).defer(engine, move |engine| hook(engine, &id));
+    }
     Some(id)
 }
 
