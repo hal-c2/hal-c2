@@ -44,7 +44,7 @@ the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 w
 shell's keymap, not the focused control.
 
 `check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
-`DeviceScreen` (a frame the decoder hands it; no decoder here) and `Terminal` (`import Ghostty`, on the `vt100`
+`DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, on the `vt100`
 crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
 
 ## Tests
@@ -72,6 +72,8 @@ What the shell still works around, each where it does so:
 - Compiled QML gets no base URL from `App::qml_dirs` (#49), so `shell/src/qml.rs` compiles with `ljos::dev` and
   sets one; and a compiled source does not say what it holds, so `--check` counts the files itself.
 - No application-wide key filter (hal-c2/ljos-ui#43): `controllers/quit.rs` and `controllers/keybindings.rs`.
+- Ljós's QtMultimedia cannot play a live stream (#60), so a device's screen is decoded with the system's FFmpeg,
+  loaded at run time as desktop-qt does: `shell/src/device/decoder.rs`.
 - The system's reduce-motion preference never reaches the app (#58), and a window cannot ask for a blurred
   backdrop (#59): `shell/src/platform_window.rs`, where the theme's window blur does nothing.
 - `JsError::Thrown` holds what a thrown value prints as, not the value, so `commands.rs` takes the error's name

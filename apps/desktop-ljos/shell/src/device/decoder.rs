@@ -12,6 +12,9 @@
 //! on the UI thread: [`Decoded::Frame`] once per new picture nobody has taken
 //! yet ([`Decode::take_frame`] takes the newest). [`Decode`] is what the
 //! stream sees of it, so tests can give it another.
+//!
+//! TODO(ljos#60): Ljós's QtMultimedia plays only whole files, so a live
+//! stream is decoded here; once Ljós can play one, this and `ffmpeg.rs` go.
 
 use std::collections::VecDeque;
 use std::ffi::{c_int, c_void};
