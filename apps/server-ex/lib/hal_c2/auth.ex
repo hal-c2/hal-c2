@@ -46,8 +46,8 @@ defmodule HalC2.Auth do
   @admin_scopes @standard_scopes ++ ~w(access:read access:write relay:write)
   @desktop_ttl :timer.hours(24)
   @tickets __MODULE__.Tickets
-  # `{{:socket, pid}, session_id}`, `{{:watcher, pid}, monitor}` and `{:revision, n}`,
-  # the last access-list event's.
+  # `{{:socket, pid}, session_id}`, `{{:watcher, pid}, entry}` (`HalC2.Watchers`) and
+  # `{:revision, n}`, the last access-list event's.
   @live __MODULE__.Live
   @tables [@tickets, HalC2.Auth.Dpop.table(), @live]
   @heir __MODULE__.Heir
@@ -330,9 +330,12 @@ defmodule HalC2.Auth do
   """
   def prune, do: GenServer.call(__MODULE__, :prune)
 
-  @doc "Watches the access list; replies with its revision and snapshot."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  @doc """
+  Watches the access list under `ref` (`HalC2.Watchers`); replies with its revision and
+  snapshot.
+  """
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   # --- server ------------------------------------------------------------------
 
@@ -345,8 +348,8 @@ defmodule HalC2.Auth do
     # Sockets and watchers of the last run stay registered.
     for [pid] <- :ets.match(@live, {{:socket, :"$1"}, :_}), do: Process.monitor(pid)
 
-    for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
-        do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+    for {{:watcher, pid}, entry} <- :ets.match_object(@live, {{:watcher, :_}, :_}),
+        do: :ets.insert(@live, {{:watcher, pid}, HalC2.Watchers.monitor_entry(entry, pid)})
 
     path = HalC2.Store.path()
     with_db(path, &ensure_schema/1)
@@ -443,9 +446,14 @@ defmodule HalC2.Auth do
     {:reply, length(revoked), broadcast(state, removed_clients(revoked))}
   end
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    if :ets.lookup(@live, {:watcher, pid}) == [],
-      do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    entry =
+      case :ets.lookup(@live, {:watcher, pid}) do
+        [{_, entry}] -> entry
+        [] -> nil
+      end
+
+    :ets.insert(@live, {{:watcher, pid}, HalC2.Watchers.add_entry(entry, pid, ref)})
 
     snapshot = %{"pairingLinks" => links(state.path), "clientSessions" => clients(state)}
     {:reply, {:ok, revision(), snapshot}, state}
@@ -470,8 +478,14 @@ defmodule HalC2.Auth do
     end
   end
 
-  def handle_cast({:unsubscribe, pid}, state) do
-    for {_, ref} <- :ets.take(@live, {:watcher, pid}), do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    with [{key, entry}] <- :ets.lookup(@live, {:watcher, pid}) do
+      case HalC2.Watchers.remove_entry(entry, ref) do
+        nil -> :ets.delete(@live, key)
+        entry -> :ets.insert(@live, {key, entry})
+      end
+    end
+
     {:noreply, state}
   end
 
@@ -744,8 +758,8 @@ defmodule HalC2.Auth do
       revision = :ets.update_counter(@live, :revision, 1, {:revision, 0})
       message = %{"version" => 1, "revision" => revision, "type" => type, "payload" => payload}
 
-      for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
-          do: send(pid, {:hal_c2_auth_access, message})
+      for {{:watcher, pid}, entry} <- :ets.match_object(@live, {{:watcher, :_}, :_}),
+          do: HalC2.Watchers.tell(pid, entry, {:hal_c2_auth_access, message})
 
       state
     end)

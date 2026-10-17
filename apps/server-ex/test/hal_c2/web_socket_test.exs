@@ -423,6 +423,117 @@ defmodule HalC2.Web.SocketTest do
              WsClient.recv(client, 1_000)
   end
 
+  # #280: a settings page closed and opened again; the unwatch's :erpc.cast may reach
+  # HalC2.Settings only after the new page's watch.
+  test "a config unwatch landing after the next subscribe leaves that one watching", %{
+    port: port
+  } do
+    start_supervised!(HalC2.Settings)
+    gate = LateUnsubscribe.install(HalC2.Settings)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "config", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {_, _, client} = WsClient.recv_until(client, &(&1["t"] == "config.usageLimitSources"))
+
+    LateUnsubscribe.arm(gate)
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {_, _, client} = WsClient.recv_until(client, &(&1["t"] == "config.usageLimitSources"))
+
+    source = %{"id" => "hub", "kind" => "cliproxy", "label" => "Hub", "accounts" => []}
+    HalC2.Settings.notify_usage_limit_sources([source])
+
+    assert {%{"t" => "config.usageLimitSources", "id" => 2, "sources" => [^source]}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
+  # #273: one socket, two pages showing pull requests.
+  test "two subscriptions to pull request refreshes on one socket each follow until their own unsub",
+       %{port: port} do
+    start_supervised!(HalC2.PullRequests.Refreshes)
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(node())}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => shape})
+
+    {[{1, 0}, {2, 0}], client} = refresh_frames(client)
+
+    HalC2.PullRequests.Refreshes.bump()
+    assert {[{1, 1}, {2, 1}], client} = refresh_frames(client)
+
+    # One page going leaves the other watching.
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 1}) |> refresh_frames()
+    HalC2.PullRequests.Refreshes.bump()
+    assert {[{2, 2}], client} = refresh_frames(client)
+
+    {[], client} = client |> WsClient.send_json(%{"t" => "unsub", "id" => 2}) |> refresh_frames()
+    HalC2.PullRequests.Refreshes.bump()
+    assert {[], _} = refresh_frames(client)
+  end
+
+  # #280: the unsub's :erpc.cast may land after the next page's subscribe.
+  test "a pull request refreshes unsubscribe landing after the next subscribe leaves that one watching",
+       %{port: port} do
+    start_supervised!(HalC2.PullRequests.Refreshes)
+    gate = LateUnsubscribe.install(HalC2.PullRequests.Refreshes)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {[{1, 0}], client} = refresh_frames(client)
+
+    LateUnsubscribe.arm(gate)
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {[{2, 0}], client} = refresh_frames(client)
+
+    HalC2.PullRequests.Refreshes.bump()
+    assert {[{2, 1}], _} = refresh_frames(client)
+  end
+
+  # A bump sent for the closed page, still in the socket's mailbox, is older than the new
+  # page's snapshot.
+  test "a pull request refresh sent before a resubscribe does not follow its snapshot", %{
+    port: port
+  } do
+    start_supervised!(HalC2.PullRequests.Refreshes)
+    gate = LateUnsubscribe.install(HalC2.PullRequests.Refreshes)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(node())}
+
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    {[{1, 0}], client} = refresh_frames(client)
+
+    LateUnsubscribe.arm(gate, hold: true)
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert_receive :unsubscribe_held, 5_000
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    assert_receive :subscribe_held, 5_000
+
+    HalC2.PullRequests.Refreshes.bump()
+    LateUnsubscribe.release(gate)
+    assert {[{2, 1}], _} = refresh_frames(client)
+  end
+
+  # The pull request refresh frames before the pong answering a ping sent once
+  # HalC2.PullRequests.Refreshes has handled what it was sent, as {id, revision}.
+  defp refresh_frames(client) do
+    :sys.get_state(HalC2.PullRequests.Refreshes)
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
+
+    {for(%{"t" => "pullRequestRefreshes", "id" => id, "revision" => r} <- frames, do: {id, r})
+     |> Enum.sort(), client}
+  end
+
   @tag :capture_log
   test "two subscriptions to Slack on one socket each follow it until their own unsub", %{
     port: port

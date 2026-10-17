@@ -32,8 +32,8 @@ defmodule HalC2.ScheduledTasks do
   @doc "Runs a task now and replies once its message is sent."
   def run_now(%{"id" => id}), do: GenServer.call(__MODULE__, {:run_now, id}, 120_000)
 
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   # --- server ------------------------------------------------------------------
 
@@ -62,8 +62,8 @@ defmodule HalC2.ScheduledTasks do
   @impl true
   def handle_call(:list, _from, state), do: {:reply, sorted(state), state}
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, {:ok, sorted(state)}, %{state | watchers: watchers}}
   end
 
@@ -127,9 +127,8 @@ defmodule HalC2.ScheduledTasks do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -466,7 +465,7 @@ defmodule HalC2.ScheduledTasks do
   defp changed(state) do
     save(state.path, sorted(state))
     tasks = sorted(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_scheduled_tasks, node(), tasks})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_scheduled_tasks, node(), tasks})
     schedule(state)
   end
 

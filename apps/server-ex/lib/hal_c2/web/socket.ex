@@ -31,7 +31,30 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 6
+  @state_version 7
+
+  # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
+  @services %{
+    resource_telemetry: HalC2.Diagnostics,
+    preview: HalC2.Preview,
+    local_servers: HalC2.LocalServers,
+    devices: HalC2.Devices,
+    slack: HalC2.Slack,
+    project_clones: HalC2.ProjectClones,
+    scheduled_tasks: HalC2.ScheduledTasks,
+    background_policy: HalC2.BackgroundPolicy,
+    pull_request_refreshes: HalC2.PullRequests.Refreshes,
+    plugins: HalC2.Plugins
+  }
+
+  # The tags of the messages watched services send (`watched/3`).
+  @watched ~w(hal_c2_settings hal_c2_themes hal_c2_usage_limit_sources hal_c2_keybindings
+              hal_c2_providers_changed hal_c2_usage_limits_command hal_c2_upgraded
+              hal_c2_auth_access hal_c2_resource_telemetry hal_c2_preview hal_c2_local_servers
+              hal_c2_devices hal_c2_slack hal_c2_project_clones hal_c2_scheduled_tasks
+              hal_c2_background_policy hal_c2_pull_request_refreshes hal_c2_plugins
+              hal_c2_plugin_topic hal_c2_worktree_setup hal_c2_provider_install
+              hal_c2_provider_auth hal_c2_vcs hal_c2_terminals)a
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -217,25 +240,6 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # The MC moved to another version in place; clients watching it see its new
-  # descriptor as a `ready`.
-  def handle_info({:hal_c2_upgraded, mc, outcome}, state) do
-    case remote(mc, HalC2.Environment, :descriptor, []) do
-      {:ok, descriptor} ->
-        config_push(state, mc, fn id ->
-          %{
-            "t" => "config.ready",
-            "id" => id,
-            "environment" => descriptor,
-            "updateOutcome" => outcome
-          }
-        end)
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
   def handle_info({:hal_c2_git_action, action_id, event}, state) do
     case state.by_terminal do
       %{{:git_action, ^action_id} => id} ->
@@ -251,57 +255,17 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_settings, mc, settings}, state) do
-    # Settings can add, remove, or enable providers.
-    if config_ids(state, mc) != [], do: send(self(), {:hal_c2_providers_changed, mc})
-    config_push(state, mc, &%{"t" => "config.settings", "id" => &1, "settings" => settings})
-  end
+  # A change from a service this socket watches, for the subscriptions it was sent to.
+  def handle_info({:hal_c2_watched, refs, message}, state), do: watched(state, message, refs)
 
-  def handle_info({:hal_c2_themes, mc, themes}, state),
-    do: config_push(state, mc, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
+  # Slack's, sent before an upgrade in place.
+  def handle_info({:hal_c2_slack, mc, refs, status}, state) when is_list(refs),
+    do: watched(state, {:hal_c2_slack, mc, status}, refs)
 
-  def handle_info({:hal_c2_usage_limit_sources, mc, sources}, state) do
-    state = remember_sources(state, mc, sources)
-
-    config_push(
-      state,
-      mc,
-      &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
-    )
-  end
-
-  def handle_info({:hal_c2_keybindings, mc, rules}, state),
-    do: config_push(state, mc, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
-
-  def handle_info({:hal_c2_providers_changed, mc}, state),
-    do: push_providers(state, mc, config_ids(state, mc))
-
-  # The hubs now cover other drivers: only `/usage-limits` clients see a change.
-  def handle_info({:hal_c2_usage_limits_command, mc}, state),
-    do: push_providers(state, mc, Enum.filter(config_ids(state, mc), &command?(state, &1)))
-
-  def handle_info({:hal_c2_auth_access, event}, state) do
-    case state.by_terminal do
-      %{:auth_access => id} ->
-        {:push, Protocol.encode(%{"t" => "authAccess", "id" => id, "event" => own(event, state)}),
-         state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_resource_telemetry, mc, snapshot}, state) do
-    case state.by_terminal do
-      %{{:resource_telemetry, ^mc} => id} ->
-        {:push,
-         Protocol.encode(%{"t" => "resourceTelemetry", "id" => id, "snapshot" => snapshot}),
-         state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
+  # To subscriptions made before an upgrade in place, which hold no ref.
+  def handle_info(message, state)
+      when is_tuple(message) and tuple_size(message) > 1 and elem(message, 0) in @watched,
+      do: watched(state, message, [nil])
 
   def handle_info({:hal_c2_preview_automation, mc, client_id, event}, state) do
     case state.by_terminal do
@@ -311,167 +275,6 @@ defmodule HalC2.Web.Socket do
       %{{:preview_automation, ^mc, ^client_id} => id} ->
         {:push, Protocol.encode(%{"t" => "previewAutomation", "id" => id, "event" => event}),
          state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_preview, mc, event}, state) do
-    case state.by_terminal do
-      %{{:preview, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "preview", "id" => id, "event" => event}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_local_servers, mc, list}, state) do
-    case state.by_terminal do
-      %{{:local_servers, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "localServers", "id" => id, "list" => list}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_devices, mc, device_state}, state) do
-    case state.by_terminal do
-      %{{:devices, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "devices", "id" => id, "state" => device_state}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  # A change sent before a subscription was made is older than the status it answered.
-  def handle_info({:hal_c2_slack, mc, refs, status}, state) do
-    subs = Map.get(state.by_terminal, {:slack, mc}, %{})
-
-    case for({id, ref} <- subs, ref in refs, do: id) do
-      [] ->
-        {:ok, state}
-
-      ids ->
-        frames =
-          for id <- ids, do: Protocol.encode(%{"t" => "slack", "id" => id, "status" => status})
-
-        {:push, frames, state}
-    end
-  end
-
-  def handle_info({:hal_c2_project_clones, mc, clones}, state) do
-    case state.by_terminal do
-      %{{:project_clones, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "projectClones", "id" => id, "clones" => clones}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_scheduled_tasks, mc, tasks}, state) do
-    case state.by_terminal do
-      %{{:scheduled_tasks, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "scheduledTasks", "id" => id, "tasks" => tasks}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_background_policy, mc, policy}, state) do
-    case state.by_terminal do
-      %{{:background_policy, ^mc} => id} ->
-        frame = %{"t" => "backgroundPolicy", "id" => id, "policy" => policy}
-        {:push, Protocol.encode(frame), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_pull_request_refreshes, mc, revision}, state) do
-    case state.by_terminal do
-      %{{:pull_request_refreshes, ^mc} => id} ->
-        frame = %{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}
-        {:push, Protocol.encode(frame), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_plugins, mc, plugins}, state) do
-    case state.by_terminal do
-      %{{:plugins, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "plugins", "id" => id, "plugins" => plugins}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_plugin_topic, mc, plugin, topic, value}, state) do
-    case state.by_terminal do
-      %{{:plugin_topic, ^mc, ^plugin, ^topic} => id} ->
-        frame = %{"t" => "plugin", "id" => id, "topic" => topic, "value" => value}
-        {:push, Protocol.encode(frame), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_worktree_setup, thread_id, snapshot}, state) do
-    case state.by_terminal do
-      %{{:worktree_setup, ^thread_id} => id} ->
-        {:push, Protocol.encode(%{"t" => "worktreeSetup", "id" => id, "event" => snapshot}),
-         state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_provider_install, instance, install}, state) do
-    case state.by_terminal do
-      %{{:provider_install, ^instance} => id} ->
-        {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
-         state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_provider_auth, instance, auth}, state) do
-    case state.by_terminal do
-      %{{:provider_auth, ^instance} => id} ->
-        {:push, Protocol.encode(%{"t" => "providerAuth", "id" => id, "state" => auth}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_vcs, cwd, event}, state) do
-    case state.by_terminal do
-      %{{:vcs, ^cwd} => id} ->
-        {:push, Protocol.encode(%{"t" => "vcs", "id" => id, "event" => event}), state}
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
-  def handle_info({:hal_c2_terminals, mc, event}, state) do
-    case state.by_terminal do
-      %{{:terminals, ^mc} => id} ->
-        {:push, Protocol.encode(%{"t" => "terminals", "id" => id, "event" => event}), state}
 
       _ ->
         {:ok, state}
@@ -652,8 +455,9 @@ defmodule HalC2.Web.Socket do
   # `/usage-limits` itself (`:usage_limits_command`) gets providers that offer it.
   defp subscribe(state, id, {:config, mc, command}, _offset) do
     shape = {:config, mc}
+    ref = make_ref()
 
-    with {:ok, :ok} <- remote(mc, HalC2.Settings, :watch, [self()]),
+    with {:ok, :ok} <- remote(mc, HalC2.Settings, :watch, [self(), ref]),
          {:ok, config} <- remote(mc, HalC2.Environment, :server_config, []) do
       # Published themes follow the snapshot.
       themes =
@@ -680,7 +484,7 @@ defmodule HalC2.Web.Socket do
             # One MC's config may be watched by several subscriptions (config, lifecycle).
             by_terminal:
               state.by_terminal
-              |> Map.update({:settings, mc}, [id], &[id | &1])
+              |> Map.update({:settings, mc}, %{id => ref}, &Map.put(&1, id, ref))
               |> Map.put({:usage_limit_sources, mc}, sources)
         }
 
@@ -700,7 +504,9 @@ defmodule HalC2.Web.Socket do
        [Protocol.encode(frame), Protocol.encode(themes_frame), Protocol.encode(sources_frame)],
        state}
     else
-      {_, reason} -> {:push, Protocol.encode(error_frame(id, reason)), state}
+      {_, reason} ->
+        :erpc.cast(mc, HalC2.Settings, :unwatch, [self(), ref])
+        {:push, Protocol.encode(error_frame(id, reason)), state}
     end
   end
 
@@ -773,74 +579,6 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:terminals, mc} = shape, _offset) do
-    case remote(mc, HalC2.Terminal.Hub, :watch, [self()]) do
-      {:ok, terminals} ->
-        event = %{"type" => "snapshot", "terminals" => terminals}
-
-        {:push, Protocol.encode(%{"t" => "terminals", "id" => id, "event" => event}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:vcs, mc, cwd} = shape, _offset) do
-    case remote(mc, HalC2.Vcs.Watch, :subscribe, [cwd, self()]) do
-      {:ok, snapshot} ->
-        {:push, Protocol.encode(%{"t" => "vcs", "id" => id, "event" => snapshot}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:vcs, cwd}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  # Only an administrative session (or the MC's own token) sees who is paired;
-  # `shape_scope/1` asks for access:read.
-  defp subscribe(state, id, :auth_access, _offset) do
-    {:ok, revision, snapshot} = HalC2.Auth.subscribe(self())
-
-    event = %{
-      "version" => 1,
-      "revision" => revision,
-      "type" => "snapshot",
-      "payload" => snapshot
-    }
-
-    {:push, Protocol.encode(%{"t" => "authAccess", "id" => id, "event" => own(event, state)}),
-     %{
-       state
-       | subs: Map.put(state.subs, id, :auth_access),
-         by_terminal: Map.put(state.by_terminal, :auth_access, id)
-     }}
-  end
-
-  defp subscribe(state, id, {:resource_telemetry, mc} = shape, _offset) do
-    case remote(mc, HalC2.Diagnostics, :subscribe, [self()]) do
-      {:ok, {:ok, snapshot}} ->
-        {:push,
-         Protocol.encode(%{"t" => "resourceTelemetry", "id" => id, "snapshot" => snapshot}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:resource_telemetry, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
   defp subscribe(state, id, {:preview_automation, mc, host}, _offset) do
     key = {:preview_automation, mc, host["clientId"]}
 
@@ -852,222 +590,6 @@ defmodule HalC2.Web.Socket do
            | subs: Map.put(state.subs, id, key),
              by_terminal: Map.put(state.by_terminal, key, id)
          }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:preview, mc} = shape, _offset) do
-    case remote(mc, HalC2.Preview, :subscribe, [self()]) do
-      {:ok, :ok} ->
-        {:ok,
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:preview, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:local_servers, mc} = shape, _offset) do
-    case remote(mc, HalC2.LocalServers, :subscribe, [self()]) do
-      {:ok, {:ok, list}} ->
-        {:push, Protocol.encode(%{"t" => "localServers", "id" => id, "list" => list}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:local_servers, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:devices, mc} = shape, _offset) do
-    case remote(mc, HalC2.Devices, :subscribe, [self()]) do
-      {:ok, {:ok, device_state}} ->
-        {:push, Protocol.encode(%{"t" => "devices", "id" => id, "state" => device_state}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  # Several subscriptions on one socket (a page in each window) may watch one MC's
-  # Slack, each under a ref of its own that its unsub lets go of, so an unsubscribe
-  # cast landing after the next subscribe cannot drop it.
-  defp subscribe(state, id, {:slack, mc} = shape, _offset) do
-    ref = make_ref()
-
-    case remote(mc, HalC2.Slack, :subscribe, [self(), ref]) do
-      {:ok, {:ok, status}} ->
-        {:push, Protocol.encode(%{"t" => "slack", "id" => id, "status" => status}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal:
-               Map.update(state.by_terminal, shape, %{id => ref}, &Map.put(&1, id, ref))
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:project_clones, mc} = shape, _offset) do
-    case remote(mc, HalC2.ProjectClones, :subscribe, [self()]) do
-      {:ok, {:ok, clones}} ->
-        {:push, Protocol.encode(%{"t" => "projectClones", "id" => id, "clones" => clones}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:project_clones, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:scheduled_tasks, mc} = shape, _offset) do
-    case remote(mc, HalC2.ScheduledTasks, :subscribe, [self()]) do
-      {:ok, {:ok, tasks}} ->
-        {:push, Protocol.encode(%{"t" => "scheduledTasks", "id" => id, "tasks" => tasks}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:scheduled_tasks, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:background_policy, mc} = shape, _offset) do
-    case remote(mc, HalC2.BackgroundPolicy, :subscribe, [self()]) do
-      {:ok, {:ok, policy}} ->
-        {:push, Protocol.encode(%{"t" => "backgroundPolicy", "id" => id, "policy" => policy}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:pull_request_refreshes, mc} = shape, _offset) do
-    case remote(mc, HalC2.PullRequests.Refreshes, :subscribe, [self()]) do
-      {:ok, {:ok, revision}} ->
-        {:push,
-         Protocol.encode(%{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:pull_request_refreshes, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:plugins, mc} = shape, _offset) do
-    case remote(mc, HalC2.Plugins, :subscribe, [self()]) do
-      {:ok, plugins} ->
-        {:push, Protocol.encode(%{"t" => "plugins", "id" => id, "plugins" => plugins}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:plugin_topic, mc, plugin, topic} = shape, _offset) do
-    case remote(mc, HalC2.Plugins, :subscribe_topic, [self(), plugin, topic]) do
-      {:ok, {:ok, value}} ->
-        frame = %{"t" => "plugin", "id" => id, "topic" => topic, "value" => value}
-
-        {:push, Protocol.encode(frame),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, shape, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:worktree_setup, mc, thread_id} = shape, _offset) do
-    case remote(mc, HalC2.WorktreeSetup, :subscribe, [thread_id, self()]) do
-      {:ok, snapshot} ->
-        {:push, Protocol.encode(%{"t" => "worktreeSetup", "id" => id, "event" => snapshot}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:worktree_setup, thread_id}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:provider_auth, mc, instance} = shape, _offset) do
-    case remote(mc, HalC2.ProviderAuth, :subscribe, [instance, self()]) do
-      {:ok, {:ok, auth}} ->
-        {:push, Protocol.encode(%{"t" => "providerAuth", "id" => id, "state" => auth}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:provider_auth, instance}, id)
-         }}
-
-      {:ok, {:error, detail}} ->
-        frame =
-          Map.put(error_frame(id, detail["message"]), "detail", Map.delete(detail, "message"))
-
-        {:push, Protocol.encode(frame), state}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  defp subscribe(state, id, {:provider_install, mc, instance} = shape, _offset) do
-    case remote(mc, HalC2.Acp.Antigravity.Installation, :subscribe, [instance, self()]) do
-      {:ok, {:ok, install}} ->
-        {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:provider_install, instance}, id)
-         }}
-
-      {:ok, {:error, detail}} ->
-        frame =
-          Map.put(error_frame(id, detail["message"]), "detail", Map.delete(detail, "message"))
-
-        {:push, Protocol.encode(frame), state}
 
       {:error, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
@@ -1127,6 +649,38 @@ defmodule HalC2.Web.Socket do
          }}
 
       {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # A shape watching a service (`watch_spec/1`): what the service answered, then its
+  # changes. The subscription's own ref keeps an unsubscribe cast landing after a later
+  # subscribe from dropping that one, and the changes sent before it from following
+  # its snapshot.
+  defp subscribe(state, id, shape, _offset) do
+    {key, mc, module, sub, unsub, args} = watch_spec(shape)
+    ref = make_ref()
+
+    case remote(mc, module, sub, args ++ [ref]) do
+      {:ok, reply} ->
+        case snapshot(shape, reply) do
+          {:error, detail} ->
+            {:push, Protocol.encode(error_frame(id, detail)), state}
+
+          message ->
+            state = %{
+              state
+              | subs: Map.put(state.subs, id, shape),
+                by_terminal:
+                  Map.update(state.by_terminal, key, %{id => ref}, &Map.put(&1, id, ref))
+            }
+
+            if message, do: watched(state, message, [ref]), else: {:ok, state}
+        end
+
+      {:error, reason} ->
+        # A call that gave up may still be taken.
+        :erpc.cast(mc, module, unsub, args ++ [ref])
         {:push, Protocol.encode(error_frame(id, reason)), state}
     end
   end
@@ -1227,7 +781,28 @@ defmodule HalC2.Web.Socket do
   # carry none.
   defp migrate(%{v: 5} = state) do
     by_stream = Map.new(state.by_stream, fn {stream_id, id} -> {stream_id, {id, nil}} end)
-    %{state | by_stream: by_stream, v: 6}
+    migrate(%{state | by_stream: by_stream, v: 6})
+  end
+
+  # Version 7: subscriptions watching a service each hold a ref of their own, several to
+  # a key (`watch_spec/1`). Those made before hold none; Slack's already did.
+  defp migrate(%{v: 6} = state) do
+    watched =
+      for {id, shape} <- state.subs,
+          {key, _, _, _, _, _} <- [watch_spec(shape)],
+          not match?({:slack, _}, key),
+          do: {key, id}
+
+    by_terminal =
+      Enum.reduce(
+        watched,
+        Map.drop(state.by_terminal, Enum.map(watched, &elem(&1, 0))),
+        fn {key, id}, by_terminal ->
+          Map.update(by_terminal, key, %{id => nil}, &Map.put(&1, id, nil))
+        end
+      )
+
+    %{state | by_terminal: by_terminal, v: 7}
   end
 
   defp migrate(state), do: state
@@ -1260,11 +835,13 @@ defmodule HalC2.Web.Socket do
 
   defp shape_scope(_shape), do: "orchestration:read"
 
-  defp config_ids(state, mc), do: Map.get(state.by_terminal, {:settings, mc}, [])
+  # The subscriptions watching `mc`'s config under one of `refs`.
+  defp config_ids(state, mc, refs),
+    do: for({id, ref} <- Map.get(state.by_terminal, {:settings, mc}, %{}), ref in refs, do: id)
 
-  # A frame for each subscription watching `mc`'s config, built by `frame.(id)`.
-  defp config_push(state, mc, frame) do
-    case config_ids(state, mc) do
+  # A frame for each of them, built by `frame.(id)`.
+  defp config_push(state, mc, refs, frame) do
+    case config_ids(state, mc, refs) do
       [] -> {:ok, state}
       ids -> {:push, Enum.map(ids, &Protocol.encode(frame.(&1))), state}
     end
@@ -1311,8 +888,8 @@ defmodule HalC2.Web.Socket do
 
   # Keeps `mc`'s latest usage-limit sources for the `/usage-limits` providers, and
   # has those re-sent when the drivers the sources cover change.
-  defp remember_sources(state, mc, sources) do
-    case config_ids(state, mc) do
+  defp remember_sources(state, mc, refs, sources) do
+    case config_ids(state, mc, refs) do
       [] ->
         state
 
@@ -1322,7 +899,7 @@ defmodule HalC2.Web.Socket do
 
         if Enum.any?(ids, &command?(state, &1)) and
              before != HalC2.ProviderUsageLimits.command_coverage(sources),
-           do: send(self(), {:hal_c2_usage_limits_command, mc})
+           do: send(self(), {:hal_c2_watched, refs, {:hal_c2_usage_limits_command, mc}})
 
         %{state | by_terminal: Map.put(state.by_terminal, key, sources)}
     end
@@ -1339,10 +916,6 @@ defmodule HalC2.Web.Socket do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
         :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
-
-      {{:vcs, mc, cwd}, subs} ->
-        :erpc.cast(mc, HalC2.Vcs.Watch, :unsubscribe, [cwd, self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:vcs, cwd})}
 
       {{:server_update, mc, _input}, subs} ->
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, mc})}
@@ -1361,122 +934,17 @@ defmodule HalC2.Web.Socket do
             by_terminal: Map.delete(state.by_terminal, {:git_action, action_id})
         }
 
-      {{:config, mc}, subs} ->
-        state = update_commands(state, &MapSet.delete(&1, id))
+      {{:config, mc} = shape, subs} ->
+        state = update_commands(%{state | subs: subs}, &MapSet.delete(&1, id))
+        state = unwatch(state, id, shape)
 
-        case List.delete(config_ids(state, mc), id) do
-          [] ->
-            :erpc.cast(mc, HalC2.Settings, :unwatch, [self()])
-
-            by_terminal =
-              Map.drop(state.by_terminal, [{:settings, mc}, {:usage_limit_sources, mc}])
-
-            %{state | subs: subs, by_terminal: by_terminal}
-
-          ids ->
-            %{state | subs: subs, by_terminal: Map.put(state.by_terminal, {:settings, mc}, ids)}
-        end
-
-      {:auth_access, subs} ->
-        HalC2.Auth.unsubscribe(self())
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, :auth_access)}
-
-      {{:resource_telemetry, mc}, subs} ->
-        # A direct cast keeps order with this socket's later frames.
-        GenServer.cast({HalC2.Diagnostics, mc}, {:unsubscribe, self()})
-
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:resource_telemetry, mc})
-        }
+        if Map.has_key?(state.by_terminal, {:settings, mc}),
+          do: state,
+          else: %{state | by_terminal: Map.delete(state.by_terminal, {:usage_limit_sources, mc})}
 
       {{:preview_automation, mc, client_id} = key, subs} ->
         :erpc.cast(mc, HalC2.PreviewAutomation, :disconnect, [client_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
-
-      {{:preview, mc}, subs} ->
-        :erpc.cast(mc, HalC2.Preview, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:preview, mc})}
-
-      {{:local_servers, mc}, subs} ->
-        :erpc.cast(mc, HalC2.LocalServers, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:local_servers, mc})}
-
-      {{:devices, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.Devices, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
-
-      {{:slack, mc} = shape, subs} ->
-        {ref, refs} = Map.pop(Map.fetch!(state.by_terminal, shape), id)
-        :erpc.cast(mc, HalC2.Slack, :unsubscribe, [self(), ref])
-
-        by_terminal =
-          if refs == %{},
-            do: Map.delete(state.by_terminal, shape),
-            else: Map.put(state.by_terminal, shape, refs)
-
-        %{state | subs: subs, by_terminal: by_terminal}
-
-      {{:project_clones, mc}, subs} ->
-        :erpc.cast(mc, HalC2.ProjectClones, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:project_clones, mc})}
-
-      {{:scheduled_tasks, mc}, subs} ->
-        :erpc.cast(mc, HalC2.ScheduledTasks, :unsubscribe, [self()])
-
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:scheduled_tasks, mc})
-        }
-
-      {{:background_policy, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.BackgroundPolicy, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
-
-      {{:pull_request_refreshes, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.PullRequests.Refreshes, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
-
-      {{:plugins, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.Plugins, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
-
-      {{:plugin_topic, mc, plugin, topic} = shape, subs} ->
-        :erpc.cast(mc, HalC2.Plugins, :unsubscribe_topic, [self(), plugin, topic])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
-
-      {{:worktree_setup, mc, thread_id}, subs} ->
-        :erpc.cast(mc, HalC2.WorktreeSetup, :unsubscribe, [thread_id, self()])
-
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:worktree_setup, thread_id})
-        }
-
-      {{:provider_install, mc, instance}, subs} ->
-        :erpc.cast(mc, HalC2.Acp.Antigravity.Installation, :unsubscribe, [instance, self()])
-
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:provider_install, instance})
-        }
-
-      {{:provider_auth, mc, instance}, subs} ->
-        :erpc.cast(mc, HalC2.ProviderAuth, :unsubscribe, [instance, self()])
-
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:provider_auth, instance})
-        }
-
-      {{:terminals, mc} = shape, subs} ->
-        :erpc.cast(mc, HalC2.Terminal.Hub, :unwatch, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:stream, mc, stream_id}, _subs} ->
         # By its tag, so it ends no subscription that follows, whenever it arrives.
@@ -1500,10 +968,230 @@ defmodule HalC2.Web.Socket do
       {:shell, subs} ->
         %{state | subs: subs, shell: %{}}
 
-      {_, subs} ->
-        %{state | subs: subs}
+      {nil, _subs} ->
+        state
+
+      {shape, subs} ->
+        unwatch(%{state | subs: subs}, id, shape)
     end
   end
+
+  # Lets go of subscription `id`'s ref on the service it watches; the service keeps
+  # this socket's others.
+  defp unwatch(state, id, shape) do
+    {key, mc, module, _sub, unsub, args} = watch_spec(shape)
+    {ref, ids} = Map.pop(Map.get(state.by_terminal, key, %{}), id)
+    :erpc.cast(mc, module, unsub, args ++ [ref])
+
+    by_terminal =
+      if ids == %{},
+        do: Map.delete(state.by_terminal, key),
+        else: Map.put(state.by_terminal, key, ids)
+
+    %{state | by_terminal: by_terminal}
+  end
+
+  # --- watched services -------------------------------------------------------------
+
+  # How a shape watching a service is followed: `{key, mc, module, subscribe,
+  # unsubscribe, args}`, both called with `args ++ [ref]` (`HalC2.Watchers`). This
+  # socket's subscriptions watching one service share `key` in `by_terminal`, as
+  # `%{id => ref}`. Nil for any other shape.
+  defp watch_spec({:config, mc}),
+    do: {{:settings, mc}, mc, HalC2.Settings, :watch, :unwatch, [self()]}
+
+  defp watch_spec({:terminals, mc} = shape),
+    do: {shape, mc, HalC2.Terminal.Hub, :watch, :unwatch, [self()]}
+
+  defp watch_spec({:vcs, mc, cwd}),
+    do: {{:vcs, cwd}, mc, HalC2.Vcs.Watch, :subscribe, :unsubscribe, [cwd, self()]}
+
+  # Only an administrative session (or the MC's own token) sees who is paired;
+  # `shape_scope/1` asks for access:read.
+  defp watch_spec(:auth_access),
+    do: {:auth_access, node(), HalC2.Auth, :subscribe, :unsubscribe, [self()]}
+
+  defp watch_spec({:plugin_topic, mc, plugin, topic} = shape),
+    do: {shape, mc, HalC2.Plugins, :subscribe_topic, :unsubscribe_topic, [self(), plugin, topic]}
+
+  defp watch_spec({:worktree_setup, mc, thread_id}),
+    do:
+      {{:worktree_setup, thread_id}, mc, HalC2.WorktreeSetup, :subscribe, :unsubscribe,
+       [thread_id, self()]}
+
+  defp watch_spec({:provider_auth, mc, instance}),
+    do:
+      {{:provider_auth, instance}, mc, HalC2.ProviderAuth, :subscribe, :unsubscribe,
+       [instance, self()]}
+
+  defp watch_spec({:provider_install, mc, instance}),
+    do:
+      {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
+       :unsubscribe, [instance, self()]}
+
+  defp watch_spec({kind, mc} = shape) when is_map_key(@services, kind),
+    do: {shape, mc, Map.fetch!(@services, kind), :subscribe, :unsubscribe, [self()]}
+
+  defp watch_spec(_shape), do: nil
+
+  # What a service answered a subscribe with, as the message it sends of a change (nil
+  # for none), or the error it refused with.
+  defp snapshot({:terminals, mc}, terminals),
+    do: {:hal_c2_terminals, mc, %{"type" => "snapshot", "terminals" => terminals}}
+
+  defp snapshot({:vcs, _mc, cwd}, event), do: {:hal_c2_vcs, cwd, event}
+
+  defp snapshot(:auth_access, {:ok, revision, payload}) do
+    event = %{"version" => 1, "revision" => revision, "type" => "snapshot", "payload" => payload}
+    {:hal_c2_auth_access, event}
+  end
+
+  defp snapshot({:preview, _mc}, :ok), do: nil
+  defp snapshot({:plugins, mc}, plugins), do: {:hal_c2_plugins, mc, plugins}
+
+  defp snapshot({:plugin_topic, mc, plugin, topic}, {:ok, value}),
+    do: {:hal_c2_plugin_topic, mc, plugin, topic, value}
+
+  defp snapshot({:worktree_setup, _mc, thread_id}, setup),
+    do: {:hal_c2_worktree_setup, thread_id, setup}
+
+  defp snapshot({:provider_auth, _mc, instance}, {:ok, auth}),
+    do: {:hal_c2_provider_auth, instance, auth}
+
+  defp snapshot({:provider_install, _mc, instance}, {:ok, install}),
+    do: {:hal_c2_provider_install, instance, install}
+
+  defp snapshot({kind, _mc, _instance}, {:error, %{} = detail})
+       when kind in [:provider_auth, :provider_install],
+       do: {:error, detail}
+
+  defp snapshot({:resource_telemetry, mc}, {:ok, value}),
+    do: {:hal_c2_resource_telemetry, mc, value}
+
+  defp snapshot({:local_servers, mc}, {:ok, value}), do: {:hal_c2_local_servers, mc, value}
+  defp snapshot({:devices, mc}, {:ok, value}), do: {:hal_c2_devices, mc, value}
+  defp snapshot({:slack, mc}, {:ok, value}), do: {:hal_c2_slack, mc, value}
+  defp snapshot({:project_clones, mc}, {:ok, value}), do: {:hal_c2_project_clones, mc, value}
+  defp snapshot({:scheduled_tasks, mc}, {:ok, value}), do: {:hal_c2_scheduled_tasks, mc, value}
+
+  defp snapshot({:background_policy, mc}, {:ok, value}),
+    do: {:hal_c2_background_policy, mc, value}
+
+  defp snapshot({:pull_request_refreshes, mc}, {:ok, value}),
+    do: {:hal_c2_pull_request_refreshes, mc, value}
+
+  # A watched service's message, for this socket's subscriptions under `refs`.
+  defp watched(state, {:hal_c2_settings, mc, settings}, refs) do
+    # Settings can add, remove, or enable providers.
+    if config_ids(state, mc, refs) != [],
+      do: send(self(), {:hal_c2_watched, refs, {:hal_c2_providers_changed, mc}})
+
+    config_push(state, mc, refs, &%{"t" => "config.settings", "id" => &1, "settings" => settings})
+  end
+
+  defp watched(state, {:hal_c2_themes, mc, themes}, refs),
+    do: config_push(state, mc, refs, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
+
+  defp watched(state, {:hal_c2_usage_limit_sources, mc, sources}, refs) do
+    state = remember_sources(state, mc, refs, sources)
+    frame = &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
+    config_push(state, mc, refs, frame)
+  end
+
+  defp watched(state, {:hal_c2_keybindings, mc, rules}, refs),
+    do:
+      config_push(state, mc, refs, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
+
+  defp watched(state, {:hal_c2_providers_changed, mc}, refs),
+    do: push_providers(state, mc, config_ids(state, mc, refs))
+
+  # The hubs now cover other drivers: only `/usage-limits` clients see a change.
+  defp watched(state, {:hal_c2_usage_limits_command, mc}, refs),
+    do: push_providers(state, mc, Enum.filter(config_ids(state, mc, refs), &command?(state, &1)))
+
+  # The MC moved to another version in place; clients watching it see its new
+  # descriptor as a `ready`.
+  defp watched(state, {:hal_c2_upgraded, mc, outcome}, refs) do
+    with [_ | _] <- config_ids(state, mc, refs),
+         {:ok, descriptor} <- remote(mc, HalC2.Environment, :descriptor, []) do
+      config_push(state, mc, refs, fn id ->
+        %{
+          "t" => "config.ready",
+          "id" => id,
+          "environment" => descriptor,
+          "updateOutcome" => outcome
+        }
+      end)
+    else
+      _ -> {:ok, state}
+    end
+  end
+
+  defp watched(state, message, refs) do
+    {key, type, fields} = watched_frame(message, state)
+
+    case for({id, ref} <- Map.get(state.by_terminal, key, %{}), ref in refs, do: id) do
+      [] ->
+        {:ok, state}
+
+      ids ->
+        frames = for id <- ids, do: Protocol.encode(Map.merge(%{"t" => type, "id" => id}, fields))
+        {:push, frames, state}
+    end
+  end
+
+  # The key of the subscriptions a service's message is for, and their frame's type and
+  # fields.
+  defp watched_frame({:hal_c2_terminals, mc, event}, _state),
+    do: {{:terminals, mc}, "terminals", %{"event" => event}}
+
+  defp watched_frame({:hal_c2_vcs, cwd, event}, _state),
+    do: {{:vcs, cwd}, "vcs", %{"event" => event}}
+
+  defp watched_frame({:hal_c2_auth_access, event}, state),
+    do: {:auth_access, "authAccess", %{"event" => own(event, state)}}
+
+  defp watched_frame({:hal_c2_resource_telemetry, mc, snapshot}, _state),
+    do: {{:resource_telemetry, mc}, "resourceTelemetry", %{"snapshot" => snapshot}}
+
+  defp watched_frame({:hal_c2_preview, mc, event}, _state),
+    do: {{:preview, mc}, "preview", %{"event" => event}}
+
+  defp watched_frame({:hal_c2_local_servers, mc, list}, _state),
+    do: {{:local_servers, mc}, "localServers", %{"list" => list}}
+
+  defp watched_frame({:hal_c2_devices, mc, devices}, _state),
+    do: {{:devices, mc}, "devices", %{"state" => devices}}
+
+  defp watched_frame({:hal_c2_slack, mc, status}, _state),
+    do: {{:slack, mc}, "slack", %{"status" => status}}
+
+  defp watched_frame({:hal_c2_project_clones, mc, clones}, _state),
+    do: {{:project_clones, mc}, "projectClones", %{"clones" => clones}}
+
+  defp watched_frame({:hal_c2_scheduled_tasks, mc, tasks}, _state),
+    do: {{:scheduled_tasks, mc}, "scheduledTasks", %{"tasks" => tasks}}
+
+  defp watched_frame({:hal_c2_background_policy, mc, policy}, _state),
+    do: {{:background_policy, mc}, "backgroundPolicy", %{"policy" => policy}}
+
+  defp watched_frame({:hal_c2_pull_request_refreshes, mc, revision}, _state),
+    do: {{:pull_request_refreshes, mc}, "pullRequestRefreshes", %{"revision" => revision}}
+
+  defp watched_frame({:hal_c2_plugins, mc, plugins}, _state),
+    do: {{:plugins, mc}, "plugins", %{"plugins" => plugins}}
+
+  defp watched_frame({:hal_c2_plugin_topic, mc, plugin, topic, value}, _state),
+    do: {{:plugin_topic, mc, plugin, topic}, "plugin", %{"topic" => topic, "value" => value}}
+
+  defp watched_frame({:hal_c2_worktree_setup, thread_id, setup}, _state),
+    do: {{:worktree_setup, thread_id}, "worktreeSetup", %{"event" => setup}}
+
+  defp watched_frame({:hal_c2_provider_install, instance, install}, _state),
+    do: {{:provider_install, instance}, "providerInstall", %{"state" => install}}
+
+  defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
+    do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
 
   # Drops a stream subscription here, telling its stream nothing.
   defp forget_stream(state, id) do

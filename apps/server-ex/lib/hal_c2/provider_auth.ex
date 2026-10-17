@@ -66,12 +66,15 @@ defmodule HalC2.ProviderAuth do
     :exit, _ -> false
   end
 
-  @doc "Adds `pid` as a subscriber; it gets `{:hal_c2_provider_auth, instance, state}`."
-  def subscribe(instance, pid), do: call(instance, {:subscribe, pid})
+  @doc """
+  Adds `pid` as a subscriber under `ref` (`HalC2.Watchers`); it gets
+  `{:hal_c2_provider_auth, instance, state}`.
+  """
+  def subscribe(instance, pid, ref \\ nil), do: call(instance, {:subscribe, pid, ref})
 
-  def unsubscribe(instance, pid) do
+  def unsubscribe(instance, pid, ref \\ nil) do
     case Registry.lookup(@registry, instance) do
-      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid})
+      [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid, ref})
       [] -> :ok
     end
   end
@@ -127,8 +130,8 @@ defmodule HalC2.ProviderAuth do
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, {:ok, state.auth}, %{state | watchers: watchers}}
   end
 
@@ -267,10 +270,8 @@ defmodule HalC2.ProviderAuth do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    maybe_stop(%{state | watchers: watchers})
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    maybe_stop(%{state | watchers: HalC2.Watchers.remove(state.watchers, pid, ref)})
   end
 
   @impl true
@@ -405,8 +406,7 @@ defmodule HalC2.ProviderAuth do
   end
 
   defp broadcast(state) do
-    for {pid, _} <- state.watchers,
-        do: send(pid, {:hal_c2_provider_auth, state.instance, state.auth})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_provider_auth, state.instance, state.auth})
   end
 
   defp methods(%{methods: nil}), do: %{}

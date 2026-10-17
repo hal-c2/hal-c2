@@ -1,11 +1,15 @@
 defmodule HalC2.Test.LateUnsubscribe do
   @moduledoc """
   Stands in for a server under its registered name and forwards it everything, except
-  that once `arm/1`ed it holds back `{:unsubscribe, ...}` casts until the next
-  `{:subscribe, ...}` call has gone ahead of them: unsubscribes sent by `:erpc.cast`,
-  which runs in a process of its own and so may land late. Armed with `hold: true`, it
-  holds that subscribe too until `release/1`, so the server can change meanwhile.
+  that once `arm/1`ed it holds back `{:unsubscribe, ...}` (or `{:unwatch, ...}`) casts
+  until the next `{:subscribe, ...}` (or `{:watch, ...}`) call has gone ahead of them:
+  unsubscribes sent by `:erpc.cast`, which runs in a process of its own and so may land
+  late. Armed with `hold: true`, it holds that subscribe too until `release/1`, so the
+  server can change meanwhile.
   """
+
+  @subscribe [:subscribe, :watch]
+  @unsubscribe [:unsubscribe, :unwatch]
 
   @doc "Takes `name` over from the process registered under it; answers the gate."
   def install(name) do
@@ -61,15 +65,15 @@ defmodule HalC2.Test.LateUnsubscribe do
         send(pid, {:armed, self()})
         loop(server, pid, hold, nil, held)
 
-      {:"$gen_cast", request} = cast when armer != nil and elem(request, 0) == :unsubscribe ->
+      {:"$gen_cast", request} = cast when armer != nil and elem(request, 0) in @unsubscribe ->
         send(armer, :unsubscribe_held)
         loop(server, armer, hold, call, [cast | held])
 
-      {:"$gen_call", _from, request} = call when hold and elem(request, 0) == :subscribe ->
+      {:"$gen_call", _from, request} = call when hold and elem(request, 0) in @subscribe ->
         send(armer, :subscribe_held)
         loop(server, armer, false, call, held)
 
-      {:"$gen_call", _from, request} = call when elem(request, 0) == :subscribe ->
+      {:"$gen_call", _from, request} = call when elem(request, 0) in @subscribe ->
         pass(server, call, held)
 
       :release when call != nil ->
