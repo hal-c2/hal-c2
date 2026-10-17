@@ -544,7 +544,6 @@ Feature: Pi
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
 
-  @backlog
   Scenario Outline: A message sent while Pi works joins the run or starts one
     Given a Pi turn that <state>
     When the user steers the thread with "also update the docs"
