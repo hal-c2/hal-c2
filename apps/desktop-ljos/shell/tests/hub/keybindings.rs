@@ -209,9 +209,9 @@ fn a_default_binding_runs_its_native_command() {
 #[test]
 fn a_key_the_shell_has_no_command_for_stays_with_the_focused_control() {
     let (hub, keymap) = hub();
-    // tabs.next is no one's command here.
-    assert_eq!(shortcut(&keymap, "Ctrl+Alt+]")["chrome"], false);
-    assert!(!keymap.press(&hub.engine, "Ctrl+Alt+]", CHROME));
+    // preview.refresh is no one's command here.
+    assert_eq!(shortcut(&keymap, "Ctrl+R")["chrome"], false);
+    assert!(!keymap.press(&hub.engine, "Ctrl+R", CHROME));
     // A key nothing binds.
     assert!(!keymap.press(&hub.engine, "Ctrl+Shift+Q", CHROME));
 }

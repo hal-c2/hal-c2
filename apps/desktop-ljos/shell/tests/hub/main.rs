@@ -28,6 +28,8 @@ mod limit_recovery;
 mod lineage;
 mod mc_plugin;
 mod menus;
+mod navigation;
+mod navigation_prop;
 mod onboarding;
 mod page;
 mod palette;
