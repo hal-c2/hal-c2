@@ -111,6 +111,15 @@ defmodule HalC2.Orchestration.Entities do
   def instance(ids), do: Map.get(ids, :instance, driver(ids))
 
   @doc """
+  A thread's provider thread and session on provider instance `instance`. Each instance
+  has its own: another instance of one driver runs in its own home and account, so it
+  cannot resume the other's native session. A driver's default instance has the
+  driver's id, so its ids are the ones threads made before instances had their own.
+  """
+  def provider_thread_id(instance, thread_id), do: "provider-thread:#{instance}:#{thread_id}"
+  def provider_session_id(instance, thread_id), do: "provider-session:#{instance}:#{thread_id}"
+
+  @doc """
   Whether a built-in driver takes a message mid-turn: Codex (`turn/steer`), Claude (a
   "now" message), OpenCode (another `session/prompt`, which its running loop picks up)
   Pi (a `steer` prompt) and Muse (`turn/steer`). An instance added for an ACP-family
