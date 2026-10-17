@@ -11,6 +11,7 @@ mod background_activity;
 mod cluster;
 mod commands;
 mod composer;
+mod composer_prop;
 mod connection_health;
 mod connections;
 mod device_settings;
