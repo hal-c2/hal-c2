@@ -24,18 +24,19 @@
 //! `connection.dismissVersionWarning` (kept on this device per pair of
 //! versions).
 //!
-//! TODO(port): ConnectionHealth::wake when the app comes to the foreground
-//! (`QGuiApplication::applicationStateChanged`): Ljós's `Application.state`
-//! is not followed from Rust yet, so a waiting retry is not run by it.
+//! The app coming to the foreground (`Application.active`) wakes the client:
+//! a waiting retry runs now, and a connection that looks healthy is checked.
+//!
 //! TODO(port): ConnectionHealth::network_changed when the system's
-//! reachability changes (`QNetworkInformation`): the shell has no reachability
-//! source, so only [`ConnectionHealth::set_network`] says a device is offline.
+//! reachability changes (`QNetworkInformation`): Ljós's facade has no
+//! reachability source (hal-c2/ljos-ui has no issue for it yet), so only
+//! [`ConnectionHealth::set_network`] says a device is offline.
 
 use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos::prelude::Engine;
+use ljos::prelude::{Engine, Value};
 use serde_json::json;
 use url::{Host, Url};
 
@@ -196,6 +197,15 @@ impl Controller for ConnectionHealth {
         store::on_changed(engine, move |engine| {
             me.run(engine, |c, engine| c.update(engine));
         });
+        // The app comes to the foreground: a waiting retry runs now.
+        if let Ok(app) = engine.singleton::<ljos::prelude::Application>() {
+            let me = init.me.clone();
+            let _ = engine.connect_by_name(app, "activeChanged", move |engine, _| {
+                if matches!(engine.read_by_name(app, "active"), Value::Bool(true)) {
+                    me.run(engine, |c, _| c.wake());
+                }
+            });
+        }
         // The MC the client is opened at may be on this machine where the
         // last one was not, or the other way round.
         let mut health = ConnectionHealth {
@@ -301,6 +311,12 @@ impl ConnectionHealth {
     /// What spends a pairing link (the MC's HTTP, unless a test says).
     pub fn set_exchange(&mut self, exchange: Exchange) {
         self.exchange = exchange;
+    }
+
+    /// The app came to the foreground: a waiting retry runs now, and a
+    /// connection that looks healthy is checked.
+    pub fn wake(&mut self) {
+        self.mc.wake();
     }
 
     /// The network changed, or the MC the client is opened at: says again
