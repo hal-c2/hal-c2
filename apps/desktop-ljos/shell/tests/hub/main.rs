@@ -52,6 +52,8 @@ mod snap_shot;
 mod snap_shot_prop;
 mod source_control;
 mod terminals;
+mod theme;
+mod theme_prop;
 mod threads;
 mod toasts;
 mod usage;
