@@ -1297,6 +1297,50 @@ fn a_copy_is_cached_and_restored() {
     );
 }
 
+// timeline_prop's seed 39f43f3d: a page is taken at the log's head, so it
+// moves the copy's offset past a change outside the window that was never
+// sent, and the copy a restart restores resumes from there.
+#[test]
+fn a_page_moves_the_cached_offset_past_changes_it_was_not_sent() {
+    let cache = Rc::new(MemoryCache::default());
+    let mut w = World::new();
+    w.tl.set_cache(Some(cache.clone()));
+    // Five turns, then a window on the newest three.
+    let mut rows: Vec<Json> = (1..=2).map(|n| turn(n, 0).remove(0)).collect();
+    for n in 3..=5 {
+        rows.extend(turn(n, 0));
+    }
+    w.tl.subscribing();
+    w.tl.receive(&obj(
+        json!({"t": "snapshot", "part": 0, "rows": rows, "done": true,
+                              "offset": 10, "handle": "log-1", "floor": 3}),
+    ));
+    w.tl.receive(&obj(json!({"t": "live", "offset": 10, "handle": "log-1"})));
+    w.drain();
+    // A reply in the first turn (offset 11) is outside the window: the MC
+    // sends nothing. The page of earlier turns holds it.
+    w.tl.load_earlier();
+    let mut page: Vec<Json> = turn(1, 1).into_iter().skip(1).collect();
+    page.extend(turn(2, 0).into_iter().skip(1));
+    w.tl.receive(&obj(
+        json!({"t": "page", "rows": page, "offset": 11, "floor": null, "done": true}),
+    ));
+    w.drain();
+    assert_eq!(w.tl.cursor().offset, 11);
+
+    w.tl.park();
+    let mut again = World::new();
+    again.tl.set_cache(Some(cache.clone()));
+    again.tl.restore(&cache.load("env:thread"));
+    again.drain();
+    assert_eq!(again.tl.cursor().offset, 11);
+    assert_eq!(again.view.ids, w.view.ids);
+    assert_eq!(
+        again.tl.subscribing(),
+        json!({"offset": 11, "window": {"floor": null}, "handle": "log-1"})
+    );
+}
+
 #[test]
 fn parking_trims_the_copy_to_the_window() {
     let cache = Rc::new(MemoryCache::default());

@@ -1387,8 +1387,13 @@ fn step(model: &mut Model, sut: &mut Sut, action: &Action) -> Result<bool, TestC
                 model.live = false;
                 model.last_events = None;
             } else {
+                // The page is taken at the log's head, as the window is
+                // lowered (HalC2.Streams.Server): the client was sent every
+                // change to its window before it, so its copy is whole as of
+                // the page's offset, even past changes it was not sent.
                 model.floor = take_runs(&was.mc, was.floor, WINDOW).1;
                 model.held = window(&model.mc, model.floor);
+                model.offset = was.seq;
             }
             sut.begin();
             sut.earlier_wanted = 0;

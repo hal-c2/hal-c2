@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 39f43f3d8722f2272f23e53ef572cca48624088737613f6af48bb9b122bcacbf # shrinks to actions = [StartRun("user"), StartRun("user"), StartRun("user"), StartRun("user"), StartRun("user"), Subscribe { parts: 1, cut: false }, AddItem { run: 443310220622975335, kind: "assistant_message", agent: 0, limit: false }, LoadEarlier { parts: 1, cut: false }, Restart]
