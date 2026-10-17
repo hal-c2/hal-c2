@@ -137,4 +137,54 @@ defmodule HalC2.AcpTest do
     assert %{"status" => "disabled", "installed" => false, "version" => nil} =
              HalC2.Acp.entry("antigravity")
   end
+
+  test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
+    # The agent tells the test it has the first read through a FIFO, which is the receipt
+    # that the read is in flight, and refuses `initialize` once the test writes to the other.
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    grok = Path.join(dir, "grok")
+
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, sys
+    request = json.loads(sys.stdin.readline())
+    open("#{started}", "w").write("started\\n")
+    open("#{release}").read()
+    error = {"code": -32603, "message": "refused"}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}), flush=True)
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+    :ok = HalC2.Settings.watch(self())
+
+    # The first listing starts the read; the instance is forgotten while the agent holds
+    # it, as a scenario's teardown or a reload does, and the agent refuses afterwards.
+    HalC2.Acp.entry("grok")
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, "started\n"}}, 10_000
+    HalC2.Acp.forget("grok")
+    File.write!(release, "go\n")
+
+    assert_receive {:hal_c2_providers_changed, _}, 10_000
+    assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+  end
 end

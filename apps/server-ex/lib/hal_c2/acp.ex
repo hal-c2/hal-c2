@@ -485,30 +485,46 @@ defmodule HalC2.Acp do
     end
   end
 
+  # A read that `forget/1` overtook says nothing: its agent may have been stopped under
+  # it (`{:error, :closed}`), and the failure would otherwise stand as the instance's
+  # state beside the read that replaced it.
   defp load(id) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
+    generation = generation(id)
 
     try do
-      case read_agent(id, dir) do
-        :ok ->
-          :persistent_term.erase({__MODULE__, id, :error})
+      result = read_agent(id, dir)
 
-        {:error, :unauthenticated} ->
-          :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
-          :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
+      if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
+        case result do
+          :ok ->
+            :persistent_term.erase({__MODULE__, id, :error})
 
-        {:error, reason} ->
-          :persistent_term.put({__MODULE__, id, :error}, describe(reason))
+          {:error, :unauthenticated} ->
+            :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
+            :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
 
-        _ ->
-          :ok
+          {:error, reason} ->
+            :persistent_term.put({__MODULE__, id, :error}, describe(reason))
+
+          _ ->
+            :ok
+        end
       end
     catch
       _, _ -> :ok
     after
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
+    end
+  end
+
+  defp generation(id) do
+    with nil <- :persistent_term.get({__MODULE__, id, :generation}, nil) do
+      generation = make_ref()
+      :persistent_term.put({__MODULE__, id, :generation}, generation)
+      generation
     end
   end
 
@@ -1161,6 +1177,7 @@ defmodule HalC2.Acp do
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 
+    :persistent_term.put({__MODULE__, id, :generation}, make_ref())
     :ok
   end
 
