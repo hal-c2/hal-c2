@@ -251,8 +251,11 @@ defmodule HalC2.Steps.Preview.Forward do
     body
   end
 
+  # As a browser's, the page's socket still writes once the other end has closed
+  # its side: a dev server closing a websocket sends its close frame and then a FIN,
+  # and the page answers the frame after it.
   defp websocket(port) do
-    {:ok, client} = WsClient.connect(port, "/ws")
+    {:ok, client} = WsClient.connect(port, "/ws", "127.0.0.1", exit_on_close: false)
     assert_receive {:dev_server, :ws_open, conn}, 5_000
     {client, conn}
   end
