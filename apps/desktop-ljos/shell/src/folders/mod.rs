@@ -6,10 +6,11 @@
 //! The model is a tree (a Ljós `ItemTree`) shaped like QFileSystemModel's
 //! with what is above the root cut to one row: the top level is the root
 //! folder itself, and `rootIndex` is that row's index, so a `TreeView` shows
-//! what is in the root. A folder is read off the Engine thread the first
-//! time a view asks how many rows it has, and again when the OS says it
-//! changed (see `watch.rs`) or the model changed it; its rows then come and
-//! go one by one, so the rows a view shows and has open keep their place.
+//! what is in the root. Every folder has an arrow, as in QFileSystemModel;
+//! one is read off the Engine thread the first time a view opens it, and
+//! again when the OS says it changed (see `watch.rs`) or the model changed
+//! it. Its rows then come and go one by one, so the rows a view shows and
+//! has open keep their place.
 //!
 //! Not ported: the system file icons (`QFileSystemModel` decoration), and a
 //! write of `rootPath` to the path it already has does not clear `error`.
@@ -23,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ljos::prelude::{
-    Atom, Cx, Engine, EngineError, ItemTree, ObjectId, Platform, QmlObject, QtObject, TreeChange,
+    Atom, Cx, Engine, EngineError, ItemTree, ObjectId, QmlObject, TreeChange,
     TreeListener, TreeListeners, Value, qml_impl,
 };
 
@@ -76,12 +77,8 @@ fn trash_of(engine: &Engine) -> Trash {
 }
 
 #[derive(QmlObject)]
-// TODO(ljos#46): a native type without `extends` has no `objectName`, which
-// FolderExplorer.qml sets; QtObject as the base gives it one.
-#[qml(module = "HalC2.Shell", name = "LocalFolderModel", extends = QtObject)]
+#[qml(module = "HalC2.Shell", name = "LocalFolderModel")]
 pub struct LocalFolderModel {
-    #[qml(base)]
-    base: QtObject,
     #[qml(notify)]
     enabled: bool,
     /// The root as a real path: what is written is checked, and an
@@ -103,7 +100,6 @@ pub struct LocalFolderModel {
 impl Default for LocalFolderModel {
     fn default() -> Self {
         LocalFolderModel {
-            base: QtObject::default(),
             enabled: false,
             root_path: Atom::from(""),
             root_index: Value::Undefined,
@@ -195,10 +191,9 @@ struct State {
     root: RefCell<String>,
     tree: RefCell<Tree>,
     listeners: TreeListeners,
-    /// The object, and its engine's platform: what a view asking for a
-    /// folder that was not read needs to have it read ([`State::want`]).
+    /// The object: what a view opening a folder that was not read needs
+    /// to have it read ([`Entries::fetch_more`]).
     obj: Cell<Option<ObjectId>>,
-    platform: RefCell<Option<Rc<Platform>>>,
     /// Bumped whenever the tree starts over: a read that finishes later is
     /// for a tree that is gone.
     generation: Cell<u64>,
@@ -258,35 +253,6 @@ impl State {
         }
         Some(place)
     }
-
-    /// A view asked what is in `dir`, which was not read: it is read from
-    /// the next frame on, once.
-    ///
-    /// TODO(ljos): not filed yet. `ItemTree` has no `hasChildren` or
-    /// `fetchMore`, and its `row_count` is given no engine: the view shows a
-    /// row's arrow when the rows under it count more than none, so a folder
-    /// is read when a view counts its rows, and the read is started through
-    /// the platform's inbox. An empty folder has no arrow (QFileSystemModel
-    /// gave every folder one until it was read).
-    fn want(&self, dir: &str) {
-        if !self.tree.borrow_mut().loading.insert(dir.to_owned()) {
-            return;
-        }
-        let platform = self.platform.borrow().clone();
-        let (Some(obj), Some(platform)) = (self.obj.get(), platform) else {
-            return;
-        };
-        let generation = self.generation.get();
-        let dir = dir.to_owned();
-        platform.expect().send(move |engine: &Engine| {
-            let state = engine.with::<LocalFolderModel, _>(obj, |m| m.state.clone());
-            if let Ok(state) = state
-                && state.generation.get() == generation
-            {
-                Model::new(engine, obj, state).list(&dir);
-            }
-        });
-    }
 }
 
 /// `State` as the tree Ljós's views read.
@@ -301,10 +267,35 @@ impl ItemTree for Entries {
             return 0;
         };
         let count = self.0.tree.borrow().children.get(&node.path).map(Vec::len);
-        count.unwrap_or_else(|| {
-            self.0.want(&node.path);
-            0
-        })
+        count.unwrap_or(0)
+    }
+
+    /// Every folder has its arrow, read or not, as in QFileSystemModel.
+    fn has_children(&self, path: &[usize]) -> bool {
+        if path.is_empty() {
+            return self.0.active();
+        }
+        self.0.node_at(path).is_some_and(|n| n.is_dir)
+    }
+
+    /// A folder that was not read, and is not being read.
+    fn can_fetch_more(&self, path: &[usize]) -> bool {
+        let Some(node) = self.0.node_at(path).filter(|n| n.is_dir) else {
+            return false;
+        };
+        let tree = self.0.tree.borrow();
+        !tree.children.contains_key(&node.path) && !tree.loading.contains(&node.path)
+    }
+
+    /// A view opened a folder that was not read: it is read off the Engine
+    /// thread, and its rows come as rows inserted.
+    fn fetch_more(&self, engine: &Engine, path: &[usize]) {
+        if !self.can_fetch_more(path) {
+            return;
+        }
+        if let (Some(node), Some(obj)) = (self.0.node_at(path), self.0.obj.get()) {
+            Model::new(engine, obj, self.0.clone()).list(&node.path);
+        }
     }
 
     fn role_names(&self) -> Vec<Atom> {
@@ -358,7 +349,6 @@ impl<'e> Model<'e> {
     /// Makes the object the tree's model and follows what QML writes.
     fn start(&self) -> Result<(), EngineError> {
         self.state.obj.set(Some(self.obj));
-        *self.state.platform.borrow_mut() = Some(Platform::of(self.engine));
         self.engine
             .set_object_tree(self.obj, Rc::new(Entries(self.state.clone())))?;
         self.cx().set(
@@ -531,8 +521,6 @@ impl<'e> Model<'e> {
         *state.tree.borrow_mut() = Tree::default();
         let root = self.root();
         let cx = self.cx();
-        // A new index each time, as QFileSystemModel's `rootIndex` is told
-        // on every change of the root.
         let index = if self.active() {
             self.engine.model_index(Some(self.obj), &[(0, 0)])
         } else {
@@ -541,7 +529,15 @@ impl<'e> Model<'e> {
         self.tell(&TreeChange::ModelReset);
         self.engine.batch(|| {
             self.show_root(&root);
-            let _ = cx.set(LocalFolderModel::ROOT_INDEX, index);
+            // QFileSystemModel's `rootIndex` is told on every change of the
+            // root, and FolderExplorer.qml re-reads what depends on it then;
+            // an index equal to the last one is not a change to `set`.
+            let same = cx.get(LocalFolderModel::ROOT_INDEX).ok().as_ref() == Some(&index);
+            if same {
+                let _ = cx.notify(LocalFolderModel::ROOT_INDEX.index);
+            } else {
+                let _ = cx.set(LocalFolderModel::ROOT_INDEX, index);
+            }
         });
         self.sync_watches();
         let _ = LocalFolderModel::emit_root_changed(&cx);
@@ -590,8 +586,6 @@ impl<'e> Model<'e> {
             return;
         };
         let old = self.state.tree.borrow().children.get(dir).cloned();
-        let was_empty = old.as_ref().is_none_or(Vec::is_empty);
-        let now_empty = entries.is_empty();
         let old = old.unwrap_or_default();
         let (removed, inserted) = {
             let kept: HashSet<&Node> = entries.iter().collect();
@@ -635,13 +629,6 @@ impl<'e> Model<'e> {
                 parent: place.clone(),
                 first,
                 count,
-            });
-        }
-        // The view shows the folder's arrow from how many rows it has.
-        if was_empty != now_empty {
-            self.tell(&TreeChange::DataChanged {
-                path: place,
-                roles: vec![Atom::from("hasChildren")],
             });
         }
         self.sync_watches();

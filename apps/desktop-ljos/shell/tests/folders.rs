@@ -32,9 +32,12 @@ Item {
     readonly property bool rooted: folders.rootIndex.valid
     readonly property string modelRoot: folders.rootPath
     property int rootChanges: 0
+    property int rootIndexChanges: 0
 
     LocalFolderModel {
         id: folders
+        objectName: "folders"
+        onRootIndexChanged: root.rootIndexChanges += 1
         enabled: root.enabled
         rootPath: root.rootPath
         protectedPaths: root.protectedPaths
@@ -207,8 +210,8 @@ fn browsing_lists_folders_first_and_disabling_hides_them() {
     f.touch("plain-file");
     f.touch(".hidden");
     f.browse();
-    // An empty folder has no arrow.
-    assert_eq!(f.rows(), "child/|plain-file");
+    // Every folder has an arrow, as in QFileSystemModel, until it is open.
+    assert_eq!(f.rows(), "child/+|plain-file");
     assert!(f.rooted());
     assert_eq!(f.path_for(0), f.path("child"));
     assert!(f.truth("isDirectory", &[&f.root_path()]));
@@ -233,18 +236,18 @@ fn folders_open_and_close_in_place() {
     f.toggle(0);
     assert_eq!(f.rows(), "a/-|  inner/+|  a.txt|z.txt");
     f.toggle(1);
-    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/+|  a.txt|z.txt");
     assert_eq!(f.path_for(2), f.path("a/inner/deep"));
     f.toggle(0);
     assert_eq!(f.rows(), "a/+|z.txt");
     // What was open stays open when its parent opens again.
     f.toggle(0);
-    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/+|  a.txt|z.txt");
     // A folder read again keeps what is open in it open.
     f.string("create", &[&f.path("a"), "new"]);
-    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  new/|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/+|  new/+|  a.txt|z.txt");
     f.string("rename", &[&f.path("a/new"), "after"]);
-    assert_eq!(f.rows(), "a/-|  after/|  inner/-|    deep/|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  after/+|  inner/-|    deep/+|  a.txt|z.txt");
 }
 
 #[test]
@@ -281,13 +284,13 @@ fn create_rename_and_move_keep_the_contents() {
     let source = f.string("create", &[&f.root_path(), "新 folder"]);
     assert_eq!(source, f.path("新 folder"));
     fs::write(Path::new(&source).join("keep.txt"), "preserved").unwrap();
-    assert_eq!(f.rows(), "新 folder/");
+    assert_eq!(f.rows(), "新 folder/+");
     let renamed = f.string("rename", &[&source, "renamed"]);
     assert_eq!(renamed, f.path("renamed"));
     assert!(!Path::new(&source).exists());
     assert_eq!(f.rows(), "renamed/+");
     let destination = f.string("create", &[&f.root_path(), "destination"]);
-    assert_eq!(f.rows(), "destination/|renamed/+");
+    assert_eq!(f.rows(), "destination/+|renamed/+");
     let moved = f.string("move", &[&renamed, &destination]);
     assert_eq!(moved, f.path("destination/renamed"));
     assert_eq!(
@@ -305,9 +308,9 @@ fn a_change_shows_in_the_folders_that_are_open() {
     f.browse();
     f.toggle(0);
     f.string("create", &[&f.path("parent"), "kid"]);
-    assert_eq!(f.rows(), "parent/-|  kid/");
+    assert_eq!(f.rows(), "parent/-|  kid/+");
     f.string("rename", &[&f.path("parent/kid"), "kid2"]);
-    assert_eq!(f.rows(), "parent/-|  kid2/");
+    assert_eq!(f.rows(), "parent/-|  kid2/+");
 }
 
 #[test]
@@ -403,6 +406,25 @@ fn a_root_that_is_not_a_plain_folder_is_not_taken() {
     assert!(f.rooted());
 }
 
+#[test]
+fn every_new_root_tells_its_index_though_the_index_is_the_same() {
+    let f = Fixture::new();
+    f.mkdir("one/inside");
+    f.mkdir("two");
+    f.set("enabled", Value::Bool(true));
+    f.set("rootPath", Value::string(f.path("one")));
+    f.settle();
+    let count = || common::number(&f.engine, f.root, "rootIndexChanges");
+    let before = count();
+    assert_eq!(f.rows(), "inside/+");
+    // The top row's index either way: what reads it reads it again.
+    f.set("rootPath", Value::string(f.path("two")));
+    f.settle();
+    assert_eq!(count(), before + 1.0);
+    assert_eq!(f.rows(), "");
+    assert!(f.rooted());
+}
+
 #[cfg(unix)]
 #[test]
 fn a_root_replaced_by_a_link_is_given_up() {
@@ -492,8 +514,8 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     f.mkdir("a");
     f.browse();
     f.toggle(0);
-    // An empty folder opens, with no arrow.
-    assert_eq!(f.rows(), "a/");
+    // An empty folder opens.
+    assert_eq!(f.rows(), "a/-");
     let (tx, rx) = mpsc::channel();
     set_wake(&f.engine, move || {
         let _ = tx.send(());
@@ -503,7 +525,7 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     rx.recv().expect("the watcher saw the change");
     deliver(&f.engine);
     f.settle();
-    assert_eq!(f.rows(), "a/-|  made-elsewhere/");
+    assert_eq!(f.rows(), "a/-|  made-elsewhere/+");
 }
 
 #[test]
