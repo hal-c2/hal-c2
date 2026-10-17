@@ -702,6 +702,21 @@ fn asking_hands_the_trimmed_text_on_and_stays_open() {
     assert_eq!(prop_text(&hub, "mode"), "command");
 }
 
+/// Add project's Local folder browses the environment's folders.
+#[test]
+fn add_projects_local_folder_browses() {
+    let (hub, _dir) = hub(&[]);
+    Commands::of(&hub.engine).run(&hub.engine, "project.add");
+    assert_eq!(prop(&hub, "open"), Value::Bool(true));
+    let row = index_of(&hub, "choice", "local-folder").expect("offered");
+    assert_eq!(
+        invoke(&hub, "run", &[Value::Int(row as i32)]),
+        Value::Bool(true)
+    );
+    assert_eq!(prop_text(&hub, "mode"), "browse");
+    assert_eq!(prop_text(&hub, "submitLabel"), "Add");
+}
+
 // -- The model, as a state machine ---------------------------------------------
 
 const COMMANDS: [&str; 3] = ["test.one", "test.two", "test.three"];

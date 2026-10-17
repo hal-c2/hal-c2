@@ -32,6 +32,7 @@ use crate::commands::Choice;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::drafts;
 use crate::controllers::navigation::{self, Navigation, Route};
+use crate::controllers::palette;
 use crate::controllers::projects;
 use crate::controllers::sidebar;
 use crate::controllers::toasts::{Action, Toasts};
@@ -462,7 +463,7 @@ impl ProjectClone {
             "server.discoverSourceControl",
             json!({}),
             Box::new(move |engine, result| {
-                me.run(engine, |c, _| {
+                me.run(engine, |c, engine| {
                     let discovery = c.discovery.entry(environment).or_default();
                     discovery.asking = false;
                     // A failed scan keeps what the last one found.
@@ -471,8 +472,8 @@ impl ProjectClone {
                         return;
                     }
                     discovery.result = Some(result);
-                    // TODO(port): CommandPaletteController::refreshMenu — the
-                    // open sources menu reads the new answer.
+                    // The open sources menu reads the new answer.
+                    palette::refresh_menu(engine);
                 });
             }),
         );
@@ -700,14 +701,25 @@ fn ask_repository(engine: &Engine, environment_id: &str, source: Source) {
         c.busy = false;
         c.lookup += 1;
     });
-    let _ = (engine, environment_id);
-    // TODO(port): CommandPaletteController::ask — title "Git URL" or
-    // "<label> repository", placeholder "Enter Git clone URL" or "Enter
-    // <label> repository (<hint>)", hint "Enter a Git clone URL and press
-    // Enter to continue." or "Enter a repository path and press Enter to
-    // look it up."; the input goes to `submit_repository(engine,
-    // environment_id, source.kind, input)`.
-    let _ = source;
+    let url = source.kind == URL.kind;
+    let (title, placeholder, hint) = if url {
+        (
+            "Git URL".to_owned(),
+            "Enter Git clone URL".to_owned(),
+            "Enter a Git clone URL and press Enter to continue.",
+        )
+    } else {
+        (
+            format!("{} repository", source.label),
+            format!("Enter {} repository ({})", source.label, source.hint),
+            "Enter a repository path and press Enter to look it up.",
+        )
+    };
+    let environment = environment_id.to_owned();
+    let kind = source.kind;
+    palette::ask(engine, &title, &placeholder, hint, move |engine, input| {
+        submit_repository(engine, &environment, kind, input);
+    });
 }
 
 /// A repository typed into the palette: a URL goes on to the destination, a
@@ -786,17 +798,25 @@ pub fn submit_repository(engine: &Engine, environment_id: &str, kind: &str, inpu
 /// Asks the palette where the repository goes: browsing from where Add
 /// project does, the folder name pinned to the path.
 pub fn ask_destination(engine: &Engine, chosen: &Chosen) {
-    let start = destination_path(
+    let query = destination_path(
         &projects::browse_start(engine, &chosen.environment_id),
         &chosen.directory_name,
     );
     controller::with::<ProjectClone, _>(engine, |c, _| c.busy = false);
-    let _ = (&start, engine);
-    // TODO(port): CommandPaletteController::browse — in
-    // `chosen.environment_id`, query `start`, pinned `chosen.directory_name`,
-    // empty text "Choose a destination path and press Enter to clone.",
-    // submit "Clone", keep open; the path goes to `start(engine, chosen,
-    // path)`.
+    let options = palette::BrowseOptions {
+        query,
+        pinned: chosen.directory_name.clone(),
+        empty_text: "Choose a destination path and press Enter to clone.".into(),
+        submit: "Clone".into(),
+        keep_open: true,
+    };
+    let to = chosen.clone();
+    palette::browse(
+        engine,
+        &chosen.environment_id,
+        move |engine, path| start(engine, &to, path),
+        options,
+    );
 }
 
 /// Starts the clone into `input`, the destination the user typed.
@@ -895,8 +915,7 @@ pub fn start(engine: &Engine, chosen: &Chosen, input: &str) {
                 return;
             }
             // The clone goes on in the background, in its toast.
-            // TODO(port): CommandPaletteController::finish — closes the
-            // palette.
+            palette::finish(engine);
             if store::with(engine, |s| s.project(&format!("{environment}:{created}"))).is_some() {
                 open_project(engine, &environment, &created);
             } else {
