@@ -1,22 +1,40 @@
 //! `layout`, desktop-qt's LayoutController: the sidebar's width, whether it
 //! is collapsed or over the thread, and the zoom, for ShellWindow.
 //!
-//! Not ported yet: keeping them in the device preferences (they last as long
-//! as the window), and the zoom and sidebar commands, which wait for the
-//! command registry.
+//! The width, whether the list is collapsed and the zoom level are kept in
+//! this device's preferences (`sidebarWidth`, `sidebarCollapsed`,
+//! `zoomLevel`; a default is not written, the key goes) and read when the
+//! preferences file is, which is after the controllers are built. A
+//! collapse chosen while the window is too narrow for the list beside the
+//! thread (`sidebar_overlay`) is not kept. Every window follows the zoom
+//! another window wrote.
+//!
+//! Commands: `sidebar.toggle`, and `view.zoomIn`, `view.zoomOut` and
+//! `view.resetZoom`, which move the zoom level by half a step within the
+//! range of 25% to 500% (levels -7.5 to 8.5; the zoom is 1.2 to the level).
 
 use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
-use crate::controller::{Controller, Init};
+use crate::commands::Commands;
+use crate::controller::{Controller, Init, Me};
 use crate::controllers::settings::Settings;
 use crate::json::Json;
+use crate::keybindings::command_label;
 use crate::platform_window;
 
 pub const SIDEBAR_WIDTH: i32 = 256;
 pub const SIDEBAR_MIN_WIDTH: i32 = 208;
 pub const CONTENT_MIN_WIDTH: i32 = 480;
+
+const SIDEBAR_COLLAPSED: &str = "sidebarCollapsed";
+const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
+const ZOOM_LEVEL: &str = "zoomLevel";
+/// The zoom menu's step, and the range of 25% to 500%.
+const ZOOM_STEP: f64 = 0.5;
+const MIN_ZOOM_LEVEL: f64 = -7.5;
+const MAX_ZOOM_LEVEL: f64 = 8.5;
 
 /// The panel animation's length for the two ways to ask for less motion and
 /// the duration the user chose.
@@ -30,6 +48,11 @@ pub fn panel_animation_ms(system_reduced: bool, setting_reduced: bool, chosen_ms
 
 pub struct Layout {
     bridge: Bridge,
+    me: Me<Layout>,
+    /// The device preferences have been read.
+    loaded: bool,
+    /// The commands are registered.
+    active: bool,
     sidebar_collapsed: bool,
     /// Shown over the thread while `sidebar_overlay`; forgotten when the
     /// window widens.
@@ -43,8 +66,18 @@ pub struct Layout {
 impl Controller for Layout {
     // The layout needs no MC, so it shows before the first snapshot.
     fn new(init: Init<'_, Self>) -> Self {
+        // The preferences file is read after the controllers are built: the
+        // first time they change is when they are there to read. Later
+        // changes are another window's zoom.
+        let me = init.me.clone();
+        Settings::of(init.engine).on_device_changed(move |engine| {
+            me.run(engine, |c, engine| c.device_changed(engine));
+        });
         let layout = Layout {
             bridge: init.bridge,
+            me: init.me,
+            loaded: false,
+            active: false,
             sidebar_collapsed: false,
             overlay_open: false,
             sidebar_width: SIDEBAR_WIDTH,
@@ -53,6 +86,38 @@ impl Controller for Layout {
         };
         layout.publish(init.engine);
         layout
+    }
+
+    fn activate(&mut self, engine: &Engine) {
+        if self.active {
+            return;
+        }
+        self.active = true;
+        let commands = Commands::of(engine);
+        let me = self.me.clone();
+        commands.add(
+            engine,
+            "sidebar.toggle",
+            &command_label("sidebar.toggle"),
+            move |engine| {
+                me.run(engine, |c, engine| {
+                    c.set_sidebar_collapsed(engine, !c.sidebar_collapsed())
+                })
+            },
+        );
+        let zoom = |engine: &Engine, command: &str, title: &str, to: fn(f64) -> f64| {
+            let me = self.me.clone();
+            commands.add(engine, command, title, move |engine| {
+                me.run(engine, |c, engine| {
+                    c.set_zoom_level(engine, to(c.zoom_level))
+                })
+            });
+        };
+        zoom(engine, "view.zoomIn", "Zoom in", |level| level + ZOOM_STEP);
+        zoom(engine, "view.zoomOut", "Zoom out", |level| {
+            level - ZOOM_STEP
+        });
+        zoom(engine, "view.resetZoom", "Actual size", |_| 0.0);
     }
 
     fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
@@ -117,12 +182,64 @@ impl Layout {
         )
     }
 
+    /// The device preferences changed: the first time they are read, then
+    /// only the zoom another window set is followed.
+    fn device_changed(&mut self, engine: &Engine) {
+        let settings = Settings::of(engine);
+        let level = settings
+            .device_value(ZOOM_LEVEL)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if self.loaded {
+            if level != self.zoom_level {
+                self.zoom_level = level;
+                self.publish(engine);
+            }
+            return;
+        }
+        self.loaded = true;
+        self.sidebar_collapsed = settings
+            .device_value(SIDEBAR_COLLAPSED)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        self.zoom_level = level;
+        let width = settings
+            .device_value(SIDEBAR_WIDTH_KEY)
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+            .unwrap_or(0);
+        if width > 0 {
+            self.sidebar_width = (width.min(i32::MAX as i64) as i32).max(SIDEBAR_MIN_WIDTH);
+        }
+        self.publish(engine);
+    }
+
+    fn set_zoom_level(&mut self, engine: &Engine, level: f64) {
+        let level = level.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL);
+        if level == self.zoom_level {
+            return;
+        }
+        self.zoom_level = level;
+        let value = if level == 0.0 {
+            Json::Null
+        } else {
+            json!(level)
+        };
+        Settings::of(engine).write_device(engine, ZOOM_LEVEL, value);
+        self.publish(engine);
+    }
+
     fn set_sidebar_width(&mut self, engine: &Engine, width: i32) {
         let width = width.min(self.sidebar_room()).max(SIDEBAR_MIN_WIDTH);
         if width == self.sidebar_width {
             return;
         }
         self.sidebar_width = width;
+        let value = if width == SIDEBAR_WIDTH {
+            Json::Null
+        } else {
+            json!(width)
+        };
+        Settings::of(engine).write_device(engine, SIDEBAR_WIDTH_KEY, value);
         self.publish(engine);
     }
 
@@ -157,6 +274,7 @@ impl Layout {
             self.overlay_open = !collapsed;
         } else {
             self.sidebar_collapsed = collapsed;
+            Settings::of(engine).write_device(engine, SIDEBAR_COLLAPSED, json!(collapsed));
         }
         self.publish(engine);
     }
