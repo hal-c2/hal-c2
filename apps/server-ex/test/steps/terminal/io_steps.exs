@@ -140,9 +140,9 @@ defmodule HalC2.Steps.Terminal.Io do
 
   step "the command runs before the history is cleared", context do
     context = await_all(context, "cleared")
-    # The shell reads its input in order, so this runs after the command did.
-    {output, context} = Terminal.run(context, "default", "test -f #{context.marker} && echo ran")
-    assert output =~ ~r/(^|[\r\n])ran\r?\n/
+    # The shell reads its input in order, so it has run the command once it answers.
+    {_, context} = Terminal.run(context, "default", "true")
+    assert File.exists?(context.marker)
     context
   end
 

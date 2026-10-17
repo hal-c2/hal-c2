@@ -627,7 +627,11 @@ defmodule HalC2.TerminalPropTest do
         {:hal_c2_terminal, ^key, _} ->
           settle_loop(key, tokens, text)
       after
-        @wait -> flunk("output of #{inspect(key)} did not arrive: #{inspect(tokens)}")
+        @wait ->
+          flunk(
+            "output of #{inspect(key)} did not arrive: #{inspect(tokens)}; " <>
+              "the terminal printed #{inspect(text)}"
+          )
       end
     end
   end
