@@ -67,5 +67,3 @@ What the shell still works around, each where it does so:
   FFmpeg, loaded at run time as desktop-qt does: `shell/src/device/decoder.rs`.
 - The compiler warns on `popup.scale` and `popup.transformOrigin` set through a `ComboBox`'s `popup` (#61), which
   `GitActions.qml` does and Qt accepts; the warning is the only harm.
-- `Window.backdrop` is a plain blur: it has no dark or light material and no macOS 26 Liquid Glass (#66, #67), so the
-  theme's choice of them does nothing (`shell/src/platform_window.rs`, `apply_window_blur`).
