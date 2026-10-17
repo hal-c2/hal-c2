@@ -49,6 +49,11 @@ defmodule HalC2.Editors do
       {"open", true} ->
         launch("open", ["-R", target])
 
+      # xdg-open has no way to select a file, and opening the file would start whatever
+      # the desktop maps its type to; showing the folder is what "reveal" means here.
+      {"xdg-open", true} ->
+        launch("xdg-open", [if(File.dir?(target), do: target, else: Path.dirname(target))])
+
       {command, _} ->
         launch(command, [target])
     end
@@ -188,9 +193,23 @@ defmodule HalC2.Editors do
     end
   end
 
-  # Editor CLIs hand off to the app and return; nothing waits on them.
+  # Editor CLIs hand off to the app and return; nothing waits on them. On Unix the app is
+  # started detached: in a session of its own and with its standard streams on /dev/null,
+  # so it outlives the MC and shares no pipe with it. Without that, a program that does
+  # not exit on its own (`xdg-open` starting a terminal editor with no terminal) kept the
+  # MC's end of the pipe open, and the process and its port stayed until the MC stopped.
+  # The shell returns as soon as it has started the program, so this does not wait on it.
   defp launch(command, args) do
-    Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} ->
+        Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+
+      _ ->
+        setsid = List.wrap(System.find_executable("setsid"))
+        script = ~s("$@" </dev/null >/dev/null 2>&1 &)
+        System.cmd("/bin/sh", ["-c", script, "sh" | setsid ++ [command | args]])
+    end
+
     {:ok, nil}
   end
 end
