@@ -550,8 +550,6 @@ impl PullRequestList {
                     if thread_id.is_empty() {
                         // The dialog resolves it and offers a thread on it,
                         // or its checkout.
-                        // TODO(port): PullRequestThreadController::open (the
-                        // dialog's controller, nothing handles this yet)
                         c.bridge.dispatch(
                             engine,
                             "pullRequestThread.open",

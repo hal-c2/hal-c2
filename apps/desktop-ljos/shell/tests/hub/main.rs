@@ -32,6 +32,7 @@ mod projects;
 mod provider_settings;
 mod provider_update_notice;
 mod pull_request_list;
+mod pull_request_thread;
 mod quit;
 mod rewind;
 mod scheduled_tasks;
