@@ -621,3 +621,51 @@ fn a_new_thread_is_a_draft_until_its_thread_arrives() {
     );
     assert!(drafts::draft(&engine, &id).is_none());
 }
+
+#[test]
+fn migrated_threads_are_announced_once() {
+    let migrated = |title: &str| {
+        let mut frame = cluster(&["t1"], false);
+        let row = &mut frame["rows"][1][3];
+        row["historyOrigin"] = json!("v1_import");
+        row["title"] = json!(title);
+        frame
+    };
+    let count = |engine: &Engine, title: &str| {
+        toast_titles(engine)
+            .iter()
+            .filter(|t| t.as_str() == title)
+            .count()
+    };
+
+    // With nowhere to keep the note, the device is told once, not at
+    // every change of the store.
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, mc) = start(dir.path());
+    for title in ["One", "Two", "Three"] {
+        mc.send(&engine, migrated(title));
+    }
+    assert_eq!(count(&engine, "Setting not saved"), 1);
+    assert_eq!(count(&engine, "Your threads were brought over"), 0);
+
+    // Kept, the threads are announced once.
+    let dir = tempfile::tempdir().unwrap();
+    let source = common::compile(&[("Main", "import QtQuick\nItem {}\n")], &[]);
+    let engine = App::new("test")
+        .register(hal_c2_shell::register)
+        .source(source)
+        .build_engine();
+    let mc = Rc::new(StreamingMc::default());
+    let launch = Launch {
+        mc_origin: Some(ORIGIN.into()),
+        cache_dir: Some(dir.path().join("cache")),
+        config_dir: Some(dir.path().join("config")),
+        ..Launch::default()
+    };
+    hal_c2_shell::start(&engine, &launch, mc.clone());
+    for title in ["One", "Two", "Three"] {
+        mc.send(&engine, migrated(title));
+    }
+    assert_eq!(count(&engine, "Your threads were brought over"), 1);
+    assert_eq!(count(&engine, "Setting not saved"), 0);
+}

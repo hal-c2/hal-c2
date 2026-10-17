@@ -365,6 +365,8 @@ pub struct Sidebar {
     draft_labels: HashMap<String, String>,
     open_draft_id: String,
     open_draft_label: Option<String>,
+    /// The migrated threads were announced, or tried to be, this run.
+    migration_announced: bool,
 }
 
 impl Controller for Sidebar {
@@ -398,6 +400,7 @@ impl Controller for Sidebar {
             draft_labels: HashMap::new(),
             open_draft_id: String::new(),
             open_draft_label: None,
+            migration_announced: false,
         }
     }
 
@@ -631,9 +634,10 @@ impl Sidebar {
 
     /// Threads the MC brought over from the first version (`historyOrigin`
     /// "v1_import") are announced once per device, the first time they are
-    /// listed.
+    /// listed. A device that cannot keep the note is told so once a run,
+    /// not at every change of the store.
     fn announce_migrated_threads(&mut self, engine: &Engine) {
-        if !store::with(engine, |s| s.synchronized()) {
+        if self.migration_announced || !store::with(engine, |s| s.synchronized()) {
             return;
         }
         let settings = Settings::of(engine);
@@ -651,7 +655,11 @@ impl Sidebar {
                 })
                 .count()
         });
-        if migrated == 0 || !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
+        if migrated == 0 {
+            return;
+        }
+        self.migration_announced = true;
+        if !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
             return;
         }
         let description = if migrated == 1 {
