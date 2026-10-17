@@ -13,7 +13,7 @@ publish = false
 # Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "f2ba6ad7e8d1c096fb5a6d017086e92c000e4d57", default-features = false }
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "91caa0172e636c9f85f0c10af2aec10e76ee0202", default-features = false }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

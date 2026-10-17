@@ -12,9 +12,10 @@
 //! it. Its rows then come and go one by one, so the rows a view shows and
 //! has open keep their place.
 //!
-//! A write of `rootPath` to the path it already has should clear `error`,
-//! as `setBrowseRootPath` does before it compares; QML's write of an equal
-//! value never reaches the model (TODO(ljos#78), see `write_root`).
+//! A write of `rootPath` to the path it already has clears `error`, as
+//! `setBrowseRootPath` does before it compares. Nothing hears an equal
+//! write but the property's setter, which cannot reach the Engine: it asks
+//! the watcher's queue for the clearing, which [`deliver`] does.
 
 mod plain;
 mod watch;
@@ -84,7 +85,7 @@ pub struct LocalFolderModel {
     enabled: bool,
     /// The root as a real path: what is written is checked, and an
     /// unacceptable one gives the property back its last good value (none).
-    #[qml(notify)]
+    #[qml(notify, write = Self::keep_root)]
     root_path: Atom,
     /// The root folder's index: the top row. The invalid index while there
     /// is nothing to browse.
@@ -108,6 +109,24 @@ impl Default for LocalFolderModel {
             error: Atom::from(""),
             state: Rc::default(),
         }
+    }
+}
+
+impl LocalFolderModel {
+    /// The setter of `rootPath`: stores what is written, and sees a write
+    /// of the root it already has, which is forgotten as `error`'s last
+    /// failure (`setBrowseRootPath` clears the error before it compares).
+    /// The model's own give-back of the root (`show_root`) is not a write.
+    fn keep_root(&self, path: Atom) -> Option<Atom> {
+        let state = &self.state;
+        if !state.giving_back.get()
+            && *state.root.borrow() == *path
+            && let Ok(watch) = state.watch.try_borrow()
+            && let Some(watch) = watch.as_ref()
+        {
+            watch.forget_error();
+        }
+        Some(path)
     }
 }
 
@@ -199,6 +218,8 @@ struct State {
     /// for a tree that is gone.
     generation: Cell<u64>,
     watch: RefCell<Option<watch::Watch>>,
+    /// The model is writing `rootPath` itself ([`Model::show_root`]).
+    giving_back: Cell<bool>,
 }
 
 impl State {
@@ -406,11 +427,13 @@ impl<'e> Model<'e> {
     /// when that was a link or a path with `..`. A binding on the property
     /// stays, as it does when C++ sets a property in Qt.
     fn show_root(&self, root: &str) {
+        self.state.giving_back.set(true);
         let _ = self.engine.write_derived(
             self.obj,
             LocalFolderModel::ROOT_PATH.index,
             Value::string(root),
         );
+        self.state.giving_back.set(false);
     }
 
     fn set_error(&self, error: &str) {
@@ -428,10 +451,8 @@ impl<'e> Model<'e> {
     /// A write of `rootPath`: setBrowseRootPath.
     fn write_root(&self, path: &str) {
         // The property giving back the root this chose is not a new write.
-        // TODO(ljos#78): a write of the root it already has is not seen at
-        // all (a watch hears changes), so `error` is not cleared by it, as
-        // setBrowseRootPath does; once a native field has a setter, this
-        // guard goes and `writing_the_root_it_already_has_...` is run.
+        // (A write of the root it already has never gets here: the setter
+        // sees it, and has `error` cleared.)
         if *self.state.root.borrow() == path {
             return;
         }
