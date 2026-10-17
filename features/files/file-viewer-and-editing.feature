@@ -243,9 +243,18 @@ Feature: Viewing and editing files
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
     @desktop @backlog-desktop
-    Scenario: An open file gets most of the Files tab
+    Scenario: An open file sits beside the file tree
       When the user opens "src/app.ts"
-      Then the file viewer is taller than the file tree
+      Then the file viewer takes the height of the Files tab
+      And the file tree is a column beside it
+
+    @desktop @backlog-desktop
+    Scenario: The file tree can be hidden while a file is open
+      Given the user opened "src/app.ts"
+      When the user hides the file explorer
+      Then the file viewer takes the whole Files tab
+      When the user closes the file
+      Then the file tree takes the whole Files tab
 
     @desktop
     Scenario: The rendered or source choice is remembered on this device

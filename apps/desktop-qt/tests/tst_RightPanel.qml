@@ -485,15 +485,29 @@ Item {
             compare(menu[0].payload.url, "https://example.com/docs");
         }
 
-        function test_openFileGetsMostOfThePanel() {
+        // The web's layout: the file beside the tree, not under it, and the tree can be hidden.
+        function test_openFileSitsBesideTheTreeAndTheTreeCanBeHidden() {
             const source = createTemporaryObject(fakeFiles, root);
             const files = createTemporaryObject(filesComponent, root, { source: source });
             const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
             const lines = findChild(files, "fileLines");
-            verify(viewer);
             tryVerify(() => viewer.visible);
-            verify(viewer.height >= files.height / 2, "viewer " + viewer.height + " of " + files.height);
+            compare(viewer.height, files.height, "the file has the tab's whole height");
+            compare(explorer.height, files.height);
+            verify(viewer.x < explorer.x, "the tree is the side column");
+            verify(viewer.width > explorer.width, "viewer " + viewer.width + " tree " + explorer.width);
             verify(lines.height > 100, "lines " + lines.height);
+
+            mouseClick(findChild(files, "fileExplorerToggle"));
+            verify(!explorer.visible);
+            tryCompare(viewer, "width", files.width, 5000, "a hidden tree gives the file the whole tab");
+            mouseClick(findChild(files, "fileExplorerToggle"));
+            verify(explorer.visible);
+
+            source.openPath = "";
+            tryVerify(() => !viewer.visible);
+            tryCompare(explorer, "width", files.width, 5000, "with no file the tree is the whole tab");
         }
 
         function test_revertAsksFirstAndCanKeepOrRestoreTheFiles() {
