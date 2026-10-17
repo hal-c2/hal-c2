@@ -37,6 +37,8 @@ bool loopbackHost(const QString& host) {
 }
 
 bool hosts(const QJsonObject& descriptor, bool own, const QUrl& origin) {
+  // Not described yet (the shell snapshot is on its way): nothing says it is here.
+  if (descriptor.isEmpty()) return false;
   const QString theirs = descriptor.value(QLatin1String("platform")).toObject().value(QLatin1String("machineId")).toString();
   const QString ours = id();
   if (!theirs.isEmpty() && !ours.isEmpty()) return theirs == ours;

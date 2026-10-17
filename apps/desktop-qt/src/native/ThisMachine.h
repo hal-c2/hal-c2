@@ -27,7 +27,7 @@ bool loopbackHost(const QString& host);
 // `platform.machineId` is id(). Without an id on both sides it is the MC the
 // shell is connected to (`own`), reached on loopback at `origin`. A loopback
 // origin alone is not enough when ids are known: an SSH port forward is
-// loopback too.
+// loopback too. An environment not described yet is not here.
 bool hosts(const QJsonObject& descriptor, bool own, const QUrl& origin);
 // The same for an environment of the cluster the shell is connected to.
 bool hosts(const ShellStore& store, const McClient& client, const QString& environmentId);

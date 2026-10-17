@@ -18,6 +18,9 @@ QJsonObject on(const QString& machine) {
   return {{QStringLiteral("platform"), QJsonObject{{QStringLiteral("machineId"), machine}}}};
 }
 
+// An MC from before `platform.machineId`.
+const QJsonObject kUnsaid{{QStringLiteral("environmentId"), QStringLiteral("env-a")}};
+
 }  // namespace
 
 class ThisMachineTest : public QObject {
@@ -57,15 +60,23 @@ private slots:
 
   void withoutIdsOnlyTheOwnMcOnLoopbackIsHere() {
     thisMachine::setIdForTesting(kHere);
-    QVERIFY(thisMachine::hosts({}, true, QUrl(QStringLiteral("ws://localhost:3773"))));
-    QVERIFY(thisMachine::hosts({}, true, QUrl(QStringLiteral("ws://[::1]:3773"))));
-    QVERIFY(!thisMachine::hosts({}, true, QUrl(QStringLiteral("wss://devbox.tailnet.ts.net"))));
-    QVERIFY(!thisMachine::hosts({}, false, QUrl(QStringLiteral("ws://127.0.0.1:3773"))));
+    QVERIFY(thisMachine::hosts(kUnsaid, true, QUrl(QStringLiteral("ws://localhost:3773"))));
+    QVERIFY(thisMachine::hosts(kUnsaid, true, QUrl(QStringLiteral("ws://[::1]:3773"))));
+    QVERIFY(!thisMachine::hosts(kUnsaid, true, QUrl(QStringLiteral("wss://devbox.tailnet.ts.net"))));
+    QVERIFY(!thisMachine::hosts(kUnsaid, false, QUrl(QStringLiteral("ws://127.0.0.1:3773"))));
     // A machine with no id of its own (Android) goes by the address alone.
     thisMachine::setIdForTesting(QString());
     QVERIFY(thisMachine::hosts(on(kElsewhere), true, QUrl(QStringLiteral("ws://127.0.0.1:3773"))));
     QVERIFY(!thisMachine::hosts(on(kHere), false, QUrl(QStringLiteral("ws://127.0.0.1:3773"))));
     QVERIFY(!thisMachine::hosts(on(kHere), true, QUrl()));
+  }
+
+  // Before the shell snapshot describes it, even the own MC on loopback could be an SSH forward.
+  void anEnvironmentNotDescribedYetIsNotHere() {
+    thisMachine::setIdForTesting(kHere);
+    QVERIFY(!thisMachine::hosts({}, true, QUrl(QStringLiteral("ws://127.0.0.1:3773"))));
+    thisMachine::setIdForTesting(QString());
+    QVERIFY(!thisMachine::hosts({}, true, QUrl(QStringLiteral("ws://localhost:3773"))));
   }
 };
 
