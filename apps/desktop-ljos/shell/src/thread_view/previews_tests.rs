@@ -166,6 +166,39 @@ fn a_refused_close_after_a_reload_puts_the_tab_back() {
     }));
 }
 
+// A tab whose page failed while its close was on the way came back, when the
+// MC refused the close, as it was before: its events were dropped.
+#[test]
+fn a_refused_close_brings_the_tab_back_as_it_is_now() {
+    let (mut p, list_call) = show();
+    p.answer(list_call, Ok(list(vec![tab("tab-1")], 1, "epoch-1")));
+    p.close("tab-1");
+    let close = held(&mut p, "preview.close");
+    p.on_event(&event(
+        "failed",
+        "tab-1",
+        2,
+        json!({"url": "", "description": "refused"}),
+    ));
+    assert!(tab_ids(&p).is_empty());
+    p.answer(close, Err("no".into()));
+    assert_eq!(tab_ids(&p), ["tab-1"]);
+    assert_eq!(p.data(0, "status"), Value::from("failed"));
+}
+
+// A tab the MC closed while the client's close was on the way came back when
+// that close was refused.
+#[test]
+fn a_refused_close_of_a_tab_the_mc_closed_stays_closed() {
+    let (mut p, list_call) = show();
+    p.answer(list_call, Ok(list(vec![tab("tab-1")], 1, "epoch-1")));
+    p.close("tab-1");
+    let close = held(&mut p, "preview.close");
+    p.on_event(&event("closed", "tab-1", 2, json!({})));
+    p.answer(close, Err("no".into()));
+    assert!(tab_ids(&p).is_empty());
+}
+
 // A tab whose snapshot changed only where no row reads it repainted, and a
 // list with such a change reset every row.
 #[test]

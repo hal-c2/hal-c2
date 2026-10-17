@@ -19,7 +19,7 @@
 //! QML binds; it runs those effects on the shell's MC.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -50,10 +50,9 @@ pub enum Then {
         generation: u64,
         url: String,
     },
-    /// The row the tab was at and the tab as it was, to bring it back.
+    /// The row the tab was at, to bring it back.
     Close {
         row: usize,
-        snapshot: Json,
         tab: String,
     },
 }
@@ -213,8 +212,10 @@ pub struct Previews {
     epoch: String,
     revision: i64,
     rows: Vec<Json>,
-    /// Tabs being closed: their events do not bring them back.
-    closing: HashSet<String>,
+    /// Tabs being closed, as their events have left them: hidden, and
+    /// brought back as they are now if the MC refuses. One the MC closes
+    /// meanwhile is forgotten.
+    closing: HashMap<String, Json>,
     /// A list is on its way; the thread's events since it was asked for,
     /// which it may predate.
     listing: bool,
@@ -243,7 +244,7 @@ impl Default for Previews {
             epoch: String::new(),
             revision: -1,
             rows: Vec::new(),
-            closing: HashSet::new(),
+            closing: HashMap::new(),
             listing: false,
             early: Vec::new(),
             servers: Vec::new(),
@@ -470,13 +471,11 @@ impl Previews {
         if self.thread.is_empty() {
             return;
         }
-        let snapshot = self.rows[row].clone();
-        self.closing.insert(tab.to_owned());
+        self.closing.insert(tab.to_owned(), self.rows[row].clone());
         self.remove(tab);
         let payload = json!({"threadId": self.thread, "tabId": tab});
         let then = Then::Close {
             row,
-            snapshot,
             tab: tab.to_owned(),
         };
         self.call("preview.close", payload, then);
@@ -532,11 +531,12 @@ impl Previews {
                 self.notes.push(PreviewNote::Suggestions);
                 self.effects.push(Effect::Open(url));
             }
-            Then::Close { row, snapshot, tab } => {
-                // Another thread, opened since, forgot what it was closing.
-                if !self.closing.remove(&tab) {
+            Then::Close { row, tab } => {
+                // Another thread, opened since, forgot what it was closing,
+                // or the MC closed it anyway.
+                let Some(snapshot) = self.closing.remove(&tab) else {
                     return;
-                }
+                };
                 let Err(error) = result else {
                     return;
                 };
@@ -574,7 +574,13 @@ impl Previews {
             .and_then(Json::as_array)
             .into_iter()
             .flatten()
-            .filter(|s| !self.closing.contains(tab_of(s)))
+            .filter(|s| match self.closing.get_mut(tab_of(s)) {
+                Some(closing) => {
+                    closing.clone_from(s);
+                    false
+                }
+                None => true,
+            })
             .cloned()
             .collect();
         text(&list, "serverEpoch").clone_into(&mut self.epoch);
@@ -589,10 +595,13 @@ impl Previews {
             }
             let revision = revision_of(&event);
             let tab = tab_of(&event);
-            if revision <= self.revision || self.closing.contains(tab) {
+            if revision <= self.revision {
                 continue;
             }
             self.revision = revision;
+            if self.follow_closing(&event) {
+                continue;
+            }
             let at = rows.iter().position(|row| tab_of(row) == tab);
             match (after(&event, at.map(|at| &rows[at])), at) {
                 (None, Some(at)) => {
@@ -649,15 +658,32 @@ impl Previews {
             return;
         }
         self.revision = revision;
-        let tab = tab_of(event);
-        if self.closing.contains(tab) {
+        if self.follow_closing(event) {
             return;
         }
+        let tab = tab_of(event);
         let current = self.row_of(tab).map(|row| &self.rows[row]);
         match after(event, current) {
             Some(next) => self.upsert(next),
             None => self.remove(tab),
         }
+    }
+
+    /// Keeps a tab being closed as `event` leaves it; whether it was one.
+    fn follow_closing(&mut self, event: &Json) -> bool {
+        let tab = tab_of(event);
+        let Some(closing) = self.closing.get(tab) else {
+            return false;
+        };
+        match after(event, Some(closing)) {
+            Some(next) => {
+                self.closing.insert(tab.to_owned(), next);
+            }
+            None => {
+                self.closing.remove(tab);
+            }
+        }
+        true
     }
 
     fn set_status(&mut self, status: &'static str, message: &str) {

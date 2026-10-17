@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 04ce2d01aafc80898575d618068aac2ca9abfc665ddc02075d0bb67228c44d51 # shrinks to actions = [McOpen("t1", ""), SetThread("t1"), McOpen("t1", ""), SetActive(true), McOpen("t1", ""), UserNewTab, Answer(0, true, false), Answer(0, true, false), UserClose("tab-4"), McFail("tab-4"), Answer(0, false, false)]
