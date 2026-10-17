@@ -863,13 +863,14 @@ impl Model {
             .collect()
     }
 
+    /// The MC searches every thread it has, a row the palette has not seen
+    /// yet too: a hit is kept and shows once its row arrives.
     fn answer(&mut self) {
         self.answered = true;
-        self.matched = self
-            .threads
-            .keys()
+        self.matched = THREADS
+            .iter()
             .filter(|t| said(t).contains(self.sent.as_str()))
-            .cloned()
+            .map(|t| (*t).to_owned())
             .collect();
     }
 
