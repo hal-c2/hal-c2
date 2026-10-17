@@ -44,7 +44,7 @@ the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 w
 shell's keymap, not the focused control.
 
 `check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
-`DeviceScreen` (a frame the decoder hands it; no decoder here) and `Terminal` (`import Ghostty`, on the `vt100`
+`DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, on the `vt100`
 crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
 
 ## Tests
@@ -60,15 +60,21 @@ virtual clock.
 
 The shell is an application of the `ljos` facade (`App`, `#[derive(QmlObject)]`, `ljos::item`, `ljos::keys`,
 `ljos::dev`, `ljos::render`) except where the facade has no way yet. `shell/Cargo.toml` names what it takes
-from `ljos_engine` and `ljos_quick` directly.
+from below it directly.
 
 What the shell still works around, each where it does so:
 
 - `ljos::item` has no pointer items, hover motion or input method client, and no way to the scene's text
-  engine or a `Font`'s text style, so `shell/src/terminal/mod.rs` registers those through `ljos_quick`, in
-  `ljos_engine`'s `MetaRef`. The facade does not name `Prop<T>` or `ConnectionId` either.
-- An item repaints only when a property its paint reads changes, and there is no private property, so
+  engine or a `Font`'s text style (#62), so `shell/src/terminal/mod.rs` registers those through `ljos_quick`,
+  in `ljos_engine`'s `MetaRef`. The facade does not name `Prop<T>` or `ConnectionId` either.
+- An item repaints only when a property its paint reads changes, and there is no private property (#62), so
   `Terminal.revision` and `DeviceScreen.frames` show in QML where Qt's items have nothing.
+- Ljós's QtMultimedia cannot play a live stream (#60), so a device's screen is decoded with the system's
+  FFmpeg, loaded at run time as desktop-qt does: `shell/src/device/decoder.rs`.
+- The facade has no standard locations and no item's device pixel ratio (#63), so `controllers/plan.rs` takes
+  `Location` from `ljos_platform` and `device/stream.rs` reads the `Screen` attached object from `ljos_controls`.
 - The system's reduce-motion preference never reaches the app (#58), and a window cannot ask for a blurred
   backdrop (#59): `shell/src/platform_window.rs`, where the theme's window blur does nothing. The colour scheme
   and motion hints are `ljos_quick`'s.
+- The compiler warns on `popup.scale` and `popup.transformOrigin` set through a `ComboBox`'s `popup` (#61), which
+  `GitActions.qml` does and Qt accepts; the warning is the only harm.

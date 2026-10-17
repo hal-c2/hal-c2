@@ -20,7 +20,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::QmlValue;
@@ -212,6 +212,26 @@ impl TimelineModel {
             rows.telling.set(false);
         }
         Some(result)
+    }
+
+    /// What the subscription to the thread's stream sends with each `sub`
+    /// (its `resume`): [`Timeline::subscribing`], asked by the MC client
+    /// with no engine to hand. What that changes is told with the next
+    /// update, which the frames that answer the `sub` make. Holds the
+    /// timeline weakly; an object gone resumes from nothing.
+    pub fn resumer(engine: &Engine, obj: ObjectId) -> impl FnMut() -> Json + 'static {
+        let rows = rows_of(engine, obj).map(|rows| Rc::downgrade(&rows));
+        move || {
+            let Some(rows) = rows.as_ref().and_then(Weak::upgrade) else {
+                return Json::Null;
+            };
+            let Ok(mut core) = rows.core.try_borrow_mut() else {
+                return Json::Null;
+            };
+            let resume = core.subscribing();
+            rows.pending.borrow_mut().extend(core.take_out());
+            resume
+        }
     }
 
     /// Reads the timeline of `obj`. `f` must not call back into it.

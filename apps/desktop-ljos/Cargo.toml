@@ -19,6 +19,7 @@ ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16
 ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }

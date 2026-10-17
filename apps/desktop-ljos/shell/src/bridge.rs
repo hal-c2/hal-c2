@@ -189,7 +189,8 @@ fn local_path(url: &str) -> Option<String> {
     Some(percent_decode(path))
 }
 
-fn percent_decode(s: &str) -> String {
+/// `%xx` escapes decoded, as QUrl::fromPercentEncoding does.
+pub(crate) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

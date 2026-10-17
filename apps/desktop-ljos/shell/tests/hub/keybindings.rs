@@ -210,9 +210,9 @@ fn a_default_binding_runs_its_native_command() {
 #[test]
 fn a_key_the_shell_has_no_command_for_stays_with_the_focused_control() {
     let (hub, keymap) = hub();
-    // pullRequest.copyNumber is no one's command here.
-    assert_eq!(shortcut(&keymap, "Ctrl+Shift+K")["chrome"], false);
-    assert!(!keymap.press(&hub.engine, "Ctrl+Shift+K", CHROME));
+    // tabs.next is no one's command here.
+    assert_eq!(shortcut(&keymap, "Ctrl+Alt+]")["chrome"], false);
+    assert!(!keymap.press(&hub.engine, "Ctrl+Alt+]", CHROME));
     // A key nothing binds.
     assert!(!keymap.press(&hub.engine, "Ctrl+Shift+Q", CHROME));
 }
@@ -223,8 +223,8 @@ fn a_terminal_keeps_every_key_but_the_terminal_commands() {
     let (hub, keymap) = linux(on_thread("main", None));
     let split = shortcut(&keymap, "Ctrl+D");
     assert_eq!(split["terminal"], true);
-    // diff.toggle is not the shell's here.
-    assert_eq!(split["chrome"], false);
+    // Outside a terminal it is the right panel's diff.toggle.
+    assert_eq!(split["chrome"], true);
     assert_eq!(shortcut(&keymap, "Ctrl+[")["terminal"], false);
     assert_eq!(shortcut(&keymap, "Ctrl+[")["chrome"], true);
 

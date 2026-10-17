@@ -13,7 +13,8 @@ serde_json.workspace = true
 # The socket is read and written at once while timers run, so its thread runs a
 # single-threaded runtime. The HTTP requests (descriptor, ticket, posts) are
 # blocking ureq calls on the runtime's blocking pool, as Ljós's own fetcher.
-tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros"] }
+# io-util: a device's screen is a GET read by hand as it arrives (stream.rs).
+tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
   "connect",
   "handshake",
@@ -24,10 +25,10 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls", "pla
 # One TLS policy for socket and HTTP: the system's trust store, as the Qt client.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
+# The device screen's GET over TLS (stream.rs), with the same config.
+tokio-rustls = { version = "0.26", default-features = false }
 url = "2"
 getrandom = "0.4"
 
 [dev-dependencies]
 proptest = "1.11"
-# The fake MC in tests/ reads and writes its HTTP by hand.
-tokio = { version = "1.53", features = ["io-util"] }

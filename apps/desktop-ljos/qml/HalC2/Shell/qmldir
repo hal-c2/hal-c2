@@ -1,6 +1,4 @@
 module HalC2.Shell
 singleton PaletteModel 1.0 PaletteModel.qml
 singleton Themes 1.0 Themes.qml
-singleton Panel 1.0 Panel.qml
-singleton Threads 1.0 Threads.qml
 singleton Onboarding 1.0 Onboarding.qml

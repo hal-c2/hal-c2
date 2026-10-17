@@ -15,11 +15,9 @@
 //! follows a [`TimelineModel`]'s `agentsChanged` and `timesChanged` and runs
 //! the core's two timers.
 //!
-//! TODO(port): RightPanelController::agents. The right panel owns one
-//! AgentsModel (its `agents` property): it makes it with
-//! [`AgentsModel::create`], gives it the shown thread with
-//! [`AgentsModel::set_thread`] and says whether the Agents tab shows with
-//! [`AgentsModel::set_active`].
+//! The right panel owns one (`Panel.agents`): it gives it the shown thread
+//! with [`AgentsModel::set_thread`] and says whether the Agents tab shows
+//! with [`AgentsModel::set_active`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet};

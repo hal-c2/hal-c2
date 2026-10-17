@@ -22,8 +22,12 @@ ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
 #   the reduced motion hint (platform_window.rs).
 # - ljos_engine: the MetaRef those hooks take, the `Prop<T>` handle type and
 #   `Engine::connect`'s ConnectionId.
+# - ljos_platform and ljos_controls: the Downloads folder (`Location`) and
+#   an item's device pixel ratio (the `Screen` attached object).
 ljos_engine.workspace = true
 ljos_quick.workspace = true
+ljos_platform.workspace = true
+ljos_controls.workspace = true
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
@@ -54,6 +58,11 @@ vt100 = "0.16"
 # and QTextDocument's markdown as text.
 regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
+# The Device tab's screen (src/device): FFmpeg is loaded at run time, never
+# linked or bundled (it is GPL), and serve-sim's JPEG seed is decoded as Ljós's
+# Image does.
+libloading = "0.8"
+zune-jpeg = "0.5"
 
 # The transcription helper's session and its signals (src/local_transcriber).
 [target.'cfg(unix)'.dependencies]
@@ -68,8 +77,7 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 [dev-dependencies]
 # What the tests drive that the facade does not name: a window's scene and
 # the test text engine (ljos_quick), the engine's virtual clock
-# (ljos_runtime) and the application's activity (ljos_controls).
-ljos_controls.workspace = true
+# (ljos_runtime) and the application's activity (ljos_controls, above).
 ljos_runtime.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"

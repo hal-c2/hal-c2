@@ -302,8 +302,7 @@ impl Keymap {
         // opens and closes.
         // TODO(port): CommandPaletteController::openChanged — the palette
         // calls `set_palette_open`.
-        // TODO(port): RightPanelController::isOpen / activeTab — the panel
-        // calls `set_preview_open` (its Previews tab shown).
+        // The right panel calls `set_preview_open` (its Previews tab shown).
         // Conditions on the route, the running turn and the composer's draft
         // (draftThreadRoute, turnRunning, composerDraft).
         let bridge = Bridge::of(engine);
