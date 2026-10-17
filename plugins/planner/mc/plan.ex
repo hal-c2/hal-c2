@@ -431,13 +431,33 @@ defmodule HalC2Plugins.Planner.Plan do
   `{:ok, ref}` with what the plan takes of a pull request or an issue a client or an
   agent names as {repository, number}, or `:error`. The rest it gives is dropped: the
   state is GitHub's, so a link starts open and the next look reads it, and a pull
-  request linked once it merged moves its task as one seen to merge.
+  request linked once it merged moves its task as one seen to merge. A `url` stays when
+  it is a web address, as it names the host a repository the MC has no checkout of is
+  read through (`Sync.look/3`); whether that host is one of the MC's is that read's to say.
   """
-  def ref(%{"repository" => repository, "number" => number})
-      when is_binary(repository) and is_integer(number),
-      do: {:ok, %{"repository" => repository, "number" => number}}
+  def ref(%{"repository" => repository, "number" => number} = value)
+      when is_binary(repository) and is_integer(number) do
+    ref = %{"repository" => repository, "number" => number}
+
+    case web_url(value["url"]) do
+      nil -> {:ok, ref}
+      url -> {:ok, Map.put(ref, "url", url)}
+    end
+  end
 
   def ref(_value), do: :error
+
+  defp web_url(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and host not in [nil, ""] ->
+        url
+
+      _ ->
+        nil
+    end
+  end
+
+  defp web_url(_url), do: nil
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
