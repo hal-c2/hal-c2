@@ -236,14 +236,16 @@ step("the environment still lists the {string} session", (ctx: LaunchWorld, labe
   expect(Object.keys(savedSessions(ctx))).toEqual([mc(ctx).origin]);
 });
 
-step("the environment revoked that session", (ctx: LaunchWorld) => {
-  const remote = mc(ctx);
-  for (const session of remote.sessions) session.revoked = true;
-  remote.dropConnections();
+step("the environment revoked that session", async (ctx: LaunchWorld) => {
+  // The client has to be gone before the revocation: a client still running would
+  // reconnect, meet the revoked bearer and forget the credential on its own clock,
+  // racing the Ctrl+C that is meant to leave it, and the next start would find
+  // either a saved revoked session or none. Revoked while closed, it finds the former.
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  for (const session of mc(ctx).sessions) session.revoked = true;
 });
 
 step("the user starts the terminal client for that environment again", async (ctx: LaunchWorld) => {
-  if (ctx.direct) await leaveDirect(ctx);
   await startDirect(ctx, ["--url", mc(ctx).origin, "--base-dir", baseDir(ctx)]);
 });
 
