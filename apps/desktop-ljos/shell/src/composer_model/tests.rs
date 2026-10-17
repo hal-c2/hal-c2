@@ -11,7 +11,12 @@ fn at(text: &str, cursor: usize) -> Option<(String, String, usize, usize)> {
     trigger(text, cursor as i64).map(|t| (t.kind, t.query, t.start, t.end))
 }
 
-fn some(kind: &str, query: &str, start: usize, end: usize) -> Option<(String, String, usize, usize)> {
+fn some(
+    kind: &str,
+    query: &str,
+    start: usize,
+    end: usize,
+) -> Option<(String, String, usize, usize)> {
     Some((kind.into(), query.into(), start, end))
 }
 
@@ -150,7 +155,10 @@ fn the_slash_menu_hides_what_does_not_apply() {
     assert!(!labels(&items).iter().any(|l| l.starts_with("/skill:")));
     // Provider commands only at the very start of the prompt.
     let items = slash_items(Some(&codex), &slash("", 4), false, true, true);
-    assert_eq!(labels(&items), ["/model", "/skill:deploy", "/skill:lint-fix"]);
+    assert_eq!(
+        labels(&items),
+        ["/model", "/skill:deploy", "/skill:lint-fix"]
+    );
     // No instance: the composer's only.
     let items = slash_items(None, &slash("", 0), true, true, true);
     assert_eq!(labels(&items), ["/model", "/plan", "/default"]);
@@ -203,13 +211,18 @@ fn paths_become_file_links() {
     assert_eq!(items[0].replacement, "[main.rs](src/main.rs) ");
     assert_eq!(items[1].id, "path:directory:docs");
     assert_eq!(items[1].description, "");
-    assert_eq!(path_link("/a b/[x](y)#?.md"), r"[\[x\](y)#?.md](/a%20b/%5Bx%5D%28y%29%23%3F.md) ");
+    assert_eq!(
+        path_link("/a b/[x](y)#?.md"),
+        r"[\[x\](y)#?.md](/a%20b/%5Bx%5D%28y%29%23%3F.md) "
+    );
     assert_eq!(path_link("/work/shop/"), "[shop](/work/shop/) ");
 }
 
 #[test]
 fn scores_prefer_exact_then_prefix_then_boundary() {
-    let score = |value: &str| score_query_match(value, "mod", 0, 2, Some(4), Some(6), Some(100), BOUNDARIES);
+    let score = |value: &str| {
+        score_query_match(value, "mod", 0, 2, Some(4), Some(6), Some(100), BOUNDARIES)
+    };
     assert_eq!(score("mod"), Some(0));
     assert_eq!(score("model"), Some(4));
     assert_eq!(score("set-model"), Some(4 + 4 * 2 + 6));
@@ -221,12 +234,17 @@ fn scores_prefer_exact_then_prefix_then_boundary() {
 
 #[test]
 fn queued_runs_wait_for_their_message() {
-    let run = obj(json!({"id": "run-a", "status": "queued", "queuePosition": 0, "userMessageId": "message:a"}));
+    let run = obj(
+        json!({"id": "run-a", "status": "queued", "queuePosition": 0, "userMessageId": "message:a"}),
+    );
     let early = queued([&run], |_| None);
     assert!(early.queue.is_empty() && early.waiting.is_empty());
     let message = obj(json!({"id": "message:a", "text": "also update docs"}));
     let later = queued([&run], |id| (id == "message:a").then_some(&message));
-    assert_eq!(later.queue, [json!({"runId": "run-a", "text": "also update docs"})]);
+    assert_eq!(
+        later.queue,
+        [json!({"runId": "run-a", "text": "also update docs"})]
+    );
 }
 
 #[test]
@@ -246,7 +264,10 @@ fn queued_runs_go_by_position_and_notices_wait_apart() {
     let q = queued(runs.iter(), found);
     assert_eq!(
         q.queue,
-        [json!({"runId": "a", "text": "A"}), json!({"runId": "b", "text": "B"})]
+        [
+            json!({"runId": "a", "text": "A"}),
+            json!({"runId": "b", "text": "B"})
+        ]
     );
     assert_eq!(q.waiting.len(), 1);
     assert_eq!(q.waiting[0]["runId"], "c");
@@ -290,15 +311,26 @@ fn options_take_the_selection_and_apply_only_what_fits() {
         {"id": "agent", "type": "select", "options": [{"id": "plan"}]},
     ]}}));
     let shown = descriptors(&model, &[json!({"id": "effort", "value": "low"})], false);
-    assert_eq!(shown.len(), 2, "the plan-only agent option goes without plan mode");
+    assert_eq!(
+        shown.len(),
+        2,
+        "the plan-only agent option goes without plan mode"
+    );
     assert_eq!(shown[0]["currentValue"], "low");
     // A prompt-injected choice reads as the default.
-    let shown = descriptors(&model, &[json!({"id": "effort", "value": "ultrathink"})], true);
+    let shown = descriptors(
+        &model,
+        &[json!({"id": "effort", "value": "ultrathink"})],
+        true,
+    );
     assert_eq!(shown[0]["currentValue"], "high");
     assert_eq!(shown.len(), 3);
 
     let options = shell_options(&shown);
-    assert_eq!(options[1], json!({"id": "fast", "label": "Fast", "type": "boolean", "value": false, "choices": []}));
+    assert_eq!(
+        options[1],
+        json!({"id": "fast", "label": "Fast", "type": "boolean", "value": false, "choices": []})
+    );
 
     assert_eq!(apply_option(&shown, "effort", &json!("nope")), None);
     assert_eq!(apply_option(&shown, "fast", &json!("yes")), None);
@@ -310,7 +342,9 @@ fn options_take_the_selection_and_apply_only_what_fits() {
 #[test]
 fn runtime_modes_follow_the_instance() {
     assert_eq!(runtime_modes(None).len(), 4);
-    let limited = instance(json!({"instanceId": "x", "driver": "x", "supportedRuntimeModes": ["auto", "full-access"]}));
+    let limited = instance(
+        json!({"instanceId": "x", "driver": "x", "supportedRuntimeModes": ["auto", "full-access"]}),
+    );
     let values: Vec<_> = runtime_modes(Some(&limited))
         .iter()
         .map(|m| m["value"].as_str().unwrap().to_owned())
@@ -321,8 +355,16 @@ fn runtime_modes_follow_the_instance() {
 #[test]
 fn enter_sends_by_the_bindings() {
     let bindings: Vec<_> = [
-        Rule::new("mod+shift+enter", "composer.sendAlternate", "composerFocus && turnRunning"),
-        Rule::new("mod+alt+enter", "composer.sendBackground", "composerFocus && draftThreadRoute"),
+        Rule::new(
+            "mod+shift+enter",
+            "composer.sendAlternate",
+            "composerFocus && turnRunning",
+        ),
+        Rule::new(
+            "mod+alt+enter",
+            "composer.sendBackground",
+            "composerFocus && draftThreadRoute",
+        ),
     ]
     .iter()
     .filter_map(compile)
@@ -350,13 +392,21 @@ fn a_picker_key_is_the_last_binding_with_the_picker_open() {
     .iter()
     .filter_map(compile)
     .collect();
-    assert_eq!(picker_key(&bindings, false, "modelPicker.jump.1"), Json::Null);
-    assert_eq!(picker_key(&bindings[..1], false, "modelPicker.jump.1")["ctrlKey"], true);
+    assert_eq!(
+        picker_key(&bindings, false, "modelPicker.jump.1"),
+        Json::Null
+    );
+    assert_eq!(
+        picker_key(&bindings[..1], false, "modelPicker.jump.1")["ctrlKey"],
+        true
+    );
 }
 
 #[test]
 fn a_started_thread_on_a_strict_provider_cannot_change_model() {
-    let list = instances(&[json!({"instanceId": "c", "driver": "claudeAgent", "requiresNewThreadForModelChange": true})]);
+    let list = instances(&[
+        json!({"instanceId": "c", "driver": "claudeAgent", "requiresNewThreadForModelChange": true}),
+    ]);
     assert!(block_reason(&list, "c", "a", "c", "b").is_some());
     assert!(block_reason(&list, "c", "a", "c", "a").is_none());
     assert!(block_reason(&list, "c", "a", "d", "b").is_none());

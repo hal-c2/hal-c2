@@ -376,7 +376,8 @@ fn model_options(
             .iter()
             .any(|m| model_matches(as_object(m), selected_model));
         if !listed {
-            let unlisted = json!({"slug": selected_model, "name": selected_model, "isUnavailable": true});
+            let unlisted =
+                json!({"slug": selected_model, "name": selected_model, "isUnavailable": true});
             models.push(as_object(&unlisted).clone());
         }
     }
@@ -450,9 +451,11 @@ pub fn picker_instances(
     let mut result = Vec::new();
     for instance in &visible {
         let favorite = |model: &Obj| {
-            prefs
-                .favorites
-                .contains(&format!("{}\n{}", instance.instance_id, text(model, "slug")))
+            prefs.favorites.contains(&format!(
+                "{}\n{}",
+                instance.instance_id,
+                text(model, "slug")
+            ))
         };
         let mut models: Vec<Obj> =
             model_options(instance, prefs, selected_instance, selected_model)
@@ -775,16 +778,21 @@ pub fn enter_intents(
     ]);
     let table = |multiline: bool| {
         let mut intents = Map::new();
-        let needs_modifier = send_shortcut == "mod-enter"
-            || (send_shortcut == "mod-enter-multiline" && multiline);
+        let needs_modifier =
+            send_shortcut == "mod-enter" || (send_shortcut == "mod-enter-multiline" && multiline);
         for mask in 0..16 {
             let (ctrl, meta, alt, shift) =
                 (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0);
-            let held: Vec<&str> = [(ctrl, "ctrl"), (meta, "meta"), (alt, "alt"), (shift, "shift")]
-                .iter()
-                .filter(|(on, _)| *on)
-                .map(|(_, name)| *name)
-                .collect();
+            let held: Vec<&str> = [
+                (ctrl, "ctrl"),
+                (meta, "meta"),
+                (alt, "alt"),
+                (shift, "shift"),
+            ]
+            .iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, name)| *name)
+            .collect();
             let command = command_for(bindings, mac, &context, "enter", ctrl, meta, alt, shift);
             let intent = if command == "composer.sendAlternate" && running {
                 "alternate"
