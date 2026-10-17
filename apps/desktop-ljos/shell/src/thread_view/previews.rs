@@ -842,9 +842,8 @@ impl ThreadPreviews {
         Ok(obj)
     }
 
-    /// Where the pages this device opened last are kept: the device setting
-    /// `previewRecentPages` (`Settings::device_value`, `write_device`).
-    // TODO(port): RightPanelController::RightPanelController — it passes them.
+    /// Where the pages this device opened last are kept: the right panel
+    /// passes the device's previewRecentPages.
     pub fn set_recents(
         engine: &Engine,
         obj: ObjectId,

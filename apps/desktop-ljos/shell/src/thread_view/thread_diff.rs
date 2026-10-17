@@ -1167,10 +1167,9 @@ impl ThreadDiff {
     }
 
     /// The thread shown, and its timeline (for its checkpoints and whether
-    /// it is working; it may come later than the thread).
-    // TODO(port): RightPanelController::setThread passes these, with
-    // setCheckout, setActive and the whitespace and wrap settings
-    // (set_default_ignore_whitespace, set_default_wrap through `update`).
+    /// it is working; it may come later than the thread). The right panel
+    /// passes these, and the checkout, whether the tab shows and the
+    /// whitespace and wrap settings through `update`.
     pub fn set_thread(
         engine: &Engine,
         obj: ObjectId,

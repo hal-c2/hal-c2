@@ -424,11 +424,12 @@ fn render_to(
     let connection = match (&launch.mc_origin, &capture.failure) {
         (Some(origin), None) => {
             let (woken, wakes) = mpsc::channel();
+            let woken_by_cache = woken.clone();
             let connection = Rc::new(Connection::spawn(move || {
                 let _ = woken.send(());
             }));
             match connection.open(origin, &options.mc_token) {
-                Ok(()) => Some((connection, wakes)),
+                Ok(()) => Some((connection, wakes, woken_by_cache)),
                 Err(e) if capture.play_after_snapshot => {
                     eprintln!("hal-c2-ljos: {e}");
                     capture = Capture::scripted(options, Some(e));
@@ -449,16 +450,31 @@ fn render_to(
         }
     };
     let root = match connection {
-        Some((connection, wakes)) => {
+        Some((connection, wakes, woken_by_cache)) => {
             hal_c2_shell::start(&engine, &launch, connection.clone());
-            if !capture.play_after_snapshot {
-                play(&engine, &capture.steps);
-            }
+            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
+                let _ = woken_by_cache.send(());
+            });
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
-            while !hal_c2_shell::active(&engine) {
+            // `--screenshot` plays its steps on the picture's clock instead.
+            let mut played = capture.play_after_snapshot;
+            let mut active = false;
+            loop {
+                // The steps once the shell is active: navigation follows a
+                // route only from then on.
+                if !active && hal_c2_shell::active(&engine) {
+                    active = true;
+                    if !played {
+                        played = true;
+                        play(&engine, &capture.steps);
+                    }
+                }
+                if active && !hal_c2_shell::controllers::threads::loading(&engine) {
+                    break;
+                }
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero()
                     || wakes.recv_timeout(left) == Err(mpsc::RecvTimeoutError::Disconnected)
@@ -470,9 +486,16 @@ fn render_to(
                         status.phase,
                         status.failure
                     );
+                    if !played {
+                        play(&engine, &capture.steps);
+                    }
+                    hal_c2_shell::controllers::threads::drain(&engine);
                     break;
                 }
-                engine.turn(None, || connection.deliver(&engine));
+                engine.turn(None, || {
+                    connection.deliver(&engine);
+                    hal_c2_shell::controllers::threads::deliver(&engine);
+                });
             }
             root
         }
@@ -563,6 +586,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::device::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
                     hal_c2_shell::local_transcriber::deliver(engine);
+                    hal_c2_shell::controllers::threads::deliver(engine);
                 }
                 Message::Activated(key) => {
                     controller::with::<AlertController, _>(engine, |alerts, engine| {
@@ -571,6 +595,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
+            // The client cache answers a thread's copy on its own thread.
+            let threads_handle = handle.clone();
+            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
+                let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             // Alerts reach the desktop's notification service; a click shows
             // its thread.
             #[cfg(all(unix, not(target_os = "macos")))]

@@ -15,10 +15,13 @@ pub mod git;
 pub mod keybindings;
 pub mod layout;
 pub mod licenses;
+pub mod limit_recovery;
 pub mod load_balancing;
 pub mod mc_plugin;
 pub mod menus;
 pub mod navigation;
+pub mod panel;
+pub mod plan;
 pub mod plugin;
 pub mod project_actions;
 pub mod project_clone;
@@ -28,6 +31,7 @@ pub mod provider_settings;
 pub mod provider_update_notice;
 pub mod pull_request_list;
 pub mod quit;
+pub mod rewind;
 pub mod scheduled_tasks;
 pub mod settings;
 pub mod settings_scope;
@@ -39,7 +43,9 @@ pub mod storage_settings;
 pub mod terminals;
 pub mod text_generation;
 pub mod theme;
+pub mod thread_lineage;
 pub mod thread_menu;
+pub mod threads;
 pub mod toasts;
 pub mod usage;
 pub mod usage_prices;
@@ -90,6 +96,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<licenses::Licenses>("licenses", &["licenses"], Scope::Window),
+        Registration::new::<limit_recovery::LimitRecovery>(
+            "limitRecovery",
+            &["limitRecovery"],
+            Scope::Window,
+        ),
         Registration::new::<load_balancing::LoadBalancing>(
             "loadBalancing",
             &["loadBalancing"],
@@ -98,6 +109,8 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<mc_plugin::McPlugin>("mcPlugins", &["mcPlugins"], Scope::Shared),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<panel::RightPanel>("panel", &["panel"], Scope::Window),
+        Registration::new::<plan::Plan>("plan", &[], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),
         Registration::new::<project_actions::ProjectActions>(
             "projectActions",
@@ -127,6 +140,7 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<quit::QuitController>("quit", &["quitHint"], Scope::Shared),
+        Registration::new::<rewind::Rewind>("rewind", &["rewind"], Scope::Window),
         Registration::new::<scheduled_tasks::ScheduledTasks>(
             "scheduledTasks",
             &["scheduledTasks"],
@@ -166,7 +180,13 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
+        Registration::new::<thread_lineage::ThreadLineage>(
+            "threadLineage",
+            &["lineage"],
+            Scope::Window,
+        ),
         Registration::new::<thread_menu::ThreadMenu>("threadMenu", &[], Scope::Window),
+        Registration::new::<threads::ThreadStore>("threads", &[], Scope::Window),
         Registration::new::<toasts::Toasts>("toasts", &["toasts"], Scope::Window),
         Registration::new::<usage::Usage>("usage", &["usage"], Scope::Window),
         Registration::new::<usage_prices::UsagePrices>(

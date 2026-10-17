@@ -36,9 +36,26 @@ const ZOOM_STEP: f64 = 0.5;
 const MIN_ZOOM_LEVEL: f64 = -7.5;
 const MAX_ZOOM_LEVEL: f64 = 8.5;
 
+/// How long a panel opens or closes over, in ms: none when the system or
+/// the "Reduce motion" setting asks for less motion, else the
+/// `panelAnimationDurationMs` setting up to 400.
+pub fn panel_animation_ms(engine: &Engine) -> i32 {
+    let settings = Settings::of(engine);
+    let setting = |key| settings.setting(engine, key);
+    animation_ms(
+        platform_window::system_reduced_motion(engine),
+        setting("reduceMotion")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        setting("panelAnimationDurationMs")
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+            .unwrap_or(0),
+    )
+}
+
 /// The panel animation's length for the two ways to ask for less motion and
 /// the duration the user chose.
-pub fn panel_animation_ms(system_reduced: bool, setting_reduced: bool, chosen_ms: i64) -> i32 {
+fn animation_ms(system_reduced: bool, setting_reduced: bool, chosen_ms: i64) -> i32 {
     if system_reduced || setting_reduced {
         0
     } else {
@@ -165,23 +182,6 @@ impl Layout {
             .max(SIDEBAR_MIN_WIDTH)
     }
 
-    /// How long a panel opens or closes over, in ms: none when the system or
-    /// the "Reduce motion" setting asks for less motion, else the
-    /// `panelAnimationDurationMs` setting up to 400.
-    pub fn panel_animation_ms(&self, engine: &Engine) -> i32 {
-        let settings = Settings::of(engine);
-        let setting = |key| settings.setting(engine, key);
-        panel_animation_ms(
-            platform_window::system_reduced_motion(engine),
-            setting("reduceMotion")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            setting("panelAnimationDurationMs")
-                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
-                .unwrap_or(0),
-        )
-    }
-
     /// The device preferences changed: the first time they are read, then
     /// only the zoom another window set is followed.
     fn device_changed(&mut self, engine: &Engine) {
@@ -295,18 +295,18 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
-    use super::panel_animation_ms;
+    use super::animation_ms;
 
     #[test]
     fn less_motion_from_the_system_or_the_setting_is_none() {
-        assert_eq!(panel_animation_ms(false, false, 150), 150);
-        assert_eq!(panel_animation_ms(true, false, 150), 0);
-        assert_eq!(panel_animation_ms(false, true, 150), 0);
+        assert_eq!(animation_ms(false, false, 150), 150);
+        assert_eq!(animation_ms(true, false, 150), 0);
+        assert_eq!(animation_ms(false, true, 150), 0);
     }
 
     #[test]
     fn the_chosen_duration_stays_within_zero_and_four_hundred() {
-        assert_eq!(panel_animation_ms(false, false, -5), 0);
-        assert_eq!(panel_animation_ms(false, false, 9999), 400);
+        assert_eq!(animation_ms(false, false, -5), 0);
+        assert_eq!(animation_ms(false, false, 9999), 400);
     }
 }

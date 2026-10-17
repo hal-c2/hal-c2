@@ -67,6 +67,8 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
     engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
+    engine.register_singleton::<controllers::threads::ThreadsObject>(MODULE, v);
+    engine.register_singleton::<controllers::panel::PanelObject>(MODULE, v);
     engine.register_singleton::<controllers::terminals::TerminalsObject>(MODULE, v);
     thread_view::register(engine, v);
     bridge::Bridge::of(engine);
@@ -94,8 +96,9 @@ pub struct Launch {
     /// (`shell-drafts.json`) are kept ([`storage::StoragePaths::data`]);
     /// none keeps nothing.
     pub data_dir: Option<PathBuf>,
-    /// Where the terminals drawer's height and per-thread state
-    /// (`shell-terminals.json`) are kept ([`storage::StoragePaths::state`]);
+    /// Where the window's own state is kept: each thread's right panel
+    /// (`shell-panel.json`), the terminals drawer's height and per-thread
+    /// state (`shell-terminals.json`) ([`storage::StoragePaths::state`]);
     /// none keeps nothing.
     pub state_dir: Option<PathBuf>,
 }
@@ -156,6 +159,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .data_dir
             .as_ref()
             .map(|dir| dir.join("shell-drafts.json")),
+    );
+    controllers::panel::set_store_path(
+        engine,
+        launch
+            .state_dir
+            .as_ref()
+            .map(|dir| dir.join("shell-panel.json")),
     );
     controller::start(engine, mc.clone(), controllers::registrations());
     controllers::terminals::set_store_path(
