@@ -13,6 +13,8 @@ defmodule HalC2.PreviewForwardProofTest do
     model: "preview_forward.maude",
     module: "PREVIEW-FORWARD",
     check: "PREVIEW-FORWARD-PROPS",
+    # Its liveness check takes about two minutes alone, and longer on a CI runner.
+    timeout: 900_000,
     code: [
       {:exports, HalC2.PreviewForward},
       {:messages, HalC2.PreviewForward.Listener},
