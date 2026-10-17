@@ -20,8 +20,9 @@ const decodeItem = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2Sh
  */
 export class ShellShapeFold {
   private sequence = 0;
-  // The rows held, by kind and id, with where each thread sits.
-  private readonly held = new Map<string, "project" | "active" | "archive">();
+  // The rows held: project ids, and thread ids with where each thread sits.
+  private readonly heldProjects = new Set<string>();
+  private readonly heldThreads = new Map<string, "active" | "archive">();
   private readonly mc: string;
 
   constructor(mc: string) {
@@ -32,17 +33,18 @@ export class ShellShapeFold {
     const projects: Array<unknown> = [];
     const threads: Array<unknown> = [];
     const archivedThreads: Array<unknown> = [];
-    this.held.clear();
+    this.heldProjects.clear();
+    this.heldThreads.clear();
     for (const [mc, id, kind, row] of rows) {
       if (mc !== this.mc) continue;
       if (kind === "project") {
         if (row.deletedAt == null) {
           projects.push(row);
-          this.held.set(`project:${id}`, "project");
+          this.heldProjects.add(id);
         }
       } else if (kind === "thread" && row.deletedAt == null) {
         (row.archivedAt == null ? threads : archivedThreads).push(row);
-        this.held.set(`thread:${id}`, row.archivedAt == null ? "active" : "archive");
+        this.heldThreads.set(id, row.archivedAt == null ? "active" : "archive");
       }
     }
     this.sequence++;
@@ -69,46 +71,41 @@ export class ShellShapeFold {
     if (mc !== this.mc) return [];
     const items: Array<OrchestrationV2ShellStreamItem> = [];
     if (reset) {
-      const named = new Set(rows.map(([id, kind]) => `${kind}:${id}`));
-      for (const [key, place] of this.held) {
-        if (named.has(key)) continue;
-        this.held.delete(key);
-        const sequence = ++this.sequence;
+      const namedProjects = new Set<string>();
+      const namedThreads = new Set<string>();
+      for (const [id, kind] of rows) (kind === "project" ? namedProjects : namedThreads).add(id);
+      // Collected before removing, so the maps are not changed while they are read.
+      const goneProjects = [...this.heldProjects].filter((id) => !namedProjects.has(id));
+      const goneThreads = [...this.heldThreads].filter(([id]) => !namedThreads.has(id));
+      for (const projectId of goneProjects) {
+        this.heldProjects.delete(projectId);
+        items.push(decodeItem({ kind: "project.removed", sequence: ++this.sequence, projectId }));
+      }
+      for (const [threadId, location] of goneThreads) {
+        this.heldThreads.delete(threadId);
         items.push(
-          place === "project"
-            ? decodeItem({
-                kind: "project.removed",
-                sequence,
-                projectId: key.slice("project:".length),
-              })
-            : decodeItem({
-                kind: "thread.removed",
-                sequence,
-                location: place,
-                threadId: key.slice("thread:".length),
-              }),
+          decodeItem({ kind: "thread.removed", sequence: ++this.sequence, location, threadId }),
         );
       }
     }
     for (const [id, kind, row] of rows) {
       const sequence = ++this.sequence;
-      const key = `${kind}:${id}`;
       if (kind === "project") {
         if (row.deletedAt == null) {
-          this.held.set(key, "project");
+          this.heldProjects.add(id);
           items.push(decodeItem({ kind: "project.updated", sequence, project: row }));
         } else {
-          this.held.delete(key);
+          this.heldProjects.delete(id);
           items.push(decodeItem({ kind: "project.removed", sequence, projectId: id }));
         }
         continue;
       }
       const location = row.archivedAt == null ? "active" : "archive";
       if (row.deletedAt == null) {
-        this.held.set(key, location);
+        this.heldThreads.set(id, location);
         items.push(decodeItem({ kind: "thread.updated", sequence, location, thread: row }));
       } else {
-        this.held.delete(key);
+        this.heldThreads.delete(id);
         items.push(decodeItem({ kind: "thread.removed", sequence, location, threadId: id }));
       }
     }
