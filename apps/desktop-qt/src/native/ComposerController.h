@@ -19,6 +19,7 @@
 #include "NativeController.h"
 
 class McClient;
+class NativeShell;
 class ShellBridge;
 class ShellStore;
 class TimelineModel;
@@ -423,6 +424,9 @@ private:
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
+  // publish() in every window's composer: what one window changed in the
+  // shared state (Kept) the others show too.
+  static void publishEverywhere(NativeShell* shell);
   QVariantMap turnState() const;
   QVariant composerState(const QVariantMap& turn) const;
   QVariantMap pickerState() const;
@@ -450,6 +454,9 @@ private:
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.
     QString images;
+    // The threads whose `queue.resume` the MC has not answered: one request
+    // at a time per thread, whichever window asks.
+    QSet<QString> resuming;
   };
   // Where the drafts' images are kept: shell-composer-images.json beside them.
   QString imagesPath() const;
@@ -458,8 +465,6 @@ private:
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.
   QHash<QString, QList<Send>> m_queues;
-  // The threads whose `queue.resume` the MC has not answered.
-  QSet<QString> m_resuming;
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;

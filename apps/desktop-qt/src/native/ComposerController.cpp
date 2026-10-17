@@ -2070,22 +2070,40 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
 }
 
 // Lets the MC start a queue it holds (after a restart or a usage limit). One
-// request at a time per thread, and only for a queue still held: a click on
-// a stale card, after another device resumed it, asks nothing.
+// request at a time per thread across every window, and only for a queue still
+// held: a click on a stale card, after another device resumed it, asks nothing.
+// The thread's stream has to be caught up too: the held flag a reconnected
+// window still shows may be one the MC has since cleared. The answer is
+// handled apart from this window, which may close before it comes.
 bool ComposerController::resumeQueue() {
   const auto thread = m_store->thread(m_thread);
-  if (!thread || m_resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
+  if (!thread || m_kept.resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
+  if (!m_client->isReady() || !m_store->synchronized() || !m_store->threadOnline(m_thread) || !m_timeline ||
+      m_timeline->threadKey() != m_thread || m_timeline->status() != QLatin1String("live")) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Not connected: queue not resumed"),
+        QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
   const QString key = m_thread;
-  m_resuming.insert(key);
-  m_client->dispatchCommand(this, thread->environmentId,
+  NativeShell* shell = NativeShell::of(this)->shell();
+  Kept& kept = m_kept;
+  kept.resuming.insert(key);
+  m_client->dispatchCommand(m_client, thread->environmentId,
                             QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
-                            [this, key](const QJsonValue&, const std::optional<QString>& error) {
-                              m_resuming.remove(key);
-                              if (error) toast(QStringLiteral("Failed to resume the queue."), *error);
-                              publish();
+                            [shell, &kept, key](const QJsonValue&, const std::optional<QString>& error) {
+                              kept.resuming.remove(key);
+                              if (error) shell->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                              publishEverywhere(shell);
                             });
-  publish();
+  publishEverywhere(shell);
   return true;
+}
+
+void ComposerController::publishEverywhere(NativeShell* shell) {
+  for (const auto& window : shell->windows()) {
+    if (auto* composer = window->controller<ComposerController>()) composer->publish();
+  }
 }
 
 bool ComposerController::editQueued(const QString& target, QString runId) {
@@ -2287,7 +2305,7 @@ QVariantMap ComposerController::turnState() const {
                     {QStringLiteral("queue"), QVariantList()},
                     {QStringLiteral("waiting"), QVariantList()},
                     {QStringLiteral("queueHeld"), false},
-                    {QStringLiteral("queueResuming"), m_resuming.contains(m_thread)}};
+                    {QStringLiteral("queueResuming"), m_kept.resuming.contains(m_thread)}};
   if (!thread || !m_timeline) return state;
 
   const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));

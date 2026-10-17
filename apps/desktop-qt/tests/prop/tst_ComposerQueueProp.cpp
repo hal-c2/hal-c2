@@ -1,10 +1,12 @@
 // The composer's view of a queue the MC holds (ComposerController, the `turn`
 // state): the queue is held while any queued run of the open thread is
 // (after a restart or a usage limit), and "Resume queue" asks the MC to
-// resume it, once at a time per thread and only while it is held. The MC
-// holds or releases queues, queues more behind a held one, runs and cancels
-// queued messages, answers a resume late or refuses it, and the connection
-// drops with an answer outstanding.
+// resume it, once at a time per thread (across windows) and only while it is
+// held and the thread's stream is current. The MC holds or releases queues,
+// queues more behind a held one, runs and cancels queued messages, answers a
+// resume late or refuses it, and the connection drops with an answer
+// outstanding, or comes back before the streams are caught up. A second window
+// shows the same thread, and may close with its request outstanding.
 
 #include "ComposerController.h"
 #include "FakeMc.h"
@@ -38,6 +40,10 @@ struct Model {
   bool holding = false;         // the MC holds its answers
   bool refusing = false;
   int failures = 0;  // "Failed to resume the queue." toasts
+  bool secondOpen = true;
+  // Reconnected, but the MC has not caught the thread streams up: what the
+  // windows show may be out of date.
+  bool stale = false;
 
   bool held(const QString& thread) const { return queued.value(thread).contains(true); }
 };
@@ -51,6 +57,12 @@ struct Sut {
   QMap<QString, QList<QJsonObject>> runs;
   QMap<QString, QList<QJsonObject>> messages;
   int seq = 0;
+  // A second window on the same MC, until it is closed.
+  QPointer<NativeWindow> second;
+  // After a reconnect the MC has taken the thread streams' subscriptions but
+  // not answered them: the subscriptions it is yet to answer.
+  bool streamsHeld = false;
+  QSet<int> awaiting;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -68,7 +80,13 @@ struct Sut {
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
                                         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
     }
-    mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) { sendThread(id, shape); });
+    mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) {
+      if (streamsHeld) {
+        awaiting.insert(id);
+      } else {
+        sendThread(id, shape);
+      }
+    });
     // The MC resumes a thread's queue: its queued runs are no longer held.
     mc.effects.append([this](const QJsonObject& command) {
       if (command.value(QLatin1String("type")) != QLatin1String("queue.resume")) return;
@@ -80,6 +98,7 @@ struct Sut {
       }
     });
     start();
+    second = native->openWindow();
     open(QStringLiteral("t1"));
     settle(QStringLiteral("t1"));
   }
@@ -129,9 +148,12 @@ struct Sut {
     if (!mc.connected()) return;
     const QString at = QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC).addSecs(seq).toString(Qt::ISODateWithMs);
     for (const int sub : mc.subscribers(QStringLiteral("stream"))) {
-      if (mc.shapeOf(sub).value(QLatin1String("stream")).toString() != thread) continue;
+      if (mc.shapeOf(sub).value(QLatin1String("stream")).toString() != thread || awaiting.contains(sub)) continue;
+      // QJsonValue keeps the event nested: Apple clang before 20 reads
+      // QJsonArray{QJsonArray{...}} as a copy of the inner array.
       mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), sub}, {QStringLiteral("offset"), seq},
-               {QStringLiteral("events"), QJsonArray{QJsonArray{seq, kind, state.value(QLatin1String("id")), QJsonObject{{QStringLiteral("s"), state}}, at}}}});
+               {QStringLiteral("events"),
+                QJsonArray{QJsonValue(QJsonArray{seq, kind, state.value(QLatin1String("id")), QJsonObject{{QStringLiteral("s"), state}}, at})}}});
     }
   }
 
@@ -172,11 +194,30 @@ struct Sut {
     }
   }
 
+  // Both windows show the thread.
   void open(const QString& thread) {
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(thread)}});
+    if (second) second->bridge()->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(thread)}});
+  }
+
+  void closeSecond() {
+    native->closeWindow(second->id());
+    // Its controllers go with it, with a request it asked outstanding.
+    RC_ASSERT(prop::until([this] { return second.isNull(); }));
+  }
+
+  // The reconnect, then the MC answering the thread streams it has been asked for.
+  void holdStreams() {
+    streamsHeld = true;
+    awaiting.clear();
+  }
+  void releaseStreams() {
+    streamsHeld = false;
+    for (const int id : std::exchange(awaiting, {})) sendThread(id, mc.shapeOf(id));
   }
 
   QVariantMap turn() const { return bridge->state()->value(QStringLiteral("turn")).toMap(); }
+  QVariantMap secondTurn() const { return second->bridge()->state()->value(QStringLiteral("turn")).toMap(); }
 
   int resumes(const QString& thread) const {
     int count = 0;
@@ -196,11 +237,15 @@ struct Sut {
 
   // The MC has sent what it was going to, and the app has read it: a round
   // trip on the connection every frame came on.
-  void settle(const QString& thread) {
+  void barrier() {
     bool done = false;
     native->client()->call(native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                            [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
     RC_ASSERT(prop::until([&] { return done; }));
+  }
+
+  void settle(const QString& thread) {
+    barrier();
     RC_ASSERT(prop::until([&] {
       const auto* timeline = native->controller<ThreadStore>()->timeline(keyOf(thread));
       return timeline && timeline->status() == QLatin1String("live");
@@ -211,20 +256,27 @@ struct Sut {
 };
 
 void verify(const Model& m, Sut& sut) {
-  sut.settle(m.open);
-  const QVariantMap turn = sut.turn();
-  RC_ASSERT(turn.value(QStringLiteral("threadKey")).toString() == keyOf(m.open));
-  RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.held(m.open));
-  RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(m.open));
-  RC_ASSERT(int(turn.value(QStringLiteral("queue")).toList().size()) == m.queued.value(m.open).size());
+  sut.barrier();
   for (const QString& thread : kThreads) RC_ASSERT(sut.resumes(thread) == m.resumes.value(thread));
   RC_ASSERT(sut.failures() == m.failures);
+  // Until the streams catch up the windows show what they last knew.
+  if (m.stale) return;
+  sut.settle(m.open);
+  // The windows agree, and a request one asked shows in the other.
+  RC_ASSERT(m.secondOpen == !sut.second.isNull());
+  for (const QVariantMap& turn : m.secondOpen ? QList<QVariantMap>{sut.turn(), sut.secondTurn()} : QList<QVariantMap>{sut.turn()}) {
+    RC_ASSERT(turn.value(QStringLiteral("threadKey")).toString() == keyOf(m.open));
+    RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.held(m.open));
+    RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(m.open));
+    RC_ASSERT(int(turn.value(QStringLiteral("queue")).toList().size()) == m.queued.value(m.open).size());
+  }
 }
 
 using Command = rc::state::Command<Model, Sut>;
 
 struct Open : Command {
   QString thread = pick(kThreads);
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
   void apply(Model& m) const override { m.open = thread; }
   void run(const Model& m0, Sut& sut) const override {
     sut.open(thread);
@@ -236,7 +288,7 @@ struct Open : Command {
 // A message queued behind the turn: held when the queue is.
 struct Enqueue : Command {
   QString thread = pick(kThreads);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.queued.value(thread).size() < 3); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && m.queued.value(thread).size() < 3); }
   void apply(Model& m) const override { m.queued[thread].append(m.held(thread)); }
   void run(const Model& m0, Sut& sut) const override {
     sut.enqueue(thread, m0.held(thread));
@@ -248,7 +300,7 @@ struct Enqueue : Command {
 // The MC restarted: what was queued waits for the user.
 struct HoldQueue : Command {
   QString thread = pick(kThreads);
-  void checkPreconditions(const Model& m) const override { RC_PRE(!m.queued.value(thread).isEmpty()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && !m.queued.value(thread).isEmpty()); }
   void apply(Model& m) const override { m.queued[thread].fill(true); }
   void run(const Model& m0, Sut& sut) const override {
     sut.hold(thread);
@@ -263,7 +315,7 @@ struct Leave : Command {
   QString thread = pick(kThreads);
   bool cancel = *rc::gen::arbitrary<bool>();
   void checkPreconditions(const Model& m) const override {
-    RC_PRE(!m.queued.value(thread).isEmpty());
+    RC_PRE(!m.stale && !m.queued.value(thread).isEmpty());
     RC_PRE(cancel || !m.held(thread));
   }
   void apply(Model& m) const override { m.queued[thread].removeFirst(); }
@@ -274,12 +326,16 @@ struct Leave : Command {
   void show(std::ostream& os) const override { os << (cancel ? "Cancel(" : "Start(") << thread.toStdString() << ")"; }
 };
 
-// "Resume queue" on the open thread. It asks the MC only for a queue that is
-// held and has no resume outstanding; the MC answers at once, late, or by
-// refusing, and a refusal leaves the queue held and says so.
+// "Resume queue" on the open thread, in either window. It asks the MC only for
+// a queue that is held, has no resume outstanding (in any window) and is
+// current; the MC answers at once, late, or by refusing, and a refusal leaves
+// the queue held and says so.
 struct Resume : Command {
+  bool inSecond;
+  explicit Resume(const Model& m) : inSecond(m.secondOpen && *rc::gen::arbitrary<bool>()) {}
+  void checkPreconditions(const Model& m) const override { RC_PRE(!inSecond || m.secondOpen); }
   void apply(Model& m) const override {
-    if (!m.held(m.open) || m.pending.contains(m.open)) return;
+    if (m.stale || !m.held(m.open) || m.pending.contains(m.open)) return;
     ++m.resumes[m.open];
     if (m.holding) {
       m.pending.insert(m.open, m.refusing);
@@ -290,10 +346,55 @@ struct Resume : Command {
     }
   }
   void run(const Model& m0, Sut& sut) const override {
-    sut.bridge->dispatch(QStringLiteral("composer.queue.resume"));
+    (inSecond ? sut.second->bridge() : sut.bridge.get())->dispatch(QStringLiteral("composer.queue.resume"));
     verify(nextState(m0), sut);
   }
-  void show(std::ostream& os) const override { os << "Resume"; }
+  void show(std::ostream& os) const override { os << (inSecond ? "ResumeInSecond" : "Resume"); }
+};
+
+// The window that asked closes with its request outstanding: the other
+// window still shows it, and the answer still clears it.
+struct CloseSecond : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.secondOpen); }
+  void apply(Model& m) const override { m.secondOpen = false; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.closeSecond();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "CloseSecond"; }
+};
+
+// The connection comes back and the MC has not yet caught the thread streams
+// up: the held flag the windows show may be one the MC has since cleared, so
+// "Resume queue" asks nothing.
+struct Reconnect : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
+  void apply(Model& m) const override {
+    m.failures += int(m.pending.size());
+    m.pending.clear();
+    m.holding = false;
+    m.stale = true;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.dropHeld();
+    sut.holdStreams();
+    sut.mc.drop();
+    RC_ASSERT(prop::until([&] { return sut.native->client()->isReady() && !sut.awaiting.isEmpty(); }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Reconnect"; }
+};
+
+// The MC answers the thread streams; the windows are current again.
+struct CatchUp : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.stale); }
+  void apply(Model& m) const override { m.stale = false; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.releaseStreams();
+    RC_ASSERT(prop::until([&] { return sut.online(); }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "CatchUp"; }
 };
 
 struct Hold : Command {
@@ -344,6 +445,7 @@ struct AnswerHeld : Command {
 // The connection drops with answers outstanding, which never reach the MC's
 // queue: the app says the resume failed, and the queue is still held.
 struct Drop : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
   void apply(Model& m) const override {
     m.failures += int(m.pending.size());
     m.pending.clear();
@@ -372,7 +474,8 @@ private slots:
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Enqueue, Enqueue, HoldQueue, HoldQueue, Leave,
-                                                                                 Resume, Resume, Resume, Hold, Refuse, AnswerHeld, Drop>()));
+                                                                                 Resume, Resume, Resume, Hold, Refuse, AnswerHeld, Drop, CloseSecond,
+                                                                                 Reconnect, CatchUp>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
