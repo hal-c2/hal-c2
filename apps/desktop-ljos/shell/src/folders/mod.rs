@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ljos::prelude::{
-    Atom, Cx, Engine, EngineError, ModelSignals, ObjectId, QmlListModel, QmlObject, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ModelSignals, ObjectId, QmlListModel, QmlObject, QtObject,
+    Value, qml_impl,
 };
 
 use crate::json::{self, Json};
@@ -79,8 +80,12 @@ fn trash_of(engine: &Engine) -> Trash {
 }
 
 #[derive(QmlObject)]
-#[qml(module = "HalC2.Shell", name = "LocalFolderModel")]
+// TODO(ljos#46): a native type without `extends` has no `objectName`, which
+// FolderExplorer.qml sets; QtObject as the base gives it one.
+#[qml(module = "HalC2.Shell", name = "LocalFolderModel", extends = QtObject)]
 pub struct LocalFolderModel {
+    #[qml(base)]
+    base: QtObject,
     #[qml(notify)]
     enabled: bool,
     /// The root as a real path: what is written is checked, and an
@@ -100,6 +105,7 @@ pub struct LocalFolderModel {
 impl Default for LocalFolderModel {
     fn default() -> Self {
         LocalFolderModel {
+            base: QtObject::default(),
             enabled: false,
             root_path: Atom::from(""),
             root_index: -1,
