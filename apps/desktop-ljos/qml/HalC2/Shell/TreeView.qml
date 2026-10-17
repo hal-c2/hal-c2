@@ -1,14 +1,14 @@
 import QtQuick
 
 // Stands in for QtQuick.TreeView over LocalFolderModel. Ljós has no tree
-// views or tree models, so the model is the tree's visible rows (depth,
-// expanded and hasChildren are roles; toggleExpanded(row) opens and closes a
-// folder) and the view is a ListView over them.
+// views or tree models (TODO(ljos#27)), so the model is the tree's visible
+// rows (depth, expanded and hasChildren are roles; toggleExpanded(row) opens
+// and closes a folder) and the view is a ListView over them.
 //
 // `model:` has to be given once the model's object is complete, as
 // FolderExplorer does by binding it to `enabled`/`rootPath`: an object that
 // becomes a model only at its own completion is one row to a view resolving
-// it earlier.
+// it earlier (TODO(ljos#37)).
 ListView {
     id: tree
 

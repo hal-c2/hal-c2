@@ -3,9 +3,9 @@
 //! browse, and create, rename, move or trash a folder in, without ever
 //! leaving the root, following a link, or touching a project's folder.
 //!
-//! Ljós has no tree models (its views read flat rows), so the model is the
-//! tree's *visible rows*: a row is an entry under the root whose parents are
-//! all expanded, with its `depth` and whether it is `expanded`.
+//! Ljós has no tree models (its views read flat rows; TODO(ljos#27)), so the
+//! model is the tree's *visible rows*: a row is an entry under the root whose
+//! parents are all expanded, with its `depth` and whether it is `expanded`.
 //! `toggleExpanded` and `setExpanded` open and close a folder, as the
 //! tree view's expand arrow does. A folder is read when it is first opened,
 //! off the Engine thread, and again when the OS says something changed in a

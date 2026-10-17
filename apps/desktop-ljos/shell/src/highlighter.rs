@@ -8,7 +8,7 @@
 //! attributes, so of what the Qt highlighter does only the dimmed markers
 //! (and heading marks) are here. Bold, italic, struck-through and code text,
 //! and `codeFont`, wait for Ljós to paint them. `codeFont` is kept so QML
-//! can set it.
+//! can set it. TODO(ljos#38).
 //!
 //! `document` is the `textDocument` of the composer's `TextEdit`.
 
