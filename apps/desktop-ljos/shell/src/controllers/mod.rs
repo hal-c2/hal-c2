@@ -19,6 +19,7 @@ pub mod mc_plugin;
 pub mod menus;
 pub mod navigation;
 pub mod plugin;
+pub mod provider_settings;
 pub mod provider_update_notice;
 pub mod pull_request_list;
 pub mod quit;
@@ -89,6 +90,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),
+        Registration::new::<provider_settings::ProviderSettings>(
+            "providerSettings",
+            &["providerSettings"],
+            Scope::Window,
+        ),
         Registration::new::<provider_update_notice::ProviderUpdateNotice>(
             "providerUpdateNotice",
             &[],
