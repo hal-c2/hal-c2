@@ -14,12 +14,12 @@ use serde_json::json;
 
 use crate::Hub;
 
-const AT: &str = "2026-03-01T00:00:00Z";
-const ORIGIN: &str = "http://127.0.0.1:1";
+pub(crate) const AT: &str = "2026-03-01T00:00:00Z";
+pub(crate) const ORIGIN: &str = "http://127.0.0.1:1";
 const FILE: &str = "plugins.file";
 
 /// The MCs of a cluster: `(mc, environment)`, all online.
-fn mcs(list: &[(&str, &str)]) -> Vec<Json> {
+pub(crate) fn mcs(list: &[(&str, &str)]) -> Vec<Json> {
     list.iter()
         .map(|(mc, environment)| {
             json!({"mc": mc, "online": true, "epoch": "e", "rev": 1,
@@ -29,19 +29,19 @@ fn mcs(list: &[(&str, &str)]) -> Vec<Json> {
         .collect()
 }
 
-fn project(mc: &str, id: &str) -> Json {
+pub(crate) fn project(mc: &str, id: &str) -> Json {
     json!([mc, id, "project", {"id": id, "title": id, "workspaceRoot": format!("/work/{id}"),
         "createdAt": AT, "updatedAt": AT}])
 }
 
-fn thread(mc: &str, id: &str, title: &str) -> Json {
+pub(crate) fn thread(mc: &str, id: &str, title: &str) -> Json {
     json!([mc, id, "thread", {"id": id, "projectId": "p1", "title": title,
         "createdAt": AT, "updatedAt": AT,
         "modelSelection": {"instanceId": "claude", "model": "m"}}])
 }
 
 /// The MC's first `shell` frame.
-fn shell(hub: &Hub, list: &[(&str, &str)], rows: Vec<Json>) {
+pub(crate) fn shell(hub: &Hub, list: &[(&str, &str)], rows: Vec<Json>) {
     hub.mc.frame(
         &hub.engine,
         "shell",
@@ -52,7 +52,7 @@ fn shell(hub: &Hub, list: &[(&str, &str)], rows: Vec<Json>) {
 }
 
 /// Rows `env-1` has changed, as the MC sends them.
-fn rows(hub: &Hub, mc: &str, rev: u32, rows: Vec<Json>) {
+pub(crate) fn rows(hub: &Hub, mc: &str, rev: u32, rows: Vec<Json>) {
     let rows: Vec<Json> = rows
         .into_iter()
         .map(|row| json!([row[1], row[2], row[3]]))
@@ -74,7 +74,7 @@ fn plain() -> Launch {
     }
 }
 
-fn launch(state: &Path) -> Launch {
+pub(crate) fn launch(state: &Path) -> Launch {
     Launch {
         mc_origin: Some(ORIGIN.into()),
         state_dir: Some(state.to_owned()),
@@ -93,15 +93,15 @@ fn hub_with(launch: Launch, threads: &[(&str, &str)]) -> Hub {
     hub
 }
 
-fn state() -> tempfile::TempDir {
+pub(crate) fn state() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
 
-fn route(hub: &Hub) -> Json {
+pub(crate) fn route(hub: &Hub) -> Json {
     hub.published("route")
 }
 
-fn kind(hub: &Hub) -> String {
+pub(crate) fn kind(hub: &Hub) -> String {
     route(hub)["kind"].as_str().unwrap_or_default().to_owned()
 }
 
@@ -117,7 +117,7 @@ fn run(hub: &Hub, command: &str) {
     hub.advance(0);
 }
 
-fn saved(dir: &Path) -> Json {
+pub(crate) fn saved(dir: &Path) -> Json {
     serde_json::from_slice(&std::fs::read(dir.join("shell-route.json")).unwrap()).unwrap()
 }
 
@@ -157,7 +157,12 @@ fn a_settings_section_comes_back_and_each_change_is_saved() {
 #[test]
 fn a_file_that_names_no_route_starts_at_home() {
     let dir = state();
-    for text in ["", "not json", r#"{"kind": "elsewhere"}"#, r#"{"kind": "thread"}"#] {
+    for text in [
+        "",
+        "not json",
+        r#"{"kind": "elsewhere"}"#,
+        r#"{"kind": "thread"}"#,
+    ] {
         std::fs::write(dir.path().join("shell-route.json"), text).unwrap();
         // No project, so nothing to land a draft on.
         let hub = Hub::with(launch(dir.path()));
@@ -342,9 +347,11 @@ fn a_plugin_threads_route_names_its_plugin() {
         &hub,
         "a",
         2,
-        vec![json!(["a", "r1", "thread", {"id": "r1", "projectId": "p1", "title": "Review",
+        vec![
+            json!(["a", "r1", "thread", {"id": "r1", "projectId": "p1", "title": "Review",
             "createdAt": AT, "updatedAt": AT,
-            "plugin": {"id": "reviews", "kind": "review", "listed": false}}])],
+            "plugin": {"id": "reviews", "kind": "review", "listed": false}}]),
+        ],
     );
     open(&hub, "env-1:r1");
     assert_eq!(
@@ -496,7 +503,11 @@ fn a_tab_follows_its_page_to_the_next_version_and_leaves_with_the_plugin() {
     assert_eq!(tab(&hub), "reviews/inbox@r1");
 
     plugins(&hub, "env-1", "r2", vec![reviews("r2", "inbox")]);
-    assert_eq!(tab(&hub), "reviews/inbox@r2", "the update keeps the user on it");
+    assert_eq!(
+        tab(&hub),
+        "reviews/inbox@r2",
+        "the update keeps the user on it"
+    );
     assert!(
         Commands::of(&hub.engine)
             .rows()
@@ -506,7 +517,12 @@ fn a_tab_follows_its_page_to_the_next_version_and_leaves_with_the_plugin() {
 
     plugins(&hub, "env-1", "r2", vec![]);
     assert_eq!(tab(&hub), "threads");
-    assert!(!Commands::of(&hub.engine).rows().iter().any(|r| r.command == "tabs.open:reviews/inbox@r2"));
+    assert!(
+        !Commands::of(&hub.engine)
+            .rows()
+            .iter()
+            .any(|r| r.command == "tabs.open:reviews/inbox@r2")
+    );
 }
 
 #[test]

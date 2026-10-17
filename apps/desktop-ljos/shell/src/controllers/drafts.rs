@@ -576,7 +576,11 @@ impl DraftController {
         // Until Navigation has published the route (restored or not), Home
         // is only the absence of one.
         let routed = Bridge::of(engine).published(engine, "route").is_some();
-        if !self.lands_on_draft || !self.active || !routed || !store::with(engine, |s| s.synchronized()) {
+        if !self.lands_on_draft
+            || !self.active
+            || !routed
+            || !store::with(engine, |s| s.synchronized())
+        {
             return;
         }
         if navigation::shown(engine) != Route::Home {

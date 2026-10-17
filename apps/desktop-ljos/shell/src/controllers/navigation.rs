@@ -100,7 +100,9 @@ impl Route {
         let text = |key: &str| value[key].as_str().unwrap_or_default();
         match value["kind"].as_str()? {
             "home" => Some(Route::Home),
-            "thread" if !text("threadKey").is_empty() => Some(Route::Thread(text("threadKey").into())),
+            "thread" if !text("threadKey").is_empty() => {
+                Some(Route::Thread(text("threadKey").into()))
+            }
             "draft" if !text("draftId").is_empty() => Some(Route::Draft(text("draftId").into())),
             "settings" => Some(Route::Settings(text("section").into())),
             "pullRequests" => Some(Route::PullRequests),
@@ -661,9 +663,10 @@ impl Navigation {
             Route::Usage => "Usage".into(),
             Route::Home => String::new(),
         };
-        let plugin = thread
-            .filter(|t| !t.plugin_id.is_empty())
-            .map_or(Json::Null, |t| json!({"id": t.plugin_id, "kind": t.plugin_kind}));
+        let plugin = thread.filter(|t| !t.plugin_id.is_empty()).map_or(
+            Json::Null,
+            |t| json!({"id": t.plugin_id, "kind": t.plugin_kind}),
+        );
         // A page shows under its own title, over everything but settings.
         if self.tab != THREADS_TAB && !matches!(self.route, Route::Settings(_)) {
             let pages = mc_plugin::pages(engine);
