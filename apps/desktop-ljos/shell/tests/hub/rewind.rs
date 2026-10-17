@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
+use hal_c2_shell::controllers::composer;
 use hal_c2_shell::json::{self, Json};
 use ljos::prelude::Value;
 use serde_json::json;
@@ -116,6 +117,11 @@ fn composer(log: &Log) -> Vec<(String, Json)> {
         .collect()
 }
 
+/// `t1`'s draft, as the composer keeps it.
+fn draft(hub: &Hub) -> String {
+    composer::draft(&hub.engine, "env-1:t1")
+}
+
 fn rollbacks(hub: &Hub) -> Vec<usize> {
     hub.mc
         .calls
@@ -163,19 +169,27 @@ fn editing_from_a_message_asks_then_rewinds_and_returns_its_prompt() {
     assert_eq!(command["scopeId"], "scope-1");
     assert_eq!(command["restoreFiles"], true);
     // The prompt returns once the MC has rewound.
-    assert!(composer(&bricks).is_empty());
+    assert_eq!(draft(&hub), "");
     hub.mc.reply(&hub.engine, sent[0], Ok(json!({})));
+    assert_eq!(draft(&hub), "check the tax rate");
     assert_eq!(
         composer(&bricks),
-        [
-            (
-                "composer.text.set".to_owned(),
-                json!({"target": "env-1:t1", "text": "check the tax rate", "cursor": 18})
-            ),
-            ("composer.focus".to_owned(), Json::Null),
-        ]
+        [("composer.focus".to_owned(), Json::Null)]
     );
     assert!(refusals(&hub).is_empty());
+}
+
+#[test]
+fn the_prompt_follows_what_the_composer_holds() {
+    let (hub, _) = three_turns("completed");
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": "env-1:t1", "text": "and the discounts", "cursor": 17}),
+    );
+    hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
+    hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
+    hub.mc.reply(&hub.engine, rollbacks(&hub)[0], Ok(json!({})));
+    assert_eq!(draft(&hub), "and the discounts\n\ncheck the tax rate");
 }
 
 #[test]
@@ -217,6 +231,7 @@ fn a_rollback_the_mc_refuses_is_said_and_the_draft_is_untouched() {
         .reply(&hub.engine, sent[0], Err(failure("The checkpoint is gone")));
     assert_eq!(refusals(&hub), ["The checkpoint is gone"]);
     assert!(composer(&bricks).is_empty());
+    assert_eq!(draft(&hub), "");
 }
 
 #[test]

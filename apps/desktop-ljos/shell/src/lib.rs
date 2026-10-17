@@ -2,9 +2,11 @@
 //! module (`Shell`, `Theme`, `Runtime`) and the controllers behind it, for
 //! the bricks in apps/desktop-qt/qml.
 
+pub mod attachment_files;
 pub mod bridge;
 pub mod cache;
 pub mod commands;
+pub mod composer_model;
 pub mod controller;
 pub mod controllers;
 pub mod device;
@@ -166,6 +168,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .state_dir
             .as_ref()
             .map(|dir| dir.join("shell-panel.json")),
+    );
+    controllers::composer::set_store_path(
+        engine,
+        launch
+            .data_dir
+            .as_ref()
+            .map(|dir| dir.join("shell-composer.json")),
     );
     controller::start(engine, mc.clone(), controllers::registrations());
     controllers::terminals::set_store_path(

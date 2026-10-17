@@ -142,15 +142,11 @@ pub fn draft(engine: &Engine, id: &str) -> Option<Draft> {
         .cloned()
 }
 
-/// What the sidebar lists the draft as: its text's first line, nothing
-/// while it holds nothing.
-///
-/// TODO(port): ComposerController::draftPreview — a draft holding only
-/// attachments or excerpts reads "1 attachment" / "N attachments".
+/// What the sidebar lists the draft as: its text's first line, else how
+/// many attachments and excerpts the composer holds for it; nothing while
+/// it holds nothing.
 pub fn preview(engine: &Engine, id: &str) -> Option<String> {
-    let draft = draft(engine, id)?;
-    let text = draft.text.trim();
-    (!text.is_empty()).then(|| text.lines().next().unwrap_or_default().to_owned())
+    crate::controllers::composer::draft_preview(engine, id)
 }
 
 /// Runs `f` once no controller is running whenever a draft comes, goes or
@@ -183,7 +179,8 @@ fn save(engine: &Engine) -> bool {
     write_atomically(&path, Json::Array(entries).to_string().as_bytes()).is_ok()
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes `bytes` to `path` whole or not at all.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -346,12 +343,12 @@ pub fn promote_draft(engine: &Engine, id: &str, thread_key: &str) {
         let index = drafts.iter().position(|d| d.id == id);
         index.map(|index| drafts.remove(index))
     };
-    if promoted.is_none() {
+    let Some(promoted) = promoted else {
         return;
-    }
+    };
     save(engine);
-    // TODO(port): ComposerController::adopt — the thread's composer takes
-    // over what the draft held (its attachments, its unsent text).
+    // The thread's composer takes over what the draft held.
+    crate::controllers::composer::adopt(engine, id, thread_key, &promoted.text);
     changed(engine);
     leave(
         engine,
@@ -428,7 +425,7 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
     Bridge::of(engine).dispatch(
         engine,
         "composer.text.set",
-        json!({"target": to, "text": left.text, "cursor": left.text.chars().count()}),
+        json!({"target": to, "text": left.text, "cursor": crate::composer_model::utf16_len(&left.text)}),
     );
     set_text(engine, from, "");
     changed(engine);

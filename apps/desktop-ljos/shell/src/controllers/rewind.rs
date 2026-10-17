@@ -21,6 +21,7 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
+use crate::controllers::composer;
 use crate::controllers::navigation::{self, Route};
 use crate::controllers::threads;
 use crate::controllers::toasts::Toasts;
@@ -29,6 +30,9 @@ use crate::json::Json;
 use crate::mc::Mc;
 use crate::store;
 use crate::thread_view::timeline_model::TimelineModel;
+
+/// packages/contracts PROVIDER_SEND_TURN_MAX_ATTACHMENTS.
+const MAX_ATTACHMENTS: usize = 100;
 
 type Obj = serde_json::Map<String, Json>;
 
@@ -163,17 +167,23 @@ impl Rewind {
         let thread = self.thread.clone();
         let point = self.point.clone();
         self.cancel(engine);
-        // TODO(port): ComposerController::attachmentsPending — "Wait for
-        // attachments to finish preparing before rewinding."
-        // TODO(port): ComposerController::attachments — the composer's count
-        // with these may not pass 100 (PROVIDER_SEND_TURN_MAX_ATTACHMENTS):
-        // "Make room for this message's attachments in the composer before
-        // rewinding."
+        if composer::attachments_pending(engine, &thread) {
+            return refuse(
+                engine,
+                "Wait for attachments to finish preparing before rewinding.",
+            );
+        }
         let attachments = point
             .get("attachments")
             .and_then(Json::as_array)
             .cloned()
             .unwrap_or_default();
+        if composer::attachments(engine, &thread).len() + attachments.len() > MAX_ATTACHMENTS {
+            return refuse(
+                engine,
+                "Make room for this message's attachments in the composer before rewinding.",
+            );
+        }
         // The attachments first: a rewind that cannot give them back does
         // not happen.
         // TODO(port): McClient::download — each attachment's
@@ -223,9 +233,7 @@ impl Rewind {
     /// The prompt after what the composer holds, then the attachments, in
     /// the composer of the thread the window still shows.
     fn restore(&self, engine: &Engine, thread: &str, point: &Obj, files: Vec<Json>) {
-        // TODO(port): ComposerController::draft — the thread's composer
-        // text, which the prompt follows after a blank line.
-        let current = String::new();
+        let current = composer::draft(engine, thread);
         let prompt = text(point, "text").trim();
         let next = if prompt.is_empty() {
             current

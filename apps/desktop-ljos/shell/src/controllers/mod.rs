@@ -2,14 +2,17 @@
 
 pub mod alerts;
 pub mod archived_threads;
+pub mod attachment_viewer;
 pub mod background_activity;
 pub mod client_activity;
 pub mod cluster;
+pub mod composer;
 pub mod connection_health;
 pub mod connections;
 pub mod device_settings;
 pub mod diagnostics;
 pub mod drafts;
+pub mod file_actions;
 pub mod folders;
 pub mod git;
 pub mod keybindings;
@@ -64,6 +67,11 @@ pub fn registrations() -> Vec<Registration> {
             &["archivedThreads"],
             Scope::Window,
         ),
+        Registration::new::<attachment_viewer::AttachmentViewer>(
+            "attachmentViewer",
+            &["attachmentViewer"],
+            Scope::Window,
+        ),
         Registration::new::<background_activity::BackgroundActivity>(
             "backgroundActivity",
             &["backgroundActivity"],
@@ -71,6 +79,11 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<client_activity::ClientActivity>("clientActivity", &[], Scope::Window),
         Registration::new::<cluster::Cluster>("cluster", &["cluster"], Scope::Window),
+        Registration::new::<composer::Composer>(
+            "composer",
+            &["turn", "composer", "modelPicker", "composerStash"],
+            Scope::Window,
+        ),
         Registration::new::<connection_health::ConnectionHealth>(
             "connectionHealth",
             &["connection"],
@@ -92,6 +105,7 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<drafts::DraftController>("drafts", &["landing"], Scope::Window),
+        Registration::new::<file_actions::FileActions>("fileActions", &[], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
         Registration::new::<git::Git>("git", &["git"], Scope::Window),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),

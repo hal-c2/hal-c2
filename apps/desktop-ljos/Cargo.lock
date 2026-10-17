@@ -1783,6 +1783,7 @@ dependencies = [
  "fancy-regex",
  "hal_c2_mc",
  "iana-time-zone",
+ "image",
  "interprocess",
  "libc",
  "libloading",
@@ -2271,6 +2272,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

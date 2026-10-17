@@ -64,6 +64,10 @@ pulldown-cmark = { version = "0.13", default-features = false }
 libloading = "0.8"
 zune-jpeg = "0.5"
 
+# The composer's attachment thumbnails (controllers/composer/attachments.rs),
+# as desktop-qt's QImage: the pictures a prompt carries are PNG or JPEG.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
 # The transcription helper's session and its signals (src/local_transcriber).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

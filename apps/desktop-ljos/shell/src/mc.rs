@@ -168,6 +168,18 @@ pub trait Mc {
     fn send_on_stream(&self, _id: StreamId, _message: StreamMessage) {}
     /// Aborts a stream: no event reaches its handler after this.
     fn close_stream(&self, _id: StreamId) {}
+
+    /// POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
+    /// `attachments.createUploadUrl`'s). A fake sees it as an `http.upload`
+    /// call carrying the URL, the type and the size.
+    fn upload(&self, relative_url: &str, bytes: Vec<u8>, mime_type: &str, reply: Reply) {
+        let payload = serde_json::json!({
+            "relativeUrl": relative_url,
+            "mimeType": mime_type,
+            "sizeBytes": bytes.len(),
+        });
+        self.call("", "http.upload", payload, reply);
+    }
 }
 
 /// What the I/O thread said, waiting for the UI thread. Only the wake-up
@@ -336,6 +348,13 @@ impl Mc for Connection {
         self.client.post(path, body, move |result| {
             with_delivering(|engine| reply(engine, result.map_err(McError::from)));
         });
+    }
+
+    fn upload(&self, relative_url: &str, bytes: Vec<u8>, mime_type: &str, reply: Reply) {
+        self.client
+            .upload(relative_url, bytes, mime_type, move |result| {
+                with_delivering(|engine| reply(engine, result.map_err(McError::from)));
+            });
     }
 
     fn subscribe(&self, shape: Json, mut on_frame: OnFrame, resume: Option<Resume>) -> SubId {
