@@ -31,6 +31,7 @@ pub mod storage;
 pub mod store;
 pub mod terminal;
 pub mod theme;
+pub mod thread_view;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -60,6 +61,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
     engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
+    thread_view::register(engine, v);
     bridge::Bridge::of(engine);
 }
 

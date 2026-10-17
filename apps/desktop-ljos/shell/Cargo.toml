@@ -60,6 +60,10 @@ trash = "5"
 fancy-regex = "0.19"
 # The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
 vt100 = "0.16"
+# The thread view (thread_view/): desktop-qt's QRegularExpression patterns
+# and QTextDocument's markdown as text.
+regex = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # System notifications (src/notifications.rs). Already built for Ljós's
 # accessibility; notify-rust's one-handle-per-notification wait cannot hear
