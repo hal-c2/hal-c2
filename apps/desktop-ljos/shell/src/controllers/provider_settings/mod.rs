@@ -54,6 +54,7 @@ use crate::controller::{self, Controller, Init, Me, Window};
 use crate::controllers::menus::{Answer, Menus};
 use crate::controllers::navigation::{Navigation, PROVIDERS_SECTION, Route, at_section};
 use crate::controllers::settings::Settings;
+use crate::controllers::terminals;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::environment_settings::{EnvironmentSettings, Outcome};
 use crate::json::Json;
@@ -65,9 +66,6 @@ const KEY: &str = "providerSettings";
 const REGISTRY: &str = "acpRegistry";
 const HEALTH_KEY: &str = "providerHealthRefreshInterval";
 const SIGN_IN_FAILED: &str = "Provider sign-in failed. Try again.";
-/// Whether this build has a terminal for a login that continues in one.
-// TODO(port): TerminalController::supported
-const TERMINAL_SUPPORTED: bool = true;
 
 static NULL: Json = Json::Null;
 
@@ -1933,7 +1931,7 @@ impl ProviderSettings {
             match (phase, interaction_type) {
                 ("starting", _) => "Starting sign-in…",
                 ("verifying", _) => "Checking your account…",
-                (_, "terminal") if TERMINAL_SUPPORTED => "Complete sign-in in the terminal below.",
+                (_, "terminal") if terminals::supported(engine) => "Complete sign-in in the terminal below.",
                 (_, "terminal") => {
                     "This sign-in continues in a terminal, which this build of HAL-C2 does not have. Cancel it and sign in from HAL-C2 on a computer."
                 }
@@ -1970,7 +1968,7 @@ impl ProviderSettings {
             Vec::new()
         };
         // The agent's login terminal: its latest output and how far it has come.
-        let terminal = if active && interaction_type == "terminal" && TERMINAL_SUPPORTED {
+        let terminal = if active && interaction_type == "terminal" && terminals::supported(engine) {
             let output = str_at(interaction, "output");
             let offset = at(interaction, "outputOffset")
                 .as_f64()

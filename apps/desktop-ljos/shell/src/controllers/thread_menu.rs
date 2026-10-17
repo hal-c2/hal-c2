@@ -43,6 +43,7 @@ use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::settings::Settings;
 use crate::controllers::sidebar::{self, Leave, Sidebar, Then};
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
+use crate::controllers::workspace;
 use crate::json::Json;
 use crate::keybindings::command_label;
 use crate::sidebar_model::{self as model, Thread};
@@ -421,8 +422,10 @@ impl Controller for ThreadMenu {
                 me.run(engine, |m, e| m.move_stopped(e));
             });
         });
-        // TODO(port): WorkspaceController::gitChanged — the route thread's
-        // branch PR, which "Copy PR link" would copy, is not followed.
+        // The route thread's branch PR, which "Copy PR link" copies.
+        workspace::on_git_changed(engine, |engine| {
+            Bridge::of(engine).defer(engine, present);
+        });
         present(engine);
     }
 
@@ -441,18 +444,17 @@ impl Controller for ThreadMenu {
                 true
             }
             "workspace.titleMenu" => {
-                // TODO(port): WorkspaceController::place — the header's
-                // place is the route's here.
-                match navigation::shown(engine) {
-                    Route::Draft(draft_id) => Bridge::of(engine).dispatch(
+                let Some(place) = workspace::place(engine) else {
+                    return true;
+                };
+                if place.draft_id.is_empty() {
+                    open(engine, &place.thread_key(), x, y, true);
+                } else {
+                    Bridge::of(engine).dispatch(
                         engine,
                         "draft.menu",
-                        json!({"draftId": draft_id, "x": x, "y": y}),
-                    ),
-                    Route::Thread(key) => {
-                        open(engine, &key, x, y, true);
-                    }
-                    _ => {}
+                        json!({"draftId": place.draft_id, "x": x, "y": y}),
+                    );
                 }
                 true
             }
@@ -1345,19 +1347,29 @@ fn unpin(engine: &Engine, key: &str) {
     }
 }
 
-/// The thread's current pull request: the row's linkedPullRequest.
-///
-/// TODO(port): WorkspaceController::git — else the PR its checkout's branch
-/// has, while the window shows it.
+/// The thread's current pull request: the row's linkedPullRequest, else the
+/// PR its checkout's branch has, while the window shows it.
 fn pull_request_url(engine: &Engine, key: &str) -> String {
-    store::with(engine, |s| {
+    let linked = store::with(engine, |s| {
         s.thread_row(key)
             .and_then(|r| r.get("linkedPullRequest"))
             .and_then(|pr| pr.get("url"))
             .and_then(Json::as_str)
             .unwrap_or_default()
             .to_owned()
-    })
+    });
+    if !linked.is_empty() || !workspace::place(engine).is_some_and(|p| p.thread_key() == key) {
+        return linked;
+    }
+    workspace::git(engine)
+        .and_then(|git| {
+            git.remote
+                .get("pr")?
+                .get("url")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
 }
 
 /// TODO(port): NavigationController::Route::projectKey — `Route` has no
@@ -1622,18 +1634,32 @@ fn move_thread(
     );
 }
 
-/// A draft of the thread's project on its branch.
+/// A draft of the thread's project on its branch: its worktree when it has
+/// one, else the branch on the project's own checkout.
 fn new_thread_on_branch(engine: &Engine, key: &str) {
     let Some(thread) = thread(engine, key) else {
         return;
     };
-    if thread.branch.is_none() {
+    let Some(branch) = thread.branch.clone() else {
         return;
-    }
-    // TODO(port): WorkspaceController::setCheckout — the draft starts on the
-    // thread's branch (its worktree when it has one); here it starts on the
-    // project's default checkout.
-    drafts::start(engine, &thread.environment_id, &thread.project_id);
+    };
+    let worktree = row_text(engine, key, "worktreePath");
+    let Some(draft_id) = drafts::start(engine, &thread.environment_id, &thread.project_id) else {
+        return;
+    };
+    let checkout = workspace::Checkout {
+        env_mode: if worktree.is_empty() {
+            "local"
+        } else {
+            "worktree"
+        }
+        .into(),
+        start_from_origin: false,
+        branch: Some(branch),
+        worktree_path: (!worktree.is_empty()).then_some(worktree),
+        ..workspace::Checkout::default()
+    };
+    workspace::set_checkout(engine, &draft_id, checkout);
 }
 
 /// What the palette shows of the route thread's commands.

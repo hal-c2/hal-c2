@@ -36,12 +36,15 @@ pub mod slack_settings;
 pub mod source_control_settings;
 pub mod stage;
 pub mod storage_settings;
+pub mod terminals;
 pub mod text_generation;
 pub mod theme;
 pub mod thread_menu;
 pub mod toasts;
 pub mod usage;
 pub mod usage_prices;
+pub mod workspace;
+pub mod worktree_setup;
 
 use crate::controller::{Registration, Scope};
 
@@ -156,6 +159,7 @@ pub fn registrations() -> Vec<Registration> {
             &["storageSettings"],
             Scope::Window,
         ),
+        Registration::new::<terminals::Terminals>("terminals", &[], Scope::Window),
         Registration::new::<text_generation::TextGeneration>(
             "textGeneration",
             &["textGeneration"],
@@ -168,6 +172,12 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<usage_prices::UsagePrices>(
             "usagePrices",
             &["usagePrices"],
+            Scope::Window,
+        ),
+        Registration::new::<workspace::Workspace>("workspace", &["workspace"], Scope::Window),
+        Registration::new::<worktree_setup::WorktreeSetup>(
+            "worktreeSetup",
+            &["worktreeSetup"],
             Scope::Window,
         ),
     ]

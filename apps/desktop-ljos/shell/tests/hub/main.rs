@@ -33,8 +33,11 @@ mod settings;
 mod simple_pages;
 mod slack;
 mod source_control;
+mod terminals;
 mod toasts;
 mod usage;
+mod workspace;
+mod worktree_setup;
 
 use std::rc::Rc;
 use std::sync::Arc;
