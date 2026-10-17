@@ -29,6 +29,7 @@ mod provider_update_notice;
 mod pull_request_list;
 mod quit;
 mod scheduled_tasks;
+mod scripted_run;
 mod settings;
 mod simple_pages;
 mod slack;

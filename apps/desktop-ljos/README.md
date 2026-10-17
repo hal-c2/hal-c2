@@ -38,6 +38,11 @@ reconnects to the MC it paired with last, or runs disconnected. `--home-dir DIR`
 client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
+A scripted run is `--action NAME[=JSON]` and `--key CHORD` steps, replayed in the order given 1.5 s apart once
+the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 when there is no picture) taken
+1.5 s after the last: `hal-c2-ljos --action settings.open --key Ctrl+K --screenshot out.png`. A chord reaches the
+shell's keymap, not the focused control.
+
 `check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
 `DeviceScreen` (a frame the decoder hands it; no decoder here) and `Terminal` (`import Ghostty`, on the `vt100`
 crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
@@ -67,6 +72,8 @@ What the shell still works around, each where it does so:
 - Compiled QML gets no base URL from `App::qml_dirs` (#49), so `shell/src/qml.rs` compiles with `ljos::dev` and
   sets one; and a compiled source does not say what it holds, so `--check` counts the files itself.
 - No application-wide key filter (hal-c2/ljos-ui#43): `controllers/quit.rs` and `controllers/keybindings.rs`.
+- The system's reduce-motion preference never reaches the app (#58), and a window cannot ask for a blurred
+  backdrop (#59): `shell/src/platform_window.rs`, where the theme's window blur does nothing.
 - `JsError::Thrown` holds what a thrown value prints as, not the value, so `commands.rs` takes the error's name
   back off to say its `message`.
 - `ClipboardService::set_text` says nothing of a failure (#54), so a copy always says it was copied:

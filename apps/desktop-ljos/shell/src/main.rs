@@ -3,7 +3,9 @@
 //!   hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK]
 //!               [--home-dir DIR] [--dev] [--config-dir DIR]
 //!               [--qml-dir DIR] [--allow-local-folder-import]
-//!               [--action NAME]... [--render PNG [--size WxH] [--settle MS]]
+//!               [--action NAME[=JSON]]... [--key CHORD]...
+//!               [--render PNG [--size WxH] [--settle MS]]
+//!               [--screenshot PNG [--size WxH]]
 //!   hal-c2-ljos --check [--qml-dir DIR]
 //!
 //! The MC is the one host/main.ts would hand desktop-qt: its origin and
@@ -14,13 +16,22 @@
 //!
 //! What the shell keeps (the session, the client cache) is under
 //! `--home-dir`, or the XDG directories (`hal-c2-dev` ones with `--dev`),
-//! one `desktop-ljos` level down (src/storage.rs). `--action` dispatches a shell action once the
-//! controllers are up, its JSON payload after a space
-//! (`settings.open`, `theme.mode {"mode":"dark"}`), for a render of a given
-//! place.
-//! `--render` writes a picture without opening a window, once the MC's
-//! first snapshot is in when there is one. `--check` only
-//! compiles the QML, and fails when a file does not compile.
+//! one `desktop-ljos` level down (src/storage.rs).
+//!
+//! `--action` dispatches a shell action, its JSON payload after a `=` or a
+//! space (`settings.open`, `theme.mode={"mode":"dark"}`), and `--key`
+//! presses a window shortcut (`Ctrl+B`; see src/scripted_run.rs for what a
+//! chord reaches). They run in the order given, 1.5 s apart, once the MC's
+//! first snapshot is in. `--screenshot` writes a picture 1.5 s after the
+//! last of them, without opening a window (the steps run on a virtual
+//! clock, so it does not wait), and exits 2 when it cannot: also when the
+//! MC cannot be reached, in which case the picture is the shell
+//! disconnected, with the reason in its error overlay.
+//!
+//! `--render` writes a picture the same way but dispatches its `--action`s
+//! before the snapshot wait, for a render of a given place, and settles for
+//! `--settle` ms. `--check` only compiles the QML, and fails when a file
+//! does not compile.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -36,6 +47,7 @@ use hal_c2_shell::mc::{Connection, Disconnected, Mc};
 #[cfg(all(unix, not(target_os = "macos")))]
 use hal_c2_shell::notifications::NativeNotifications;
 use hal_c2_shell::qml::{self, Roots};
+use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::session::{self, Session};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::{Launch, store};
@@ -54,9 +66,11 @@ struct Options {
     launch: Launch,
     mc_token: String,
     roots: Roots,
-    actions: Vec<String>,
+    /// The `--action`s and `--key`s, in the order given.
+    steps: Vec<Step>,
     check: bool,
     render: Option<PathBuf>,
+    screenshot: Option<PathBuf>,
     size: (u32, u32),
     settle_ms: u64,
     home_dir: Option<PathBuf>,
@@ -68,8 +82,9 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK] [--home-dir DIR] [--dev]\n\
          \x20                  [--config-dir DIR] [--qml-dir DIR] [--licenses MANIFEST]\n\
-         \x20                  [--allow-local-folder-import] [--action NAME]...\n\
+         \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
+         \x20                  [--screenshot PNG [--size WxH]]\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]"
     );
     ExitCode::from(2)
@@ -92,9 +107,10 @@ fn parse() -> Result<Options, String> {
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
         roots: Roots::checkout(),
-        actions: Vec::new(),
+        steps: Vec::new(),
         check: false,
         render: None,
+        screenshot: None,
         size: (1280, 800),
         settle_ms: 1500,
         home_dir: None,
@@ -126,9 +142,21 @@ fn parse() -> Result<Options, String> {
             }
             "--licenses" => o.launch.licenses_manifest = Some(value()?.into()),
             "--allow-local-folder-import" => o.launch.allow_local_folder_import = true,
-            "--action" => o.actions.push(value()?),
+            "--action" => {
+                let (step, note) = Step::action(&value()?);
+                if let Some(note) = note {
+                    eprintln!("hal-c2-ljos: {note}");
+                }
+                o.steps.push(step);
+            }
+            "--key" => {
+                let chord = value()?;
+                scripted_run::sequence(&chord).map_err(|e| format!("--key {chord}: {e}"))?;
+                o.steps.push(Step::Key(chord));
+            }
             "--check" => o.check = true,
             "--render" => o.render = Some(value()?.into()),
+            "--screenshot" => o.screenshot = Some(value()?.into()),
             "--size" => {
                 let v = value()?;
                 let (w, h) = v
@@ -147,6 +175,12 @@ fn parse() -> Result<Options, String> {
             _ => return Err(format!("unknown option {arg}")),
         }
     }
+    if o.render.is_some() && o.screenshot.is_some() {
+        return Err("--render and --screenshot are two ways to take a picture; use one".into());
+    }
+    if o.render.is_some() && o.steps.iter().any(|s| matches!(s, Step::Key(_))) {
+        return Err("--key needs the shell running: use --screenshot, not --render".into());
+    }
     Ok(o)
 }
 
@@ -158,14 +192,16 @@ fn main() -> ExitCode {
             return usage();
         }
     };
-    if !options.check
-        && let Err(e) = connect_to(&mut options)
-    {
-        eprintln!("hal-c2-ljos: {e}");
-        return ExitCode::FAILURE;
-    }
     if options.check {
         return check(&options.roots);
+    }
+    // A failed start still gets its picture when one was asked for.
+    let failure = connect_to(&mut options).err();
+    if let Some(e) = &failure {
+        eprintln!("hal-c2-ljos: {e}");
+        if options.screenshot.is_none() {
+            return ExitCode::FAILURE;
+        }
     }
     let source = match qml::compile(&options.roots, OnError::Record) {
         Ok(source) => source,
@@ -178,8 +214,20 @@ fn main() -> ExitCode {
         .register(hal_c2_shell::register)
         .source(source)
         .root(ROOT);
+    if let Some(out) = &options.screenshot {
+        // ScriptedRun's codes: 0 for a picture, 2 for none, or for the
+        // picture of a start that failed.
+        return match render_to(app, &options, out, Capture::scripted(&options, failure)) {
+            Ok(false) => ExitCode::SUCCESS,
+            Ok(true) => ExitCode::from(2),
+            Err(e) => {
+                eprintln!("hal-c2-ljos: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let result = match &options.render {
-        Some(out) => render_to(app, &options, out),
+        Some(out) => render_to(app, &options, out, Capture::render(&options)).map(drop),
         None => run(app, options),
     };
     match result {
@@ -310,41 +358,102 @@ fn report_warnings(engine: &Engine) {
     });
 }
 
-fn dispatch_actions(engine: &Engine, actions: &[String]) {
-    let bridge = Bridge::of(engine);
-    for action in actions {
-        let (name, payload) = action.split_once(' ').unwrap_or((action, ""));
-        let payload = serde_json::from_str(payload).unwrap_or_else(|e| {
-            if !payload.is_empty() {
-                eprintln!("hal-c2-ljos: --action {name}: the payload is not JSON ({e}), so none");
-            }
-            serde_json::Value::Null
-        });
-        bridge.dispatch(engine, name, payload);
+/// What a picture is of: the steps before it, how long the shell settles,
+/// and why the start failed when it did.
+struct Capture {
+    steps: Vec<Step>,
+    /// `--render` dispatches its actions before it waits for the snapshot;
+    /// `--screenshot` plays its steps after it, spaced out on the clock.
+    play_after_snapshot: bool,
+    settle_ms: u64,
+    failure: Option<String>,
+}
+
+impl Capture {
+    /// `--render`: the actions at once, the `--settle` time.
+    fn render(options: &Options) -> Capture {
+        Capture {
+            steps: options.steps.clone(),
+            play_after_snapshot: false,
+            settle_ms: options.settle_ms,
+            failure: None,
+        }
+    }
+
+    /// `--screenshot`: the steps one and a half seconds apart, then the
+    /// picture one and a half after the last; or, for a start that failed,
+    /// the shell disconnected showing why, a picture one and a half seconds
+    /// in.
+    fn scripted(options: &Options, failure: Option<String>) -> Capture {
+        let (steps, settle) = match failure {
+            Some(_) => (Vec::new(), scripted_run::SPACING),
+            None => (
+                options.steps.clone(),
+                scripted_run::timetable(options.steps.len()).1,
+            ),
+        };
+        Capture {
+            steps,
+            play_after_snapshot: true,
+            settle_ms: settle.as_millis() as u64,
+            failure,
+        }
     }
 }
 
 /// A picture without a window: the shell once its MC's first snapshot is in
 /// (what the cache kept, when the MC does not answer in time), or as it
-/// shows disconnected.
-fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
+/// shows disconnected. True when it is the picture of a start that failed
+/// (`capture.failure`, or the MC refusing the connection here), which
+/// ScriptedRun's `captureFailure` takes for exit code 2.
+fn render_to(
+    app: App,
+    options: &Options,
+    out: &PathBuf,
+    mut capture: Capture,
+) -> Result<bool, String> {
     // The bundled font: the same picture on every machine.
     ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
     let picture = Picture::new(options.size.0, options.size.1)
-        .settle(options.settle_ms)
+        .settle(capture.settle_ms)
         .on_scene_message(|message| eprintln!("scene: {message}"));
     picture.install(&engine);
     report_warnings(&engine);
-    let root = match &options.launch.mc_origin {
-        Some(origin) => {
+    let mut launch = options.launch.clone();
+    let connection = match (&launch.mc_origin, &capture.failure) {
+        (Some(origin), None) => {
             let (woken, wakes) = mpsc::channel();
             let connection = Rc::new(Connection::spawn(move || {
                 let _ = woken.send(());
             }));
-            connection.open(origin, &options.mc_token)?;
-            hal_c2_shell::start(&engine, &options.launch, connection.clone());
-            dispatch_actions(&engine, &options.actions);
+            match connection.open(origin, &options.mc_token) {
+                Ok(()) => Some((connection, wakes)),
+                Err(e) if capture.play_after_snapshot => {
+                    eprintln!("hal-c2-ljos: {e}");
+                    capture = Capture::scripted(options, Some(e));
+                    None
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        _ => None,
+    };
+    if capture.failure.is_some() {
+        // The shell that has no MC to wait for.
+        launch.mc_origin = None;
+    }
+    let play = |engine: &Engine, steps: &[Step]| {
+        for step in steps {
+            scripted_run::run(engine, step);
+        }
+    };
+    let root = match connection {
+        Some((connection, wakes)) => {
+            hal_c2_shell::start(&engine, &launch, connection.clone());
+            if !capture.play_after_snapshot {
+                play(&engine, &capture.steps);
+            }
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
@@ -356,8 +465,10 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
                 {
                     let status = connection.client().status();
                     eprintln!(
-                        "hal-c2-ljos: no snapshot from {origin} ({:?} {}), so what the cache kept",
-                        status.phase, status.failure
+                        "hal-c2-ljos: no snapshot from {} ({:?} {}), so what the cache kept",
+                        launch.mc_origin.as_deref().unwrap_or_default(),
+                        status.phase,
+                        status.failure
                     );
                     break;
                 }
@@ -367,8 +478,14 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
         }
         None => {
             let mc = Rc::new(Disconnected::default());
-            hal_c2_shell::start(&engine, &options.launch, mc.clone());
-            dispatch_actions(&engine, &options.actions);
+            hal_c2_shell::start(&engine, &launch, mc.clone());
+            if let Some(why) = &capture.failure {
+                // What ShellErrorOverlay shows.
+                Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
+            }
+            if !capture.play_after_snapshot {
+                play(&engine, &capture.steps);
+            }
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
@@ -376,6 +493,10 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             root
         }
     };
+    if capture.play_after_snapshot {
+        // On the picture's virtual clock: they all run while it settles.
+        scripted_run::play(&engine, capture.steps.clone());
+    }
     let png = picture.png(&engine, root)?;
     store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -383,7 +504,7 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     }
     std::fs::write(out, png).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("hal-c2-ljos: wrote {}", out.display());
-    Ok(())
+    Ok(capture.failure.is_some())
 }
 
 /// What other threads tell the window's.
@@ -414,6 +535,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
                 let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let transcriber_handle = handle.clone();
+            hal_c2_shell::local_transcriber::set_wake(&engine, move || {
+                let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             let (mc, connection): (Rc<dyn Mc>, _) = match &options.launch.mc_origin {
                 Some(origin) => {
                     let wake = handle.clone();
@@ -432,6 +557,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     }
                     hal_c2_shell::folders::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
+                    hal_c2_shell::local_transcriber::deliver(engine);
                 }
                 Message::Activated(key) => {
                     controller::with::<AlertController, _>(engine, |alerts, engine| {
@@ -454,7 +580,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     alerts.set_presenter(Rc::new(notifications))
                 });
             }
-            dispatch_actions(&engine, &options.actions);
+            // ScriptedRun: once the shell shows the MC's state, each step in
+            // turn, 1.5 s apart.
+            let steps = options.steps.clone();
+            hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
             engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string().into())

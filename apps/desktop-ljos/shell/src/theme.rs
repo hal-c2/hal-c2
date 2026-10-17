@@ -17,6 +17,7 @@ use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_imp
 
 use crate::bridge::Bridge;
 use crate::json::Json;
+use crate::platform_window;
 
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Theme", uncreatable)]
@@ -602,6 +603,25 @@ fn show(engine: &Engine) {
         let _ = cx.set(ThemeStore::FRAMELESS, !loaded || file.frameless);
         let _ = cx.notify(ThemeStore::PALETTE.index);
     });
+    // ShellRuntime::applyWindowTheme: what the window and the application
+    // take from the theme. After the borrows: the platform's answer can run
+    // bindings.
+    let (loaded, dark) = (file.loaded, d.appearance != "light");
+    let (transparent, blur, glass) = (
+        file.window_transparent,
+        file.window_blur,
+        file.window_liquid_glass,
+    );
+    let follows_system = file.follows_system_appearance;
+    drop((d, base, file));
+    platform_window::apply_window_theme(
+        engine,
+        loaded && transparent,
+        loaded && blur,
+        loaded && glass,
+        follows_system,
+        dark,
+    );
 }
 
 #[cfg(test)]
