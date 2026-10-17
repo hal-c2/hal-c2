@@ -17,6 +17,8 @@ import {
   LEAVE_ALT_SCREEN,
   launchSetup,
   leaveDirect,
+  orderLog,
+  orderPreload,
   RESTORE_SEQUENCES,
   runClient,
   runningMc,
@@ -34,6 +36,9 @@ const TERMINALS: Record<string, { TERM: string; TERM_PROGRAM?: string; KONSOLE_V
     kitty: { TERM: "xterm-kitty" },
     wezterm: { TERM: "xterm-256color", TERM_PROGRAM: "WezTerm" },
     konsole: { TERM: "xterm-256color", KONSOLE_VERSION: "230804" },
+    alacritty: { TERM: "alacritty" },
+    foot: { TERM: "foot" },
+    iterm: { TERM: "xterm-256color", TERM_PROGRAM: "iTerm.app" },
   };
 
 function client(ctx: LaunchWorld): ProcessRun {
@@ -107,7 +112,7 @@ step("the recorded MC does not answer", (ctx: LaunchWorld) => {
 });
 
 step("the user starts the terminal client", async (ctx: LaunchWorld) => {
-  await startDirect(ctx, ["--base-dir", baseDir(ctx)]);
+  await startDirect(ctx, ["--base-dir", baseDir(ctx)], { preload: orderPreload(ctx) });
 });
 
 step("the terminal client connects to that MC", async (ctx: LaunchWorld) => {
@@ -269,6 +274,127 @@ step("the user's terminal is {word}", (ctx: LaunchWorld, name: string) => {
   const terminal = key === undefined ? undefined : TERMINALS[key];
   if (!terminal) throw new Error(`unknown terminal "${name}"`);
   Object.assign(launchSetup(ctx).env, { TERM_PROGRAM: undefined, ...terminal });
+});
+
+step("the terminal does not set COLORTERM", (ctx: LaunchWorld) => {
+  launchSetup(ctx).env.COLORTERM = undefined;
+});
+
+step("the shell set COLORTERM to {string}", (ctx: LaunchWorld, value: string) => {
+  launchSetup(ctx).env.COLORTERM = value;
+});
+
+// A name no terminal gives itself: nothing in TERM or TERM_PROGRAM the client recognises.
+step("the user's terminal is not one the client recognises", (ctx: LaunchWorld) => {
+  Object.assign(launchSetup(ctx).env, { TERM: "dumb", TERM_PROGRAM: undefined });
+});
+
+/** The client's colour report once it has left, so its startup line is certainly written. */
+async function leftWithColourReport(ctx: LaunchWorld): Promise<string> {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  return startupLine(clientLog(ctx));
+}
+
+step("the client advertises truecolor to its renderer", async (ctx: LaunchWorld) => {
+  const line = await leftWithColourReport(ctx);
+  expect(line).toContain("COLORTERM=truecolor ");
+  expect(startupCaps(line).rgb).toBe(true);
+});
+
+step(
+  "the client keeps the shell's COLORTERM of {string}",
+  async (ctx: LaunchWorld, value: string) => {
+    expect(await leftWithColourReport(ctx)).toContain(`COLORTERM=${value} `);
+  },
+);
+
+step("the client does not claim truecolor support", async (ctx: LaunchWorld) => {
+  const line = await leftWithColourReport(ctx);
+  expect(line).toContain("COLORTERM= ");
+  expect(startupCaps(line).rgb).toBe(false);
+});
+
+// --- tmux ---
+
+step("the user is not inside tmux", (ctx: LaunchWorld) => {
+  Object.assign(launchSetup(ctx).env, { TMUX: undefined, TMUX_PANE: undefined });
+});
+
+const TMUX_PANE = "%7";
+
+step("the user is inside a tmux pane that is in copy mode", (ctx: LaunchWorld) => {
+  Object.assign(launchSetup(ctx).env, {
+    TMUX: "/tmp/tmux-1000/default,4242,0",
+    TMUX_PANE,
+  });
+});
+
+step("the client does not run any tmux command", async (ctx: LaunchWorld) => {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  expect(orderLog(ctx)).toEqual(["draw"]);
+});
+
+step("the pane leaves copy mode before the terminal client draws", async (ctx: LaunchWorld) => {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  // The client asks tmux other things too (its environment, for inline images).
+  const events = orderLog(ctx);
+  const leftCopyMode = events.indexOf(`tmux copy-mode -q -t ${TMUX_PANE}`);
+  expect(leftCopyMode).toBeGreaterThanOrEqual(0);
+  expect(leftCopyMode).toBeLessThan(events.indexOf("draw"));
+});
+
+// --- the first screen ---
+
+step(
+  "an MC is running on this machine that has not sent its first snapshot",
+  (ctx: LaunchWorld) => {
+    runningMc(ctx, { holdShell: true });
+  },
+);
+
+function open(ctx: LaunchWorld) {
+  if (!ctx.direct) throw new Error(`the client is not open:\n${ctx.client?.stderr}`);
+  return ctx.direct.spawned;
+}
+
+step("the terminal client opens in the alternate screen", (ctx: LaunchWorld) => {
+  expect(open(ctx).output.stdout).toContain(ENTER_ALT_SCREEN);
+});
+
+step("its status line says {string}", async (ctx: LaunchWorld, text: string) => {
+  await open(ctx).screen.until(text);
+});
+
+step("the MC sends its first snapshot", (ctx: LaunchWorld) => {
+  mc(ctx).releaseShell();
+});
+
+step("its status line counts the projects and threads", async (ctx: LaunchWorld) => {
+  const screen = open(ctx).screen;
+  await screen.until("0 project(s) · 0 thread(s)");
+  expect(screen.text()).not.toContain("Connecting…");
+});
+
+// --- a socket ticket nobody answers ---
+
+/** Client-runtime's default for an authorization request. */
+const TICKET_REQUEST_TIMEOUT_MS = 10_000;
+
+step(
+  "an MC is running on this machine that does not answer socket ticket requests",
+  (ctx: LaunchWorld) => {
+    runningMc(ctx, { silentTickets: true });
+  },
+);
+
+step("the client asks that MC for another socket ticket", async (ctx: LaunchWorld) => {
+  // The 10 s timeout and the 2 s reconnect delay are the behaviour, so the wait is theirs.
+  await mc(ctx).until(() => mc(ctx).ticketTimes.length >= 2, "a second ticket request", 40_000);
+});
+
+step("the first ticket request was given up on only after 10 seconds", (ctx: LaunchWorld) => {
+  const [first, second] = mc(ctx).ticketTimes;
+  expect(second! - first!).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS);
 });
 
 // --- SSH ---

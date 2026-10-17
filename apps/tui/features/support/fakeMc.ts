@@ -74,19 +74,32 @@ export interface FakeMc {
   readonly sessions: FakeSession[];
   /** Bearers each ticket request carried, in order. */
   readonly ticketBearers: string[];
+  /** When each ticket request arrived (`Date.now()`), in order. */
+  readonly ticketTimes: number[];
   readonly sockets: FakeSocket[];
   /** Pairing tokens the MC still accepts (each works once). */
   readonly pairingTokens: Set<string>;
   readonly tokenExchanges: number;
   /** Close every open socket, as an MC restart or network drop would. */
   dropConnections(): void;
+  /** Send the shell snapshots `holdShell` kept back. */
+  releaseShell(): void;
   /** Resolves once `check` holds, re-checked whenever the client does something. */
-  until(check: () => boolean, what: string): Promise<void>;
+  until(check: () => boolean, what: string, timeoutMs?: number): Promise<void>;
   stop(): void;
 }
 
 /** How long the client gets to do what a step waits for; failing past it is a bug. */
 const UNTIL_TIMEOUT_MS = 10_000;
+
+export interface FakeMcOptions {
+  readonly accessToken?: string;
+  readonly pairingToken?: string;
+  /** Answer no socket ticket request, as an MC that accepts the connection and never replies. */
+  readonly silentTickets?: boolean;
+  /** Keep the first `shell` snapshot back until `releaseShell()`. */
+  readonly holdShell?: boolean;
+}
 
 interface SocketData {
   readonly record: FakeSocket;
@@ -103,14 +116,18 @@ async function formOrJson(request: Request): Promise<Record<string, string>> {
   return Object.fromEntries(new URLSearchParams(await request.text()));
 }
 
-export function startFakeMc(options: { accessToken?: string; pairingToken?: string } = {}): FakeMc {
+export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
   const accessToken = options.accessToken ?? "fake-mc-access-token";
   const sessions: FakeSession[] = [];
   const ticketBearers: string[] = [];
+  const ticketTimes: number[] = [];
   const sockets: FakeSocket[] = [];
   const pairingTokens = new Set(options.pairingToken ? [options.pairingToken] : []);
   const tickets = new Set<string>();
   const open = new Set<ServerWebSocket<SocketData>>();
+  // Sockets whose `shell` snapshot is held back, with the frame id to answer.
+  const heldShells: Array<{ ws: ServerWebSocket<SocketData>; id: number | undefined }> = [];
+  let shellReleased = !options.holdShell;
   let tokenExchanges = 0;
   let nextId = 1;
   const waiters = new Set<() => void>();
@@ -167,6 +184,11 @@ export function startFakeMc(options: { accessToken?: string; pairingToken?: stri
       case "/api/auth/websocket-ticket": {
         const token = bearer(request);
         ticketBearers.push(token ?? "");
+        ticketTimes.push(Date.now());
+        if (options.silentTickets) {
+          changed();
+          return new Promise<Response>(() => {});
+        }
         if (!authenticated(token)) {
           return Response.json(
             { _tag: "EnvironmentAuthInvalidError", reason: "invalid_credential" },
@@ -226,7 +248,9 @@ export function startFakeMc(options: { accessToken?: string; pairingToken?: stri
           );
         }
         if (frame.shape.type === "shell") {
-          ws.send(JSON.stringify({ t: "shell", id: frame.id, rows: [], mcs: [] }));
+          if (shellReleased) {
+            ws.send(JSON.stringify({ t: "shell", id: frame.id, rows: [], mcs: [] }));
+          } else heldShells.push({ ws, id: frame.id });
         }
       },
     },
@@ -237,6 +261,7 @@ export function startFakeMc(options: { accessToken?: string; pairingToken?: stri
     accessToken,
     sessions,
     ticketBearers,
+    ticketTimes,
     sockets,
     pairingTokens,
     get tokenExchanges() {
@@ -245,12 +270,18 @@ export function startFakeMc(options: { accessToken?: string; pairingToken?: stri
     dropConnections: () => {
       for (const ws of open) ws.close(1012, "MC restarting");
     },
-    until: (check, what) =>
+    releaseShell: () => {
+      shellReleased = true;
+      for (const { ws, id } of heldShells.splice(0)) {
+        ws.send(JSON.stringify({ t: "shell", id, rows: [], mcs: [] }));
+      }
+    },
+    until: (check, what, timeoutMs = UNTIL_TIMEOUT_MS) =>
       new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           waiters.delete(waiter);
           reject(new Error(`the fake MC timed out waiting for ${what}`));
-        }, UNTIL_TIMEOUT_MS);
+        }, timeoutMs);
         const waiter = () => {
           if (!check()) return;
           clearTimeout(timer);
