@@ -2282,16 +2282,18 @@ defmodule HalC2.Steps.Planning.Planner do
   step "GitHub refuses changes to \#{int}", %{args: [number]} = context do
     World.cli_rules(
       context,
-      for args <- [
-            ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
-            ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
-            ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"]
+      for {args, docs} <- [
+            {["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+             "issues/issues#update-an-issue"},
+            {["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+             "issues/assignees#add-assignees-to-an-issue"},
+            {["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"],
+             "issues/assignees#remove-assignees-from-an-issue"}
           ] do
         %{
           "args" => args,
           "exit" => 1,
-          "stderr" =>
-            "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/issues#update-an-issue)\n"
+          "stderr" => "HTTP 422: Validation Failed (https://docs.github.com/rest/#{docs})\n"
         }
       end
     )
