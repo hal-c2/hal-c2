@@ -27,6 +27,7 @@ mod http;
 pub mod pairing;
 #[cfg(test)]
 mod prop;
+pub mod stream;
 
 use std::sync::Arc;
 use std::time::Duration;
