@@ -69,6 +69,10 @@ QtObject {
         importError = "";
         importConflicts = [];
     }
+    function resolveImport(choice) {
+        clearImport();
+        return record("resolveImport", [choice]);
+    }
     function saveCustom(theme) {
         record("saveCustom", [theme]);
         return "saved";

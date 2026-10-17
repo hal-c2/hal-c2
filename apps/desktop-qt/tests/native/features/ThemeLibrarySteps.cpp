@@ -406,6 +406,18 @@ const Steps steps([] {
     world.waitFor([&] { return !opened(world, "importer"); }, QStringLiteral("the import dialog to close"));
   });
 
+  step(QStringLiteral("the user presses in the message field"), [keyboard](World& world, const Captures&, const Table&) {
+    keyboard(world).click(QStringLiteral("message"));
+  });
+  step(QStringLiteral("the theme editor closes and the message field keeps what is typed there"),
+       [keyboard, opened](World& world, const Captures&, const Table&) {
+         Brick& brick = keyboard(world);
+         world.waitFor([&] { return !opened(world, "editor") && !themes(world)->editorOpen(); }, QStringLiteral("the theme editor to close"));
+         QTest::keyClick(&brick.window(), 'x');
+         expect(brick.item(QStringLiteral("message"))->property("text") == QLatin1String("x"),
+                QStringLiteral("the message is \"%1\"").arg(brick.item(QStringLiteral("message"))->property("text").toString()));
+       });
+
   // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
   const auto inspected = [](World& world) -> Brick& {
     if (!world.brick) {
@@ -439,6 +451,10 @@ const Steps steps([] {
                              .arg(picked.value(QStringLiteral("role")).toString(), picked.value(QStringLiteral("color")).toString())
                              .arg(picked.value(QStringLiteral("count")).toInt());
     expect(inspected(world).shows(told), QStringLiteral("the editor does not say \"%1\"").arg(told));
+  });
+  step(QStringLiteral("the keyboard is back in the theme editor"), [inspected](World& world, const Captures&, const Table&) {
+    Brick& brick = inspected(world);
+    world.waitFor([&] { return brick.item(QStringLiteral("pick"))->hasActiveFocus(); }, QStringLiteral("the editor to take the keyboard back"));
   });
   step(QStringLiteral("the user is inspecting the app for a color"), [inspected](World& world, const Captures&, const Table&) {
     auto* commands = world.native().controller<KeybindingController>()->commands();

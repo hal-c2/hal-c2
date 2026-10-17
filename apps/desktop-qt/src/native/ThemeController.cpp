@@ -528,11 +528,12 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
 }
 
 QString ThemeController::duplicate(const QString& id) {
+  // The standard look is no definition, but draft() reads it back as one.
   const auto definition = find(id);
-  if (!definition) return {};
+  if (!definition && id != kStandardId) return {};
   QVariantMap copy = draft(id);
   copy.insert(QStringLiteral("id"), QString());
-  copy.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(definition->label));
+  copy.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(copy.value(QStringLiteral("label")).toString()));
   return saveCustom(copy);
 }
 

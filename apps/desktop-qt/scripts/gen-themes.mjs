@@ -16,8 +16,20 @@ const palettes = await import(
 const output = NodePath.join(here, "..", "src/native/themes.json");
 
 // Roles outside the theme files that the bricks read: success is emerald-500
-// and info blue-500, in both appearances.
-const fixed = { success: "oklch(0.696 0.17 162.48)", info: "oklch(0.623 0.214 259.815)" };
+// and info blue-500 in both appearances, and a merged pull request is
+// violet-600 on light and violet-300 at 90% on dark.
+const fixed = {
+  light: {
+    success: "oklch(0.696 0.17 162.48)",
+    info: "oklch(0.623 0.214 259.815)",
+    merged: "oklch(0.541 0.281 293.009)",
+  },
+  dark: {
+    success: "oklch(0.696 0.17 162.48)",
+    info: "oklch(0.623 0.214 259.815)",
+    merged: "oklch(0.811 0.111 293.571 / 0.9)",
+  },
+};
 
 const themes = {
   roles: palettes.THEME_COLOR_ROLES,
@@ -28,7 +40,7 @@ const themes = {
     light: palettes.T3_CHAT_THEME.colors,
     dark: palettes.T3_CHAT_THEME.variants.dark,
   },
-  fixed: { light: fixed, dark: fixed },
+  fixed,
   // The corner radius (0.625rem) and the UI and monospace font stacks.
   radius: 10,
   fonts: {

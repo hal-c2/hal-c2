@@ -163,5 +163,43 @@ Item {
             tryVerify(() => !dialog.visible);
             tryVerify(() => composer.activeFocus);
         }
+
+        // Leaving the dialog any way but a choice cancels the import, so an
+        // installed theme it was asking about is dropped.
+        function test_escapeCancelsWhatTheImportWasAskingAbout() {
+            const dialog = openImport();
+            Themes.importConflicts = ["Nord"];
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !dialog.visible);
+            compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), ["cancel"]);
+            compare(Themes.importConflicts, []);
+        }
+
+        // features/navigation/theme-editor.feature: the editor closes on a
+        // press outside it, but not on the press that picks a colour.
+        function test_aPressOutsideClosesTheEditorExceptWhileItPicks() {
+            const editor = openEditor();
+            Themes.inspecting = true;
+            mouseClick(composer);
+            verify(editor.visible, "the press that picks does not close it");
+            Themes.pick("#ff0000");
+            mouseClick(composer);
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+        }
+
+        // features/navigation/theme-editor.feature: after a colour is picked
+        // the keyboard is the editor's again.
+        function test_theKeyboardReturnsToTheEditorAfterAPick() {
+            const editor = openEditor();
+            const pick = findChild(editor.contentItem, "pick");
+            Themes.inspecting = true;
+            composer.forceActiveFocus();
+            verify(!pick.activeFocus);
+            Themes.pick("#ff0000");
+            tryVerify(() => pick.activeFocus);
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !editor.visible);
+        }
     }
 }

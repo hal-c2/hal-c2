@@ -115,7 +115,7 @@ private slots:
   // for by name comes with every theme, or is one a theme may add.
   void bricksPaintWithRolesEveryThemeHas() {
     // Drawn in the brick's own fallback unless a theme names them.
-    const QStringList optional{QStringLiteral("merged"), QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
+    const QStringList optional{QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
                                QStringLiteral("sidebarActiveIndicator"), QStringLiteral("scrim")};
     static const QRegularExpression read(QStringLiteral("palette\\.color\\(\"([A-Za-z0-9]+)\""));
     QStringList unknown;
