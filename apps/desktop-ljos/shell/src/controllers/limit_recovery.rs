@@ -47,7 +47,11 @@ struct Reading {
     can_snooze: bool,
 }
 
-fn later(engine: &Engine, me: &Me<LimitRecovery>, f: impl FnOnce(&mut LimitRecovery, &Engine) + 'static) {
+fn later(
+    engine: &Engine,
+    me: &Me<LimitRecovery>,
+    f: impl FnOnce(&mut LimitRecovery, &Engine) + 'static,
+) {
     let me = me.clone();
     Bridge::of(engine).defer(engine, move |engine| me.run(engine, f));
 }
@@ -78,7 +82,9 @@ fn read(engine: &Engine) -> Reading {
         reading.run_id = run.run_id.clone();
         reading.reset_at = text(row.get("usageLimitResetAt"));
         let reset = parse_iso(Some(&reading.reset_at));
-        let stopped = parse_iso(Some(run.completed_at.as_deref().unwrap_or(&thread.updated_at)));
+        let stopped = parse_iso(Some(
+            run.completed_at.as_deref().unwrap_or(&thread.updated_at),
+        ));
         reading.can_schedule = matches!((reset, stopped), (Some(r), Some(s)) if r > s);
         let recovery = row.get("limitRecovery").cloned().unwrap_or(Json::Null);
         let same = text(recovery.get("runId")) == reading.run_id
@@ -179,7 +185,11 @@ impl Controller for LimitRecovery {
             }
             _ => return true,
         }
-        self.error.clear();
+        // The last refusal no longer stands while the MC is asked again.
+        if !self.error.is_empty() {
+            self.error.clear();
+            self.publish(engine);
+        }
         let (environment, thread) = now.key.split_once(':').unwrap_or(("", &now.key));
         let me = self.me.clone();
         self.mc.dispatch_command(

@@ -43,7 +43,11 @@ pub struct ThreadLineage {
     waiting: Option<(String, TimerId)>,
 }
 
-fn later(engine: &Engine, me: &Me<ThreadLineage>, f: impl FnOnce(&mut ThreadLineage, &Engine) + 'static) {
+fn later(
+    engine: &Engine,
+    me: &Me<ThreadLineage>,
+    f: impl FnOnce(&mut ThreadLineage, &Engine) + 'static,
+) {
     let me = me.clone();
     Bridge::of(engine).defer(engine, move |engine| me.run(engine, f));
 }
@@ -56,7 +60,8 @@ fn shown_thread(engine: &Engine) -> String {
 }
 
 fn environment_of(key: &str) -> &str {
-    key.split_once(':').map_or(key, |(environment, _)| environment)
+    key.split_once(':')
+        .map_or(key, |(environment, _)| environment)
 }
 
 fn text<'a>(row: &'a Row, object: &str, field: &str) -> &'a str {
@@ -350,8 +355,9 @@ impl Controller for ThreadLineage {
         }
         self.active = true;
         let me = self.me.clone();
-        self.bridge
-            .watch(engine, "route", move |e, _| later(e, &me, |c, e| c.publish(e)));
+        self.bridge.watch(engine, "route", move |e, _| {
+            later(e, &me, |c, e| c.publish(e))
+        });
         let me = self.me.clone();
         store::on_changed(engine, move |e| later(e, &me, Self::store_changed));
         self.publish(engine);
@@ -361,7 +367,13 @@ impl Controller for ThreadLineage {
         if !self.active {
             return false;
         }
-        let field = |name: &str| payload.get(name).and_then(Json::as_str).unwrap_or("").to_owned();
+        let field = |name: &str| {
+            payload
+                .get(name)
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
         match action {
             "lineage.open" => {
                 let key = field("key");

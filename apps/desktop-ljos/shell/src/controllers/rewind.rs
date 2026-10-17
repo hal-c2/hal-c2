@@ -121,7 +121,10 @@ impl Rewind {
         let providers = config.get("providers").and_then(Json::as_array);
         let forgets = providers.into_iter().flatten().any(|status| {
             status.get("instanceId").and_then(Json::as_str) == Some(instance.as_str())
-                && status.get("supportsConversationRollback").and_then(Json::as_bool) == Some(false)
+                && status
+                    .get("supportsConversationRollback")
+                    .and_then(Json::as_bool)
+                    == Some(false)
         });
         if forgets {
             return refuse(
@@ -130,13 +133,22 @@ impl Rewind {
             );
         }
         if !store::with(engine, |s| s.thread_online(&thread)) {
-            return refuse(engine, "Reconnect the environment before reverting checkpoints.");
+            return refuse(
+                engine,
+                "Reconnect the environment before reverting checkpoints.",
+            );
         }
         if working {
-            return refuse(engine, "Interrupt the current turn before reverting checkpoints.");
+            return refuse(
+                engine,
+                "Interrupt the current turn before reverting checkpoints.",
+            );
         }
         if !point.contains_key("checkpointId") {
-            return refuse(engine, "There is no checkpoint before this message to rewind to.");
+            return refuse(
+                engine,
+                "There is no checkpoint before this message to rewind to.",
+            );
         }
         self.thread = thread;
         self.row = row_id.to_owned();
@@ -177,13 +189,7 @@ impl Rewind {
         self.roll_back(thread, point, Vec::new(), restore_files);
     }
 
-    fn roll_back(
-        &mut self,
-        thread: String,
-        point: Obj,
-        files: Vec<Json>,
-        restore_files: bool,
-    ) {
+    fn roll_back(&mut self, thread: String, point: Obj, files: Vec<Json>, restore_files: bool) {
         let (environment, thread_id) = thread.split_once(':').unwrap_or(("", &thread));
         let me = self.me.clone();
         let command = json!({
@@ -241,7 +247,10 @@ impl Rewind {
         if !files.is_empty() {
             bridge.dispatch(engine, "composer.attach", json!({"files": files}));
         }
-        bridge.send_to_bricks(engine, "composer.focus", &Json::Null);
+        // After the text, which waits for this controller to return.
+        bridge.defer(engine, |engine| {
+            Bridge::of(engine).send_to_bricks(engine, "composer.focus", &Json::Null);
+        });
     }
 }
 

@@ -115,7 +115,8 @@ impl Plan {
         // The same checkout as the planning thread.
         let branch = text(&row, "branch");
         let worktree = text(&row, "worktreePath");
-        let mut strategy = json!({"type": if worktree.is_empty() { "root" } else { "existing_worktree" }});
+        let mut strategy =
+            json!({"type": if worktree.is_empty() { "root" } else { "existing_worktree" }});
         if !worktree.is_empty() {
             strategy["worktreePath"] = json!(worktree);
         }
@@ -171,7 +172,12 @@ impl Plan {
             } else {
                 reason
             };
-            show(engine, "error", "Could not start implementation thread", &reason);
+            show(
+                engine,
+                "error",
+                "Could not start implementation thread",
+                &reason,
+            );
         };
         let me = self.me.clone();
         let mc = self.mc.clone();
@@ -222,8 +228,15 @@ impl Plan {
             )
         });
         let path = free_path(&folder, &file_name(markdown));
-        match std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(&path, exported(markdown))) {
-            Ok(()) => show(engine, "success", "Plan downloaded", &path.to_string_lossy()),
+        match std::fs::create_dir_all(&folder)
+            .and_then(|()| std::fs::write(&path, exported(markdown)))
+        {
+            Ok(()) => show(
+                engine,
+                "success",
+                "Plan downloaded",
+                &path.to_string_lossy(),
+            ),
             Err(e) => show(engine, "error", "Could not download plan", &e.to_string()),
         }
     }
@@ -238,7 +251,10 @@ impl Plan {
             }
             let project = row.get("projectId").and_then(Json::as_str).unwrap_or("");
             let project = s.project_row(environment, project)?;
-            project.get("workspaceRoot").and_then(Json::as_str).map(str::to_owned)
+            project
+                .get("workspaceRoot")
+                .and_then(Json::as_str)
+                .map(str::to_owned)
         })
         .unwrap_or_default();
         if root.is_empty() {
@@ -331,7 +347,10 @@ mod tests {
     #[test]
     fn a_plan_is_named_after_its_heading() {
         assert_eq!(file_name("# Tax line\n\n- Add it"), "tax-line.md");
-        assert_eq!(file_name("intro\n  ## Add the `cart`'s (new) total!"), "add-the-carts-new-total.md");
+        assert_eq!(
+            file_name("intro\n  ## Add the `cart`'s (new) total!"),
+            "add-the-carts-new-total.md"
+        );
         assert_eq!(file_name("no heading"), "plan.md");
         assert_eq!(file_name("# ???"), "plan.md");
     }
