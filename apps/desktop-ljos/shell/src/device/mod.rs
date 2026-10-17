@@ -1,5 +1,5 @@
 //! The Device tab: a device's live screen and input over the MC's device hub
-//! (desktop-qt's FFmpeg, DeviceDecoder, DeviceStream and ThreadDevices).
+//! (desktop-qt's DeviceDecoder, DeviceStream and ThreadDevices).
 //!
 //! Decoders work on threads of their own. One with a picture or news wakes
 //! the shell through the waker ([`set_wake`]), which then calls [`deliver`]
@@ -14,7 +14,6 @@ use ljos::prelude::{Engine, ObjectId};
 
 pub mod decoder;
 pub mod devices;
-pub mod ffmpeg;
 pub mod stream;
 
 use decoder::{Decode, Decoder, Notify};
@@ -68,7 +67,7 @@ pub fn deliver(engine: &Engine) {
     }
 }
 
-/// Tests: what makes the streams' decoders from now on, instead of FFmpeg's
+/// Tests: what makes the streams' decoders from now on, instead of Ljós's
 /// [`Decoder`]. It is given what to call when the decoder has news.
 pub fn set_decoders(engine: &Engine, make: impl Fn(Notify) -> Box<dyn Decode> + 'static) {
     *Hub::of(engine).decoders.borrow_mut() = Some(Rc::new(make));

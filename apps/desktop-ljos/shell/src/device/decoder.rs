@@ -1,28 +1,24 @@
-//! A device's H.264 screen, decoded off the UI thread with libavcodec
-//! (desktop-qt's src/native/DeviceDecoder.h): iOS sends AVCC (length-prefixed
-//! NAL units after an avcC record), Android sends Annex-B access units. Every
-//! unit is decoded, since later frames refer to earlier ones, but only the
-//! newest picture of a batch is converted to RGBA, so a decoder that falls
-//! behind skips pictures, never queues them. A backlog past [`MAX_QUEUED`] is
-//! dropped whole and decoding waits for the next keyframe: [`Decode::push`]
-//! returns false and the stream asks the device for one.
+//! A device's H.264 screen, decoded off the UI thread with Ljós's stream
+//! decoder (desktop-qt's src/native/DeviceDecoder.h): iOS sends AVCC
+//! (length-prefixed NAL units after an avcC record), Android sends Annex-B
+//! access units. Every unit is decoded, since later frames refer to earlier
+//! ones, but only the newest picture of a batch is scaled and kept, so a
+//! decoder that falls behind skips pictures, never queues them. A backlog
+//! past [`MAX_QUEUED`] is dropped whole and decoding waits for the next
+//! keyframe: [`Decode::push`] returns false and the stream asks the device
+//! for one.
 //!
 //! [`Decoder`] runs on a thread of its own and calls its [`Notify`] there
 //! when it has something to say; its owner then takes [`Decode::take_events`]
 //! on the UI thread: [`Decoded::Frame`] once per new picture nobody has taken
 //! yet ([`Decode::take_frame`] takes the newest). [`Decode`] is what the
 //! stream sees of it, so tests can give it another.
-//!
-//! TODO(ljos#60): Ljós's QtMultimedia plays only whole files, so a live
-//! stream is decoded here; once Ljós can play one, this and `ffmpeg.rs` go.
 
 use std::collections::VecDeque;
-use std::ffi::{c_int, c_void};
-use std::ptr;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
-use super::ffmpeg::{self, Api, FrameHead, PADDING, SWS_BILINEAR};
+use ljos::media::{self, DecodeError, StreamFormat, VideoFrame};
 
 /// Units queued before the backlog is dropped.
 pub const MAX_QUEUED: usize = 8;
@@ -58,8 +54,6 @@ pub enum Decoded {
 
 /// A device stream's decoder, as the stream uses it.
 pub trait Decode {
-    /// Whether it can decode at all; the error says what to install.
-    fn available(&self) -> Result<(), String>;
     /// A new stream: `avcc` is its avcC record (AVCC units follow), or None
     /// for Annex-B. Drops what is queued and the newest picture, and decodes
     /// nothing before a keyframe.
@@ -102,7 +96,6 @@ pub fn fit((width, height): (u32, u32), (lw, lh): (u32, u32)) -> (u32, u32) {
 struct Unit {
     data: Vec<u8>,
     offset: usize,
-    keyframe: bool,
     jpeg: bool,
     /// The reset() generation it belongs to.
     epoch: u64,
@@ -134,7 +127,7 @@ impl Shared {
     }
 }
 
-/// libavcodec's decoder on a thread of its own.
+/// Ljós's stream decoder on a thread of its own.
 pub struct Decoder {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
@@ -186,10 +179,6 @@ impl Drop for Decoder {
 }
 
 impl Decode for Decoder {
-    fn available(&self) -> Result<(), String> {
-        ffmpeg::api().map(|_| ()).ok_or_else(ffmpeg::missing)
-    }
-
     fn reset(&mut self, avcc: Option<Vec<u8>>) {
         let mut state = self.shared.lock();
         state.epoch += 1;
@@ -224,7 +213,6 @@ impl Decode for Decoder {
         state.queue.push_back(Unit {
             data: unit,
             offset,
-            keyframe,
             jpeg: false,
             epoch,
         });
@@ -239,7 +227,6 @@ impl Decode for Decoder {
         state.queue.push_back(Unit {
             data: jpeg,
             offset: 0,
-            keyframe: false,
             jpeg: true,
             epoch,
         });
@@ -266,11 +253,17 @@ impl Decode for Decoder {
     }
 }
 
-/// The decoder's thread: decodes everything queued, then converts only the
+/// The newest picture of a batch, scaled only once it is known to be.
+enum Newest {
+    Still((u32, u32), Picture),
+    Video(VideoFrame),
+}
+
+/// The decoder's thread: decodes everything queued, then scales only the
 /// newest picture, until the decoder is dropped.
 fn work(shared: &Shared) {
-    let mut codec: Option<Codec> = None;
-    let mut open_epoch: Option<u64> = None;
+    // The stream's decoder and the reset() generation it was opened for.
+    let mut video: Option<(media::Decoder, u64)> = None;
     loop {
         let (batch, limit, avcc, epoch) = {
             let mut state = shared.lock();
@@ -291,59 +284,75 @@ fn work(shared: &Shared) {
             )
         };
         let mut newest = None;
-        let mut source = (0, 0);
         let mut failed = false;
         // No decoder to decode with: nothing later will do better.
         let mut unusable = None;
-        let mut decoded = false;
+        // Units given to the decoder since the newest still.
+        let mut fed = false;
         for unit in batch {
             if unit.epoch != epoch {
                 continue;
             }
             if unit.jpeg {
                 if let Some((size, still)) = jpeg(&unit.data, limit) {
-                    source = size;
-                    newest = Some(still);
-                    decoded = false;
+                    newest = Some(Newest::Still(size, still));
+                    fed = false;
                 }
                 continue;
             }
-            if open_epoch != Some(epoch) {
-                codec = None;
-                match Codec::open(avcc.as_deref()) {
-                    Ok(opened) => {
-                        codec = Some(opened);
-                        open_epoch = Some(epoch);
-                    }
+            if video.as_ref().is_none_or(|(_, opened)| *opened != epoch) {
+                video = None;
+                match open(avcc.as_deref()) {
+                    Ok(opened) => video = Some((opened, epoch)),
                     Err(why) => {
-                        unusable = Some(why);
+                        unusable = why;
                         failed = true;
                         break;
                     }
                 }
             }
-            let Some(open) = codec.as_mut() else {
+            let Some((decoder, _)) = video.as_mut() else {
                 failed = true;
                 break;
             };
-            match open.decode(
-                unit.data.get(unit.offset..).unwrap_or_default(),
-                unit.keyframe,
-            ) {
-                Ok(got) => decoded |= got,
-                Err(()) => {
+            match decoder.push(unit.data.get(unit.offset..).unwrap_or_default()) {
+                Ok(mut frames) => {
+                    fed = true;
+                    if let Some(frame) = frames.pop() {
+                        newest = Some(Newest::Video(frame));
+                    }
+                }
+                Err(_) => {
                     failed = true;
                     break;
                 }
             }
         }
-        if decoded
+        // TODO(ljos): the decoder holds a unit until the next one begins, and
+        // a picture until its reorder window fills, which a screen that sends
+        // nothing while it is still may never do. Finishing the batch hands
+        // out every picture now; the stream decodes on after it.
+        if fed
             && !failed
-            && let Some(open) = codec.as_mut()
+            && let Some((decoder, _)) = video.as_mut()
         {
-            source = open.size();
-            newest = open.convert(limit);
+            match decoder.finish() {
+                Ok(mut frames) => {
+                    if let Some(frame) = frames.pop() {
+                        newest = Some(Newest::Video(frame));
+                    }
+                }
+                Err(_) => failed = true,
+            }
         }
+        if failed {
+            video = None;
+        }
+        let newest = match newest {
+            Some(Newest::Video(frame)) if !failed => scaled(frame, limit),
+            Some(Newest::Still(size, still)) => Some((size, still)),
+            _ => None,
+        };
         let said = {
             let mut state = shared.lock();
             if epoch != state.epoch {
@@ -352,8 +361,7 @@ fn work(shared: &Shared) {
             if failed {
                 state.queue.clear();
                 state.awaiting_keyframe = true;
-                open_epoch = None;
-            } else if let Some(picture) = newest {
+            } else if let Some((source, picture)) = newest {
                 state.frame = Some(picture);
                 state.source = source;
                 if !state.notified {
@@ -374,6 +382,28 @@ fn work(shared: &Shared) {
     }
 }
 
+/// A decoder for a stream with `avcc` (None: Annex-B). Err(None) for an
+/// avcC record no decoder starts from (every unit fails, as broken video),
+/// Err(Some(why)) when this build cannot decode H.264 at all.
+fn open(avcc: Option<&[u8]>) -> Result<media::Decoder, Option<String>> {
+    let format = match avcc {
+        None => StreamFormat::H264AnnexB,
+        Some(config) => StreamFormat::H264Avcc {
+            config: config.to_vec(),
+        },
+    };
+    media::Decoder::new(&format).map_err(|why| match why {
+        DecodeError::Codec(_) => None,
+        _ => Some("This build has no H.264 decoder.".to_owned()),
+    })
+}
+
+/// A decoded picture as RGBA, scaled down to `limit`, with its own size.
+fn scaled(frame: VideoFrame, limit: (u32, u32)) -> Option<((u32, u32), Picture)> {
+    let size = (frame.width(), frame.height());
+    fitted(frame.into_rgba()?, size, limit)
+}
+
 /// A JPEG as RGBA, scaled down to `limit`, with its own size.
 fn jpeg(bytes: &[u8], limit: (u32, u32)) -> Option<((u32, u32), Picture)> {
     use zune_jpeg::zune_core::{
@@ -383,7 +413,15 @@ fn jpeg(bytes: &[u8], limit: (u32, u32)) -> Option<((u32, u32), Picture)> {
     let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
     let pixels = decoder.decode().ok()?;
     let info = decoder.info()?;
-    let size = (u32::from(info.width), u32::from(info.height));
+    fitted(
+        pixels,
+        (u32::from(info.width), u32::from(info.height)),
+        limit,
+    )
+}
+
+/// RGBA `pixels` of `size` scaled down to `limit`, with their own size.
+fn fitted(pixels: Vec<u8>, size: (u32, u32), limit: (u32, u32)) -> Option<((u32, u32), Picture)> {
     if size.0 == 0 || size.1 == 0 || pixels.len() != size.0 as usize * size.1 as usize * 4 {
         return None;
     }
@@ -432,270 +470,6 @@ fn shrink(pixels: &[u8], from: (u32, u32), to: (u32, u32)) -> Vec<u8> {
     out
 }
 
-/// How a stream's units become what libavcodec is fed.
-enum Framing {
-    /// As they come.
-    AnnexB,
-    /// Length-prefixed NAL units, each `length_size` bytes long, become
-    /// Annex-B; a keyframe gets the avcC record's parameter sets (`sets`,
-    /// Annex-B already) before it.
-    Avcc { length_size: usize, sets: Vec<u8> },
-    /// An avcC record no decoder starts from: every unit fails.
-    Broken,
-}
-
-const START: [u8; 4] = [0, 0, 0, 1];
-
-/// The NAL unit length size and parameter sets (as Annex-B) of an avcC
-/// record (ISO/IEC 14496-15 AVCDecoderConfigurationRecord).
-fn parse_avcc(record: &[u8]) -> Option<(usize, Vec<u8>)> {
-    if record.len() < 7 || record[0] != 1 {
-        return None;
-    }
-    let length_size = usize::from(record[4] & 3) + 1;
-    let mut sets = Vec::new();
-    let mut at = 5;
-    for mask in [0x1f, 0xff] {
-        let count = record.get(at)? & mask;
-        at += 1;
-        for _ in 0..count {
-            let length = usize::from(u16::from_be_bytes([*record.get(at)?, *record.get(at + 1)?]));
-            at += 2;
-            sets.extend_from_slice(&START);
-            sets.extend_from_slice(record.get(at..at + length)?);
-            at += length;
-        }
-    }
-    Some((length_size, sets))
-}
-
-/// An AVCC unit as Annex-B behind `sets`; Err for one whose lengths run
-/// past its end.
-fn annex_b(unit: &[u8], length_size: usize, sets: &[u8]) -> Result<Vec<u8>, ()> {
-    let mut out = Vec::with_capacity(sets.len() + unit.len() + 16);
-    out.extend_from_slice(sets);
-    let mut at = 0;
-    while at < unit.len() {
-        let prefix = unit.get(at..at + length_size).ok_or(())?;
-        let length = prefix
-            .iter()
-            .fold(0usize, |n, &b| (n << 8) | usize::from(b));
-        at += length_size;
-        out.extend_from_slice(&START);
-        out.extend_from_slice(unit.get(at..at + length).ok_or(())?);
-        at += length;
-    }
-    Ok(out)
-}
-
-/// One stream's libavcodec decoder and swscale converter.
-struct Codec {
-    av: &'static Api,
-    context: *mut c_void,
-    packet: *mut c_void,
-    picture: *mut FrameHead,
-    /// The newest picture decoded.
-    last: *mut FrameHead,
-    scaler: *mut c_void,
-    rgba: c_int,
-    framing: Framing,
-}
-
-impl Codec {
-    /// A decoder for a stream with `avcc` (None: Annex-B), or why none
-    /// started.
-    fn open(avcc: Option<&[u8]>) -> Result<Codec, String> {
-        let av = ffmpeg::api().ok_or_else(ffmpeg::missing)?;
-        // SAFETY: every call is FFmpeg's documented use of the pointers it
-        // returned; Codec's Drop frees what was made.
-        unsafe {
-            let codec = (av.find_decoder_by_name)(c"h264".as_ptr());
-            if codec.is_null() {
-                return Err("This FFmpeg has no H.264 decoder.".to_owned());
-            }
-            let failed = || "The H.264 decoder did not start.".to_owned();
-            let mut this = Codec {
-                av,
-                context: (av.alloc_context3)(codec),
-                packet: ptr::null_mut(),
-                picture: ptr::null_mut(),
-                last: ptr::null_mut(),
-                scaler: ptr::null_mut(),
-                rgba: (av.get_pix_fmt)(c"rgba".as_ptr()),
-                framing: match avcc {
-                    None => Framing::AnnexB,
-                    Some(record) => match parse_avcc(record) {
-                        Some((length_size, sets)) => Framing::Avcc { length_size, sets },
-                        None => Framing::Broken,
-                    },
-                },
-            };
-            if this.context.is_null() || this.rgba < 0 {
-                return Err(failed());
-            }
-            // A live screen: no reordering delay, and slice threads (frame
-            // threads hold pictures back one per thread). Options, not
-            // AVCodecContext's fields, whose layout moves between releases.
-            let mut options = ptr::null_mut();
-            (av.dict_set)(&mut options, c"flags".as_ptr(), c"+low_delay".as_ptr(), 0);
-            (av.dict_set)(&mut options, c"thread_type".as_ptr(), c"slice".as_ptr(), 0);
-            (av.dict_set)(&mut options, c"threads".as_ptr(), c"auto".as_ptr(), 0);
-            let opened = (av.open2)(this.context, codec, &mut options);
-            (av.dict_free)(&mut options);
-            if opened < 0 {
-                return Err(failed());
-            }
-            this.packet = (av.packet_alloc)();
-            this.picture = (av.frame_alloc)();
-            this.last = (av.frame_alloc)();
-            if this.packet.is_null() || this.picture.is_null() || this.last.is_null() {
-                return Err(failed());
-            }
-            Ok(this)
-        }
-    }
-
-    /// Decodes one unit; whether a picture came of it, or Err for one the
-    /// decoder refused.
-    fn decode(&mut self, unit: &[u8], keyframe: bool) -> Result<bool, ()> {
-        let fed = match &self.framing {
-            Framing::AnnexB => None,
-            Framing::Avcc { length_size, sets } => Some(annex_b(
-                unit,
-                *length_size,
-                if keyframe { sets } else { &[] },
-            )?),
-            Framing::Broken => return Err(()),
-        };
-        let fed = fed.as_deref().unwrap_or(unit);
-        // An empty packet is no unit (libavcodec refuses one with data).
-        let size = c_int::try_from(fed.len()).map_err(|_| ())?;
-        if size == 0 || fed.len() > c_int::MAX as usize - PADDING {
-            return Err(());
-        }
-        let av = self.av;
-        // SAFETY: the packet takes the av_malloc'd data, padded and zeroed as
-        // av_packet_from_data requires, or it is freed here. The keyframe flag
-        // is not set: H.264's decoder finds keyframes in the units.
-        unsafe {
-            let data = (av.malloc)(fed.len() + PADDING).cast::<u8>();
-            if data.is_null() {
-                return Err(());
-            }
-            ptr::copy_nonoverlapping(fed.as_ptr(), data, fed.len());
-            ptr::write_bytes(data.add(fed.len()), 0, PADDING);
-            (av.packet_unref)(self.packet);
-            if (av.packet_from_data)(self.packet, data, size) < 0 {
-                (av.free)(data.cast());
-                return Err(());
-            }
-            let sent = (av.send_packet)(self.context, self.packet);
-            (av.packet_unref)(self.packet);
-            if sent < 0 {
-                return Err(());
-            }
-            // Keeps the newest picture; the ones before it are never shown.
-            let mut got = false;
-            while (av.receive_frame)(self.context, self.picture) == 0 {
-                (av.frame_unref)(self.last);
-                (av.frame_move_ref)(self.last, self.picture);
-                got = true;
-            }
-            Ok(got)
-        }
-    }
-
-    /// The newest picture's size.
-    fn size(&self) -> (u32, u32) {
-        // SAFETY: `last` is a live AVFrame; its head is FrameHead.
-        let last = unsafe { &*self.last };
-        (last.width.max(0) as u32, last.height.max(0) as u32)
-    }
-
-    /// The newest picture as RGBA, scaled down to `limit`.
-    fn convert(&mut self, limit: (u32, u32)) -> Option<Picture> {
-        let av = self.av;
-        // SAFETY: `last` holds a decoded picture; swscale writes into a
-        // buffer of aligned rows padded past the end, as its SIMD needs,
-        // which is freed here.
-        unsafe {
-            let last = &*self.last;
-            let source = (last.width.max(0) as u32, last.height.max(0) as u32);
-            if source.0 == 0 || source.1 == 0 {
-                return None;
-            }
-            let (width, height) = fit(source, limit);
-            self.scaler = (av.get_cached_context)(
-                self.scaler,
-                last.width,
-                last.height,
-                last.format,
-                width as c_int,
-                height as c_int,
-                self.rgba,
-                SWS_BILINEAR,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null(),
-            );
-            if self.scaler.is_null() {
-                return None;
-            }
-            let row = width as usize * 4;
-            let stride = row.next_multiple_of(64);
-            let bits = (av.malloc)(stride * height as usize + 64).cast::<u8>();
-            if bits.is_null() {
-                return None;
-            }
-            let planes = [bits, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()];
-            let strides = [stride as c_int, 0, 0, 0];
-            (av.scale)(
-                self.scaler,
-                last.data.as_ptr().cast(),
-                last.linesize.as_ptr(),
-                0,
-                last.height,
-                planes.as_ptr(),
-                strides.as_ptr(),
-            );
-            let mut rgba = Vec::with_capacity(row * height as usize);
-            for y in 0..height as usize {
-                rgba.extend_from_slice(std::slice::from_raw_parts(bits.add(y * stride), row));
-            }
-            (av.free)(bits.cast());
-            Some(Picture {
-                width,
-                height,
-                rgba,
-            })
-        }
-    }
-}
-
-impl Drop for Codec {
-    fn drop(&mut self) {
-        let av = self.av;
-        // SAFETY: each pointer is FFmpeg's or null, and freed once.
-        unsafe {
-            if !self.context.is_null() {
-                (av.free_context)(&mut self.context);
-            }
-            if !self.packet.is_null() {
-                (av.packet_free)(&mut self.packet);
-            }
-            if !self.picture.is_null() {
-                (av.frame_free)(&mut self.picture);
-            }
-            if !self.last.is_null() {
-                (av.frame_free)(&mut self.last);
-            }
-            if !self.scaler.is_null() {
-                (av.free_scaler)(self.scaler);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,27 +481,6 @@ mod tests {
         assert_eq!(fit((72, 160), (36, 200)), (36, 80));
         assert_eq!(fit((72, 160), (100, 40)), (18, 40));
         assert_eq!(fit((1000, 1), (10, 10)), (10, 1));
-    }
-
-    #[test]
-    fn an_avcc_record_and_units_become_annex_b() {
-        let record = [
-            1, 0x42, 0, 0x1e, 0xff, 0xe1, 0, 2, 0x67, 0xaa, 1, 0, 1, 0x68,
-        ];
-        let (length_size, sets) = parse_avcc(&record).expect("a record");
-        assert_eq!(length_size, 4);
-        assert_eq!(sets, [0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68]);
-        let unit = [0, 0, 0, 2, 0x65, 1, 0, 0, 0, 1, 0x41];
-        assert_eq!(
-            annex_b(&unit, 4, &sets).unwrap(),
-            [
-                0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65, 1, 0, 0, 0, 1, 0x41
-            ]
-        );
-        // A length past the end, or a record cut short, is no video.
-        assert!(annex_b(&[0, 0, 0, 9, 1], 4, &[]).is_err());
-        assert!(parse_avcc(&record[..4]).is_none());
-        assert!(parse_avcc(&record[..9]).is_none());
     }
 
     #[test]

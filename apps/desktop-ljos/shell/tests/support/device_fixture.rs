@@ -1,6 +1,7 @@
 //! desktop-qt's device fixture (a solid red 72x160 H.264 clip, Annex-B) as
 //! the device hub sends it: serve-sim's AVCC body and serve-emu's SEMU
-//! frames. Included by the device tests
+//! frames; and [`red_blue`], a 72x160 clip that turns from red to blue.
+//! Included by the device tests
 //! (`#[path = "support/device_fixture.rs"] mod device_fixture;`).
 
 #![allow(dead_code)]
@@ -13,10 +14,23 @@ pub struct Fixture {
 }
 
 pub fn fixture() -> Fixture {
-    let path = concat!(
+    clip(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../desktop-qt/tests/native/features/fixtures/device-72x160.h264"
-    );
+    ))
+}
+
+/// Four Constrained Baseline pictures with no reordering: a red keyframe, a
+/// red delta, then two blue deltas.
+pub fn red_blue() -> Fixture {
+    clip(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/device-red-blue-72x160.h264"
+    ))
+}
+
+/// The Annex-B clip at `path`.
+fn clip(path: &str) -> Fixture {
     let data = std::fs::read(path).expect("the device fixture");
     let mut starts = Vec::new();
     let mut at = 0;
@@ -51,7 +65,11 @@ pub fn fixture() -> Fixture {
 
 /// The avcC record of the fixture; `broken`, one no decoder starts from.
 pub fn avcc(broken: bool) -> Vec<u8> {
-    let f = fixture();
+    avcc_of(&fixture(), broken)
+}
+
+/// The avcC record of `f`.
+pub fn avcc_of(f: &Fixture, broken: bool) -> Vec<u8> {
     let mut record = vec![1];
     record.extend_from_slice(&f.sps[1..4]);
     record.push(0xff); // four-byte lengths
@@ -78,13 +96,17 @@ pub fn envelope(tag: u8, payload: &[u8]) -> Vec<u8> {
 /// The fixture's pictures as AVCC units (four-byte lengths), with whether
 /// each is a keyframe.
 pub fn avcc_units() -> Vec<(Vec<u8>, bool)> {
-    fixture()
-        .slices
-        .into_iter()
+    avcc_units_of(&fixture())
+}
+
+/// `f`'s pictures as AVCC units.
+pub fn avcc_units_of(f: &Fixture) -> Vec<(Vec<u8>, bool)> {
+    f.slices
+        .iter()
         .map(|(slice, key)| {
             let mut unit = (slice.len() as u32).to_be_bytes().to_vec();
-            unit.extend_from_slice(&slice);
-            (unit, key)
+            unit.extend_from_slice(slice);
+            (unit, *key)
         })
         .collect()
 }
@@ -100,7 +122,11 @@ pub fn ios_video(broken: bool) -> Vec<u8> {
 
 /// serve-emu's frames: Annex-B access units behind a SEMU header.
 pub fn android_video() -> Vec<(Vec<u8>, bool)> {
-    let f = fixture();
+    android_video_of(&fixture())
+}
+
+/// `f`'s pictures as serve-emu's frames.
+pub fn android_video_of(f: &Fixture) -> Vec<(Vec<u8>, bool)> {
     let start = [0u8, 0, 0, 1];
     f.slices
         .iter()
