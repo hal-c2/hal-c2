@@ -1322,3 +1322,105 @@ fn the_wizard_follows_its_rules_in_any_order() {
         }
     });
 }
+
+/// What a shell that started without an MC is told while it pairs, in any
+/// order.
+#[derive(Clone, Debug)]
+enum Unpaired {
+    /// A pairing link (or text that is none), and what spending it comes to.
+    Pair {
+        link: bool,
+        outcome: usize,
+    },
+    /// The pairing's exchange returns.
+    Finish,
+    /// The MC it opened sends its rows.
+    Snapshot,
+    AnswerJoin(bool),
+}
+
+const OUTCOMES: [Outcome; 5] = [
+    Outcome::Paired,
+    Outcome::Unreachable,
+    Outcome::NotMc,
+    Outcome::Incompatible,
+    Outcome::Refused,
+];
+
+#[test]
+fn a_shell_without_an_mc_pairs_once_whatever_the_order() {
+    let unpaired = prop_oneof![
+        3 => (any::<bool>(), 0usize..5).prop_map(|(link, outcome)| Unpaired::Pair { link, outcome }),
+        3 => Just(Unpaired::Finish),
+        1 => Just(Unpaired::Snapshot),
+        2 => any::<bool>().prop_map(Unpaired::AnswerJoin),
+    ];
+    proptest!(ProptestConfig::with_cases(64), |(ops in prop::collection::vec(unpaired, 1..30))| {
+        let rig = Rig::disconnected("unpaired-model");
+        // has_mc, pairing, a spent link's outcome on its way, the last
+        // pairing failed, MCs opened, the MC's rows in.
+        let (mut has_mc, mut pairing, mut spending, mut failed, mut opened, mut listed) =
+            (false, false, None::<Outcome>, false, 0usize, false);
+        for op in ops {
+            match op {
+                Unpaired::Pair { link, outcome } => {
+                    let outcome = OUTCOMES[outcome];
+                    rig.onboarding(move |c, _| {
+                        c.set_exchange(Arc::new(move |_, _| Pairing {
+                            outcome,
+                            origin: "https://laptop.example".into(),
+                            token: "session".into(),
+                            descriptor: Map::new(),
+                        }))
+                    });
+                    let url = if link { "https://laptop.example/pair#token=T" } else { "laptop" };
+                    rig.dispatch("onboarding.pair", json!({"pairingUrl": url}));
+                    if !pairing {
+                        failed = false;
+                        if has_mc {
+                            pairing = true;
+                        } else if link {
+                            pairing = true;
+                            spending = Some(outcome);
+                        } else {
+                            failed = true;
+                        }
+                    }
+                }
+                Unpaired::Finish => {
+                    Platform::of(&rig.engine).finish(&rig.engine);
+                    if let Some(outcome) = spending.take() {
+                        pairing = false;
+                        if outcome == Outcome::Paired {
+                            has_mc = true;
+                            opened += 1;
+                        } else {
+                            failed = true;
+                        }
+                    }
+                }
+                Unpaired::Snapshot => {
+                    if has_mc {
+                        rig.shell(&[], &[], &[]);
+                        listed = true;
+                    }
+                }
+                Unpaired::AnswerJoin(ok) => {
+                    if rig.mc.inner.pending("cluster.join").is_some() {
+                        rig.answer("cluster.join", if ok { Ok(json!({})) } else { error("no") });
+                        pairing = false;
+                        failed = !ok;
+                    }
+                }
+            }
+            let state = rig.state();
+            prop_assert_eq!(&state["gate"], "wizard");
+            prop_assert_eq!(&state["pairing"], &json!(pairing));
+            prop_assert_eq!(state["pairingError"] != "", failed, "{:?}", state);
+            prop_assert_eq!(hal_c2_shell::has_mc(&rig.engine), has_mc);
+            prop_assert_eq!(rig.mc.opened.borrow().len(), opened);
+            prop_assert_eq!(rig.mc.inner.pending("cluster.join").is_some(), pairing && spending.is_none());
+            prop_assert_eq!(state["computers"].as_array().map_or(0, Vec::len), usize::from(listed));
+        }
+    });
+}
