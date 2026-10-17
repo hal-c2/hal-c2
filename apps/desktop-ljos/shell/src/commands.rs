@@ -28,7 +28,7 @@ use std::fmt;
 use std::rc::{Rc, Weak};
 
 use ljos::prelude::{Atom, Cx, Engine, ModelSignals, ObjectId, QmlListModel, QmlObject, RowKey};
-use ljos::prelude::{JsError, SignalIndex, Value, qml_impl};
+use ljos::prelude::{SignalIndex, Value, qml_impl};
 
 use crate::bridge::Bridge;
 
@@ -185,24 +185,6 @@ impl CommandRegistry {
     #[qml(invokable)]
     fn run(cx: &Cx, command: Atom) -> bool {
         Commands::of(cx.engine).run(cx.engine, &command)
-    }
-}
-
-/// What a failed QML command says, as desktop-qt's: the thrown error's
-/// `message` (`no` for `throw new Error("no")`).
-///
-/// Ljós's `JsError::Thrown` holds what the thrown value prints as (`Error:
-/// no`), not the value, so its `message` cannot be read; the name an error
-/// prints before it is taken off instead. A thrown value that is not an
-/// error keeps what it prints as, where Qt's says nothing. TODO(ljos): not
-/// filed yet; the README's Ljós list has it.
-fn thrown_message(error: JsError) -> String {
-    let JsError::Thrown { message, .. } = error else {
-        return error.to_string();
-    };
-    match message.split_once(": ") {
-        Some((name, rest)) if name.ends_with("Error") && !name.contains(' ') => rest.to_owned(),
-        _ => message,
     }
 }
 
@@ -495,7 +477,12 @@ impl Commands {
                     None
                 }
                 Runner::Js(callback) => {
-                    engine.try_call_js(&callback, &[]).err().map(thrown_message)
+                    // What desktop-qt says: the thrown error's `message` (`no`
+                    // for `throw new Error("no")`).
+                    engine
+                        .try_call_js(&callback, &[])
+                        .err()
+                        .map(|e| e.message(engine))
                 }
                 Runner::Menu => {
                     me.emit(engine, &me.0.menu_requested, &command);

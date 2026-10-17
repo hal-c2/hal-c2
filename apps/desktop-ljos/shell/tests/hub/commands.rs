@@ -115,18 +115,27 @@ fn ran_failed_and_menu_hooks_follow_a_run() {
     });
     let throws = js_value(&hub.engine, "(() => { throw new Error('no') })");
     commands.add_js(&hub.engine, "broken", "Broken", throws, None);
+    // Any thrown value's own message, not only an Error's.
+    let throws = js_value(
+        &hub.engine,
+        "(() => { throw { message: 'gone', code: 7 } })",
+    );
+    commands.add_js(&hub.engine, "plain", "Plain", throws, None);
     assert!(commands.is_menu("theme.select"));
     assert_eq!(commands.choices(&hub.engine, "theme.select")[0].id, "dark");
     assert!(commands.choices(&hub.engine, "broken").is_empty());
     commands.run(&hub.engine, "theme.select");
     commands.run(&hub.engine, "broken");
+    commands.run(&hub.engine, "plain");
     assert_eq!(
         *log.borrow(),
         [
             "menu theme.select",
             "ran theme.select",
             "ran broken",
-            "failed broken 'no'"
+            "failed broken 'no'",
+            "ran plain",
+            "failed plain 'gone'"
         ]
     );
 }
