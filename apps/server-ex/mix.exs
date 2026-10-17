@@ -183,13 +183,16 @@ defmodule HalC2.MixProject do
   defp write_upgrade_manifest(release) do
     rel = Path.join([release.path, "releases", release.version])
     own = Path.join([release.path, "lib", "hal_c2-#{release.version}"])
+    root = Path.expand("../..", __DIR__)
 
     digest = fn paths ->
       paths
       |> Enum.sort()
       # sys.config names its own release directory, which changes with every version.
       |> Enum.map(
-        &{Path.relative_to(&1, release.path) |> String.replace(release.version, "{version}"),
+        &{Path.relative_to(&1, release.path)
+         |> Path.relative_to(root)
+         |> String.replace(release.version, "{version}"),
          &1 |> File.read!() |> String.replace(release.version, "{version}")}
       )
       |> :erlang.term_to_binary()
@@ -218,8 +221,14 @@ defmodule HalC2.MixProject do
               name != :hal_c2 and not properties[:otp_app?],
               do: app
         ),
-      # Packages installed for the build machine's platform, which no other can use.
-      "packages" => digest.([Path.join(own, "priv/cursor-acp/package.json")]),
+      # Packages built for the build machine's platform, which no other can use: by
+      # their sources, so a bundle from another platform with the same ones is as good.
+      "packages" =>
+        digest.(
+          [Path.join(own, "priv/cursor-acp/package.json")] ++
+            Enum.map(~w(Cargo.toml Cargo.lock), &Path.join(root, "native/machine-files/#{&1}")) ++
+            Path.wildcard(Path.join(root, "native/machine-files/src/*.rs"))
+        ),
       "config" =>
         digest.(
           for f <- ~w(sys.config runtime.exs vm.args),

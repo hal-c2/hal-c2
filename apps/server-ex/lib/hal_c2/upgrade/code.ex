@@ -10,9 +10,10 @@ defmodule HalC2.Upgrade.Code do
   Erlang, serves as well as this machine's own.
   """
 
-  # Installed for the build machine's platform (`stage_cursor_acp` in mix.exs), so
-  # they stay the running version's; the manifest's `packages` says when they change.
-  @platform_packages "priv/cursor-acp/node_modules"
+  # Built for the build machine's platform (`stage_cursor_acp` and
+  # `stage_machine_files` in mix.exs), so they stay the running version's, or stay
+  # absent; the manifest's `packages` says when they change.
+  @platform_packages ["priv/cursor-acp/node_modules", "priv/bin/hal-c2-machine-files"]
 
   @doc """
   Writes release `target` under `root` from the release `running` describes and the
@@ -30,10 +31,12 @@ defmodule HalC2.Upgrade.Code do
     for {app, {old, new}} <- apps do
       staged(Path.join([root, "lib", "#{app}-#{new}"]), fn dir ->
         File.cp_r!(Path.join([bundle, "lib", "#{app}-#{new}"]), dir)
-        packages = Path.join(dir, @platform_packages)
-        File.rm_rf!(packages)
-        kept = Path.join([root, "lib", "#{app}-#{old}", @platform_packages])
-        if File.dir?(kept), do: File.cp_r!(kept, packages)
+
+        for package <- @platform_packages do
+          File.rm_rf!(Path.join(dir, package))
+          kept = Path.join([root, "lib", "#{app}-#{old}", package])
+          if File.exists?(kept), do: File.cp_r!(kept, Path.join(dir, package))
+        end
       end)
     end
 
