@@ -552,6 +552,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      const previous = (yield* SubscriptionRef.get(state)).history;
       const hasProgressiveHistory =
         item.historyCursor !== undefined ||
         item.hasMoreHistory !== undefined ||
@@ -567,7 +568,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 hasMoreHistory: item.hasMoreHistory ?? false,
                 loading: false,
                 error: null,
-                expanded: false,
+                // A snapshot that answers a load-earlier, or follows one, holds paged turns.
+                expanded: previous.expanded || previous.loading,
                 latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null,
               },
             }
@@ -791,11 +793,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           }));
         }
 
+        // A load-earlier still out died with the session it was asked on.
+        yield* patchHistoryMeta((history) =>
+          history.loading ? { ...history, loading: false } : history,
+        );
+        const { history: held } = yield* SubscriptionRef.get(state);
         return {
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           ...(acceptBoundedSnapshot ? { acceptBoundedSnapshot: true as const } : {}),
+          // Earlier turns the user paged in stay loaded when a new session replaces
+          // this one; a request still out died with it.
+          ...(held.expanded ? { historyCursor: held.historyCursor } : {}),
         };
       }),
       {

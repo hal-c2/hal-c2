@@ -132,6 +132,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
+  const lastHistoryCursor = yield* Ref.make<string | null | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -149,6 +150,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
+      readonly historyCursor?: string | null;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -157,6 +159,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
+          Effect.andThen(Ref.set(lastHistoryCursor, input.historyCursor)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -277,6 +280,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
+    lastHistoryCursor,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -821,6 +825,17 @@ describe("EnvironmentThreads", () => {
       expect(
         Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
       ).toBe(true);
+      // The longer timeline stays out of the cache, and a replacement session
+      // keeps it: it opens where the paged turns start (here, the thread's start).
+      expect(expanded.history.expanded).toBe(true);
+      expect(yield* Ref.get(harness.lastHistoryCursor)).toBeUndefined();
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastHistoryCursor)).toBeNull();
     }),
   );
 

@@ -2794,6 +2794,12 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Allows snapshot fallbacks to contain a bounded, pageable history window. */
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Where the timeline the client already holds starts (a snapshot's
+   * `historyCursor`; null: the whole thread), so a replacement subscription keeps the
+   * earlier turns the user paged in. Only protocol-3 servers read it.
+   */
+  historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 

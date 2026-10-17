@@ -141,5 +141,56 @@ describe("ClusterSocket", () => {
       socket.close();
       vi.useRealTimers();
     });
+
+    it("asks for a page again when a resync or a reconnect dropped it", async () => {
+      vi.useFakeTimers();
+      const { socket, sockets } = setup();
+      const subscription = socket.subscribeWindow(shape, 200, () => {});
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      sockets[0]!.serve({
+        t: "snapshot",
+        id: 1,
+        rows: [],
+        part: 0,
+        done: true,
+        offset: 40,
+        floor: 12,
+        handle: "h1",
+      });
+      subscription.more(150);
+
+      sockets[0]!.serve({ t: "resync", id: 1, offset: 41 });
+      expect(sockets[0]!.sent.slice(-2)).toMatchObject([
+        { t: "sub", id: 1, window: { floor: 12 } },
+        { t: "more", id: 1, items: 150 },
+      ]);
+
+      sockets[0]!.close();
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[1]!.sent).toMatchObject([
+        { t: "sub", id: 1, window: { floor: 12 } },
+        { t: "more", id: 1, items: 150 },
+      ]);
+
+      // Once the page is whole it is not asked for again.
+      sockets[1]!.serve({ t: "page", id: 1, rows: [], done: true, offset: 41, floor: 5 });
+      sockets[1]!.serve({ t: "resync", id: 1, offset: 42 });
+      expect(sockets[1]!.sent.at(-1)).toMatchObject({ t: "sub", id: 1, window: { floor: 5 } });
+      socket.close();
+      vi.useRealTimers();
+    });
+
+    it("opens at the floor a replaced session held", () => {
+      const { socket, sockets } = setup();
+      socket.subscribeWindow(shape, 200, () => {}, 5);
+      socket.subscribeWindow(shape, 200, () => {}, null);
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[0]!.sent).toEqual([
+        { t: "sub", id: 1, shape, offset: null, window: { floor: 5 } },
+        { t: "sub", id: 2, shape, offset: null, window: { floor: null } },
+      ]);
+      socket.close();
+    });
   });
 });

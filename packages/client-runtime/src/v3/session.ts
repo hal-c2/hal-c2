@@ -439,7 +439,17 @@ export function makeV3Session(input: {
     // A thread opens as its newest turns, as the Qt clients' does; `loadEarlier` adds
     // the ones before, through the thread's open subscription.
     const earlier = new Map<string, WindowedSubscription["more"]>();
-    const thread = (request: { readonly threadId: string }) => {
+    const thread = (request: {
+      readonly threadId: string;
+      readonly historyCursor?: string | null | undefined;
+    }) => {
+      // The window the client held before this session replaced the last one.
+      const floor =
+        request.historyCursor === undefined
+          ? undefined
+          : request.historyCursor === null
+            ? null
+            : Number(request.historyCursor);
       const fold = new ThreadShapeFold(ThreadId.make(request.threadId));
       return Stream.callback<OrchestrationV2ThreadStreamItem>((queue) =>
         Effect.acquireRelease(
@@ -450,6 +460,7 @@ export function makeV3Session(input: {
               (frame) => {
                 Queue.offerAllUnsafe(queue, foldThreadFrame(fold, frame));
               },
+              Number.isInteger(floor) || floor === null ? floor : undefined,
             );
             earlier.set(request.threadId, subscription.more);
             return subscription;

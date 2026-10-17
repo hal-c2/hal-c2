@@ -123,6 +123,8 @@ interface Subscription {
   readonly windowItems?: number;
   floor?: number | null;
   handle?: string;
+  /** Items of a `more` the MC has not finished answering; asked again after a resubscription. */
+  pendingMore?: number;
 }
 
 /** A thread stream that holds its newest turns; `more` adds the ones before. */
@@ -208,14 +210,22 @@ export class ClusterSocket {
   /**
    * Subscribes to a thread stream as its newest `items` turn items (`page` frames
    * answer `more`). The folded thread can be shorter than the thread; `snapshot`
-   * and `page` frames say where it starts.
+   * and `page` frames say where it starts. `floor` opens the window a client already
+   * held (a replaced session's) at that run instead (null: all of the thread).
    */
   subscribeWindow(
     shape: StreamShape,
     items: number,
     onFrame: (frame: ShapeFrame) => void,
+    floor?: number | null,
   ): WindowedSubscription {
-    return this.add({ shape, onFrame, offset: null, windowItems: items });
+    return this.add({
+      shape,
+      onFrame,
+      offset: null,
+      windowItems: items,
+      ...(floor === undefined ? {} : { floor }),
+    });
   }
 
   private add(subscription: Subscription): WindowedSubscription {
@@ -227,7 +237,9 @@ export class ClusterSocket {
         if (this.subscriptions.delete(id)) this.send({ t: "unsub", id });
       },
       more: (items) => {
-        if (!this.ready || !this.subscriptions.has(id)) return false;
+        const subscription = this.subscriptions.get(id);
+        if (!this.ready || subscription === undefined) return false;
+        subscription.pendingMore = items;
         this.send({ t: "more", id, items });
         return true;
       },
@@ -294,6 +306,7 @@ export class ClusterSocket {
     const floor = frame.floor;
     const holdsFloor = frame.t === "snapshot" || (frame.t === "page" && frame.done === true);
     if (holdsFloor && (typeof floor === "number" || floor === null)) subscription.floor = floor;
+    if (frame.t === "page" && frame.done === true) delete subscription.pendingMore;
     if (frame.t === "page" && frame.done === true && typeof frame.offset === "number") {
       subscription.offset = Math.max(subscription.offset ?? 0, frame.offset);
     }
@@ -338,6 +351,10 @@ export class ClusterSocket {
         ? { handle: subscription.handle }
         : {}),
     });
+    // The MC drops a page owed to the subscription this one replaces.
+    if (subscription.pendingMore !== undefined) {
+      this.send({ t: "more", id, items: subscription.pendingMore });
+    }
   }
 
   private send(message: unknown): void {
