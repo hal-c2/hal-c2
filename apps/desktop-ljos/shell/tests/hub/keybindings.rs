@@ -23,7 +23,6 @@ use ljos::keys::{KeyEvent, Modifiers};
 use ljos::prelude::ApplicationState;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Value};
-use ljos_controls::WindowSystem;
 use serde_json::json;
 
 use crate::Hub;
@@ -953,7 +952,7 @@ fn the_jump_keys_show_once_the_modifier_is_held() {
     keymap.on_jump_hints(move |_, labels, show| log.borrow_mut().push((labels.to_vec(), show)));
     // The keys as a window is given them; the keymap keeps none.
     let window = hub.window();
-    let key = |ev: KeyEvent| assert!(!window.key(&hub.engine, &ev));
+    let key = |ev: KeyEvent| assert!(!window.key(&ev));
     let ctrl = || KeyEvent::press(qt::KEY_CONTROL).with_modifiers(Modifiers::CONTROL);
 
     // A quick shortcut shows none.
@@ -982,7 +981,7 @@ fn the_jump_keys_show_once_the_modifier_is_held() {
     key(ctrl());
     hub.advance(200);
     assert_eq!(*shown.borrow(), [(labels, true)]);
-    WindowSystem::of(&hub.engine).set_application_state(&hub.engine, ApplicationState::Inactive);
+    ljos::testing::set_application_state(&hub.engine, ApplicationState::Inactive);
     assert_eq!(shown.borrow().last().unwrap(), &(vec![], false));
 }
 

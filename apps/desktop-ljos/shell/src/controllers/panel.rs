@@ -296,9 +296,9 @@ fn toast(engine: &Engine, kind: &str, title: &str, description: &str) {
     });
 }
 
-fn warn<T>(engine: &Engine, result: Result<T, ljos_engine::EngineError>) {
+fn warn<T>(engine: &Engine, result: Result<T, ljos::prelude::EngineError>) {
     if let Err(e) = result {
-        engine.log(ljos_engine::LogLevel::Warning, "Panel", e.to_string());
+        engine.log(ljos::prelude::LogLevel::Warning, "Panel", e.to_string());
     }
 }
 

@@ -24,10 +24,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
+use ljos::prelude::ConnectionId;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
-// What `Engine::connect` returns, which the facade does not name.
-use ljos_engine::ConnectionId;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
 use super::summary::{Obj, subagent_detail};

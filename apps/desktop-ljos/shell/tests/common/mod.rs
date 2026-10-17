@@ -310,46 +310,46 @@ pub fn js_value(engine: &Engine, js: &str) -> Value {
     engine.eval_js(js).unwrap_or_else(|e| panic!("{js}: {e}"))
 }
 
-/// A scene over `root`, for what a test wants to see painted or send input
-/// to. Frames run on the engine's own clock, which only moves when told.
+/// A test window, `width` by `height`, that shows nothing yet; the engine
+/// runs on its clock from here on. Make it before the objects whose timers
+/// the test lets run.
+///
+/// The window's clock would start at the engine's system time, off the
+/// 1 ms grid Ljós rounds timer deadlines up to, and then `advance(n)` stops
+/// short of an `n` ms timer started at once (TODO(ljos): no issue yet; the
+/// port's draft is "TestWindow's clock starts off the timer grid"). A
+/// virtual clock at zero, set first, starts it on the grid.
+pub fn test_window(engine: &Engine, width: f64, height: f64) -> ljos::testing::TestWindow {
+    engine.set_clock(Rc::new(ljos_runtime::VirtualClock::new()));
+    ljos::testing::TestWindow::new(engine, width, height)
+}
+
+/// A window showing `root`, for what a test wants to see painted or send
+/// input to. It runs on a virtual clock, which only moves when told.
 pub struct Scene {
-    pub scene: ljos_quick::QuickScene,
+    pub window: ljos::testing::TestWindow,
 }
 
 impl Scene {
     pub fn new(engine: &Engine, root: ObjectId, size: (f64, f64)) -> Self {
         // The bundled font: the same cells on every machine.
-        ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
-        let mut scene = ljos_quick::QuickScene::new(ljos::item::kurbo::Size::new(size.0, size.1));
-        scene.set_root(engine, root).expect("a root");
-        let mut s = Scene { scene };
-        s.settle(engine);
-        s
+        ljos::testing::set_text_engine(ljos::item::TextEngine::new());
+        let mut window = ljos::testing::TestWindow::new(engine, size.0, size.1);
+        window.show(root).expect("the root is shown");
+        Scene { window }
     }
 
     /// Frames until the scene has nothing left to do.
-    pub fn settle(&mut self, engine: &Engine) {
-        for _ in 0..64 {
-            let now = engine.now();
-            let out = self.scene.frame(engine, now);
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-                return;
-            }
-        }
-        panic!("the scene did not settle");
+    pub fn settle(&mut self) {
+        self.window.settle().expect("the scene settles");
     }
 
     /// What `item` last painted, back to front.
-    pub fn ops(&mut self, engine: &Engine, item: ObjectId) -> Vec<ljos::item::DrawOp> {
-        self.settle(engine);
-        let node = self.scene.node_of(item).expect("a node for the item");
-        let snapshot = self.scene.snapshot().expect("a frame").clone();
-        snapshot
-            .items
-            .iter()
-            .filter(|p| p.node == node)
-            .filter_map(|p| p.list.as_ref())
-            .flat_map(|l| l.ops().to_vec())
-            .collect()
+    pub fn ops(&mut self, item: ObjectId) -> Vec<ljos::item::DrawOp> {
+        self.settle();
+        self.window
+            .painted(item)
+            .map(|list| list.ops().to_vec())
+            .unwrap_or_default()
     }
 }

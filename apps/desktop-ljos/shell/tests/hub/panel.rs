@@ -18,6 +18,7 @@ use hal_c2_shell::thread_view::agents::AgentsModel;
 use hal_c2_shell::thread_view::pull_request_review::PullRequestReview;
 use hal_c2_shell::thread_view::workspace_files::WorkspaceFiles;
 use ljos::prelude::ObjectId;
+use ljos::system::{HostPrefs, report_system_prefs};
 use serde_json::json;
 
 use crate::Hub;
@@ -338,6 +339,28 @@ fn opening_within_a_thread_slides_for_the_set_duration() {
     Settings::of(&hub.engine).set(&hub.engine, "reduceMotion", json!(true));
     hub.dispatch("rightPanel.toggle", json!({}));
     assert_eq!(panel(&hub)["transitionMs"], 0);
+}
+
+#[test]
+fn the_systems_motion_preference_is_followed_while_the_shell_runs() {
+    let (hub, _dir) = device_hub(&["t1"]);
+    Settings::of(&hub.engine).set(&hub.engine, "panelAnimationDurationMs", json!(200));
+    open(&hub, "t1");
+    let system_reduces = |reduced| {
+        report_system_prefs(
+            &hub.engine,
+            HostPrefs {
+                reduced_motion: Some(reduced),
+                ..HostPrefs::default()
+            },
+        );
+    };
+    system_reduces(true);
+    hub.dispatch("rightPanel.toggle", json!({}));
+    assert_eq!(panel(&hub)["transitionMs"], 0);
+    system_reduces(false);
+    hub.dispatch("rightPanel.toggle", json!({}));
+    assert_eq!(panel(&hub)["transitionMs"], 200);
 }
 
 #[test]

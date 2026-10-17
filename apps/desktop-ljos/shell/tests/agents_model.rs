@@ -3,10 +3,8 @@
 
 mod common;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use common::{call, number};
@@ -17,7 +15,7 @@ use hal_c2_shell::thread_view::time::{Clock, Zone, parse_iso};
 use hal_c2_shell::thread_view::timeline::Timeline;
 use hal_c2_shell::thread_view::timeline_model::TimelineModel;
 use ljos::prelude::{Engine, ObjectId, Value};
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos::testing::TestWindow;
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -70,7 +68,7 @@ struct Fixture {
     root: ObjectId,
     timeline: ObjectId,
     agents: ObjectId,
-    timers: Arc<VirtualClock>,
+    window: RefCell<TestWindow>,
     now: Rc<Cell<DateTime<Utc>>>,
     seq: Cell<i64>,
 }
@@ -80,8 +78,8 @@ fn fixture() -> Fixture {
         common::compile(&[("Main", MAIN)], &[]),
         Rc::new(Disconnected::default()),
     );
-    let timers = Arc::new(VirtualClock::new());
-    engine.set_clock(Rc::new(timers.clone()));
+    // A window for its clock, before Main starts its timers on it.
+    let window = RefCell::new(common::test_window(&engine, 100.0, 100.0));
     let root = engine
         .create_from_url("Main", None, Vec::new())
         .expect("Main is made");
@@ -103,7 +101,7 @@ fn fixture() -> Fixture {
         root,
         timeline,
         agents,
-        timers,
+        window,
         now,
         seq: Cell::new(0),
     };
@@ -152,9 +150,7 @@ impl Fixture {
     fn pass(&self, ms: u64) {
         self.now
             .set(self.now.get() + chrono::Duration::milliseconds(ms as i64));
-        self.timers
-            .set(self.timers.now() + Duration::from_millis(ms));
-        self.engine.advance_timers(self.timers.now());
+        self.window.borrow_mut().advance(ms).unwrap();
     }
 }
 

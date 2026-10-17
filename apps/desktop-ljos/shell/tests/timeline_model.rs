@@ -6,8 +6,6 @@ mod common;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use common::{call, number, read};
 use hal_c2_shell::json::Json;
@@ -18,7 +16,7 @@ use hal_c2_shell::thread_view::timeline::{Out, Timeline};
 use hal_c2_shell::thread_view::timeline_model::TimelineModel;
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos::testing::TestWindow;
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -89,7 +87,7 @@ struct Fixture {
     engine: Engine,
     root: ObjectId,
     model: ObjectId,
-    clock: Arc<VirtualClock>,
+    window: RefCell<TestWindow>,
     stores: Rc<Stores>,
 }
 
@@ -98,8 +96,8 @@ fn fixture() -> Fixture {
         common::compile(&[("Main", MAIN)], &[]),
         Rc::new(Disconnected::default()),
     );
-    let clock = Arc::new(VirtualClock::new());
-    engine.set_clock(Rc::new(clock.clone()));
+    // A window for its clock, before Main starts its timers on it.
+    let window = RefCell::new(common::test_window(&engine, 100.0, 100.0));
     let root = engine
         .create_from_url("Main", None, Vec::new())
         .expect("Main is made");
@@ -117,7 +115,7 @@ fn fixture() -> Fixture {
         engine,
         root,
         model,
-        clock,
+        window,
         stores,
     }
 }
@@ -269,7 +267,6 @@ fn changes_reach_the_cache_after_the_flush_delay() {
     f.receive(json!({"t": "events", "offset": 4,
                      "events": [[4, "turn-item", "reply-1", {"a": {"text": "!"}}, "x"]]}));
     assert_eq!(f.stores.0.get(), after_snapshot, "it waits for more");
-    f.clock.set(f.clock.now() + Duration::from_millis(600));
-    f.engine.advance_timers(f.clock.now());
+    f.window.borrow_mut().advance(600).unwrap();
     assert_eq!(f.stores.0.get(), after_snapshot + 1);
 }

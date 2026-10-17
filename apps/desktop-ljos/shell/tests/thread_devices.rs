@@ -12,8 +12,6 @@ mod device_mc;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use common::{call, read, text};
 use device_fixture::{android_video, avcc, envelope, ios_video};
@@ -24,7 +22,7 @@ use hal_c2_shell::device::{self, ffmpeg};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{StreamEnd, StreamEvent, StreamId, StreamMessage};
 use ljos::prelude::{Engine, ObjectId, Value};
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos::testing::TestWindow;
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -68,7 +66,7 @@ struct Tab {
     stream: ObjectId,
     mc: Rc<DeviceMc>,
     script: Rc<RefCell<Script>>,
-    clock: Arc<VirtualClock>,
+    window: RefCell<TestWindow>,
     opened: Rc<RefCell<Vec<(String, bool)>>>,
     closed: Rc<RefCell<Vec<(String, String)>>>,
     names: Rc<RefCell<u32>>,
@@ -124,8 +122,8 @@ fn state(devices: &[Device], open: &[&str]) -> Json {
 fn tab_with(real_decoder: bool) -> Tab {
     let mc = DeviceMc::new();
     let engine = common::engine(common::compile(&[("Main", MAIN)], &[]), mc.clone());
-    let clock = Arc::new(VirtualClock::new());
-    engine.set_clock(Rc::new(clock.clone()));
+    // A window for its clock, before Main starts its timers on it.
+    let window = RefCell::new(common::test_window(&engine, 100.0, 100.0));
     let script = if real_decoder {
         Rc::new(RefCell::new(Script::default()))
     } else {
@@ -160,7 +158,7 @@ fn tab_with(real_decoder: bool) -> Tab {
         stream,
         mc,
         script,
-        clock,
+        window,
         opened,
         closed,
         names,
@@ -211,8 +209,7 @@ impl Tab {
     }
     /// `ms` pass on the engine's timers.
     fn pass(&self, ms: i32) {
-        self.clock.advance(Duration::from_millis(ms as u64));
-        self.engine.advance_timers(self.clock.now());
+        self.window.borrow_mut().advance(ms as u64).unwrap();
     }
     /// The decoder's news reaches the stream.
     fn decoded(&self) {
@@ -419,6 +416,24 @@ fn the_tab_says_it_is_connecting_until_the_first_picture() {
     t.decoded();
     assert_eq!(t.text("status"), "streaming");
     assert!(t.shown());
+}
+
+#[test]
+fn a_display_of_finer_pixels_gets_a_finer_picture() {
+    let t = tab();
+    ljos::testing::set_screens(
+        &t.engine,
+        &[ljos::testing::ScreenSpec {
+            scale: 2.0,
+            ..Default::default()
+        }],
+    );
+    t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
+    t.ios_video_sends(ios_video(false));
+    t.decoded();
+    assert!(t.shown());
+    // The 100 by 200 screen, in the display's pixels.
+    assert_eq!(t.script.borrow().maximum, (200, 400));
 }
 
 #[test]

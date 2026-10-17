@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{ConnectionId, EngineError, RowKey};
+use ljos::prelude::{ConnectionId, EngineError, RowKey};
 use serde_json::json;
 
 use super::file_render::{self, CSV_ROW_LIMIT};
@@ -1053,7 +1053,7 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 
 fn warn(engine: &Engine, e: &EngineError) {
     engine.log(
-        ljos_engine::LogLevel::Warning,
+        ljos::prelude::LogLevel::Warning,
         "WorkspaceFiles",
         e.to_string(),
     );
@@ -1530,11 +1530,11 @@ fn restart(
     let Some(interval) = interval else {
         return;
     };
-    let native = ljos_engine::Timer {
+    let native = ljos::prelude::Timer {
         interval,
         repeat: false,
         running: true,
-        ..ljos_engine::Timer::default()
+        ..ljos::prelude::Timer::default()
     };
     let made = engine.create_native(native, Some(obj)).and_then(|timer| {
         engine.connect_by_name(timer, "triggered", move |engine, _| then(engine, obj))?;

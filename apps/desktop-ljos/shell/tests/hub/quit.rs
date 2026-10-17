@@ -61,7 +61,7 @@ fn mod_q() -> KeyEvent {
 
 impl Quitting {
     fn key(&self, ev: KeyEvent) -> bool {
-        self.window.key(&self.hub.engine, &ev)
+        self.window.key(&ev)
     }
 
     /// Control, then Q, as a press of mod+Q starts.

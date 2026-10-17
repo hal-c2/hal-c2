@@ -35,9 +35,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos::item::ImageHandle;
-use ljos::prelude::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, QmlType, qml_impl};
-use ljos_engine::MetaRef;
+use ljos::item::{self, ImageHandle};
+use ljos::prelude::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, qml_impl};
 use serde_json::json;
 
 use super::decoder::{Decode, Decoded};
@@ -1147,7 +1146,7 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "DeviceStream",
             e.to_string(),
         );
@@ -1260,20 +1259,11 @@ impl DeviceStream {
 
 /// The largest picture worth making: the first screen's size in device
 /// pixels (Qt's `DeviceScreen::limit()`).
-///
-/// TODO(ljos#63): the facade has no way to an item's device pixel ratio, so
-/// it is read off the `Screen` attached object, below the facade.
 fn limit_of(engine: &Engine, screens: &[ObjectId]) -> (u32, u32) {
     let Some(&screen) = screens.iter().find(|s| engine.is_alive(**s)) else {
         return (0, 0);
     };
-    let ratio = engine
-        .attached_object(
-            screen,
-            &MetaRef::Static(ljos_controls::Screen::static_meta()),
-        )
-        .and_then(|a| engine.with::<ljos_controls::ScreenAttached, _>(a, |s| s.device_pixel_ratio))
-        .ok()
+    let ratio = Some(item::device_pixel_ratio(engine, screen))
         .filter(|r| r.is_finite() && *r > 0.0)
         .unwrap_or(1.0);
     let side = |name: &str| {
@@ -1447,11 +1437,11 @@ fn single_shot(
     ms: i32,
     f: impl Fn(&Engine) + 'static,
 ) -> Option<ObjectId> {
-    let native = ljos_engine::Timer {
+    let native = ljos::prelude::Timer {
         interval: ms,
         repeat: false,
         running: true,
-        ..ljos_engine::Timer::default()
+        ..ljos::prelude::Timer::default()
     };
     let timer = engine.create_native(native, Some(obj)).ok()?;
     engine

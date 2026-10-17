@@ -768,7 +768,7 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "ThreadDevices",
             e.to_string(),
         );

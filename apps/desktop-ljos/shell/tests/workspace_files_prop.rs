@@ -16,8 +16,6 @@ mod common;
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use common::FakeMc;
 use hal_c2_shell::Launch;
@@ -28,8 +26,7 @@ use hal_c2_shell::thread_view::rows::RowSource;
 use hal_c2_shell::thread_view::workspace_files::{SEARCH_DELAY_MS, WorkspaceFiles};
 use ljos::App;
 use ljos::prelude::{Engine, ObjectId, Value};
-// The facade has no virtual clock at the pinned Ljós; as the other tests.
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos::testing::TestWindow;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -478,7 +475,7 @@ impl Model {
 /// The real thing: the Files tab over a fake MC, and the requests it holds.
 struct Sut {
     engine: Engine,
-    clock: Arc<VirtualClock>,
+    window: TestWindow,
     mc: Rc<FakeMc>,
     files: ObjectId,
     tree: ObjectId,
@@ -494,8 +491,8 @@ impl Sut {
         let engine = App::new("test")
             .register(hal_c2_shell::register)
             .build_engine();
-        let clock = Arc::new(VirtualClock::new());
-        engine.set_clock(Rc::new(clock.clone()));
+        // A window for its clock, before the shell starts its timers on it.
+        let window = common::test_window(&engine, 100.0, 100.0);
         let mc = Rc::new(FakeMc::default());
         hal_c2_shell::start(&engine, &Launch::default(), mc.clone());
         let files = WorkspaceFiles::create(&engine, None, mc.clone()).expect("the files");
@@ -503,7 +500,7 @@ impl Sut {
         WorkspaceFiles::set_target(&engine, files, "env-a", "");
         Sut {
             engine,
-            clock,
+            window,
             mc,
             files,
             tree,
@@ -516,9 +513,7 @@ impl Sut {
     /// Lets the search pause pass, then takes in the calls made since: the
     /// disk is read as they come in.
     fn settle(&mut self) {
-        self.clock
-            .set(self.clock.now() + Duration::from_millis(SEARCH_DELAY_MS as u64));
-        self.engine.advance_timers(self.clock.now());
+        self.window.advance(SEARCH_DELAY_MS as u64).unwrap();
         let calls = self.mc.calls.borrow().clone();
         for (index, (_, method, payload)) in calls.iter().enumerate().skip(self.seen) {
             let text = |key: &str| payload.get(key).and_then(Json::as_str).unwrap_or("");
