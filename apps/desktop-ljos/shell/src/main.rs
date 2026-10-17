@@ -227,6 +227,7 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
     }
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
+    options.launch.state_dir = Some(paths.state);
     Ok(())
 }
 

@@ -10,11 +10,29 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init};
+use crate::controllers::settings::Settings;
 use crate::json::Json;
 
 pub const SIDEBAR_WIDTH: i32 = 256;
 pub const SIDEBAR_MIN_WIDTH: i32 = 208;
 pub const CONTENT_MIN_WIDTH: i32 = 480;
+
+/// How long the right panel slides open or closed: Settings → Appearance's
+/// panelAnimationDurationMs (at most 400), none when motion is reduced.
+// TODO(port): LayoutController g_systemReducedMotion — the platform's own
+// reduced-motion setting also turns it off.
+pub fn panel_animation_ms(engine: &Engine) -> i32 {
+    let settings = Settings::of(engine);
+    let reduce = settings.setting(engine, "reduceMotion");
+    if reduce.and_then(|v| v.as_bool()).unwrap_or(false) {
+        return 0;
+    }
+    let ms = settings
+        .setting(engine, "panelAnimationDurationMs")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    (ms as i32).clamp(0, 400)
+}
 
 pub struct Layout {
     bridge: Bridge,

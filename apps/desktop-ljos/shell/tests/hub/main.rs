@@ -18,6 +18,7 @@ mod keybindings;
 mod mc_plugin;
 mod menus;
 mod page;
+mod panel;
 mod plugin;
 mod provider_update_notice;
 mod pull_request_list;

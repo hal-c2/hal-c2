@@ -2,7 +2,6 @@ module HalC2.Shell
 singleton Terminals 1.0 Terminals.qml
 singleton PaletteModel 1.0 PaletteModel.qml
 singleton Themes 1.0 Themes.qml
-singleton Panel 1.0 Panel.qml
 singleton Onboarding 1.0 Onboarding.qml
 TreeView 1.0 TreeView.qml
 TreeViewDelegate 1.0 TreeViewDelegate.qml
