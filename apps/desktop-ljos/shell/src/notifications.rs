@@ -261,9 +261,6 @@ impl Presenter for NativeNotifications {
     fn permitted(&self) -> Option<bool> {
         Some(self.supported())
     }
-
-    // No badge: desktop-qt sets QGuiApplication::setBadgeNumber, and Ljós
-    // has no badge yet (the default does nothing). TODO(ljos#45).
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {

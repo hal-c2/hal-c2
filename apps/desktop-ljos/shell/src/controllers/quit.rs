@@ -164,9 +164,7 @@ impl QuitController {
             for hook in &hooks {
                 hook(engine);
             }
-            // Qt.quit(): Ljós has no Rust call for it (`Engine::request_quit`
-            // is crate-private, TODO(ljos#44)), so it goes through JS.
-            let _ = engine.eval_js("Qt.quit()");
+            engine.request_quit();
         });
     }
 

@@ -602,7 +602,6 @@ impl Keymap {
     /// shell's with that focus.
     fn refresh_shortcuts(&self, engine: &Engine) {
         let commands = Commands::of(engine);
-        commands.prune(engine);
         let focuses = [
             Focus::default(),
             Focus {

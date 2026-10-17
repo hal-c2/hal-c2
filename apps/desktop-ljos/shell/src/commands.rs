@@ -23,11 +23,12 @@
 //! it whenever it likes, without reaching the keybindings controller.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos::prelude::{Atom, Cx, Engine, ModelSignals, ObjectId, QmlListModel, QmlObject, RowKey};
-use ljos::prelude::{Value, qml_impl};
+use ljos::prelude::{JsError, SignalIndex, Value, qml_impl};
 
 use crate::bridge::Bridge;
 
@@ -123,6 +124,9 @@ struct Inner {
     entries: RefCell<Vec<Entry>>,
     next_key: Cell<RowKey>,
     object: Cell<Option<ObjectId>>,
+    /// The owners whose `destroyed` takes their commands away, each
+    /// connected once.
+    owners: RefCell<HashSet<ObjectId>>,
     signals: RefCell<Option<ModelSignals>>,
     label_for: RefCell<Option<LabelFor>>,
     ran: RefCell<Vec<Hook>>,
@@ -181,6 +185,24 @@ impl CommandRegistry {
     #[qml(invokable)]
     fn run(cx: &Cx, command: Atom) -> bool {
         Commands::of(cx.engine).run(cx.engine, &command)
+    }
+}
+
+/// What a failed QML command says, as desktop-qt's: the thrown error's
+/// `message` (`no` for `throw new Error("no")`).
+///
+/// Ljós's `JsError::Thrown` holds what the thrown value prints as (`Error:
+/// no`), not the value, so its `message` cannot be read; the name an error
+/// prints before it is taken off instead. A thrown value that is not an
+/// error keeps what it prints as, where Qt's says nothing. TODO(ljos): not
+/// filed yet; the README's Ljós list has it.
+fn thrown_message(error: JsError) -> String {
+    let JsError::Thrown { message, .. } = error else {
+        return error.to_string();
+    };
+    match message.split_once(": ") {
+        Some((name, rest)) if name.ends_with("Error") && !name.contains(' ') => rest.to_owned(),
+        _ => message,
     }
 }
 
@@ -272,7 +294,7 @@ impl Commands {
     }
 
     /// A QML callback, owned by `owner`: the command goes when it does. Not
-    /// a function (as far as Rust can tell): nothing is added.
+    /// a function, or an owner already gone: nothing is added.
     pub fn add_js(
         &self,
         engine: &Engine,
@@ -281,12 +303,54 @@ impl Commands {
         callback: Value,
         owner: Option<ObjectId>,
     ) {
-        // Ljós cannot say whether a JS value is callable (TODO(ljos#42));
-        // anything that is not a JS value certainly is not.
-        if !matches!(callback, Value::Js(_)) {
+        if !engine.is_callable(&callback) {
+            return;
+        }
+        if let Some(owner) = owner
+            && !self.watch(engine, owner)
+        {
             return;
         }
         self.insert(engine, command, title, Runner::Js(callback), owner, None);
+    }
+
+    /// Takes `owner`'s commands away as it is destroyed (Qt's
+    /// `QObject::destroyed`); false when it is gone already.
+    fn watch(&self, engine: &Engine, owner: ObjectId) -> bool {
+        if self.0.owners.borrow().contains(&owner) {
+            return true;
+        }
+        let inner: Weak<Inner> = Rc::downgrade(&self.0);
+        let connected = engine.connect(owner, SignalIndex::DESTROYED, move |engine, _| {
+            if let Some(inner) = inner.upgrade() {
+                Commands(inner).forget(engine, owner);
+            }
+        });
+        if connected.is_err() {
+            return false;
+        }
+        self.0.owners.borrow_mut().insert(owner);
+        true
+    }
+
+    /// Takes away the QML commands `owner` added, as it goes.
+    fn forget(&self, engine: &Engine, owner: ObjectId) {
+        self.0.owners.borrow_mut().remove(&owner);
+        let mut removed = false;
+        loop {
+            let index = self
+                .0
+                .entries
+                .borrow()
+                .iter()
+                .position(|e| e.owner == Some(owner));
+            let Some(index) = index else { break };
+            self.remove_at(engine, index);
+            removed = true;
+        }
+        if removed {
+            self.count_changed(engine);
+        }
     }
 
     /// Adds `command` as a menu of `choices`, read each time it is shown.
@@ -317,7 +381,6 @@ impl Commands {
         owner: Option<ObjectId>,
         choices: Option<Choices>,
     ) {
-        self.prune(engine);
         let label_for = self.0.label_for.borrow().clone();
         let shortcut = label_for.map_or(String::new(), |l| l(engine, command));
         let replaced = {
@@ -387,30 +450,7 @@ impl Commands {
         }
     }
 
-    /// Takes away the QML commands whose owner is gone.
-    ///
-    /// Ljós tells Rust nothing when an object is destroyed (Qt's
-    /// `QObject::destroyed`), so a dead owner's command goes the next time
-    /// the registry is used, not at once. TODO(ljos#41).
-    pub fn prune(&self, engine: &Engine) {
-        let mut pruned = false;
-        loop {
-            let dead = self
-                .0
-                .entries
-                .borrow()
-                .iter()
-                .position(|e| e.owner.is_some_and(|o| !engine.is_alive(o)));
-            let Some(index) = dead else { break };
-            self.remove_at(engine, index);
-            pruned = true;
-        }
-        if pruned {
-            self.count_changed(engine);
-        }
-    }
-
-    /// How many commands are registered (owners gone or not).
+    /// How many commands are registered.
     pub fn len(&self) -> usize {
         self.0.entries.borrow().len()
     }
@@ -419,8 +459,7 @@ impl Commands {
         self.len() == 0
     }
 
-    pub fn contains(&self, engine: &Engine, command: &str) -> bool {
-        self.prune(engine);
+    pub fn contains(&self, _engine: &Engine, command: &str) -> bool {
         self.index_of(command).is_some()
     }
 
@@ -437,7 +476,6 @@ impl Commands {
     /// nothing. It runs once no controller is running, so a controller may
     /// run a command that reaches back into it.
     pub fn run(&self, engine: &Engine, command: &str) -> bool {
-        self.prune(engine);
         let runner = {
             let entries = self.0.entries.borrow();
             let Some(entry) = entries.iter().find(|e| e.row.command == command) else {
@@ -456,9 +494,9 @@ impl Commands {
                     run(engine);
                     None
                 }
-                // Ljós's call_js says only that the call threw, not why:
-                // the message is empty (TODO(ljos#42)).
-                Runner::Js(callback) => engine.call_js(&callback, &[]).is_none().then(String::new),
+                Runner::Js(callback) => {
+                    engine.try_call_js(&callback, &[]).err().map(thrown_message)
+                }
                 Runner::Menu => {
                     me.emit(engine, &me.0.menu_requested, &command);
                     None
@@ -595,7 +633,7 @@ impl Commands {
         self.0.menu_requested.borrow_mut().push(Rc::new(f));
     }
 
-    /// `command` ran and failed, saying why (empty: it did not say).
+    /// `command` ran and failed, saying why (what its callback threw).
     pub fn on_failed(&self, f: impl Fn(&Engine, &str, &str) + 'static) {
         self.0.failed.borrow_mut().push(Rc::new(f));
     }

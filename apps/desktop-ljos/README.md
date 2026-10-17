@@ -66,10 +66,12 @@ What the shell still works around, each where it does so:
 
 - Compiled QML gets no base URL from `App::qml_dirs`, so `shell/src/qml.rs` compiles with `ljos::dev` and sets
   one; and a compiled source does not say what it holds, so `--check` counts the files itself.
-- No application-wide key filter (hal-c2/ljos-ui#43) or Rust `request_quit` (#44): `controllers/quit.rs`.
-- No destroyed signal (#41), and `call_js` neither says why a call threw nor whether a value is callable (#42):
-  `commands.rs`.
-- No badge (#45): `notifications.rs`. No tree models (#27): `qml/HalC2/Shell/TreeView.qml`.
+- No application-wide key filter (hal-c2/ljos-ui#43): `controllers/quit.rs` and `controllers/keybindings.rs`.
+- `JsError::Thrown` holds what a thrown value prints as, not the value, so `commands.rs` takes the error's name
+  back off to say its `message`.
+- `ClipboardService::set_text` says nothing of a failure, so a copy always says it was copied:
+  `controllers/thread_menu.rs`.
+- No tree models (#27): `qml/HalC2/Shell/TreeView.qml`.
 - A record (`Value::Map`, `Value::List`) becomes a new script object on every read, a copy of the whole tree
   that is never `===` itself, so state QML binds to is handed through a script function once; and a typed `Json`
   parameter throws the whole call for one field that is not data, so `Shell.dispatch` and `Shell.publish` read
