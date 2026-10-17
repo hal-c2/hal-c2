@@ -1,0 +1,63 @@
+import { describe, expect, it } from "bun:test";
+import { createPropertyMap } from "opentui-qml";
+
+import type { PickRequest } from "./composerState.ts";
+import { STATUS_HISTORY_LIMIT, createStatusLog } from "./statusLog.ts";
+
+function setup() {
+  const state = createPropertyMap();
+  const cleared: string[] = [];
+  const picks: PickRequest[] = [];
+  const log = createStatusLog({
+    state,
+    now: () => "2026-07-14T00:00:00.000Z",
+    clearCurrent: (text) => cleared.push(text),
+    pick: (request) => picks.push(request),
+  });
+  return { state, log, cleared, picks };
+}
+
+const error = (text: string) => ({ kind: "error", text }) as const;
+
+describe("status log", () => {
+  it("pins only errors, and a newer error replaces the pinned one", () => {
+    const { state, log } = setup();
+    log.note({ kind: "info", text: "Ready." });
+    expect(state.get("statusError")).toBeNull();
+    log.note(error("first"));
+    log.note({ kind: "success", text: "Done." });
+    expect(state.get("statusError")).toEqual({ text: "first" });
+    log.note(error("second"));
+    expect(state.get("statusError")).toEqual({ text: "second" });
+  });
+
+  it("offers dismissal only while an error is pinned, and clears the line it was on", () => {
+    const { log, state, cleared } = setup();
+    const ids = () => log.commands().map((command) => command.id);
+    expect(ids()).toEqual(["status.history"]);
+    log.note(error("boom"));
+    expect(ids()).toEqual(["status.dismiss", "status.history"]);
+    expect(log.dispatch("status.dismiss")).toBe(true);
+    expect(state.get("statusError")).toBeNull();
+    expect(cleared).toEqual(["boom"]);
+    expect(ids()).toEqual(["status.history"]);
+  });
+
+  it("does not record the same error again while it is pinned", () => {
+    const { log, picks } = setup();
+    log.note(error("boom"));
+    log.note(error("boom"));
+    log.dispatch("status.history");
+    expect(picks[0]!.options).toHaveLength(1);
+  });
+
+  it("lists the errors newest first, keeps the last few, and reading them dismisses the pinned one", () => {
+    const { log, picks, state } = setup();
+    for (let n = 0; n < STATUS_HISTORY_LIMIT + 5; n += 1) log.note(error(`error ${n}`));
+    log.dispatch("status.history");
+    const labels = picks[0]!.options.map((option) => option.label);
+    expect(labels).toHaveLength(STATUS_HISTORY_LIMIT);
+    expect(labels[0]).toBe(`error ${STATUS_HISTORY_LIMIT + 4}`);
+    expect(state.get("statusError")).toBeNull();
+  });
+});
