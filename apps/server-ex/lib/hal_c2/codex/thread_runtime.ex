@@ -97,9 +97,20 @@ defmodule HalC2.Codex.ThreadRuntime do
   thread's provider thread. Needs the thread's session to be running.
   """
   def upload_feedback(thread_id, reason) do
+    gone = {:error, "The provider session is no longer running. Send a message first."}
+
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:upload_feedback, reason}, 60_000)
-      [] -> {:error, "The provider session is no longer running. Send a message first."}
+      # A session that stopped after the lookup is as gone as one the lookup did not find.
+      [{pid, _}] ->
+        try do
+          GenServer.call(pid, {:upload_feedback, reason}, 60_000)
+        catch
+          :exit, {why, _} when why in [:noproc, :normal, :shutdown] -> gone
+          :exit, {{:shutdown, _}, _} -> gone
+        end
+
+      [] ->
+        gone
     end
   end
 
@@ -173,8 +184,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Codex.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 

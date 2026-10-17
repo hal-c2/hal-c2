@@ -398,8 +398,16 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def release do
     case Orchestration.release_session(@tid) do
-      :ok -> reply({:ok, %{}}, [])
-      :busy -> reply({:error, :busy}, [])
+      :ok ->
+        # Released means gone from the registry too, not only dead: the next message
+        # looks the session up first.
+        if Registry.lookup(HalC2.Muse.Registry, @tid) != [],
+          do: raise("a released session is still registered")
+
+        reply({:ok, %{}}, [])
+
+      :busy ->
+        reply({:error, :busy}, [])
     end
   end
 
