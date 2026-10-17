@@ -544,8 +544,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^the user's own git config sends "(?<url>[^"]+)" to SSH$/,
-       %{args: ["https://github.com/"]} = context do
+  step "the user's own git config sends \"https://github.com/\" to SSH", context do
     config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
 
     File.write!(config, """
