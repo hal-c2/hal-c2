@@ -63,6 +63,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
     engine.register_singleton::<controllers::threads::ThreadsObject>(MODULE, v);
     engine.register_singleton::<controllers::panel::PanelObject>(MODULE, v);
+    engine.register_singleton::<controllers::terminals::TerminalsObject>(MODULE, v);
     thread_view::register(engine, v);
     bridge::Bridge::of(engine);
 }
@@ -90,8 +91,9 @@ pub struct Launch {
     /// none keeps nothing.
     pub data_dir: Option<PathBuf>,
     /// Where the window's own state is kept: each thread's right panel
-    /// (`shell-panel.json`) ([`storage::StoragePaths::state`]); none keeps
-    /// nothing.
+    /// (`shell-panel.json`), the terminals drawer's height and per-thread
+    /// state (`shell-terminals.json`) ([`storage::StoragePaths::state`]);
+    /// none keeps nothing.
     pub state_dir: Option<PathBuf>,
 }
 
@@ -160,6 +162,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .map(|dir| dir.join("shell-panel.json")),
     );
     controller::start(engine, mc.clone(), controllers::registrations());
+    controllers::terminals::set_store_path(
+        engine,
+        launch
+            .state_dir
+            .as_ref()
+            .map(|dir| dir.join("shell-terminals.json")),
+    );
     controllers::settings::Settings::of(engine).set_device_path(
         engine,
         launch

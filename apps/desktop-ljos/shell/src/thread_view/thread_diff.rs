@@ -74,7 +74,7 @@ pub enum Effect {
         payload: Json,
         then: Then,
     },
-    /// `orchestration.dispatchCommand`; the runner adds the commandId.
+    /// `orchestration.dispatchCommand`, through `Mc::dispatch_command`.
     Dispatch {
         environment: String,
         command: Json,

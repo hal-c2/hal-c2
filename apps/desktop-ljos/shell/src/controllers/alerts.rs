@@ -11,9 +11,9 @@
 //! thread but the one shown; without focus, a system notification per thread
 //! (a newer one replaces it), which the window's focus clears. Sound follows
 //! the mode alone. Turns that finish without focus are counted on the dock or
-//! taskbar badge until the window has focus again. The platform side is the
-//! [`Presenter`], which main.rs wires to [`crate::notifications`] and tests
-//! fake.
+//! taskbar badge (Ljós's `Platform` badge) until the window has focus again.
+//! The rest of the platform side is the [`Presenter`], which main.rs wires
+//! to [`crate::notifications`] and tests fake.
 //!
 //! A thread's alerts can be muted on this device (`mutedAlertThreads`,
 //! thread keys): it is still followed, so unmuting alerts only what changes
@@ -22,7 +22,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
-use ljos::prelude::{Engine, Value};
+use ljos::prelude::{Engine, Platform, Value};
 
 use crate::bridge::Bridge;
 use crate::commands::Commands;
@@ -62,9 +62,6 @@ pub trait Presenter {
     fn permitted(&self) -> Option<bool> {
         None
     }
-    /// The dock or taskbar badge: how many turns finished since the window
-    /// last had focus (0 clears it).
-    fn badge(&self, _count: u32) {}
 }
 
 /// No platform: nothing is shown or played.
@@ -93,6 +90,12 @@ pub struct AlertRun {
     /// When it completed, in milliseconds since the epoch
     /// (`sidebar::parseIso` of its `completedAt`).
     pub completed_at: Option<i64>,
+}
+
+/// The dock or taskbar badge: how many turns finished since the window last
+/// had focus (0 clears it), as desktop-qt's `QGuiApplication::setBadgeNumber`.
+fn badge(engine: &Engine, count: u32) {
+    Platform::of(engine).set_badge_number(count);
 }
 
 pub fn has_system_notifications(mode: &str) -> bool {
@@ -295,7 +298,7 @@ impl AlertController {
         self.focused
     }
 
-    pub fn set_focused(&mut self, _engine: &Engine, focused: bool) {
+    pub fn set_focused(&mut self, engine: &Engine, focused: bool) {
         if self.focused == focused {
             return;
         }
@@ -306,7 +309,7 @@ impl AlertController {
         }
         if focused && self.unseen > 0 {
             self.unseen = 0;
-            self.presenter.badge(0);
+            badge(engine, 0);
         }
     }
 
@@ -498,7 +501,7 @@ impl AlertController {
             }
             if kind == "completion" && !self.focused {
                 self.unseen += 1;
-                self.presenter.badge(self.unseen);
+                badge(engine, self.unseen);
             }
             if self.in_app && self.focused && key != shown {
                 let kind_of_toast = if kind == "completion" {

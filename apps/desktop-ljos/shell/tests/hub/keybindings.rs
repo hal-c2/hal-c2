@@ -14,6 +14,7 @@ use hal_c2_shell::controllers::keybindings::{Focus, KeybindingsObject, Keymap};
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::settings_scope::{Environment, SettingsScope};
+use hal_c2_shell::controllers::terminals::Terminals;
 use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::json::{self, Json};
 use hal_c2_shell::keybindings::{command_label, qt};
@@ -23,6 +24,8 @@ use serde_json::json;
 
 use crate::Hub;
 use crate::common::call;
+use crate::page::last;
+use crate::workspace::{clustered, on_thread, project, shell, thread};
 
 const UPSERT: &str = "hal-c2.upsertKeybinding";
 const REMOVE: &str = "hal-c2.removeKeybinding";
@@ -203,18 +206,17 @@ fn a_default_binding_runs_its_native_command() {
 #[test]
 fn a_key_the_shell_has_no_command_for_stays_with_the_focused_control() {
     let (hub, keymap) = hub();
-    // composer.previousWorktree is no one's command here.
-    assert_eq!(shortcut(&keymap, "Ctrl+Shift+L")["chrome"], false);
-    assert!(!keymap.press(&hub.engine, "Ctrl+Shift+L", CHROME));
+    // tabs.next is no one's command here.
+    assert_eq!(shortcut(&keymap, "Ctrl+Alt+]")["chrome"], false);
+    assert!(!keymap.press(&hub.engine, "Ctrl+Alt+]", CHROME));
     // A key nothing binds.
     assert!(!keymap.press(&hub.engine, "Ctrl+Shift+Q", CHROME));
 }
 
 #[test]
 fn a_terminal_keeps_every_key_but_the_terminal_commands() {
-    let (hub, keymap) = hub();
-    let log = actions(&hub);
-    keymap.add_terminal_commands(&hub.engine);
+    // A build that draws terminals has their commands.
+    let (hub, keymap) = linux(on_thread("main", None));
     let split = shortcut(&keymap, "Ctrl+D");
     assert_eq!(split["terminal"], true);
     // Outside a terminal it is the right panel's diff.toggle.
@@ -222,9 +224,13 @@ fn a_terminal_keeps_every_key_but_the_terminal_commands() {
     assert_eq!(shortcut(&keymap, "Ctrl+[")["terminal"], false);
     assert_eq!(shortcut(&keymap, "Ctrl+[")["chrome"], true);
 
+    hub.dispatch("terminal.toggle", json!(null));
     assert!(keymap.press(&hub.engine, "Ctrl+D", TERMINAL));
     assert!(!keymap.press(&hub.engine, "Ctrl+[", TERMINAL));
-    assert_eq!(*log.borrow(), ["terminal.split null"]);
+    assert_eq!(
+        hub.with_controller::<Terminals, _>(|t, _| t.terminal_ids()),
+        ["term-1", "term-2"]
+    );
 }
 
 #[test]
@@ -324,18 +330,20 @@ fn the_composer_keys_reach_the_composer_brick() {
 
 #[test]
 fn a_project_script_runs_from_its_key() {
-    let (hub, keymap) = hub();
-    let log = actions(&hub);
+    let (hub, keymap) = linux(clustered(Launch::default()));
+    let scripts = json!({"scripts": [{"id": "test", "name": "Test", "command": "npm test",
+        "icon": "test", "runOnWorktreeCreate": false}]});
+    shell(&hub, vec![project(scripts), thread("t1", "main", None)]);
+    hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
     push(
         &hub,
         json!([{"key": "mod+shift+u", "command": "script.test.run"}]),
     );
     assert_eq!(shortcut(&keymap, "Ctrl+Shift+U")["chrome"], true);
     assert!(keymap.press(&hub.engine, "Ctrl+Shift+U", CHROME));
-    assert_eq!(
-        *log.borrow(),
-        [r#"workspace.runScript {"scriptId":"test"}"#]
-    );
+    // It runs in a terminal of its own, as its action does.
+    assert_eq!(hub.published("workspace")["preferredScriptId"], "test");
+    assert_eq!(last(&hub, "env-1", "terminal.open")["terminalId"], "term-1");
     let row = row(&keymap, "script.test.run", "mod+shift+u");
     assert_eq!(row["source"], "Project");
     assert_eq!(row["canRemove"], true);
