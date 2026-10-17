@@ -13,16 +13,13 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
 
 use crate::bridge::Bridge;
 use crate::json::Json;
 
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either
-// (meta.create is gone), and `engine.singleton` fails.
-#[qml(module = "HalC2.Shell", name = "Theme")]
+#[qml(module = "HalC2.Shell", name = "Theme", uncreatable)]
 #[qml_singleton]
 pub struct ThemeStore {
     #[qml(notify, readonly)]

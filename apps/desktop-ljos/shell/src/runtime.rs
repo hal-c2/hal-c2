@@ -6,13 +6,10 @@
 
 use std::path::Path;
 
-use ljos::prelude::{Atom, Cx, Engine, QmlObject, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Cx, Engine, QmlObject, qml_impl, qml_singleton};
 
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either
-// (meta.create is gone), and `engine.singleton` fails.
-#[qml(module = "HalC2.Shell", name = "Runtime")]
+#[qml(module = "HalC2.Shell", name = "Runtime", uncreatable)]
 #[qml_singleton]
 pub struct ShellRuntime {
     #[qml(constant, readonly)]

@@ -34,8 +34,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -1176,8 +1175,7 @@ fn toast(engine: &Engine, title: &str, reason: &str) {
 /// reads `document` or `device` too, which change whenever what it says
 /// may have.
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either.
-#[qml(module = "HalC2.Shell", name = "Settings")]
+#[qml(module = "HalC2.Shell", name = "Settings", uncreatable)]
 #[qml_singleton]
 pub struct SettingsObject {
     #[qml(notify, readonly)]

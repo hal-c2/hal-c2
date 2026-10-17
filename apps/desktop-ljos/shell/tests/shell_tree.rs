@@ -6,10 +6,12 @@ mod common;
 use std::rc::Rc;
 
 use common::{shell_with, text};
+use hal_c2_shell::Launch;
 use hal_c2_shell::mc::Disconnected;
 use hal_c2_shell::qml::{self, Roots};
-use hal_c2_shell::{Launch, render};
 use ljos::App;
+use ljos::dev::OnError;
+use ljos::render::{Fonts, Picture, set_fonts};
 
 #[test]
 fn native_and_qml_singletons_share_the_module() {
@@ -34,21 +36,14 @@ fn native_and_qml_singletons_share_the_module() {
 
 #[test]
 fn the_desktop_shell_loads_from_the_checkout() {
-    let loaded = qml::load(&Roots::checkout()).expect("the QML loads");
-    // The native types not ported yet (Terminal, DeviceScreen) fail their
-    // files only.
-    assert!(
-        loaded.compiled * 10 >= loaded.files * 9,
-        "{} of {}: {:?}",
-        loaded.compiled,
-        loaded.files,
-        loaded.errors
-    );
+    let source = qml::compile(&Roots::checkout(), OnError::Fail).expect("every QML file compiles");
+    set_fonts(Fonts::Bundled);
     let engine = App::new("test")
         .register(hal_c2_shell::register)
-        .source(loaded.source)
+        .source(source)
         .build_engine();
-    let clock = render::prepare(&engine);
+    let picture = Picture::new(640, 400).settle(200);
+    picture.install(&engine);
     let mc = Rc::new(Disconnected::default());
     hal_c2_shell::start(&engine, &Launch::default(), mc.clone());
     hal_c2_shell::bridge::Bridge::of(&engine).dispatch(
@@ -60,6 +55,6 @@ fn the_desktop_shell_loads_from_the_checkout() {
         .create_from_url("Main", None, Vec::new())
         .expect("Main is made");
     mc.deliver(&engine);
-    let png = render::picture(&engine, &clock, root, (640, 400), 200).expect("a picture");
+    let png = picture.png(&engine, root).expect("a picture");
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }

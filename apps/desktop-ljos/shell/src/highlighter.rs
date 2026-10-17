@@ -75,13 +75,8 @@ fn line_markers(line: &str, offset: usize, color: Color, spans: &mut Vec<Highlig
 }
 
 /// Adds the type to the `HalC2.Shell` module.
-pub fn register(engine: &Engine, version: ljos_engine::Version) {
-    use ljos_engine::{MetaRef, QmlType};
-    engine.register_type(
-        crate::MODULE,
-        version,
-        MetaRef::Static(ComposerHighlighter::static_meta()),
-    );
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [ComposerHighlighter]));
 }
 
 #[derive(QmlObject)]

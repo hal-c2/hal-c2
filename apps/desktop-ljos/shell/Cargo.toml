@@ -12,25 +12,31 @@ name = "hal-c2-ljos"
 path = "src/main.rs"
 
 [dependencies]
-# dev-qml: the shell compiles its QML at start-up (see src/qml.rs for why).
-# No `media`: the bricks play nothing.
-ljos = { workspace = true, features = ["shell", "dev-qml"] }
-# The system colour scheme's type, which ljos_quick returns but does not name.
-ljos_a11y.workspace = true
-ljos_compiler.workspace = true
-ljos_controls.workspace = true
-# For the paths the QmlObject derive generates (see the workspace manifest).
+# dev-qml: the shell compiles its QML at start-up (the README says why).
+# render: `--render`. No `media`: the bricks play nothing.
+ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
+# Below the facade, for what it does not offer yet. The custom items
+# (Terminal, DeviceScreen, the composer's highlighter) are ljos_quick's
+# hooks over ljos_engine's and ljos_render's types; the facade has no way
+# to one.
 ljos_engine.workspace = true
-# The clipboard's mode, which the facade does not name.
-ljos_platform.workspace = true
 ljos_quick.workspace = true
 ljos_render.workspace = true
-ljos_runtime.workspace = true
 # The layout of a run of terminal cells (LayoutParams, which ljos_quick does
 # not re-export).
 ljos_text.workspace = true
+# What the facade hands out but does not name: the system colour scheme
+# (ljos_quick::color_scheme), the clipboard's mode, the coalescing key of
+# `UiHandle::send_coalesced`, the engine clock's `Time` and `TimerId`.
+ljos_a11y.workspace = true
+ljos_platform.workspace = true
+ljos_runtime.workspace = true
+# The focus state of the application (`Application`), which only QML reads
+# through the facade.
+ljos_controls.workspace = true
 hal_c2_mc.workspace = true
-# The system's handler for links (Ljós has no openUrlExternally yet).
+# The system's handler for links: Ljós at the pin has no openUrlExternally
+# (TODO(ljos#10): fixed after it).
 open = "5"
 # The kept session (src/session.rs).
 serde.workspace = true

@@ -51,13 +51,8 @@ const NOT_TRASHED: &str =
     "The folder could not be moved to the system trash. It has not been permanently deleted.";
 
 /// Adds the model to the `HalC2.Shell` module.
-pub fn register(engine: &Engine, version: ljos_engine::Version) {
-    use ljos_engine::{MetaRef, QmlType};
-    engine.register_type(
-        crate::MODULE,
-        version,
-        MetaRef::Static(LocalFolderModel::static_meta()),
-    );
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [LocalFolderModel]));
 }
 
 /// What moves a folder to the system Trash; false leaves it where it is.

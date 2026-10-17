@@ -16,9 +16,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use ljos::prelude::{
-    Atom, Cx, Engine, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl,
+    Atom, Cx, Engine, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl, qml_singleton,
 };
-use ljos_engine::qml_singleton;
 use ljos_platform::ClipboardMode;
 
 use crate::json::{self, Json};
@@ -53,9 +52,7 @@ type ClipboardWriter = Rc<dyn Fn(&str)>;
 
 /// `Shell` in `HalC2.Shell`.
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either
-// (meta.create is gone), and `engine.singleton` fails.
-#[qml(module = "HalC2.Shell", name = "Shell")]
+#[qml(module = "HalC2.Shell", name = "Shell", uncreatable)]
 #[qml_singleton]
 pub struct ShellBridge {
     #[qml(constant, readonly)]

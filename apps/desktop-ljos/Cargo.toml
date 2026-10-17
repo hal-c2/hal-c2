@@ -14,11 +14,8 @@ publish = false
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
 ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "1eba260ed1e9cf61b364ae6442b595abb132880d", default-features = false }
-# Behind the facade, for what it does not offer yet (shell/src/qml.rs and
-# shell/src/render.rs say what for). Same rev as `ljos`.
-ljos_compiler = { git = "https://github.com/hal-c2/ljos-ui", rev = "1eba260ed1e9cf61b364ae6442b595abb132880d" }
-# The QmlObject derive and qml_impl name `::ljos_engine`, which a `pub use`
-# through the facade does not make resolve: only a direct dependency does.
+# Behind the facade, for what it does not offer yet (shell/Cargo.toml says
+# what for). Same rev as `ljos`.
 ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "1eba260ed1e9cf61b364ae6442b595abb132880d" }
 ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "1eba260ed1e9cf61b364ae6442b595abb132880d" }
 ljos_a11y = { git = "https://github.com/hal-c2/ljos-ui", rev = "1eba260ed1e9cf61b364ae6442b595abb132880d" }

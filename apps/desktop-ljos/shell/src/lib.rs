@@ -22,7 +22,6 @@ pub mod provider;
 pub mod notifications;
 pub mod qml;
 pub mod qr;
-pub mod render;
 pub mod runtime;
 pub mod session;
 pub mod sidebar_model;
@@ -35,8 +34,7 @@ pub mod theme;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use ljos::prelude::Engine;
-use ljos_engine::Version;
+use ljos::prelude::{Engine, Version};
 
 /// The module's import name.
 pub const MODULE: &str = "HalC2.Shell";
@@ -46,17 +44,17 @@ pub const MODULE: &str = "HalC2.Shell";
 /// module is QML (qml/HalC2/Shell); a qmldir naming those files beside
 /// these types is one module to the bricks.
 ///
-/// An `App::register` function: Ljós takes a plain `fn`, so what depends on
-/// the launch (config dir, MC) is given afterwards, by `theme::install`,
-/// `runtime::install` and `controller::start`.
+/// For `App::register`, which also runs it on the engine that compiles the
+/// QML, so what depends on the launch (config dir, MC) is given afterwards,
+/// by [`start`].
 pub fn register(engine: &Engine) {
     let v = Version::new(1, 0);
     engine.register_singleton::<bridge::ShellBridge>(MODULE, v);
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
-    folders::register(engine, v);
-    highlighter::register(engine, v);
-    device_screen::register(engine, v);
+    folders::register(engine);
+    highlighter::register(engine);
+    device_screen::register(engine);
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);

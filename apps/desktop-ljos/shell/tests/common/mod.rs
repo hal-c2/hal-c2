@@ -11,32 +11,28 @@ use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Mc, OnFrame, OnReady, Reply, Resume, SubId};
 use ljos::App;
 use ljos::MapSource;
-use ljos::dev::EngineOracle;
+use ljos::dev::OnError;
 use ljos::prelude::{Engine, ObjectId, Value};
-use ljos_compiler::{Project, compile_file};
 
 /// `files` (key, text) compiled against the standard modules and
-/// `HalC2.Shell`; `qmldirs` (directory key, text) after them. Panics with
-/// the diagnostics of a file that does not compile.
+/// `HalC2.Shell`, with `qmldirs` (directory key, text) beside them. Panics
+/// with the errors of a file that does not compile.
 pub fn compile(files: &[(&str, &str)], qmldirs: &[(&str, &str)]) -> MapSource {
+    let dir = tempfile::tempdir().expect("a directory for the QML");
+    let put = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().expect("a file in the directory"))
+            .and_then(|()| std::fs::write(&path, text))
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    };
+    for (key, text) in files {
+        put(dir.path().join(format!("{key}.qml")), text);
+    }
+    for (key, text) in qmldirs {
+        put(dir.path().join(key).join("qmldir"), text);
+    }
     let snapshot = ljos::engine();
     hal_c2_shell::register(&snapshot);
-    let mut project = Project::new(EngineOracle::from_engine(&snapshot));
-    for (key, text) in files {
-        project.add(key, *text);
-    }
-    for (dir, text) in qmldirs {
-        project.add_qmldir(dir, text);
-    }
-    let mut source = MapSource::new();
-    for (key, _) in files {
-        match compile_file(&project, key) {
-            Ok(c) if !c.has_errors() => source.insert(*key, c.file),
-            Ok(c) => panic!("{key}: {:?}", c.diagnostics),
-            Err(ds) => panic!("{key}: {ds:?}"),
-        }
-    }
-    source
+    ljos::dev::compile(dir.path(), Some(&snapshot), OnError::Fail).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The engine of an app with `source`, the shell started over `mc`.

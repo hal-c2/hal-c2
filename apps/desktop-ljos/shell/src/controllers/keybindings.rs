@@ -43,8 +43,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use ljos_runtime::{Time, TimerId};
 use serde_json::json;
 
@@ -1360,8 +1359,7 @@ fn jump_to(engine: &Engine, key: &str) {
 
 /// `Keybindings` in QML.
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either.
-#[qml(module = "HalC2.Shell", name = "Keybindings")]
+#[qml(module = "HalC2.Shell", name = "Keybindings", uncreatable)]
 #[qml_singleton]
 pub struct KeybindingsObject {
     /// The command registry (CommandRegistry).
