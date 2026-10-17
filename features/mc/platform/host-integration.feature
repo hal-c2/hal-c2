@@ -60,6 +60,26 @@ Feature: The MC working with its host machine
     Then macOS opens "src/app.ts" in its default text editor
 
   @mc
+  Scenario: On Windows the default editor is the one Windows opens text files in
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client reads the MC's server config
+    Then the default editor is listed first
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows a text association without a chosen program still names the editor
+    Given the MC runs on Windows and the class registered for .txt opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: A Windows host without a text association does not offer a default editor
+    Given the MC runs on Windows with no program for text files
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
   Scenario: A default editor installed in a vendor folder is found by its id
     Given the host's default text editor is "acme-editor.desktop", installed as "acme/editor.desktop"
     When a client reads the MC's server config
