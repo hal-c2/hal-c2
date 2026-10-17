@@ -40,6 +40,7 @@ mod usage;
 mod workspace;
 mod worktree_setup;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,6 +50,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use ljos::App;
+use ljos::keys::KeyEvent;
 use ljos::prelude::Engine;
 use ljos_runtime::{Clock as _, VirtualClock};
 
@@ -106,11 +108,31 @@ impl Hub {
         self.engine.advance_timers(self.clock.now());
     }
 
+    /// An empty window of the hub's engine, for key events given as a
+    /// window is given them: the application's key filters see them first.
+    pub fn window(&self) -> Window {
+        let source = common::compile(&[("Window", "import QtQuick\nItem {}")], &[]);
+        let root = ljos::create_root(&self.engine, source, "Window").expect("the window");
+        let mut scene = ljos_quick::QuickScene::new(ljos::item::kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&self.engine, root).expect("a root");
+        Window(RefCell::new(scene))
+    }
+
     /// Runs `f` on the controller `C`, as another controller would.
     pub fn with_controller<C: hal_c2_shell::controller::Controller, R>(
         &self,
         f: impl FnOnce(&mut C, &Engine) -> R,
     ) -> R {
         hal_c2_shell::controller::with::<C, R>(&self.engine, f).expect("the controller is free")
+    }
+}
+
+/// A window with nothing in it ([`Hub::window`]).
+pub struct Window(RefCell<ljos_quick::QuickScene>);
+
+impl Window {
+    /// Gives the window `ev`; true when something kept it.
+    pub fn key(&self, engine: &Engine, ev: &KeyEvent) -> bool {
+        self.0.borrow_mut().key_event(engine, ev)
     }
 }

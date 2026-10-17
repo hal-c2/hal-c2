@@ -19,7 +19,10 @@ use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::json::{self, Json};
 use hal_c2_shell::keybindings::{command_label, qt};
 use hal_c2_shell::mc::McError;
+use ljos::keys::{KeyEvent, Modifiers};
 use ljos::prelude::QmlValue;
+use ljos::prelude::ApplicationState;
+use ljos_controls::WindowSystem;
 use ljos::prelude::{Atom, Cx, Value};
 use serde_json::json;
 
@@ -948,25 +951,38 @@ fn the_jump_keys_show_once_the_modifier_is_held() {
     let shown: Rc<RefCell<Vec<Hints>>> = Rc::default();
     let log = shown.clone();
     keymap.on_jump_hints(move |_, labels, show| log.borrow_mut().push((labels.to_vec(), show)));
+    // The keys as a window is given them; the keymap keeps none.
+    let window = hub.window();
+    let key = |ev: KeyEvent| assert!(!window.key(&hub.engine, &ev));
+    let ctrl = || KeyEvent::press(qt::KEY_CONTROL).with_modifiers(Modifiers::CONTROL);
 
     // A quick shortcut shows none.
-    keymap.key_event(&hub.engine, qt::KEY_CONTROL, true);
+    key(ctrl());
     hub.advance(199);
-    keymap.key_event(&hub.engine, qt::KEY_CONTROL, false);
+    key(KeyEvent::release(qt::KEY_CONTROL));
     hub.advance(1000);
     assert_eq!(*shown.borrow(), [(vec![], false)]);
     shown.borrow_mut().clear();
 
-    keymap.key_event(&hub.engine, qt::KEY_CONTROL, true);
+    key(ctrl());
     // Auto-repeat does not restart the wait.
     hub.advance(150);
-    keymap.key_event(&hub.engine, qt::KEY_CONTROL, true);
+    key(ctrl().repeated());
     hub.advance(50);
     let labels: Vec<String> = (1..=9).map(|n| format!("Ctrl+{n}")).collect();
-    assert_eq!(*shown.borrow(), [(labels, true)]);
+    assert_eq!(*shown.borrow(), [(labels.clone(), true)]);
     // Another key with it held keeps them; letting go hides them.
-    keymap.key_event(&hub.engine, qt::KEY_SHIFT, false);
-    keymap.key_event(&hub.engine, qt::KEY_CONTROL, false);
+    key(KeyEvent::release(qt::KEY_SHIFT).with_modifiers(Modifiers::CONTROL));
+    key(KeyEvent::release(qt::KEY_CONTROL));
+    assert_eq!(shown.borrow().last().unwrap(), &(vec![], false));
+
+    // Held as the application loses the keyboard: the release goes to
+    // another application, and the keys hide.
+    shown.borrow_mut().clear();
+    key(ctrl());
+    hub.advance(200);
+    assert_eq!(*shown.borrow(), [(labels, true)]);
+    WindowSystem::of(&hub.engine).set_application_state(&hub.engine, ApplicationState::Inactive);
     assert_eq!(shown.borrow().last().unwrap(), &(vec![], false));
 }
 

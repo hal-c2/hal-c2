@@ -43,6 +43,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use ljos::keys::KeyKind;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use ljos::prelude::{Time, TimerId};
@@ -311,6 +312,20 @@ impl Keymap {
                 Keymap::of(engine).refresh_shortcuts(engine);
             });
         }
+        // The jump keys' modifier, as desktop-qt's application event filter
+        // follows it: every window's key events, kept for the window.
+        ljos::keys::add_key_filter(engine, |engine, _, ev| {
+            Keymap::of(engine).key_event(engine, ev.key, ev.kind == KeyKind::Press);
+            false
+        });
+        // Letting go of the modifier in another application is not seen.
+        if let Ok(app) = engine.singleton::<ljos::prelude::Application>() {
+            let _ = engine.connect_by_name(app, "activeChanged", move |engine, _| {
+                if !matches!(engine.read_by_name(app, "active"), Value::Bool(true)) {
+                    Keymap::of(engine).set_jump_modifier_held(engine, false);
+                }
+            });
+        }
         self.0.state.borrow_mut().registering = true;
         self.register_commands(engine);
         self.0.state.borrow_mut().registering = false;
@@ -414,12 +429,8 @@ impl Keymap {
         self.jump_hints(engine, Vec::new(), false);
     }
 
-    /// A key went down or up anywhere in the application (Qt::Key): what
-    /// desktop-qt's application event filter sees.
-    ///
-    /// TODO(ljos#43): Ljós has no hook that sees a key before the
-    /// focused item (a `Shortcut` with `Qt.ApplicationShortcut` runs first,
-    /// but never hears the modifier's release), so nothing calls this yet.
+    /// A key went down or up anywhere in the application (Qt::Key): the
+    /// key filter [`Keymap::activate`] installs calls it for every window.
     pub fn key_event(&self, engine: &Engine, key: i32, pressed: bool) {
         // Qt calls the Command key Control on macOS.
         let modifier = key == qt::KEY_CONTROL || (!self.mac() && key == qt::KEY_META);

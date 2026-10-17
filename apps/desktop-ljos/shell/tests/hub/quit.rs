@@ -16,12 +16,13 @@ use hal_c2_shell::keybindings::qt;
 use ljos::keys::{KeyEvent, Modifiers};
 use serde_json::json;
 
-use crate::Hub;
+use crate::{Hub, Window};
 
 /// A shell whose `confirmQuit` is `mode` (unset for `None`), with what it
 /// asked of the app counted: quits, then concealments.
 struct Quitting {
     hub: Hub,
+    window: Window,
     quits: Rc<Cell<u32>>,
     conceals: Rc<Cell<u32>>,
 }
@@ -47,6 +48,7 @@ fn quitting(test: &str, mode: Option<serde_json::Value>) -> Quitting {
         quit.on_conceal(move |_| c.set(c.get() + 1));
     });
     Quitting {
+        window: hub.window(),
         hub,
         quits,
         conceals,
@@ -59,7 +61,7 @@ fn mod_q() -> KeyEvent {
 
 impl Quitting {
     fn key(&self, ev: KeyEvent) -> bool {
-        quit::filter(&self.hub.engine, &ev)
+        self.window.key(&self.hub.engine, &ev)
     }
 
     /// Control, then Q, as a press of mod+Q starts.

@@ -97,6 +97,7 @@ pub struct QuitController {
 
 impl Controller for QuitController {
     fn new(init: Init<'_, Self>) -> Self {
+        ljos::keys::add_key_filter(init.engine, |engine, _, ev| filter(engine, ev));
         QuitController {
             bridge: init.bridge,
             me: init.me,
@@ -139,16 +140,12 @@ impl Controller for QuitController {
     }
 }
 
-/// Offers a key event of the window's to the quit shortcut before anything
+/// Offers a key event of a window's to the quit shortcut before anything
 /// in the window sees it; true when it was the shortcut's, and so not the
-/// window's. The window calls it for every key event it gets.
-///
-/// TODO(ljos#43): Ljós has no application-wide key filter (Qt's
-/// `installEventFilter`); an application `Shortcut` takes mod+Q before an
-/// editor but not the hold and release this counts, so nothing calls this
-/// yet. Claiming the press also covers Qt's ShortcutOverride:
-/// no `Shortcut` sees a press this took.
-pub fn filter(engine: &Engine, ev: &KeyEvent) -> bool {
+/// window's. The controller installs it as an application-wide key filter.
+/// Keeping the press also covers Qt's ShortcutOverride: no `Shortcut` sees
+/// a press this took.
+fn filter(engine: &Engine, ev: &KeyEvent) -> bool {
     controller::with::<QuitController, _>(engine, |quit, engine| quit.key_event(engine, ev))
         .unwrap_or(false)
 }
