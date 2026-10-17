@@ -407,6 +407,21 @@ fn a_root_that_is_not_a_plain_folder_is_not_taken() {
 }
 
 #[test]
+#[ignore = "TODO(ljos#78): a write of an equal value is not seen by the model"]
+fn writing_the_root_it_already_has_forgets_the_last_failure() {
+    let f = Fixture::new();
+    f.browse();
+    f.string("create", &[&f.root_path(), "a"]);
+    assert_eq!(f.string("create", &[&f.root_path(), "a"]), "");
+    assert_ne!(f.error(), "");
+    // setBrowseRootPath clears the error before it sees the root is the same.
+    f.set("rootPath", Value::string(f.root_path()));
+    f.settle();
+    assert_eq!(f.error(), "");
+    assert!(f.rooted());
+}
+
+#[test]
 fn every_new_root_tells_its_index_though_the_index_is_the_same() {
     let f = Fixture::new();
     f.mkdir("one/inside");
