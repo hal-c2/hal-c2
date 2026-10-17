@@ -57,6 +57,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
     folders::register(engine);
     highlighter::register(engine);
+    device::register(engine);
     device_screen::register(engine);
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
