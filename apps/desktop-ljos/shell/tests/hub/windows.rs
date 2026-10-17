@@ -408,3 +408,20 @@ fn a_setting_that_fails_to_save_says_so_in_the_window_that_changed_it() {
     assert_eq!(titles("two"), [json!("Setting not saved")]);
     assert_eq!(titles(MAIN), Vec::<Json>::new());
 }
+
+#[test]
+fn each_window_holds_its_own_activity_lease() {
+    let (hub, _) = opening(Launch::default());
+    hub.mc.set_ready(&hub.engine, true);
+    open(&hub, "two");
+    let windows: std::collections::BTreeSet<String> = hub
+        .mc
+        .calls
+        .borrow()
+        .iter()
+        .filter(|(_, method, _)| method == "server.reportClientActivity")
+        .filter_map(|(_, _, payload)| payload["clientId"].as_str()?.rsplit_once(':'))
+        .map(|(_, window)| window.to_owned())
+        .collect();
+    assert_eq!(windows, [MAIN, "two"].map(str::to_owned).into());
+}

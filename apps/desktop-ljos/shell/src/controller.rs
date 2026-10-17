@@ -655,12 +655,16 @@ pub fn each_window(engine: &Engine, f: impl Fn(&Engine)) {
 /// directory: desktop-qt's NativeWindow::setStoreDirs. None without a state
 /// directory.
 pub fn state_file(engine: &Engine, name: &str) -> Option<PathBuf> {
-    let host = Host::of(engine);
-    let dir = host.state_dir.borrow().clone()?;
-    let id = host
+    let dir = Host::of(engine).state_dir.borrow().clone()?;
+    Some(window_dir(&dir, &window_id(engine)).join(name))
+}
+
+/// The id of the window acting now (see [`Bridge::of`]), `main` when there
+/// is no window set.
+pub fn window_id(engine: &Engine) -> String {
+    Host::of(engine)
         .window_of(Bridge::of(engine))
-        .map_or_else(|| MAIN.to_owned(), |w| w.id.clone());
-    Some(window_dir(&dir, &id).join(name))
+        .map_or_else(|| MAIN.to_owned(), |w| w.id.clone())
 }
 
 /// The state directory itself for `main`, else its own under it.

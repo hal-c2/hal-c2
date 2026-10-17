@@ -86,7 +86,7 @@ impl ClientActivity {
         let focused = focused(engine);
         let payload = json!({
             "environmentId": environment,
-            "clientId": client_id(),
+            "clientId": client_id(engine),
             "clientKind": "desktop-renderer",
             "visible": true,
             "focused": focused,
@@ -115,9 +115,9 @@ fn focused(engine: &Engine) -> bool {
         Value::Int(state) if state == ApplicationState::Active.qt_value())
 }
 
-/// This run's id for its leases, with the window's; a restarted app's old
-/// leases run out on their own.
-fn client_id() -> String {
+/// This run's id for its leases, one lease per window; a restarted app's
+/// old leases run out on their own.
+fn client_id(engine: &Engine) -> String {
     static PROCESS: OnceLock<String> = OnceLock::new();
     let process = PROCESS.get_or_init(|| {
         let mut bytes = [0u8; 16];
@@ -129,7 +129,7 @@ fn client_id() -> String {
         bytes[12..].copy_from_slice(&std::process::id().to_le_bytes());
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     });
-    format!("{process}:main")
+    format!("{process}:{}", controller::window_id(engine))
 }
 
 /// UTC now as `2026-10-16T12:00:00.000Z`.
