@@ -34,8 +34,8 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::LazyLock;
 
+use ljos::prelude::RowKey;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
-use ljos_engine::RowKey;
 use regex::Regex;
 use serde_json::{Map, json};
 

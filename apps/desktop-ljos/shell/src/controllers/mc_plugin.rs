@@ -32,8 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use serde_json::{Map, json};
 use url::Url;
 

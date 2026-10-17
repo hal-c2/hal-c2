@@ -79,7 +79,7 @@ pub fn apply_window_theme(
 
 #[cfg(test)]
 mod tests {
-    use ljos_a11y::ColorScheme;
+    use ljos::prelude::ColorScheme;
 
     use super::*;
 
@@ -92,15 +92,15 @@ mod tests {
         let engine = engine();
         ljos_quick::update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Light);
         set_color_scheme(&engine, true, true);
-        assert_eq!(ljos_quick::color_scheme(&engine), ColorScheme::Dark);
+        assert_eq!(ljos::color_scheme(&engine), ColorScheme::Dark);
         set_color_scheme(&engine, true, false);
-        assert_eq!(ljos_quick::color_scheme(&engine), ColorScheme::Light);
+        assert_eq!(ljos::color_scheme(&engine), ColorScheme::Light);
         ljos_quick::update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Dark);
         set_color_scheme(&engine, true, false);
-        assert_eq!(ljos_quick::color_scheme(&engine), ColorScheme::Light);
+        assert_eq!(ljos::color_scheme(&engine), ColorScheme::Light);
         // Not asking is the system's again.
         set_color_scheme(&engine, false, false);
-        assert_eq!(ljos_quick::color_scheme(&engine), ColorScheme::Dark);
+        assert_eq!(ljos::color_scheme(&engine), ColorScheme::Dark);
     }
 
     #[test]
@@ -113,7 +113,7 @@ mod tests {
         } else {
             ColorScheme::Light
         };
-        assert_eq!(ljos_quick::color_scheme(&engine), wanted);
+        assert_eq!(ljos::color_scheme(&engine), wanted);
         // A theme that follows the system never overrides it.
         apply_window_theme(&engine, true, true, true, true, true);
         let wanted = if cfg!(target_os = "macos") {
@@ -121,7 +121,7 @@ mod tests {
         } else {
             wanted
         };
-        assert_eq!(ljos_quick::color_scheme(&engine), wanted);
+        assert_eq!(ljos::color_scheme(&engine), wanted);
     }
 
     #[test]

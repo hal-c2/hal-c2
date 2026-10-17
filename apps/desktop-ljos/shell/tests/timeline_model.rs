@@ -16,8 +16,8 @@ use hal_c2_shell::thread_view::cache::{ThreadCache, ThreadUpdate};
 use hal_c2_shell::thread_view::time::{Clock, Zone, parse_iso};
 use hal_c2_shell::thread_view::timeline::{Out, Timeline};
 use hal_c2_shell::thread_view::timeline_model::TimelineModel;
+use ljos::prelude::ClipboardMode;
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
-use ljos_platform::ClipboardMode;
 use ljos_runtime::{Clock as _, VirtualClock};
 use serde_json::json;
 

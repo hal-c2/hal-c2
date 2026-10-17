@@ -29,7 +29,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::prelude::Engine;
-use ljos_runtime::TimerId;
+use ljos::prelude::TimerId;
 use serde_json::{Map, Value, json};
 
 use crate::cache::{self, LocalCache};

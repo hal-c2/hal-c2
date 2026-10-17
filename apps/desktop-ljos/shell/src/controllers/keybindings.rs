@@ -44,7 +44,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
-use ljos_runtime::{Time, TimerId};
+use ljos::prelude::{Time, TimerId};
 use serde_json::json;
 
 use crate::bridge::Bridge;

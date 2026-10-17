@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Engine, ObjectId, Value};
-use ljos_engine::{EngineError, ModelSignals, QmlListModel, RowKey};
+use ljos::prelude::{EngineError, ModelSignals, QmlListModel, RowKey};
 
 /// One change to a core's rows, as it made it.
 #[derive(Clone, Debug, PartialEq)]

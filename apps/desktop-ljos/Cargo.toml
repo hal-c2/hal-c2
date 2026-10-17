@@ -13,17 +13,17 @@ publish = false
 # Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe", default-features = false }
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a", default-features = false }
 # Behind the facade, for what it does not offer yet (shell/Cargo.toml says
 # what for). Same rev as `ljos`.
-ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_a11y = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_render = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe", default-features = false }
-ljos_text = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
-ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "087e0d96eb4caae1634349a77964787618b6aafe" }
+ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_a11y = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_render = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a", default-features = false }
+ljos_text = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
+ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

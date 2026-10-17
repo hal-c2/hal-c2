@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, Local, TimeZone, Utc};
 use ljos::prelude::Engine;
-use ljos_runtime::{Time, TimerId};
+use ljos::prelude::{Time, TimerId};
 use serde_json::json;
 
 use crate::bridge::Bridge;

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{EngineError, RowKey};
+use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
@@ -891,7 +891,7 @@ impl DiffModel {
             })
         });
         if let Err(e) = result {
-            engine.log(ljos_engine::LogLevel::Warning, "DiffModel", e.to_string());
+            engine.log(ljos::prelude::LogLevel::Warning, "DiffModel", e.to_string());
         }
     }
 }

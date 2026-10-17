@@ -8,8 +8,8 @@ use std::rc::Rc;
 use common::{Scene, call, read, shell};
 use hal_c2_shell::device_screen::{drop_frame, show_frame};
 use hal_c2_shell::mc::Disconnected;
+use ljos::item::DrawOp;
 use ljos::prelude::{Engine, ObjectId, Value};
-use ljos_render::DrawOp;
 
 const MAIN: &str = r#"
 import QtQuick

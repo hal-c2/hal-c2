@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{EngineError, RowKey};
+use ljos::prelude::{EngineError, RowKey};
 use regex::Regex;
 use serde_json::json;
 
@@ -1259,7 +1259,11 @@ impl ThreadDiff {
 
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
-        engine.log(ljos_engine::LogLevel::Warning, "ThreadDiff", e.to_string());
+        engine.log(
+            ljos::prelude::LogLevel::Warning,
+            "ThreadDiff",
+            e.to_string(),
+        );
     }
 }
 

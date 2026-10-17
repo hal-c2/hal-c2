@@ -149,7 +149,12 @@ fn bump(engine: &Engine, serial: Option<NodeId>) {
 struct FramePaint(Option<ImageHandle>);
 
 impl ItemPaint for FramePaint {
-    fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder) {
+    fn paint(
+        &self,
+        size: kurbo::Size,
+        _: &mut ljos_quick::TextEngine,
+        out: &mut DisplayListBuilder,
+    ) {
         let Some(image) = &self.0 else { return };
         if size.width > 0.0 && size.height > 0.0 {
             out.image(

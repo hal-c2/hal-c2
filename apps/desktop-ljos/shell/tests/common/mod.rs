@@ -291,7 +291,7 @@ impl Scene {
     pub fn new(engine: &Engine, root: ObjectId, size: (f64, f64)) -> Self {
         // The bundled font: the same cells on every machine.
         ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
-        let mut scene = ljos_quick::QuickScene::new(ljos_render::kurbo::Size::new(size.0, size.1));
+        let mut scene = ljos_quick::QuickScene::new(ljos::item::kurbo::Size::new(size.0, size.1));
         scene.set_root(engine, root).expect("a root");
         let mut s = Scene { scene };
         s.settle(engine);
@@ -311,7 +311,7 @@ impl Scene {
     }
 
     /// What `item` last painted, back to front.
-    pub fn ops(&mut self, engine: &Engine, item: ObjectId) -> Vec<ljos_render::DrawOp> {
+    pub fn ops(&mut self, engine: &Engine, item: ObjectId) -> Vec<ljos::item::DrawOp> {
         self.settle(engine);
         let node = self.scene.node_of(item).expect("a node for the item");
         let snapshot = self.scene.snapshot().expect("a frame").clone();

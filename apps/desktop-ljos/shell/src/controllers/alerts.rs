@@ -246,7 +246,7 @@ fn follow_store(engine: &Engine, me: &Me<AlertController>) {
 /// Whether the application has focus, followed from Ljós's `Application`
 /// (`Qt.application`); focused when there is none.
 fn follow_focus(engine: &Engine, me: &Me<AlertController>) -> bool {
-    let Ok(app) = engine.singleton::<ljos_controls::Application>() else {
+    let Ok(app) = engine.singleton::<ljos::prelude::Application>() else {
         return true;
     };
     let me = me.clone();

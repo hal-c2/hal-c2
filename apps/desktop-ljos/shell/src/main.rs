@@ -51,11 +51,11 @@ use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::session::{self, Session};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::{Launch, store};
+use ljos::CoalesceKey;
 use ljos::dev::OnError;
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ShellConfig};
-use ljos_runtime::CoalesceKey;
 
 const ROOT: &str = "Main";
 /// How long a render waits for the MC's first snapshot before it shows what

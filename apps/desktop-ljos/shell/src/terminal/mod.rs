@@ -543,7 +543,12 @@ fn look(e: &Engine, me: ObjectId, style: ljos_quick::TextStyle, cell: (f64, f64)
 struct Screen(Painted);
 
 impl ItemPaint for Screen {
-    fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder) {
+    fn paint(
+        &self,
+        size: kurbo::Size,
+        _: &mut ljos_quick::TextEngine,
+        out: &mut DisplayListBuilder,
+    ) {
         self.0.paint(size, out);
     }
 }

@@ -8,12 +8,13 @@ use std::rc::Rc;
 
 use common::{Scene, call, number, read, shell, text};
 use hal_c2_shell::mc::Disconnected;
+use ljos::item::WheelEvent;
+use ljos::keys::{KeyEvent, KeyKind, Modifiers, key};
+use ljos::prelude::{ClipboardMode, Platform, Time};
 use ljos::prelude::{Engine, ObjectId, Value};
-use ljos_platform::{ClipboardMode, Platform};
-use ljos_quick::keys::key;
-use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, WheelEvent};
-use ljos_render::{DrawOp, Paint, Rgba, kurbo};
-use ljos_runtime::Time;
+// Pointer events, which the facade does not name.
+use ljos::item::{DrawOp, Paint, Rgba, kurbo};
+use ljos_quick::{MouseButtons, PointerEvent};
 
 const MAIN: &str = r##"
 import QtQuick
@@ -113,7 +114,7 @@ impl Rig {
 
     fn type_key(&mut self, ev: KeyEvent) -> bool {
         let mut up = ev.clone();
-        up.kind = ljos_quick::KeyKind::Release;
+        up.kind = KeyKind::Release;
         let taken = self.scene.scene.key_event(&self.engine, &ev);
         self.scene.scene.key_event(&self.engine, &up);
         taken

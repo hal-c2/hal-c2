@@ -22,9 +22,9 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use ljos::prelude::ClipboardMode;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, Platform, QmlObject, Value, qml_impl};
-use ljos_engine::{EngineError, ItemModel, ModelChange, ModelListener, ModelListeners};
-use ljos_platform::ClipboardMode;
+use ljos::prelude::{EngineError, ItemModel, ModelChange, ModelListener, ModelListeners};
 
 use super::timeline::{FLUSH_DELAY_MS, Out, Role, Timeline};
 use crate::json::{self, Json};
@@ -361,7 +361,7 @@ fn sync(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
     };
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "TimelineModel",
             e.to_string(),
         );
@@ -370,11 +370,11 @@ fn sync(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
 
 /// A single shot of the flush timer, owned by the model.
 fn flush_after(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
-    let native = ljos_engine::Timer {
+    let native = ljos::prelude::Timer {
         interval: FLUSH_DELAY_MS,
         repeat: false,
         running: true,
-        ..ljos_engine::Timer::default()
+        ..ljos::prelude::Timer::default()
     };
     let timer = engine.create_native(native, Some(obj)).ok()?;
     engine

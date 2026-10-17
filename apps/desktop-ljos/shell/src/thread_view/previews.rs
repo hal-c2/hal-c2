@@ -24,7 +24,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{EngineError, RowKey};
+use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
@@ -893,7 +893,7 @@ impl ThreadPreviews {
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "ThreadPreviews",
             e.to_string(),
         );

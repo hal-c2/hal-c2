@@ -158,7 +158,7 @@ impl Themes {
         let dark = match self.mode {
             Mode::Dark => true,
             Mode::Light => false,
-            Mode::System => ljos_quick::color_scheme(engine) == ljos_a11y::ColorScheme::Dark,
+            Mode::System => ljos::color_scheme(engine) == ljos::prelude::ColorScheme::Dark,
         };
         let (standard, fixed) = if dark {
             (&data.dark, &data.fixed_dark)

@@ -66,7 +66,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
     engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
     engine.register_singleton::<controllers::terminals::TerminalsObject>(MODULE, v);
-    thread_view::register(engine, v);
+    thread_view::register(engine);
     bridge::Bridge::of(engine);
 }
 

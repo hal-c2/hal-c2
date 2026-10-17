@@ -31,10 +31,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
+use ljos::prelude::TimerId;
 use ljos::prelude::{
     Atom, Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, qml_impl,
 };
-use ljos_runtime::TimerId;
 
 pub use machine::{Effect, KILL_AFTER_MS, Machine};
 

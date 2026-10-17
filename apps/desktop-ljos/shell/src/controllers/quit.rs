@@ -19,9 +19,9 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use ljos::keys::{KeyEvent, KeyKind, Modifiers};
 use ljos::prelude::Engine;
-use ljos_quick::{KeyEvent, KeyKind, Modifiers};
-use ljos_runtime::{Time, TimerId};
+use ljos::prelude::{Time, TimerId};
 use serde_json::json;
 
 use crate::bridge::Bridge;

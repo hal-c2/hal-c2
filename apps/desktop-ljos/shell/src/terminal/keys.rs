@@ -4,8 +4,7 @@
 //! Not done: the kitty keyboard protocol, which libghostty's encoder speaks
 //! and `vt100` does not track.
 
-use ljos_quick::Modifiers;
-use ljos_quick::keys::key;
+use ljos::keys::{Modifiers, key};
 
 /// xterm's modifier parameter: 1 plus shift 1, alt 2, control 4, meta 8.
 fn modifier_param(m: Modifiers) -> u8 {

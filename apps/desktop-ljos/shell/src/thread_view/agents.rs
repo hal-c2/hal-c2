@@ -27,7 +27,9 @@ use std::rc::Rc;
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{ConnectionId, EngineError, RowKey};
+use ljos::prelude::{EngineError, RowKey};
+// What `Engine::connect` returns, which the facade does not name.
+use ljos_engine::ConnectionId;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
 use super::summary::{Obj, subagent_detail};
@@ -737,7 +739,11 @@ impl AgentsModel {
 }
 
 fn warn(engine: &Engine, e: &EngineError) {
-    engine.log(ljos_engine::LogLevel::Warning, "AgentsModel", e.to_string());
+    engine.log(
+        ljos::prelude::LogLevel::Warning,
+        "AgentsModel",
+        e.to_string(),
+    );
 }
 
 /// A timer owned by the model: `then` after `interval` ms, again and again
@@ -749,11 +755,11 @@ fn timer(
     repeat: bool,
     then: fn(&Engine, ObjectId),
 ) -> Option<ObjectId> {
-    let native = ljos_engine::Timer {
+    let native = ljos::prelude::Timer {
         interval,
         repeat,
         running: true,
-        ..ljos_engine::Timer::default()
+        ..ljos::prelude::Timer::default()
     };
     let made = engine.create_native(native, Some(obj)).and_then(|timer| {
         engine.connect_by_name(timer, "triggered", move |engine, _| then(engine, obj))?;

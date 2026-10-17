@@ -13,7 +13,7 @@ use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::quit::{self, Mode, QuitController};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::keybindings::qt;
-use ljos_quick::{KeyEvent, Modifiers};
+use ljos::keys::{KeyEvent, Modifiers};
 use serde_json::json;
 
 use crate::Hub;
