@@ -18,8 +18,7 @@ ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
 # Below the facade, for what it does not name yet (the README's Ljós
 # section has the issues):
 # - ljos_quick: the Terminal's pointer, hover and input method hooks and the
-#   scene's text engine and font styles; the style hints' colour scheme and
-#   the reduced motion hint (platform_window.rs).
+#   scene's text engine and font styles.
 # - ljos_engine: the MetaRef those hooks take, the `Prop<T>` handle type and
 #   `Engine::connect`'s ConnectionId.
 # - ljos_platform and ljos_controls: the Downloads folder (`Location`) and

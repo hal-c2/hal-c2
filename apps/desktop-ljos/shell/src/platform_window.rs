@@ -5,9 +5,9 @@
 //!
 //! Of the three, Ljós gives the shell the application's colour scheme
 //! (`Qt.styleHints.colorScheme`), which is all `applyApplicationAppearance`
-//! does. Reduced motion is read from Ljós's accessibility hints, which a
-//! host fills in; the window host does not fill in macOS's yet. The window's
-//! blur and liquid glass have no Ljós API at all. Each says so where it is.
+//! does, and the system's motion preference, which Ljós's host reads and
+//! follows on every platform it has. The window's blur and liquid glass
+//! have no Ljós API at all. Each says so where it is.
 
 use ljos::prelude::{Engine, Value};
 
@@ -26,7 +26,7 @@ pub fn apply_application_appearance(engine: &Engine, enabled: bool, dark: bool) 
 /// system's own when it asks for none. The part of
 /// [`apply_application_appearance`] that is not the platform's.
 pub fn set_color_scheme(engine: &Engine, enabled: bool, dark: bool) {
-    let Some(hints) = ljos_quick::style_hints(engine) else {
+    let Some(hints) = ljos::style_hints(engine) else {
         return;
     };
     // Qt::ColorScheme: Unknown, Light, Dark.
@@ -38,16 +38,12 @@ pub fn set_color_scheme(engine: &Engine, enabled: bool, dark: bool) {
     let _ = engine.write_by_name(hints, "colorScheme", Value::Int(scheme));
 }
 
-/// Whether the system asks apps to reduce motion: Ljós's accessibility
-/// hint, which follows the host as it changes (desktop-qt read it once, at
-/// start).
-///
-/// TODO(ljos#58): the window host (ljos_egui) feeds `set_system_prefs` the
-/// colour scheme but not the motion preference, so this is false even where
-/// the system asks (on macOS, which desktop-qt read); the app's own "Reduce
-/// motion" setting still works.
+/// Whether the system asks apps to reduce motion: what Ljós's host reports
+/// (the settings portal, NSWorkspace or Windows' own setting) as it
+/// changes, where desktop-qt read macOS's once at start. Read when a panel
+/// moves, so a change applies to the next one.
 pub fn system_reduced_motion(engine: &Engine) -> bool {
-    ljos_quick::reduced_motion(engine)
+    ljos::reduced_motion(engine)
 }
 
 /// The frosted backdrop behind a transparent window, with the theme's
@@ -80,6 +76,7 @@ pub fn apply_window_theme(
 #[cfg(test)]
 mod tests {
     use ljos::prelude::ColorScheme;
+    use ljos::system::{HostPrefs, report_system_prefs, update_system_prefs};
 
     use super::*;
 
@@ -90,12 +87,12 @@ mod tests {
     #[test]
     fn the_application_asks_for_a_scheme_and_gives_it_back() {
         let engine = engine();
-        ljos_quick::update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Light);
+        update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Light);
         set_color_scheme(&engine, true, true);
         assert_eq!(ljos::color_scheme(&engine), ColorScheme::Dark);
         set_color_scheme(&engine, true, false);
         assert_eq!(ljos::color_scheme(&engine), ColorScheme::Light);
-        ljos_quick::update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Dark);
+        update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Dark);
         set_color_scheme(&engine, true, false);
         assert_eq!(ljos::color_scheme(&engine), ColorScheme::Light);
         // Not asking is the system's again.
@@ -106,7 +103,7 @@ mod tests {
     #[test]
     fn only_macos_lets_the_theme_decide_the_applications_scheme() {
         let engine = engine();
-        ljos_quick::update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Light);
+        update_system_prefs(&engine, |p| p.color_scheme = ColorScheme::Light);
         apply_window_theme(&engine, true, true, true, false, true);
         let wanted = if cfg!(target_os = "macos") {
             ColorScheme::Dark
@@ -125,10 +122,22 @@ mod tests {
     }
 
     #[test]
-    fn reduced_motion_is_what_the_host_said() {
+    fn reduced_motion_follows_what_the_host_reports() {
         let engine = engine();
         assert!(!system_reduced_motion(&engine));
-        ljos_quick::update_system_prefs(&engine, |p| p.reduced_motion = true);
+        let report = |reduced| {
+            report_system_prefs(
+                &engine,
+                HostPrefs {
+                    reduced_motion: Some(reduced),
+                    ..HostPrefs::default()
+                },
+            );
+        };
+        report(true);
         assert!(system_reduced_motion(&engine));
+        // The system changed its mind while the shell ran.
+        report(false);
+        assert!(!system_reduced_motion(&engine));
     }
 }
