@@ -421,19 +421,14 @@ fn run(app: App, options: Options) -> Result<(), String> {
             };
             setup.on_message(move |engine: &Engine, message| match message {
                 Message::Wake => {
-                    // A panic here would drop the rest of the inbox's batch.
-                    engine.turn(None, || {
-                        if let Some(connection) = &connection {
-                            connection.deliver(engine);
-                        }
-                        hal_c2_shell::folders::deliver(engine);
-                    });
+                    if let Some(connection) = &connection {
+                        connection.deliver(engine);
+                    }
+                    hal_c2_shell::folders::deliver(engine);
                 }
                 Message::Activated(key) => {
-                    engine.turn(None, || {
-                        controller::with::<AlertController, _>(engine, |alerts, engine| {
-                            alerts.open_thread(engine, &key)
-                        });
+                    controller::with::<AlertController, _>(engine, |alerts, engine| {
+                        alerts.open_thread(engine, &key)
                     });
                 }
             });
@@ -443,8 +438,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             #[cfg(all(unix, not(target_os = "macos")))]
             {
                 let clicked = handle.clone();
+                // On the listener thread, which may wait for room: a click
+                // is not dropped for a full inbox.
                 let notifications = NativeNotifications::session(move |key| {
-                    let _ = clicked.send(Message::Activated(key));
+                    let _ = clicked.send_blocking(Message::Activated(key));
                 });
                 controller::with::<AlertController, _>(&engine, |alerts, _| {
                     alerts.set_presenter(Rc::new(notifications))
