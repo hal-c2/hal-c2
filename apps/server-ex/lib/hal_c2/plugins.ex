@@ -1152,16 +1152,21 @@ defmodule HalC2.Plugins do
   # its supervisor starts it again.
   defp restore([%{file: file, binaries: binaries} | _]) do
     for {module, binary} <- binaries, not current?(module, binary) do
-      unless :code.soft_purge(module) do
-        Logger.warning(
-          "plugin #{Path.basename(file)}: stopping processes still in #{inspect(module)}"
-        )
-
-        :code.purge(module)
-      end
-
+      purge(module, file)
       :code.load_binary(module, String.to_charlist(file), binary)
-      :code.soft_purge(module)
+      # The refused version is now the old code; a process still in it would keep the
+      # next update from loading.
+      purge(module, file)
+    end
+  end
+
+  defp purge(module, file) do
+    unless :code.soft_purge(module) do
+      Logger.warning(
+        "plugin #{Path.basename(file)}: stopping processes still in #{inspect(module)}"
+      )
+
+      :code.purge(module)
     end
   end
 

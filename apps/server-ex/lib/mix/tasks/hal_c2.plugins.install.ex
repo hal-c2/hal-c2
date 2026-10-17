@@ -27,7 +27,9 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
     if opts[:release] && Application.get_env(:hal_c2, :home) == :dev,
       do: Application.delete_env(:hal_c2, :home)
 
-    checkout = Application.get_env(:hal_c2, :plugins_install_checkout, @checkout)
+    checkout =
+      Path.expand(Application.get_env(:hal_c2, :plugins_install_checkout, @checkout))
+
     source = Path.join(checkout, "plugins")
     ids = if ids == [], do: packages(source), else: ids
 
