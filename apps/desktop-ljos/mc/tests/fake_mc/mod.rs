@@ -270,6 +270,16 @@ fn answer(path: &str, request: &str, shared: &Shared) -> (u16, String) {
                 json!({"ticket": ticket, "expiresAt": "2026-10-16T00:00:00Z"}).to_string(),
             )
         }
+        // The session's own scopes, for the bearer that asks.
+        "/api/auth/session" => {
+            if header(request, "authorization") != format!("Bearer {TOKEN}") {
+                return (401, json!({"message": "Not signed in."}).to_string());
+            }
+            (
+                200,
+                json!({"authenticated": true, "scopes": ["orchestration:read"]}).to_string(),
+            )
+        }
         "/oauth/token" => {
             let form = request
                 .split_once("\r\n\r\n")

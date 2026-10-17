@@ -160,6 +160,15 @@ impl McHandle {
         });
     }
 
+    /// GETs `path` of the MC's origin (its HTTP API, as `/api/auth/session`),
+    /// with the access token. Answered by a [`McEvent::Reply`] for `id`.
+    pub fn get(&self, id: u64, path: impl Into<String>) {
+        self.send(Command::Http {
+            id,
+            request: HttpCall::Get { path: path.into() },
+        });
+    }
+
     /// POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
     /// `attachments.createUploadUrl`'s): the URL is its own authorization.
     /// Answered by a [`McEvent::Reply`] for `id`.
