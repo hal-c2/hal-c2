@@ -472,6 +472,7 @@ fn render_to(
             hal_c2_shell::controllers::threads::set_wake(&engine, move || {
                 let _ = woken_by_cache.send(());
             });
+            hal_c2_shell::theme::set_application_font(&engine);
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
@@ -523,6 +524,7 @@ fn render_to(
                 // What ShellErrorOverlay shows.
                 Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
             }
+            hal_c2_shell::theme::set_application_font(&engine);
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
@@ -585,6 +587,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::local_transcriber::set_wake(&engine, move || {
                 let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let theme_handle = handle.clone();
+            hal_c2_shell::theme::set_wake(&engine, move || {
+                let _ = theme_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             // A connection even without an MC to open it at: the welcome
             // wizard or Connections settings may pair with one later
             // (hal_c2_shell::open).
@@ -603,6 +609,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::device::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
                     hal_c2_shell::local_transcriber::deliver(engine);
+                    hal_c2_shell::theme::deliver(engine);
                     hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
                 }
@@ -662,6 +669,8 @@ fn run(app: App, options: Options) -> Result<(), String> {
             // turn, 1.5 s apart.
             let steps = options.steps.clone();
             hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
+            // The saved theme's interface font, for all the root makes.
+            hal_c2_shell::theme::set_application_font(&engine);
             engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string().into())
