@@ -30,11 +30,11 @@ fn files_tab() -> (Hub, ObjectId, tempfile::TempDir) {
         "shell",
         "",
         json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 1,
-            "environment": {"environmentId": "env-1", "label": "Here"}}],
-            "rows": [
-                ["a", "p1", "project", {"id": "p1", "title": "P", "workspaceRoot": "/work/p"}],
-                ["a", "t1", "thread", {"id": "t1", "projectId": "p1", "title": "T1"}],
-            ]}),
+        "environment": {"environmentId": "env-1", "label": "Here"}}],
+        "rows": [
+            ["a", "p1", "project", {"id": "p1", "title": "P", "workspaceRoot": "/work/p"}],
+            ["a", "t1", "thread", {"id": "t1", "projectId": "p1", "title": "T1"}],
+        ]}),
     );
     hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
     hub.dispatch("rightPanel.add", json!({"kind": "files"}));
@@ -53,7 +53,10 @@ fn read(hub: &Hub, path: &str, contents: &str) {
             method == "projects.readFile" && payload["relativePath"] == path
         })
         .expect("the file is read");
-    assert!(hub.mc.reply(&hub.engine, index, Ok(json!({"contents": contents}))));
+    assert!(
+        hub.mc
+            .reply(&hub.engine, index, Ok(json!({"contents": contents})))
+    );
 }
 
 fn source_kinds(hub: &Hub, files: ObjectId) -> Vec<String> {
@@ -73,7 +76,11 @@ fn the_tab_shows_the_kinds_this_device_keeps_as_source() {
 #[test]
 fn reading_a_kind_as_source_is_kept_for_the_next_file_of_it() {
     let (hub, files, _dir) = files_tab();
-    hub.mc.answer(&hub.engine, "projects.listEntries", Ok(json!({"entries": []})));
+    hub.mc.answer(
+        &hub.engine,
+        "projects.listEntries",
+        Ok(json!({"entries": []})),
+    );
     hub.engine
         .invoke_by_name(files, "openFile", &[Value::from("todo.md"), Value::from(0)])
         .unwrap();
@@ -90,13 +97,20 @@ fn reading_a_kind_as_source_is_kept_for_the_next_file_of_it() {
     hub.engine
         .write_by_name(files, "rendered", Value::Bool(true))
         .unwrap();
-    assert_eq!(Settings::of(&hub.engine).device_value("fileSourceKinds"), None);
+    assert_eq!(
+        Settings::of(&hub.engine).device_value("fileSourceKinds"),
+        None
+    );
 }
 
 #[test]
 fn a_save_the_mc_refuses_is_toasted_with_the_path() {
     let (hub, files, _dir) = files_tab();
-    hub.mc.answer(&hub.engine, "projects.listEntries", Ok(json!({"entries": []})));
+    hub.mc.answer(
+        &hub.engine,
+        "projects.listEntries",
+        Ok(json!({"entries": []})),
+    );
     hub.engine
         .invoke_by_name(files, "openFile", &[Value::from("a.txt"), Value::from(0)])
         .unwrap();

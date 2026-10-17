@@ -274,13 +274,7 @@ impl Rewind {
                                     Ok(file) => {
                                         let mut fetched = fetched;
                                         fetched.push(file);
-                                        c.fetch(
-                                            thread,
-                                            point,
-                                            attachments,
-                                            fetched,
-                                            restore_files,
-                                        );
+                                        c.fetch(thread, point, attachments, fetched, restore_files);
                                     }
                                     Err(why) => c.failed(engine, &why),
                                 }

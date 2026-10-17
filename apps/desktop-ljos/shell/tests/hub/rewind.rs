@@ -330,7 +330,10 @@ fn the_attachments_come_back_from_the_mc_before_the_thread_rewinds() {
             "fileName": "shot.png", "mimeType": "image/png"}})
     );
     serve(&hub, "a1", Ok("png-bytes"));
-    assert_eq!(calls_to(&hub, "http.download")[0].1["relativeUrl"], "/attachments/a1?sig=1");
+    assert_eq!(
+        calls_to(&hub, "http.download")[0].1["relativeUrl"],
+        "/attachments/a1?sig=1"
+    );
     assert!(rollbacks(&hub).is_empty());
     serve(&hub, "a2", Ok("remember the milk"));
     assert_eq!(rollbacks(&hub).len(), 1);
@@ -357,18 +360,26 @@ fn the_attachments_come_back_from_the_mc_before_the_thread_rewinds() {
         ]
     );
     let written = std::env::temp_dir().join("hal-c2-rewind/a2/notes.txt");
-    assert_eq!(std::fs::read_to_string(written).unwrap(), "remember the milk");
+    assert_eq!(
+        std::fs::read_to_string(written).unwrap(),
+        "remember the milk"
+    );
     assert!(refusals(&hub).is_empty());
 }
 
 #[test]
 fn an_attachment_that_cannot_be_read_stops_the_rewind() {
-    let attachments = json!([{"type": "image", "id": "a1", "name": "shot.png", "mimeType": "image/png"}]);
+    let attachments =
+        json!([{"type": "image", "id": "a1", "name": "shot.png", "mimeType": "image/png"}]);
 
     let (hub, _) = three_turns_with("completed", attachments.clone());
     hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
     hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
-    hub.mc.answer(&hub.engine, "assets.createUrl", Err(failure("No such attachment")));
+    hub.mc.answer(
+        &hub.engine,
+        "assets.createUrl",
+        Err(failure("No such attachment")),
+    );
     assert_eq!(refusals(&hub), ["No such attachment"]);
     assert!(rollbacks(&hub).is_empty());
 

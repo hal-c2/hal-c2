@@ -347,9 +347,7 @@ mod tests {
     struct Probe(Vec<&'static str>);
 
     fn engine() -> Engine {
-        App::new("test")
-            .register(crate::register)
-            .build_engine()
+        App::new("test").register(crate::register).build_engine()
     }
 
     fn probe() -> (Rc<RefCell<Probe>>, Me<Probe>) {
