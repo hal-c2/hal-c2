@@ -426,7 +426,7 @@ Rectangle {
                     objectName: "addProject"
                     Accessible.name: qsTr("Add project")
                     // A local folder is picked here; without local folders the command palette asks.
-                    onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localEnvironmentId ?? null) !== null ? addProjectDialog.open() : Shell.dispatch("project.add")
+                    onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localFolders ?? false) ? addProjectDialog.open() : Shell.dispatch("project.add")
                 }
 
                 FolderDialog {

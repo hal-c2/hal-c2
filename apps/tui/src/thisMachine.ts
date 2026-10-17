@@ -66,10 +66,15 @@ let cached: Promise<string | null> | undefined;
 export const thisMachineId = (): Promise<string | null> =>
   (cached ??= rawId().then(hashMachineId, () => null));
 
-/** Whether `host` (a URL's hostname) is this machine's loopback: localhost, 127.0.0.0/8, ::1. */
+/**
+ * Whether `host` (a URL's hostname) is this machine's loopback: localhost,
+ * 127.0.0.0/8, ::1, and 127.0.0.0/8 mapped into IPv6, which a URL writes in hex
+ * (`[::ffff:7f00:1]`).
+ */
 export function loopbackHost(host: string): boolean {
   const bare = host.toLowerCase().replace(/^\[(.*)\]$/, "$1");
   if (bare === "localhost" || bare === "::1") return true;
+  if (/^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(bare)) return true;
   const v4 = bare.replace(/^::ffff:/, "");
   return /^127(\.\d{1,3}){3}$/.test(v4);
 }

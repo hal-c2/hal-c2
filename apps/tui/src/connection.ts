@@ -1246,13 +1246,15 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
     getServerConfig: () => runtime.runPromise(request(WS_METHODS.serverGetConfig, {})),
 
-    // Nothing is mounted yet: only an MC's own files, when it runs here.
+    // Nothing is mounted yet: only an MC's own files, when it runs here. An
+    // MC that does not describe itself is not taken to run here.
     localPathFor: async (path) => {
       const [config, ours] = await Promise.all([
         runtime.runPromise(request(WS_METHODS.serverGetConfig, {})).catch(() => null),
         thisMachineId(),
       ]);
-      const theirs = config?.environment.platform.machineId;
+      if (!config) return null;
+      const theirs = config.environment.platform.machineId;
       return hostedHere({ ours, theirs, own, origin }) ? path : null;
     },
 

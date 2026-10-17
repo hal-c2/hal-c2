@@ -32,6 +32,8 @@ describe("loopbackHost", () => {
       "::1",
       "[::1]",
       "::ffff:127.0.0.1",
+      new URL("ws://[::ffff:127.0.0.1]:3773").hostname,
+      "[::ffff:7f08:90a]",
     ]) {
       expect(loopbackHost(host)).toBe(true);
     }
@@ -42,6 +44,7 @@ describe("loopbackHost", () => {
       "devbox",
       "localhost.example.com",
       "::2",
+      new URL("ws://[::ffff:192.168.1.20]:3773").hostname,
     ]) {
       expect(loopbackHost(host)).toBe(false);
     }
