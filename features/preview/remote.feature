@@ -96,7 +96,7 @@ Feature: Preview across MCs and devices
 
   @backlog @desktop @mobile @priority-low
   Scenario: A client with no MC of its own forwards a dev server's port itself
-    Given the client is connected to an MC on another machine and none runs on its own
+    Given the client is connected to an MC on another machine and its own machine runs no MC
     And a dev server on that machine listens on port 3000 for that machine only
     When the user opens a browser tab at "http://localhost:3000" for a thread on that MC
     Then the client listens on its own machine and carries the page over its connection to the MC
@@ -138,10 +138,10 @@ Feature: Preview across MCs and devices
       And nothing listens for it on the client's machine
 
       Examples:
-        | port                                            |
-        | a port none of the thread's tabs names          |
-        | the second MC's own port, though a tab names it |
-        | the cluster's port, though a tab names it       |
+        | port                                               |
+        | a port none of the thread's tabs names             |
+        | the second MC's own port, even when a tab names it |
+        | the cluster's port, even when a tab names it       |
 
     @backlog @mc
     Scenario: A forward closes with the last tab that uses it

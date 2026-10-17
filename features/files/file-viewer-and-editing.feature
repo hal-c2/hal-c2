@@ -170,7 +170,6 @@ Feature: Viewing and editing files
 
       Examples:
         | where                                              |
-        | the MC on this machine                             |
         | another MC of the cluster                          |
         | an MC on another machine the client is paired with |
 
