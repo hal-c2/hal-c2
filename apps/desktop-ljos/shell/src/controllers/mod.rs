@@ -33,6 +33,7 @@ pub mod storage_settings;
 pub mod text_generation;
 pub mod theme;
 pub mod thread_menu;
+pub mod threads;
 pub mod toasts;
 pub mod usage;
 pub mod usage_prices;
@@ -139,6 +140,7 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
         Registration::new::<thread_menu::ThreadMenu>("threadMenu", &[], Scope::Window),
+        Registration::new::<threads::ThreadStore>("threads", &[], Scope::Window),
         Registration::new::<toasts::Toasts>("toasts", &["toasts"], Scope::Window),
         Registration::new::<usage::Usage>("usage", &["usage"], Scope::Window),
         Registration::new::<usage_prices::UsagePrices>(

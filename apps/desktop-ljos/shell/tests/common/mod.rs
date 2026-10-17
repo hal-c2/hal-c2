@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::json::Json;
-use hal_c2_shell::mc::{Mc, OnFrame, OnReady, Reply, Resume, SubId};
+use hal_c2_shell::mc::{Frame, Mc, OnFrame, OnReady, Reply, Resume, SubId};
 use ljos::App;
 use ljos::MapSource;
 use ljos::dev::OnError;
@@ -92,6 +92,10 @@ pub struct FakeMc {
     replies: RefCell<Vec<Option<Reply>>>,
     /// The subscriptions still followed: id, shape, handler.
     subs: RefCell<Vec<(SubId, Json, Option<OnFrame>)>>,
+    /// What each subscription that has one says it resumes from.
+    resumes: RefCell<Vec<(SubId, Option<Resume>)>>,
+    /// Every `more`: the subscription and how many turns it asked for.
+    pub mores: RefCell<Vec<(SubId, u32)>>,
 }
 
 impl FakeMc {
@@ -101,6 +105,45 @@ impl FakeMc {
             .iter()
             .map(|(_, m, _)| m.clone())
             .collect()
+    }
+
+    /// What subscription `id` says it resumes from, as a `sub` frame would
+    /// carry it; none without a resume (or once unsubscribed).
+    pub fn resume(&self, id: SubId) -> Option<Frame> {
+        let mut resume = self
+            .resumes
+            .borrow_mut()
+            .iter_mut()
+            .find(|(i, _)| *i == id)
+            .and_then(|(_, r)| r.take())?;
+        let frame = resume();
+        if let Some(slot) = self.resumes.borrow_mut().iter_mut().find(|(i, _)| *i == id) {
+            slot.1 = Some(resume);
+        }
+        Some(frame)
+    }
+
+    /// Sends `frame` (an object with `t`) to subscription `id` alone.
+    pub fn frame_to(&self, engine: &Engine, id: SubId, frame: Json) {
+        let Json::Object(frame) = frame else {
+            panic!("a frame is an object")
+        };
+        self.deliver(engine, id, &frame);
+    }
+
+    fn deliver(&self, engine: &Engine, id: SubId, frame: &Frame) {
+        let handler = self
+            .subs
+            .borrow_mut()
+            .iter_mut()
+            .find(|(i, _, _)| *i == id)
+            .and_then(|(_, _, h)| h.take());
+        let Some(mut handler) = handler else { return };
+        handler(engine, frame);
+        // Back, unless the frame unsubscribed it.
+        if let Some(slot) = self.subs.borrow_mut().iter_mut().find(|(i, _, _)| *i == id) {
+            slot.2 = Some(handler);
+        }
     }
 
     /// Answers call `index` (of `calls`); false when it was answered before.
@@ -201,18 +244,7 @@ impl FakeMc {
             .map(|(id, _)| id)
             .collect();
         for id in ids {
-            let handler = self
-                .subs
-                .borrow_mut()
-                .iter_mut()
-                .find(|(i, _, _)| *i == id)
-                .and_then(|(_, _, h)| h.take());
-            let Some(mut handler) = handler else { continue };
-            handler(engine, &frame);
-            // Back, unless the frame unsubscribed it.
-            if let Some(slot) = self.subs.borrow_mut().iter_mut().find(|(i, _, _)| *i == id) {
-                slot.2 = Some(handler);
-            }
+            self.deliver(engine, id, &frame);
         }
     }
 
@@ -243,18 +275,24 @@ impl Mc for FakeMc {
         self.replies.borrow_mut().push(Some(reply));
     }
 
-    fn subscribe(&self, shape: Json, on_frame: OnFrame, _: Option<Resume>) -> SubId {
+    fn subscribe(&self, shape: Json, on_frame: OnFrame, resume: Option<Resume>) -> SubId {
         self.next.set(self.next.get() + 1);
         let id = SubId(self.next.get());
         self.subs.borrow_mut().push((id, shape, Some(on_frame)));
+        if resume.is_some() {
+            self.resumes.borrow_mut().push((id, resume));
+        }
         id
     }
 
     fn unsubscribe(&self, id: SubId) {
         self.subs.borrow_mut().retain(|(i, _, _)| *i != id);
+        self.resumes.borrow_mut().retain(|(i, _)| *i != id);
     }
 
-    fn more(&self, _: SubId, _: u32) {}
+    fn more(&self, id: SubId, items: u32) {
+        self.mores.borrow_mut().push((id, items));
+    }
 
     fn on_ready_changed(&self, f: OnReady) {
         self.on_ready.borrow_mut().push(f);

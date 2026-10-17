@@ -338,17 +338,31 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     let root = match &options.launch.mc_origin {
         Some(origin) => {
             let (woken, wakes) = mpsc::channel();
+            let woken_by_cache = woken.clone();
             let connection = Rc::new(Connection::spawn(move || {
                 let _ = woken.send(());
             }));
             connection.open(origin, &options.mc_token)?;
             hal_c2_shell::start(&engine, &options.launch, connection.clone());
-            dispatch_actions(&engine, &options.actions);
+            let cache_woken = woken_by_cache.clone();
+            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
+                let _ = cache_woken.send(());
+            });
             let root = engine
                 .create_from_url(ROOT, None, Vec::new())
                 .map_err(|e| e.to_string())?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
-            while !hal_c2_shell::active(&engine) {
+            let mut dispatched = false;
+            loop {
+                // The actions once the shell is active: navigation follows
+                // a route only from then on.
+                if hal_c2_shell::active(&engine) && !dispatched {
+                    dispatched = true;
+                    dispatch_actions(&engine, &options.actions);
+                }
+                if dispatched && !hal_c2_shell::controllers::threads::loading(&engine) {
+                    break;
+                }
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero()
                     || wakes.recv_timeout(left) == Err(mpsc::RecvTimeoutError::Disconnected)
@@ -358,9 +372,16 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
                         "hal-c2-ljos: no snapshot from {origin} ({:?} {}), so what the cache kept",
                         status.phase, status.failure
                     );
+                    if !dispatched {
+                        dispatch_actions(&engine, &options.actions);
+                    }
+                    hal_c2_shell::controllers::threads::drain(&engine);
                     break;
                 }
-                engine.turn(None, || connection.deliver(&engine));
+                engine.turn(None, || {
+                    connection.deliver(&engine);
+                    hal_c2_shell::controllers::threads::deliver(&engine);
+                });
             }
             root
         }
@@ -431,6 +452,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     }
                     hal_c2_shell::folders::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
+                    hal_c2_shell::controllers::threads::deliver(engine);
                 }
                 Message::Activated(key) => {
                     controller::with::<AlertController, _>(engine, |alerts, engine| {
@@ -439,6 +461,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
+            // The client cache answers a thread's copy on its own thread.
+            let threads_handle = handle.clone();
+            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
+                let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             // Alerts reach the desktop's notification service; a click shows
             // its thread.
             #[cfg(all(unix, not(target_os = "macos")))]

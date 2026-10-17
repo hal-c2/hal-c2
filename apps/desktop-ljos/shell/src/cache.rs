@@ -229,9 +229,9 @@ impl LocalCache {
 
     /// Called from the worker when a `load_thread` reply is ready, and from
     /// `load_thread` itself on a cache that is not open: the owner then runs
-    /// [`LocalCache::deliver`] on its own thread.
-    // TODO(port): ThreadStore::loadThread is the only reader; it hands the
-    // wake to the event loop (as main.rs does the MC connection's).
+    /// [`LocalCache::deliver`] on its own thread. The shell's ThreadStore is
+    /// the only reader: `controllers::threads::set_wake` hands it the event
+    /// loop's wake.
     pub fn set_wake(&self, wake: impl Fn() + Send + Sync + 'static) {
         *self.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(wake));
     }

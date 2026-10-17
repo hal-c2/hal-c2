@@ -27,6 +27,7 @@ mod settings;
 mod simple_pages;
 mod slack;
 mod source_control;
+mod threads;
 mod toasts;
 mod usage;
 
