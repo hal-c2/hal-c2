@@ -97,14 +97,15 @@ defmodule HalC2.Editors do
 
   # How to launch the user's default text editor, or nil without one. On Linux that is the
   # desktop entry `xdg-mime` names for text/plain, run through `gio launch`, which also
-  # opens a terminal for terminal editors such as Neovim.
+  # opens a terminal for terminal editors such as Neovim. On macOS it is `open -t`, on
+  # Windows the program registered for `.txt`.
   defp default_editor do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
       {:unix, :darwin} ->
         {"open", ["-t"]}
 
       {:win32, _} ->
-        nil
+        windows_text_editor()
 
       _ ->
         with true <- display?(),
@@ -115,6 +116,57 @@ defmodule HalC2.Editors do
         else
           _ -> nil
         end
+    end
+  end
+
+  # The program Windows opens `.txt` files with, from the registry through `reg query`: the
+  # user's choice, else the class registered for the extension, and that class's
+  # `shell\open\command`. Nil without one, and for a Store app, whose class names no command
+  # line (it activates through `DelegateExecute`).
+  defp windows_text_editor do
+    explorer = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"
+
+    with reg when reg != nil <- System.find_executable("reg"),
+         class when class != nil <-
+           reg_value(reg, [explorer <> "\\.txt\\UserChoice", "/v", "ProgId"]) ||
+             reg_value(reg, ["HKCR\\.txt", "/ve"]),
+         line when line != nil <-
+           reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]),
+         [command | args] <- command_words(expand_variables(line)) do
+      # The file goes last, in place of the %1 (or %L) the registered line puts it at.
+      {command, Enum.reject(args, &String.match?(&1, ~r/%[1lL*]/))}
+    else
+      _ -> nil
+    end
+  end
+
+  # The data of the value `reg query` prints for `args`, or nil. Like xdg-mime, it runs
+  # while a client waits for the server config, so it gets 2 s.
+  defp reg_value(reg, args) do
+    task = Task.async(fn -> System.cmd(reg, ["query" | args], stderr_to_stdout: true) end)
+
+    with {:ok, {out, 0}} <- Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill),
+         [_, data] <- Regex.run(~r/^\s+\S.*?\s+REG_[A-Z_]+\s+(\S.*?)\s*$/m, out) do
+      data
+    else
+      _ -> nil
+    end
+  end
+
+  # `%SystemRoot%` and the like, as REG_EXPAND_SZ data holds them; `%1` is not one.
+  defp expand_variables(line) do
+    Regex.replace(~r/%([A-Za-z_][A-Za-z0-9_()]*)%/, line, fn all, name ->
+      System.get_env(name) || all
+    end)
+  end
+
+  # A command line split at spaces, a quoted part (the program in `Program Files`) whole.
+  defp command_words(line) do
+    for match <- Regex.scan(~r/"([^"]*)"|(\S+)/, line) do
+      case match do
+        [_, quoted] -> quoted
+        [_, _, word] -> word
+      end
     end
   end
 

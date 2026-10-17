@@ -188,6 +188,49 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> install("gio")
   end
 
+  # A Windows host whose `reg` answers for the .txt association: the user's choice
+  # (`user_choice`, else the class registered for .txt) names `txtfile`, whose open
+  # command is the `notepad` that reports to this test.
+  defp windows_host(context, answers) do
+    World.put_app_env(:os_type, {:win32, :nt})
+    context = install(context, "notepad")
+
+    command =
+      ~s|    (Default)    REG_EXPAND_SZ    "#{Path.join(context.bin, "notepad")}" %1|
+
+    body =
+      ~s|case "$2" in\n| <>
+        Enum.map_join(answers, fn {key, value} ->
+          ~s|  *'#{key}'*) printf '\\nHKEY\\n#{value}\\n' ;;\n|
+        end) <>
+        ~s|  *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\nHKEY\\n%s\\n' '#{command}' ;;\n| <>
+        ~s|  *) exit 1 ;;\nesac|
+
+    install_script(context, "reg", body)
+  end
+
+  step "the MC runs on Windows and opens text files in Notepad", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows with no program for text files", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exit 1")
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
   step "DISPLAY is set but empty and there is no Wayland display", context do
     World.put_os_env("DISPLAY", "")
     World.put_os_env("WAYLAND_DISPLAY", nil)
