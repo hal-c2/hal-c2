@@ -598,6 +598,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::controllers::plugin::deliver(engine);
                     hal_c2_shell::local_transcriber::deliver(engine);
                     hal_c2_shell::controllers::threads::deliver(engine);
+                    hal_c2_shell::controllers::snap_shot::deliver(engine);
                 }
                 Message::Activated(key) => {
                     controller::with::<AlertController, _>(engine, |alerts, engine| {
@@ -611,6 +612,17 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::controllers::threads::set_wake(&engine, move || {
                 let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            // Snapshots capture through the desktop session's portals; what
+            // they learn on their own threads wakes the window's.
+            let snap_shot_handle = handle.clone();
+            let snap_shot =
+                hal_c2_shell::snap_shot::system(options.launch.cache_dir.clone(), move || {
+                    let _ = snap_shot_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+                });
+            controller::with::<hal_c2_shell::controllers::snap_shot::SnapShot, _>(
+                &engine,
+                |c, e| c.set_backend(e, snap_shot),
+            );
             // Alerts reach the desktop's notification service; a click shows
             // its thread.
             #[cfg(all(unix, not(target_os = "macos")))]

@@ -42,6 +42,8 @@ mod scripted_run;
 mod settings;
 mod simple_pages;
 mod slack;
+mod snap_shot;
+mod snap_shot_prop;
 mod source_control;
 mod terminals;
 mod threads;

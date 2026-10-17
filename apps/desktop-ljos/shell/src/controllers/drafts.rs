@@ -604,7 +604,7 @@ impl DraftController {
 /// The project to start in: the one asked for, else the scoped one, else
 /// the one the window shows, else the first. With several projects and
 /// none of them showing or in scope, it asks which one.
-fn start_new(engine: &Engine, requested: &str) {
+pub fn start_new(engine: &Engine, requested: &str) {
     let group = if !requested.is_empty() {
         // A stale key (project removed, environment gone) must not land the
         // thread in whichever project sorts first.
