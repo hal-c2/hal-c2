@@ -3,7 +3,7 @@
 //! reads back, one typed without its scheme is tried over HTTPS then HTTP,
 //! an invitation reads back the same wrapped in the app's link or not, and
 //! text nobody chose is no invitation unless it is a plain pairing link.
-//! The exchange against scripted MCs is not ported.
+//! The exchange against scripted MCs is in `pairing_exchange_prop.rs`.
 
 use proptest::prelude::*;
 
