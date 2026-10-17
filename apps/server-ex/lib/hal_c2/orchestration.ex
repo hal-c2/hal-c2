@@ -545,13 +545,8 @@ defmodule HalC2.Orchestration do
         users_run(state, queued["id"])
 
       message && target && target["status"] in @active_statuses &&
-        steerable?(target, queued["providerInstanceId"]) &&
-          runtime(target["providerInstanceId"]).steer(
-            thread_id,
-            target["id"],
-            steer_input(message)
-          ) == :ok ->
-        promoted(thread_id, queued, target, message)
+          steerable?(target, queued["providerInstanceId"]) ->
+        promote(thread_id, queued, target, message, command)
 
       true ->
         restart_promoted(thread_id, command)
@@ -654,32 +649,87 @@ defmodule HalC2.Orchestration do
 
   # A question the provider asked without waiting (Codex's async questions) has no
   # provider call to answer: its answer is a user message.
-  # The provider took the promoted message into its running turn.
-  defp promoted(thread_id, queued, target, message) do
-    HalC2.Streams.transact(thread_id, :thread, fn state ->
-      at = Entities.now()
+  # The promoted message joins the running turn before the provider is asked to take
+  # it, as a steer does (`reserve_steer/3`): a second promote finds its run no longer
+  # queued, and the message sits ahead of the answer. A refusal puts it back in the
+  # queue, first, and interrupts the turn, which starts it next.
+  defp promote(thread_id, queued, target, message, command) do
+    promoted =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        runs = StreamState.get(state, "run")
 
-      changes =
-        [
-          upsert(
-            state,
-            "run",
-            queued["id"],
-            &Map.merge(&1, %{
-              "status" => "cancelled",
-              "queuePosition" => nil,
-              "completedAt" => at
-            })
-          ),
-          upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
-        ] ++
-          steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
+        if runs[queued["id"]]["status"] == "queued" and
+             runs[target["id"]]["status"] in @active_statuses do
+          at = Entities.now()
+
+          changes =
+            [
+              upsert(
+                state,
+                "run",
+                queued["id"],
+                &Map.merge(&1, %{
+                  "status" => "cancelled",
+                  "queuePosition" => nil,
+                  "completedAt" => at
+                })
+              ),
+              upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
+            ] ++
+              steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
+
+          {Enum.reject(changes, &is_nil/1), :promoted}
+        else
+          {[], runs[queued["id"]]["status"]}
+        end
+      end)
+
+    case promoted do
+      :promoted ->
+        case runtime(target["providerInstanceId"]).steer(
+               thread_id,
+               target["id"],
+               steer_input(message)
+             ) do
+          :ok ->
+            HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
+            {:ok, %{"sequence" => sequence(thread_id)}}
+
+          {:error, _} ->
+            unpromote(thread_id, queued, message)
+            result = restart_promoted(thread_id, command)
+            # A turn that ended while it was out of the queue did not start it.
+            start_next(thread_id)
+            result
+        end
+
+      "queued" ->
+        restart_promoted(thread_id, command)
+
+      _ ->
+        {:error, "Queued run #{queued["id"]} is not queued."}
+    end
+  end
+
+  defp unpromote(thread_id, queued, message) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      changes = [
+        upsert(
+          state,
+          "run",
+          queued["id"],
+          &Map.merge(&1, %{
+            "status" => "queued",
+            "queuePosition" => queued["queuePosition"],
+            "completedAt" => nil
+          })
+        ),
+        upsert(state, "message", message["id"], &Map.put(&1, "runId", queued["id"])),
+        {"turn-item", "turn-item:user:#{message["id"]}", Patch.delete()}
+      ]
 
       {Enum.reject(changes, &is_nil/1), :ok}
     end)
-
-    HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
-    {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
   defp message_request(thread_id, request_id) do
@@ -1528,8 +1578,8 @@ defmodule HalC2.Orchestration do
       status when status in [:queued, :sent] ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:steer, run} ->
-        steer(thread_id, run, command)
+      {:steer, run, message_id} ->
+        steer(thread_id, run, message_id, command)
 
       {:restart, active_run_id} ->
         # The queued message goes first; the interrupted run's end starts it.
@@ -1689,52 +1739,103 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # The provider takes the message first; only then does it join the run. If the turn
-  # ended meanwhile, the message is sent like any other (started, or queued behind a
-  # newer run). A steer that lost the race with the turn's
-  # end is handled the same way. A provider that refuses while its turn still runs is an error for the sender:
-  # the message was not delivered, so it is neither shown in the turn nor queued.
-  defp steer(thread_id, run, command) do
+  # A steer is recorded in the running turn before the provider is asked to take it
+  # (`steer/4`), in the transaction that decided it. A repeat of its message id then
+  # finds it sent, so the provider is asked once, and the message sits in the
+  # transcript ahead of whatever the provider answers it with.
+  defp reserve_steer(state, run, command) do
+    at = Entities.now()
+    message_id = command["messageId"] || Entities.new_id("message")
+    ids = %{thread: run["threadId"], run: run["id"], root_node: run["rootNodeId"]}
+
+    message =
+      Entities.message(ids, message_id, "user", command["text"] || "", false, at)
+      |> Map.merge(%{
+        "attachments" => command["attachments"] || [],
+        "createdBy" => command["createdBy"] || "user",
+        "creationSource" => command["creationSource"] || "web"
+      })
+      |> with_message_fields(command)
+
+    {[create("message", message_id, message)] ++
+       steer_changes(state, run, message_id, message, "steer", at),
+     {:ok, {:steer, run, message_id}}}
+  end
+
+  # What a runtime's `:ok` means: the provider answers the message.
+  # - Codex and Muse refuse a `turn/steer` whose turn is no longer the one running
+  #   (`expectedTurnId`), and answer an accepted one in that turn.
+  # - Claude takes a steer only while the run's turn is its current one. A turn it was
+  #   already ending answers it in a turn of its own, which the MC records as a wake.
+  # - OpenCode (ACP) and Pi take a steer as their loop ends and answer it in a new
+  #   loop, which their runtimes do not record yet (#313).
+  # - Other ACP agents (Cursor, Grok, Antigravity) cannot be steered: they refuse.
+  # - Plugin providers answer for their own `steer/3`.
+  #
+  # A refusal takes the reserved message back out of the run. While the turn still
+  # runs that is an error for the sender: the message was not delivered, so it is
+  # neither shown in the turn nor queued. A turn that ended meanwhile is why it was
+  # refused, so the message is sent like any other (started, or queued behind a
+  # newer run).
+  defp steer(thread_id, run, message_id, command) do
     instance = run["providerInstanceId"] || "codex"
 
     case runtime(instance).steer(thread_id, run["id"], steer_input(command)) do
       :ok ->
-        HalC2.Streams.transact(thread_id, :thread, fn state ->
-          at = Entities.now()
-          message_id = command["messageId"] || Entities.new_id("message")
-          ids = %{thread: thread_id, run: run["id"], root_node: run["rootNodeId"]}
-
-          message =
-            Entities.message(ids, message_id, "user", command["text"] || "", false, at)
-            |> Map.merge(%{
-              "attachments" => command["attachments"] || [],
-              "createdBy" => command["createdBy"] || "user",
-              "creationSource" => command["creationSource"] || "web"
-            })
-            |> with_message_fields(command)
-
-          {[create("message", message_id, message)] ++
-             steer_changes(state, run, message_id, message, "steer", at), :ok}
-        end)
-
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:error, reason} ->
-        if run_active?(thread_id, run["id"]) do
-          {:error,
-           "#{HalC2.ThreadMove.provider_name(instance)} did not take the message into its running turn (#{reason}). Send it again, or stop the turn first."}
-        else
+        resend =
           command
+          |> Map.put("messageId", message_id)
           |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
           |> Map.delete("deliveryIntent")
-          |> dispatch()
+
+        case HalC2.Streams.transact(thread_id, :thread, &unsteer(&1, thread_id, run, resend)) do
+          {:resent, decided} ->
+            dispatched(thread_id, resend, decided)
+
+          :refused ->
+            {:error,
+             "#{HalC2.ThreadMove.provider_name(instance)} did not take the message into its running turn (#{reason}). Send it again, or stop the turn first."}
+
+          {:error, _} = refused ->
+            refused
         end
     end
   end
 
-  defp run_active?(thread_id, run_id) do
-    state = HalC2.Streams.state(thread_id)
-    (StreamState.get(state, "run")[run_id] || %{})["status"] in @active_statuses
+  defp unsteer(state, thread_id, run, resend) do
+    message_id = resend["messageId"]
+    message = StreamState.get(state, "message")[message_id]
+    status = (StreamState.get(state, "run")[run["id"]] || %{})["status"]
+
+    released = [
+      {"message", message_id, Patch.delete()},
+      {"turn-item", "turn-item:user:#{message_id}", Patch.delete()}
+    ]
+
+    cond do
+      message == nil or message["runId"] != run["id"] ->
+        {[], :refused}
+
+      status in @active_statuses ->
+        {released, :refused}
+
+      true ->
+        case decide_dispatch(with_changes(state, released), thread_id, resend) do
+          {changes, {:ok, _} = decided} -> {released ++ changes, {:resent, decided}}
+          {_, refused} -> {released, refused}
+        end
+    end
+  end
+
+  # `state` as it is once `changes` are committed, for deciding more in the same
+  # transaction.
+  defp with_changes(state, changes) do
+    Enum.reduce(changes, state, fn {kind, id, patch}, acc ->
+      StreamState.apply_event(acc, %{seq: acc.seq, kind: kind, entity: id, patch: patch})
+    end)
   end
 
   # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
@@ -2494,7 +2595,7 @@ defmodule HalC2.Orchestration do
             queue_run(state, thread, runs, command, active["id"])
 
           (steer or auto_steer) and steerable?(active, message_instance(thread, command)) ->
-            {[], {:ok, {:steer, active}}}
+            reserve_steer(state, active, command)
 
           steer ->
             queue_run(state, thread, runs, command, active["id"])

@@ -912,6 +912,67 @@ defmodule HalC2.OrchestrationTest do
       end
     end
 
+    # #98: the steer is recorded before Codex is asked, so the repeat finds it sent.
+    test "the same steer sent twice at once reaches the provider once", %{tmp_dir: dir} do
+      log = Path.join(dir, "codex-requests.log")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_LOG=#{log}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      steer = fn ->
+        send_message(thread_id, "m2", "look here instead", %{
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "steer"
+        })
+      end
+
+      [first, second] = [Task.async(steer), Task.async(steer)]
+      assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = Task.await(second)
+
+      state = await_statuses(thread_id, ["completed"])
+
+      steers =
+        log
+        |> File.stream!()
+        |> Enum.map(&JSON.decode!/1)
+        |> Enum.filter(&(&1["method"] == "turn/steer"))
+
+      assert length(steers) == 1
+
+      assert [%{"id" => "m2"}] =
+               Enum.filter(StreamState.list(state, "message"), &(&1["id"] == "m2"))
+    end
+
+    # #105: Codex took the steer and ended its turn before it said so. The message is
+    # in the turn ahead of its answer, not after the turn's end.
+    test "a steer taken as the turn ends is shown before its answer" do
+      thread_id = launch("closing soon")
+      _ = await_run(thread_id, "running")
+
+      {:ok, _} =
+        send_message(thread_id, "m2", "look here instead", %{
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "steer"
+        })
+
+      state = await_statuses(thread_id, ["completed"])
+      items = StreamState.list(state, "turn-item")
+      steer = Enum.find(items, &(&1["messageId"] == "m2"))
+      answer = Enum.find(items, &(&1["text"] == "steered: look here instead"))
+
+      assert steer["runId"] == answer["runId"]
+      assert steer["ordinal"] < answer["ordinal"]
+    end
+
     test "a queued message promoted to steer joins the running turn" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")

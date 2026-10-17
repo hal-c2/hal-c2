@@ -123,6 +123,7 @@ paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 page_size = int(os.environ.get("FAKE_CODEX_PAGE_SIZE", "0"))
 turns = 0
 finishing = False  # "finishing": the turn ends as a steer for it arrives
+closing = False  # "closing": the turn takes a steer, answers it and ends before it replies
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -239,9 +240,10 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
                 send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
                 continue
-        if "wait" in text or "finishing" in text:
+        if "wait" in text or "finishing" in text or "closing" in text:
             waiting_ctx = ctx
             finishing = "finishing" in text
+            closing = "closing" in text
             continue
         if text.startswith("say "):
             say(ctx, text)
@@ -391,6 +393,15 @@ for line in sys.stdin:
         if params["expectedTurnId"] != ctx["turnId"] or os.path.exists(os.environ.get("FAKE_CODEX_REJECT_STEER", "/nonexistent")):
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
             continue
+        if closing:
+            # The turn took the steer and ended before its answer got back.
+            closing = False
+            text = "steered: " + params["input"][0]["text"]
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+            send({"id": mid, "result": {"turnId": ctx["turnId"]}})
+            continue
         send({"id": mid, "result": {"turnId": ctx["turnId"]}})
         if params["input"][0]["text"].startswith("say "):
             say(ctx, params["input"][0]["text"])
@@ -402,8 +413,8 @@ for line in sys.stdin:
         # A running turn passes on a new quota reading, as Codex does alongside token usage.
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
-        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
-        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
