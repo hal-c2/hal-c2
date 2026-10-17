@@ -2,13 +2,13 @@
 //! shortcuts and hal-c2.json, and the same list as Settings → Project keeps
 //! it (ProjectActionsController.cpp, features/projects/scripts.feature).
 
-use hal_c2_shell::controllers::sidebar;
+use hal_c2_shell::controllers::{drafts, sidebar, workspace};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::McError;
-use hal_c2_shell::project::place::{self, Place};
 use serde_json::json;
 
 use crate::Hub;
+use crate::workspace::thread;
 
 const AT: &str = "2026-03-01T00:00:00Z";
 const MUTATE: &str = "projects.mutate";
@@ -52,32 +52,23 @@ fn hub(scripts: Vec<Json>, file: Option<&str>, settings: Json) -> Hub {
     let hub = Hub::clustered();
     hub.mc.set_ready(&hub.engine, true);
     rows(&hub, &scripts);
-    place::set_place(
-        &hub.engine,
-        Some(Place {
-            environment_id: "env-1".into(),
-            thread_id: "t1".into(),
-            project_id: "p1".into(),
-            root: "/w/p1".into(),
-            scripts,
-            ..Place::default()
-        }),
-    );
+    hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
     hub.advance(0);
     config(&hub, settings);
-    match file {
-        Some(contents) => hub.mc.answer(
-            &hub.engine,
-            "projects.readFile",
-            Ok(json!({"contents": contents})),
-        ),
-        None => hub.mc.answer(
-            &hub.engine,
-            "projects.readFile",
-            Err(McError::new("no such file")),
-        ),
-    }
+    read_file(&hub, file);
     hub
+}
+
+/// Answers the reads of hal-c2.json that wait: the landing draft's first, which
+/// the route to the thread left behind, then the thread's own.
+fn read_file(hub: &Hub, file: Option<&str>) {
+    while let Some(index) = hub.mc.pending("projects.readFile") {
+        let result = match file {
+            Some(contents) => Ok(json!({"contents": contents})),
+            None => Err(McError::new("no such file")),
+        };
+        hub.mc.reply(&hub.engine, index, result);
+    }
 }
 
 /// The shell's rows: `p1` with `scripts`, and `p2` with one of its own.
@@ -93,7 +84,7 @@ fn rows(hub: &Hub, scripts: &[Json]) {
         json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 1,
             "environment": {"environmentId": "env-1", "label": "Laptop",
                 "capabilities": {"projectSettingsOverrides": true}}}],
-            "rows": [project("p1", scripts),
+            "rows": [project("p1", scripts), thread("t1", "main", None),
                 project("p2", &[json!({"id": "deploy", "name": "Deploy", "command": "make",
                     "icon": "play", "runOnWorktreeCreate": false})])]}),
     );
@@ -389,35 +380,28 @@ fn a_project_with_its_own_list_in_settings_keeps_changes_there() {
 
 #[test]
 fn a_new_threads_workspace_comes_from_the_setting_else_the_file() {
-    let draft = |id: &str| Place {
-        environment_id: "env-1".into(),
-        thread_id: format!("t-{id}"),
-        project_id: "p1".into(),
-        draft_id: id.into(),
-        root: "/w/p1".into(),
-        ..Place::default()
-    };
+    let start = |hub: &Hub, project: &str| drafts::start(&hub.engine, "env-1", project).unwrap();
     // The saved setting.
     let hub = hub(
         vec![],
         Some(r#"{"defaultThreadEnvMode": "local"}"#),
         json!({"defaultThreadEnvMode": "worktree"}),
     );
-    place::set_place(&hub.engine, Some(draft("d1")));
+    let d1 = start(&hub, "p1");
     hub.advance(0);
-    assert_eq!(place::checkout(&hub.engine, "d1").env_mode, "worktree");
+    assert_eq!(workspace::checkout(&hub.engine, &d1).env_mode, "worktree");
     // A draft already placed by the user stays.
-    place::set_checkout(
+    let d2 = start(&hub, "p2");
+    workspace::set_checkout(
         &hub.engine,
-        "d2",
-        place::Checkout {
+        &d2,
+        workspace::Checkout {
             branch: Some("main".into()),
-            ..place::Checkout::default()
+            ..workspace::Checkout::default()
         },
     );
-    place::set_place(&hub.engine, Some(draft("d2")));
     hub.advance(0);
-    assert_eq!(place::checkout(&hub.engine, "d2").env_mode, "local");
+    assert_eq!(workspace::checkout(&hub.engine, &d2).env_mode, "local");
 
     // Without a setting, the file.
     let hub = self::hub(
@@ -425,15 +409,11 @@ fn a_new_threads_workspace_comes_from_the_setting_else_the_file() {
         Some(r#"{"defaultThreadEnvMode": "worktree"}"#),
         json!({}),
     );
-    place::set_place(&hub.engine, Some(draft("d3")));
+    let d3 = start(&hub, "p1");
     hub.advance(0);
     // Read for this draft first.
-    hub.mc.answer(
-        &hub.engine,
-        "projects.readFile",
-        Ok(json!({"contents": r#"{"defaultThreadEnvMode": "worktree"}"#})),
-    );
-    assert_eq!(place::checkout(&hub.engine, "d3").env_mode, "worktree");
+    read_file(&hub, Some(r#"{"defaultThreadEnvMode": "worktree"}"#));
+    assert_eq!(workspace::checkout(&hub.engine, &d3).env_mode, "worktree");
 }
 
 // -- Settings → Project -----------------------------------------------------

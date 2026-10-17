@@ -29,9 +29,9 @@ use serde_json::json;
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::toasts::{Action, Toasts};
+use crate::controllers::workspace;
 use crate::json::Json;
 use crate::mc::{Frame, Mc, McError, SubId};
-use crate::project::place;
 use crate::store;
 
 /// How long a finished action's result stays (GIT_ACTION_SUCCESS_VISIBLE_MS).
@@ -510,11 +510,11 @@ impl Controller for Git {
         }
         self.active = true;
         let me = self.me.clone();
-        place::on_git_changed(engine, move |engine| {
+        workspace::on_git_changed(engine, move |engine| {
             me.run(engine, |c, engine| c.publish(engine));
         });
         let me = self.me.clone();
-        place::on_place_changed(engine, move |engine| {
+        workspace::on_place_changed(engine, move |engine| {
             me.run(engine, |c, engine| {
                 // A question or dialog about another checkout does not follow
                 // the route.
@@ -557,7 +557,7 @@ impl Controller for Git {
         if !self.active || !action.starts_with("git.") {
             return false;
         }
-        let ready = place::place(engine).is_some_and(|p| {
+        let ready = workspace::place(engine).is_some_and(|p| {
             !p.cwd().is_empty() && store::with(engine, |s| s.environment_online(&p.environment_id))
         });
         if !ready {
@@ -624,7 +624,7 @@ impl Controller for Git {
                 self.publish(engine);
             }
             "git.publish.submit" => self.submit_publish(engine, payload),
-            "git.refresh" => place::refresh_git(engine),
+            "git.refresh" => workspace::refresh_git(engine),
             _ => {}
         }
         true
@@ -639,7 +639,7 @@ impl Git {
     /// The checkout's local and remote status as one (VcsStatusResult); none
     /// before the first local status.
     fn status(&self, engine: &Engine) -> Option<Status> {
-        let git = place::git(engine)?;
+        let git = workspace::git(engine)?;
         if git.local.is_empty() {
             return None;
         }
@@ -673,10 +673,10 @@ impl Git {
         if !self.active {
             return;
         }
-        let place = place::place(engine);
+        let place = workspace::place(engine);
         // An unreachable machine says why when the checkout's status is
         // followed.
-        let unreachable = place::git_error(engine);
+        let unreachable = workspace::git_error(engine);
         if let Some(p) = &place
             && (!store::with(engine, |s| s.environment_online(&p.environment_id))
                 || !unreachable.is_empty())
@@ -873,7 +873,7 @@ impl Git {
             self.publish(engine);
             return;
         }
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         let mut input = json!({
@@ -1039,7 +1039,7 @@ impl Git {
             dismiss_toast(engine, &self.progress_toast);
         }
         self.progress_toast.clear();
-        place::refresh_git(engine);
+        workspace::refresh_git(engine);
         self.publish(engine);
     }
 
@@ -1052,13 +1052,13 @@ impl Git {
         if text(branch, "status") != "created" || name.is_empty() {
             return;
         }
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         if !place.draft_id.is_empty() {
-            let mut checkout = place::checkout(engine, &place.draft_id);
+            let mut checkout = workspace::checkout(engine, &place.draft_id);
             checkout.branch = Some(name);
-            place::set_checkout(engine, &place.draft_id, checkout);
+            workspace::set_checkout(engine, &place.draft_id, checkout);
             return;
         }
         self.mc.dispatch_command(
@@ -1076,7 +1076,7 @@ impl Git {
         if self.busy() {
             return;
         }
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         self.pulling = true;
@@ -1124,7 +1124,7 @@ impl Git {
                             }
                         }
                     }
-                    place::refresh_git(engine);
+                    workspace::refresh_git(engine);
                     c.publish(engine);
                 });
             }),
@@ -1135,7 +1135,7 @@ impl Git {
         if self.init_pending {
             return;
         }
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         self.init_pending = true;
@@ -1153,7 +1153,7 @@ impl Git {
                             toasts.error(engine, "Git initialization failed", &error.message);
                         });
                     }
-                    place::refresh_git(engine);
+                    workspace::refresh_git(engine);
                     c.publish(engine);
                 });
             }),
@@ -1169,7 +1169,7 @@ impl Git {
             hosts: publish_hosts(&[], false),
         });
         self.publish(engine);
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         let me = self.me.clone();
@@ -1222,7 +1222,7 @@ impl Git {
         publishing.busy = true;
         publishing.error.clear();
         self.publish(engine);
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         let me = self.me.clone();
@@ -1290,7 +1290,7 @@ impl Git {
             open,
             RESULT_MS,
         );
-        place::refresh_git(engine);
+        workspace::refresh_git(engine);
         self.publish(engine);
     }
 }

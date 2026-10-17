@@ -58,12 +58,12 @@ use crate::controllers::menus::Menus;
 use crate::controllers::settings::{Map, Settings};
 use crate::controllers::settings_scope::SettingsScope;
 use crate::controllers::toasts::Toasts;
+use crate::controllers::workspace::{self, Checkout};
 use crate::environment_settings::{Edit, EnvironmentSettings};
 use crate::json::Json;
 use crate::keybindings;
 use crate::mc::Mc;
 use crate::project::file::{self, File, Script};
-use crate::project::place::{self, Checkout};
 use crate::project::scripts;
 use crate::settings_page;
 use crate::store;
@@ -330,7 +330,7 @@ impl Controller for ProjectActions {
         }
         self.active = true;
         let me = self.me.clone();
-        place::on_place_changed(engine, move |engine| {
+        workspace::on_place_changed(engine, move |engine| {
             me.run(engine, |c, engine| c.follow(engine));
         });
         let me = self.me.clone();
@@ -469,7 +469,7 @@ impl ProjectActions {
             self.publish(engine);
             return;
         }
-        let place = place::place(engine);
+        let place = workspace::place(engine);
         let environment = place
             .as_ref()
             .map(|p| p.environment_id.clone())
@@ -557,7 +557,7 @@ impl ProjectActions {
     /// A draft the user has not placed yet starts where the project's
     /// default says: a saved setting first, then hal-c2.json.
     fn apply_default_workspace(&mut self, engine: &Engine) {
-        let Some(place) = place::place(engine) else {
+        let Some(place) = workspace::place(engine) else {
             return;
         };
         if place.draft_id.is_empty() || self.placed.contains(&place.draft_id) {
@@ -588,7 +588,7 @@ impl ProjectActions {
         }
         let draft_id = place.draft_id;
         self.placed.insert(draft_id.clone());
-        let mut checkout = place::checkout(engine, &draft_id);
+        let mut checkout = workspace::checkout(engine, &draft_id);
         let untouched = Checkout::default();
         let placed = checkout.env_mode != untouched.env_mode
             || checkout.branch.is_some()
@@ -599,7 +599,7 @@ impl ProjectActions {
         }
         checkout.env_mode = mode;
         self.applied.insert(draft_id.clone());
-        place::set_checkout(engine, &draft_id, checkout);
+        workspace::set_checkout(engine, &draft_id, checkout);
     }
 
     /// The key bound to the action, as the newest binding says it, or "".

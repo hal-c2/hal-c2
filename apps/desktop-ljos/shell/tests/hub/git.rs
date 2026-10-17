@@ -3,52 +3,54 @@
 
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::McError;
-use hal_c2_shell::project::place::{self, Place};
 use proptest::prelude::*;
 use serde_json::json;
 
 use crate::Hub;
+use crate::workspace::{self, project, thread};
 
-const AT: &str = "2026-03-01T00:00:00Z";
-
-/// The route on a thread of `env-1`'s project, in a checkout whose status is
-/// `local` and `remote`.
+/// The route on thread t1 of `env-1`'s project p1 (t2 is its sibling), in a
+/// checkout whose status is `local` and `remote`.
 fn hub(local: Json, remote: Json) -> Hub {
     let hub = Hub::clustered();
-    hub.mc.frame(
-        &hub.engine,
-        "shell",
-        "",
-        json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 1,
-            "environment": {"environmentId": "env-1", "label": "Laptop"}}],
-            "rows": [["a", "p1", "project", {"id": "p1", "title": "p1", "workspaceRoot": "/w/p1",
-                "createdAt": AT, "updatedAt": AT}]]}),
+    workspace::shell(
+        &hub,
+        vec![
+            project(json!({})),
+            thread("t1", "feature", None),
+            thread("t2", "feature", None),
+        ],
     );
-    place::set_place(
-        &hub.engine,
-        Some(Place {
-            environment_id: "env-1".into(),
-            thread_id: "t1".into(),
-            project_id: "p1".into(),
-            root: "/w/p1".into(),
-            ..Place::default()
-        }),
-    );
+    hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
     status(&hub, local, remote);
     hub
 }
 
+/// The MC's `vcs` shape says the checkout is now `local` and `remote`.
 fn status(hub: &Hub, local: Json, remote: Json) {
-    place::set_git(
+    hub.mc.frame(
         &hub.engine,
-        Some(place::Git {
-            local: local.as_object().cloned().unwrap_or_default(),
-            remote: remote.as_object().cloned().unwrap_or_default(),
-        }),
-        "",
+        "vcs",
+        "env-1",
+        json!({"t": "vcs", "event": {"_tag": "snapshot", "local": local, "remote": remote}}),
     );
     // The pill follows once the controller is free.
     hub.advance(0);
+}
+
+/// The route leaves the thread: no checkout is followed.
+fn leave(hub: &Hub) {
+    hub.dispatch("usage.open", json!({}));
+    hub.advance(0);
+}
+
+/// How many times the shell asked the MC to read the checkout again.
+fn refreshes(hub: &Hub) -> usize {
+    hub.mc
+        .methods()
+        .iter()
+        .filter(|m| *m == "vcs.refreshStatus")
+        .count()
 }
 
 fn local(changes: bool, default_ref: bool) -> Json {
@@ -133,15 +135,18 @@ fn the_pill_offers_what_the_checkout_needs_next() {
 #[test]
 fn off_a_checkout_or_an_unreachable_machine_there_is_no_pill() {
     let hub = hub(local(true, false), remote(0, 0));
-    place::set_git(&hub.engine, None, "Build box is not reachable.");
+    hub.mc.frame(
+        &hub.engine,
+        "vcs",
+        "env-1",
+        json!({"t": "error", "reason": "Build box is not reachable."}),
+    );
     hub.advance(0);
     assert_eq!(
         pill(&hub),
         json!({"available": false, "unavailableReason": "Build box is not reachable."})
     );
-    place::set_place(&hub.engine, None);
-    place::set_git(&hub.engine, None, "");
-    hub.advance(0);
+    leave(&hub);
     assert_eq!(pill(&hub), json!({"available": false}));
 }
 
@@ -153,7 +158,7 @@ fn a_stacked_action_runs_in_the_mcs_git_action_stream_and_one_toast_follows_its_
     assert_eq!(shapes.len(), 1);
     let input = &shapes[0]["input"];
     assert_eq!(input["action"], "commit");
-    assert_eq!(input["cwd"], "/w/p1");
+    assert_eq!(input["cwd"], "/w/p");
     assert_eq!(input["commitMessage"], "Fix it");
     assert_eq!(input["threadId"], "t1");
     assert_eq!(shapes[0]["environment"], "env-1");
@@ -178,13 +183,13 @@ fn a_stacked_action_runs_in_the_mcs_git_action_stream_and_one_toast_follows_its_
     hub.advance(3000);
     assert_eq!(pill(&hub)["progress"]["elapsed"], "3s");
 
-    let before = place::git_refreshes(&hub.engine);
+    let before = refreshes(&hub);
     frame(&hub, finished("Committed"));
     assert!(actions(&hub).is_empty());
     assert_eq!(pill(&hub)["busy"], false);
     assert_eq!(pill(&hub)["progress"], Json::Null);
     assert_eq!(titles(&hub), ["Committed"]);
-    assert_eq!(place::git_refreshes(&hub.engine), before + 1);
+    assert_eq!(refreshes(&hub), before + 1);
 }
 
 #[test]
@@ -239,16 +244,7 @@ fn a_question_about_one_checkout_does_not_follow_the_route() {
     let hub = hub(local(true, true), remote(0, 0));
     hub.dispatch("git.quick", json!({}));
     assert_ne!(pill(&hub)["pendingDefaultBranch"], Json::Null);
-    place::set_place(
-        &hub.engine,
-        Some(Place {
-            environment_id: "env-1".into(),
-            thread_id: "t2".into(),
-            project_id: "p1".into(),
-            root: "/w/p1".into(),
-            ..Place::default()
-        }),
-    );
+    hub.dispatch("thread.open", json!({"key": "env-1:t2"}));
     hub.advance(0);
     assert_eq!(pill(&hub)["pendingDefaultBranch"], Json::Null);
     hub.dispatch("git.defaultBranch", json!({"choice": "continue"}));
@@ -289,7 +285,7 @@ fn pull_toasts_its_progress_and_reads_the_status_again() {
     hub.dispatch("git.quick", json!({}));
     assert_eq!(pill(&hub)["busy"], true);
     assert_eq!(titles(&hub), ["Pulling latest changes..."]);
-    let before = place::git_refreshes(&hub.engine);
+    let before = refreshes(&hub);
     hub.mc.answer(
         &hub.engine,
         "vcs.pull",
@@ -301,7 +297,7 @@ fn pull_toasts_its_progress_and_reads_the_status_again() {
         "Updated feature from origin/feature"
     );
     assert_eq!(pill(&hub)["busy"], false);
-    assert_eq!(place::git_refreshes(&hub.engine), before + 1);
+    assert_eq!(refreshes(&hub), before + 1);
 
     hub.dispatch("git.quick", json!({}));
     hub.mc
@@ -383,8 +379,7 @@ fn publishing_walks_the_hosts_then_the_repository_and_keeps_the_dialog_on_failur
 #[test]
 fn actions_wait_for_a_connected_checkout() {
     let hub = hub(local(true, false), remote(0, 0));
-    place::set_place(&hub.engine, None);
-    hub.advance(0);
+    leave(&hub);
     hub.dispatch("git.commit", json!({"message": "m"}));
     assert!(actions(&hub).is_empty());
 }
