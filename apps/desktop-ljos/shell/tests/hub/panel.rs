@@ -15,6 +15,7 @@ use hal_c2_shell::controllers::terminals::Terminals;
 use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::thread_view::agents::AgentsModel;
+use hal_c2_shell::thread_view::workspace_files::WorkspaceFiles;
 use serde_json::json;
 
 use crate::Hub;
@@ -438,7 +439,9 @@ fn the_tab_models_are_the_panel_singletons() {
     let previews = hub.engine.read_by_name(obj, "previews");
     assert!(matches!(previews, ljos::prelude::Value::Object(_)));
     let files = hub.engine.read_by_name(obj, "files");
-    assert!(matches!(files, ljos::prelude::Value::Null));
+    assert!(matches!(files, ljos::prelude::Value::Object(_)));
+    let device = hub.engine.read_by_name(obj, "device");
+    assert!(matches!(device, ljos::prelude::Value::Object(_)));
     let agents = hub.engine.read_by_name(obj, "agents");
     assert!(matches!(agents, ljos::prelude::Value::Object(_)));
 }
@@ -613,6 +616,131 @@ fn a_device_takes_the_pickers_place() {
     assert_eq!(titles(&hub), Vec::<String>::new());
     hub.with_controller::<RightPanel, _>(|p, e| p.open_device(e, "device:h:d", false));
     assert_eq!(titles(&hub), ["Device"]);
+}
+
+/// The files calls (`projects.*`) made so far, as "method key".
+fn files_calls(hub: &Hub) -> Vec<String> {
+    hub.mc
+        .calls
+        .borrow()
+        .iter()
+        .filter(|(_, m, _)| m.starts_with("projects."))
+        // The project's settings file is read for the settings, not the tab.
+        .filter(|(_, _, p)| p["relativePath"] != "hal-c2.json")
+        .map(|(_, m, p)| {
+            let key = ["directoryPath", "relativePath"]
+                .iter()
+                .find_map(|k| p.get(*k).and_then(Json::as_str))
+                .unwrap_or("");
+            format!("{} {key} {}", m.trim_start_matches("projects."), p["cwd"])
+        })
+        .collect()
+}
+
+#[test]
+fn the_files_tab_lists_the_threads_checkout_while_it_shows() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    assert!(files_calls(&hub).is_empty());
+    hub.dispatch("rightPanel.add", json!({"kind": "files"}));
+    assert_eq!(files_calls(&hub), ["listEntries  \"/work/p\""]);
+    // Another tab hides it; showing it again does not list again.
+    hub.dispatch("rightPanel.add", json!({"kind": "agents"}));
+    hub.dispatch("rightPanel.activate", json!({"id": "files"}));
+    assert_eq!(files_calls(&hub).len(), 1);
+    // Closing the panel hides it too.
+    hub.dispatch("rightPanel.toggle", json!({}));
+    let files = hub.with_controller::<RightPanel, _>(|p, _| p.files().unwrap());
+    let shown = WorkspaceFiles::read(&hub.engine, files, |f| f.is_active());
+    assert_eq!(shown, Some(false));
+}
+
+#[test]
+fn the_files_tab_follows_the_thread_shown() {
+    let hub = hub_with(
+        Launch::default(),
+        &[
+            json!({"id": "t1"}),
+            json!({"id": "t2", "worktreePath": "/work/t2"}),
+        ],
+    );
+    open(&hub, "t1");
+    hub.dispatch("rightPanel.add", json!({"kind": "files"}));
+    open(&hub, "t2");
+    hub.dispatch("rightPanel.add", json!({"kind": "files"}));
+    assert_eq!(
+        files_calls(&hub),
+        ["listEntries  \"/work/p\"", "listEntries  \"/work/t2\""]
+    );
+    let files = hub.with_controller::<RightPanel, _>(|p, _| p.files().unwrap());
+    let root = WorkspaceFiles::read(&hub.engine, files, |f| f.root().to_owned());
+    assert_eq!(root.as_deref(), Some("/work/t2"));
+}
+
+#[test]
+fn opening_a_file_in_the_panel_reads_it_at_the_line() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    hub.with_controller::<RightPanel, _>(|p, e| {
+        p.open(e, "files", &json!({"path": "src/a.rs", "line": 3}));
+    });
+    assert_eq!(panel(&hub)["activeId"], "files");
+    assert_eq!(
+        files_calls(&hub),
+        ["listEntries  \"/work/p\"", "readFile src/a.rs \"/work/p\""]
+    );
+    let files = hub.with_controller::<RightPanel, _>(|p, _| p.files().unwrap());
+    let open = WorkspaceFiles::read(&hub.engine, files, |f| f.open_path().to_owned());
+    assert_eq!(open.as_deref(), Some("src/a.rs"));
+}
+
+/// The environment's devices: an iPhone, with the thread's session when
+/// `open`.
+fn devices(name: &str, open: bool) -> Json {
+    let sessions = if open {
+        json!([{"deviceId": "UDID-1", "hostId": "host-1", "threadId": "t1"}])
+    } else {
+        json!([])
+    };
+    json!({"t": "devices", "state": {
+        "bootingDevices": [],
+        "devices": [{"booted": true, "hostId": "host-1", "id": "UDID-1", "name": name,
+            "platform": "ios", "version": "iOS 26.0"}],
+        "hostStatus": "ready",
+        "hostStatuses": {"host-1": {"status": "ready"}},
+        "hosts": [{"id": "host-1", "label": "studio",
+            "platforms": [{"available": true, "platform": "ios"}]}],
+        "hubBasePath": "/api/device-hub/mcs/a",
+        "onboardingCompleted": true,
+        "sessions": sessions,
+    }})
+}
+
+#[test]
+fn a_device_the_agent_opens_gets_a_tab_named_for_it() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    hub.mc
+        .frame(&hub.engine, "devices", "", devices("iPhone 17", false));
+    let before = titles(&hub);
+    hub.mc
+        .frame(&hub.engine, "devices", "", devices("iPhone 17", true));
+    let named = |name: &str| [before.clone(), vec![name.to_owned()]].concat();
+    assert_eq!(titles(&hub), named("iPhone 17"));
+    assert_eq!(panel(&hub)["activeId"], "device:host-1:UDID-1");
+    // The device renamed renames the tab.
+    hub.mc
+        .frame(&hub.engine, "devices", "", devices("Olafur's iPhone", true));
+    assert_eq!(titles(&hub), named("Olafur's iPhone"));
+    // The session ending does not close it: the tab says the device is gone
+    // until the user closes it.
+    hub.mc.frame(
+        &hub.engine,
+        "devices",
+        "",
+        devices("Olafur's iPhone", false),
+    );
+    assert_eq!(titles(&hub), named("Olafur's iPhone"));
 }
 
 mod prop {

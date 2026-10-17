@@ -37,6 +37,7 @@ use crate::controllers::settings::Settings;
 use crate::controllers::terminals::{self, Terminals};
 use crate::controllers::threads;
 use crate::controllers::toasts::{self, Toasts};
+use crate::device::devices::ThreadDevices;
 use crate::json::{self, Json};
 use crate::keybindings::command_label;
 use crate::sidebar_model;
@@ -45,6 +46,7 @@ use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
 use crate::thread_view::previews::ThreadPreviews;
 use crate::thread_view::thread_diff::ThreadDiff;
+use crate::thread_view::workspace_files::WorkspaceFiles;
 
 /// The kinds of tab the panel shows; a terminal, review or device tab's id
 /// carries what it shows after its kind.
@@ -139,11 +141,14 @@ pub fn device_target_of(id: &str) -> Option<(String, String)> {
     }
 }
 
-fn title_of(id: &str) -> String {
+/// A tab's title; a device tab is named for its device once the devices
+/// (`devices`) know it.
+fn title_of(engine: &Engine, devices: Option<ObjectId>, id: &str) -> String {
     match kind_of(id) {
-        // TODO(port): ThreadDevices::titleOf — a device tab is named for its
-        // device once the devices are known; "Device" until then.
-        "device" => "Device".into(),
+        "device" => devices.map_or_else(
+            || "Device".into(),
+            |devices| ThreadDevices::title_of(engine, devices, id),
+        ),
         "pull-request" => format!("PR #{}", reviewed_of(&id[REVIEW_TAB.len()..]).2),
         "diff" => "Diff".into(),
         "agents" => "Agents".into(),
@@ -259,6 +264,8 @@ pub struct RightPanel {
     diff: Option<ObjectId>,
     previews: Option<ObjectId>,
     agents: Option<ObjectId>,
+    files: Option<ObjectId>,
+    devices: Option<ObjectId>,
     /// The thread's checkout, for the Files tab.
     files_root: String,
 }
@@ -301,7 +308,10 @@ impl Controller for RightPanel {
             Bridge::of(e).open_external(e, url)
         });
         let agents = AgentsModel::create(engine, owner, Default::default());
+        let files = WorkspaceFiles::create(engine, owner, init.mc.clone());
+        let devices = ThreadDevices::create(engine, owner, init.mc.clone());
         let (diff, previews, agents) = (diff.ok(), previews.ok(), agents.ok());
+        let (files, devices) = (files.ok(), devices.ok());
         if let Some(obj) = owner {
             let value = |obj: Option<ObjectId>| obj.map_or(Value::Null, Value::Object);
             warn(
@@ -315,6 +325,14 @@ impl Controller for RightPanel {
             warn(
                 engine,
                 engine.set_internal(obj, PanelObject::AGENTS, value(agents)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::FILES, value(files)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::DEVICE, value(devices)),
             );
         }
         if let Some(previews) = previews {
@@ -346,9 +364,23 @@ impl Controller for RightPanel {
                 }),
             );
         }
-        // TODO(port): ThreadDevices::opened / closed / namesChanged — the
-        // devices open and close their tabs (`open_device`, `close_tab_in`)
-        // and rename them.
+        if let Some(devices) = devices {
+            // The devices open and close their tabs and rename them.
+            let hook = me.clone();
+            ThreadDevices::on_opened(engine, devices, move |e, tab, automatic| {
+                let tab = tab.to_owned();
+                later(e, &hook, move |p, e| p.open_device(e, &tab, automatic));
+            });
+            let hook = me.clone();
+            ThreadDevices::on_closed(engine, devices, move |e, thread_key, tab| {
+                let (thread_key, tab) = (thread_key.to_owned(), tab.to_owned());
+                later(e, &hook, move |p, e| p.close_tab_in(e, &thread_key, &tab));
+            });
+            let hook = me.clone();
+            ThreadDevices::on_names_changed(engine, devices, move |e| {
+                later(e, &hook, |p, e| p.publish(e));
+            });
+        }
         // TODO(port): ThreadPullRequests::countChanged / stateChanged — the
         // add menu and the palette follow the linked pull requests, and the
         // review its environment going offline and back.
@@ -377,6 +409,8 @@ impl Controller for RightPanel {
             diff,
             previews,
             agents,
+            files,
+            devices,
             files_root: String::new(),
         };
         let path = engine.extension::<StorePath>().0.borrow().clone();
@@ -498,6 +532,12 @@ impl RightPanel {
         self.on_thread && self.current().open
     }
 
+    /// The Files tab's WorkspaceFiles, for the controllers that save its
+    /// choices (FileActionsController) or follow its failures.
+    pub fn files(&self) -> Option<ObjectId> {
+        self.files
+    }
+
     pub fn active_tab(&self) -> String {
         self.current().active
     }
@@ -584,8 +624,10 @@ impl RightPanel {
             .setting(engine, "diffLayout")
             .is_some_and(|v| v.as_str() == Some("split"));
         let collapsed = flag("diffFilesCollapsed");
-        // TODO(port): WorkspaceFiles::setDefaultWrap — file previews wrap
-        // as the diffs do.
+        // File previews wrap as the diffs do.
+        if let Some(files) = self.files {
+            WorkspaceFiles::set_default_wrap(engine, files, wrap);
+        }
         if let Some(diff) = self.diff {
             ThreadDiff::update(engine, diff, |t| {
                 t.set_default_wrap(wrap);
@@ -652,8 +694,10 @@ impl RightPanel {
             if let Some(agents) = self.agents {
                 AgentsModel::set_thread(engine, agents, environment, timeline);
             }
-            // TODO(port): WorkspaceFiles::setTarget(environment, root) and
-            // setTimeline(timeline).
+            if let Some(files) = self.files {
+                WorkspaceFiles::set_target(engine, files, environment, &root);
+                WorkspaceFiles::set_timeline(engine, files, timeline);
+            }
             self.files_root = root;
             // TODO(port): ThreadPullRequests::setThread(threadKey).
             if let Some(previews) = self.previews {
@@ -662,7 +706,9 @@ impl RightPanel {
                     p.set_configured(configured);
                 });
             }
-            // TODO(port): ThreadDevices::setThread(environment, threadId, mc).
+            if let Some(devices) = self.devices {
+                ThreadDevices::set_thread(engine, devices, environment, &thread_id, &mc);
+            }
             self.open_proactively(engine);
         }
         self.present_commands(engine);
@@ -826,8 +872,11 @@ impl RightPanel {
                     }
                 }
             });
-        } else if !path.is_empty() {
-            // TODO(port): WorkspaceFiles::openFile(path, line).
+        } else if !path.is_empty()
+            && let Some(files) = self.files
+        {
+            let line = int(options.get("line")).unwrap_or(0) as i32;
+            WorkspaceFiles::show_file(engine, files, path, line);
         }
     }
 
@@ -1141,8 +1190,19 @@ impl RightPanel {
         if let Some(agents) = self.agents {
             AgentsModel::set_active(engine, agents, open && active == "agents");
         }
-        // TODO(port): WorkspaceFiles::setActive, ThreadDevices::setTab, and PullRequestReview::setOnline /
-        // setPullRequest / setActive for a review tab.
+        if let Some(files) = self.files {
+            WorkspaceFiles::set_active(engine, files, open && active == "files");
+        }
+        if let Some(devices) = self.devices {
+            let tab = if open && kind_of(&active) == "device" {
+                active.as_str()
+            } else {
+                ""
+            };
+            ThreadDevices::set_tab(engine, devices, tab);
+        }
+        // TODO(port): PullRequestReview::setOnline / setPullRequest /
+        // setActive for a review tab.
         Keymap::of(engine).set_preview_open(engine, open && active == "previews");
         self.publish(engine);
         self.save();
@@ -1168,7 +1228,9 @@ impl RightPanel {
         let tabs: Vec<Json> = state
             .tabs
             .iter()
-            .map(|id| json!({"id": id, "kind": kind_of(id), "title": title_of(id)}))
+            .map(|id| {
+                json!({"id": id, "kind": kind_of(id), "title": title_of(engine, self.devices, id)})
+            })
             .collect();
         // Terminals need the thread's place.
         let thread = &self.thread;
@@ -1412,7 +1474,7 @@ pub struct PanelObject {
     /// The Previews tab's ThreadPreviews.
     #[qml(notify, readonly)]
     previews: Value,
-    // TODO(port): WorkspaceFiles — the Files tab's (its FileTreeModel).
+    /// The Files tab's WorkspaceFiles.
     #[qml(readonly)]
     files: Value,
     /// The Agents tab's AgentsModel.
@@ -1424,7 +1486,7 @@ pub struct PanelObject {
     // TODO(port): ThreadPullRequests — the Pull requests tab's.
     #[qml(readonly)]
     pull_requests: Value,
-    // TODO(port): ThreadDevices — a device tab's.
+    /// A device tab's ThreadDevices.
     #[qml(readonly)]
     device: Value,
 }
