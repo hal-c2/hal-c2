@@ -7,18 +7,26 @@ mod common;
 
 mod alerts;
 mod archived_threads;
+mod background_activity;
+mod cluster;
 mod commands;
 mod connection_health;
 mod connections;
 mod device_settings;
+mod diagnostics;
 mod keybindings;
 mod mc_plugin;
 mod menus;
+mod page;
 mod plugin;
 mod provider_update_notice;
 mod pull_request_list;
 mod quit;
+mod scheduled_tasks;
 mod settings;
+mod simple_pages;
+mod slack;
+mod source_control;
 mod toasts;
 mod usage;
 
