@@ -397,8 +397,8 @@ for line in sys.stdin:
             # The turn took the steer and ended before its answer got back.
             closing = False
             text = "steered: " + params["input"][0]["text"]
-            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{ctx['turnId']}", "text": ""}}})
-            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{ctx['turnId']}", "text": text}}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
             send({"id": mid, "result": {"turnId": ctx["turnId"]}})
             continue
@@ -413,8 +413,8 @@ for line in sys.stdin:
         # A running turn passes on a new quota reading, as Codex does alongside token usage.
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
-        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
-        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
