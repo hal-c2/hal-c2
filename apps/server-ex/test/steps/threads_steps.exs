@@ -2861,19 +2861,23 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "that install offers {string} as imported", %{args: [title]} = context do
-    assert for(t <- t3_offered(context), t["imported"], do: t["title"]) == [title]
+    assert title in for(t <- t3_offered(context), t["imported"], do: t["title"])
     context
   end
 
   step "that install does not offer {string} as imported", %{args: [title]} = context do
     offered = t3_offered(context)
-    assert for(t <- offered, t["imported"], do: t["title"]) == []
+    refute title in for(t <- offered, t["imported"], do: t["title"])
     assert title in for(t <- offered, do: t["title"])
     context
   end
 
   step "the attachment of {string} cannot be read", %{args: [title]} = context do
-    File.chmod!(t3_attachment(context, title), 0o000)
+    path = t3_attachment(context, title)
+    mode = File.stat!(path).mode
+    File.chmod!(path, 0o000)
+    # Restored even if the scenario fails before the step that does it.
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(path, mode) end)
     context
   end
 

@@ -223,6 +223,17 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "The `meta` entries whose key starts with `prefix`, as `%{key => value}`, in one read."
+  def metas(path, prefix) do
+    with_reader(path, fn db ->
+      {:ok, stmt} =
+        Sqlite3.prepare(db, "SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1")
+
+      :ok = Sqlite3.bind(stmt, [prefix])
+      step_reduce(db, stmt, %{}, fn [key, value], acc -> Map.put(acc, key, value) end)
+    end)
+  end
+
   def put_meta(store \\ __MODULE__, key, value),
     do: write(store, {:put_meta, key, value})
 
