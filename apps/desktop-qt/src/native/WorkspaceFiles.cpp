@@ -301,8 +301,10 @@ void WorkspaceFiles::reloadFile() {
 
 void WorkspaceFiles::signMedia(int request) {
   // A path in the workspace is the thread's file; a full path is served only
-  // as a media file. With no thread, the workspace folder names itself.
-  const bool outside = m_openPath.startsWith(QLatin1Char('/')) || m_openPath.contains(QLatin1String(":\\"));
+  // as a media file. With no thread, the workspace folder names itself. The
+  // path is the thread's machine's, so a Windows one counts here too.
+  static const QRegularExpression full(QStringLiteral(R"(^(/|\\\\|[A-Za-z]:[/\\]))"));
+  const bool outside = full.match(m_openPath).hasMatch();
   QJsonObject resource{{QStringLiteral("path"), m_openPath}};
   if (m_thread.isEmpty()) {
     resource.insert(QStringLiteral("_tag"), QStringLiteral("draft-workspace-file"));
@@ -356,7 +358,7 @@ void WorkspaceFiles::mediaFailed(const QUrl& url) {
                                              {QStringLiteral("pdf"), QStringLiteral("document")}};
   m_mediaUrl.clear();
   m_fileStatus = QStringLiteral("error");
-  m_fileProblem = tr("The %1 could not be loaded.").arg(nouns.value(mediaKind()));
+  m_fileProblem = tr("The %1 could not be loaded.").arg(nouns.value(mediaKind(), QStringLiteral("file")));
   emit fileChanged();
 }
 

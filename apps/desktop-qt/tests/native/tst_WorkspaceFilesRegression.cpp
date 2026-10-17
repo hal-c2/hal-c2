@@ -258,6 +258,24 @@ private slots:
                           {QStringLiteral("path"), QStringLiteral("media/theme.mp3")}}));
   }
 
+  // A full path is the thread's machine's: on Windows it has a drive or a
+  // share, and with forward slashes it was signed as a workspace file.
+  void aWindowsPathIsAMediaFile() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("C:/w"), QStringLiteral("t1"));
+    const QStringList paths{QStringLiteral("C:/Users/me/shot.png"), QStringLiteral("D:\\shots\\b.png"),
+                            QStringLiteral("\\\\server\\share\\c.png")};
+    for (const QString& path : paths) {
+      files.openFile(path);
+      QVERIFY(QTest::qWaitFor([&] { return held.signings() == paths.indexOf(path) + 1; }));
+      QCOMPARE(held.callsOf(QStringLiteral("assets.createUrl")).last().payload.value(QLatin1String("resource")).toObject()
+                   .value(QLatin1String("_tag")).toString(),
+               QStringLiteral("media-file"));
+    }
+  }
+
   // A query typed with no workspace said a search was on its way, forever.
   void aQueryWithoutAWorkspaceIsNotSearching() {
     Held held;
