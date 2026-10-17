@@ -185,6 +185,27 @@ private slots:
     QCOMPARE(slash->end, 3);
   }
 
+  // A bare `@` opened no menu. It is never searched, so the menu opens at
+  // once and says nothing matches, as the web's did; a word after it waits for
+  // its search to answer before saying so.
+  void aBareAtOpensTheMenuSayingNothingMatches() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto shown = [&shell] { return shell.bridge->state()->value(QStringLiteral("composer")).toMap(); };
+
+    shell.type(QStringLiteral("@"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@"));
+    QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
+    QCOMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
+
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@src"));
+    QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
+    QVERIFY(shown().value(QStringLiteral("suggestionsEmptyText")).isNull());
+  }
+
   // A queued run that arrived before its message was listed as a blank row;
   // it now waits off the list until the message is here.
   void aQueuedRunWithoutItsMessageIsNotListed() {
