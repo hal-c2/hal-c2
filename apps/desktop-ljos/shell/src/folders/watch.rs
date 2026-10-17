@@ -20,10 +20,13 @@ use super::{Model, State};
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// What the watcher threads leave for the Engine thread.
+/// What the watcher threads, and a model's setter, leave for the Engine
+/// thread.
 #[derive(Default)]
 struct Shared {
     events: Mutex<Vec<(u64, PathBuf)>>,
+    /// Models whose `error` a write of their root asked to clear.
+    forgets: Mutex<Vec<u64>>,
     wake: Mutex<Option<Wake>>,
 }
 
@@ -33,6 +36,18 @@ impl Shared {
             let mut events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
             events.extend(paths.into_iter().map(|p| (model, p)));
         }
+        self.wake();
+    }
+
+    fn forget(&self, model: u64) {
+        self.forgets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(model);
+        self.wake();
+    }
+
+    fn wake(&self) {
         let wake = self
             .wake
             .lock()
@@ -72,6 +87,21 @@ pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
 /// Hands each model what its directories saw. On the Engine thread.
 pub fn deliver(engine: &Engine) {
     let hub = Hub::of(engine);
+    let forgets = std::mem::take(
+        &mut *hub
+            .shared
+            .forgets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+    for id in forgets {
+        let found = hub.models.borrow().get(&id).cloned();
+        if let Some((obj, state)) = found.and_then(|(o, s)| Some((o, s.upgrade()?)))
+            && engine.is_alive(obj)
+        {
+            Model::new(engine, obj, state).set_error("");
+        }
+    }
     let events = std::mem::take(
         &mut *hub
             .shared
@@ -119,6 +149,13 @@ impl Watch {
             watcher: None,
             dirs: HashSet::new(),
         }
+    }
+
+    /// Has the Engine thread clear the model's `error`, the next time the
+    /// shell delivers: a write of the root it already has is heard by no
+    /// one but its setter, and cannot touch the engine from there.
+    pub fn forget_error(&self) {
+        self.shared.forget(self.id);
     }
 
     /// Watches exactly `dirs` (each one level, not what is below). A
