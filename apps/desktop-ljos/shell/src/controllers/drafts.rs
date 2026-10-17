@@ -196,10 +196,12 @@ fn open(engine: &Engine, route: Route) {
 
 /// Every window that shows `from` shows `to` instead.
 fn leave(engine: &Engine, from: &Route, to: Route) {
-    controller::with::<Navigation, _>(engine, |n, e| {
-        if n.route() == from {
-            n.replace(e, to);
-        }
+    controller::each_window(engine, |engine| {
+        controller::with::<Navigation, _>(engine, |n, e| {
+            if n.route() == from {
+                n.replace(e, to.clone());
+            }
+        });
     });
 }
 

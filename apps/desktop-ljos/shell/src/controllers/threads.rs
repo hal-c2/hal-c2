@@ -84,7 +84,7 @@ struct Shared {
 }
 
 fn shared(engine: &Engine) -> Rc<Shared> {
-    engine.extension::<Shared>()
+    Bridge::of(engine).extension::<Shared>(engine)
 }
 
 /// The thread shown: "environmentId:threadId", or empty.
@@ -145,10 +145,13 @@ pub fn deliver(engine: &Engine) {
     if let Some(cache) = store::cache(engine) {
         cache.deliver();
     }
-    let loaded = std::mem::take(&mut *shared(engine).loaded.borrow_mut());
-    for (key, model, thread) in loaded {
-        controller::with::<ThreadStore, _>(engine, |s, e| s.restored(e, &key, model, &thread));
-    }
+    // Each window's, to its own store.
+    controller::each_window(engine, |engine| {
+        let loaded = std::mem::take(&mut *shared(engine).loaded.borrow_mut());
+        for (key, model, thread) in loaded {
+            controller::with::<ThreadStore, _>(engine, |s, e| s.restored(e, &key, model, &thread));
+        }
+    });
 }
 
 /// Whether the active thread is still waiting for its first rows: a
@@ -339,7 +342,7 @@ impl ThreadStore {
         timeline.set_clock(shared(engine).clock.borrow().clone());
         let kept = store::cache(engine);
         timeline.set_cache(kept.clone().map(|c| c as Rc<dyn ThreadCache>));
-        let owner = engine.singleton::<ThreadsObject>().ok();
+        let owner = Bridge::of(engine).singleton::<ThreadsObject>(engine).ok();
         let model = match TimelineModel::create(engine, owner, timeline) {
             Ok(model) => model,
             Err(e) => {
@@ -465,7 +468,7 @@ impl ThreadStore {
         let key = shared.active.borrow().clone();
         let model = self.threads.get(&key).map(|f| f.model);
         shared.timeline.set(model);
-        if let Ok(obj) = engine.singleton::<ThreadsObject>() {
+        if let Ok(obj) = Bridge::of(engine).singleton::<ThreadsObject>(engine) {
             let result = engine
                 .set_internal(obj, ThreadsObject::ACTIVE_THREAD, Atom::from(key.as_str()))
                 .and_then(|()| {

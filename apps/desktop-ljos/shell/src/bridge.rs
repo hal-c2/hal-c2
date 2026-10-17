@@ -8,17 +8,27 @@
 //! and the rest reach the bricks as `actionRequested`.
 //!
 //! The bridge holds no domain logic. Its Rust-side state lives in an
-//! engine extension, so [`Bridge`] is only a handle on the singleton.
+//! engine extension, so [`Bridge`] is only a handle on a `Shell` object.
+//!
+//! Each window has its own bridge, as each of desktop-qt's windows had its
+//! own ShellBridge: the first window's is the singleton, the others' are
+//! made by [`Bridge::new_window`]. [`Bridge::of`] is the bridge of the window
+//! acting now ([`Bridge::act`]): the one an action came from, or whose
+//! controller is running; else the front window's. A key every window
+//! shows ([`Bridge::share_key`]) is published on every bridge.
 
+use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
+use ljos::ljos_engine::QmlSingleton;
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{
-    Atom, Cx, Engine, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl, qml_singleton,
+    Atom, Cx, Engine, EngineError, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl,
+    qml_singleton,
 };
 
 use crate::attachment_files;
@@ -44,10 +54,11 @@ pub type Interceptor = Rc<dyn Fn(&Engine, &str, &Json) -> bool>;
 type Watcher = Rc<dyn Fn(&Engine, &Json)>;
 type Deferred = Box<dyn FnOnce(&Engine)>;
 
-/// What waits for the running controllers to return.
+/// What waits for the running controllers to return, with the bridge it
+/// is for.
 enum Queued {
-    Action(String, Json),
-    Call(Deferred),
+    Action(ObjectId, String, Json),
+    Call(ObjectId, Deferred),
 }
 type ClipboardWriter = Rc<dyn Fn(&str) -> bool>;
 
@@ -249,14 +260,33 @@ pub(crate) fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The bridge's Rust side, one per engine.
+/// One bridge's own: its state, and what was added to it.
 #[derive(Default)]
-struct BridgeState {
+struct Own {
     map: RefCell<Option<PropertyMap>>,
     /// What each key last had, to skip a republish of the same value.
     published: RefCell<HashMap<String, Json>>,
     interceptors: RefCell<Vec<Interceptor>>,
     watchers: RefCell<Vec<(String, Watcher)>>,
+    /// [`Bridge::extension`]'s.
+    extensions: RefCell<Vec<(TypeId, Rc<dyn Any>)>>,
+    /// [`Bridge::singleton`]'s, for a bridge that is not the singleton.
+    objects: RefCell<Vec<(TypeId, ObjectId)>>,
+}
+
+/// The bridges' Rust side, one per engine.
+#[derive(Default)]
+struct BridgeState {
+    /// The singleton's, once made.
+    main: Cell<Option<ObjectId>>,
+    /// Every bridge's own, oldest first.
+    bridges: RefCell<Vec<(ObjectId, Rc<Own>)>>,
+    /// The window acting now ([`Bridge::act`]).
+    acting: Cell<Option<ObjectId>>,
+    /// The window last acted in, or opened: [`Bridge::of`] when none acts.
+    front: Cell<Option<ObjectId>>,
+    /// The keys every window shows ([`Bridge::share_key`]).
+    shared_keys: RefCell<HashSet<String>>,
     /// Controllers running now ([`Bridge::hold`]); actions dispatched
     /// meanwhile wait in `queued`.
     held: Cell<usize>,
@@ -271,98 +301,324 @@ impl BridgeState {
     fn of(engine: &Engine) -> Rc<BridgeState> {
         engine.extension::<BridgeState>()
     }
+
+    fn own(&self, bridge: ObjectId) -> Option<Rc<Own>> {
+        self.bridges
+            .borrow()
+            .iter()
+            .find(|(b, _)| *b == bridge)
+            .map(|(_, own)| own.clone())
+    }
+
+    fn is_open(&self, bridge: ObjectId) -> bool {
+        self.bridges.borrow().iter().any(|(b, _)| *b == bridge)
+    }
 }
 
-/// The engine's `Shell`, from Rust.
+/// [`Bridge::acting_now`]: who acts, asked later.
+#[derive(Clone)]
+pub struct Acting(Rc<BridgeState>);
+
+impl Acting {
+    pub fn now(&self) -> Option<Bridge> {
+        self.0.acting.get().map(Bridge)
+    }
+}
+
+/// A window's `Shell`, from Rust.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bridge(ObjectId);
 
 impl Bridge {
-    /// The engine's bridge, made with its state keys on first use.
+    /// The bridge of the window acting now, else of the front window, else
+    /// the singleton (the first window's), made with its state keys on
+    /// first use.
     pub fn of(engine: &Engine) -> Bridge {
+        let main = Bridge::main(engine);
+        let state = BridgeState::of(engine);
+        if let Some(b) = state.acting.get().filter(|b| state.is_open(*b)) {
+            return Bridge(b);
+        }
+        Bridge::front(&state).unwrap_or(main)
+    }
+
+    /// The front window's bridge, else the oldest open one's.
+    fn front(state: &BridgeState) -> Option<Bridge> {
+        state
+            .front
+            .get()
+            .filter(|b| state.is_open(*b))
+            .or_else(|| state.bridges.borrow().first().map(|(b, _)| *b))
+            .map(Bridge)
+    }
+
+    /// The singleton: the first window's bridge, which the shared
+    /// controllers are built on. It outlives its window, but is no longer
+    /// one of the open ones once that closes.
+    pub fn main(engine: &Engine) -> Bridge {
+        let state = BridgeState::of(engine);
+        if let Some(obj) = state.main.get() {
+            return Bridge(obj);
+        }
         let obj = engine
             .singleton::<ShellBridge>()
             .expect("HalC2.Shell is registered (crate::register)");
-        let state = BridgeState::of(engine);
-        if state.map.borrow().is_none() {
-            let map = PropertyMap::new(engine, Some(obj)).expect("the bridge is alive");
-            for key in STATE_KEYS {
-                map.insert(engine, key, Value::Undefined);
-            }
-            let _ = Cx::new(engine, obj).set(ShellBridge::STATE, Some(map.object()));
-            *state.map.borrow_mut() = Some(map);
-        }
+        state.main.set(Some(obj));
+        Bridge::made(engine, &state, obj);
         Bridge(obj)
+    }
+
+    /// A bridge for another window: its own `Shell` object and state, the
+    /// shared keys as the others show them.
+    pub fn new_window(engine: &Engine) -> Option<Bridge> {
+        let main = Bridge::main(engine);
+        let state = BridgeState::of(engine);
+        let source = Bridge::front(&state).unwrap_or(main);
+        let obj = engine.create_native(ShellBridge::default(), None).ok()?;
+        let own = Bridge::made(engine, &state, obj);
+        let bridge = Bridge(obj);
+        let keys: Vec<Atom> = source
+            .own(engine)
+            .and_then(|o| o.map.borrow().as_ref().map(PropertyMap::keys))
+            .unwrap_or_default();
+        for key in keys {
+            bridge.declare_key(engine, &key);
+        }
+        let shared: Vec<(String, Json)> = {
+            let keys = state.shared_keys.borrow();
+            source
+                .own(engine)
+                .map(|o| {
+                    o.published
+                        .borrow()
+                        .iter()
+                        .filter(|(k, _)| keys.contains(*k))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for (key, value) in shared {
+            bridge.publish_own(engine, &own, &key, value);
+        }
+        let enabled = engine
+            .get(source.0, ShellBridge::LOCAL_FOLDER_IMPORT_ENABLED)
+            .unwrap_or(false);
+        let _ = Cx::new(engine, obj).set(ShellBridge::LOCAL_FOLDER_IMPORT_ENABLED, enabled);
+        Some(bridge)
+    }
+
+    fn made(engine: &Engine, state: &BridgeState, obj: ObjectId) -> Rc<Own> {
+        let map = PropertyMap::new(engine, Some(obj)).expect("the bridge is alive");
+        for key in STATE_KEYS {
+            map.insert(engine, key, Value::Undefined);
+        }
+        let _ = Cx::new(engine, obj).set(ShellBridge::STATE, Some(map.object()));
+        let own = Rc::new(Own {
+            map: RefCell::new(Some(map)),
+            ..Own::default()
+        });
+        state.bridges.borrow_mut().push((obj, own.clone()));
+        own
+    }
+
+    /// The window is gone: so is what was added to its bridge, and the
+    /// bridge, unless it is the singleton (which only stops being open).
+    pub fn close(self, engine: &Engine) {
+        let state = BridgeState::of(engine);
+        let own = {
+            let mut bridges = state.bridges.borrow_mut();
+            let at = bridges.iter().position(|(b, _)| *b == self.0);
+            at.map(|at| bridges.remove(at).1)
+        };
+        let Some(own) = own else { return };
+        let objects = std::mem::take(&mut *own.objects.borrow_mut());
+        for (_, obj) in objects {
+            engine.destroy(obj);
+        }
+        own.interceptors.borrow_mut().clear();
+        own.watchers.borrow_mut().clear();
+        // Dropped out of the borrow: an extension's drop may reach the bridge.
+        let extensions = std::mem::take(&mut *own.extensions.borrow_mut());
+        drop(extensions);
+        if state.main.get() != Some(self.0) {
+            engine.destroy(self.0);
+        }
+    }
+
+    /// Runs `f` as this bridge's window: [`Bridge::of`] is this bridge
+    /// until it returns.
+    pub fn act<R>(self, engine: &Engine, f: impl FnOnce() -> R) -> R {
+        let state = BridgeState::of(engine);
+        let _acting = Restore(&state.acting, state.acting.replace(Some(self.0)));
+        f()
+    }
+
+    /// The bridge of the window acting now, if one is.
+    pub fn acting(engine: &Engine) -> Option<Bridge> {
+        BridgeState::of(engine).acting.get().map(Bridge)
+    }
+
+    /// Who acts, readable where there is no engine: an MC call binds its
+    /// reply to the window that made it.
+    pub fn acting_now(engine: &Engine) -> Acting {
+        Acting(BridgeState::of(engine))
+    }
+
+    /// Runs `f` as this bridge's window if it is still open; `None` once
+    /// it is gone. A callback a window registered somewhere every window
+    /// shares (settings, the application) goes through here.
+    pub fn if_open<R>(self, engine: &Engine, f: impl FnOnce() -> R) -> Option<R> {
+        self.is_open(engine).then(|| self.act(engine, f))
+    }
+
+    /// Makes this the window [`Bridge::of`] is when none acts.
+    pub fn set_front(self, engine: &Engine) {
+        BridgeState::of(engine).front.set(Some(self.0));
+    }
+
+    /// The open window's bridge that `obj` is, if it is one: what a native
+    /// object a bridge owns runs as.
+    pub fn open_at(engine: &Engine, obj: ObjectId) -> Option<Bridge> {
+        let bridge = Bridge(obj);
+        bridge.is_open(engine).then_some(bridge)
+    }
+
+    /// Whether this bridge's window is still there.
+    pub fn is_open(self, engine: &Engine) -> bool {
+        BridgeState::of(engine).is_open(self.0)
+    }
+
+    /// `key` is every window's: published on one bridge, it is published
+    /// on all.
+    pub fn share_key(engine: &Engine, key: &str) {
+        BridgeState::of(engine)
+            .shared_keys
+            .borrow_mut()
+            .insert(key.to_owned());
+    }
+
+    /// This bridge's `T`, made on first use: what would be an engine
+    /// extension, one per window instead.
+    pub fn extension<T: Default + 'static>(self, engine: &Engine) -> Rc<T> {
+        let Some(own) = self.own(engine) else {
+            // A bridge that is gone keeps nothing.
+            return Rc::new(T::default());
+        };
+        let id = TypeId::of::<T>();
+        if let Some(found) = own.extensions.borrow().iter().find(|(t, _)| *t == id) {
+            return found.1.clone().downcast::<T>().expect("of its type");
+        }
+        let made = Rc::new(T::default());
+        own.extensions.borrow_mut().push((id, made.clone()));
+        made
+    }
+
+    /// This window's `T`: the engine's singleton for the first window, an
+    /// object of its own for each other.
+    ///
+    /// TODO(ljos-gap: Window-scoped singletons): QML still finds the
+    /// engine's, so another window's bricks cannot see their own.
+    pub fn singleton<T: QmlSingleton + Default>(
+        self,
+        engine: &Engine,
+    ) -> Result<ObjectId, EngineError> {
+        if Some(self.0) == BridgeState::of(engine).main.get() || !self.is_open(engine) {
+            return engine.singleton::<T>();
+        }
+        let own = self.own(engine).expect("an open bridge has its own");
+        let id = TypeId::of::<T>();
+        if let Some(found) = own.objects.borrow().iter().find(|(t, _)| *t == id) {
+            return Ok(found.1);
+        }
+        let obj = engine.create_native(T::default(), None)?;
+        own.objects.borrow_mut().push((id, obj));
+        Ok(obj)
     }
 
     pub fn object(self) -> ObjectId {
         self.0
     }
 
-    fn map(engine: &Engine) -> PropertyMap {
-        Bridge::of(engine);
-        BridgeState::of(engine)
-            .map
-            .borrow()
-            .clone()
-            .expect("made by Bridge::of")
+    fn own(self, engine: &Engine) -> Option<Rc<Own>> {
+        Bridge::main(engine);
+        BridgeState::of(engine).own(self.0)
     }
 
     /// A key bindings can follow before anything publishes it.
     pub fn declare_key(self, engine: &Engine, key: &str) {
-        let map = Bridge::map(engine);
+        let Some(map) = self.own(engine).and_then(|o| o.map.borrow().clone()) else {
+            return;
+        };
         if !map.contains(key) {
             map.insert(engine, key, Value::Undefined);
         }
     }
 
     /// Sets `Shell.state[key]`, unless it already holds `value`: an unchanged
-    /// republish would re-run every binding on the key for nothing.
+    /// republish would re-run every binding on the key for nothing. A shared
+    /// key is set on every window's bridge.
     pub fn publish(self, engine: &Engine, key: &str, value: Json) {
         let state = BridgeState::of(engine);
-        if state.published.borrow().get(key) == Some(&value) {
+        Bridge::main(engine);
+        if state.shared_keys.borrow().contains(key) {
+            let all = state.bridges.borrow().clone();
+            for (b, own) in all {
+                Bridge(b).publish_own(engine, &own, key, value.clone());
+            }
+            return;
+        }
+        if let Some(own) = state.own(self.0) {
+            self.publish_own(engine, &own, key, value);
+        }
+    }
+
+    fn publish_own(self, engine: &Engine, own: &Own, key: &str, value: Json) {
+        if own.published.borrow().get(key) == Some(&value) {
             return;
         }
         let shown = value.to_value();
-        Bridge::map(engine).insert(engine, key, shown.clone());
-        state
-            .published
+        let Some(map) = own.map.borrow().clone() else {
+            return;
+        };
+        map.insert(engine, key, shown.clone());
+        own.published
             .borrow_mut()
             .insert(key.to_owned(), value.clone());
-        let watchers: Vec<Watcher> = state
+        let watchers: Vec<Watcher> = own
             .watchers
             .borrow()
             .iter()
             .filter(|(k, _)| k == key)
             .map(|(_, w)| w.clone())
             .collect();
-        for watch in watchers {
-            watch(engine, &value);
-        }
+        self.act(engine, || {
+            for watch in watchers {
+                watch(engine, &value);
+            }
+        });
         let _ =
             ShellBridge::emit_state_entry_changed(&Cx::new(engine, self.0), Atom::new(key), shown);
     }
 
     /// What `key` was last published as.
     pub fn published(self, engine: &Engine, key: &str) -> Option<Json> {
-        BridgeState::of(engine).published.borrow().get(key).cloned()
+        self.own(engine)?.published.borrow().get(key).cloned()
     }
 
     /// Calls `f` with each value published under `key`, before QML hears of
     /// it: what main.cpp's connections to stateEntryChanged do (the theme).
     pub fn watch(self, engine: &Engine, key: &str, f: impl Fn(&Engine, &Json) + 'static) {
-        BridgeState::of(engine)
-            .watchers
-            .borrow_mut()
-            .push((key.to_owned(), Rc::new(f)));
+        if let Some(own) = self.own(engine) {
+            own.watchers.borrow_mut().push((key.to_owned(), Rc::new(f)));
+        }
     }
 
     /// Offers every action to `interceptor` after those added before it.
     pub fn add_interceptor(self, engine: &Engine, interceptor: Interceptor) {
-        BridgeState::of(engine)
-            .interceptors
-            .borrow_mut()
-            .push(interceptor);
+        if let Some(own) = self.own(engine) {
+            own.interceptors.borrow_mut().push(interceptor);
+        }
     }
 
     /// Hands `action` to the interceptors in turn; one none handles reaches
@@ -378,35 +634,57 @@ impl Bridge {
             state
                 .queued
                 .borrow_mut()
-                .push_back(Queued::Action(action.to_owned(), payload));
+                .push_back(Queued::Action(self.0, action.to_owned(), payload));
             return;
         }
-        self.deliver(engine, &state, action, &payload);
+        self.deliver(engine, action, &payload);
     }
 
     /// Runs `f` once no controller is running: at once when none is, else
     /// right after the outermost returns, in order with the actions
     /// dispatched meanwhile. What a controller hands back to its caller (a
     /// toast's action, a menu's choice, a command) goes through here, so the
-    /// callback may call that controller again.
+    /// callback may call that controller again. It runs as the window that
+    /// was acting (else this bridge's).
     pub fn defer(self, engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
         let state = BridgeState::of(engine);
+        let window = state.acting.get().unwrap_or(self.0);
         if state.held.get() > 0 || state.draining.get() {
             state
                 .queued
                 .borrow_mut()
-                .push_back(Queued::Call(Box::new(f)));
+                .push_back(Queued::Call(window, Box::new(f)));
             return;
         }
-        f(engine);
+        Bridge(window).run_as(engine, f);
     }
 
-    fn deliver(self, engine: &Engine, state: &BridgeState, action: &str, payload: &Json) {
-        let interceptors = state.interceptors.borrow().clone();
-        if interceptors.iter().any(|i| i(engine, action, payload)) {
-            return;
+    /// `f` as this bridge's window, or as the front one once it is gone.
+    fn run_as(self, engine: &Engine, f: impl FnOnce(&Engine)) {
+        if self.is_open(engine) {
+            self.act(engine, || f(engine));
+        } else {
+            f(engine);
         }
-        self.send_to_bricks(engine, action, payload);
+    }
+
+    fn deliver(self, engine: &Engine, action: &str, payload: &Json) {
+        let Some(own) = self.own(engine) else {
+            // Its window is gone. What the shared controllers dispatch on
+            // the first window's bridge goes on to the window in front.
+            let to = Bridge::of(engine);
+            if BridgeState::of(engine).main.get() == Some(self.0) && to != self {
+                to.deliver(engine, action, payload);
+            }
+            return;
+        };
+        let interceptors = own.interceptors.borrow().clone();
+        self.act(engine, || {
+            if interceptors.iter().any(|i| i(engine, action, payload)) {
+                return;
+            }
+            self.send_to_bricks(engine, action, payload);
+        });
     }
 
     /// Native code asking the bricks to do something (focus the composer):
@@ -435,10 +713,10 @@ impl Bridge {
             loop {
                 let next = state.queued.borrow_mut().pop_front();
                 match next {
-                    Some(Queued::Action(action, payload)) => {
-                        self.deliver(engine, &state, &action, &payload)
+                    Some(Queued::Action(bridge, action, payload)) => {
+                        Bridge(bridge).deliver(engine, &action, &payload)
                     }
-                    Some(Queued::Call(f)) => f(engine),
+                    Some(Queued::Call(bridge, f)) => Bridge(bridge).run_as(engine, f),
                     None => break,
                 }
             }
@@ -500,8 +778,21 @@ impl Bridge {
         *BridgeState::of(engine).mc_origin.borrow_mut() = origin.to_owned();
     }
 
+    /// Every window's bridge says so.
     pub fn set_local_folder_import_enabled(self, engine: &Engine, enabled: bool) {
-        let _ = Cx::new(engine, self.0).set(ShellBridge::LOCAL_FOLDER_IMPORT_ENABLED, enabled);
+        let main = Bridge::main(engine);
+        let mut all: Vec<ObjectId> = BridgeState::of(engine)
+            .bridges
+            .borrow()
+            .iter()
+            .map(|(b, _)| *b)
+            .collect();
+        if !all.contains(&main.0) {
+            all.push(main.0);
+        }
+        for b in all {
+            let _ = Cx::new(engine, b).set(ShellBridge::LOCAL_FOLDER_IMPORT_ENABLED, enabled);
+        }
     }
 
     /// Whether this machine's folders are the MC's: import is allowed and
@@ -516,6 +807,15 @@ impl Bridge {
                 origin_host(&origin).as_str(),
                 "localhost" | "127.0.0.1" | "::1"
             )
+    }
+}
+
+/// Puts a cell back as it was when dropped, also when unwinding.
+struct Restore<'a, T: Copy>(&'a Cell<T>, T);
+
+impl<T: Copy> Drop for Restore<'_, T> {
+    fn drop(&mut self) {
+        self.0.set(self.1);
     }
 }
 

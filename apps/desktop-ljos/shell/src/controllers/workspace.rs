@@ -170,7 +170,7 @@ struct Shared {
 }
 
 fn shared(engine: &Engine) -> Rc<Shared> {
-    engine.extension::<Shared>()
+    Bridge::of(engine).extension::<Shared>(engine)
 }
 
 /// Runs each hook once no controller is running.

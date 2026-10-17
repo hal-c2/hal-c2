@@ -55,6 +55,8 @@ mod terminals;
 mod threads;
 mod toasts;
 mod usage;
+mod windows;
+mod windows_prop;
 mod workspace;
 mod workspace_files;
 mod worktree_setup;

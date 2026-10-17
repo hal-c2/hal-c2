@@ -86,7 +86,7 @@ struct Shared {
 }
 
 fn shared(engine: &Engine) -> std::rc::Rc<Shared> {
-    engine.extension::<Shared>()
+    Bridge::of(engine).extension::<Shared>(engine)
 }
 
 /// Whether the sidebar lists the MC's rows (activated).
