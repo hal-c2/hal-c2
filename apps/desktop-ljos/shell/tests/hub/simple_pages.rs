@@ -195,9 +195,7 @@ fn load_balancing_waits_for_a_second_machine_and_saves_weights() {
     assert_eq!(written(&hub)["loadBalancingWeights"], json!({"env-2": 25}));
     accept_write(&hub, 3);
     let state = hub.published("loadBalancing");
-    // The cluster's labels come with SettingsScope::set_sources (a
-    // TODO(port)), so a machine is named by its id until then.
-    assert_eq!(state["summary"], "env-2 less often");
+    assert_eq!(state["summary"], "Build box less often");
     assert_eq!(state["machines"][1]["weight"], 25);
 
     // A weight that is not offered is ignored.

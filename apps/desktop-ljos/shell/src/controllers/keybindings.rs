@@ -54,6 +54,7 @@ use crate::controllers::menus::Menus;
 use crate::controllers::navigation::{Navigation, Route};
 use crate::controllers::settings::Settings;
 use crate::controllers::settings_scope::SettingsScope;
+use crate::controllers::thread_menu::ThreadMenu;
 use crate::controllers::toasts::{Action, Toasts};
 use crate::json::{self, Json};
 use crate::keybindings::{self as keymap, Binding, Context, When, qt};
@@ -415,8 +416,9 @@ impl Keymap {
     /// A key went down or up anywhere in the application (Qt::Key): what
     /// desktop-qt's application event filter sees.
     ///
-    /// Ljós has no application-wide key filter (TODO(ljos#43)), so nothing
-    /// calls this yet; the window must forward its key events.
+    /// TODO(ljos#43): Ljós has no hook that sees a key before the
+    /// focused item (a `Shortcut` with `Qt.ApplicationShortcut` runs first,
+    /// but never hears the modifier's release), so nothing calls this yet.
     pub fn key_event(&self, engine: &Engine, key: i32, pressed: bool) {
         // Qt calls the Command key Control on macOS.
         let modifier = key == qt::KEY_CONTROL || (!self.mac() && key == qt::KEY_META);
@@ -424,8 +426,6 @@ impl Keymap {
     }
 
     fn jump_hints(&self, engine: &Engine, labels: Vec<String>, show: bool) {
-        // TODO(port): SidebarController::setJumpHints — the sidebar listens
-        // with `on_jump_hints`.
         let hooks = self.0.jump_hints.borrow().clone();
         let labels = Rc::new(labels);
         for hook in hooks {
@@ -952,8 +952,7 @@ impl Keymap {
             return;
         };
         let mut environments = vec![mc.environment()];
-        // The store's environments, as the settings scope has them (TODO(port)
-        // there: ShellStore::environments / environmentOnline).
+        // The store's environments, as the settings scope has them.
         let scope = SettingsScope::of(engine);
         for id in scope.listed(engine) {
             if !environments.contains(&id) && scope.online(engine, &id) {
@@ -1237,10 +1236,27 @@ impl Keymap {
                 }),
             );
         }
-        // TODO(port): ThreadMenuController::togglePin / toggleSettle — the
-        // thread menu's port adds "thread.pin" and "thread.settle" (the
-        // route thread's, as its menu has them).
-        //
+        // The route thread's pin and settlement, as its menu has them.
+        add(
+            "thread.pin",
+            Box::new(|engine| {
+                let key = current_thread(engine);
+                if !key.is_empty() {
+                    controller::with::<ThreadMenu, _>(engine, |menu, e| menu.toggle_pin(e, &key));
+                }
+            }),
+        );
+        add(
+            "thread.settle",
+            Box::new(|engine| {
+                let key = current_thread(engine);
+                if !key.is_empty() {
+                    controller::with::<ThreadMenu, _>(engine, |menu, e| {
+                        menu.toggle_settle(e, &key);
+                    });
+                }
+            }),
+        );
         // Undo is the newest toast's (ThreadMenuController::undo).
         add(
             "thread.undo",
@@ -1276,8 +1292,6 @@ impl Keymap {
     }
 
     fn threads(&self, engine: &Engine) -> Option<Vec<String>> {
-        // TODO(port): SidebarController::isActive / orderedKeys — the
-        // sidebar calls `set_threads`.
         let source = self.0.threads.borrow().clone();
         source.and_then(|threads| threads(engine))
     }

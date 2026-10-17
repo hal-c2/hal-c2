@@ -87,7 +87,7 @@ impl Thread {
         format!("{}:{}", self.environment_id, self.id)
     }
 
-    fn project_key(&self) -> String {
+    pub fn project_key(&self) -> String {
         format!("{}:{}", self.environment_id, self.project_id)
     }
 }

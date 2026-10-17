@@ -24,9 +24,8 @@
 //! scope.write(engine, |settings, project_id| settings, "");
 //! ```
 //!
-//! What the cluster holds comes from [`SettingsScope::set_sources`]. Until
-//! the store and the sidebar are ported, the scope knows this machine's
-//! environment and no projects.
+//! What the cluster holds comes from the store and the sidebar's groups, or
+//! from [`SettingsScope::set_sources`] (tests).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -38,9 +37,11 @@ use serde_json::json;
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init};
 use crate::controllers::settings::{Map, Settings};
+use crate::controllers::sidebar;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::environment_settings::{EnvironmentSettings, Outcome, Reading};
 use crate::json::Json;
+use crate::store;
 
 const KEY: &str = "settingsScope";
 
@@ -300,12 +301,26 @@ impl SettingsScope {
         let source = self.0.environments.borrow().clone();
         match source {
             Some(source) => source(engine),
-            // TODO(port): ShellStore::environments / environment /
-            // environmentOnline. Until then, the MC's own environment.
+            // The store's, else the MC's own before it has any.
             None => {
+                let known: Vec<Environment> = store::with(engine, |s| {
+                    s.environments()
+                        .into_iter()
+                        .map(|id| Environment {
+                            label: s
+                                .environment(&id)
+                                .get("label")
+                                .and_then(Json::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            online: s.environment_online(&id),
+                            id,
+                        })
+                        .collect()
+                });
                 let local = SettingsScope::local(engine);
-                if local.is_empty() {
-                    Vec::new()
+                if !known.is_empty() || local.is_empty() {
+                    known
                 } else {
                     vec![Environment {
                         id: local,
@@ -319,8 +334,27 @@ impl SettingsScope {
 
     fn groups(&self, engine: &Engine) -> Vec<ProjectGroup> {
         let source = self.0.groups.borrow().clone();
-        // TODO(port): SidebarController::groups / group / grouped.
-        source.map_or_else(Vec::new, |s| s(engine))
+        match source {
+            Some(source) => source(engine),
+            None => sidebar::groups(engine)
+                .into_iter()
+                .map(|g| ProjectGroup {
+                    title: g
+                        .summary
+                        .get("displayName")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    key: g.key,
+                    member_keys: g.member_keys,
+                    members: g
+                        .members
+                        .into_iter()
+                        .map(|p| (p.environment_id, p.id))
+                        .collect(),
+                })
+                .collect(),
+        }
     }
 
     pub fn label(&self, engine: &Engine, environment_id: &str) -> String {
@@ -777,6 +811,13 @@ impl Controller for SettingsScopeController {
         init.mc.on_ready_changed(Box::new(|engine: &Engine, _| {
             SettingsScope::of(engine).update(engine);
         }));
+        // What the scope covers follows the cluster and the sidebar's
+        // grouping.
+        let refresh = |engine: &Engine| {
+            Bridge::of(engine).defer(engine, |engine| SettingsScope::of(engine).refresh(engine));
+        };
+        store::on_changed(init.engine, refresh);
+        sidebar::on_grouped(init.engine, refresh);
         SettingsScopeController {
             scope: SettingsScope::of(init.engine),
         }

@@ -83,8 +83,9 @@ pub struct Launch {
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
-    /// Where the session an in-app pairing makes is kept
-    /// ([`storage::StoragePaths::data`]); none keeps nothing.
+    /// Where the session an in-app pairing makes and the shell's drafts
+    /// (`shell-drafts.json`) are kept ([`storage::StoragePaths::data`]);
+    /// none keeps nothing.
     pub data_dir: Option<PathBuf>,
 }
 
@@ -138,6 +139,13 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     if let Some(cache) = &launch.cache_dir {
         controllers::mc_plugin::set_cache_dir(engine, cache.join("mc-plugins"));
     }
+    controllers::drafts::set_path(
+        engine,
+        launch
+            .data_dir
+            .as_ref()
+            .map(|dir| dir.join("shell-drafts.json")),
+    );
     controller::start(engine, mc.clone(), controllers::registrations());
     controllers::settings::Settings::of(engine).set_device_path(
         engine,

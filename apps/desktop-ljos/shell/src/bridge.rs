@@ -455,7 +455,8 @@ impl Bridge {
         *BridgeState::of(engine).clipboard_writer.borrow_mut() = Some(Rc::new(write));
     }
 
-    /// Puts `text` on the clipboard, as `setClipboardText` does.
+    /// Puts `text` on the clipboard, as `setClipboardText` does, or where
+    /// [`Bridge::set_clipboard_writer`] says.
     pub fn copy_to_clipboard(self, engine: &Engine, text: &str) {
         let writer = BridgeState::of(engine).clipboard_writer.borrow().clone();
         match writer {

@@ -2,10 +2,12 @@
 //! shows (home, a thread, a draft, settings, pull requests, usage) and the
 //! way back and forward.
 //!
-//! Not ported yet, for want of the store, drafts, plugins and commands:
-//! thread titles and locating moved or deleted threads, dropping a sent
-//! draft, plugin tabs, the palette's places, and keeping the route between
-//! runs. A thread route is shown as named.
+//! Not ported yet, for want of plugins and the palette: thread titles and
+//! locating moved or deleted threads, plugin tabs, the palette's places,
+//! and keeping the route between runs. A thread route is shown as named.
+//!
+//! What another controller reads of the route while Navigation may be
+//! running is [`shown`].
 
 use ljos::prelude::Engine;
 use serde_json::json;
@@ -183,8 +185,30 @@ impl Navigation {
         &self.route
     }
 
+    /// The thread shown, empty when the route is not a thread.
+    pub fn thread_key(&self) -> &str {
+        match &self.route {
+            Route::Thread(key) => key,
+            _ => "",
+        }
+    }
+
+    /// The draft shown, empty when the route is not a draft.
+    pub fn draft_id(&self) -> &str {
+        match &self.route {
+            Route::Draft(id) => id,
+            _ => "",
+        }
+    }
+
     pub fn open(&mut self, engine: &Engine, route: Route) {
         self.go(engine, route, false);
+    }
+
+    /// Goes to `route` in place of the one shown, leaving nothing to go
+    /// back to (a parked thread's window moving on, a sent draft).
+    pub fn replace(&mut self, engine: &Engine, route: Route) {
+        self.go(engine, route, true);
     }
 
     /// `hal-c2://thread/<environment>/<thread>` opens the thread.
@@ -284,6 +308,30 @@ impl Navigation {
         }
         self.bridge.publish(engine, "route", state);
     }
+}
+
+/// The route the window shows, as last published: what a controller reads
+/// without borrowing Navigation (which may be the one running).
+pub fn shown(engine: &Engine) -> Route {
+    let Some(route) = Bridge::of(engine).published(engine, "route") else {
+        return Route::Home;
+    };
+    let text = |key: &str| route[key].as_str().unwrap_or_default().to_owned();
+    match route["kind"].as_str().unwrap_or_default() {
+        "thread" if !text("threadKey").is_empty() => Route::Thread(text("threadKey")),
+        "draft" if !text("draftId").is_empty() => Route::Draft(text("draftId")),
+        "settings" => Route::Settings(text("section")),
+        "pullRequests" => Route::PullRequests,
+        "usage" => Route::Usage,
+        _ => Route::Home,
+    }
+}
+
+/// The link [`Navigation::open_link`] opens `thread_key`
+/// (`environment:thread`) by.
+pub fn thread_link(thread_key: &str) -> String {
+    let (environment, thread) = thread_key.split_once(':').unwrap_or(("", thread_key));
+    format!("hal-c2://thread/{environment}/{thread}")
 }
 
 fn take_reachable(stack: &mut Vec<Route>, current: &Route) -> Option<Route> {

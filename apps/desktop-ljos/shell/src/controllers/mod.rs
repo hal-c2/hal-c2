@@ -9,6 +9,7 @@ pub mod connection_health;
 pub mod connections;
 pub mod device_settings;
 pub mod diagnostics;
+pub mod drafts;
 pub mod folders;
 pub mod keybindings;
 pub mod layout;
@@ -24,13 +25,14 @@ pub mod quit;
 pub mod scheduled_tasks;
 pub mod settings;
 pub mod settings_scope;
-pub mod sidebar_seam;
+pub mod sidebar;
 pub mod slack_settings;
 pub mod source_control_settings;
 pub mod stage;
 pub mod storage_settings;
 pub mod text_generation;
 pub mod theme;
+pub mod thread_menu;
 pub mod toasts;
 pub mod usage;
 pub mod usage_prices;
@@ -73,6 +75,7 @@ pub fn registrations() -> Vec<Registration> {
             &["diagnostics"],
             Scope::Window,
         ),
+        Registration::new::<drafts::DraftController>("drafts", &["landing"], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
@@ -108,7 +111,11 @@ pub fn registrations() -> Vec<Registration> {
             &["settingsScope"],
             Scope::Window,
         ),
-        Registration::new::<sidebar_seam::SidebarSeam>("sidebar", &["sidebar"], Scope::Window),
+        Registration::new::<sidebar::Sidebar>(
+            "sidebar",
+            &["sidebar", "customSnooze"],
+            Scope::Window,
+        ),
         Registration::new::<slack_settings::SlackSettings>(
             "slackSettings",
             &["slackSettings"],
@@ -131,6 +138,7 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
+        Registration::new::<thread_menu::ThreadMenu>("threadMenu", &[], Scope::Window),
         Registration::new::<toasts::Toasts>("toasts", &["toasts"], Scope::Window),
         Registration::new::<usage::Usage>("usage", &["usage"], Scope::Window),
         Registration::new::<usage_prices::UsagePrices>(

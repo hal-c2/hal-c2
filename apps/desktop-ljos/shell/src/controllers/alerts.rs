@@ -32,6 +32,8 @@ use crate::controllers::settings::Settings;
 use crate::controllers::toasts::{Action, DEFAULT_TIMEOUT_MS, Toasts};
 use crate::json::Json;
 use crate::mc::Mc;
+use crate::sidebar_model;
+use crate::store;
 
 pub const TOGGLE_MUTE: &str = "thread.toggleAlerts";
 pub const MUTED_KEY: &str = "mutedAlertThreads";
@@ -139,12 +141,13 @@ impl Controller for AlertController {
             if !ready {
                 me.run(engine, |alerts, _| {
                     alerts.seen.clear();
-                    // TODO(port): ShellStore::synchronized — the store hands
-                    // its threads over again once its snapshot is in.
+                    // The store hands its threads over again once its
+                    // snapshot is in.
                     alerts.threads = None;
                 });
             }
         }));
+        follow_store(engine, &init.me);
         let focused = follow_focus(engine, &init.me);
         AlertController {
             bridge: init.bridge,
@@ -160,7 +163,9 @@ impl Controller for AlertController {
             settings_read: false,
             following_settings: false,
             threads: None,
-            locate: None,
+            locate: Some(Rc::new(|engine: &Engine, key: &str| {
+                store::get(engine).map_or_else(|| key.to_owned(), |s| s.borrow().located(key))
+            })),
         }
     }
 
@@ -202,6 +207,39 @@ impl Controller for AlertController {
     }
 }
 
+/// Hands the store's threads over on each change once it is synchronized
+/// with its MCs, after the change has run.
+fn follow_store(engine: &Engine, me: &Me<AlertController>) {
+    let me = me.clone();
+    store::on_changed(engine, move |engine| {
+        let me = me.clone();
+        Bridge::of(engine).defer(engine, move |engine| {
+            let threads = store::with(engine, |s| {
+                s.synchronized().then(|| {
+                    s.threads()
+                        .iter()
+                        .map(|t| AlertThread {
+                            key: t.key(),
+                            title: t.title.clone(),
+                            subagent: t.subagent,
+                            archived: t.archived_at.is_some(),
+                            status: sidebar_model::status(t).to_owned(),
+                            latest_run: t.latest_run.as_ref().map(|run| AlertRun {
+                                run_id: run.run_id.clone(),
+                                status: run.status.clone(),
+                                completed_at: sidebar_model::parse_iso(run.completed_at.as_deref()),
+                            }),
+                        })
+                        .collect::<Vec<_>>()
+                })
+            });
+            if let Some(threads) = threads {
+                me.run(engine, |alerts, engine| alerts.set_threads(engine, threads));
+            }
+        });
+    });
+}
+
 /// Whether the application has focus, followed from Ljós's `Application`
 /// (`Qt.application`); focused when there is none.
 fn follow_focus(engine: &Engine, me: &Me<AlertController>) -> bool {
@@ -241,19 +279,13 @@ impl AlertController {
 
     /// The store's threads, now that it is synchronized with its MCs; each
     /// change of the store hands them over again.
-    ///
-    /// TODO(port): ShellStore::changed / threads — the store calls this
-    /// with its rows (and `sidebar::status`, `sidebar::parseIso`) once it
-    /// is ported.
     pub fn set_threads(&mut self, engine: &Engine, threads: Vec<AlertThread>) {
         self.threads = Some(threads);
         self.evaluate(engine);
     }
 
     /// Where a thread lives now, from where it lived when it was notified
-    /// (it may have moved since).
-    ///
-    /// TODO(port): ShellStore::located — the store sets it.
+    /// (it may have moved since). The store's `located`, unless tests say.
     pub fn set_locate(&mut self, locate: Locate) {
         self.locate = Some(locate);
     }
