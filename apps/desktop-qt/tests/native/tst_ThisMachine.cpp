@@ -40,10 +40,12 @@ private slots:
   }
 
   void loopbackHosts() {
-    for (const char* host : {"localhost", "LOCALHOST", "127.0.0.1", "127.8.9.10", "::1"}) {
+    for (const char* host : {"localhost", "LOCALHOST", "127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1", "::ffff:7f00:1"}) {
       QVERIFY2(thisMachine::loopbackHost(QString::fromLatin1(host)), host);
     }
-    for (const char* host : {"", "192.168.1.20", "100.64.0.7", "devbox", "localhost.example.com", "::2"}) {
+    for (const char* host : {"", "192.168.1.20", "100.64.0.7", "devbox", "localhost.example.com", "::2",
+                             // DNS names that only look like loopback addresses.
+                             "127.example.com", "127.0.0.1.nip.io"}) {
       QVERIFY2(!thisMachine::loopbackHost(QString::fromLatin1(host)), host);
     }
   }

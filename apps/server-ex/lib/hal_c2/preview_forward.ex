@@ -161,8 +161,17 @@ defmodule HalC2.PreviewForward do
 
   def loopback?(_url, _port), do: false
 
-  defp loopback_host?("localhost"), do: true
-  defp loopback_host?("::1"), do: true
-  defp loopback_host?("127." <> _), do: true
+  # A name only resolves to loopback when it is localhost: a DNS name such as
+  # 127.example.com is someone's website.
+  defp loopback_host?(host) when is_binary(host) do
+    case :inet.parse_strict_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0xFFFF, high, _}} -> Bitwise.bsr(high, 8) == 127
+      {:ok, _} -> false
+      {:error, _} -> String.downcase(host) == "localhost"
+    end
+  end
+
   defp loopback_host?(_), do: false
 end

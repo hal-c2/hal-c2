@@ -13,17 +13,18 @@ defmodule HalC2.Test.DevServer do
       `{:dev_server, :ws_closed, conn}` report each socket, and
       `send(conn, :close)` closes it from the server's side.
 
-  Both return `{port, server}` and stop with `stop/1` (or when the test ends).
+  Both return `{port, server}` and stop, with their connections, on `stop/1`
+  or when `owner` ends (not when it is only cut off from the server's MC).
   """
 
   @socket [:binary, active: false, reuseaddr: true, packet: :raw]
 
   @doc "An echo server on `ip` at `port` (0 for a free one)."
-  def echo(ip, port, owner), do: hold(fn -> echo_listen(ip, port, owner) end)
+  def echo(ip, port, owner), do: hold(owner, fn -> echo_listen(ip, port, owner) end)
 
   @doc "An HTTP server with a websocket echo on `ip` at `port` (0 for a free one)."
   def websocket(ip, port, owner) do
-    hold(fn ->
+    hold(owner, fn ->
       {:ok, server} =
         Bandit.start_link(
           plug: {__MODULE__.Plug, owner},
@@ -58,18 +59,23 @@ defmodule HalC2.Test.DevServer do
   end
 
   # Runs `start` in a process of its own that outlives the caller (an `:erpc`
-  # call's process ends as soon as it returns) and holds what it starts.
-  defp hold(start) do
+  # call's process ends as soon as it returns) and holds what it starts until
+  # `owner` ends; its shutdown takes what it linked down with it.
+  defp hold(owner, start) do
     caller = self()
     ref = make_ref()
 
     server =
       spawn(fn ->
+        owned = Process.monitor(owner)
         send(caller, {ref, start.()})
 
         receive do
           :stop -> :ok
+          {:DOWN, ^owned, :process, _, reason} when reason != :noconnection -> :ok
         end
+
+        exit(:shutdown)
       end)
 
     receive do
@@ -87,7 +93,7 @@ defmodule HalC2.Test.DevServer do
   # Until the server stops, which closes `listen`.
   defp accept(listen, owner) do
     with {:ok, socket} <- :gen_tcp.accept(listen) do
-      conn = spawn(fn -> receive(do: ({:socket, socket} -> echo(socket, owner))) end)
+      conn = spawn_link(fn -> receive(do: ({:socket, socket} -> echo(socket, owner))) end)
       :ok = :gen_tcp.controlling_process(socket, conn)
       send(conn, {:socket, socket})
       send(owner, {:dev_server, :accepted, conn})

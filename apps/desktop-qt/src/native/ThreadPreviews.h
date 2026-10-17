@@ -111,6 +111,9 @@ private:
   void unfollow();
   bool forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const;
   void openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc);
+  // openFor through one of `tabs` at the url's port, or a tab opened for it.
+  void openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
+                      const QList<QJsonObject>& tabs);
   void onEvent(const QJsonObject& event);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;

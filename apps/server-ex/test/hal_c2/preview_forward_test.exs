@@ -53,7 +53,14 @@ defmodule HalC2.PreviewForwardTest do
       assert PreviewForward.loopback?("http://[::1]:3000/", 3000)
       assert PreviewForward.loopback?("http://localhost/", 80)
       refute PreviewForward.loopback?("http://localhost:3001/", 3000)
+      assert PreviewForward.loopback?("http://LOCALHOST:3000/", 3000)
+      assert PreviewForward.loopback?("http://127.8.9.10:3000/", 3000)
+      assert PreviewForward.loopback?("http://[::ffff:7f00:1]:3000/", 3000)
       refute PreviewForward.loopback?("http://example.com:3000/", 3000)
+      # A DNS name that only looks like a loopback address is a website.
+      refute PreviewForward.loopback?("http://127.example.com:3000/", 3000)
+      refute PreviewForward.loopback?("http://127.0.0.1.nip.io:3000/", 3000)
+      refute PreviewForward.loopback?("http://[::ffff:c0a8:114]:3000/", 3000)
       refute PreviewForward.loopback?("file://localhost:3000/", 3000)
       refute PreviewForward.loopback?(nil, 3000)
     end

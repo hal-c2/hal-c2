@@ -187,3 +187,14 @@ Feature: Preview across MCs and devices
       When the user opens the link
       Then the thread gets a browser tab at "http://localhost:3000/cart"
       And the system browser opens "/cart" on the address the desktop's MC forwards to the dev server
+
+    # Hidden, the desktop no longer follows the thread's tabs, so it asks which there are.
+    @desktop
+    Scenario: A dev server link opens through the forward after its tab closed elsewhere
+      Given a thread on the second MC has a browser tab at "http://localhost:3000"
+      And the agent of a thread on the second MC writes "http://localhost:3000/cart"
+      And the user hides the thread's previews
+      And another client closes the thread's tab at "http://localhost:3000"
+      When the user opens the link
+      Then the thread gets a browser tab at "http://localhost:3000/cart"
+      And the system browser opens "/cart" on the address the desktop's MC forwards to the dev server

@@ -514,6 +514,23 @@ const Steps steps([] {
     if (!panel->isOpen() || panel->activeTab() != QLatin1String("previews")) panel->togglePreviews();
     waitForUrls(world, {c[0]});
   });
+  step(QStringLiteral("the user hides the thread's previews"), [](World& world, const Captures&, const Table&) {
+    RightPanelController* panel = world.native().controller<RightPanelController>();
+    if (panel->isOpen() && panel->activeTab() == QLatin1String("previews")) panel->togglePreviews();
+    world.sync();
+    world.waitFor([&] { return world.mc.subscribers(QStringLiteral("preview")).isEmpty(); }, QStringLiteral("the desktop to stop following the tabs"));
+  });
+  // The desktop no longer follows the tabs, so it hears nothing of this.
+  step(QStringLiteral("another client closes the thread's tab at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    const auto at = std::find_if(fake.tabs.begin(), fake.tabs.end(), [&](const QJsonObject& tab) {
+      return tab.value(QLatin1String("threadId")) == kPeerThread && tab.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")) == c[0];
+    });
+    expect(at != fake.tabs.end(), QStringLiteral("no tab at %1").arg(c[0]));
+    emitEvent(world.mc, *at, QStringLiteral("closed"));
+    fake.tabs.erase(at);
+    world.sync();
+  });
   step(QStringLiteral("the user opens the tab"), [](World& world, const Captures&, const Table&) {
     model(world).open(model(world).index(0).data(ThreadPreviews::TabIdRole).toString());
     world.sync();
