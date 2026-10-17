@@ -33,7 +33,8 @@ defmodule HalC2Plugins.Planner.Sync do
   linked issues not among its open ones come from one listing of its issues updated
   since that look began, and one not updated since is the detail that look had, so
   only an issue neither has is read alone, or every one the listing lacks when it
-  fails or is cut short.
+  fails or is cut short. Without a `before` every one is read alone, which the found
+  `full` says.
   """
   def look(settings, items, before) do
     at = System.monotonic_time()
@@ -47,6 +48,7 @@ defmodule HalC2Plugins.Planner.Sync do
           at: at,
           started: started,
           problem: nil,
+          full: before == nil,
           unwatched: [],
           projects: projects,
           issues: [],
@@ -67,6 +69,7 @@ defmodule HalC2Plugins.Planner.Sync do
           at: at,
           started: started,
           problem: message(error),
+          full: false,
           unwatched: [],
           projects: nil,
           issues: [],

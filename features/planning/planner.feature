@@ -926,6 +926,19 @@ Feature: Planner
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
       And that look read no issue alone
 
+    # GitHub does not count every change to an issue, a milestone renamed or a pull
+    # request now closing it, as an update to it. A look a day after the last one that
+    # read every closed issue alone reads them all alone again.
+    @mc
+    Scenario: A closed issue is read alone again once a day, whatever GitHub counted as updated
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+
     @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again
       Given "planner" follows the issues of "acme/api" labelled "roadmap"

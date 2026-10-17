@@ -1715,6 +1715,19 @@ defmodule HalC2.Steps.Planning.Planner do
     close_issue(context, number, "COMPLETED", %{"title" => title, "body" => body})
   end
 
+  # GitHub answers for the issue read alone, but lists nothing as updated since.
+  step "the closed \#{int} is renamed on GitHub to {string} with the description {string}, which GitHub does not count as an update",
+       %{args: [number, title, body]} = context do
+    context
+    |> close_issue(number, "COMPLETED", %{"title" => title, "body" => body})
+    |> World.cli_rules([listing([], nil)])
+  end
+
+  step "the planner last read every closed issue alone over a day ago", context do
+    World.put_app_env(:planner_full_read_seconds, 0)
+    context
+  end
+
   step "\#{int} is reopened on GitHub without the label", %{args: [number]} = context do
     off_the_list(context, GitHubIssues.issue(context.repository, number))
   end
