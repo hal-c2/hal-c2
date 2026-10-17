@@ -291,7 +291,12 @@ void ThreadPreviews::openThroughTab(const QUrl& url, const QString& environmentI
                      m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
                      return;
                    }
-                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   // A row only for the thread shown: the list this follows may
+                   // have come after the user went to another.
+                   if (generation == m_generation && environmentId == m_environment && threadId == m_thread && result.isObject() &&
+                       m_status == QLatin1String("ready")) {
+                     upsert(result.toObject());
+                   }
                    openFor(url, environmentId, threadId, mc);
                  });
 }
@@ -320,10 +325,9 @@ void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, cons
                    }
                    QUrl forwarded = url;
                    forwarded.setPort(result.toObject().value(QLatin1String("port")).toInt(port));
-                   // The forward listens at 127.0.0.1 and ::1 only, not at
-                   // 127.0.0.1's aliases.
-                   const QHostAddress at(forwarded.host());
-                   if (!at.isNull() && at != QHostAddress(QHostAddress::LocalHostIPv6)) forwarded.setHost(QStringLiteral("127.0.0.1"));
+                   // The forward listens at 127.0.0.1, and at ::1 only where
+                   // this machine has IPv6, never at 127.0.0.1's aliases.
+                   if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
                    m_open(forwarded);
                  });
 }

@@ -124,6 +124,10 @@ machine you are connected to forwards that port, so the page opens on this machi
 tabs has open is forwarded. The forward closes with the thread's last tab at that port, or
 when the other machine stops answering.
 
+This needs the desktop app connected to the machine it runs on, which reaches the rest of the
+cluster for it. Connected straight to another machine, a `localhost` link opens as it is, on
+your own machine.
+
 ### Balance new threads across machines
 
 Load balancing is off by default. Once the cluster has two or more machines, turn it on
