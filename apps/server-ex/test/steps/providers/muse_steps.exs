@@ -614,10 +614,10 @@ defmodule HalC2.Steps.Providers.Muse do
     child_id = context.subagent["childThreadId"]
     child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
 
-    assert [
-             %{"role" => "user", "text" => "Review the diff for bugs\nFocus on app.ts"},
-             %{"role" => "assistant", "text" => "Found one bug in app.ts."}
-           ] = child |> StreamState.list("message") |> Enum.sort_by(& &1["role"], :desc)
+    assert %{
+             "user" => "Review the diff for bugs\nFocus on app.ts",
+             "assistant" => "Found one bug in app.ts."
+           } == child |> StreamState.list("message") |> Map.new(&{&1["role"], &1["text"]})
 
     context
   end

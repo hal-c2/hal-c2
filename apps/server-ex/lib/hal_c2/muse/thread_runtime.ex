@@ -888,8 +888,12 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # Muse's subagents still running when the turn ends end with it.
   defp end_subagents(state, status) do
-    for {_id, %{done: false, sub: sub}} <- state.subs,
-        do: NativeSubagent.finish(sub, status, nil)
+    state.subs
+    |> Map.values()
+    |> Enum.each(fn
+      %{done: false, sub: sub} -> NativeSubagent.finish(sub, status, nil)
+      _ -> :ok
+    end)
 
     state
   end

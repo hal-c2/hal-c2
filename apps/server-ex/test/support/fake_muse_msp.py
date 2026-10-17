@@ -22,7 +22,7 @@
 # once the turn has completed; with "late": true, as the next turn/start arrives), {"childShell": command} (a workflow child asks, offering
 # no way to approve unless "approvable", for "requirements" approvals), {"todos": [{"text",
 # "status"}]} (session/todoListChanged), {"subagent": {"objective", "role", "progress", "answer",
-# "status", "failure"}} (a subagent item: started, updated with "progress" as its summary, and
+# "status", "failure"}} (a subagent item: started, updated with "progress" as its fallbackText, and
 # completed with "answer" as its result text and "status" (default completed); no "answer" leaves
 # it running), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
