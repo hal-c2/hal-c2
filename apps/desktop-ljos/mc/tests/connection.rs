@@ -285,6 +285,26 @@ fn an_mc_on_another_protocol_blocks_without_a_socket() {
 }
 
 #[test]
+fn a_download_gets_the_bytes_of_a_signed_url_or_why_not() {
+    let harness = Harness::new();
+    harness.open();
+    harness.ready();
+
+    let got: Rc<RefCell<Vec<Result<Vec<u8>, CallError>>>> = Rc::default();
+    for url in ["/attachments/a1.png?sig=ok", "/attachments/gone.png?sig=ok"] {
+        let sink = got.clone();
+        harness
+            .client
+            .download(url, move |result| sink.borrow_mut().push(result));
+    }
+    harness.until(|_| got.borrow().len() == 2);
+    let mut got = got.take();
+    got.sort_by_key(|r| r.is_err());
+    assert_eq!(got[0], Ok(b"png-bytes".to_vec()));
+    assert_eq!(got[1].as_ref().unwrap_err().message, "HTTP 404");
+}
+
+#[test]
 fn a_token_the_socket_refuses_gets_a_ticket_for_it() {
     let harness = Harness::new();
     harness.mc.set_token_on_socket(false);

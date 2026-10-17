@@ -14,8 +14,11 @@
 //! prompt and the attachments to the thread's draft; `rewind.cancel` drops
 //! the question. A rewind that cannot happen changes nothing and says why.
 
+use std::path::Path;
 use std::rc::Rc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use ljos::prelude::Engine;
 use serde_json::json;
 
@@ -68,6 +71,39 @@ fn refuse(engine: &Engine, why: &str) {
 
 fn text<'a>(point: &'a Obj, key: &str) -> &'a str {
     point.get(key).and_then(Json::as_str).unwrap_or("")
+}
+
+fn text_of(value: &Json, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Json::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// An attachment as the composer takes it back, from the bytes the MC gave:
+/// an image carries them, a file of this machine is written for the next
+/// message to send again. `Err` is why a file could not be written.
+fn as_file(attachment: &Json, bytes: &[u8]) -> Result<Json, String> {
+    let name = text_of(attachment, "name");
+    let mut file = json!({"name": name, "mimeType": text_of(attachment, "mimeType")});
+    if attachment.get("type").and_then(Json::as_str) == Some("image") {
+        file["base64"] = STANDARD.encode(bytes).into();
+        return Ok(file);
+    }
+    // Only the name's last part: the MC's names are not trusted with a path.
+    let leaf = Path::new(&name)
+        .file_name()
+        .map_or_else(|| "attachment".into(), |n| n.to_os_string());
+    let folder = std::env::temp_dir()
+        .join("hal-c2-rewind")
+        .join(text_of(attachment, "id").replace(['/', '\\'], "_"));
+    let path = folder.join(leaf);
+    std::fs::create_dir_all(&folder)
+        .and_then(|()| std::fs::write(&path, bytes))
+        .map_err(|e| e.to_string())?;
+    file["path"] = path.to_string_lossy().into_owned().into();
+    Ok(file)
 }
 
 impl Rewind {
@@ -186,17 +222,87 @@ impl Rewind {
         }
         // The attachments first: a rewind that cannot give them back does
         // not happen.
-        // TODO(port): McClient::download — each attachment's
-        // `assets.createUrl` {resource: {_tag: "attachment", attachmentId,
-        // fileName, mimeType}} relativeUrl, fetched: an image as {name,
-        // mimeType, base64}, a file written under the temp dir's
-        // hal-c2-rewind/<id>/<name> as {name, mimeType, path}. The shell's
-        // Mc has no download yet, so such a message is not rewound.
-        if !attachments.is_empty() {
-            return refuse(engine, "This message's attachments could not be read.");
-        }
         self.working = true;
-        self.roll_back(thread, point, Vec::new(), restore_files);
+        self.fetch(thread, point, attachments, Vec::new(), restore_files);
+    }
+
+    /// Fetches the first of `attachments` from the MC (`assets.createUrl`,
+    /// then the bytes of its signed URL), and goes on to the rest; with none
+    /// left, rolls back. `fetched` holds the files so far, as the composer
+    /// takes them: an image as {name, mimeType, base64}, a file written under
+    /// the temp dir's hal-c2-rewind/<id>/<name> as {name, mimeType, path}.
+    fn fetch(
+        &mut self,
+        thread: String,
+        point: Obj,
+        mut attachments: Vec<Json>,
+        fetched: Vec<Json>,
+        restore_files: bool,
+    ) {
+        if attachments.is_empty() {
+            return self.roll_back(thread, point, fetched, restore_files);
+        }
+        let attachment = attachments.remove(0);
+        let field = |key: &str| attachment.get(key).and_then(Json::as_str).unwrap_or("");
+        let environment = thread.split_once(':').map_or("", |(e, _)| e).to_owned();
+        let request = json!({"resource": {
+            "_tag": "attachment",
+            "attachmentId": field("id"),
+            "fileName": field("name"),
+            "mimeType": field("mimeType"),
+        }});
+        let me = self.me.clone();
+        self.mc.call(
+            &environment,
+            "assets.createUrl",
+            request,
+            Box::new(move |engine, result| {
+                me.run(engine, move |c, engine| {
+                    let url = match result {
+                        Ok(created) => text_of(&created, "relativeUrl"),
+                        Err(error) => return c.failed(engine, &error.message),
+                    };
+                    let me = c.me.clone();
+                    c.mc.download(
+                        &url,
+                        Box::new(move |engine, result| {
+                            me.run(engine, move |c, engine| {
+                                let file = result
+                                    .map_err(|e| e.message)
+                                    .and_then(|bytes| as_file(&attachment, &bytes));
+                                match file {
+                                    Ok(file) => {
+                                        let mut fetched = fetched;
+                                        fetched.push(file);
+                                        c.fetch(
+                                            thread,
+                                            point,
+                                            attachments,
+                                            fetched,
+                                            restore_files,
+                                        );
+                                    }
+                                    Err(why) => c.failed(engine, &why),
+                                }
+                            });
+                        }),
+                    );
+                });
+            }),
+        );
+    }
+
+    /// A fetch that failed: nothing is rewound.
+    fn failed(&mut self, engine: &Engine, why: &str) {
+        self.working = false;
+        refuse(
+            engine,
+            if why.is_empty() {
+                "This message's attachments could not be read."
+            } else {
+                why
+            },
+        );
     }
 
     fn roll_back(&mut self, thread: String, point: Obj, files: Vec<Json>, restore_files: bool) {

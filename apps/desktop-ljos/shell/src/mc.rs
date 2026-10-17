@@ -58,6 +58,8 @@ impl From<hal_c2_mc::CallError> for McError {
 }
 
 pub type Reply = Box<dyn FnOnce(&Engine, Result<Json, McError>)>;
+/// What [`Mc::download`] gives: the bytes, or why they could not be read.
+pub type BytesReply = Box<dyn FnOnce(&Engine, Result<Vec<u8>, McError>)>;
 pub type OnFrame = Box<dyn FnMut(&Engine, &Frame)>;
 /// What a `sub` frame carries besides its shape (a stream's `offset`,
 /// `handle` and `window`), asked each time it is sent: whoever holds the
@@ -179,6 +181,26 @@ pub trait Mc {
             "sizeBytes": bytes.len(),
         });
         self.call("", "http.upload", payload, reply);
+    }
+    /// GETs a signed URL the MC handed out (`assets.createUrl`'s
+    /// `relativeUrl`). A fake sees it as an `http.download` call carrying the
+    /// URL, and answers with the file's text.
+    fn download(&self, relative_url: &str, reply: BytesReply) {
+        let payload = serde_json::json!({ "relativeUrl": relative_url });
+        self.call(
+            "",
+            "http.download",
+            payload,
+            Box::new(move |engine, result| {
+                reply(
+                    engine,
+                    result.map(|body| match body {
+                        Json::String(text) => text.into_bytes(),
+                        other => other.to_string().into_bytes(),
+                    }),
+                )
+            }),
+        );
     }
 }
 
@@ -355,6 +377,12 @@ impl Mc for Connection {
             .upload(relative_url, bytes, mime_type, move |result| {
                 with_delivering(|engine| reply(engine, result.map_err(McError::from)));
             });
+    }
+
+    fn download(&self, relative_url: &str, reply: BytesReply) {
+        self.client.download(relative_url, move |result| {
+            with_delivering(|engine| reply(engine, result.map_err(McError::from)));
+        });
     }
 
     fn subscribe(&self, shape: Json, mut on_frame: OnFrame, resume: Option<Resume>) -> SubId {
