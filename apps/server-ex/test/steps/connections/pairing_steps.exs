@@ -10,6 +10,17 @@ defmodule HalC2.Steps.Connections.Pairing do
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
+  @stand_in """
+  #!/bin/sh
+  # hal_c2 eval EXPR ARGS...: a release applies runtime.exs to the home; this one is told it.
+  [ "$1" = eval ] || exit 64
+  expr="$2"
+  shift 2
+  exec elixir -pa "$STAND_IN_CODE" \\
+    -e 'Application.put_env(:hal_c2, :home, System.fetch_env!("STAND_IN_HOME"))' \\
+    -e "$expr" -- "$@"
+  """
+
   # --- printed on the host ---------------------------------------------------------
 
   step "an operator asks the MC for a pairing link with its LAN address", context do
@@ -19,6 +30,34 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "an operator asks for a pairing link for {string}", %{args: [base]} = context do
     context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
+  end
+
+  # The real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that evaluates what a
+  # release would, with elixir over this build's code and the scenario's home.
+  step "an operator runs {string} on the installed MC's command line",
+       %{args: [line]} = context do
+    root = Mc.tmp_dir(context.mc, "release")
+    File.mkdir_p!(Path.join(root, "bin"))
+    wrapper = Path.join([root, "bin", "hal-c2-service"])
+    File.cp!(Path.expand("../../../rel/overlays/bin/hal-c2-service", __DIR__), wrapper)
+    stand_in = Path.join([root, "bin", "hal_c2"])
+    File.write!(stand_in, @stand_in)
+    File.chmod!(stand_in, 0o755)
+
+    [command | args] = String.split(line)
+    [base | _] = Enum.reject(args, &String.starts_with?(&1, "--"))
+
+    {out, 0} =
+      System.cmd(wrapper, [command | args],
+        env: [
+          {"STAND_IN_CODE", Path.join(Mix.Project.build_path(), "lib/*/ebin")},
+          {"STAND_IN_HOME", Application.fetch_env!(:hal_c2, :home)},
+          {"RELEASE_ROOT", root}
+        ],
+        stderr_to_stdout: true
+      )
+
+    context |> Map.put(:base, base) |> Map.put(:printed, String.trim(out))
   end
 
   step "it prints the address with a one-time token", context do

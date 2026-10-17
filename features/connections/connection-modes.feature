@@ -109,6 +109,14 @@ Feature: How clients reach an environment
     When an operator asks for a Tailscale pairing link on another port
     Then the link uses that port
 
+  # An installed MC has no Mix: its operator runs the single file (hal-c2-service pair).
+  @mc
+  Scenario: A taken Tailscale port names the command an installed MC is paired with
+    Given the default tailnet HTTPS port is in use
+    And the MC was started from an installed release
+    When an operator asks for a Tailscale pairing link on the taken port
+    Then the refusal tells them to run "hal-c2-service pair"
+
   @backlog @desktop
   Scenario: The first SSH launch installs the server on the host
     Given a host that has never run HAL-C2

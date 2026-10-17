@@ -1,6 +1,6 @@
 defmodule HalC2.TailscaleServe do
   @moduledoc """
-  Publishes this MC over Tailscale Serve HTTPS for `mix hal_c2.pair --tailscale`: the
+  Publishes this MC over Tailscale Serve HTTPS for `pair --tailscale` (`HalC2.Pair`): the
   machine's MagicDNS name fronts the local listener, and tailscaled keeps the mapping
   across MC restarts.
 
@@ -82,7 +82,7 @@ defmodule HalC2.TailscaleServe do
               do: :ok,
               else:
                 {:taken,
-                 "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to `mix hal_c2.pair` to publish this one on another port."}
+                 "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to `#{HalC2.Pair.command_name()}` to publish this one on another port."}
 
           _ ->
             occupied(port)
@@ -96,7 +96,7 @@ defmodule HalC2.TailscaleServe do
   defp occupied(port),
     do:
       {:taken,
-       "HTTPS port #{port} on the tailnet already serves something that is not a HAL-C2 server. Pass --tailscale-serve-port to `mix hal_c2.pair` to publish this one on another port."}
+       "HTTPS port #{port} on the tailnet already serves something that is not a HAL-C2 server. Pass --tailscale-serve-port to `#{HalC2.Pair.command_name()}` to publish this one on another port."}
 
   defp mapping(name, port) do
     case run(["serve", "status", "--json"]) do
