@@ -138,7 +138,7 @@ defmodule HalC2.UpgradeTest do
   # A bundle archive whose manifest is `manifest`, packed as `mix hal_c2.bundle` does.
   defp tarball(dir, name, manifest) do
     archive = Path.join(dir, name <> ".tar.gz")
-    entry = {~c"releases/2.0.0/upgrade.json", JSON.encode!(manifest)}
+    entry = {~c"releases/#{manifest["version"]}/upgrade.json", JSON.encode!(manifest)}
     :ok = :erl_tar.create(String.to_charlist(archive), [entry], [:compressed])
     archive
   end

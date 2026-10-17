@@ -22,8 +22,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   With `--release`, builds the prod release under this commit's local version and has the
   installed MC on this machine update to it (`mise run mc:reload --release`), over
   its HTTP port with its access token as well. That MC is the one in the user's
-  `hal-c2` profile, in `HAL_C2_MC_HOME` when that is set, or under `--home ROOT`, the
-  root its `HAL_C2_HOME` names. The MCs clustered with
+  `hal-c2` profile, or the one in `HAL_C2_MC_HOME` (the MC's own directory) when that is
+  set. `--home ROOT` replaces both: it names the root the installed MC runs with as
+  `HAL_C2_HOME` (the XDG directories under it hold the MC's files). The MCs clustered with
   it update to the build too, whatever their platform, when it only changes code.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
@@ -150,11 +151,13 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
     # `--home` names the installed MC's root. Otherwise a checkout's own home is the dev
     # profile, and the installed MC's is the user's.
+    configured = Application.get_env(:hal_c2, :home)
+
     home =
       cond do
         root -> {:root, Path.expand(root)}
-        Application.get_env(:hal_c2, :home) == :dev -> nil
-        true -> Application.get_env(:hal_c2, :home)
+        configured == :dev -> nil
+        true -> configured
       end
 
     dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
