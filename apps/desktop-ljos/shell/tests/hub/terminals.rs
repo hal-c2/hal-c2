@@ -553,3 +553,411 @@ fn a_remembered_drawer_whose_terminals_ended_stays_shut() {
     assert!(!is_open(&hub));
     assert!(ids(&hub).is_empty());
 }
+
+// --- A session against its model --------------------------------------------
+
+mod session_model {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use hal_c2_shell::controllers::terminals::{Session, SessionEvent, TerminalPlace};
+    use hal_c2_shell::json::Json;
+    use hal_c2_shell::mc::Mc;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    use crate::Hub;
+    use crate::page::failure;
+
+    /// TerminalWriteInput's limit and the transcript's, in UTF-16 units.
+    const MAX_WRITE: usize = 65536;
+    const MAX_TRANSCRIPT: usize = 512 * 1024;
+
+    fn units(text: &str) -> usize {
+        text.encode_utf16().count()
+    }
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        Write(String),
+        Resize(i32, i32),
+        /// `snapshot` (or `restarted`) with this history.
+        Snapshot(String, bool),
+        Output(String),
+        Cleared,
+        Exited,
+        Problem(String),
+        Closed,
+        Refused(String),
+        AnswerWrite(bool),
+        AnswerResize(bool),
+        End,
+    }
+
+    fn text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            8 => "[a-c\r\u{e9}\u{1f600}]{0,6}",
+            // Past one request's limit, splitting on and between characters.
+            1 => prop_oneof![
+                Just("\u{e9}".repeat(70_000)),
+                Just("\u{1f600}".repeat(40_000)),
+                Just(format!("a{}", "\u{1f600}".repeat(32_768))),
+            ],
+        ]
+    }
+
+    fn output() -> impl Strategy<Value = String> {
+        prop_oneof![
+            8 => "[a-c\r\n\u{1f600}]{0,6}",
+            // Past what the transcript keeps.
+            1 => prop_oneof![Just("x".repeat(300_000)), Just("\u{1f600}".repeat(200_000))],
+        ]
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            5 => text().prop_map(Op::Write),
+            4 => (-1i32..4, -1i32..4).prop_map(|(c, r)| Op::Resize(c, r)),
+            3 => ("[ab]{0,3}", any::<bool>()).prop_map(|(h, r)| Op::Snapshot(h, r)),
+            3 => output().prop_map(Op::Output),
+            1 => Just(Op::Cleared),
+            1 => Just(Op::Exited),
+            1 => "[ab]{0,3}".prop_map(Op::Problem),
+            1 => Just(Op::Closed),
+            1 => "[ab]{0,3}".prop_map(Op::Refused),
+            5 => any::<bool>().prop_map(Op::AnswerWrite),
+            5 => any::<bool>().prop_map(Op::AnswerResize),
+            1 => Just(Op::End),
+        ]
+    }
+
+    #[derive(Debug, Default)]
+    struct Model {
+        attached: bool,
+        ended: bool,
+        subscribed: bool,
+        /// Typed but not sent.
+        pending: String,
+        writing: bool,
+        resizing: bool,
+        wanted: Option<(i32, i32)>,
+        sent: Option<(i32, i32)>,
+        /// Since the screen last started over.
+        transcript: Vec<String>,
+        writes: Vec<String>,
+        resizes: Vec<(i32, i32)>,
+        events: Vec<SessionEvent>,
+    }
+
+    impl Model {
+        fn flush_writes(&mut self) {
+            if self.writing || !self.attached || self.pending.is_empty() {
+                return;
+            }
+            let mut at = self.pending.len();
+            let mut count = 0;
+            for (i, c) in self.pending.char_indices() {
+                count += c.len_utf16();
+                if count > MAX_WRITE {
+                    at = i;
+                    break;
+                }
+            }
+            let rest = self.pending.split_off(at);
+            self.writes.push(std::mem::replace(&mut self.pending, rest));
+            self.writing = true;
+        }
+
+        fn flush_resize(&mut self) {
+            let Some(wanted) = self.wanted else { return };
+            if self.resizing || !self.attached || self.sent == Some(wanted) {
+                return;
+            }
+            self.sent = Some(wanted);
+            self.resizes.push(wanted);
+            self.resizing = true;
+        }
+
+        fn append(&mut self, data: &str) {
+            if !data.is_empty() {
+                self.transcript.push(data.to_owned());
+            }
+        }
+
+        fn note(&mut self, text: &str) {
+            self.append(&format!("\r\n[{text}]\r\n"));
+        }
+
+        fn replace(&mut self, history: &str) {
+            self.transcript.clear();
+            self.append(history);
+        }
+
+        /// What the transcript keeps: the newest chunks within its limit,
+        /// at least the newest one.
+        fn kept(&self) -> String {
+            let mut from = 0;
+            let mut size: usize = self.transcript.iter().map(|c| units(c)).sum();
+            while size > MAX_TRANSCRIPT && self.transcript.len() - from > 1 {
+                size -= units(&self.transcript[from]);
+                from += 1;
+            }
+            self.transcript[from..].concat()
+        }
+
+        /// Whether the MC's frames still reach the session.
+        fn hears(&self) -> bool {
+            self.subscribed && !self.ended
+        }
+    }
+
+    struct World {
+        hub: Hub,
+        session: Session,
+        events: Rc<RefCell<Vec<SessionEvent>>>,
+        model: Model,
+    }
+
+    impl World {
+        fn new(size: Option<(i32, i32)>) -> World {
+            let hub = Hub::new();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let heard = events.clone();
+            let place = TerminalPlace {
+                environment_id: "env-1".into(),
+                thread_id: "t1".into(),
+                cwd: "/w/p".into(),
+                ..TerminalPlace::default()
+            };
+            let mc: Rc<dyn Mc> = hub.mc.clone();
+            let session =
+                Session::open(&hub.engine, mc, &place, "term-1", size, move |_, event| {
+                    heard.borrow_mut().push(event.clone())
+                });
+            let model = Model {
+                subscribed: true,
+                wanted: size,
+                sent: size,
+                ..Model::default()
+            };
+            World {
+                hub,
+                session,
+                events,
+                model,
+            }
+        }
+
+        fn frame(&self, frame: Json) {
+            self.hub.mc.frame_where(
+                &self.hub.engine,
+                |shape| shape["type"] == "terminal" && shape["input"]["terminalId"] == "term-1",
+                frame,
+            );
+        }
+
+        fn event(&self, event: Json) {
+            self.frame(json!({"t": "terminal", "event": event}));
+        }
+
+        fn answer(&self, method: &str, ok: bool) -> bool {
+            let Some(index) = self.hub.mc.pending(method) else {
+                return false;
+            };
+            let result = if ok {
+                Ok(json!({}))
+            } else {
+                Err(failure("gone"))
+            };
+            self.hub.mc.reply(&self.hub.engine, index, result);
+            true
+        }
+
+        fn step(&mut self, op: Op) {
+            let engine = &self.hub.engine;
+            let m = &mut self.model;
+            match op {
+                Op::Write(data) => {
+                    self.session.write(engine, &data);
+                    if !m.ended {
+                        m.pending.push_str(&data);
+                        m.flush_writes();
+                    }
+                }
+                Op::Resize(columns, rows) => {
+                    self.session.resize(engine, columns, rows);
+                    if columns > 0 && rows > 0 && !m.ended {
+                        m.wanted = Some((columns, rows));
+                        m.events.push(SessionEvent::Resized(columns, rows));
+                        m.flush_resize();
+                    }
+                }
+                Op::Snapshot(history, restarted) => {
+                    let kind = if restarted { "restarted" } else { "snapshot" };
+                    let hears = m.hears();
+                    self.event(json!({"type": kind, "snapshot": {"history": history}}));
+                    let m = &mut self.model;
+                    if hears {
+                        m.replace(&history);
+                        if !std::mem::replace(&mut m.attached, true) {
+                            m.flush_writes();
+                            m.events.push(SessionEvent::Attached);
+                        }
+                        if m.wanted.is_some() {
+                            m.sent = None;
+                            m.flush_resize();
+                        }
+                    }
+                }
+                Op::Output(data) => {
+                    let hears = m.hears();
+                    self.event(json!({"type": "output", "data": data}));
+                    if hears {
+                        self.model.append(&data);
+                    }
+                }
+                Op::Cleared => {
+                    let hears = m.hears();
+                    self.event(json!({"type": "cleared"}));
+                    if hears {
+                        self.model.replace("");
+                    }
+                }
+                Op::Exited => {
+                    let hears = m.hears();
+                    self.event(json!({"type": "exited"}));
+                    if hears {
+                        self.model.note("process exited");
+                        self.model.events.push(SessionEvent::Exited);
+                    }
+                }
+                Op::Problem(message) => {
+                    let hears = m.hears();
+                    self.event(json!({"type": "error", "message": message}));
+                    if hears {
+                        self.model.note(&message);
+                    }
+                }
+                Op::Closed => {
+                    let hears = m.hears();
+                    self.event(json!({"type": "closed"}));
+                    if hears {
+                        self.model.subscribed = false;
+                        self.model.events.push(SessionEvent::Closed);
+                    }
+                }
+                Op::Refused(reason) => {
+                    let hears = m.hears();
+                    self.frame(json!({"t": "error", "reason": reason}));
+                    if hears {
+                        let m = &mut self.model;
+                        m.subscribed = false;
+                        m.note(&reason);
+                        m.events.push(SessionEvent::Failed(reason));
+                    }
+                }
+                Op::AnswerWrite(ok) => {
+                    if self.answer("terminal.write", ok) {
+                        let m = &mut self.model;
+                        m.writing = false;
+                        if !ok {
+                            m.pending.clear();
+                        } else if !m.ended {
+                            m.flush_writes();
+                        }
+                    }
+                }
+                Op::AnswerResize(ok) => {
+                    if self.answer("terminal.resize", ok) {
+                        let m = &mut self.model;
+                        m.resizing = false;
+                        if !m.ended {
+                            m.flush_resize();
+                        }
+                    }
+                }
+                Op::End => {
+                    self.session.end(engine);
+                    m.ended = true;
+                    m.subscribed = false;
+                }
+            }
+        }
+
+        fn check(&self) {
+            let m = &self.model;
+            let calls = self.hub.mc.calls.borrow();
+            let writes: Vec<String> = calls
+                .iter()
+                .filter(|(_, method, _)| method == "terminal.write")
+                .map(|(_, _, input)| input["data"].as_str().unwrap().to_owned())
+                .collect();
+            let resizes: Vec<(i32, i32)> = calls
+                .iter()
+                .filter(|(_, method, _)| method == "terminal.resize")
+                .map(|(_, _, input)| {
+                    (
+                        input["cols"].as_i64().unwrap() as i32,
+                        input["rows"].as_i64().unwrap() as i32,
+                    )
+                })
+                .collect();
+            drop(calls);
+            // In order, whole, and each within one request's limit.
+            assert_eq!(writes, m.writes);
+            assert!(
+                writes
+                    .iter()
+                    .all(|w| !w.is_empty() && units(w) <= MAX_WRITE)
+            );
+            assert_eq!(resizes, m.resizes);
+            // One of each in flight at a time.
+            let in_flight = |method: &str| {
+                let calls = self.hub.mc.calls.borrow();
+                (0..calls.len())
+                    .filter(|&i| calls[i].1 == method && self.hub.mc.is_pending(i))
+                    .count()
+            };
+            assert!(in_flight("terminal.write") <= 1);
+            assert!(in_flight("terminal.resize") <= 1);
+            assert_eq!(in_flight("terminal.write") == 1, m.writing);
+            assert_eq!(in_flight("terminal.resize") == 1, m.resizing);
+            // Settled, the MC has the size the Terminal last asked for.
+            if m.attached && !m.ended && !m.resizing {
+                assert_eq!(self.session.size(), m.wanted);
+            }
+            assert_eq!(self.session.size(), m.sent);
+            assert_eq!(self.session.attached(), m.attached);
+            assert_eq!(self.session.subscribed(), m.subscribed);
+            let transcript = self.session.transcript();
+            assert!(
+                transcript == m.kept(),
+                "the transcript keeps the newest output"
+            );
+            assert!(
+                units(&transcript) <= MAX_TRANSCRIPT
+                    || !transcript.is_empty()
+                        && m.transcript.last().is_some_and(|c| *c == transcript),
+                "the transcript is bounded, but for one chunk past the limit"
+            );
+            assert_eq!(*self.events.borrow(), m.events);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+        #[test]
+        fn a_session_follows_its_model(
+            size in proptest::option::of((1i32..4, 1i32..4)),
+            ops in proptest::collection::vec(op(), 1..40),
+        ) {
+            let mut world = World::new(size);
+            world.check();
+            for op in ops {
+                world.step(op);
+                world.check();
+            }
+        }
+    }
+}
