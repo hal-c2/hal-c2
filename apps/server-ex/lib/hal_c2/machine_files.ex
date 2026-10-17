@@ -138,7 +138,8 @@ defmodule HalC2.MachineFiles do
 
   @doc """
   The folder name of each member: its label made safe for a path, with the start of
-  its environment id after it when two members share one.
+  its environment id after it when two members share one, and all of its id when
+  even that is another's name.
   """
   @spec folders([{node, map}]) :: %{String.t() => map}
   def folders(environments) do
@@ -147,6 +148,7 @@ defmodule HalC2.MachineFiles do
         label = descriptor["label"] || id
         {folder_name(label, id), %{node: mc, environment: id, label: label}}
       end
+      |> Enum.sort_by(fn {_name, member} -> member.environment end)
 
     shared =
       named
@@ -154,10 +156,15 @@ defmodule HalC2.MachineFiles do
       |> Enum.filter(fn {_name, n} -> n > 1 end)
       |> MapSet.new(&elem(&1, 0))
 
-    Map.new(named, fn {name, member} ->
-      if MapSet.member?(shared, name),
-        do: {"#{name}-#{String.slice(member.environment, 0, 8)}", member},
-        else: {name, member}
+    # In environment id order, so each member's name is the same however they are listed.
+    Enum.reduce(named, %{}, fn {name, member}, taken ->
+      id = member.environment
+      first = if MapSet.member?(shared, name), do: "#{name}-#{String.slice(id, 0, 8)}", else: name
+
+      [first, "#{name}-#{id}"]
+      |> Stream.concat(Stream.map(Stream.iterate(2, &(&1 + 1)), &"#{name}-#{id}-#{&1}"))
+      |> Enum.find(&(not Map.has_key?(taken, &1)))
+      |> then(&Map.put(taken, &1, member))
     end)
   end
 

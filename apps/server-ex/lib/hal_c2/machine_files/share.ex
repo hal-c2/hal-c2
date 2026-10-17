@@ -59,7 +59,9 @@ defmodule HalC2.MachineFiles.Share do
 
       worktree = [
         {:is_map_key, "worktreePath", :"$1"},
-        {:is_binary, {:map_get, "worktreePath", :"$1"}}
+        {:is_binary, {:map_get, "worktreePath", :"$1"}},
+        {:orelse, {:not, {:is_map_key, "deletedAt", :"$1"}},
+         {:==, {:map_get, "deletedAt", :"$1"}, nil}}
       ]
 
       :ets.select(HalC2.Shell, [
@@ -124,37 +126,39 @@ defmodule HalC2.MachineFiles.Share do
     end
   end
 
-  @doc "Up to `count` bytes of the file `path` from `offset`; empty at its end."
-  @spec read(String.t(), non_neg_integer, non_neg_integer) :: {:ok, binary} | {:error, atom}
-  def read(path, offset, count) when is_binary(path) and offset >= 0 and count >= 0 do
-    with {:ok, _} <- real(path, roots()),
-         :ok <- regular(path),
-         {:ok, fd} <- :file.open(path, [:read, :binary, :raw]) do
-      try do
-        case :file.pread(fd, offset, min(count, @max_read)) do
-          {:ok, data} -> {:ok, data}
-          :eof -> {:ok, ""}
-          {:error, reason} -> {:error, reason}
-        end
-      after
-        :file.close(fd)
+  @doc """
+  Up to `count` bytes of the file `path` from `offset`; empty at its end. With an
+  `id`, `:estale` when `path` is no longer that file.
+  """
+  @spec read(String.t(), non_neg_integer, non_neg_integer, term) ::
+          {:ok, binary} | {:error, atom}
+  def read(path, offset, count, id \\ nil)
+      when is_binary(path) and offset >= 0 and count >= 0 do
+    opened(path, id, [:read], fn fd ->
+      case :file.pread(fd, offset, min(count, @max_read)) do
+        {:ok, data} -> {:ok, data}
+        :eof -> {:ok, ""}
+        {:error, reason} -> {:error, reason}
       end
-    end
+    end)
   end
 
-  @doc "Writes `data` into the existing file `path` at `offset`; the bytes written."
-  @spec write(String.t(), non_neg_integer, binary) :: {:ok, non_neg_integer} | {:error, atom}
-  def write(path, offset, data) when is_binary(path) and offset >= 0 and is_binary(data) do
-    with {:ok, _} <- real(path, roots()),
-         :ok <- regular(path),
-         {:ok, fd} <- :file.open(path, [:read, :write, :binary, :raw]) do
-      try do
-        with :ok <- :file.pwrite(fd, offset, data), do: {:ok, byte_size(data)}
-      after
-        :file.close(fd)
-      end
-    end
+  @doc """
+  Writes `data` into the existing file `path` at `offset`; the bytes written. With
+  an `id`, `:estale` when `path` is no longer that file.
+  """
+  @spec write(String.t(), non_neg_integer, binary, term) ::
+          {:ok, non_neg_integer} | {:error, atom}
+  def write(path, offset, data, id \\ nil)
+      when is_binary(path) and offset >= 0 and is_binary(data) do
+    opened(path, id, [:read, :write], fn fd ->
+      with :ok <- :file.pwrite(fd, offset, data), do: {:ok, byte_size(data)}
+    end)
   end
+
+  @doc "Flushes the file `path`, if it is still the file `id`, to its disk."
+  @spec fsync(String.t(), term) :: :ok | {:error, atom}
+  def fsync(path, id) when is_binary(path), do: opened(path, id, [:read], &:file.sync/1)
 
   @doc "Creates the file `path`, which must not exist yet, with `mode`."
   @spec create(String.t(), non_neg_integer) :: {:ok, attr} | {:error, atom}
@@ -201,8 +205,8 @@ defmodule HalC2.MachineFiles.Share do
 
   @doc """
   Changes what `changes` names of `path`: `:size` truncates or extends it, `:mode`
-  sets its permissions, `:mtime` (or `:atime` alone) sets its times, to a POSIX
-  time or `:now`. The new attributes.
+  sets its permissions, `:atime` and `:mtime` set its times, each to a POSIX time
+  or `:now`. The new attributes.
   """
   @spec setattr(String.t(), map) :: {:ok, attr} | {:error, atom}
   def setattr(path, changes) when is_binary(path) and is_map(changes) do
@@ -211,7 +215,7 @@ defmodule HalC2.MachineFiles.Share do
     with {:ok, _} <- real(path, roots),
          :ok <- truncate(path, changes[:size]),
          :ok <- chmod(path, changes[:mode]),
-         :ok <- touch(path, changes[:mtime] || changes[:atime]),
+         :ok <- touch(path, changes[:atime], changes[:mtime]),
          do: stat(path, roots)
   end
 
@@ -311,6 +315,33 @@ defmodule HalC2.MachineFiles.Share do
     end
   end
 
+  # `fun` with `path` open, once it is under a root, a regular file, and the file
+  # `id` names if there is one.
+  defp opened(path, id, modes, fun) do
+    with {:ok, _} <- real(path, roots()),
+         :ok <- regular(path),
+         {:ok, fd} <- :file.open(path, [:binary, :raw | modes]) do
+      try do
+        with :ok <- same(fd, id), do: fun.(fd)
+      after
+        :file.close(fd)
+      end
+    end
+  end
+
+  defp same(_fd, nil), do: :ok
+
+  defp same(fd, id) do
+    case :file.read_file_info(fd, [:raw]) do
+      {:ok, info} ->
+        stat = File.Stat.from_record(info)
+        if {stat.major_device, stat.inode} == id, do: :ok, else: {:error, :estale}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # Only regular files are read and written: opening a fifo or a device would wait
   # for someone else, or do something other than read a file.
   defp regular(path) do
@@ -359,7 +390,8 @@ defmodule HalC2.MachineFiles.Share do
   defp truncate(_path, nil), do: :ok
 
   defp truncate(path, size) when is_integer(size) and size >= 0 do
-    with {:ok, fd} <- :file.open(path, [:read, :write, :raw]) do
+    with :ok <- regular(path),
+         {:ok, fd} <- :file.open(path, [:read, :write, :raw]) do
       try do
         with {:ok, _} <- :file.position(fd, size), do: :file.truncate(fd)
       after
@@ -373,11 +405,18 @@ defmodule HalC2.MachineFiles.Share do
   defp chmod(path, mode) when is_integer(mode),
     do: write_info(path, %File.Stat{mode: Bitwise.band(mode, 0o7777)})
 
-  defp touch(_path, nil), do: :ok
-  defp touch(path, :now), do: touch(path, System.os_time(:second))
+  defp touch(_path, nil, nil), do: :ok
 
-  defp touch(path, time) when is_integer(time),
-    do: write_info(path, %File.Stat{atime: time, mtime: time})
+  # The OS sets both times at once, so the one not asked for is kept as it is.
+  defp touch(path, atime, mtime) do
+    with {:ok, stat} <- file_stat(path) do
+      write_info(path, %File.Stat{atime: time(atime, stat.atime), mtime: time(mtime, stat.mtime)})
+    end
+  end
+
+  defp time(nil, kept), do: kept
+  defp time(:now, _kept), do: System.os_time(:second)
+  defp time(time, _kept) when is_integer(time), do: time
 
   # Every file call goes straight to the OS (`raw`, `:prim_file`), never through
   # this VM's file server: a process of this VM that reads through a member's folder

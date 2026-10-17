@@ -147,6 +147,51 @@ defmodule HalC2.MachineFiles.ShareTest do
     refute File.exists?(Path.join(ctx.shop, "lib"))
   end
 
+  test "a file saved over by renaming is stale to whoever opened the old one", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id}} = Share.stat(cart)
+    assert Share.read(cart, 0, 6, id) == {:ok, "export"}
+    assert Share.fsync(cart, id) == :ok
+
+    saved = Path.join(ctx.shop, "src/.cart.ts.swp")
+    File.write!(saved, "export const cart = [2];\n")
+    File.rename!(saved, cart)
+
+    assert Share.read(cart, 0, 6, id) == {:error, :estale}
+    assert Share.write(cart, 0, "x", id) == {:error, :estale}
+    assert Share.fsync(cart, id) == {:error, :estale}
+    assert {:ok, %{id: new}} = Share.stat(cart)
+    assert Share.read(cart, 0, 6, new) == {:ok, "export"}
+  end
+
+  test "times are set apart, and only regular files are truncated", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    assert {:ok, _} = Share.setattr(cart, %{atime: 1_600_000_000, mtime: 1_700_000_000})
+    assert %{atime: 1_600_000_000, mtime: 1_700_000_000} = File.stat!(cart, time: :posix)
+
+    assert {:ok, _} = Share.setattr(cart, %{atime: 1_650_000_000})
+    assert %{atime: 1_650_000_000, mtime: 1_700_000_000} = File.stat!(cart, time: :posix)
+
+    fifo = Path.join(ctx.shop, "pipe")
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    assert Share.setattr(fifo, %{size: 0}) == {:error, :eacces}
+  end
+
+  test "a deleted thread's worktree is no longer shared", ctx do
+    cart = Path.join(ctx.worktree, "src/cart.ts")
+    assert {:ok, _} = Share.stat(cart)
+
+    put(
+      "t1",
+      {"thread",
+       %{"id" => "t1", "projectId" => "shop", "worktreePath" => ctx.worktree, "deletedAt" => "x"}}
+    )
+
+    :ok = Shell.sync()
+
+    assert Share.stat(cart) == {:error, :enoent}
+  end
+
   test "a project that is deleted is no longer shared", ctx do
     cart = Path.join(ctx.shop, "src/cart.ts")
     assert {:ok, _} = Share.stat(cart)

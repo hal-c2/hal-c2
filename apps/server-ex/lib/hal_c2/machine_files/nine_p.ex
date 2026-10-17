@@ -276,7 +276,8 @@ defmodule HalC2.MachineFiles.NineP do
     eloop: 40,
     enotsup: 95,
     etimedout: 110,
-    ehostdown: 112
+    ehostdown: 112,
+    estale: 116
   }
 
   @doc "The Linux errno of a POSIX error atom; EIO for one it does not know."

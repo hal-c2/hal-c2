@@ -12,8 +12,11 @@ defmodule HalC2.MachineFiles.SessionTest do
   defp devbox(:walk, ["/home/me/shop", ["cart.ts"]]), do: {:ok, [file(13, 5)]}
   defp devbox(:stat, ["/home/me/shop/cart.ts"]), do: {:ok, file(13, 5)}
   defp devbox(:stat, ["/home/me/shop"]), do: {:ok, dir(12)}
-  defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count]), do: {:ok, "cart\n"}
-  defp devbox(:write, ["/home/me/shop/cart.ts", 0, data]), do: {:ok, byte_size(data)}
+  # cart.ts is file 13 until it is saved over, as an editor there would.
+  defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, 13}]), do: {:ok, "cart\n"}
+  defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, _}]), do: {:error, :estale}
+  defp devbox(:write, ["/home/me/shop/cart.ts", 0, data, {1, 13}]), do: {:ok, byte_size(data)}
+  defp devbox(:fsync, [path, id]), do: send(self(), {:fsync, path, id}) && :ok
 
   defp devbox(:list, ["/home/me/shop"]),
     do: {:ok, [{"cart.ts", :regular, {1, 13}}, {"src", :directory, {1, 14}}]}
@@ -114,6 +117,26 @@ defmodule HalC2.MachineFiles.SessionTest do
     assert {{:read, "cart\n"}, s} = step(s, {:read, 2, 0, 4096})
     assert {{:write, 3}, s} = step(s, {:write, 2, 0, "hey"})
     assert {{:getattr, _, %{size: 5}}, _} = step(s, {:getattr, 2})
+  end
+
+  test "an open file stays the file it opened, and is flushed where it is" do
+    s = at_shop()
+    assert {{:walk, [_]}, s} = step(s, {:walk, 1, 2, ["cart.ts"]})
+    assert {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 2})
+    assert s.opened[2] == {1, 13}
+    assert {{:fsync}, s} = step(s, {:fsync, 2})
+    assert_received {:fsync, "/home/me/shop/cart.ts", {1, 13}}
+
+    # Saved over on devbox while still open here.
+    s = %{s | opened: %{s.opened | 2 => {1, 99}}}
+    assert {{:lerror, 116}, s} = step(s, {:read, 2, 0, 4096})
+
+    # The folder itself has nothing to flush; a clunked fid forgets its file.
+    assert {{:walk, [_]}, s} = step(s, {:walk, 0, 3, ["devbox"]})
+    assert {{:fsync}, s} = step(s, {:fsync, 3})
+    refute_received {:fsync, _, _}
+    assert {{:clunk}, s} = step(s, {:clunk, 2})
+    refute Map.has_key?(s.opened, 2)
   end
 
   test "a machine that does not answer fails each call with its reason" do

@@ -105,6 +105,20 @@ defmodule HalC2.MachineFilesTest do
              ["dddddddd-4", "devbox-aaaaaaaa", "devbox-bbbbbbbb", "lab-one"]
   end
 
+  test "no member's folder takes another's name" do
+    members = [
+      {:a@h, %{"environmentId" => "aaaaaaaa-1", "label" => "devbox"}},
+      {:b@h, %{"environmentId" => "bbbbbbbb-2", "label" => "devbox"}},
+      {:c@h, %{"environmentId" => "cccccccc-3", "label" => "devbox-aaaaaaaa"}}
+    ]
+
+    folders = MachineFiles.folders(members)
+    assert map_size(folders) == 3
+    assert folders["devbox-aaaaaaaa"].node == :a@h
+    assert folders["devbox-aaaaaaaa-cccccccc-3"].node == :c@h
+    assert MachineFiles.folders(Enum.reverse(members)) == folders
+  end
+
   test "a member's folder appears when it joins and goes when it is removed", ctx do
     server = start(ctx)
 
