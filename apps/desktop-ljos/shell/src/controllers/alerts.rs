@@ -184,7 +184,7 @@ impl Controller for AlertController {
         self.evaluate(engine);
     }
 
-    fn attach(&mut self, engine: &Engine, _window: &Window) {
+    fn attach(&mut self, engine: &Engine, window: &Window) {
         let commands = Commands::of(engine);
         let me = self.me.clone();
         commands.add(engine, TOGGLE_MUTE, MUTE, move |engine| {
@@ -199,11 +199,15 @@ impl Controller for AlertController {
         commands.set_terms(TOGGLE_MUTE, &["mute", "unmute", "notifications", "alerts"]);
         // Its title follows the route. Watchers run inside the publish, so
         // the presenting waits until no controller runs.
+        // Each window's command follows that window's route.
         let me = self.me.clone();
-        self.bridge.watch(engine, "route", move |engine, _| {
+        let bridge = window.bridge;
+        bridge.watch(engine, "route", move |engine, _| {
             let me = me.clone();
-            Bridge::of(engine).defer(engine, move |engine| {
-                me.run(engine, |alerts, engine| alerts.present(engine));
+            bridge.defer(engine, move |engine| {
+                bridge.if_open(engine, || {
+                    me.run(engine, |alerts, engine| alerts.present(engine));
+                });
             });
         });
         self.present(engine);

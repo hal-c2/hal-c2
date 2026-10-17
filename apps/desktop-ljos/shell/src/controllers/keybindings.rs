@@ -249,9 +249,12 @@ fn toast(engine: &Engine, f: impl FnOnce(&mut Toasts, &Engine) + 'static) {
 }
 
 impl Keymap {
-    /// The engine's keymap, with the defaults in force.
+    /// The acting window's keymap ([`Bridge::of`]), with the defaults in
+    /// force: each window has its own commands, and its own state for the
+    /// conditions (the terminal, the palette, the jump keys).
     pub fn of(engine: &Engine) -> Keymap {
-        let slot = engine.extension::<Slot>();
+        let bridge = Bridge::of(engine);
+        let slot = bridge.extension::<Slot>(engine);
         if let Some(keymap) = slot.0.borrow().clone() {
             return keymap;
         }
@@ -259,34 +262,39 @@ impl Keymap {
         keymap.0.state.borrow_mut().mac = cfg!(target_os = "macos");
         *slot.0.borrow_mut() = Some(keymap.clone());
         let commands = Commands::of(engine);
-        if let Ok(obj) = engine.singleton::<KeybindingsObject>() {
+        if let Ok(obj) = bridge.singleton::<KeybindingsObject>(engine) {
             let shown = commands.object().map_or(Value::Undefined, Value::Object);
             let _ = Cx::new(engine, obj).set(KeybindingsObject::COMMANDS, shown);
             // What a brick knows only: the model picker it shows is open.
             let _ = engine.connect_by_name(obj, "modelPickerOpenChanged", move |engine, _| {
                 let open = engine.read_by_name(obj, "modelPickerOpen");
-                Keymap::of(engine).model_picker_changed(engine, matches!(open, Value::Bool(true)));
+                bridge.if_open(engine, || {
+                    Keymap::of(engine)
+                        .model_picker_changed(engine, matches!(open, Value::Bool(true)))
+                });
             });
         }
         // A command coming or going changes which keys are the shell's.
-        commands.on_changed(|engine| {
-            let keymap = Keymap::of(engine);
-            let count = Commands::of(engine).len();
-            let changed = {
-                let mut s = keymap.0.state.borrow_mut();
-                !s.registering && std::mem::replace(&mut s.commands, count) != count
-            };
-            if changed {
-                keymap.refresh_shortcuts(engine);
-            }
+        commands.on_changed(move |engine| {
+            bridge.if_open(engine, || {
+                let keymap = Keymap::of(engine);
+                let count = Commands::of(engine).len();
+                let changed = {
+                    let mut s = keymap.0.state.borrow_mut();
+                    !s.registering && std::mem::replace(&mut s.commands, count) != count
+                };
+                if changed {
+                    keymap.refresh_shortcuts(engine);
+                }
+            });
         });
         keymap.set_rules(engine, Vec::new());
         keymap
     }
 
     fn object(engine: &Engine) -> Option<Cx<'_>> {
-        engine
-            .singleton::<KeybindingsObject>()
+        Bridge::of(engine)
+            .singleton::<KeybindingsObject>(engine)
             .ok()
             .map(|obj| Cx::new(engine, obj))
     }
@@ -296,18 +304,24 @@ impl Keymap {
         if std::mem::replace(&mut self.0.state.borrow_mut().active, true) {
             return;
         }
+        // Every window's settings, each window's keymap: its hooks run as
+        // the window they are for.
+        let bridge = Bridge::of(engine);
         let settings = Settings::of(engine);
-        settings.on_config_changed(|engine| Keymap::of(engine).follow_rules(engine));
+        settings.on_config_changed(move |engine| {
+            bridge.if_open(engine, || Keymap::of(engine).follow_rules(engine));
+        });
         // A reload of keybindings.json is confirmed, at most once every two
         // seconds.
-        settings.on_keybindings_pushed(|engine| Keymap::of(engine).pushed(engine));
+        settings.on_keybindings_pushed(move |engine| {
+            bridge.if_open(engine, || Keymap::of(engine).pushed(engine));
+        });
         // The terminals controller calls `set_terminal_open` as its drawer
         // opens and closes.
         // The palette calls `set_palette_open` as it opens and closes.
         // The right panel calls `set_preview_open` (its Previews tab shown).
         // Conditions on the route, the running turn and the composer's draft
         // (draftThreadRoute, turnRunning, composerDraft).
-        let bridge = Bridge::of(engine);
         for key in ["turn", "route", "panel", "composer"] {
             bridge.watch(engine, key, |engine, _| {
                 Keymap::of(engine).refresh_shortcuts(engine);
@@ -315,15 +329,19 @@ impl Keymap {
         }
         // The jump keys' modifier, as desktop-qt's application event filter
         // follows it: every window's key events, kept for the window.
-        ljos::keys::add_key_filter(engine, |engine, _, ev| {
-            Keymap::of(engine).key_event(engine, ev.key, ev.kind == KeyKind::Press);
+        ljos::keys::add_key_filter(engine, move |engine, _, ev| {
+            bridge.if_open(engine, || {
+                Keymap::of(engine).key_event(engine, ev.key, ev.kind == KeyKind::Press)
+            });
             false
         });
         // Letting go of the modifier in another application is not seen.
         if let Ok(app) = engine.singleton::<ljos::prelude::Application>() {
             let _ = engine.connect_by_name(app, "activeChanged", move |engine, _| {
                 if !matches!(engine.read_by_name(app, "active"), Value::Bool(true)) {
-                    Keymap::of(engine).set_jump_modifier_held(engine, false);
+                    bridge.if_open(engine, || {
+                        Keymap::of(engine).set_jump_modifier_held(engine, false)
+                    });
                 }
             });
         }

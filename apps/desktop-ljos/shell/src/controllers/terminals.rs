@@ -73,7 +73,6 @@ type Hook = Rc<dyn Fn(&Engine)>;
 struct Env {
     supported: Cell<bool>,
     drawn: Cell<bool>,
-    changed: RefCell<Vec<Hook>>,
 }
 
 impl Default for Env {
@@ -81,7 +80,6 @@ impl Default for Env {
         Env {
             supported: Cell::new(true),
             drawn: Cell::new(true),
-            changed: RefCell::default(),
         }
     }
 }
@@ -95,9 +93,11 @@ pub fn supported(engine: &Engine) -> bool {
 /// The app says so once, before any window.
 pub fn set_supported(engine: &Engine, supported: bool) {
     engine.extension::<Env>().supported.set(supported);
-    if let Ok(obj) = engine.singleton::<TerminalsObject>() {
-        let _ = Cx::new(engine, obj).set(TerminalsObject::SUPPORTED, supported);
-    }
+    controller::each_window(engine, |engine| {
+        if let Ok(obj) = Bridge::of(engine).singleton::<TerminalsObject>(engine) {
+            let _ = Cx::new(engine, obj).set(TerminalsObject::SUPPORTED, supported);
+        }
+    });
     refresh(engine);
 }
 
@@ -114,18 +114,16 @@ pub fn set_drawn(engine: &Engine, drawn: bool) {
 /// it has terminals, the drawer, the active terminal, the groups); once no
 /// controller is running.
 pub fn on_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
-    engine
-        .extension::<Env>()
-        .changed
+    Bridge::of(engine)
+        .extension::<Changed>(engine)
+        .0
         .borrow_mut()
         .push(Rc::new(f));
 }
 
-/// Where the drawer's height and, per thread, whether it is open and on
-/// which terminal are kept across restarts; read at once.
-pub fn set_store_path(engine: &Engine, path: Option<PathBuf>) {
-    controller::with::<Terminals, _>(engine, |t, engine| t.set_store_path(engine, path));
-}
+/// [`on_changed`]'s hooks, a window's own: its terminals are.
+#[derive(Default)]
+struct Changed(RefCell<Vec<Hook>>);
 
 fn refresh(engine: &Engine) {
     Bridge::of(engine).defer(engine, |engine| {
@@ -392,10 +390,12 @@ impl Session {
             terminal_id: Atom::new(terminal_id),
             session: SessionRef(Rc::downgrade(&session.0)),
         };
+        // The window's: it goes with the window.
+        let owner = Some(Bridge::of(engine).object());
         session
             .0
             .object
-            .set(engine.create_native(object, None).ok());
+            .set(engine.create_native(object, owner).ok());
         let weak = Rc::downgrade(&session.0);
         let subscription = mc.subscribe(
             json!({ "type": "terminal", "environment": place.environment_id, "input": input }),
@@ -828,7 +828,10 @@ impl Tabs {
     fn new(engine: &Engine) -> Tabs {
         let rows = ListRows::new(TabRows::default());
         let object = engine
-            .create_native(TerminalTabsObject::default(), None)
+            .create_native(
+                TerminalTabsObject::default(),
+                Some(Bridge::of(engine).object()),
+            )
             .ok();
         if let Some(obj) = object {
             let _ = rows.attach(engine, obj);
@@ -1134,7 +1137,7 @@ impl Controller for Terminals {
     fn new(init: Init<'_, Self>) -> Self {
         let engine = init.engine;
         let tabs = Tabs::new(engine);
-        if let Ok(obj) = engine.singleton::<TerminalsObject>() {
+        if let Ok(obj) = init.bridge.singleton::<TerminalsObject>(engine) {
             let cx = Cx::new(engine, obj);
             let _ = cx.set(TerminalsObject::SUPPORTED, supported(engine));
             let _ = cx.set(
@@ -1167,6 +1170,12 @@ impl Controller for Terminals {
             told: Facts::default(),
         };
         terminals.told = terminals.facts();
+        // Where the drawer's height and, per thread, whether it is open and
+        // on which terminal are kept across restarts: its window's.
+        terminals.set_store_path(
+            engine,
+            controller::state_file(engine, "shell-terminals.json"),
+        );
         terminals
     }
 
@@ -1721,7 +1730,7 @@ impl Terminals {
         }
         let was_open = self.told.open;
         self.told = now.clone();
-        if let Ok(obj) = engine.singleton::<TerminalsObject>() {
+        if let Ok(obj) = self.bridge.singleton::<TerminalsObject>(engine) {
             let cx = Cx::new(engine, obj);
             let _ = cx.set(TerminalsObject::AVAILABLE, now.available);
             let _ = cx.set(TerminalsObject::OPEN, now.open);
@@ -1738,14 +1747,14 @@ impl Terminals {
                 Keymap::of(engine).set_terminal_open(engine, open);
             });
         }
-        let hooks = engine.extension::<Env>().changed.borrow().clone();
+        let hooks = bridge.extension::<Changed>(engine).0.borrow().clone();
         for hook in hooks {
             bridge.defer(engine, move |engine| hook(engine));
         }
     }
 
     fn focus_requested(&self, engine: &Engine, terminal_id: &str) {
-        if let Ok(obj) = engine.singleton::<TerminalsObject>() {
+        if let Ok(obj) = self.bridge.singleton::<TerminalsObject>(engine) {
             let _ = TerminalsObject::emit_focus_requested(
                 &Cx::new(engine, obj),
                 Atom::new(terminal_id),

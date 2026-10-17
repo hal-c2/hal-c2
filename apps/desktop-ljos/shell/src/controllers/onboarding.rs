@@ -1078,7 +1078,7 @@ impl Onboarding {
             .as_ref()
             .and_then(TerminalSession::object)
             .map_or(Value::Null, Value::Object);
-        if let Ok(obj) = engine.singleton::<OnboardingObject>() {
+        if let Ok(obj) = self.bridge.singleton::<OnboardingObject>(engine) {
             let _ = Cx::new(engine, obj).set(OnboardingObject::TERMINAL, value);
         }
     }

@@ -39,6 +39,7 @@ pub mod store;
 pub mod terminal;
 pub mod theme;
 pub mod thread_view;
+pub mod window_mc;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -101,9 +102,11 @@ pub struct Launch {
     /// (`shell-drafts.json`) are kept ([`storage::StoragePaths::data`]);
     /// none keeps nothing.
     pub data_dir: Option<PathBuf>,
-    /// Where the window's own state is kept: each thread's right panel
+    /// Where the windows' own state is kept: each thread's right panel
     /// (`shell-panel.json`), the terminals drawer's height and per-thread
-    /// state (`shell-terminals.json`) ([`storage::StoragePaths::state`]);
+    /// state (`shell-terminals.json`), and which windows are open
+    /// (`shell-windows.json`) ([`storage::StoragePaths::state`]; a window
+    /// other than the first keeps its own under `shell-windows/<id>`);
     /// none keeps nothing.
     pub state_dir: Option<PathBuf>,
 }
@@ -198,13 +201,6 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("shell-drafts.json")),
     );
-    controllers::panel::set_store_path(
-        engine,
-        launch
-            .state_dir
-            .as_ref()
-            .map(|dir| dir.join("shell-panel.json")),
-    );
     controllers::composer::set_store_path(
         engine,
         launch
@@ -212,14 +208,10 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("shell-composer.json")),
     );
+    // Each window keeps its panel and terminals under its own directory
+    // of this one (ShellWindows::windowDir).
+    controller::set_state_dir(engine, launch.state_dir.clone());
     controller::start(engine, mc.clone(), controllers::registrations());
-    controllers::terminals::set_store_path(
-        engine,
-        launch
-            .state_dir
-            .as_ref()
-            .map(|dir| dir.join("shell-terminals.json")),
-    );
     controllers::settings::Settings::of(engine).set_device_path(
         engine,
         launch

@@ -4,9 +4,9 @@
 //! shows, whether it is open or maximized, and the thread details column.
 //!
 //! Each thread keeps its panel: going to another thread shows that one's,
-//! and the last [`STORED_THREADS`] shown are kept in `shell-panel.json`
-//! ([`set_store_path`]) with the panel's width, so they come back with the
-//! app. Terminal tabs end with the app.
+//! and the last [`STORED_THREADS`] shown are kept in its window's
+//! `shell-panel.json` ([`controller::state_file`]) with the panel's width,
+//! so they come back with the app. Terminal tabs end with the app.
 //!
 //! The tabs' models are the `Panel` singleton's ([`PanelObject`]): the
 //! panel points them at the thread shown and says which one is in view,
@@ -16,7 +16,6 @@
 //! `{threadKey, isOpen, transitionMs, activeId, tabs: [{id, kind, title}],
 //! width, maximized, detailsOpen, details, canAdd, addReasons}`.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -223,17 +222,6 @@ fn relation_status(thread: &sidebar_model::Thread) -> &'static str {
     }
 }
 
-/// Where the panels are kept; read when the panel is made.
-#[derive(Default)]
-struct StorePath(RefCell<Option<PathBuf>>);
-
-/// Where the panel keeps each thread's tabs (`shell-panel.json` in the
-/// state directory). Call it before the shell starts; none keeps them for
-/// this run only.
-pub fn set_store_path(engine: &Engine, path: Option<PathBuf>) {
-    *engine.extension::<StorePath>().0.borrow_mut() = path;
-}
-
 fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -306,7 +294,7 @@ impl Controller for RightPanel {
     fn new(init: Init<'_, Self>) -> Self {
         let engine = init.engine;
         let me = init.me;
-        let owner = engine.singleton::<PanelObject>().ok();
+        let owner = init.bridge.singleton::<PanelObject>(engine).ok();
         let diff = ThreadDiff::create(engine, owner, init.mc.clone(), toast);
         let previews = ThreadPreviews::create(engine, owner, init.mc.clone(), toast, |e, url| {
             Bridge::of(e).open_external(e, url)
@@ -465,8 +453,8 @@ impl Controller for RightPanel {
             devices,
             files_root: String::new(),
         };
-        let path = engine.extension::<StorePath>().0.borrow().clone();
-        panel.load(path);
+        // Its window's: none keeps them for this run only.
+        panel.load(controller::state_file(engine, "shell-panel.json"));
         panel
     }
 

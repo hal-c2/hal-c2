@@ -149,7 +149,7 @@ impl std::fmt::Debug for SettingsScope {
 
 impl SettingsScope {
     pub fn of(engine: &Engine) -> SettingsScope {
-        let slot = engine.extension::<Slot>();
+        let slot = Bridge::of(engine).extension::<Slot>(engine);
         if let Some(scope) = slot.0.borrow().clone() {
             return scope;
         }

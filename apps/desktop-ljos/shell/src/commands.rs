@@ -159,32 +159,45 @@ pub struct CommandRegistry {
     count: i32,
 }
 
+/// Runs `f` with the registry that is `cx.this`, as its window.
+fn mine<R>(cx: &Cx, f: impl FnOnce(Commands) -> R) -> R {
+    let engine = cx.engine;
+    match engine
+        .owner(cx.this)
+        .and_then(|o| Bridge::open_at(engine, o))
+    {
+        Some(bridge) => bridge.act(engine, || f(Commands::of(engine))),
+        None => f(Commands::of(engine)),
+    }
+}
+
 #[qml_impl]
 impl CommandRegistry {
     /// Adds `command`, run by `callback`, until `owner` goes.
     #[qml(invokable)]
     fn add(cx: &Cx, command: Atom, title: Atom, callback: Value, owner: Value) {
-        let commands = Commands::of(cx.engine);
         let owner = match owner {
             Value::Object(id) => Some(id),
             _ => None,
         };
-        commands.add_js(cx.engine, &command, &title, callback, owner);
+        mine(cx, |commands| {
+            commands.add_js(cx.engine, &command, &title, callback, owner)
+        });
     }
 
     #[qml(invokable)]
     fn remove(cx: &Cx, command: Atom) {
-        Commands::of(cx.engine).remove(cx.engine, &command);
+        mine(cx, |commands| commands.remove(cx.engine, &command));
     }
 
     #[qml(invokable)]
     fn contains(cx: &Cx, command: Atom) -> bool {
-        Commands::of(cx.engine).contains(cx.engine, &command)
+        mine(cx, |commands| commands.contains(cx.engine, &command))
     }
 
     #[qml(invokable)]
     fn run(cx: &Cx, command: Atom) -> bool {
-        Commands::of(cx.engine).run(cx.engine, &command)
+        mine(cx, |commands| commands.run(cx.engine, &command))
     }
 }
 
@@ -235,15 +248,19 @@ impl QmlListModel for Rows {
 }
 
 impl Commands {
-    /// The engine's registry, made with its QML object on first use.
+    /// The acting window's registry ([`Bridge::of`]), made with its QML
+    /// object on first use; each window has its own, as each has its own
+    /// controllers to run them.
     pub fn of(engine: &Engine) -> Commands {
-        let registry = engine.extension::<Registry>();
+        let bridge = Bridge::of(engine);
+        let registry = bridge.extension::<Registry>(engine);
         if let Some(commands) = registry.0.borrow().clone() {
             return commands;
         }
         let commands = Commands::default();
         *registry.0.borrow_mut() = Some(commands.clone());
-        if let Ok(obj) = engine.create_native(CommandRegistry::default(), None) {
+        // Gone with its window's bridge.
+        if let Ok(obj) = engine.create_native(CommandRegistry::default(), Some(bridge.object())) {
             commands.0.object.set(Some(obj));
             if let Ok(signals) = engine.set_list_model(obj, Rc::new(Rows(commands.0.clone()))) {
                 *commands.0.signals.borrow_mut() = Some(signals);

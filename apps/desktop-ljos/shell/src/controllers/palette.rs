@@ -686,7 +686,7 @@ impl Controller for Palette {
         let engine = init.engine;
         let list = Rc::new(List::default());
         let props = Rc::new(RefCell::new(Props::default()));
-        let object = engine.singleton::<PaletteObject>().ok();
+        let object = init.bridge.singleton::<PaletteObject>(engine).ok();
         if let Some(obj) = object {
             if let Ok(signals) = engine.set_list_model(obj, list.clone() as Rc<dyn QmlListModel>) {
                 *list.signals.borrow_mut() = Some(signals);
