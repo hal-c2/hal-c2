@@ -21,6 +21,11 @@ type Log = Rc<RefCell<Vec<(String, Json)>>>;
 /// checkpoint it left; `t2` beside it. The run of the last turn is
 /// `last_run`.
 fn three_turns(last_run: &str) -> (Hub, Log) {
+    three_turns_with(last_run, json!([]))
+}
+
+/// As [`three_turns`], the second prompt carrying `attachments`.
+fn three_turns_with(last_run: &str, attachments: Json) -> (Hub, Log) {
     let hub = Hub::clustered();
     hub.mc.set_ready(&hub.engine, true);
     hub.mc.frame(
@@ -60,7 +65,7 @@ fn three_turns(last_run: &str) -> (Hub, Log) {
         rows.push(
             json!(["turn-item", format!("ask-{turn}"), {"id": format!("ask-{turn}"),
             "type": "user_message", "runId": run, "ordinal": turn * 10, "status": "completed",
-            "text": prompt}]),
+            "text": prompt, "attachments": if turn == 2 { attachments.clone() } else { json!([]) }}]),
         );
         rows.push(
             json!(["turn-item", format!("reply-{turn}"), {"id": format!("reply-{turn}"),
@@ -277,4 +282,114 @@ fn a_rewind_that_cannot_happen_says_why() {
         ]
     );
     assert!(rollbacks(&hub).is_empty());
+}
+
+fn calls_to(hub: &Hub, method: &str) -> Vec<(String, Json)> {
+    hub.mc
+        .calls
+        .borrow()
+        .iter()
+        .filter(|(_, m, _)| m == method)
+        .map(|(e, _, p)| (e.clone(), p.clone()))
+        .collect()
+}
+
+/// Answers the oldest `assets.createUrl` with a URL for `name`, then that
+/// URL's download with `body`.
+fn serve(hub: &Hub, name: &str, body: Result<&str, &str>) {
+    hub.mc.answer(
+        &hub.engine,
+        "assets.createUrl",
+        Ok(json!({"relativeUrl": format!("/attachments/{name}?sig=1")})),
+    );
+    hub.mc.answer(
+        &hub.engine,
+        "http.download",
+        body.map(Json::from).map_err(failure),
+    );
+}
+
+#[test]
+fn the_attachments_come_back_from_the_mc_before_the_thread_rewinds() {
+    let (hub, _) = three_turns_with(
+        "completed",
+        json!([
+            {"type": "image", "id": "a1", "name": "shot.png", "mimeType": "image/png"},
+            {"type": "file", "id": "a2", "name": "notes.txt", "mimeType": "text/plain"},
+        ]),
+    );
+    hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
+    hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
+    // One at a time, and nothing rolls back until all are here.
+    let asked = calls_to(&hub, "assets.createUrl");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].0, "env-1");
+    assert_eq!(
+        asked[0].1,
+        json!({"resource": {"_tag": "attachment", "attachmentId": "a1",
+            "fileName": "shot.png", "mimeType": "image/png"}})
+    );
+    serve(&hub, "a1", Ok("png-bytes"));
+    assert_eq!(
+        calls_to(&hub, "http.download")[0].1["relativeUrl"],
+        "/attachments/a1?sig=1"
+    );
+    assert!(rollbacks(&hub).is_empty());
+    serve(&hub, "a2", Ok("remember the milk"));
+    assert_eq!(rollbacks(&hub).len(), 1);
+
+    hub.mc.reply(&hub.engine, rollbacks(&hub)[0], Ok(json!({})));
+    // The composer holds both: the image by its bytes, the file by the path
+    // it was written to, which is one of this machine's now.
+    let attached: Vec<(String, String)> = hub.published("composer")["attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["name"].as_str().unwrap().to_owned(),
+                a["kind"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        attached,
+        [
+            ("shot.png".to_owned(), "image".to_owned()),
+            ("notes.txt".to_owned(), "file".to_owned())
+        ]
+    );
+    let written = std::env::temp_dir().join("hal-c2-rewind/a2/notes.txt");
+    assert_eq!(
+        std::fs::read_to_string(written).unwrap(),
+        "remember the milk"
+    );
+    assert!(refusals(&hub).is_empty());
+}
+
+#[test]
+fn an_attachment_that_cannot_be_read_stops_the_rewind() {
+    let attachments =
+        json!([{"type": "image", "id": "a1", "name": "shot.png", "mimeType": "image/png"}]);
+
+    let (hub, _) = three_turns_with("completed", attachments.clone());
+    hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
+    hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
+    hub.mc.answer(
+        &hub.engine,
+        "assets.createUrl",
+        Err(failure("No such attachment")),
+    );
+    assert_eq!(refusals(&hub), ["No such attachment"]);
+    assert!(rollbacks(&hub).is_empty());
+
+    // The download fails, and a rewind asked for again is not held up.
+    let (hub, _) = three_turns_with("completed", attachments);
+    hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
+    hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
+    serve(&hub, "a1", Err("HTTP 404"));
+    assert_eq!(refusals(&hub), ["HTTP 404"]);
+    assert!(rollbacks(&hub).is_empty());
+    hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
+    assert_eq!(hub.published("rewind")["turn"], 2);
 }

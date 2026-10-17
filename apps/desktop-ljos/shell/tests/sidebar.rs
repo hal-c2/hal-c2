@@ -485,6 +485,33 @@ fn copying_from_the_thread_menu_says_whether_it_was_copied() {
 }
 
 #[test]
+fn project_settings_opens_for_the_threads_logical_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, _mc) = started(dir.path(), &["t1"], false);
+    dispatch(
+        &engine,
+        "thread.menu",
+        json!({"key": "env-a:t1", "x": 0, "y": 0}),
+    );
+    choose(&engine, "project-settings");
+    let shown = route(&engine);
+    assert_eq!(shown["kind"], "settings");
+    assert_eq!(shown["section"], "/settings/projects");
+    let key = shown["projectKey"].as_str().expect("the project's key");
+    assert!(!key.is_empty());
+    assert_eq!(
+        hal_c2_shell::controllers::sidebar::logical_project_key(&engine, "env-a", "p1").as_deref(),
+        Some(key)
+    );
+
+    // Going anywhere else leaves the project behind.
+    dispatch(&engine, "usage.open", json!({}));
+    assert_eq!(route(&engine)["projectKey"], Json::Null);
+    dispatch(&engine, "settings.open", json!({}));
+    assert_eq!(route(&engine)["projectKey"], Json::Null);
+}
+
+#[test]
 fn the_selection_menu_acts_on_every_selected_thread() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, mc) = started(dir.path(), &["t1", "t2", "t3"], false);

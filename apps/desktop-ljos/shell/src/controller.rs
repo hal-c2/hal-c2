@@ -62,10 +62,41 @@ impl<C> Clone for Me<C> {
 
 impl<C: 'static> Me<C> {
     /// Runs `f` on the controller, unless it is gone. Actions dispatched
-    /// meanwhile run after it.
+    /// meanwhile run after it. `f` may borrow, so it cannot wait: the
+    /// controller must not be running (use [`Me::run_after`] for a callback
+    /// that can come while it is).
     pub fn run(&self, engine: &Engine, f: impl FnOnce(&mut C, &Engine)) {
         let Some(me) = self.0.upgrade() else { return };
         Bridge::of(engine).hold(engine, || f(&mut me.borrow_mut(), engine));
+    }
+
+    /// Runs `f` on the controller, unless it is gone, as [`Me::run`] does
+    /// when the controller is free. A callback that comes while the
+    /// controller is running (one it set off itself, a route it published)
+    /// cannot borrow it: `f` waits in the bridge's queue and runs once the
+    /// controller returns, in order with the actions dispatched meanwhile. A
+    /// controller borrowed outside the bridge's hold (a test holding it)
+    /// stays borrowed past that, and `f` is dropped rather than queued
+    /// again.
+    pub fn run_after(&self, engine: &Engine, f: impl FnOnce(&mut C, &Engine) + 'static) {
+        self.run_at(engine, f, true);
+    }
+
+    fn run_at(&self, engine: &Engine, f: impl FnOnce(&mut C, &Engine) + 'static, retry: bool) {
+        let Some(me) = self.0.upgrade() else { return };
+        let bridge = Bridge::of(engine);
+        // Held either way: what `f` dispatches waits for it to return.
+        let busy = bridge.hold(engine, || match me.try_borrow_mut() {
+            Ok(mut c) => {
+                f(&mut c, engine);
+                None
+            }
+            Err(_) => Some(f),
+        });
+        if let (Some(f), true) = (busy, retry) {
+            let this = self.clone();
+            bridge.defer(engine, move |engine| this.run_at(engine, f, false));
+        }
     }
 }
 
@@ -304,4 +335,68 @@ pub fn every(
 
 pub fn stop_timer(engine: &Engine, timer: ObjectId) {
     engine.destroy(timer);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use ljos::App;
+
+    struct Probe(Vec<&'static str>);
+
+    fn engine() -> Engine {
+        App::new("test").register(crate::register).build_engine()
+    }
+
+    fn probe() -> (Rc<RefCell<Probe>>, Me<Probe>) {
+        let rc = Rc::new(RefCell::new(Probe(Vec::new())));
+        let me = Me(Rc::downgrade(&rc));
+        (rc, me)
+    }
+
+    #[test]
+    fn a_callback_while_the_controller_runs_waits_until_it_returns() {
+        let engine = engine();
+        let (rc, me) = probe();
+        Bridge::of(&engine).hold(&engine, || {
+            let mut running = rc.borrow_mut();
+            // As an MC reply the controller's own publishing set off.
+            me.run_after(&engine, |c, _| c.0.push("callback"));
+            running.0.push("running");
+        });
+        assert_eq!(rc.borrow().0, ["running", "callback"]);
+    }
+
+    #[test]
+    fn callbacks_that_waited_run_in_the_order_they_came() {
+        let engine = engine();
+        let (rc, me) = probe();
+        Bridge::of(&engine).hold(&engine, || {
+            let _running = rc.borrow_mut();
+            me.run_after(&engine, |c, _| c.0.push("first"));
+            me.run_after(&engine, |c, _| c.0.push("second"));
+        });
+        assert_eq!(rc.borrow().0, ["first", "second"]);
+    }
+
+    #[test]
+    fn a_callback_for_a_controller_that_is_gone_is_skipped() {
+        let engine = engine();
+        let (rc, me) = probe();
+        drop(rc);
+        let ran = Rc::new(Cell::new(false));
+        let flag = ran.clone();
+        me.run_after(&engine, move |_, _| flag.set(true));
+        assert!(!ran.get());
+    }
+
+    #[test]
+    fn a_callback_runs_at_once_when_the_controller_is_free() {
+        let engine = engine();
+        let (rc, me) = probe();
+        me.run_after(&engine, |c, _| c.0.push("now"));
+        assert_eq!(rc.borrow().0, ["now"]);
+    }
 }

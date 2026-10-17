@@ -77,7 +77,7 @@ impl Route {
             Route::Settings(section) => (Json::Null, Json::Null, text(section)),
             _ => (Json::Null, Json::Null, Json::Null),
         };
-        json!({"kind": self.kind(), "threadKey": thread, "draftId": draft, "projectKey": null, "section": section})
+        json!({"kind": self.kind(), "threadKey": thread, "draftId": draft, "section": section})
     }
 }
 
@@ -85,6 +85,9 @@ pub struct Navigation {
     bridge: Bridge,
     active: bool,
     route: Route,
+    /// The logical project a settings route was opened for, empty for none.
+    /// Only the shown route carries it: going anywhere else clears it.
+    project_key: String,
     back_stack: Vec<Route>,
     forward_stack: Vec<Route>,
     target: String,
@@ -99,6 +102,7 @@ impl Controller for Navigation {
             bridge: init.bridge,
             active: false,
             route: Route::Home,
+            project_key: String::new(),
             back_stack: Vec::new(),
             forward_stack: Vec::new(),
             target: String::new(),
@@ -205,6 +209,13 @@ impl Navigation {
         self.go(engine, route, false);
     }
 
+    /// Opens `route` for the logical project `project_key`, which the route
+    /// publishes as `projectKey` (the projects page opens on it). Opening
+    /// the route already shown for another project moves it there.
+    pub fn open_for_project(&mut self, engine: &Engine, route: Route, project_key: String) {
+        self.go_with(engine, route, false, project_key);
+    }
+
     /// Goes to `route` in place of the one shown, leaving nothing to go
     /// back to (a parked thread's window moving on, a sent draft).
     pub fn replace(&mut self, engine: &Engine, route: Route) {
@@ -250,7 +261,15 @@ impl Navigation {
     }
 
     fn go(&mut self, engine: &Engine, route: Route, replace: bool) {
+        self.go_with(engine, route, replace, String::new());
+    }
+
+    fn go_with(&mut self, engine: &Engine, route: Route, replace: bool, project_key: String) {
         if route == self.route {
+            if !project_key.is_empty() && self.project_key != project_key {
+                self.project_key = project_key;
+                self.publish(engine);
+            }
             return;
         }
         self.target.clear();
@@ -276,6 +295,7 @@ impl Navigation {
             }
         }
         self.route = route;
+        self.project_key = project_key;
         self.publish(engine);
     }
 
@@ -294,6 +314,7 @@ impl Navigation {
         }
         let mut state = self.route.json();
         let extra = json!({
+            "projectKey": if self.project_key.is_empty() { Json::Null } else { json!(self.project_key) },
             "title": self.route.title(),
             "tab": THREADS_TAB,
             "plugin": null,

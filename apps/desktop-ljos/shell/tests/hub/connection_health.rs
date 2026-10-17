@@ -376,6 +376,21 @@ fn a_remote_mc_is_not_tried_without_a_network_and_woken_when_it_returns() {
     assert_eq!(rig.mc.online.borrow().last(), Some(&true));
 }
 
+#[test]
+fn coming_to_the_foreground_wakes_the_client() {
+    use ljos::prelude::ApplicationState;
+    let rig = Rig::new("foreground");
+    let woken = rig.mc.wakes.get();
+    // Leaving the foreground wakes nothing.
+    ljos::testing::set_application_state(&rig.engine, ApplicationState::Inactive);
+    assert_eq!(rig.mc.wakes.get(), woken);
+    ljos::testing::set_application_state(&rig.engine, ApplicationState::Active);
+    assert_eq!(rig.mc.wakes.get(), woken + 1);
+    // Still in the foreground: nothing to say.
+    ljos::testing::set_application_state(&rig.engine, ApplicationState::Active);
+    assert_eq!(rig.mc.wakes.get(), woken + 1);
+}
+
 fn paired(origin: &str, token: &str) -> Pairing {
     let mut descriptor = Map::new();
     descriptor.insert("label".into(), json!("Studio"));

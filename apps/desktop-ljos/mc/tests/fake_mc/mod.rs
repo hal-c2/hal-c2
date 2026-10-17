@@ -270,6 +270,8 @@ fn answer(path: &str, request: &str, shared: &Shared) -> (u16, String) {
                 json!({"ticket": ticket, "expiresAt": "2026-10-16T00:00:00Z"}).to_string(),
             )
         }
+        // A signed URL: its query is its authorization.
+        "/attachments/a1.png?sig=ok" => (200, "png-bytes".to_owned()),
         "/oauth/token" => {
             let form = request
                 .split_once("\r\n\r\n")

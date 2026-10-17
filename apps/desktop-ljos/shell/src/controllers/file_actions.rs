@@ -5,35 +5,54 @@
 //! editorId}`), copy its mention (`files.copyMention {path}`) or add it to
 //! the chat (`files.addToChat {path}`). Paths are relative to the checkout.
 //!
-//! TODO(port): desktop-qt also keeps the Files tab's source kinds in the
-//! device settings (`fileSourceKinds`, through WorkspaceFiles'
-//! setSourceKinds/sourceKindsChanged) and toasts its saveFailed ("Could not
-//! save {path}"); both wait for `RightPanelController::files()`.
+//! It also keeps the Files tab's source kinds (the kinds the user reads as
+//! source rather than rendered) in this device's settings (`fileSourceKinds`),
+//! and toasts a save the MC refused ("Could not save {path}").
 
-use ljos::prelude::Engine;
+use ljos::prelude::{Engine, ObjectId};
 use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::composer_model::path_link;
 use crate::controller::{self, Controller, Init};
 use crate::controllers::composer;
+use crate::controllers::panel::RightPanel;
+use crate::controllers::settings::Settings;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
+use crate::thread_view::workspace_files::WorkspaceFiles;
+
+/// The device setting holding the source kinds.
+const SOURCE_KINDS: &str = "fileSourceKinds";
 
 pub struct FileActions {
     bridge: Bridge,
+    active: bool,
 }
 
-/// The checkout the files are in.
-///
-/// TODO(port): desktop-qt reads `RightPanelController::files()->root()`,
-/// which keeps the last thread's checkout away from a thread; until the
-/// panel's WorkspaceFiles is here this is the route thread's checkout.
+/// The Files tab's WorkspaceFiles, if the panel has one.
+fn files(engine: &Engine) -> Option<ObjectId> {
+    controller::with::<RightPanel, _>(engine, |p, _| p.files()).flatten()
+}
+
+/// The checkout the files are in: the Files tab's, which keeps the last
+/// thread's checkout away from a thread.
 fn root(engine: &Engine) -> String {
-    workspace::place(engine)
-        .map(|place| place.cwd().to_owned())
+    files(engine)
+        .and_then(|files| WorkspaceFiles::read(engine, files, |f| f.root().to_owned()))
         .unwrap_or_default()
+}
+
+/// The kinds the device setting names.
+fn kinds(engine: &Engine) -> Vec<String> {
+    match Settings::of(engine).device_value(SOURCE_KINDS) {
+        Some(Json::Array(kinds)) => kinds
+            .iter()
+            .filter_map(|k| k.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// `path` in `root`; empty without either.
@@ -71,7 +90,35 @@ impl Controller for FileActions {
     fn new(init: Init<'_, Self>) -> Self {
         FileActions {
             bridge: init.bridge,
+            active: false,
         }
+    }
+
+    /// The Files tab shows the kinds this device keeps, keeps the ones the
+    /// user chooses there, and its failed saves are toasted.
+    fn activate(&mut self, engine: &Engine) {
+        if self.active {
+            return;
+        }
+        let Some(files) = files(engine) else { return };
+        self.active = true;
+        let settings = Settings::of(engine);
+        settings.on_device_changed(move |engine| {
+            WorkspaceFiles::set_source_kinds(engine, files, &kinds(engine));
+        });
+        WorkspaceFiles::set_source_kinds(engine, files, &kinds(engine));
+        WorkspaceFiles::on_source_kinds_changed(engine, files, move |engine| {
+            let chosen = WorkspaceFiles::source_kinds(engine, files);
+            let value = if chosen.is_empty() {
+                Json::Null
+            } else {
+                json!(chosen)
+            };
+            Settings::of(engine).write_device(engine, SOURCE_KINDS, value);
+        });
+        WorkspaceFiles::on_save_failed(engine, files, |engine, path, problem| {
+            error(engine, &format!("Could not save {path}"), problem);
+        });
     }
 
     fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
