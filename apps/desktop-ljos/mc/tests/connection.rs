@@ -115,6 +115,7 @@ fn resume_at(offset: &Rc<Cell<u64>>) -> impl FnMut() -> Frame + 'static {
 }
 
 type Slot = Rc<RefCell<Option<Result<Value, CallError>>>>;
+type Downloads = Rc<RefCell<Vec<Result<Vec<u8>, CallError>>>>;
 
 fn reply_slot() -> (Slot, impl FnOnce(Result<Value, CallError>) + 'static) {
     let slot = Rc::new(RefCell::new(None));
@@ -290,7 +291,7 @@ fn a_download_gets_the_bytes_of_a_signed_url_or_why_not() {
     harness.open();
     harness.ready();
 
-    let got: Rc<RefCell<Vec<Result<Vec<u8>, CallError>>>> = Rc::default();
+    let got: Downloads = Rc::default();
     for url in ["/attachments/a1.png?sig=ok", "/attachments/gone.png?sig=ok"] {
         let sink = got.clone();
         harness
