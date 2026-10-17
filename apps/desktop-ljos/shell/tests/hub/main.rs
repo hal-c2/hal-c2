@@ -96,7 +96,9 @@ impl Hub {
             .register(hal_c2_shell::register)
             .build_engine();
         // Before the shell starts, for its timers to start on the window's clock.
-        let test_window = Rc::new(RefCell::new(common::test_window(&engine, 100.0, 100.0)));
+        let test_window = Rc::new(RefCell::new(ljos::testing::TestWindow::new(
+            &engine, 100.0, 100.0,
+        )));
         let mc = Rc::new(FakeMc::default());
         hal_c2_shell::start(&engine, &launch, mc.clone());
         Hub {

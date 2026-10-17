@@ -391,7 +391,7 @@ fn the_window_reports_itself_when_the_mc_is_ready_and_every_report_interval() {
         .register(hal_c2_shell::register)
         .build_engine();
     // A window for its clock, before the shell starts its timers on it.
-    let mut window = common::test_window(&engine, 100.0, 100.0);
+    let mut window = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
     hal_c2_shell::start(&engine, &hal_c2_shell::Launch::default(), mc.clone());
     assert!(
         mc.methods().is_empty(),

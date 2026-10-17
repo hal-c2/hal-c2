@@ -60,7 +60,6 @@ virtual clock.
 
 The shell is an application of the `ljos` facade alone (`App`, `#[derive(QmlObject)]`, `ljos::item`,
 `ljos::keys`, `ljos::system`, `ljos::window`, `ljos::dev`, `ljos::render`), and its tests of `ljos::testing`.
-`shell/Cargo.toml` names the one crate the tests take from below it.
 
 What the shell still works around, each where it does so:
 
@@ -70,5 +69,3 @@ What the shell still works around, each where it does so:
   `GitActions.qml` does and Qt accepts; the warning is the only harm.
 - `Window.backdrop` is a plain blur: it has no dark or light material and no macOS 26 Liquid Glass (#66, #67), so the
   theme's choice of them does nothing (`shell/src/platform_window.rs`, `apply_window_blur`).
-- A test window's clock starts off the 1 ms grid timer deadlines are rounded to, so letting a timer's interval
-  pass stops short of it (#65). The tests set a virtual clock at zero first: `shell/tests/common/mod.rs`, `test_window`.

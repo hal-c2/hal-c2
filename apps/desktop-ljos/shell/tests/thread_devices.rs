@@ -123,7 +123,7 @@ fn tab_with(real_decoder: bool) -> Tab {
     let mc = DeviceMc::new();
     let engine = common::engine(common::compile(&[("Main", MAIN)], &[]), mc.clone());
     // A window for its clock, before Main starts its timers on it.
-    let window = RefCell::new(common::test_window(&engine, 100.0, 100.0));
+    let window = RefCell::new(ljos::testing::TestWindow::new(&engine, 100.0, 100.0));
     let script = if real_decoder {
         Rc::new(RefCell::new(Script::default()))
     } else {

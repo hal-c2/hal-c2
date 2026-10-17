@@ -1788,7 +1788,6 @@ dependencies = [
  "libc",
  "libloading",
  "ljos",
- "ljos_runtime",
  "notify",
  "proptest",
  "pulldown-cmark",

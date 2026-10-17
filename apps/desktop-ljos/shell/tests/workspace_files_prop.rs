@@ -492,7 +492,7 @@ impl Sut {
             .register(hal_c2_shell::register)
             .build_engine();
         // A window for its clock, before the shell starts its timers on it.
-        let window = common::test_window(&engine, 100.0, 100.0);
+        let window = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
         let mc = Rc::new(FakeMc::default());
         hal_c2_shell::start(&engine, &Launch::default(), mc.clone());
         let files = WorkspaceFiles::create(&engine, None, mc.clone()).expect("the files");
