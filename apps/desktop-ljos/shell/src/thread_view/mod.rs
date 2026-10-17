@@ -1,7 +1,7 @@
 //! A thread's content as the desktop shows it: desktop-qt's TimelineModel
 //! (the conversation's rows), TimelineSummary, AgentsModel (the Agents
 //! tab), ThreadPreviews (the browser tabs), DiffModel and ThreadDiff (the
-//! diff panel) and FileTreeModel (the files panel), in Rust.
+//! diff panel), FileTreeModel and WorkspaceFiles (the files panel), in Rust.
 //!
 //! Each model is a pure core that takes MC frames and replies and records
 //! its row changes, and a thin `QmlObject` over it that is the model QML
@@ -10,6 +10,7 @@
 pub mod agents;
 pub mod cache;
 pub mod diff;
+pub mod file_render;
 pub mod file_tree;
 pub mod previews;
 pub mod rows;
@@ -18,6 +19,7 @@ pub mod thread_diff;
 pub mod time;
 pub mod timeline;
 pub mod timeline_model;
+pub mod workspace_files;
 
 use ljos::prelude::Engine;
 
@@ -32,6 +34,8 @@ pub fn register(engine: &Engine, version: ljos_engine::Version) {
         file_tree::FileTreeModel::static_meta(),
         previews::ThreadPreviews::static_meta(),
         thread_diff::ThreadDiff::static_meta(),
+        workspace_files::TextLinesModel::static_meta(),
+        workspace_files::WorkspaceFiles::static_meta(),
     ] {
         engine.register_type(crate::MODULE, version, MetaRef::Static(meta));
     }
