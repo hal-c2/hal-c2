@@ -35,7 +35,12 @@ defmodule HalC2.Upgrade.Code do
         for package <- @platform_packages do
           File.rm_rf!(Path.join(dir, package))
           kept = Path.join([root, "lib", "#{app}-#{old}", package])
-          if File.exists?(kept), do: File.cp_r!(kept, Path.join(dir, package))
+
+          # A bundle built on macOS has no `priv/bin` for the helper to go back into.
+          if File.exists?(kept) do
+            File.mkdir_p!(Path.dirname(Path.join(dir, package)))
+            File.cp_r!(kept, Path.join(dir, package))
+          end
         end
       end)
     end

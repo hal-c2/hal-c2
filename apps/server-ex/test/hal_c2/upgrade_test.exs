@@ -177,8 +177,7 @@ defmodule HalC2.UpgradeTest do
     File.mkdir_p!(Path.join(new_lib, "ebin"))
     File.mkdir_p!(Path.join(new_lib, "priv/cursor-acp/node_modules"))
     File.write!(Path.join(new_lib, "priv/cursor-acp/node_modules/native"), "another platform's")
-    File.mkdir_p!(Path.join(new_lib, "priv/bin"))
-    File.write!(Path.join(new_lib, "priv/bin/hal-c2-machine-files"), "another platform's helper")
+    # Built on macOS, the bundle has no machine-files helper and no `priv/bin` for it.
     modules = [:"Elixir.HalC2.Old", :"Elixir.HalC2.New"]
 
     File.write!(
