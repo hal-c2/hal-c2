@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 9
+  @state_version 10
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -68,7 +68,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   @doc """
   ACP has no way to add to a running prompt, but OpenCode's running loop takes a
   second `session/prompt` (`%{text, attachments}`, built like a turn's) into the
-  turn; both answer when the turn ends.
+  turn; both answer when the loop ends. One that arrives as the loop ends runs a loop
+  of its own, so the turn ends when the last of its prompts has answered.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
@@ -148,6 +149,10 @@ defmodule HalC2.Acp.ThreadRuntime do
        options: [],
        turn: nil,
        prompt: nil,
+       # The turn's steers OpenCode has not answered (`Connection.request/5`), and the
+       # turn's own prompt's answer once it came before theirs.
+       steers: :gen_server.reqids_new(),
+       answer: nil,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -252,12 +257,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: ref} = state)
       when ref != nil and not state.interrupted and state.turn.ids.run == run_id do
-    conn = state.conn
     prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, false)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
-    # Its answer is the turn's, which the first prompt's already ends.
-    Task.start(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-    {:reply, :ok, state}
+    steers = Connection.request(state.conn, "session/prompt", params, :steer, state.steers)
+    {:reply, :ok, %{state | steers: steers}}
   end
 
   def handle_call({:steer, _run_id, _message}, _from, state),
@@ -433,9 +436,51 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
+  # The turn's prompt answered. A steer still out may be running a loop of its own
+  # (OpenCode's), whose answer ends the turn instead (`steered/2`).
   def handle_info({ref, result}, %{prompt: ref} = state) do
     Process.demonitor(ref, [:flush])
 
+    if state.interrupted or :gen_server.reqids_size(state.steers) == 0,
+      do: answered(state, result),
+      else: {:noreply, %{state | answer: result}}
+  end
+
+  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
+        else: state
+
+    state = end_work(state, "failed")
+
+    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
+  end
+
+  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+
+  def handle_info(message, state) do
+    case :gen_server.check_response(message, state.steers, true) do
+      {reply, :steer, steers} -> steered(%{state | steers: steers}, reply)
+      _ -> {:noreply, state}
+    end
+  end
+
+  # A steer's answer. The last of the turn's prompts to answer ends it, as the last
+  # one that ran, unless it was refused.
+  defp steered(state, reply) do
+    answer =
+      case reply do
+        {:reply, {:ok, _} = result} when state.answer != nil -> result
+        _ -> state.answer
+      end
+
+    if answer != nil and :gen_server.reqids_size(state.steers) == 0,
+      do: answered(state, answer),
+      else: {:noreply, %{state | answer: answer}}
+  end
+
+  defp answered(state, result) do
     {status, failure} =
       case result do
         _ when state.interrupted -> {"interrupted", nil}
@@ -460,20 +505,6 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A turn that did not complete takes its background work, and earlier turns', down.
     {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
   end
-
-  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
-    state =
-      if state.turn,
-        do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
-        else: state
-
-    state = end_work(state, "failed")
-
-    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
-  end
-
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
-  def handle_info(_other, state), do: {:noreply, state}
 
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
   # it was running ends, with what was buffered, so the thread shows the session is gone.
@@ -534,7 +565,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # Planning modes are read from the session's next config options.
   defp migrate(%{v: 8} = state),
-    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9)
+    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9) |> migrate()
+
+  defp migrate(%{v: 9} = state),
+    do: Map.merge(state, %{v: 10, steers: :gen_server.reqids_new(), answer: nil})
 
   # --- session -------------------------------------------------------------------
 
@@ -1994,7 +2028,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = state |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}}
+    %{state | turn: nil, items: %{}, steers: :gen_server.reqids_new(), answer: nil}
   end
 
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
