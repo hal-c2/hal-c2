@@ -16,7 +16,7 @@ sload model-checker
 mod PREVIEW-FORWARD is
   protecting NAT .
 
-  sorts Node Pid Life Msg Msgs Item Conf Sys .
+  sorts Node Pid Life Fault Msg Msgs Item Conf Sys .
   subsort Msg < Msgs .
   subsort Item < Conf .
 
@@ -40,6 +40,9 @@ mod PREVIEW-FORWARD is
   --- Not started; a listener asking for its grant, or the browser's pipe handed its
   --- socket; a pipe in its dial call (pa) or dialing the dev server (pd); running; ended.
   ops idle asking dialing up dead : -> Life [ctor] .
+
+  --- The kinds of fault: the listener or the grant killed, an MC stopped, the MCs parted.
+  ops killing stopping parting : -> Fault [ctor] .
 
   --- pa's dial call to the grant and its answer; a chunk and its ack; a monitor's
   --- DOWN; the tab's change, from HalC2.Preview.
@@ -68,11 +71,13 @@ mod PREVIEW-FORWARD is
   op dev : Nat -> Item [ctor] .
   --- The exit signal a pipe gets from the listener or grant it is linked to.
   op kx : Pid -> Item [ctor] .
-  --- Whether the thread's tab names the port; the window; the faults left; a fault
-  --- happened; the MCs parted; an MC stopped; a chunk came out of order.
+  --- Whether the thread's tab names the port; the window; the faults left, and a kind
+  --- of fault that may strike; a fault happened; the MCs parted; an MC stopped; a chunk
+  --- came out of order.
   op tab : Bool -> Item [ctor] .
   op win : Nat -> Item [ctor] .
   op budget : Nat -> Item [ctor] .
+  op may : Fault -> Item [ctor] .
   ops fault split oops : -> Item [ctor] .
   op down : Node -> Item [ctor] .
 
@@ -88,13 +93,21 @@ mod PREVIEW-FORWARD is
   var Ms : Msg .
   var C : Conf .
   var E : Item .
+  var FK : Fault .
   var Z : Sys .
 
-  --- N chunks from the browser, M from the dev server, a window of W, F faults.
+  --- N chunks from the browser, M from the dev server, a window of W, and F faults of
+  --- any kind, or of kind FK alone. With one fault, every state reachable with any kind
+  --- is reachable with one of them, so a search per kind covers the search from all
+  --- three, and each is a part of it.
   op initial : Nat Nat Nat Nat -> Sys .
-  eq initial(N, M, W, F)
+  op initial : Nat Nat Nat Nat Fault -> Sys .
+  op start : Nat Nat Nat Nat Conf -> Sys .
+  eq initial(N, M, W, F) = start(N, M, W, F, may(killing) may(stopping) may(parting)) .
+  eq initial(N, M, W, F, FK) = start(N, M, W, F, may(FK)) .
+  eq start(N, M, W, F, C)
    = { lst(asking) grt(idle) pp(pa, idle, 0, false, 0) pp(pd, idle, 0, false, 0)
-       wants(N, M) tab(true) win(W) budget(F)
+       wants(N, M) tab(true) win(W) budget(F) C
        ln(pa, pd, nomsg) ln(pd, pa, nomsg) ln(pa, g, nomsg) ln(g, pa, nomsg)
        ln(g, l, nomsg) ln(l, g, nomsg) ln(pv, g, nomsg) } .
 
@@ -250,22 +263,28 @@ mod PREVIEW-FORWARD is
   rl [shut] : sk(P, K, Wr, R, Gt, false, true) => sk(P, K, Wr, R, Gt, true, true) .
 
   --- The listener or the grant is killed.
-  rl [kill] : { budget(s F) lst(up) C } => { endListener(budget(F) fault lst(up) C) } .
-  rl [kill] : { budget(s F) grt(up) C } => { endGrant(budget(F) fault grt(up) C) } .
+  rl [kill] : { may(killing) budget(s F) lst(up) C }
+    => { endListener(may(killing) budget(F) fault lst(up) C) } .
+  rl [kill] : { may(killing) budget(s F) grt(up) C }
+    => { endGrant(may(killing) budget(F) fault grt(up) C) } .
 
   --- An MC stops: its processes end and its sockets close.
-  rl [crash] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
-    => { budget(F) fault down(a) lst(X) grt(if Y == idle then idle else dead fi)
+  rl [crash] : { may(stopping) budget(s F) lst(X) grt(Y)
+                 pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { may(stopping) budget(F) fault down(a) lst(X) grt(if Y == idle then idle else dead fi)
          pp(pa, XA, UA, AA, IA) pp(pd, if XD == idle then idle else dead fi, UD, AD, ID)
          close(pd, tell(g, l, X == up, tell(pd, pa, XA == up, cutAll(C)))) } .
-  rl [crash] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
-    => { budget(F) fault down(b) lst(dead) grt(Y)
+  rl [crash] : { may(stopping) budget(s F) lst(X) grt(Y)
+                 pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { may(stopping) budget(F) fault down(b) lst(dead) grt(Y)
          pp(pa, if XA == idle then idle else dead fi, UA, AA, IA) pp(pd, XD, UD, AD, ID)
          close(pa, tell(l, g, Y == up, tell(pa, pd, alive(XD), cutAll(C)))) } .
 
   --- The MCs lose each other.
-  rl [split] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
-    => { budget(F) fault split lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID)
+  rl [split] : { may(parting) budget(s F) lst(X) grt(Y)
+                 pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { may(parting) budget(F) fault split lst(X) grt(Y)
+         pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID)
          tell(g, l, X == up, tell(l, g, Y == up, tell(pd, pa, XA == up, tell(pa, pd, alive(XD), cutAll(C))))) } .
 
   --- bad states -----------------------------------------------------------------------
