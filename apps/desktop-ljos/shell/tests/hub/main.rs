@@ -23,6 +23,7 @@ mod limit_recovery;
 mod lineage;
 mod mc_plugin;
 mod menus;
+mod onboarding;
 mod page;
 mod panel;
 mod plan;

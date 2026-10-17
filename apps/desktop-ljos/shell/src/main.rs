@@ -43,6 +43,8 @@ use hal_c2_mc::pairing;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::alerts::AlertController;
+use hal_c2_shell::controllers::connection_health::ConnectionHealth;
+use hal_c2_shell::controllers::onboarding::Onboarding;
 use hal_c2_shell::mc::{Connection, Disconnected, Mc};
 #[cfg(all(unix, not(target_os = "macos")))]
 use hal_c2_shell::notifications::NativeNotifications;
@@ -296,18 +298,7 @@ fn pair(link: &str, data_dir: &Path) -> Result<Session, String> {
         .and_then(|i| pairing::read_link(&i.link))
         .or_else(|| pairing::read_link(link))
         .ok_or_else(|| format!("{link:?} is not a pairing link"))?;
-    let client = pairing::Client {
-        label: format!("HAL-C2 desktop on {}", host_name()),
-        device_type: "desktop".into(),
-        os: match std::env::consts::OS {
-            "linux" => "Linux",
-            "macos" => "macOS",
-            "windows" => "Windows",
-            other => other,
-        }
-        .into(),
-    };
-    let result = pairing::exchange(&parsed, &client);
+    let result = pairing::exchange(&parsed, &pairing_client());
     let said = |key: &str| {
         result
             .descriptor
@@ -344,6 +335,21 @@ fn pair(link: &str, data_dir: &Path) -> Result<Session, String> {
     session::save(data_dir, &kept).map_err(|e| format!("{}: {e}", data_dir.display()))?;
     eprintln!("hal-c2-ljos: paired with {} at {}", kept.label, kept.origin);
     Ok(kept)
+}
+
+/// What this desktop says it is to the MC it pairs with.
+fn pairing_client() -> pairing::Client {
+    pairing::Client {
+        label: format!("HAL-C2 desktop on {}", host_name()),
+        device_type: "desktop".into(),
+        os: match std::env::consts::OS {
+            "linux" => "Linux",
+            "macos" => "macOS",
+            "windows" => "Windows",
+            other => other,
+        }
+        .into(),
+    }
 }
 
 fn host_name() -> String {
@@ -577,22 +583,20 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::local_transcriber::set_wake(&engine, move || {
                 let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
-            let (mc, connection): (Rc<dyn Mc>, _) = match &options.launch.mc_origin {
-                Some(origin) => {
-                    let wake = handle.clone();
-                    let connection = Rc::new(Connection::spawn(move || {
-                        let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
-                    }));
-                    connection.open(origin, &options.mc_token)?;
-                    (connection.clone(), Some(connection))
-                }
-                None => (Rc::new(Disconnected::default()), None),
-            };
+            // A connection even without an MC to open it at: the welcome
+            // wizard or Connections settings may pair with one later
+            // (hal_c2_shell::open).
+            let wake = handle.clone();
+            let connection = Rc::new(Connection::spawn(move || {
+                let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
+            }));
+            if let Some(origin) = &options.launch.mc_origin {
+                connection.open(origin, &options.mc_token)?;
+            }
+            let mc: Rc<dyn Mc> = connection.clone();
             setup.on_message(move |engine: &Engine, message| match message {
                 Message::Wake => {
-                    if let Some(connection) = &connection {
-                        connection.deliver(engine);
-                    }
+                    connection.deliver(engine);
                     hal_c2_shell::folders::deliver(engine);
                     hal_c2_shell::device::deliver(engine);
                     hal_c2_shell::controllers::plugin::deliver(engine);
@@ -606,6 +610,13 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
+            // An in-app pairing names this desktop as `--pair` does.
+            controller::with::<ConnectionHealth, _>(&engine, |health, _| {
+                health.set_pairing_client(pairing_client())
+            });
+            controller::with::<Onboarding, _>(&engine, |onboarding, _| {
+                onboarding.set_pairing_client(pairing_client())
+            });
             // The client cache answers a thread's copy on its own thread.
             let threads_handle = handle.clone();
             hal_c2_shell::controllers::threads::set_wake(&engine, move || {
