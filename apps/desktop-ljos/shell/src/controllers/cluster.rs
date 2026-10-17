@@ -19,6 +19,7 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init, Me};
+use crate::controllers::drafts;
 use crate::controllers::navigation::CLUSTER_SECTION;
 use crate::controllers::settings::Map;
 use crate::json::Json;
@@ -171,8 +172,6 @@ impl Controller for Cluster {
 impl Cluster {
     /// `f` runs with the id of a machine removed from the cluster, once the
     /// MC has said so: whatever the shell wrote for it goes with it.
-    // TODO(port): DraftController is not ported; its drafts for the removed
-    // environment are to be dropped from here (ClusterController::change).
     pub fn on_removed(&mut self, f: impl Fn(&Engine, &str) + 'static) {
         self.removed.push(Rc::new(f));
     }
@@ -278,6 +277,15 @@ impl Cluster {
             // with it, its drafts here.
             if method == "cluster.remove" {
                 let removed = settings_page::text(&sent, "id").to_owned();
+                // A draft that is shown leaves the route, which this
+                // controller follows: removed once it has returned.
+                let gone = removed.clone();
+                Bridge::of(engine).defer(engine, move |engine| {
+                    let drafts = drafts::all(engine).into_iter();
+                    for draft in drafts.filter(|d| d.environment_id == gone) {
+                        drafts::remove(engine, &draft.id);
+                    }
+                });
                 for hook in c.removed.clone() {
                     hook(engine, &removed);
                 }

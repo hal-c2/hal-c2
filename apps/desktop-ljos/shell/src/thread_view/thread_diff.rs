@@ -30,7 +30,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet};
-use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -75,7 +74,7 @@ pub enum Effect {
         payload: Json,
         then: Then,
     },
-    /// `orchestration.dispatchCommand`; the runner adds the commandId.
+    /// `orchestration.dispatchCommand`, through `Mc::dispatch_command`.
     Dispatch {
         environment: String,
         command: Json,
@@ -1079,32 +1078,6 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
     engine.with::<ThreadDiff, _>(obj, |d| d.inner.clone()).ok()
 }
 
-/// A fresh random (v4) UUID for a commandId: the hasher's keys are random
-/// per process and step per hasher.
-// TODO(port): Mc::dispatch_command (McClient::dispatchCommand) once the
-// Mc trait has it.
-fn command_id() -> String {
-    let half = || {
-        std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-    };
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&half().to_le_bytes());
-    bytes[8..].copy_from_slice(&half().to_le_bytes());
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let h: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
-}
-
 fn checkpoints_of(engine: &Engine, timeline: ObjectId) -> Option<(Vec<Obj>, bool)> {
     TimelineModel::read(engine, timeline, |t| {
         (
@@ -1343,17 +1316,11 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
         } => inner.mc.call(&environment, method, payload, reply(then)),
         Effect::Dispatch {
             environment,
-            mut command,
+            command,
             then,
-        } => {
-            command["commandId"] = json!(command_id());
-            inner.mc.call(
-                &environment,
-                "orchestration.dispatchCommand",
-                command,
-                reply(then),
-            );
-        }
+        } => inner
+            .mc
+            .dispatch_command(&environment, command, reply(then)),
         Effect::Notify {
             kind,
             title,

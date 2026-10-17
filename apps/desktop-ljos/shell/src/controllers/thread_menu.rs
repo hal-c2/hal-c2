@@ -1361,8 +1361,9 @@ fn pull_request_url(engine: &Engine, key: &str) -> String {
     })
 }
 
-/// TODO(port): NavigationController::Route::projectKey — the settings route
-/// has no project yet, so the projects page opens on its first.
+/// TODO(port): NavigationController::Route::projectKey — `Route` has no
+/// project yet. desktop-qt puts the thread's project key in the route, and
+/// nothing there reads it back: the projects page opens on the scope's.
 fn open_project_settings(engine: &Engine, key: &str) {
     if thread(engine, key).is_none() {
         return;
