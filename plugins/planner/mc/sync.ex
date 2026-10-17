@@ -857,7 +857,8 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   What GitHub is asked when the plan syncs both ways and `new` (in `items`) differs
   from what GitHub has of it (`synced`, see `synced/3`): the issue's title, body,
-  state, assignee and labels, its blocking issues and sub-issues, its dates on the
+  state, assignee (the new owner added, only the old one removed) and labels, its
+  blocking issues and sub-issues, its dates on the
   board, and a milestone's title, date and the issues it holds. Each op is
   `{method, input, took}` for `HalC2.Plugins.Host.issues/3`, the method `:board`
   putting the issue on the board before its dates are set, and `took` what GitHub has
@@ -889,9 +890,6 @@ defmodule HalC2Plugins.Planner.Sync do
       %{}
       |> put_if(differs.("title"), "title", new["title"])
       |> put_if(differs.("notes"), "body", new["notes"])
-      # The task holds one of the issue's assignees: sent when it did not change, it
-      # would drop the rest.
-      |> put_if(differs.("owner"), "assignees", List.wrap(new["owner"]))
       |> put_if(differs.("labels"), "labels", new["labels"])
       |> Map.merge(if(synced["state"] == state, do: %{}, else: state(state)))
 
@@ -899,9 +897,11 @@ defmodule HalC2Plugins.Planner.Sync do
       if patch != %{},
         do: [
           {"update", Map.merge(base, patch),
-           &Map.merge(&1, Map.take(fields(new), ~w(title notes owner labels state)))}
+           &Map.merge(&1, Map.take(fields(new), ~w(title notes labels state)))}
         ],
         else: []
+
+    update = update ++ owner_pushes(base, synced, new, differs)
 
     # GitHub has the relations of `synced` on the issue they were made on, `was`: a task
     # linked to another issue since drops them from that one and makes them anew on its
@@ -958,6 +958,23 @@ defmodule HalC2Plugins.Planner.Sync do
     {unsub, sub} = Enum.split_with(parent, &(elem(&1, 0) == "removeSubIssue"))
 
     update ++ unblock ++ unsub ++ block ++ sub ++ board_pushes(settings, base, differs, new)
+  end
+
+  # The task holds one of the issue's assignees, so a new owner replaces only the old
+  # one: the old comes off first, then the new goes on, and GitHub has the owner it took
+  # last, so a refusal in between sends only what is left.
+  defp owner_pushes(base, synced, new, differs) do
+    off =
+      for old <- [synced["owner"]],
+          old != nil and differs.("owner"),
+          do: {"removeAssignees", Map.put(base, "assignees", [old]), &Map.put(&1, "owner", nil)}
+
+    on =
+      for login <- [new["owner"]],
+          login != nil and differs.("owner"),
+          do: {"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}
+
+    off ++ on
   end
 
   defp board_pushes(settings, base, differs, new) do

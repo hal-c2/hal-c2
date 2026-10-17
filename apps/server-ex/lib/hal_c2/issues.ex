@@ -23,6 +23,8 @@ defmodule HalC2.Issues do
     "board" => :board,
     "create" => :create,
     "update" => :update,
+    "addAssignees" => :add_assignees,
+    "removeAssignees" => :remove_assignees,
     "comment" => :comment,
     "createMilestone" => :create_milestone,
     "updateMilestone" => :update_milestone,
@@ -34,8 +36,8 @@ defmodule HalC2.Issues do
     "setBoardField" => :set_board_field
   }
 
-  @writes ~w(create update comment createMilestone updateMilestone addSubIssue removeSubIssue
-             addBlockedBy removeBlockedBy addBoardItem setBoardField)
+  @writes ~w(create update addAssignees removeAssignees comment createMilestone updateMilestone
+             addSubIssue removeSubIssue addBlockedBy removeBlockedBy addBoardItem setBoardField)
 
   @page 100
   @repository ~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
@@ -439,6 +441,35 @@ defmodule HalC2.Issues do
            do: read_written(ctx, number, made)
     end
   end
+
+  # Assignees are added and removed by login, so the issue's other assignees stay;
+  # `update` sets the whole list.
+  @doc false
+  def add_assignees(input), do: assignees("POST", input)
+  @doc false
+  def remove_assignees(input), do: assignees("DELETE", input)
+
+  defp assignees(method, input) do
+    with {:ok, ctx} <- repository(input),
+         {:ok, number} <- number(input["number"]),
+         {:ok, logins} <- logins(input["assignees"]),
+         {:ok, raw} <- post(ctx, "issues/#{number}/assignees", method, %{"assignees" => logins}) do
+      {:ok,
+       %{
+         "repository" => ctx.repository,
+         "number" => number,
+         "assignees" => for(%{"login" => login} <- raw["assignees"] || [], do: login)
+       }}
+    end
+  end
+
+  defp logins([_ | _] = logins) do
+    if Enum.all?(logins, &(is_binary(&1) and &1 != "")),
+      do: {:ok, logins},
+      else: {:error, "assignees must be a list of logins."}
+  end
+
+  defp logins(_), do: {:error, "assignees must be a list of logins."}
 
   @doc false
   def comment(input) do
