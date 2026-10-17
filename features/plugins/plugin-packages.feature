@@ -138,6 +138,13 @@ Feature: Plugin packages
     And the MC's copy holds the checkout's files and no others
 
   @mc
+  Scenario: A developer who installs a package that fails to reload is told why
+    Given the package "code-review" is enabled
+    When a developer installs "code-review" from a checkout whose second MC file does not compile
+    Then the install prints that "code-review" did not load because of "undefined function"
+    And "code-review" answers as its old version
+
+  @mc
   Scenario: The settings a package declares have types and defaults
     Given the package "code-review" declares a choice, a list, a switch, a long text and a secret
     When the user opens its settings without having saved any

@@ -102,6 +102,38 @@ defmodule HalC2.PluginsTest do
     assert {:ok, %{"content" => "notes 1"}} = main_page("notes")
   end
 
+  # Loading the new version made the running one the module's old code; a process still
+  # in it keeps that code from being purged, so the refused version stayed the current
+  # code. The last good version is loaded again, and the process in it is stopped.
+  test "a refused update leaves the old version's code loaded while a process runs in it" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    assert "1" = busy(:version, [])
+
+    me = self()
+    {waiter, ref} = spawn_monitor(fn -> busy(:wait, [me]) end)
+    assert_receive {:parked, ^waiter}
+
+    code_package("busy", "2", [
+      {"a.ex", busy_source("2")},
+      {"b.ex", "defmodule HalC2PluginsTest.Broken do\n  def broken(, do: :x\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "1", "reloadError" => error} = listed("busy")
+    assert error =~ "b.ex"
+    assert "1" = busy(:version, [])
+
+    assert_receive {:DOWN, ^ref, :process, ^waiter, :killed}
+
+    # The next update loads over it as usual.
+    code_package("busy", "3", [{"a.ex", busy_source("3")}])
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "3", "reloadError" => nil} = listed("busy")
+    assert "3" = busy(:version, [])
+  end
+
   test "a crash reported by a supervisor that is gone is not charged to the plugin" do
     package("notes", "1")
     Plugins.handle("rescan", %{})
@@ -295,6 +327,51 @@ defmodule HalC2.PluginsTest do
         }
       })
     )
+  end
+
+  # A package with MC sources `[{name, source}]`, replacing what the directory held.
+  defp code_package(id, version, sources) do
+    dir = Path.join(plugins_dir(), id)
+    File.rm_rf!(dir)
+    File.mkdir_p!(Path.join(dir, "mc"))
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{
+        "id" => id,
+        "name" => id,
+        "version" => version,
+        "description" => "A package with code.",
+        "apiVersion" => 1
+      })
+    )
+
+    for {name, source} <- sources, do: File.write!(Path.join([dir, "mc", name]), source)
+  end
+
+  # Calls the package's module, which only exists once the test has loaded it.
+  defp busy(function, args), do: apply(Module.concat(HalC2PluginsTest, Busy), function, args)
+
+  # A plugin whose `wait/1` parks the caller in this version's own code.
+  defp busy_source(version) do
+    """
+    defmodule HalC2PluginsTest.Busy do
+      @behaviour HalC2.Plugins.Extension
+
+      def version, do: #{inspect(version)}
+      def wait(parent) do
+        send(parent, {:parked, self()})
+
+        receive do
+          :go -> :ok
+        end
+
+        :ok
+      end
+
+      def call(method, _input, _context), do: {:error, "no method " <> method}
+    end
+    """
   end
 
   # The plugin "listener", granted `slack:read`, is in its handler of event 1 (`first`,
