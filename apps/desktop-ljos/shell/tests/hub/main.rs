@@ -19,6 +19,7 @@ mod mc_plugin;
 mod menus;
 mod page;
 mod plugin;
+mod provider_settings;
 mod provider_update_notice;
 mod pull_request_list;
 mod quit;

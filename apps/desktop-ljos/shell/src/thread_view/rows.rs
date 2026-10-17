@@ -1,5 +1,5 @@
 //! The rows of a pure core as a Ljós list model: what DiffModel,
-//! FileTreeModel and ThreadPreviews share.
+//! FileTreeModel, ThreadPreviews and AgentsModel share.
 //!
 //! A core changes its rows in one go and records each change as it makes
 //! it ([`RowChange`]); [`ListRows::update`] then tells the views of them one
@@ -26,6 +26,11 @@ pub enum RowChange {
     Removed {
         first: usize,
         count: usize,
+    },
+    /// The row at `from` now is at `to` (an index with it taken out).
+    Moved {
+        from: usize,
+        to: usize,
     },
     /// Roles of `count` rows from `first`; none: any of them.
     Changed {
@@ -144,6 +149,16 @@ impl<S: RowSource + 'static> ListRows<S> {
                     s.rows_removed(engine, first, count);
                 }
             }
+            RowChange::Moved { from, to } => {
+                {
+                    let mut shown = self.shown.borrow_mut();
+                    let key = shown.remove(from);
+                    shown.insert(to, key);
+                }
+                if let Some(s) = signals {
+                    s.rows_moved(engine, from, to, 1);
+                }
+            }
             RowChange::Changed {
                 first,
                 count,
@@ -212,6 +227,7 @@ pub struct Mirror {
     /// (row key, roles; none: all)
     pub redrawn: Vec<(RowKey, &'static [&'static str])>,
     pub resets: usize,
+    pub moves: usize,
 }
 
 #[cfg(test)]
@@ -273,6 +289,17 @@ impl Mirror {
                     assert!(first + count <= self.keys.len(), "removed past the end");
                     self.keys.drain(first..first + count);
                     self.values.drain(first..first + count);
+                }
+                RowChange::Moved { from, to } => {
+                    assert!(
+                        from < self.keys.len() && to < self.keys.len(),
+                        "moved past the end"
+                    );
+                    let key = self.keys.remove(from);
+                    self.keys.insert(to, key);
+                    let values = self.values.remove(from);
+                    self.values.insert(to, values);
+                    self.moves += 1;
                 }
                 RowChange::Changed {
                     first,

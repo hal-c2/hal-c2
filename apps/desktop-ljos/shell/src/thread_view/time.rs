@@ -39,7 +39,7 @@ impl Zone {
 
     /// A wall-clock time of this zone, as UTC (the earlier of two, in a
     /// repeated hour).
-    fn utc_of(self, at: NaiveDateTime) -> Option<DateTime<Utc>> {
+    pub fn utc_of(self, at: NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Zone::Local => Local
                 .from_local_datetime(&at)

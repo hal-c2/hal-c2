@@ -187,9 +187,6 @@ impl FakeMc {
     /// Sends `frame` (an object with `t`) to every subscription whose shape
     /// is `{type: kind}` for `environment` (any, when empty).
     pub fn frame(&self, engine: &Engine, kind: &str, environment: &str, frame: Json) {
-        let Json::Object(frame) = frame else {
-            panic!("a frame is an object")
-        };
         let ids: Vec<SubId> = self
             .subscriptions()
             .into_iter()
@@ -201,18 +198,27 @@ impl FakeMc {
             .map(|(id, _)| id)
             .collect();
         for id in ids {
-            let handler = self
-                .subs
-                .borrow_mut()
-                .iter_mut()
-                .find(|(i, _, _)| *i == id)
-                .and_then(|(_, _, h)| h.take());
-            let Some(mut handler) = handler else { continue };
-            handler(engine, &frame);
-            // Back, unless the frame unsubscribed it.
-            if let Some(slot) = self.subs.borrow_mut().iter_mut().find(|(i, _, _)| *i == id) {
-                slot.2 = Some(handler);
-            }
+            self.frame_to(engine, id, frame.clone());
+        }
+    }
+
+    /// Sends `frame` (an object with `t`) to the subscription `id`, if it is
+    /// still followed.
+    pub fn frame_to(&self, engine: &Engine, id: SubId, frame: Json) {
+        let Json::Object(frame) = frame else {
+            panic!("a frame is an object")
+        };
+        let handler = self
+            .subs
+            .borrow_mut()
+            .iter_mut()
+            .find(|(i, _, _)| *i == id)
+            .and_then(|(_, _, h)| h.take());
+        let Some(mut handler) = handler else { return };
+        handler(engine, &frame);
+        // Back, unless the frame unsubscribed it.
+        if let Some(slot) = self.subs.borrow_mut().iter_mut().find(|(i, _, _)| *i == id) {
+            slot.2 = Some(handler);
         }
     }
 
