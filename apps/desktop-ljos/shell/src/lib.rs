@@ -5,6 +5,7 @@
 pub mod bridge;
 pub mod cache;
 pub mod commands;
+pub mod composer_model;
 pub mod controller;
 pub mod controllers;
 pub mod device_screen;
