@@ -1128,19 +1128,32 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "the user starts work on {string}", %{args: [title]} = context do
-    context = ensure(context, title)
-    ids = [item!(context, title)["id"]]
-
-    {reply, context} =
-      plugin(context, "run", %{"action" => action_id(context, "Start work"), "itemIds" => ids})
-
-    assert {:ok, %{"run" => run}} = reply
-    Map.put(context, :run, run)
+    start_work(context, title)
   end
 
   # The launch's call to the worktree setup exits, with no process to answer it.
   step "the MC cannot set up worktrees", context do
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
+    context
+  end
+
+  # The launch's call to the worktree setup waits on a process that tells the scenario
+  # who called, and never answers.
+  step "the MC's worktree setup holds every start", context do
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
+    test = self()
+    holder = ExUnit.Callbacks.start_supervised!({Task, fn -> hold_setups(test) end})
+    Process.register(holder, HalC2.WorktreeSetup)
+    context
+  end
+
+  step "the user starts work on {string} and its thread start is killed",
+       %{args: [title]} = context do
+    context = start_work(context, title)
+    assert_receive {:setup_held, launcher}, 10_000
+    ref = Process.monitor(launcher)
+    Process.exit(launcher, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 10_000
     context
   end
 
@@ -2186,6 +2199,27 @@ defmodule HalC2.Steps.Planning.Planner do
        %{args: [number, first, second]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, first)
+    context = update_task(context, number, %{"title" => second})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted and the user renames it to {string} before GitHub answers",
+       %{args: [number, first, id, second]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     context = update_task(context, number, %{"title" => second})
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
@@ -3267,6 +3301,25 @@ defmodule HalC2.Steps.Planning.Planner do
     plan = plan!(context)
     ids = Enum.map([title, from, to], &(item(plan, &1) || flunk("the plan has no #{&1}"))["id"])
     Enum.zip(["id", "from", "to"], ids) |> Map.new()
+  end
+
+  defp start_work(context, title) do
+    context = ensure(context, title)
+    ids = [item!(context, title)["id"]]
+
+    {reply, context} =
+      plugin(context, "run", %{"action" => action_id(context, "Start work"), "itemIds" => ids})
+
+    assert {:ok, %{"run" => run}} = reply
+    Map.put(context, :run, run)
+  end
+
+  defp hold_setups(test) do
+    receive do
+      {:"$gen_call", {caller, _}, {:start, _, _, _, _, _}} -> send(test, {:setup_held, caller})
+    end
+
+    hold_setups(test)
   end
 
   defp update_task(context, number, fields) do
