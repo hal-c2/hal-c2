@@ -70,6 +70,13 @@ Feature: When source control goes wrong
     Then the commit is kept and the status shows the branch ahead of its upstream
     And the failure is reported with the push step that failed
 
+  # The GitHub CLI's sign-in made for SSH has no `workflow` scope (hal-c2/hal-c2#244).
+  @mc
+  Scenario: A push refused for a missing workflow scope says how to give it
+    Given GitHub refuses the push because the sign-in lacks the workflow scope
+    When the user runs "Commit & push"
+    Then the failure tells the user to run "gh auth refresh -s workflow"
+
   @mc
   Scenario: A failed git command keeps its command and exit code
     Given git exits with an error while initializing "shop"

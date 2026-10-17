@@ -623,10 +623,22 @@ defmodule HalC2.GitActions do
   defp git!(cwd, args) do
     case Git.run(cwd, args, max_bytes: 256 * 1024) do
       {:ok, %{status: 0}} -> :ok
-      {:ok, %{err: err}} -> fail!("git #{hd(args)} failed: #{last_lines(err)}")
+      {:ok, %{err: err}} -> fail!("git #{hd(args)} failed: #{last_lines(err)}#{hint(args, err)}")
       {:error, reason} -> fail!("git #{hd(args)} failed: #{reason}")
     end
   end
+
+  # GitHub turns away a workflow change pushed with a sign-in that lacks the scope
+  # (the GitHub CLI's, when it was made for SSH; see `HalC2.Git.use_gh_for_github/0`).
+  defp hint(["push" | _], err) do
+    if err =~ ~r/without `workflow` scope/,
+      do:
+        " Run `gh auth refresh -s workflow` on this machine to let the GitHub CLI's " <>
+          "sign-in push workflow changes, then try again.",
+      else: ""
+  end
+
+  defp hint(_args, _err), do: ""
 
   defp last_lines(text),
     do: text |> String.trim() |> String.split("\n") |> Enum.take(-3) |> Enum.join(" ")

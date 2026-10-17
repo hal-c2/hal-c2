@@ -171,6 +171,15 @@ defmodule HalC2.Git do
   HTTPS, and `gh auth git-credential` answers for them. An MC running as a service
   has no SSH agent, so a key behind a passphrase never answers there.
 
+  Where an SSH agent does answer for GitHub, git is left on SSH: the CLI's sign-in
+  has no `workflow` scope when it was made for SSH, and HTTPS would refuse a push
+  that changes a workflow.
+
+  A user's own `https://github.com/` to SSH rule would undo the rewrite (git
+  rewrites an address once, by the longest matching prefix, and the first one on a
+  tie), so the file also holds a rule for each first character of an owner's name,
+  one character longer than theirs, that keeps the address on HTTPS.
+
   Git includes a file the MC owns and writes again on each call (at boot and after
   a hot update), so a later sign-in or sign-out reaches git already running too.
   """
@@ -199,7 +208,8 @@ defmodule HalC2.Git do
 
   defp github_config do
     with gh when is_binary(gh) <- System.find_executable("gh"),
-         true <- gh_signed_in?() do
+         true <- gh_signed_in?(),
+         false <- ssh_answers_for_github?() do
       # Git runs the helper through a shell, which would split a path with a space.
       helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
 
@@ -207,6 +217,7 @@ defmodule HalC2.Git do
       [url "https://github.com/"]
       \tinsteadOf = git@github.com:
       \tinsteadOf = ssh://git@github.com/
+      #{keep_https_rules()}\
       [credential "https://github.com"]
       \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
       \thelper =
@@ -214,6 +225,55 @@ defmodule HalC2.Git do
       """
     else
       _ -> ""
+    end
+  end
+
+  # `https://github.com/a` kept as it is, for a..z, A..Z and 0..9 (the first character
+  # of any owner name GitHub allows): each is longer than a user's `https://github.com/`
+  # rule, so it wins. `pushInsteadOf` does the same for pushes, which a user's own
+  # `pushInsteadOf` would take over.
+  defp keep_https_rules do
+    for first <- Enum.concat([?a..?z, ?A..?Z, ?0..?9]), into: "" do
+      prefix = "https://github.com/" <> <<first>>
+      "[url \"#{prefix}\"]\n\tinsteadOf = #{prefix}\n\tpushInsteadOf = #{prefix}\n"
+    end
+  end
+
+  # Whether the SSH agent holds a key that GitHub takes. Only an agent with keys is
+  # asked, so a service without one does not touch the network here.
+  defp ssh_answers_for_github? do
+    with sock when sock not in [nil, ""] <- System.get_env("SSH_AUTH_SOCK"),
+         add when is_binary(add) <- System.find_executable("ssh-add"),
+         ssh when is_binary(ssh) <- System.find_executable("ssh"),
+         {:ok, {_, 0}} <- bounded_cmd(add, ["-l"], 3_000),
+         {:ok, {out, _}} <-
+           bounded_cmd(
+             ssh,
+             ~w(-T -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=3 git@github.com),
+             8_000
+           ) do
+      # GitHub greets a key it knows and then exits 1, as it gives no shell.
+      out =~ "successfully authenticated"
+    else
+      _ -> false
+    end
+  end
+
+  defp bounded_cmd(command, args, timeout) do
+    # A program that cannot run is no answer, and must not take the caller (the
+    # upgrader, at boot) down with its linked task.
+    task =
+      Task.async(fn ->
+        try do
+          System.cmd(command, args, stderr_to_stdout: true)
+        rescue
+          _ -> {"", 127}
+        end
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> {:ok, result}
+      _ -> :error
     end
   end
 
