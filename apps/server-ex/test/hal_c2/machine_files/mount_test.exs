@@ -189,6 +189,18 @@ defmodule HalC2.MachineFiles.MountTest do
     File.close(file)
   end
 
+  # What makes a file read-only writes it through the handle it made it with.
+  test "a file created read-only through the folder is written there", ctx do
+    copy = Path.join(ctx.shop, "src/copy.ts")
+
+    assert {"", 0} =
+             System.cmd("sh", ["-c", ~s(umask 222 && printf hi > "$1"), "sh", through(ctx, copy)],
+               stderr_to_stdout: true
+             )
+
+    assert File.read!(copy) == "hi"
+  end
+
   test "a member removed from the cluster has no folder", ctx do
     assert File.dir?(Path.join(ctx.root, "devbox"))
     Agent.update(ctx.cluster, fn _ -> [] end)

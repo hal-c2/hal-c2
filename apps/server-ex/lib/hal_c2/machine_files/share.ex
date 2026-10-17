@@ -129,7 +129,7 @@ defmodule HalC2.MachineFiles.Share do
   defp open(path, owner, roots) do
     with {:ok, attr} <- stat(path, roots) do
       if attr.type == :regular and owner != nil,
-        do: {:ok, with({:ok, pinned} <- pin(path, owner), do: pinned, else: (_ -> attr))},
+        do: {:ok, with({:ok, pinned} <- pin(path, owner, nil), do: pinned, else: (_ -> attr))},
         else: {:ok, attr}
     end
   end
@@ -219,8 +219,14 @@ defmodule HalC2.MachineFiles.Share do
          :ok <- still_dir(Path.dirname(path), dir, roots),
          {:ok, fd} <- :file.open(path, [:write, :exclusive, :raw]) do
       :file.close(fd)
-      _ = chmod(path, mode)
-      open(path, owner, roots)
+      # Its creator writes it through the fid that made it, even with a mode it may
+      # not write: until no fid holds it, it is also its owner's to read and write.
+      _ = chmod(path, Bitwise.bor(mode, 0o600))
+
+      with {:error, _} <- if(owner, do: pin(path, owner, mode), else: {:error, :unowned}) do
+        _ = chmod(path, mode)
+        stat(path, roots)
+      end
     end
   end
 
@@ -427,9 +433,9 @@ defmodule HalC2.MachineFiles.Share do
   end
 
   # The file `path` held open by a new process, with the attributes of what it holds.
-  defp pin(path, owner) do
+  defp pin(path, owner, mode) do
     caller = self()
-    {pin, ref} = spawn_monitor(fn -> hold(path, owner, caller) end)
+    {pin, ref} = spawn_monitor(fn -> hold(path, owner, caller, mode) end)
 
     receive do
       {^pin, answer} ->
@@ -441,12 +447,20 @@ defmodule HalC2.MachineFiles.Share do
     end
   end
 
-  defp hold(path, owner, caller) do
+  # A file just created holds its own `mode` back until it is let go (`create/4`),
+  # and takes it then unless someone changed its mode since.
+  defp hold(path, owner, caller, mode) do
     with {:ok, fd} <- :file.open(path, [:read, :raw, :binary]),
          {:ok, info} <- :file.read_file_info(fd, [:raw, time: :posix]) do
       ref = Process.monitor(owner)
-      send(caller, {self(), {:ok, Map.put(attr(File.Stat.from_record(info)), :pin, self())}})
+      held = attr(File.Stat.from_record(info))
+      send(caller, {self(), {:ok, Map.put(held, :pin, self())}})
       wait(ref, @unclaimed)
+
+      with true <- mode != nil,
+           {:ok, now} <- real_stat(path),
+           true <- now.id == held.id and now.mode == held.mode,
+           do: chmod(path, mode)
     else
       error -> send(caller, {self(), error})
     end

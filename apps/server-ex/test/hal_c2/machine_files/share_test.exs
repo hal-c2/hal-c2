@@ -231,6 +231,38 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert Share.open(Path.join(ctx.home, "notes.txt"), self()) == {:error, :enoent}
   end
 
+  # As `umask 222; echo hi > f`, or a copy of a read-only file, does.
+  test "a file created read-only is written through its fid, and is read-only once let go",
+       ctx do
+    mode = fn path -> Bitwise.band(File.stat!(path).mode, 0o777) end
+
+    let_go = fn pin ->
+      ref = Process.monitor(pin)
+      send(pin, :claim)
+      send(pin, :release)
+      assert_receive {:DOWN, ^ref, :process, ^pin, _}
+    end
+
+    copy = Path.join(ctx.shop, "src/copy.ts")
+    {:ok, %{id: id, pin: pin}} = Share.create(copy, 0o444, nil, self())
+    assert Share.write(copy, 0, "hi", {id, pin}) == {:ok, 2}
+    let_go.(pin)
+    assert mode.(copy) == 0o444
+    assert File.read!(copy) == "hi"
+
+    # A mode set before then, as `cp -p` sets one, is the one it keeps.
+    kept = Path.join(ctx.shop, "src/kept.ts")
+    {:ok, %{id: id, pin: pin}} = Share.create(kept, 0o444, nil, self())
+    assert {:ok, _} = Share.setattr(kept, %{mode: 0o640}, {id, pin})
+    let_go.(pin)
+    assert mode.(kept) == 0o640
+
+    # With no one to hold it, it has its mode at once.
+    bare = Path.join(ctx.shop, "src/bare.ts")
+    assert {:ok, %{mode: created}} = Share.create(bare, 0o444)
+    assert Bitwise.band(created, 0o777) == 0o444
+  end
+
   test "a directory renamed away and made again is stale to whoever stood in it", ctx do
     src = Path.join(ctx.shop, "src")
     cart = Path.join(src, "cart.ts")
