@@ -2322,6 +2322,19 @@ defmodule HalC2.Steps.Planning.Planner do
   # and to `soon` at once; it notes each milestone in the order it takes them.
   step "GitHub takes moving \#{int} to {string} late and to {string} at once",
        %{args: [number, late, soon]} = context do
+    late_and_soon(context, number, late, soon, "")
+  end
+
+  # As above, but `soon` is refused the second time it is asked.
+  step "GitHub takes moving \#{int} to {string} late and to {string} at once, but refuses the second move to it",
+       %{args: [number, late, soon]} = context do
+    count = Path.join(context.mc.home, "gh-asked")
+    n = "$(cat '#{count}' 2>/dev/null || echo 0)"
+    refuse = "n=#{n}; echo $((n + 1)) > '#{count}'; [ \"$n\" -ne 1 ] && "
+    late_and_soon(context, number, late, soon, refuse)
+  end
+
+  defp late_and_soon(context, number, late, soon, check) do
     gate = Path.join(context.mc.home, "gh-gate")
     {_, 0} = System.cmd("mkfifo", [gate])
     taken = Path.join(context.mc.home, "gh-milestones")
@@ -2338,7 +2351,7 @@ defmodule HalC2.Steps.Planning.Planner do
     end
 
     context
-    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, "")])
+    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, check)])
     |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
   end
 

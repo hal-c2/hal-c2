@@ -1140,6 +1140,17 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
       Then GitHub has #7 in the milestone "Release" last
 
+    # The correction is the milestone's to send, so one GitHub refused goes again with
+    # the milestone's next change, though the milestone the task is in asked GitHub already.
+    @mc
+    Scenario: A correction GitHub refused is sent again with the milestone's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Launch" late and to "Release" at once, but refuses the second move to it
+      And the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
+      When the user moves "Issue 9" from "Launch" to "Beta"
+      Then GitHub has #7 in the milestone "Release" last
+
     # A move between milestones is asked of GitHub by the milestone the task moved to, so
     # a task that leaves that one before it asks still leaves the one GitHub has it in.
     @mc
