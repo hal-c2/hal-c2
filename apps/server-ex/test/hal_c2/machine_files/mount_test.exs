@@ -26,7 +26,7 @@ defmodule HalC2.MachineFiles.MountTest do
 
   @devbox %{"environmentId" => "env-devbox", "label" => "devbox"}
 
-  setup do
+  setup ctx do
     dir =
       Path.join(System.tmp_dir!(), "hal-c2-machine-files-#{System.unique_integer([:positive])}")
 
@@ -64,7 +64,7 @@ defmodule HalC2.MachineFiles.MountTest do
          subscribe: false,
          name: nil,
          root: root,
-         ttl_ms: 0,
+         ttl_ms: Map.get(ctx, :ttl_ms, 0),
          environments: fn -> Agent.get(cluster, & &1) end}
       )
 
@@ -106,6 +106,39 @@ defmodule HalC2.MachineFiles.MountTest do
     assert options =~ "user_id=#{String.trim(uid)}"
     refute options =~ "allow_other"
     assert Bitwise.band(File.stat!(Path.dirname(ctx.root)).mode, 0o777) == 0o700
+  end
+
+  # A symlink inside the project and the file it names are one inode to the kernel:
+  # what is opened by the file's name stays that file whatever the link names later.
+  test "a file also reached through a symlink stays itself when the link changes", ctx do
+    alias_changes(ctx)
+  end
+
+  # The kernel then reaches the inode without a lookup, and is told it is stale.
+  @tag ttl_ms: 60_000
+  test "so does one the kernel still has cached", ctx do
+    alias_changes(ctx)
+  end
+
+  defp alias_changes(ctx) do
+    src = Path.join(ctx.shop, "src")
+    File.write!(Path.join(src, "a.ts"), "a")
+    File.write!(Path.join(src, "b.ts"), "b")
+    File.ln_s!("a.ts", Path.join(src, "alias.ts"))
+
+    # Open through the link first, so the kernel keeps the inode it shares with a.ts.
+    {:ok, held} = File.open(through(ctx, Path.join(src, "alias.ts")), [:read])
+    assert File.read!(through(ctx, Path.join(src, "a.ts"))) == "a"
+
+    File.rm!(Path.join(src, "alias.ts"))
+    File.ln_s!("b.ts", Path.join(src, "alias.ts"))
+    assert File.read!(through(ctx, Path.join(src, "a.ts"))) == "a"
+    File.write!(through(ctx, Path.join(src, "a.ts")), "a2")
+    assert File.read!(Path.join(src, "b.ts")) == "b"
+
+    File.rm!(Path.join(src, "alias.ts"))
+    assert File.read!(through(ctx, Path.join(src, "a.ts"))) == "a2"
+    File.close(held)
   end
 
   test "a member removed from the cluster has no folder", ctx do

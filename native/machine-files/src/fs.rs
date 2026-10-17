@@ -2,6 +2,11 @@
 //! decides what they mean. An inode is the qid path the MC gave it; each one the
 //! kernel knows holds a fid until the kernel forgets it, and each open file or
 //! directory holds a fid of its own (its handle) until it is released.
+//!
+//! An inode's fid is at the path the kernel last looked it up by. A symlink inside a
+//! project and the file it names are one inode, so an older path may name another
+//! file by now, or none: what reaches an inode by its fid checks it is still that
+//! file, and fails as stale otherwise, which has the kernel look the name up again.
 
 use crate::client::Client;
 use crate::p9::{AT_REMOVEDIR, Attr, R, SetAttr, T, Time};
@@ -66,6 +71,16 @@ fn errno(code: i32) -> Errno {
     Errno::from_i32(code)
 }
 
+/// An inode's path that names nothing now, or a fid a newer lookup replaced, is
+/// stale: the kernel looks the name up again.
+fn stale(e: Errno) -> Errno {
+    if e == Errno::ENOENT || e == Errno::EBADF {
+        Errno::ESTALE
+    } else {
+        e
+    }
+}
+
 impl MachineFiles {
     pub fn new(client: Arc<Client>, ready: Arc<Ready>, ttl: Duration) -> MachineFiles {
         // SAFETY: getuid and getgid cannot fail and touch no memory.
@@ -126,6 +141,17 @@ impl MachineFiles {
         }
     }
 
+    /// The fid `ino` is reached by and its attributes, if it is still that file.
+    fn node_attr(&self, ino: INodeNo) -> Result<(u32, Attr)> {
+        let fid = self.fid(ino)?;
+        let attr = self.getattr_fid(fid).map_err(stale)?;
+        if attr.qid.path == ino.0 {
+            Ok((fid, attr))
+        } else {
+            Err(Errno::ESTALE)
+        }
+    }
+
     /// Looks `name` up in the directory `parent` and counts the lookup.
     fn lookup_entry(&self, parent: u32, name: &OsStr) -> Result<FileAttr> {
         let newfid = self.new_fid();
@@ -145,12 +171,13 @@ impl MachineFiles {
                 return Err(e);
             }
         };
-        let known = {
+        // The path just looked up names the file now; the one before may not.
+        let replaced = {
             let mut nodes = self.nodes.lock().unwrap();
             match nodes.get_mut(&attr.qid.path) {
                 Some(node) => {
                     node.lookups += 1;
-                    true
+                    Some(std::mem::replace(&mut node.fid, newfid))
                 }
                 None => {
                     nodes.insert(
@@ -160,12 +187,12 @@ impl MachineFiles {
                             lookups: 1,
                         },
                     );
-                    false
+                    None
                 }
             }
         };
-        if known {
-            self.clunk(newfid);
+        if let Some(old) = replaced {
+            self.clunk(old);
         }
         Ok(self.file_attr(&attr))
     }
@@ -193,17 +220,17 @@ impl MachineFiles {
     }
 
     fn open_fid(&self, ino: INodeNo, flags: OpenFlags) -> Result<u32> {
-        let fid = self.clone_fid(self.fid(ino)?)?;
+        let fid = self.clone_fid(self.fid(ino)?).map_err(stale)?;
         // Creating and truncating come as their own requests.
         let flags = flags.0 & !(libc::O_CREAT | libc::O_EXCL | libc::O_NOCTTY | libc::O_TRUNC);
         match self.call(&T::Lopen {
             fid,
             flags: flags as u32,
         }) {
-            Ok(_) => Ok(fid),
-            Err(e) => {
+            Ok(R::Lopen(qid)) if qid.path == ino.0 => Ok(fid),
+            opened => {
                 self.clunk(fid);
-                Err(e)
+                Err(opened.map_or_else(stale, |_| Errno::ESTALE))
             }
         }
     }
@@ -279,10 +306,11 @@ impl Filesystem for MachineFiles {
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, fh: Option<FileHandle>, reply: ReplyAttr) {
-        let fid = fh
-            .map(|fh| Ok(fh.0 as u32))
-            .unwrap_or_else(|| self.fid(ino));
-        match fid.and_then(|fid| self.getattr_fid(fid)) {
+        let attr = match fh {
+            Some(fh) => self.getattr_fid(fh.0 as u32),
+            None => self.node_attr(ino).map(|(_, attr)| attr),
+        };
+        match attr {
             Ok(attr) => reply.attr(&self.ttl, &self.file_attr(&attr)),
             Err(e) => reply.error(e),
         }
@@ -314,9 +342,11 @@ impl Filesystem for MachineFiles {
             atime: atime.map(time),
             mtime: mtime.map(time),
         };
-        let fid = fh
-            .map(|fh| Ok(fh.0 as u32))
-            .unwrap_or_else(|| self.fid(ino));
+        // By the inode's path only while it names the same file, as truncate(2) asks.
+        let fid = match fh {
+            Some(fh) => Ok(fh.0 as u32),
+            None => self.node_attr(ino).map(|(fid, _)| fid),
+        };
         let attr = fid.and_then(|fid| {
             self.call(&T::Setattr { fid, set })?;
             self.getattr_fid(fid)
