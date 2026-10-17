@@ -6,15 +6,23 @@
 //! `Theme.palette.color(role, fallback)`, and reading `palette` is what makes
 //! such a call re-run when the theme changes (a call records no dependency).
 //!
-//! Not ported yet: watching theme.json (it is read at start and on
-//! `reload()`), and making `fontUi` the application's font
-//! (TODO(ljos#84): it can only be set before the engine is built).
+//! theme.json is watched: an edit reloads it. The OS watcher runs on a
+//! thread of its own and the shell hears of it through the waker
+//! ([`set_wake`]), then calls [`deliver`] on the Engine thread, as
+//! `folders/watch.rs` does.
+//!
+//! `fontUi` is the application's font ([`set_application_font`]), set from
+//! the saved theme before the root is made. Ljós cannot change it while the
+//! app runs (TODO(ljos#84)), so a font chosen later shows on the next start.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, PoisonError};
 
+use ljos::ljos_engine::Font;
 use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::bridge::Bridge;
 use crate::json::Json;
@@ -176,6 +184,38 @@ struct ThemeState {
     path: RefCell<Option<PathBuf>>,
     file: RefCell<ThemeFile>,
     base: RefCell<Base>,
+    /// The application font as the host set it: the desktop's.
+    desktop_font: RefCell<Option<Font>>,
+    /// The config directory's watcher, while there is one.
+    watcher: RefCell<Option<RecommendedWatcher>>,
+    changes: Arc<Changes>,
+}
+
+type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// What the watcher thread leaves for the Engine thread.
+#[derive(Default)]
+struct Changes {
+    pending: Mutex<bool>,
+    wake: Mutex<Option<Wake>>,
+}
+
+impl Changes {
+    fn push(&self) {
+        *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        let wake = self
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    fn take(&self) -> bool {
+        std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner))
+    }
 }
 
 impl ThemeState {
@@ -197,12 +237,77 @@ pub fn install(engine: &Engine, config_dir: Option<PathBuf>) {
         .map_or(String::new(), |p| p.to_string_lossy().into_owned());
     let _ = cx.set(ThemeStore::PATH, Atom::from(shown.as_str()));
     let _ = cx.set(ThemeStore::PALETTE, Some(obj));
-    *ThemeState::of(engine).path.borrow_mut() = path;
+    let state = ThemeState::of(engine);
+    *state.desktop_font.borrow_mut() = Some(Font::default());
+    *state.watcher.borrow_mut() = path.as_ref().and_then(|p| watch(p, &state.changes));
+    *state.path.borrow_mut() = path;
     Bridge::of(engine).watch(engine, "theme", apply_base_theme);
     if let Some(theme) = Bridge::of(engine).published(engine, "theme") {
         apply_base_theme(engine, &theme);
     }
     reload(engine);
+}
+
+/// Watches the directory theme.json is in (one level), so it is seen made,
+/// replaced (an editor's save), changed and removed. `None` when the
+/// directory cannot be watched, as when there is none yet.
+fn watch(path: &std::path::Path, changes: &Arc<Changes>) -> Option<RecommendedWatcher> {
+    let dir = path.parent()?;
+    let name = path.file_name()?.to_owned();
+    let changes = changes.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if let Ok(event) = event
+            && !event.kind.is_access()
+            && event.paths.iter().any(|p| p.file_name() == Some(&name))
+        {
+            changes.push();
+        }
+    })
+    .ok()?;
+    watcher.watch(dir, RecursiveMode::NonRecursive).ok()?;
+    Some(watcher)
+}
+
+/// Says what to run, on any thread, when theme.json changed: post a message
+/// to the Engine thread, which calls [`deliver`].
+pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
+    let wake: Wake = Arc::new(wake);
+    *ThemeState::of(engine)
+        .changes
+        .wake
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(wake);
+}
+
+/// Reads theme.json again when it changed. On the Engine thread.
+pub fn deliver(engine: &Engine) {
+    if ThemeState::of(engine).changes.take() {
+        reload(engine);
+    }
+}
+
+/// The family `fontUi` names now (theme.json's, else the saved theme's), or
+/// "" for the desktop's.
+pub fn application_font_family(engine: &Engine) -> String {
+    let state = ThemeState::of(engine);
+    let file = state.file.borrow();
+    let base = state.base.borrow();
+    Derived::of(&file, &base).font_ui
+}
+
+/// Makes `fontUi` the application font (desktop-qt's
+/// `ThemeStore::applyInterfaceFont`): the desktop's font in that family.
+/// Process-wide, and only what is made afterwards takes it, so a host calls
+/// it once, after [`crate::start`] and before it makes the root.
+pub fn set_application_font(engine: &Engine) {
+    let family = application_font_family(engine);
+    let Some(mut font) = ThemeState::of(engine).desktop_font.borrow().clone() else {
+        return;
+    };
+    if !family.is_empty() {
+        font.family = Atom::from(family.as_str());
+    }
+    Font::set_application_font(Some(&font));
 }
 
 /// The resolved theme the theme controller publishes (`ShellThemeState`).
@@ -615,6 +720,9 @@ fn show(engine: &Engine) {
     );
     let follows_system = file.follows_system_appearance;
     drop((d, base, file));
+    // TODO(ljos#84): the application font follows `fontUi` here
+    // (set_application_font, and what is drawn already takes its family),
+    // once Ljós can change it while the app runs.
     platform_window::apply_window_theme(
         engine,
         loaded && transparent,

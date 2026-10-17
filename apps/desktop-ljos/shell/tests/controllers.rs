@@ -14,6 +14,7 @@ use hal_c2_shell::controllers::layout::{
     CONTENT_MIN_WIDTH, Layout, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH,
 };
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
+use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::theme::{Mode, Themes, canonical_color};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Disconnected, Mc};
@@ -289,9 +290,17 @@ fn only_the_apps_thread_links_open() {
 
 // theme
 
+/// The mode is kept in this device's preferences: a file of their own.
+fn with_preferences(engine: &Engine) -> tempfile::TempDir {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    Settings::of(engine).set_device_path(engine, Some(dir.path().join("preferences.json")));
+    dir
+}
+
 #[test]
 fn the_appearance_cycles_system_light_dark() {
     let (engine, _) = shell(EMPTY, disconnected());
+    let _dir = with_preferences(&engine);
     let themes = controller::controller::<Themes>(&engine).unwrap();
     assert_eq!(themes.borrow().mode(), Mode::System);
     // Headless, the system says light.
@@ -316,6 +325,7 @@ fn the_appearance_cycles_system_light_dark() {
 #[test]
 fn every_published_colour_is_hex() {
     let (engine, _) = shell(EMPTY, disconnected());
+    let _dir = with_preferences(&engine);
     for mode in ["light", "dark"] {
         dispatch(&engine, "theme.mode", json!({"mode": mode}));
         let theme = published(&engine, "theme");
@@ -341,6 +351,9 @@ fn css_colours_become_hex() {
         canonical_color("oklch(100% 0 0)").as_deref(),
         Some("#ffffff")
     );
+    // QColor's names: SVG 1.1's, so not CSS 4's rebeccapurple.
+    assert_eq!(canonical_color("Tomato").as_deref(), Some("#ff6347"));
+    assert_eq!(canonical_color("alice blue").as_deref(), Some("#f0f8ff"));
     assert_eq!(canonical_color("rebeccapurple"), None);
 }
 
@@ -362,6 +375,7 @@ Item {
 #[test]
 fn the_theme_singleton_follows_the_published_theme() {
     let (engine, root) = shell(THEMED, disconnected());
+    let _dir = with_preferences(&engine);
     let canvas = |engine: &Engine| {
         published(engine, "theme")["colors"]["canvas"]
             .as_str()

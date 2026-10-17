@@ -1,2 +1,1 @@
 module HalC2.Shell
-singleton Themes 1.0 Themes.qml
