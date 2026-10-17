@@ -2557,7 +2557,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 [[package]]
 name = "ljos"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
@@ -2575,7 +2575,7 @@ dependencies = [
 [[package]]
 name = "ljos_a11y"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "accesskit",
 ]
@@ -2583,7 +2583,7 @@ dependencies = [
 [[package]]
 name = "ljos_compiler"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2604,7 +2604,7 @@ dependencies = [
 [[package]]
 name = "ljos_controls"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
@@ -2621,7 +2621,7 @@ dependencies = [
 [[package]]
 name = "ljos_egui"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "egui",
  "ljos_a11y",
@@ -2635,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "ljos_engine"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "arcstr",
  "bitflags 2.13.2",
@@ -2657,7 +2657,7 @@ dependencies = [
 [[package]]
 name = "ljos_host"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "thiserror 2.0.21",
  "winit",
@@ -2667,7 +2667,7 @@ dependencies = [
 [[package]]
 name = "ljos_i18n"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "icu_calendar",
  "icu_datetime",
@@ -2681,7 +2681,7 @@ dependencies = [
 [[package]]
 name = "ljos_ir"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "blake3",
  "postcard",
@@ -2692,7 +2692,7 @@ dependencies = [
 [[package]]
 name = "ljos_js"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "ljos_runtime",
  "rquickjs",
@@ -2704,7 +2704,7 @@ dependencies = [
 [[package]]
 name = "ljos_macros"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2715,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "ljos_oxc_parser"
 version = "0.144.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "bitflags 2.13.2",
  "cow-utils",
@@ -2738,7 +2738,7 @@ dependencies = [
 [[package]]
 name = "ljos_platform"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "arboard",
  "futures",
@@ -2759,7 +2759,7 @@ dependencies = [
 [[package]]
 name = "ljos_quick"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "bitflags 2.13.2",
  "fancy-regex",
@@ -2786,7 +2786,7 @@ dependencies = [
 [[package]]
 name = "ljos_reactive"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "slotmap",
  "smallvec",
@@ -2796,7 +2796,7 @@ dependencies = [
 [[package]]
 name = "ljos_render"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "bitflags 2.13.2",
  "egui",
@@ -2816,7 +2816,7 @@ dependencies = [
 [[package]]
 name = "ljos_runtime"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "bitflags 2.13.2",
  "smallvec",
@@ -2826,7 +2826,7 @@ dependencies = [
 [[package]]
 name = "ljos_shader"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "naga",
  "serde",
@@ -2837,7 +2837,7 @@ dependencies = [
 [[package]]
 name = "ljos_shell"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "block2 0.6.2",
  "egui",
@@ -2868,7 +2868,7 @@ dependencies = [
 [[package]]
 name = "ljos_text"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "ljos_render",
  "parley",
@@ -4174,7 +4174,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 [[package]]
 name = "qml_front"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "oxc_ast_visit",
  "oxc_syntax",
@@ -4186,7 +4186,7 @@ dependencies = [
 [[package]]
 name = "qml_syntax"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 dependencies = [
  "ljos_oxc_parser",
  "oxc_allocator",
@@ -4204,7 +4204,7 @@ checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 [[package]]
 name = "qt_types"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=f1c716bf44d1cedd4929f8b6d59844f8a475d796#f1c716bf44d1cedd4929f8b6d59844f8a475d796"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=e54c152b14141f254285b4947e63454c14593572#e54c152b14141f254285b4947e63454c14593572"
 
 [[package]]
 name = "quick-error"
