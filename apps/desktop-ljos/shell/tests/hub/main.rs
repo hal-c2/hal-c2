@@ -16,6 +16,7 @@ mod device_settings;
 mod diagnostics;
 mod git;
 mod keybindings;
+mod layout;
 mod mc_plugin;
 mod menus;
 mod page;
