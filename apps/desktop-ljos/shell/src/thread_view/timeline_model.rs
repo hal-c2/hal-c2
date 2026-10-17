@@ -22,12 +22,13 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, Platform, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, ItemModel, ModelChange, ModelListener, ModelListeners};
 
 use super::timeline::{FLUSH_DELAY_MS, Out, Role, Timeline};
-use crate::json::{self, Json};
+use crate::json::Json;
 
 /// Hears each of a timeline's changes after its views have.
 pub type Observer = Rc<dyn Fn(&Engine, &Out)>;
@@ -80,14 +81,14 @@ impl ItemModel for Rows {
         Role::ALL.iter().map(|r| Atom::new(r.name())).collect()
     }
 
-    fn data(&self, engine: &Engine, row: usize, role: &str) -> Value {
+    fn data(&self, _: &Engine, row: usize, role: &str) -> Value {
         let Some(role) = Role::from_name(role) else {
             return Value::Undefined;
         };
         let core = self.core.borrow();
         let value = self.core_row(&core, row).and_then(|at| core.data(at, role));
         drop(core);
-        value.map_or(Value::Undefined, |v| json::to_value(engine, &v))
+        value.map_or(Value::Undefined, |v| v.to_value())
     }
 
     fn row_key(&self, row: usize) -> u64 {
@@ -148,10 +149,6 @@ fn rows_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Rows>> {
     engine
         .with::<TimelineModel, _>(obj, |m| m.rows.0.clone())
         .ok()
-}
-
-fn json_of(engine: &Engine, obj: super::summary::Obj) -> Value {
-    json::to_value(engine, &Json::Object(obj))
 }
 
 fn text_of(engine: &Engine, value: &Value) -> String {
@@ -447,7 +444,7 @@ impl TimelineModel {
     #[qml(invokable)]
     fn checkpoint_of(cx: &Cx, row_id: Atom) -> Value {
         let found = TimelineModel::read(cx.engine, cx.this, |t| t.checkpoint_of(&row_id));
-        json_of(cx.engine, found.unwrap_or_default())
+        Json::Object(found.unwrap_or_default()).to_value()
     }
 
     /// The run a reply finished, for its actions; "" when none.
@@ -461,7 +458,7 @@ impl TimelineModel {
     #[qml(invokable)]
     fn rewind_point_of(cx: &Cx, row_id: Atom) -> Value {
         let found = TimelineModel::read(cx.engine, cx.this, |t| t.rewind_point_of(&row_id));
-        json_of(cx.engine, found.unwrap_or_default())
+        Json::Object(found.unwrap_or_default()).to_value()
     }
 
     /// Puts a message's text on the clipboard; false when the row has none

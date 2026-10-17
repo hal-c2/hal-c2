@@ -27,7 +27,6 @@ use ljos::prelude::{
     TreeListener, TreeListeners, Value, qml_impl,
 };
 
-use crate::json::{self, Json};
 use plain::{broad_directory, clean, occupied, plain_directory, plain_entry, within};
 pub use watch::{deliver, set_wake};
 
@@ -94,7 +93,7 @@ pub struct LocalFolderModel {
     #[qml(notify, readonly)]
     root_index: Value,
     #[qml(notify)]
-    protected_paths: Value,
+    protected_paths: Vec<String>,
     #[qml(notify, readonly)]
     error: Atom,
     #[qml(skip)]
@@ -108,7 +107,7 @@ impl Default for LocalFolderModel {
             enabled: false,
             root_path: Atom::from(""),
             root_index: Value::Undefined,
-            protected_paths: Value::Undefined,
+            protected_paths: Vec::new(),
             error: Atom::from(""),
             state: Rc::default(),
         }
@@ -428,14 +427,9 @@ impl<'e> Model<'e> {
     }
 
     fn protected_paths(&self) -> Vec<String> {
-        let value = self.cx().read("protectedPaths");
-        match json::from_value(self.engine, &value) {
-            Json::Array(paths) => paths
-                .into_iter()
-                .filter_map(|p| p.as_str().map(str::to_owned))
-                .collect(),
-            _ => Vec::new(),
-        }
+        self.cx()
+            .get(LocalFolderModel::PROTECTED_PATHS)
+            .unwrap_or_default()
     }
 
     // ---- the two properties QML writes

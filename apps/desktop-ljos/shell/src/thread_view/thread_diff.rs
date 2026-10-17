@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 use regex::Regex;
@@ -43,7 +44,7 @@ use super::rows::{ListRows, RowChange, RowSource, int};
 use super::summary::Obj;
 use super::timeline::Out;
 use super::timeline_model::TimelineModel;
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::mc::{Mc, McError};
 
 /// The selection that reviews the checkout's uncommitted changes.
@@ -1274,7 +1275,7 @@ fn write(engine: &Engine, obj: ObjectId, facts: &Facts) {
         .iter()
         .map(|(value, label)| json!({"value": value, "label": label}))
         .collect();
-    let choices = json::to_value(engine, &Json::Array(choices));
+    let choices = Json::Array(choices).to_value();
     let atom = |s: &str| Atom::new(s);
     let result = engine
         .set_internal(obj, ThreadDiff::CHOICES, choices)
@@ -1400,7 +1401,7 @@ impl ThreadDiff {
         let Some(comment) = comment else {
             return false;
         };
-        let value = json::to_value(cx.engine, &comment);
+        let value = comment.to_value();
         warn(cx.engine, ThreadDiff::emit_comment_requested(cx, value));
         true
     }

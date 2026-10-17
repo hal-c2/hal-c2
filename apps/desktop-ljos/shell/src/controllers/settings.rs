@@ -34,6 +34,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use serde_json::json;
 
@@ -41,7 +42,7 @@ use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init};
 use crate::controllers::settings_scope::SettingsScope;
 use crate::controllers::toasts::Toasts;
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::mc::{Frame, McError, SubId};
 
 /// A settings document.
@@ -429,7 +430,7 @@ impl Settings {
             return;
         };
         let cx = Cx::new(engine, obj);
-        let object = |map: &Map| json::to_value(engine, &Json::Object(map.clone()));
+        let object = |map: &Map| Json::Object(map.clone()).to_value();
         match signal {
             Signal::Settings => {
                 let (ready, document, version, error) = {
@@ -454,7 +455,7 @@ impl Settings {
             }
             Signal::Themes => {
                 let themes = Json::Array(self.0.state.borrow().themes.clone());
-                let _ = cx.set(SettingsObject::THEMES, json::to_value(engine, &themes));
+                let _ = cx.set(SettingsObject::THEMES, themes.to_value());
             }
             Signal::Device => {
                 let (device, error) = {
@@ -1211,15 +1212,16 @@ impl Default for SettingsObject {
     }
 }
 
-fn shown(engine: &Engine, json: Option<Json>) -> Value {
-    json.map_or(Value::Undefined, |j| json::to_value(engine, &j))
+/// A setting as QML reads it: `undefined` when there is none.
+fn shown(json: Option<Json>) -> Value {
+    json.map_or(Value::Undefined, |j| j.to_value())
 }
 
 #[qml_impl]
 impl SettingsObject {
     #[qml(invokable)]
     fn value(cx: &Cx, path: Atom) -> Value {
-        shown(cx.engine, Settings::of(cx.engine).value(&path))
+        shown(Settings::of(cx.engine).value(&path))
     }
 
     #[qml(invokable)]
@@ -1230,7 +1232,7 @@ impl SettingsObject {
 
     #[qml(invokable)]
     fn device_value(cx: &Cx, key: Atom) -> Value {
-        shown(cx.engine, Settings::of(cx.engine).device_value(&key))
+        shown(Settings::of(cx.engine).device_value(&key))
     }
 
     #[qml(invokable)]
@@ -1246,12 +1248,12 @@ impl SettingsObject {
 
     #[qml(invokable)]
     fn setting(cx: &Cx, key: Atom) -> Value {
-        shown(cx.engine, Settings::of(cx.engine).setting(cx.engine, &key))
+        shown(Settings::of(cx.engine).setting(cx.engine, &key))
     }
 
     #[qml(invokable)]
     fn default_of(cx: &Cx, key: Atom) -> Value {
-        shown(cx.engine, Settings::of(cx.engine).default_of(&key))
+        shown(Settings::of(cx.engine).default_of(&key))
     }
 
     #[qml(invokable)]

@@ -15,12 +15,13 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::{
     Atom, Cx, Engine, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl, qml_singleton,
 };
 
-use crate::json::{self, Json};
+use crate::json::Json;
 
 /// The keys the bricks bind before any controller declares them: main.cpp's
 /// `backendError`, the sidebar's, and the ones the default layout reads.
@@ -83,14 +84,12 @@ impl ShellBridge {
     fn window_command_requested(command: Atom);
 
     #[qml(invokable)]
-    fn dispatch(cx: &Cx, action: Atom, payload: Value) {
-        let payload = json::from_value(cx.engine, &payload);
+    fn dispatch(cx: &Cx, action: Atom, payload: Json) {
         Bridge(cx.this).dispatch(cx.engine, &action, payload);
     }
 
     #[qml(invokable)]
-    fn publish(cx: &Cx, key: Atom, value: Value) {
-        let value = json::from_value(cx.engine, &value);
+    fn publish(cx: &Cx, key: Atom, value: Json) {
         Bridge(cx.this).publish(cx.engine, &key, value);
     }
 
@@ -140,9 +139,8 @@ impl ShellBridge {
 
     /// The folders among `urls`, as paths on this machine.
     #[qml(invokable)]
-    fn directory_paths(cx: &Cx, urls: Value) -> Vec<Value> {
-        file_urls(cx.engine, &urls)
-            .into_iter()
+    fn directory_paths(&self, urls: Vec<String>) -> Vec<Value> {
+        urls.into_iter()
             .filter_map(|url| local_path(&url))
             .filter(|path| Path::new(path).is_dir())
             .map(|path| Value::from(path.as_str()))
@@ -179,18 +177,6 @@ impl ShellBridge {
     #[qml(invokable)]
     fn clipboard_files(&self) -> Vec<Value> {
         Vec::new()
-    }
-}
-
-/// What QML hands a file helper (`drop.urls`, one URL), as strings.
-fn file_urls(engine: &Engine, urls: &Value) -> Vec<String> {
-    match json::from_value(engine, urls) {
-        Json::Array(items) => items
-            .into_iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect(),
-        Json::String(one) => vec![one],
-        _ => Vec::new(),
     }
 }
 
@@ -299,7 +285,7 @@ impl Bridge {
         if state.published.borrow().get(key) == Some(&value) {
             return;
         }
-        let shown = json::to_value(engine, &value);
+        let shown = value.to_value();
         Bridge::map(engine).insert(engine, key, shown.clone());
         state
             .published
@@ -388,7 +374,7 @@ impl Bridge {
     /// Native code asking the bricks to do something (focus the composer):
     /// bypasses the interceptors, which would otherwise see their own requests.
     pub fn send_to_bricks(self, engine: &Engine, action: &str, payload: &Json) {
-        let payload = json::to_value(engine, payload);
+        let payload = payload.to_value();
         let _ = ShellBridge::emit_action_requested(
             &Cx::new(engine, self.0),
             Atom::new(action),

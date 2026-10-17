@@ -23,12 +23,13 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::mc::{Mc, McError, SubId};
 
 pub const ROLES: &[&str] = &["tabId", "url", "title", "status", "problem"];
@@ -902,7 +903,7 @@ fn warn(engine: &Engine, result: Result<(), EngineError>) {
 
 fn tell_suggestions(engine: &Engine, obj: ObjectId, rows: &ListRows<Previews>) {
     let suggestions = rows.read(Previews::suggestions);
-    let value = json::to_value(engine, &Json::Array(suggestions));
+    let value = Json::Array(suggestions).to_value();
     warn(
         engine,
         engine.set_internal(obj, ThreadPreviews::SUGGESTIONS, value),

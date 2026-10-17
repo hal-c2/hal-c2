@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use serde_json::{Map, json};
 use url::Url;
@@ -40,7 +41,7 @@ use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::menus::Menus;
 use crate::controllers::toasts::Toasts;
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::mc::{Mc, SubId};
 use crate::store;
 
@@ -324,7 +325,7 @@ fn answered(engine: &Engine, request: i32, result: &Json, error: &str) {
         return;
     };
     let result = if error.is_empty() {
-        json::to_value(engine, result)
+        result.to_value()
     } else {
         Value::Undefined
     };
@@ -343,7 +344,7 @@ fn publish_to(engine: &Engine, watch: i32, value: &Json) {
     let _ = McPluginsObject::emit_published(
         &Cx::new(engine, object),
         watch,
-        json::to_value(engine, value),
+        value.to_value(),
     );
 }
 
@@ -370,8 +371,7 @@ impl McPluginsObject {
 
     /// Asks plugin `id` on `environment` (`plugins.call`).
     #[qml(invokable)]
-    fn call(cx: &Cx, environment: Atom, id: Atom, method: Atom, input: Value) -> i32 {
-        let input = json::from_value(cx.engine, &input);
+    fn call(cx: &Cx, environment: Atom, id: Atom, method: Atom, input: Json) -> i32 {
         Channel::of(cx.engine).ask(
             cx.engine,
             &environment,
@@ -382,8 +382,7 @@ impl McPluginsObject {
 
     /// Saves plugin `id`'s settings on `environment` (`plugins.saveSettings`).
     #[qml(invokable)]
-    fn save_settings(cx: &Cx, environment: Atom, id: Atom, settings: Value) -> i32 {
-        let settings = json::from_value(cx.engine, &settings);
+    fn save_settings(cx: &Cx, environment: Atom, id: Atom, settings: Json) -> i32 {
         let settings = if settings.is_object() {
             settings
         } else {

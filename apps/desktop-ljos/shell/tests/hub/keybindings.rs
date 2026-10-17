@@ -19,6 +19,7 @@ use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::json::{self, Json};
 use hal_c2_shell::keybindings::{command_label, qt};
 use hal_c2_shell::mc::McError;
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Value};
 use serde_json::json;
 
@@ -659,7 +660,7 @@ fn an_edited_row_replaces_its_rule() {
     );
     // From the page: an empty `when` and a row.
     let obj = object(&hub);
-    let row_value = json::to_value(&hub.engine, &edited);
+    let row_value = edited.to_value();
     call(
         &hub.engine,
         obj,
@@ -1020,10 +1021,7 @@ fn the_window_presses_through_the_singleton() {
     let log = Log::default();
     native(&hub, &log, "sidebar.toggle");
     let obj = object(&hub);
-    let focus = json::to_value(
-        &hub.engine,
-        &json!({"terminal": false, "composer": true, "editable": true}),
-    );
+    let focus = json!({"terminal": false, "composer": true, "editable": true}).to_value();
     assert_eq!(
         call(
             &hub.engine,

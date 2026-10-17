@@ -38,7 +38,6 @@ use ljos::prelude::{
 
 pub use machine::{Effect, KILL_AFTER_MS, Machine};
 
-use crate::json::{self, Json};
 
 /// Adds the type to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
@@ -55,7 +54,7 @@ pub struct LocalTranscriber {
     program: Atom,
     /// Its arguments, a list of strings, passed as they are.
     #[qml(notify)]
-    arguments: Value,
+    arguments: Vec<String>,
     #[qml(notify, readonly)]
     running: bool,
     /// `idle`, `starting`, `recording`, `transcribing` or `cancelling`.
@@ -72,7 +71,7 @@ impl Default for LocalTranscriber {
         LocalTranscriber {
             base: QtObject::default(),
             program: Atom::from(""),
-            arguments: Value::Undefined,
+            arguments: Vec::new(),
             running: false,
             status: Atom::from("idle"),
             error: Atom::from(""),
@@ -170,16 +169,6 @@ fn configuration(engine: &Engine, obj: ObjectId) -> Option<(String, Vec<String>)
     let (program, arguments) = engine
         .with::<LocalTranscriber, _>(obj, |t| (t.program.to_string(), t.arguments.clone()))
         .ok()?;
-    let arguments = match json::from_value(engine, &arguments) {
-        Json::Array(items) => items
-            .iter()
-            .map(|item| match item {
-                Json::String(s) => s.clone(),
-                other => other.to_string(),
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
     Some((program, arguments))
 }
 

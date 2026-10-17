@@ -18,12 +18,13 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
-use crate::json::{self, Json};
+use crate::json::Json;
 
 /// Up to this many changed and context lines, every file starts expanded.
 pub const AUTO_EXPAND_LINES: usize = 4000;
@@ -913,7 +914,7 @@ impl DiffModel {
     #[qml(invokable)]
     fn tree(cx: &Cx) -> Value {
         let tree = DiffModel::read(cx.engine, cx.this, Diff::tree).unwrap_or_default();
-        json::to_value(cx.engine, &Json::Array(tree))
+        Json::Array(tree).to_value()
     }
 
     #[qml(invokable)]
@@ -930,7 +931,7 @@ impl DiffModel {
         let found = DiffModel::update(cx.engine, cx.this, |d| {
             d.excerpt(index(file), &side, first, last)
         });
-        json::to_value(cx.engine, &found.unwrap_or_else(|| json!({})))
+        found.unwrap_or_else(|| json!({})).to_value()
     }
 
     /// The header row of `file`, or -1.

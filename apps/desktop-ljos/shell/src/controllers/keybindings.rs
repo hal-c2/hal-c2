@@ -43,6 +43,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use ljos::prelude::{Time, TimerId};
 use serde_json::json;
@@ -56,7 +57,7 @@ use crate::controllers::settings::Settings;
 use crate::controllers::settings_scope::SettingsScope;
 use crate::controllers::thread_menu::ThreadMenu;
 use crate::controllers::toasts::{Action, Toasts};
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::keybindings::{self as keymap, Binding, Context, When, qt};
 
 /// The appearance toggle's command, which the theme registers: held down, it
@@ -657,7 +658,7 @@ impl Keymap {
             s.shortcuts = shortcuts.clone();
         }
         if let Some(cx) = Keymap::object(engine) {
-            let shown = json::to_value(engine, &Json::Array(shortcuts));
+            let shown = Json::Array(shortcuts).to_value();
             let _ = cx.set(KeybindingsObject::SHORTCUTS, shown);
         }
     }
@@ -773,7 +774,7 @@ impl Keymap {
         };
         if let Some(cx) = Keymap::object(engine) {
             engine.batch(|| {
-                let shown = json::to_value(engine, &Json::Array(rows));
+                let shown = Json::Array(rows).to_value();
                 let _ = cx.set(KeybindingsObject::BINDINGS, shown);
                 let _ = cx.set(
                     KeybindingsObject::CUSTOM_COUNT,

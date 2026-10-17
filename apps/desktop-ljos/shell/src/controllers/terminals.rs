@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::LazyLock;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::RowKey;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
 use regex::Regex;
@@ -45,7 +46,7 @@ use crate::controllers::keybindings::Keymap;
 use crate::controllers::menus::{Answer, Menus};
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
-use crate::json::{self, Json};
+use crate::json::Json;
 use crate::mc::{Frame, Mc, SubId};
 use crate::thread_view::rows::{ListRows, RowChange, RowSource, int};
 
@@ -1142,7 +1143,7 @@ impl Controller for Terminals {
             );
             let _ = cx.set(
                 TerminalsObject::GROUP_SIZES,
-                json::to_value(engine, &json!({})),
+                json!({}).to_value(),
             );
         }
         let mut terminals = Terminals {
@@ -1731,7 +1732,7 @@ impl Terminals {
             let _ = cx.set(TerminalsObject::ACTIVE_TERMINAL_ID, Atom::new(&now.active));
             let _ = cx.set(TerminalsObject::ACTIVE_GROUP, Atom::new(&now.active_group));
             let sizes = json!(now.group_sizes);
-            let _ = cx.set(TerminalsObject::GROUP_SIZES, json::to_value(engine, &sizes));
+            let _ = cx.set(TerminalsObject::GROUP_SIZES, sizes.to_value());
         }
         let bridge = self.bridge;
         if was_open != now.open {

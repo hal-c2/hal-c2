@@ -18,6 +18,7 @@ use std::time::Duration;
 use common::{call, shell, text};
 use hal_c2_shell::local_transcriber::{Effect, Machine, deliver, set_wake};
 use hal_c2_shell::mc::Disconnected;
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Engine, ObjectId, Value};
 
 const MAIN: &str = r#"
@@ -149,7 +150,7 @@ fn arguments_are_passed_as_they_are() {
     );
     f.set(
         "arguments",
-        hal_c2_shell::json::to_value(&f.engine, &serde_json::json!(["a b", "$HOME"])),
+        serde_json::json!(["a b", "$HOME"]).to_value(),
     );
     assert!(f.start(&helper));
     f.until("the end", |f| f.get("running") == "false");

@@ -19,12 +19,13 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
 use super::rows::{ListRows, RowChange, RowSource, int};
-use crate::json::{self, Json};
+use crate::json::Json;
 
 pub const ROLES: &[&str] = &[
     "path", "name", "depth", "kind", "expanded", "ignored", "problem", "selected",
@@ -856,7 +857,7 @@ impl FileTreeModel {
     #[qml(invokable)]
     fn entries_in(cx: &Cx, folder: Atom) -> Value {
         let entries = FileTreeModel::read(cx.engine, cx.this, |t| t.entries_in(&folder));
-        json::to_value(cx.engine, &Json::Array(entries.unwrap_or_default()))
+        Json::Array(entries.unwrap_or_default()).to_value()
     }
 }
 
