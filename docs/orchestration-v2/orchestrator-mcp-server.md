@@ -85,7 +85,8 @@ request that cannot run.
 
 This page describes the orchestration tools. Each tool's description and input schema are in
 [`priv/mcp_tools.json`](../../apps/server-ex/priv/mcp_tools.json), which is the source; the full set
-the MC advertises is there and in `priv/mcp_mc_tools.json`. Only the tools `HalC2.Mcp.Tools`
+the MC advertises is there and in
+[`priv/mcp_mc_tools.json`](../../apps/server-ex/priv/mcp_mc_tools.json). Only the tools `HalC2.Mcp.Tools`
 implements are listed to agents.
 
 ### `orchestrator_capabilities`
