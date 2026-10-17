@@ -141,6 +141,13 @@ pub trait Mc {
         }
         self.call(environment, "orchestration.dispatchCommand", command, reply);
     }
+    /// POSTs `body` to `path` of the MC's HTTP API (answers too large for
+    /// the socket, as `/api/pull-requests/diff`), with its access token. A
+    /// fake answers it as the call `"POST <path>"` on no environment, so its
+    /// replies come as any call's do.
+    fn post(&self, path: &str, body: Json, reply: Reply) {
+        self.call("", &format!("POST {path}"), body, reply);
+    }
 
     // Streams on the MC's origin, beside the socket (a device's screen). A
     // fake without them has no origin to open one at.
@@ -323,6 +330,12 @@ impl Mc for Connection {
             .call(environment, method, payload, move |result| {
                 with_delivering(|engine| reply(engine, result.map_err(McError::from)));
             });
+    }
+
+    fn post(&self, path: &str, body: Json, reply: Reply) {
+        self.client.post(path, body, move |result| {
+            with_delivering(|engine| reply(engine, result.map_err(McError::from)));
+        });
     }
 
     fn subscribe(&self, shape: Json, mut on_frame: OnFrame, resume: Option<Resume>) -> SubId {
