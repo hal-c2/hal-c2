@@ -121,6 +121,28 @@ fn active(hub: &Hub) -> String {
         .to_string()
 }
 
+/// A thread closed while the window shows it stays closed when the route
+/// is published again for something else, such as the thread's new title.
+#[test]
+fn a_closed_thread_stays_closed_when_its_title_changes() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    assert_eq!(open_threads(&hub), vec![key("t1")]);
+    hub.with_controller::<ThreadStore, _>(|s, e| s.close(e, &key("t1")));
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 2,
+            "environment": {"environmentId": "env-1", "label": "Here"}}], "rows": [
+            ["a", "p1", "project", {"id": "p1", "title": "P", "workspaceRoot": "/work/p"}],
+            ["a", "t1", "thread", {"id": "t1", "projectId": "p1", "title": "Renamed"}]]}),
+    );
+    threads::drain(&hub.engine);
+    assert_eq!(hub.published("route")["title"], "Renamed");
+    assert!(open_threads(&hub).is_empty());
+}
+
 #[test]
 fn opening_a_thread_follows_its_stream_into_its_timeline() {
     let hub = hub(&["t1"]);

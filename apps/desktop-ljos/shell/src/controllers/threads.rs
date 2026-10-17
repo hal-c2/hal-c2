@@ -193,6 +193,9 @@ pub struct ThreadStore {
     idle_timer: Option<TimerId>,
     phase: Phase,
     hooked: bool,
+    /// The thread the route showed when last heard: a route published again
+    /// for its title or tab does not reopen a thread closed meanwhile.
+    routed: String,
 }
 
 impl Controller for ThreadStore {
@@ -233,6 +236,7 @@ impl Controller for ThreadStore {
             left_at: BTreeMap::new(),
             idle_timer: None,
             hooked: false,
+            routed: String::new(),
         }
     }
 
@@ -252,7 +256,7 @@ impl Controller for ThreadStore {
             Bridge::of(engine).watch(engine, "route", move |engine, _| {
                 let me = me.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
-                    me.run(engine, |s, e| s.open(e, &route_key(e)));
+                    me.run(engine, Self::follow_route);
                 });
             });
             let me = self.me.clone();
@@ -262,7 +266,8 @@ impl Controller for ThreadStore {
             });
         }
         self.read_settings(engine);
-        self.open(engine, &route_key(engine));
+        self.routed = route_key(engine);
+        self.open(engine, &self.routed.clone());
         self.retry(engine);
     }
 }
@@ -275,6 +280,15 @@ fn route_key(engine: &Engine) -> String {
 }
 
 impl ThreadStore {
+    /// The route was published: opens its thread when it shows another.
+    fn follow_route(&mut self, engine: &Engine) {
+        let key = route_key(engine);
+        if key != self.routed {
+            self.routed.clone_from(&key);
+            self.open(engine, &key);
+        }
+    }
+
     pub fn timeline(&self, key: &str) -> Option<ObjectId> {
         self.threads.get(key).map(|f| f.model)
     }

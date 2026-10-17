@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 91c803bb8717f5fed0a969a90f767bf7f3198af5ace329d2f93053723a7349b8 # shrinks to ops = [Open(0), Open(1), Advance(300000)]
+cc adf28a33a56406cb75a4eb6e948e0f36c0396deea918376fc4fb8f00edd2ab7d # shrinks to ops = [Restore(4), Drop, Open(4), Close(4)]
