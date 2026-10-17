@@ -370,10 +370,12 @@ fn sync(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
 
 /// A single shot of the flush timer, owned by the model.
 fn flush_after(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
-    let mut native = ljos_engine::Timer::default();
-    native.interval = FLUSH_DELAY_MS;
-    native.repeat = false;
-    native.running = true;
+    let native = ljos_engine::Timer {
+        interval: FLUSH_DELAY_MS,
+        repeat: false,
+        running: true,
+        ..ljos_engine::Timer::default()
+    };
     let timer = engine.create_native(native, Some(obj)).ok()?;
     engine
         .connect_by_name(timer, "triggered", move |engine, _| {

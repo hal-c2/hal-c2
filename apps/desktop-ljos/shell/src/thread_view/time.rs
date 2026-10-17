@@ -39,7 +39,7 @@ impl Zone {
 
     /// A wall-clock time of this zone, as UTC (the earlier of two, in a
     /// repeated hour).
-    fn from_local(self, at: NaiveDateTime) -> Option<DateTime<Utc>> {
+    fn utc_of(self, at: NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Zone::Local => Local
                 .from_local_datetime(&at)
@@ -102,7 +102,7 @@ pub fn parse_iso(text: &str, zone: Zone) -> Option<DateTime<Utc>> {
     ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M"]
         .iter()
         .find_map(|format| NaiveDateTime::parse_from_str(text, format).ok())
-        .and_then(|at| zone.from_local(at))
+        .and_then(|at| zone.utc_of(at))
 }
 
 /// A JSON string as a time; None for anything else.

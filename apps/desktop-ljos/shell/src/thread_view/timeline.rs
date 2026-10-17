@@ -1275,12 +1275,12 @@ impl Timeline {
             .collect();
         runs.sort_by(|a, b| b.cmp(a));
         let mut count = 0;
-        for i in 0..runs.len().saturating_sub(1) {
-            count += counts.get(runs[i].1).copied().unwrap_or(0);
+        for (ordinal, id) in runs.iter().take(runs.len().saturating_sub(1)) {
+            count += counts.get(*id).copied().unwrap_or(0);
             if count < WINDOW_ITEMS {
                 continue;
             }
-            cache.trim_thread(&self.thread_key, runs[i].0);
+            cache.trim_thread(&self.thread_key, *ordinal);
             return;
         }
     }
