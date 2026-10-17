@@ -22,6 +22,12 @@ defmodule HalC2.Import.PreviousInstall do
 
   @databases ~w(statev2.sqlite state.sqlite)
 
+  # The store's mark on an imported thread: "unfinished" from when its streams are made
+  # until its files are brought, "finished" after.
+  @mark_prefix "import.thread."
+  @unfinished "unfinished"
+  @finished "finished"
+
   @doc "The installs found on this machine: `[%{\"path\", \"label\"}]`."
   def sources(env \\ System.get_env(), user_home \\ Paths.user_home()) do
     old =
@@ -51,7 +57,7 @@ defmodule HalC2.Import.PreviousInstall do
   """
   def scan(%{"source" => path}) do
     with {:ok, index} <- index(path) do
-      here = here()
+      done = done()
 
       threads =
         for thread <- Map.values(index.threads), thread.parent == nil do
@@ -64,7 +70,7 @@ defmodule HalC2.Import.PreviousInstall do
             "updatedAt" => thread.updated_at,
             "subagents" => length(family(index, thread.id)) - 1,
             "settled" => thread.settled,
-            "imported" => MapSet.member?(here, thread.id)
+            "imported" => todo(index, thread.id, done) == []
           }
         end
 
@@ -102,9 +108,15 @@ defmodule HalC2.Import.PreviousInstall do
   def import_threads(_, _), do: {:error, "Name the install and the threads to import."}
 
   # `report` hears how far the thread is: its events read, then its threads finished.
+  # A thread whose streams are here but whose files were not all brought (the import
+  # failed or the MC stopped in `finish/3`) is marked unfinished in the store, so a retry
+  # finishes it rather than answering "already here".
   defp import_thread(path, index, files, id, report) do
+    here = here()
+    done = MapSet.difference(here, unfinished())
+
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
-         [_ | _] = missing <- family(index, id) -- MapSet.to_list(here()),
+         [_ | _] = missing <- todo(index, id, done),
          {:ok, project, target} <- target(index.projects[thread.project]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
@@ -112,12 +124,17 @@ defmodule HalC2.Import.PreviousInstall do
       events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
       threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
 
-      {:ok, _} =
-        HalC2.Import.V2.run(database(path), Store,
-          only: missing,
-          rewrite: rewrite,
-          progress: events
-        )
+      fresh = Enum.reject(missing, &MapSet.member?(here, &1))
+      for id <- fresh, do: :ok = Store.put_meta(mark_key(id), @unfinished)
+
+      if fresh != [] do
+        {:ok, _} =
+          HalC2.Import.V2.run(database(path), Store,
+            only: fresh,
+            rewrite: rewrite,
+            progress: events
+          )
+      end
 
       threads.(0)
 
@@ -125,6 +142,7 @@ defmodule HalC2.Import.PreviousInstall do
       |> Enum.with_index(1)
       |> Enum.each(fn {id, n} ->
         finish(path, files, id)
+        :ok = Store.put_meta(mark_key(id), @finished)
         threads.(n)
       end)
     else
@@ -181,8 +199,14 @@ defmodule HalC2.Import.PreviousInstall do
         }
 
         case Projects.mutate(input) do
-          {:ok, local} -> {:ok, project, local}
-          {:error, _} -> {:error, "Its project folder #{root} is no longer on this machine."}
+          {:ok, local} ->
+            # The project's row is written a moment after the commit; a retry of a failed
+            # import must find the project it made, not try to make it again.
+            HalC2.Streams.flush_shell(id)
+            {:ok, project, local}
+
+          {:error, _} ->
+            {:error, "Its project folder #{root} is no longer on this machine."}
         end
     end
   end
@@ -192,6 +216,21 @@ defmodule HalC2.Import.PreviousInstall do
     do: [id | Enum.flat_map(Map.get(index.children, id, []), &family(index, &1))]
 
   defp here, do: MapSet.new(Store.list_streams(Store.path()), & &1.id)
+
+  # The threads here with their files: their streams are here and no unfinished mark
+  # says the files are not. Read once for all threads, not one store read per thread.
+  defp done, do: MapSet.difference(here(), unfinished())
+
+  defp unfinished do
+    for {key, @unfinished} <- Store.metas(Store.path(), @mark_prefix),
+        into: MapSet.new(),
+        do: String.replace_prefix(key, @mark_prefix, "")
+  end
+
+  # The threads of a family still to bring: absent here, or here without their files.
+  defp todo(index, id, done), do: Enum.reject(family(index, id), &MapSet.member?(done, &1))
+
+  defp mark_key(id), do: @mark_prefix <> id
 
   defp ls(dir) do
     case File.ls(dir) do

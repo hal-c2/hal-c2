@@ -60,6 +60,19 @@ Feature: Carrying threads and context across servers and agents
     Then the user is told "Alpha" is already here
     And that install offers "Alpha" as imported
 
+  @mc
+  Scenario: A thread whose files could not be brought can be imported again
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the attachment of "Alpha" cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    And that install does not offer "Alpha" as imported
+    And the attachment of "Alpha" can be read again
+    When the user imports "Alpha" from that install
+    Then "Alpha" is listed in a new project at the folder it worked in
+    And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
+    And that install offers "Alpha" as imported
+
   @backlog @mc
   Scenario: Threads from the first version are migrated once
     Given the first version's database holds the thread "Legacy work"
