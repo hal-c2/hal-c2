@@ -303,10 +303,13 @@ defmodule HalC2.DelegationPropTest do
   # A delegation without a task prompt is refused and starts nothing (hal-c2/hal-c2#258).
   def delegate_blank(input) do
     observe(fn ->
+      tasks = fn -> Enum.map(StreamState.list(stream(@parent), "subagent"), & &1["id"]) end
+      before = tasks.()
+
       assert {:error, "invalid_task", _} =
                Delegation.delegate(%{"id" => @parent}, "codex", input)
 
-      assert Enum.map(StreamState.list(stream(@parent), "subagent"), & &1["id"]) == [@task]
+      assert tasks.() == before
     end)
   end
 
