@@ -756,32 +756,13 @@ fn configuring_reopens_permissions_or_binds_again() {
     assert!(probed(true).machine.configure().is_empty());
 }
 
-// -- The hash ----------------------------------------------------------------
+// -- The shortcut id ---------------------------------------------------------
 
 #[test]
-fn sha256_is_the_standard_digest() {
-    let hex =
-        |bytes: &[u8]| -> String { sha256(bytes).iter().map(|b| format!("{b:02x}")).collect() };
+fn the_shortcut_id_is_desktop_qts() {
     assert_eq!(
-        hex(b""),
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
-    assert_eq!(
-        hex(b"abc"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
-    // Two blocks, and the padding edge at 55 and 56 bytes.
-    assert_eq!(
-        hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
-        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-    );
-    assert_eq!(
-        hex(&[b'a'; 55]),
-        "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"
-    );
-    assert_eq!(
-        hex(&[b'a'; 56]),
-        "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"
+        shortcut_id("CTRL+SHIFT+2"),
+        "hal-c2-snap-shot-33b6c70257289646"
     );
 }
 

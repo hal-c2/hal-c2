@@ -40,6 +40,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 iana-time-zone = "0.1"
 # The plugins' files the MC sends (controllers/mc_plugin.rs).
 base64 = "0.23"
+# The SnapShot shortcut's portal id (snap_shot/portal.rs), as desktop-qt's
+# QCryptographicHash.
+sha2 = "0.10"
 # The local folder browser (src/folders): watching folders and moving files to the trash.
 notify = "8"
 trash = "5"
