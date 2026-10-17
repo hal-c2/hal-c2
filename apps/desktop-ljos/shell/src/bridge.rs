@@ -517,8 +517,8 @@ impl Bridge {
     /// This window's `T`: the engine's singleton for the first window, an
     /// object of its own for each other.
     ///
-    /// TODO(ljos-gap: Window-scoped singletons): QML still finds the
-    /// engine's, so another window's bricks cannot see their own.
+    /// TODO(ljos#81): QML still finds the engine's, so another window's
+    /// bricks cannot see their own.
     pub fn singleton<T: QmlSingleton + Default>(
         self,
         engine: &Engine,

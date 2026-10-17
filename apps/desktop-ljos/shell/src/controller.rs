@@ -560,9 +560,9 @@ fn close_now(engine: &Engine, id: &str) {
         };
         if windows.len() == 1 {
             drop(windows);
-            // TODO(ljos-gap: An app that runs with no window shown): on
-            // macOS the app stays in the dock with its last window closed;
-            // Ljós ends the event loop once no window is shown.
+            // TODO(ljos#82): on macOS the app stays in the dock with its
+            // last window closed; Ljós ends the event loop once no window is
+            // shown.
             if !cfg!(target_os = "macos") {
                 engine.request_quit();
             }
