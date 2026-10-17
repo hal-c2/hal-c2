@@ -17,6 +17,7 @@ mod connections;
 mod device_settings;
 mod diagnostics;
 mod git;
+mod identity;
 mod keybindings;
 mod layout;
 mod limit_recovery;

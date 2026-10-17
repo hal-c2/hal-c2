@@ -15,6 +15,7 @@ pub mod drafts;
 pub mod file_actions;
 pub mod folders;
 pub mod git;
+pub mod identity;
 pub mod keybindings;
 pub mod layout;
 pub mod licenses;
@@ -109,6 +110,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<file_actions::FileActions>("fileActions", &[], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
         Registration::new::<git::Git>("git", &["git"], Scope::Window),
+        Registration::new::<identity::Identity>(
+            "identity",
+            &["projectIcons", "projectIconPicker", "environmentIcons"],
+            Scope::Window,
+        ),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<licenses::Licenses>("licenses", &["licenses"], Scope::Window),
