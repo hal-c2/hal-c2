@@ -397,8 +397,8 @@ for line in sys.stdin:
             # The turn took the steer and ended before its answer got back.
             closing = False
             text = "steered: " + params["input"][0]["text"]
-            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
-            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{ctx['turnId']}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{ctx['turnId']}", "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
             send({"id": mid, "result": {"turnId": ctx["turnId"]}})
             continue
