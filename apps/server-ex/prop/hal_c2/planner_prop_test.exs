@@ -2466,6 +2466,11 @@ defmodule HalC2.PlannerPropTest do
           # Once more, for what the processes that just ended told it.
           if settled_once, do: :ok, else: drain(true)
 
+        # A look that ended between the state read and the links read: its `:DOWN` is
+        # already queued ahead of the next state read, so this goes round once, not forever.
+        [] ->
+          drain(false)
+
         kids ->
           await(kids)
           drain(false)
@@ -2489,7 +2494,6 @@ defmodule HalC2.PlannerPropTest do
 
   # Waits for the first of `kids` to end. A look that has ended leaves `polling` set
   # until the planner reads its `:DOWN`, which the next state read queues behind.
-  defp await([]), do: :ok
 
   defp await([kid | _]) do
     ref = Process.monitor(kid)
