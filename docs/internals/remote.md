@@ -22,6 +22,16 @@ prove that a route works. In particular, a host's loopback address refers to a
 different machine when another device opens it. Endpoint selection must not
 silently fall back to loopback when a shareable endpoint is unavailable.
 
+A dev server a thread starts on another cluster member listens on that machine's
+loopback. [`preview.forward`](../../apps/server-ex/lib/hal_c2/preview_forward.ex) carries it
+over the cluster's distribution link, as `ssh -L` would: the client asks the MC it is
+connected to, which binds its own loopback; the thread's MC dials
+its dev server, and only for a port one of the thread's browser tabs names, never its own
+or the cluster's ports. That lands on the user's machine only when the client's MC runs
+there, so a client must not ask for a forward of an MC on another machine. The bytes share
+the distribution link with every other message between the two MCs, which is why each
+connection's chunks are capped and acked rather than sent as fast as the socket reads.
+
 ## Access and process ownership are different
 
 Tailscale supplies an endpoint for ordinary pairing, so it needs no separate

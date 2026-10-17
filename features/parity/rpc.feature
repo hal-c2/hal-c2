@@ -8,7 +8,7 @@
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
 #   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
-#   Counts: 172 contract methods; 169 aligned, 3 dropped.
+#   Counts: 173 contract methods; 170 aligned, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
 #   "via" says how a protocol 3 client reaches the method: an rpc frame (under the MC's
@@ -28,7 +28,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the MC answers with the contract's response shape for <method>
 
-    Examples: 169 aligned methods
+    Examples: 170 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -156,6 +156,7 @@ Feature: RPC parity with the TypeScript server
       | preview.refresh                          | preview           | rpc                                                                       |
       | preview.close                            | preview           | rpc                                                                       |
       | preview.list                             | preview           | rpc                                                                       |
+      | preview.forward                          | preview           | rpc                                                                       |
       | preview.reportStatus                     | preview           | rpc                                                                       |
       | previewAutomation.connect                | previewAutomation | shape previewAutomation                                                   |
       | previewAutomation.respond                | previewAutomation | rpc                                                                       |

@@ -4,9 +4,12 @@
 #   apps/server-ex/lib/hal_c2/preview.ex (serverEpoch per MC run, watcher monitoring)
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host stream ends on eviction, dropped on socket exit)
 #   apps/server-ex/lib/hal_c2/local_servers.ex
+#   apps/server-ex/lib/hal_c2/preview_forward.ex, preview_forward/ (preview.forward: listener, grant, pipes)
+#   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link a forward rides on)
+#   apps/desktop-qt/src/native/ThreadPreviews.cpp (openAddress: a loopback page of another MC's thread opens through its forward)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (thread.openAddress, link.menu's Open link)
 #   apps/web/src/components/preview/usePreviewSession.ts, useDiscoveredLocalServers.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
-#   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link a forward rides on)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp, apps/desktop-qt/src/ShellBridge.cpp (tabs open in the system browser)
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (web links in a reply)
 #   apps/web/src/browser/browserTargetResolver.ts (upstream rewrote localhost to the environment's host,
@@ -101,6 +104,15 @@ Feature: Preview across MCs and devices
     When the user opens a browser tab at "http://localhost:3000" for a thread on that MC
     Then the client listens on its own machine and carries the page over its connection to the MC
 
+  # Until then a forward through an MC on another machine would listen on that machine.
+  @desktop
+  Scenario: A desktop whose MC is on another machine opens a dev server's address as it is
+    Given the desktop's MC runs on another machine and is in a cluster with a second MC
+    And a thread on the second MC has a browser tab at "http://localhost:3000"
+    When the user opens the tab
+    Then the system browser opens "http://localhost:3000"
+    And nothing is forwarded
+
   # A dev server on the thread's machine is usually reachable only from that machine, and
   # its pages, cookies and sign-in callbacks expect the address "localhost". The MC on the
   # user's machine forwards the port over the cluster, so the user's browser opens the same
@@ -112,26 +124,26 @@ Feature: Preview across MCs and devices
       And that MC is in a cluster with a second MC on another machine
       And a dev server on the second MC's machine listens on port 3000 for that machine only
 
-    @backlog @mc
+    @mc
     Scenario: Opening a tab for a dev server on another MC forwards its port
       When the client opens a browser tab at "http://localhost:3000" for a thread on the second MC
       Then the client's MC listens on port 3000 for its own machine only
       And a page asked of that port is answered by the second MC's dev server
 
-    @backlog @mc
+    @mc
     Scenario: A forwarded dev server keeps its live connections
       Given the client's MC forwards port 3000 for a thread on the second MC
       When a page from the forward opens a websocket to the dev server
       Then messages pass both ways until either side closes it
 
-    @backlog @mc
+    @mc
     Scenario: A port already in use on the client's machine is forwarded on another one
       Given port 3000 is in use on the client's machine
       When the client opens a browser tab at "http://localhost:3000" for a thread on the second MC
       Then the client's MC forwards the dev server on a free port of its own machine
       And the client is told the address it forwards to
 
-    @backlog @mc
+    @mc
     Scenario Outline: Only a dev server a thread has a tab for is forwarded
       When the client asks to forward <port> of the second MC's machine for a thread
       Then the request is refused
@@ -143,33 +155,46 @@ Feature: Preview across MCs and devices
         | the second MC's own port, even when a tab names it |
         | the cluster's port, even when a tab names it       |
 
-    @backlog @mc
+    @mc
     Scenario: A forward closes with the last tab that uses it
       Given the client's MC forwards port 3000 for a thread on the second MC
       When the thread's last tab at port 3000 is closed
       Then the client's MC stops listening on port 3000
 
-    @backlog @mc
+    @mc
     Scenario: A forward to an MC that stops answering closes
       Given the client's MC forwards port 3000 for a thread on the second MC
       When the second MC stops answering
       Then the client's MC stops listening on port 3000
       And connections through it are closed rather than left hanging
 
-    @backlog @mc
+    @mc
     Scenario: A dev server on the client's own MC is not forwarded
       When the client opens a browser tab at "http://localhost:3000" for a thread on its own MC
       Then nothing is forwarded
       And the tab's address stays "http://localhost:3000"
 
-    @backlog @desktop
+    @desktop
     Scenario: The desktop opens a dev server on another machine through the forward
       Given a thread on the second MC has a browser tab at "http://localhost:3000"
       When the user opens the tab
       Then the system browser opens the address the desktop's MC forwards to the dev server
 
-    @backlog @desktop
+    # The second MC forwards only a port one of the thread's tabs names.
+    @desktop
     Scenario: A dev server link in a reply opens through the forward
       Given the agent of a thread on the second MC writes "http://localhost:3000/cart"
       When the user opens the link
-      Then the system browser opens "/cart" on the address the desktop's MC forwards to the dev server
+      Then the thread gets a browser tab at "http://localhost:3000/cart"
+      And the system browser opens "/cart" on the address the desktop's MC forwards to the dev server
+
+    # Hidden, the desktop no longer follows the thread's tabs, so it asks which there are.
+    @desktop
+    Scenario: A dev server link opens through the forward after its tab closed elsewhere
+      Given a thread on the second MC has a browser tab at "http://localhost:3000"
+      And the agent of a thread on the second MC writes "http://localhost:3000/cart"
+      And the user hides the thread's previews
+      And another client closes the thread's tab at "http://localhost:3000"
+      When the user opens the link
+      Then the thread gets a browser tab at "http://localhost:3000/cart"
+      And the system browser opens "/cart" on the address the desktop's MC forwards to the dev server

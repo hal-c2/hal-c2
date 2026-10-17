@@ -270,8 +270,11 @@ defmodule HalC2.Test.Mc do
   Starts a second MC joined to this one: a `:peer` VM running the whole app in
   its own home under the scenario's `mc.home`. This VM becomes distributed on
   first use. Returns the peer's MC name; the peer stops when the scenario ends.
+
+  `opts`: `:env`, more of the peer's `:hal_c2` settings; `stoppable: true` lets
+  the scenario stop the MC itself (`:init.stop/0`) and still clean up after it.
   """
-  def start_peer(mc) do
+  def start_peer(mc, opts \\ []) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
@@ -283,13 +286,17 @@ defmodule HalC2.Test.Mc do
         name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
+        peer_down: if(opts[:stoppable], do: :continue, else: :stop),
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
       })
 
     ExUnit.Callbacks.on_exit(fn -> :peer.stop(peer) end)
 
     # A peer MC does not read Mix config, so it gets the MC settings directly.
-    for {key, value} <- [start_mc: true, home: Path.join(mc.home, "peer"), port: 0],
+    env =
+      [start_mc: true, home: Path.join(mc.home, "peer"), port: 0] ++ Keyword.get(opts, :env, [])
+
+    for {key, value} <- env,
         do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])

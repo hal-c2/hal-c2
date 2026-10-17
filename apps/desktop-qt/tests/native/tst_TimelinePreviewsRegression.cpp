@@ -177,6 +177,30 @@ private slots:
     QCOMPARE(redrawn.count(), 0);
     QCOMPARE(resets.count(), 0);
   }
+
+  // A link opened for a thread on another MC gets a tab there first; when the
+  // answers came after the user had gone to another thread, that tab showed in
+  // the other thread's list.
+  void aLinkForAThreadLeftBehindAddsNoTabToTheNextOne() {
+    Fixture f;
+    QVERIFY(QTest::qWaitFor([&f] { return f.client->isReady(); }));
+    const QString remote = QStringLiteral("t2");
+    f.previews->setThread(QStringLiteral("env-b"), remote, QStringLiteral("mc-b"));
+    f.previews->openAddress(QStringLiteral("http://localhost:3000/"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    const FakeMc::Rpc remoteList = f.held[QStringLiteral("preview.list")].takeFirst();
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({}, 1)));
+    f.mc.reply(remoteList, list({}, 1));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.open")).isEmpty(); }));
+    const QJsonObject opened{{QStringLiteral("threadId"), remote},
+                             {QStringLiteral("tabId"), QStringLiteral("tab-9")},
+                             {QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Loading")},
+                                                                       {QStringLiteral("url"), QStringLiteral("http://localhost:3000/")}}}};
+    f.mc.reply(f.held[QStringLiteral("preview.open")].takeFirst(), opened);
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList());
+  }
 };
 
 QTEST_MAIN(tst_TimelinePreviewsRegression)

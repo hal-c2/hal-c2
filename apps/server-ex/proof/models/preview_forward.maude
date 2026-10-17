@@ -1,0 +1,331 @@
+sload model-checker
+
+--- A forwarded dev server, HalC2.PreviewForward: the client's MC b listens for the
+--- browser (Listener) and carries one connection (a Pipe pair) to the thread's MC a,
+--- whose Grant lets it dial the dev server while the thread's tab names the port.
+--- Bytes move in chunks, each acked, with at most `win` unacked a way. The browser and
+--- the dev server write and close; the tab closes; and one fault may strike: the
+--- listener or the grant is killed, an MC stops, or the MCs part.
+--- proof/hal_c2/preview_forward_proof_test.exs maps it to the code and checks it.
+---
+--- Every message travels a lane from its sender to its receiver, in order, as Erlang
+--- keeps a pair's messages; a receiver takes the head of any lane to it. A lost MC or
+--- a parting drops what is on the lanes between the MCs, and each process on either
+--- side that monitors one across is told so with a DOWN, behind nothing.
+
+mod PREVIEW-FORWARD is
+  protecting NAT .
+
+  sorts Node Pid Life Msg Msgs Item Conf Sys .
+  subsort Msg < Msgs .
+  subsort Item < Conf .
+
+  ops a b : -> Node [ctor] .
+
+  --- The listener and the browser's pipe, on b; the grant, the dev server's pipe, and
+  --- HalC2.Preview, which sends the grant its tab's changes, on a.
+  ops l pa g pd pv : -> Pid [ctor] .
+
+  op node : Pid -> Node .
+  eq node(l) = b .
+  eq node(pa) = b .
+  eq node(g) = a .
+  eq node(pd) = a .
+  eq node(pv) = a .
+
+  op peer : Pid -> Pid .
+  eq peer(pa) = pd .
+  eq peer(pd) = pa .
+
+  --- Not started; a listener asking for its grant, or the browser's pipe handed its
+  --- socket; a pipe in its dial call (pa) or dialing the dev server (pd); running; ended.
+  ops idle asking dialing up dead : -> Life [ctor] .
+
+  --- pa's dial call to the grant and its answer; a chunk and its ack; a monitor's
+  --- DOWN; the tab's change, from HalC2.Preview.
+  ops dq ack dn ev : -> Msg [ctor] .
+  op dr : Bool -> Msg [ctor] .
+  op dt : Nat -> Msg [ctor] .
+  op nomsg : -> Msgs [ctor] .
+  op _;_ : Msgs Msgs -> Msgs [ctor assoc id: nomsg] .
+
+  op ln : Pid Pid Msgs -> Item [ctor] .
+
+  op lst : Life -> Item [ctor] .
+  op grt : Life -> Item [ctor] .
+  --- A pipe: its life, its chunks unacked, whether its socket is armed, and the last
+  --- chunk it was sent.
+  op pp : Pid Life Nat Bool Nat -> Item [ctor] .
+  --- A pipe's socket and the app at its other end, the browser's for pa, the dev
+  --- server's for pd: the chunks the app has left to write, has written, the pipe has
+  --- read, and the app got from the pipe; whether the app closed its end; whether the
+  --- pipe's end is open.
+  op sk : Pid Nat Nat Nat Nat Bool Bool -> Item [ctor] .
+  --- The browser about to connect, with chunks to write, and the dev server's; its
+  --- connection waiting to be accepted; the dev server's chunks until it is dialed.
+  op wants : Nat Nat -> Item [ctor] .
+  op pend : Nat -> Item [ctor] .
+  op dev : Nat -> Item [ctor] .
+  --- The exit signal a pipe gets from the listener or grant it is linked to.
+  op kx : Pid -> Item [ctor] .
+  --- Whether the thread's tab names the port; the window; the faults left; a fault
+  --- happened; the MCs parted; an MC stopped; a chunk came out of order.
+  op tab : Bool -> Item [ctor] .
+  op win : Nat -> Item [ctor] .
+  op budget : Nat -> Item [ctor] .
+  ops fault split oops : -> Item [ctor] .
+  op down : Node -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars P Q : Pid .
+  vars X Y XA XD : Life .
+  vars U U' UA UD I I' IA ID J K K' Wr Wr' R R' Gt Gt' N M F W : Nat .
+  vars A A' AA AD S O : Bool .
+  vars L L1 L2 L3 L4 L5 L6 : Msgs .
+  var Ms : Msg .
+  var C : Conf .
+  var E : Item .
+  var Z : Sys .
+
+  --- N chunks from the browser, M from the dev server, a window of W, F faults.
+  op initial : Nat Nat Nat Nat -> Sys .
+  eq initial(N, M, W, F)
+   = { lst(asking) grt(idle) pp(pa, idle, 0, false, 0) pp(pd, idle, 0, false, 0)
+       wants(N, M) tab(true) win(W) budget(F)
+       ln(pa, pd, nomsg) ln(pd, pa, nomsg) ln(pa, g, nomsg) ln(g, pa, nomsg)
+       ln(g, l, nomsg) ln(l, g, nomsg) ln(pv, g, nomsg) } .
+
+  op alive : Life -> Bool .
+  eq alive(asking) = true .
+  eq alive(dialing) = true .
+  eq alive(up) = true .
+  eq alive(idle) = false .
+  eq alive(dead) = false .
+
+  op has : Item Conf -> Bool .
+  eq has(E, E C) = true .
+  eq has(E, C) = false [owise] .
+
+  --- sending -------------------------------------------------------------------------
+
+  op cut : Pid Pid Conf -> Bool .
+  eq cut(P, Q, C)
+   = has(down(node(P)), C) or has(down(node(Q)), C) or (node(P) =/= node(Q) and has(split, C)) .
+
+  op send : Pid Pid Msg Conf -> Conf .
+  eq send(P, Q, Ms, ln(P, Q, L) C)
+   = if cut(P, Q, C) then ln(P, Q, L) C else ln(P, Q, L ; Ms) C fi .
+
+  --- A DOWN put on an emptied lane, when a parting or a lost MC ends a monitor.
+  op tell : Pid Pid Bool Conf -> Conf .
+  eq tell(P, Q, true, ln(P, Q, L) C) = ln(P, Q, L ; dn) C .
+  eq tell(P, Q, false, C) = C .
+
+  op cutAll : Conf -> Conf .
+  eq cutAll(ln(pa, pd, L1) ln(pd, pa, L2) ln(pa, g, L3) ln(g, pa, L4) ln(g, l, L5) ln(l, g, L6) C)
+   = ln(pa, pd, nomsg) ln(pd, pa, nomsg) ln(pa, g, nomsg) ln(g, pa, nomsg)
+     ln(g, l, nomsg) ln(l, g, nomsg) C .
+
+  --- ending ----------------------------------------------------------------------------
+
+  op close : Pid Conf -> Conf .
+  eq close(P, sk(P, K, Wr, R, Gt, S, true) C) = sk(P, K, Wr, R, Gt, S, false) C .
+  eq close(P, C) = C [owise] .
+
+  --- Whether a pipe's peer, at life Y, monitors it: pd monitors pa from its start, pa
+  --- monitors pd once its dial call is answered.
+  op watched : Pid Life -> Bool .
+  eq watched(pa, Y) = alive(Y) .
+  eq watched(pd, Y) = Y == up .
+
+  --- A pipe ends: its socket closes, and a peer that monitors it is told.
+  op stop : Pid Conf -> Conf .
+  ceq stop(P, pp(P, X, U, A, I) pp(Q, Y, U', A', I') C)
+   = pp(P, dead, U, A, I) pp(Q, Y, U', A', I')
+     close(P, if watched(P, Y) then send(P, Q, dn, C) else C fi)
+   if Q == peer(P) .
+
+  --- The grant ends: the listener, monitoring it, is told, and pd, linked to it, is killed.
+  op endGrant : Conf -> Conf .
+  eq endGrant(grt(X) pp(pd, Y, U, A, I) C)
+   = grt(dead) pp(pd, Y, U, A, I) (if alive(Y) then kx(pd) else empty fi) send(g, l, dn, C) .
+
+  --- The listener ends: the grant, monitoring it, is told, and pa, linked to it, is killed.
+  op endListener : Conf -> Conf .
+  eq endListener(lst(X) pp(pa, Y, U, A, I) C)
+   = lst(dead) pp(pa, Y, U, A, I) (if alive(Y) then kx(pa) else empty fi) send(l, g, dn, C) .
+
+  --- the forward --------------------------------------------------------------------
+
+  --- Listener.init/1 asks a for a grant (PreviewForward.grant/3, Grant.init/1), which
+  --- exists while the tab names the port; else, or with a out of reach, it stops.
+  crl [granted] : { lst(asking) grt(idle) tab(true) C } => { lst(up) grt(up) tab(true) C }
+    if not cut(l, g, C) .
+  crl [refused] : { lst(asking) tab(false) C } => { lst(dead) tab(false) C }
+    if not cut(l, g, C) .
+  crl [unavailable] : { lst(asking) C } => { lst(dead) C } if cut(l, g, C) .
+
+  --- The browser connects; the listener accepts and hands the socket to a pipe.
+  rl [connect] : lst(up) wants(N, M) => lst(up) pend(N) dev(M) .
+  rl [accept] : lst(up) pend(N) pp(pa, idle, 0, false, 0)
+    => lst(up) pp(pa, asking, 0, false, 0) sk(pa, N, 0, 0, 0, false, true) .
+  --- No listener accepts it: the connection is refused.
+  rl [reset] : lst(dead) pend(N) => lst(dead) .
+
+  --- Pipe {:socket, _}: the dial call to the grant over :erpc, which fails once a is
+  --- out of reach.
+  crl [ask] : { pp(pa, asking, 0, false, 0) C } => { pp(pa, dialing, 0, false, 0) send(pa, g, dq, C) }
+    if not cut(pa, g, C) .
+  crl [ask-failed] : { pp(pa, X, U, A, I) C } => { stop(pa, pp(pa, X, U, A, I) C) }
+    if (X == asking or X == dialing) and cut(pa, g, C) .
+
+  --- Grant {:dial, _}: pd, linked to the grant, monitoring pa (a DOWN at once if pa has
+  --- ended), and the answer.
+  rl [dial-call] : { grt(up) ln(pa, g, dq ; L) pp(pd, idle, 0, false, 0) pp(pa, Y, U, A, I) C }
+    => { grt(up) ln(pa, g, L) pp(pd, dialing, 0, false, 0) pp(pa, Y, U, A, I)
+         send(g, pa, dr(true), if alive(Y) then C else send(pa, pd, dn, C) fi) } .
+  --- PreviewForward.dial/2 to a grant that has ended: the call exits, the answer fails.
+  rl [dial-gone] : { grt(dead) ln(pa, g, dq ; L) C } => { grt(dead) send(g, pa, dr(false), ln(pa, g, L) C) } .
+
+  --- pa gets its answer: it monitors pd (a DOWN at once if pd has ended) and arms.
+  rl [answer] : { pp(pa, dialing, 0, false, 0) ln(g, pa, dr(true) ; L) pp(pd, Y, U, A, I) C }
+    => { pp(pa, up, 0, true, 0) ln(g, pa, L) pp(pd, Y, U, A, I)
+         (if alive(Y) then C else send(pd, pa, dn, C) fi) } .
+  rl [answer-failed] : { pp(pa, dialing, 0, false, 0) ln(g, pa, dr(false) ; L) C }
+    => { stop(pa, pp(pa, dialing, 0, false, 0) ln(g, pa, L) C) } .
+
+  --- Pipe handle_continue {:dial, _}: the dev server answers, or nothing listens.
+  rl [dial] : pp(pd, dialing, 0, false, 0) dev(M) => pp(pd, up, 0, true, 0) sk(pd, M, 0, 0, 0, false, true) .
+  rl [dial-refused] : { pp(pd, dialing, 0, false, 0) C } => { stop(pd, pp(pd, dialing, 0, false, 0) C) } .
+
+  --- Pipe {:tcp, _, _}: an armed pipe reads a chunk (its socket's buffer is one chunk),
+  --- sends it on, and arms again while fewer than `win` are unacked.
+  crl [tcp] : { pp(P, up, U, true, I) sk(P, K, Wr, R, Gt, S, true) win(W) C }
+    => { pp(P, up, s U, s U < W, I) sk(P, K, Wr, s R, Gt, S, true) win(W) send(P, peer(P), dt(s R), C) }
+    if R < Wr .
+
+  --- Pipe {:preview_forward, :data, _}: the chunk is written to the app and acked; an
+  --- app that has closed its end refuses it, and the chunk is dropped and acked.
+  crl [data] : { pp(P, up, U, A, I) ln(Q, P, dt(J) ; L) sk(P, K, Wr, R, Gt, S, true) C }
+    => { pp(P, up, U, A, J) ln(Q, P, L) sk(P, K, Wr, R, if S then Gt else s Gt fi, S, true)
+         (if J == s I then empty else oops fi) send(P, Q, ack, C) }
+    if Q == peer(P) .
+
+  --- Pipe {:preview_forward, :ack}: one fewer unacked, and armed again if it can be.
+  crl [ack] : { pp(P, up, s U, A, I) ln(Q, P, ack ; L) win(W) C }
+    => { pp(P, up, U, A or U < W, I) ln(Q, P, L) win(W) C }
+    if Q == peer(P) .
+
+  --- Pipe {:tcp_closed, _}: an armed pipe sees the app's close after all it wrote.
+  rl [closed] : { pp(P, up, U, true, I) sk(P, K, Wr, Wr, Gt, true, true) C }
+    => { stop(P, pp(P, up, U, true, I) sk(P, K, Wr, Wr, Gt, true, true) C) } .
+
+  --- Pipe {:DOWN, ...}: the other end has gone, after all it sent.
+  crl [down] : { pp(P, up, U, A, I) ln(Q, P, dn ; L) C } => { stop(P, pp(P, up, U, A, I) ln(Q, P, L) C) }
+    if Q == peer(P) .
+
+  --- A linked pipe dies with its listener or grant.
+  rl [killed] : { kx(P) pp(P, X, U, A, I) C }
+    => { if alive(X) then stop(P, pp(P, X, U, A, I) C) else pp(P, X, U, A, I) C fi } .
+
+  --- Grant {:hal_c2_preview, ...}: the tab no longer names the port. Grant {:DOWN, ...}:
+  --- the listener has gone. Either ends it.
+  rl [grant-closed] : { grt(up) ln(pv, g, ev ; L) C } => { endGrant(grt(up) ln(pv, g, L) C) } .
+  rl [grant-down] : { grt(up) ln(l, g, dn ; L) C } => { endGrant(grt(up) ln(l, g, L) C) } .
+
+  --- Listener {:DOWN, ...}: the grant has gone.
+  rl [listener-down] : { lst(up) ln(g, l, dn ; L) C } => { endListener(lst(up) ln(g, l, L) C) } .
+
+  --- the environment ----------------------------------------------------------------
+
+  --- The tab closes or navigates away; HalC2.Preview tells the grant, subscribed.
+  rl [close-tab] : { tab(true) grt(X) C }
+    => { tab(false) grt(X) (if X == up then send(pv, g, ev, C) else C fi) } .
+
+  --- The browser or the dev server writes a chunk, or closes its end.
+  rl [write] : sk(P, s K, Wr, R, Gt, false, true) => sk(P, K, s Wr, R, Gt, false, true) .
+  rl [shut] : sk(P, K, Wr, R, Gt, false, true) => sk(P, K, Wr, R, Gt, true, true) .
+
+  --- The listener or the grant is killed.
+  rl [kill] : { budget(s F) lst(up) C } => { endListener(budget(F) fault lst(up) C) } .
+  rl [kill] : { budget(s F) grt(up) C } => { endGrant(budget(F) fault grt(up) C) } .
+
+  --- An MC stops: its processes end and its sockets close.
+  rl [crash] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { budget(F) fault down(a) lst(X) grt(if Y == idle then idle else dead fi)
+         pp(pa, XA, UA, AA, IA) pp(pd, if XD == idle then idle else dead fi, UD, AD, ID)
+         close(pd, tell(g, l, X == up, tell(pd, pa, XA == up, cutAll(C)))) } .
+  rl [crash] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { budget(F) fault down(b) lst(dead) grt(Y)
+         pp(pa, if XA == idle then idle else dead fi, UA, AA, IA) pp(pd, XD, UD, AD, ID)
+         close(pa, tell(l, g, Y == up, tell(pa, pd, alive(XD), cutAll(C)))) } .
+
+  --- The MCs lose each other.
+  rl [split] : { budget(s F) lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C }
+    => { budget(F) fault split lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID)
+         tell(g, l, X == up, tell(l, g, Y == up, tell(pd, pa, XA == up, tell(pa, pd, alive(XD), cutAll(C))))) } .
+
+  --- bad states -----------------------------------------------------------------------
+
+  op dts : Msgs -> Nat .
+  eq dts(nomsg) = 0 .
+  eq dts(dt(J) ; L) = s dts(L) .
+  eq dts(Ms ; L) = dts(L) [owise] .
+
+  --- More chunks unacked, or on their way, than the window.
+  op overdrawn : Sys -> Bool .
+  ceq overdrawn({ pp(P, X, U, A, I) win(W) C }) = true if U > W .
+  ceq overdrawn({ ln(P, Q, L) win(W) C }) = true if dts(L) > W .
+  eq overdrawn(Z) = false [owise] .
+
+  --- A chunk came out of order, twice, or not at all.
+  op disordered : Sys -> Bool .
+  eq disordered({ oops C }) = true .
+  eq disordered(Z) = false [owise] .
+
+  --- The forward ended while its tab named the port and nothing went wrong.
+  op torn : Sys -> Bool .
+  ceq torn({ tab(true) lst(dead) C }) = true if not has(fault, C) .
+  eq torn(Z) = false [owise] .
+
+  --- One app closed first, nothing went wrong, and the other's end closed short of what
+  --- the first had written.
+  op lost : Sys -> Bool .
+  ceq lost({ tab(true) sk(pa, K, Wr, R, Gt, true, O) sk(pd, K', Wr', R', Gt', false, false) C }) = true
+    if not has(fault, C) and Gt' < Wr .
+  ceq lost({ tab(true) sk(pd, K', Wr', R', Gt', true, O) sk(pa, K, Wr, R, Gt, false, false) C }) = true
+    if not has(fault, C) and Gt < Wr' .
+  eq lost(Z) = false [owise] .
+endm
+
+mod PREVIEW-FORWARD-PROPS is
+  including PREVIEW-FORWARD .
+  including MODEL-CHECKER .
+  subsort Sys < State .
+
+  --- The tab closed or a fault struck; the forward and its connection have ended; an
+  --- app closed its end; the connection has ended.
+  ops over ended shut gone : -> Prop [ctor] .
+
+  vars X Y XA XD : Life .
+  vars UA UD IA ID K Wr R Gt : Nat .
+  vars AA AD O : Bool .
+  var P : Pid .
+  var C : Conf .
+  var Z : Sys .
+
+  eq { tab(false) C } |= over = true .
+  eq { fault C } |= over = true .
+  eq Z |= over = false [owise] .
+
+  eq { lst(X) grt(Y) pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C } |= ended
+   = not alive(X) and not alive(Y) and not alive(XA) and not alive(XD) .
+
+  eq { sk(P, K, Wr, R, Gt, true, O) C } |= shut = true .
+  eq Z |= shut = false [owise] .
+
+  eq { pp(pa, XA, UA, AA, IA) pp(pd, XD, UD, AD, ID) C } |= gone = not alive(XA) and not alive(XD) .
+endm
