@@ -148,10 +148,7 @@ fn arguments_are_passed_as_they_are() {
         "helper.sh",
         r#"printf '{"type":"transcript","text":"%s|%s"}\n' "$1" "$2""#,
     );
-    f.set(
-        "arguments",
-        serde_json::json!(["a b", "$HOME"]).to_value(),
-    );
+    f.set("arguments", serde_json::json!(["a b", "$HOME"]).to_value());
     assert!(f.start(&helper));
     f.until("the end", |f| f.get("running") == "false");
     assert_eq!(f.get("heard"), "a b|$HOME");

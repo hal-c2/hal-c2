@@ -22,8 +22,8 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use ljos::prelude::QmlValue;
 use ljos::prelude::ClipboardMode;
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, Platform, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, ItemModel, ModelChange, ModelListener, ModelListeners};
 

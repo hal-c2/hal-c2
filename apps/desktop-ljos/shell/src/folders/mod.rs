@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ljos::prelude::{
-    Atom, Cx, Engine, EngineError, ItemTree, ObjectId, QmlObject, TreeChange,
-    TreeListener, TreeListeners, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ItemTree, ObjectId, QmlObject, TreeChange, TreeListener,
+    TreeListeners, Value, qml_impl,
 };
 
 use plain::{broad_directory, clean, occupied, plain_directory, plain_entry, within};

@@ -1141,10 +1141,7 @@ impl Controller for Terminals {
                 TerminalsObject::TABS,
                 tabs.object.map_or(Value::Null, Value::Object),
             );
-            let _ = cx.set(
-                TerminalsObject::GROUP_SIZES,
-                json!({}).to_value(),
-            );
+            let _ = cx.set(TerminalsObject::GROUP_SIZES, json!({}).to_value());
         }
         let mut terminals = Terminals {
             bridge: init.bridge,

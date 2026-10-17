@@ -15,8 +15,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
-use ljos::prelude::QmlValue;
 use ljos::prelude::ClipboardMode;
+use ljos::prelude::QmlValue;
 use ljos::prelude::{
     Atom, Cx, Engine, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl, qml_singleton,
 };

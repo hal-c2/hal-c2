@@ -341,11 +341,7 @@ fn publish_to(engine: &Engine, watch: i32, value: &Json) {
     let Ok(object) = engine.singleton::<McPluginsObject>() else {
         return;
     };
-    let _ = McPluginsObject::emit_published(
-        &Cx::new(engine, object),
-        watch,
-        value.to_value(),
-    );
+    let _ = McPluginsObject::emit_published(&Cx::new(engine, object), watch, value.to_value());
 }
 
 /// How a UI part reaches its plugin's MC part.

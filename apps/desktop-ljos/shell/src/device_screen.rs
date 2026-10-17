@@ -141,12 +141,7 @@ fn repaint(engine: &Engine, screen: ObjectId) {
 struct FramePaint(Option<ImageHandle>);
 
 impl ItemPaint for FramePaint {
-    fn paint(
-        &self,
-        size: kurbo::Size,
-        _: &mut TextEngine,
-        out: &mut DisplayListBuilder,
-    ) {
+    fn paint(&self, size: kurbo::Size, _: &mut TextEngine, out: &mut DisplayListBuilder) {
         let Some(image) = &self.0 else { return };
         if size.width > 0.0 && size.height > 0.0 {
             out.image(

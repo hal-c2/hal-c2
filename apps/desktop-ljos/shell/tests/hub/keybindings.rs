@@ -20,10 +20,10 @@ use hal_c2_shell::json::{self, Json};
 use hal_c2_shell::keybindings::{command_label, qt};
 use hal_c2_shell::mc::McError;
 use ljos::keys::{KeyEvent, Modifiers};
-use ljos::prelude::QmlValue;
 use ljos::prelude::ApplicationState;
-use ljos_controls::WindowSystem;
+use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Value};
+use ljos_controls::WindowSystem;
 use serde_json::json;
 
 use crate::Hub;

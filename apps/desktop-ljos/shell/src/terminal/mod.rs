@@ -537,12 +537,7 @@ fn look(e: &Engine, me: ObjectId, style: TextStyle, cell: (f64, f64)) -> Look {
 struct Screen(Painted);
 
 impl ItemPaint for Screen {
-    fn paint(
-        &self,
-        size: kurbo::Size,
-        _: &mut TextEngine,
-        out: &mut DisplayListBuilder,
-    ) {
+    fn paint(&self, size: kurbo::Size, _: &mut TextEngine, out: &mut DisplayListBuilder) {
         self.0.paint(size, out);
     }
 }
@@ -569,19 +564,9 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
 
 fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
     // Shift+PageUp and Shift+PageDown page through history, as in xterm.
-    if ev.modifiers == Modifiers::SHIFT
-        && (ev.key == key::PAGE_UP || ev.key == key::PAGE_DOWN)
-    {
+    if ev.modifiers == Modifiers::SHIFT && (ev.key == key::PAGE_UP || ev.key == key::PAGE_DOWN) {
         let page = vt_mut(e, me, |vt| i64::from(vt.size().0).saturating_sub(1).max(1)).unwrap_or(1);
-        scroll(
-            e,
-            me,
-            if ev.key == key::PAGE_UP {
-                -page
-            } else {
-                page
-            },
-        );
+        scroll(e, me, if ev.key == key::PAGE_UP { -page } else { page });
         return true;
     }
     let app = vt_mut(e, me, |vt| vt.application_cursor()).unwrap_or(false);

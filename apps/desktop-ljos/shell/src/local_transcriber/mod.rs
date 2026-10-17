@@ -38,7 +38,6 @@ use ljos::prelude::{
 
 pub use machine::{Effect, KILL_AFTER_MS, Machine};
 
-
 /// Adds the type to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [LocalTranscriber]));
