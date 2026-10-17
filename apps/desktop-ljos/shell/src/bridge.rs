@@ -124,13 +124,7 @@ impl ShellBridge {
 
     #[qml(invokable)]
     fn set_clipboard_text(cx: &Cx, text: Atom) {
-        let writer = BridgeState::of(cx.engine).clipboard_writer.borrow().clone();
-        match writer {
-            Some(write) => write(&text),
-            None => Platform::of(cx.engine)
-                .clipboard()
-                .set_text(ClipboardMode::Clipboard, &text),
-        }
+        Bridge(cx.this).copy_text(cx.engine, &text);
     }
 
     /// Whether pasting `text` into a prompt of `prompt_length` characters
@@ -465,6 +459,17 @@ impl Bridge {
     /// Where `open_external` sends a URL instead of the system (tests).
     pub fn set_url_opener(self, engine: &Engine, open: impl Fn(&str) + 'static) {
         *BridgeState::of(engine).opener.borrow_mut() = Some(Rc::new(open));
+    }
+
+    /// Puts `text` on the clipboard, as `setClipboardText` does.
+    pub fn copy_text(self, engine: &Engine, text: &str) {
+        let writer = BridgeState::of(engine).clipboard_writer.borrow().clone();
+        match writer {
+            Some(write) => write(text),
+            None => Platform::of(engine)
+                .clipboard()
+                .set_text(ClipboardMode::Clipboard, text),
+        }
     }
 
     /// Where `setClipboardText` writes instead of the clipboard (tests).

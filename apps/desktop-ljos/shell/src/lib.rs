@@ -25,6 +25,7 @@ pub mod qr;
 pub mod render;
 pub mod runtime;
 pub mod session;
+pub mod settings_page;
 pub mod sidebar_model;
 pub mod single_instance;
 pub mod storage;
