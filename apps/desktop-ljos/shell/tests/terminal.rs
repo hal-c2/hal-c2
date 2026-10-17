@@ -11,7 +11,7 @@ use hal_c2_shell::mc::Disconnected;
 use ljos::item::WheelEvent;
 use ljos::keys::{KeyEvent, KeyKind, Modifiers, key};
 use ljos::prelude::{ClipboardMode, Platform, Time};
-use ljos::prelude::{Engine, ObjectId, Value};
+use ljos::prelude::{Color, Engine, ObjectId, Value};
 // Pointer events, which the facade does not name.
 use ljos::item::{DrawOp, Paint, Rgba, kurbo};
 use ljos_quick::{MouseButtons, PointerEvent};
@@ -229,6 +229,25 @@ fn output_is_read_back_as_text_and_painted_as_cells() {
             .iter()
             .any(|(r, c)| *r == cursor && near(*c, rgb(0xd8d8d8)))
     );
+}
+
+#[test]
+fn a_transparent_cursor_colour_is_one_and_not_the_default() {
+    let mut rig = Rig::new();
+    rig.write("hi");
+    let cursor = kurbo::Rect::new(PAD + 2.0 * rig.cw, PAD, PAD + 3.0 * rig.cw, PAD + rig.ch);
+    let fill = |rig: &mut Rig| {
+        rects(&rig.ops())
+            .into_iter()
+            .find(|(r, _)| *r == cursor)
+            .map(|(_, c)| c)
+    };
+    // Unset, the cursor is in the foreground colour.
+    assert!(near(fill(&mut rig).expect("a cursor"), rgb(0xd8d8d8)));
+    rig.engine
+        .write_by_name(rig.term, "cursorColor", Value::Color(Color::TRANSPARENT))
+        .unwrap();
+    assert_eq!(fill(&mut rig).expect("a cursor").a, 0.0);
 }
 
 #[test]

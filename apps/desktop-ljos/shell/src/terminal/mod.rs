@@ -116,12 +116,11 @@ pub struct Terminal {
     pub foreground_color: Color,
     #[qml(notify)]
     pub background_color: Color,
-    /// Fully transparent (the default) draws the cursor in the foreground
-    /// colour.
+    /// Invalid (the default) draws the cursor in the foreground colour.
     #[qml(notify)]
     pub cursor_color: Color,
-    /// Fully transparent (the default) shows a selection by swapping the
-    /// colours of its cells.
+    /// Invalid (the default) shows a selection by swapping the colours of
+    /// its cells.
     #[qml(notify)]
     pub selection_color: Color,
     /// Colours for the first palette entries (the 16 ANSI ones, and on to
@@ -177,8 +176,8 @@ impl Default for Terminal {
             font: Font::default(),
             foreground_color: Color::from_rgba8(0xd8, 0xd8, 0xd8, 0xff),
             background_color: Color::from_rgba8(0x1d, 0x1f, 0x21, 0xff),
-            cursor_color: Color::TRANSPARENT,
-            selection_color: Color::TRANSPARENT,
+            cursor_color: Color::INVALID,
+            selection_color: Color::INVALID,
             ansi_colors: Value::Undefined,
             padding: 4.0,
             scrollback_limit: 10_000,
@@ -517,7 +516,7 @@ fn look(e: &Engine, me: ObjectId, style: ljos_quick::TextStyle, cell: (f64, f64)
             _ => [0.0; 4],
         }
     };
-    let optional = |p| Some(color(p)).filter(|c| c[3] > 0.0);
+    let optional = |p| matches!(e.read(me, p), Value::Color(c) if c.is_valid()).then(|| color(p));
     let mut palette = paint::default_palette();
     if let Value::List(items) = e.read(me, Terminal::ANSI_COLORS.index) {
         for (slot, v) in palette.iter_mut().zip(items.iter()) {
