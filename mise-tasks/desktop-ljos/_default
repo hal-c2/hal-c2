@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
-#MISE description="Open the desktop shell on Ljós (--mc-origin URL --mc-token TOKEN, or HAL_C2_MC_ORIGIN/HAL_C2_MC_TOKEN; none runs disconnected)"
+#MISE description="Open the desktop shell on Ljós, paired with the running MC (mise run mc), as mise run desktop does; --mc-origin URL --mc-token TOKEN or --pair LINK names another"
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
-# There is no pairing yet: the origin and session token are given as host/main.ts
-# would hand them to desktop-qt.
-exec mise exec -- cargo run --release -q -p hal_c2_shell -- "$@"
+args=("$@")
+# Kept in the hal-c2-dev directories, as mise run desktop keeps desktop-qt's.
+[[ " $* " == *" --home-dir"* || " $* " == *" --dev "* ]] || args=(--dev "${args[@]+"${args[@]}"}")
+# Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780; HAL_C2_MC_HOME
+# for one with its own home) unless the arguments name one.
+if [[ " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
+  origin="http://127.0.0.1:${HAL_C2_MC_PORT:-3780}"
+  if ! curl -fsS -m 2 "$origin/.well-known/hal-c2/environment" >/dev/null; then
+    echo "no MC answers at $origin. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), or pass --mc-origin/--pair." >&2
+    exit 1
+  fi
+  link="$(cd ../server-ex && mise exec -- mix hal_c2.pair "$origin" | grep -Eo '^https?://[^ ]+[?#]token=[^ ]+' | head -n 1)"
+  if [[ -z $link ]]; then
+    echo "mix hal_c2.pair printed no pairing link." >&2
+    exit 1
+  fi
+  args=(--pair "$link" "${args[@]}")
+fi
+exec mise exec -- cargo run --release -q -p hal_c2_shell -- "${args[@]}"
