@@ -1719,7 +1719,8 @@ defmodule HalC2Plugins.Planner do
 
       again ->
         item = state.items[id]
-        synced = synced || Sync.synced(item, item, state.items)
+        synced = Sync.misplaced(synced || Sync.synced(item, item, state.items), again)
+        again = for {_id, op} <- again, do: op
         {{again ++ ops, synced}, put_in(state.items[id]["synced"], synced)}
     end
   end
