@@ -5,8 +5,6 @@ mod common;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use common::{FakeMc, shell, text};
 use hal_c2_shell::bridge::Bridge;
@@ -21,7 +19,6 @@ use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Disconnected, Mc};
 use ljos::App;
 use ljos::prelude::Engine;
-use ljos_runtime::{Clock as _, VirtualClock};
 use serde_json::json;
 
 const EMPTY: &str = "import QtQuick\nItem {}\n";
@@ -393,8 +390,8 @@ fn the_window_reports_itself_when_the_mc_is_ready_and_every_report_interval() {
     let engine = App::new("test")
         .register(hal_c2_shell::register)
         .build_engine();
-    let clock = Arc::new(VirtualClock::new());
-    engine.set_clock(Rc::new(clock.clone()));
+    // A window for its clock, before the shell starts its timers on it.
+    let mut window = common::test_window(&engine, 100.0, 100.0);
     hal_c2_shell::start(&engine, &hal_c2_shell::Launch::default(), mc.clone());
     assert!(
         mc.methods().is_empty(),
@@ -406,12 +403,10 @@ fn the_window_reports_itself_when_the_mc_is_ready_and_every_report_interval() {
     assert_eq!(environment, "env-1");
     assert_eq!(payload["clientKind"], json!("desktop-renderer"));
     assert_eq!(payload["environmentId"], json!("env-1"));
-    clock.set(clock.now() + Duration::from_millis(REPORT_MS as u64));
-    engine.advance_timers(clock.now());
+    window.advance(REPORT_MS as u64).unwrap();
     assert_eq!(mc.methods().len(), 2);
     // Gone: the timer keeps running and says nothing.
     mc.set_ready(&engine, false);
-    clock.set(clock.now() + Duration::from_millis(REPORT_MS as u64));
-    engine.advance_timers(clock.now());
+    window.advance(REPORT_MS as u64).unwrap();
     assert_eq!(mc.methods().len(), 2);
 }

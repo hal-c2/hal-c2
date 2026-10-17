@@ -310,6 +310,20 @@ pub fn js_value(engine: &Engine, js: &str) -> Value {
     engine.eval_js(js).unwrap_or_else(|e| panic!("{js}: {e}"))
 }
 
+/// A test window, `width` by `height`, that shows nothing yet; the engine
+/// runs on its clock from here on. Make it before the objects whose timers
+/// the test lets run.
+///
+/// The window's clock would start at the engine's system time, off the
+/// 1 ms grid Ljós rounds timer deadlines up to, and then `advance(n)` stops
+/// short of an `n` ms timer started at once (TODO(ljos): no issue yet; the
+/// port's draft is "TestWindow's clock starts off the timer grid"). A
+/// virtual clock at zero, set first, starts it on the grid.
+pub fn test_window(engine: &Engine, width: f64, height: f64) -> ljos::testing::TestWindow {
+    engine.set_clock(Rc::new(ljos_runtime::VirtualClock::new()));
+    ljos::testing::TestWindow::new(engine, width, height)
+}
+
 /// A window showing `root`, for what a test wants to see painted or send
 /// input to. It runs on a virtual clock, which only moves when told.
 pub struct Scene {

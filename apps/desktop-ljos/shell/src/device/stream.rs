@@ -1146,7 +1146,7 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "DeviceStream",
             e.to_string(),
         );
@@ -1437,11 +1437,11 @@ fn single_shot(
     ms: i32,
     f: impl Fn(&Engine) + 'static,
 ) -> Option<ObjectId> {
-    let native = ljos_engine::Timer {
+    let native = ljos::prelude::Timer {
         interval: ms,
         repeat: false,
         running: true,
-        ..ljos_engine::Timer::default()
+        ..ljos::prelude::Timer::default()
     };
     let timer = engine.create_native(native, Some(obj)).ok()?;
     engine

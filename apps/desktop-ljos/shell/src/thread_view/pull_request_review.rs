@@ -19,8 +19,8 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
+use ljos::prelude::EngineError;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, QmlValue, Value, qml_impl};
-use ljos_engine::EngineError;
 use serde_json::json;
 
 use super::diff::DiffModel;
@@ -1206,7 +1206,7 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "PullRequestReview",
             e.to_string(),
         );

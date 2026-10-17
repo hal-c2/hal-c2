@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, QmlValue, Value, qml_impl};
-use ljos_engine::{EngineError, RowKey};
+use ljos::prelude::{EngineError, RowKey};
 use regex::Regex;
 use serde_json::{Map, json};
 
@@ -1088,7 +1088,7 @@ fn tell(engine: &Engine, obj: ObjectId, rows: &ListRows<PullRequests>, notes: &[
     }
     if let Err(e) = result {
         engine.log(
-            ljos_engine::LogLevel::Warning,
+            ljos::prelude::LogLevel::Warning,
             "ThreadPullRequests",
             e.to_string(),
         );

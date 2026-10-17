@@ -653,11 +653,11 @@ impl Composer {
                 }
             }),
         );
-        let native = ljos_engine::Timer {
+        let native = ljos::prelude::Timer {
             interval: PLACEMENT_WAIT_MS,
             repeat: false,
             running: true,
-            ..ljos_engine::Timer::default()
+            ..ljos::prelude::Timer::default()
         };
         let Ok(id) = engine.create_native(native, Some(Bridge::of(engine).object())) else {
             return;

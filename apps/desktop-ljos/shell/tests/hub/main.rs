@@ -53,8 +53,6 @@ mod worktree_setup;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use common::FakeMc;
 use hal_c2_shell::Launch;
@@ -63,12 +61,13 @@ use hal_c2_shell::json::Json;
 use ljos::App;
 use ljos::keys::KeyEvent;
 use ljos::prelude::Engine;
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos::testing::TestWindow;
 
-/// A started shell with no QML, its clock virtual from the start.
+/// A started shell with no QML, its clock virtual from the start: the
+/// clock of a test window that shows nothing until [`Hub::window`].
 pub struct Hub {
     pub engine: Engine,
-    pub clock: Arc<VirtualClock>,
+    test_window: Rc<RefCell<TestWindow>>,
     pub mc: Rc<FakeMc>,
 }
 
@@ -96,11 +95,15 @@ impl Hub {
         let engine = App::new("test")
             .register(hal_c2_shell::register)
             .build_engine();
-        let clock = Arc::new(VirtualClock::new());
-        engine.set_clock(Rc::new(clock.clone()));
+        // Before the shell starts, for its timers to start on the window's clock.
+        let test_window = Rc::new(RefCell::new(common::test_window(&engine, 100.0, 100.0)));
         let mc = Rc::new(FakeMc::default());
         hal_c2_shell::start(&engine, &launch, mc.clone());
-        Hub { engine, clock, mc }
+        Hub {
+            engine,
+            test_window,
+            mc,
+        }
     }
 
     pub fn published(&self, key: &str) -> Json {
@@ -113,20 +116,21 @@ impl Hub {
         Bridge::of(&self.engine).dispatch(&self.engine, action, payload);
     }
 
-    /// Moves the clock on by `ms` and runs what fell due.
+    /// Moves the clock on by `ms`, running each timer as it falls due.
     pub fn advance(&self, ms: u64) {
-        self.clock.set(self.clock.now() + Duration::from_millis(ms));
-        self.engine.advance_timers(self.clock.now());
+        self.test_window
+            .borrow_mut()
+            .advance(ms)
+            .expect("the hub comes to rest");
     }
 
-    /// An empty window of the hub's engine, for key events given as a
-    /// window is given them: the application's key filters see them first.
+    /// The hub's window with an empty item in it, for key events given as
+    /// a window is given them: the application's key filters see them first.
     pub fn window(&self) -> Window {
         let source = common::compile(&[("Window", "import QtQuick\nItem {}")], &[]);
         let root = ljos::create_root(&self.engine, source, "Window").expect("the window");
-        let mut scene = ljos_quick::QuickScene::new(ljos::item::kurbo::Size::new(100.0, 100.0));
-        scene.set_root(&self.engine, root).expect("a root");
-        Window(RefCell::new(scene))
+        self.test_window.borrow_mut().show(root).expect("a root");
+        Window(self.test_window.clone())
     }
 
     /// Runs `f` on the controller `C`, as another controller would.
@@ -139,11 +143,11 @@ impl Hub {
 }
 
 /// A window with nothing in it ([`Hub::window`]).
-pub struct Window(RefCell<ljos_quick::QuickScene>);
+pub struct Window(Rc<RefCell<TestWindow>>);
 
 impl Window {
     /// Gives the window `ev`; true when something kept it.
-    pub fn key(&self, engine: &Engine, ev: &KeyEvent) -> bool {
-        self.0.borrow_mut().key_event(engine, ev)
+    pub fn key(&self, ev: &KeyEvent) -> bool {
+        self.0.borrow_mut().key(ev)
     }
 }

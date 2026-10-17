@@ -15,10 +15,6 @@ path = "src/main.rs"
 # dev-qml: the shell compiles its QML at start-up (the README says why).
 # render: `--render`. No `media`: the bricks play nothing.
 ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
-# Below the facade, for what it does not name yet (the README's Ljós
-# section has the issues):
-# - ljos_engine: names the prelude also has.
-ljos_engine.workspace = true
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
@@ -73,11 +69,9 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 # `testing`: a window without a platform, on a virtual clock, to show items
 # in and hand them input.
 ljos = { workspace = true, features = ["testing"] }
-# What the tests drive below `ljos::testing`: the hub's window and the
-# highlighter's spans (ljos_quick), the engine's virtual clock
-# (ljos_runtime) and the application's activity (ljos_controls).
-ljos_quick.workspace = true
-ljos_controls.workspace = true
+# Below the facade: a virtual clock at zero, for a test window to start on
+# the timer grid (tests/common/mod.rs `test_window`; TODO(ljos): no issue
+# yet, the port's draft is "TestWindow's clock starts off the timer grid").
 ljos_runtime.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"

@@ -10,7 +10,7 @@ use common::{call, shell};
 use hal_c2_shell::highlighter::spans as highlight;
 use hal_c2_shell::mc::Disconnected;
 use ljos::prelude::{Color, Engine, ObjectId, Value};
-use ljos_quick::text_input::highlights;
+use ljos::testing::highlights;
 
 const DIM: Color = Color::from_rgba8(0x80, 0x80, 0x80, 0x99);
 

@@ -339,7 +339,7 @@ impl ThreadStore {
         let model = match TimelineModel::create(engine, owner, timeline) {
             Ok(model) => model,
             Err(e) => {
-                engine.log(ljos_engine::LogLevel::Warning, "Threads", e.to_string());
+                engine.log(ljos::prelude::LogLevel::Warning, "Threads", e.to_string());
                 return;
             }
         };
@@ -472,7 +472,7 @@ impl ThreadStore {
                     )
                 });
             if let Err(e) = result {
-                engine.log(ljos_engine::LogLevel::Warning, "Threads", e.to_string());
+                engine.log(ljos::prelude::LogLevel::Warning, "Threads", e.to_string());
             }
         }
         let listeners = shared.active_changed.borrow().clone();
