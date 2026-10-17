@@ -431,6 +431,9 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (m_queuedEdit && m_queuedEdit->thread == target) endQueuedEdit();
     return true;
   }
+  if (action == QLatin1String("composer.queue.resume")) {
+    return resumeQueue();
+  }
   if (action == QLatin1String("composer.queue.steer")) {
     // Without a run, the first queued one (the steer key).
     QString runId = map.value(QStringLiteral("runId")).toString();
@@ -2067,6 +2070,43 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
   return true;
 }
 
+// Lets the MC start a queue it holds (after a restart or a usage limit). One
+// request at a time per thread across every window, and only for a queue still
+// held: a click on a stale card, after another device resumed it, asks nothing.
+// The thread's stream has to be caught up too: the held flag a reconnected
+// window still shows may be one the MC has since cleared. The answer is
+// handled apart from this window, which may close before it comes.
+bool ComposerController::resumeQueue() {
+  const auto thread = m_store->thread(m_thread);
+  if (!thread || m_kept.resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
+  if (!m_client->isReady() || !m_store->synchronized() || !m_store->threadOnline(m_thread) || !m_timeline ||
+      m_timeline->threadKey() != m_thread || m_timeline->status() != QLatin1String("live")) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Not connected: queue not resumed"),
+        QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+  const QString key = m_thread;
+  NativeShell* shell = NativeShell::of(this)->shell();
+  Kept& kept = m_kept;
+  kept.resuming.insert(key);
+  m_client->dispatchCommand(m_client, thread->environmentId,
+                            QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
+                            [shell, &kept, key](const QJsonValue&, const std::optional<QString>& error) {
+                              kept.resuming.remove(key);
+                              if (error) shell->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                              publishEverywhere(shell);
+                            });
+  publishEverywhere(shell);
+  return true;
+}
+
+void ComposerController::publishEverywhere(NativeShell* shell) {
+  for (const auto& window : shell->windows()) {
+    if (auto* composer = window->controller<ComposerController>()) composer->publish();
+  }
+}
+
 bool ComposerController::editQueued(const QString& target, QString runId) {
   if (target.isEmpty() || !m_draftId.isEmpty() || (m_queuedEdit && m_queuedEdit->saving)) return true;
   const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
@@ -2253,7 +2293,9 @@ QVariantMap ComposerController::turnState() const {
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},
             {QStringLiteral("queue"), QVariantList()},
-            {QStringLiteral("waiting"), QVariantList()}};
+            {QStringLiteral("waiting"), QVariantList()},
+            {QStringLiteral("queueHeld"), false},
+            {QStringLiteral("queueResuming"), false}};
   }
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
@@ -2262,7 +2304,9 @@ QVariantMap ComposerController::turnState() const {
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},
                     {QStringLiteral("queue"), QVariantList()},
-                    {QStringLiteral("waiting"), QVariantList()}};
+                    {QStringLiteral("waiting"), QVariantList()},
+                    {QStringLiteral("queueHeld"), false},
+                    {QStringLiteral("queueResuming"), m_kept.resuming.contains(m_thread)}};
   if (!thread || !m_timeline) return state;
 
   const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
@@ -2348,6 +2392,7 @@ QVariantMap ComposerController::turnState() const {
   const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
   state.insert(QStringLiteral("queue"), queued.queue);
   state.insert(QStringLiteral("waiting"), queued.waiting);
+  state.insert(QStringLiteral("queueHeld"), queued.held);
   return state;
 }
 

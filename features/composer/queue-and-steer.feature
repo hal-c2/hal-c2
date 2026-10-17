@@ -324,8 +324,23 @@ Feature: Follow-ups while the agent is working
     Then the queue marks "fix typo" as being edited and offers to cancel the edit
     And the composer shows the message's image, which the user can remove
 
-  @backlog @desktop
+  @desktop
   Scenario: A held queue says its messages are safe
     Given "later" was queued when the MC restarted
     When the MC comes back
     Then the queue is headed "Queue held after restart" and says "Messages stay saved until you resume."
+
+  @desktop
+  Scenario: A held queue is resumed from the composer
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    When the user resumes the queue
+    Then the MC is asked to resume the queue
+
+  @desktop
+  Scenario: A resume the MC refuses is reported
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC refuses "queue.resume" with "thread is archived"
+    When the user resumes the queue
+    Then the user sees an "error" toast "Failed to resume the queue." saying "thread is archived"

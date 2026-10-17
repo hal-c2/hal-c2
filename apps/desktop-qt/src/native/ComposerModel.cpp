@@ -842,6 +842,7 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
   });
   Queued queued;
   for (const QJsonObject& run : waiting) {
+    queued.held = queued.held || run.value(QLatin1String("queueHeld")).toBool();
     const QString runId = run.value(QLatin1String("id")).toString();
     const auto found = messages.constFind(run.value(QLatin1String("userMessageId")).toString());
     if (found == messages.cend()) continue;

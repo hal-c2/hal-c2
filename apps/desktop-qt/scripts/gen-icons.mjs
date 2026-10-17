@@ -84,6 +84,7 @@ const ICONS = [
   "panel-right",
   "panel-right-close",
   "paperclip",
+  "pause",
   "pen-line",
   "pencil",
   "pencil-ruler",
