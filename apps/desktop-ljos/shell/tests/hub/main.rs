@@ -8,6 +8,8 @@ mod common;
 mod alerts;
 mod archived_threads;
 mod background_activity;
+mod client_activity;
+mod client_activity_prop;
 mod cluster;
 mod commands;
 mod composer;

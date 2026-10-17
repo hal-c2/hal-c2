@@ -1,20 +1,22 @@
 //! `clientActivity`, desktop-qt's ClientActivityController: tells the MC
-//! this window is open (`server.reportClientActivity`), so its background
-//! work (git fetches, provider checks) runs for what a client watches. A
-//! report is a lease of LEASE_MS, renewed every REPORT_MS and on every new
-//! connection.
-//!
-//! Not ported yet: the shown thread's and checkout's scopes (they wait for
-//! the workspace controller) and focus (Ljós's `Application.state` is not
-//! followed here yet), so a report names provider status only and says the
-//! window is focused.
+//! what this window is looking at (`server.reportClientActivity`), so its
+//! background work (git fetches, provider checks) runs for what a client
+//! watches. A report is a lease of LEASE_MS naming the scopes watched:
+//! provider status always, the shown thread (a server thread, not a draft)
+//! and its checkout's git status, as the workspace controller places the
+//! route. It says whether the application has focus, followed from Ljós's
+//! `Application.state` (focused when there is none). A lease is renewed
+//! every REPORT_MS, on every new connection, and whenever the place or the
+//! application's state changes.
 
 use std::sync::OnceLock;
 
-use ljos::prelude::{Engine, ObjectId};
+use ljos::prelude::{Application, ApplicationState, Engine, ObjectId, Value};
 use serde_json::json;
 
 use crate::controller::{self, Controller, Init, Me};
+use crate::controllers::workspace;
+use crate::json::Json;
 use crate::mc::Mc;
 
 pub const REPORT_MS: i32 = 25_000;
@@ -50,25 +52,47 @@ impl Controller for ClientActivity {
                 me.run(engine, |c, engine| c.report(engine));
             }
         }));
+        let me = self.me.clone();
+        workspace::on_place_changed(engine, move |engine| {
+            me.run(engine, |c, engine| c.report(engine));
+        });
+        // The application gaining or losing the keyboard.
+        if let Ok(app) = engine.singleton::<Application>() {
+            let me = self.me.clone();
+            let _ = engine.connect_by_name(app, "stateChanged", move |engine, _| {
+                me.run(engine, |c, engine| c.report(engine));
+            });
+        }
         self.report(engine);
     }
 }
 
 impl ClientActivity {
-    fn report(&self, _engine: &Engine) {
+    fn report(&self, engine: &Engine) {
         if !self.mc.is_ready() {
             return;
         }
-        let environment = self.mc.environment();
+        let mut environment = self.mc.environment();
+        let mut scopes = vec![json!({ "type": "provider-status" })];
+        if let Some(place) = workspace::place(engine) {
+            environment = place.environment_id.clone();
+            if place.draft_id.is_empty() {
+                scopes.push(json!({ "type": "thread", "threadId": place.thread_id }));
+            }
+            if !place.cwd().is_empty() {
+                scopes.push(json!({ "type": "vcs-status", "cwd": place.cwd() }));
+            }
+        }
+        let focused = focused(engine);
         let payload = json!({
             "environmentId": environment,
             "clientId": client_id(),
             "clientKind": "desktop-renderer",
             "visible": true,
-            "focused": true,
-            "recentlyInteracted": true,
-            "appState": "active",
-            "scopes": [{ "type": "provider-status" }],
+            "focused": focused,
+            "recentlyInteracted": focused,
+            "appState": if focused { "active" } else { "inactive" },
+            "scopes": Json::Array(scopes),
             "ttlMs": LEASE_MS,
             "observedAt": now_iso8601(),
         });
@@ -79,6 +103,16 @@ impl ClientActivity {
             Box::new(|_, _| {}),
         );
     }
+}
+
+/// Whether the application is `Active` (`Qt.application.state`); focused
+/// when there is no application to ask.
+fn focused(engine: &Engine) -> bool {
+    let Ok(app) = engine.singleton::<Application>() else {
+        return true;
+    };
+    matches!(engine.read_by_name(app, "state"),
+        Value::Int(state) if state == ApplicationState::Active.qt_value())
 }
 
 /// This run's id for its leases, with the window's; a restarted app's old
