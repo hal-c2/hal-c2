@@ -521,11 +521,13 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
         let _ = tx.send(());
     });
     fs::create_dir(f.path("a/made-elsewhere")).unwrap();
-    // The OS tells the waker; the Engine thread then delivers.
-    rx.recv().expect("the watcher saw the change");
-    deliver(&f.engine);
-    f.settle();
-    assert_eq!(f.rows(), "a/-|  made-elsewhere/+");
+    // The OS tells the waker; the Engine thread then delivers. A wake can come
+    // before the change is readable, so each one is delivered until it shows.
+    while f.rows() != "a/-|  made-elsewhere/+" {
+        rx.recv().expect("the watcher saw the change");
+        deliver(&f.engine);
+        f.settle();
+    }
 }
 
 #[test]

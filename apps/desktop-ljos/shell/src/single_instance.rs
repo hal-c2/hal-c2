@@ -267,8 +267,13 @@ mod tests {
         );
         let long = PathBuf::from(format!("/{}", "x".repeat(120)));
         let a = address(&long, None, false);
-        assert!(a.len() < 100 && a.ends_with(&name_suffix(&a)), "{a}");
-        assert!(a.starts_with(std::env::temp_dir().to_str().unwrap()), "{a}");
+        // In the temporary directory, however long its own path is.
+        assert_eq!(
+            Path::new(&a),
+            std::env::temp_dir().join(name_suffix(&a)),
+            "{a}"
+        );
+        assert!(name_suffix(&a).starts_with("hal-c2-ljos-"), "{a}");
     }
 
     fn name_suffix(address: &str) -> String {
