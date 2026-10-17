@@ -158,6 +158,8 @@ defmodule HalC2.UpgradeTest do
     old_lib = Path.join([root, "lib", "hal_c2-1.0.0"])
     File.mkdir_p!(Path.join(old_lib, "priv/cursor-acp/node_modules"))
     File.write!(Path.join(old_lib, "priv/cursor-acp/node_modules/native"), "this platform's")
+    File.mkdir_p!(Path.join(old_lib, "priv/bin"))
+    File.write!(Path.join(old_lib, "priv/bin/hal-c2-machine-files"), "this platform's helper")
     old_rel = Path.join([root, "releases", "1.0.0"])
     File.mkdir_p!(Path.join(old_rel, "consolidated"))
     File.write!(Path.join(old_rel, "start.boot"), :erlang.term_to_binary(script))
@@ -175,6 +177,7 @@ defmodule HalC2.UpgradeTest do
     File.mkdir_p!(Path.join(new_lib, "ebin"))
     File.mkdir_p!(Path.join(new_lib, "priv/cursor-acp/node_modules"))
     File.write!(Path.join(new_lib, "priv/cursor-acp/node_modules/native"), "another platform's")
+    # Built on macOS, the bundle has no machine-files helper and no `priv/bin` for it.
     modules = [:"Elixir.HalC2.Old", :"Elixir.HalC2.New"]
 
     File.write!(
@@ -221,6 +224,9 @@ defmodule HalC2.UpgradeTest do
              Path.join([root, "lib", "hal_c2-2.0.0", "priv/cursor-acp/node_modules/native"])
            ) ==
              "this platform's"
+
+    assert File.read!(Path.join([root, "lib", "hal_c2-2.0.0", "priv/bin/hal-c2-machine-files"])) ==
+             "this platform's helper"
 
     assert %{
              "version" => "2.0.0",

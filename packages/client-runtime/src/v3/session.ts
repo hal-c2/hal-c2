@@ -12,6 +12,7 @@ import {
   AgentSessionScanError,
   ExternalLauncherError,
   ExternalLauncherUnknownEditorError,
+  FilesLocalPathError,
   FilesystemBrowseError,
   GitCommandError,
   GitManagerError,
@@ -592,6 +593,16 @@ export function makeV3Session(input: {
         }),
     );
 
+    // Answered by this session's MC, whichever member the path is on.
+    const localPath = forward(
+      WS_METHODS.filesLocalPath,
+      (request: { readonly path: string }, message) =>
+        new FilesLocalPathError({
+          path: request.path,
+          message: (message.trim() || "The mc could not place the file.") as never,
+        }),
+    );
+
     const getTurnDiff = forward(
       ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
       (_request: object, message) => new OrchestrationGetTurnDiffError({ message }),
@@ -1134,6 +1145,7 @@ export function makeV3Session(input: {
     const served: Record<string, (request: never) => unknown> = {
       [WS_METHODS.projectsMutate]: mutateProject,
       [WS_METHODS.filesystemBrowse]: browse,
+      [WS_METHODS.filesLocalPath]: localPath,
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: dispatchCommand,
       [ORCHESTRATION_V2_WS_METHODS.launchThread]: launchThread,
       [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: getTurnDiff,

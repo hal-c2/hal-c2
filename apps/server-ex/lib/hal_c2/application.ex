@@ -37,6 +37,8 @@ defmodule HalC2.Application do
       HalC2.Settings,
       HalC2.Streams,
       HalC2.Shell,
+      # The other members' files, as folders on this machine.
+      HalC2.MachineFiles,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,

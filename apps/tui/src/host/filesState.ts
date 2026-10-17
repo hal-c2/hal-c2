@@ -14,6 +14,7 @@ import { clip } from "../format.ts";
 import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
 import type { StatusKind } from "../store.ts";
+import { FILES_ELSEWHERE, type LocalPath } from "../thisMachine.ts";
 import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the panel's border and header take. */
@@ -302,7 +303,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     viewer = null;
     options.setOpen(true);
     publish();
-    loadEditors();
+    loadEditors(token, workspace);
     track(
       client.listEntries(workspace).then(
         (entries) => {
@@ -479,20 +480,31 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
   };
 
-  /** The editors the environment can launch, by `EDITORS` id and label. */
+  /** The editors the MC that starts one for the workspace can launch, by `EDITORS` id and label. */
   let editors: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
-  const loadEditors = () => {
-    if (!client.getServerConfig) return;
+  const loadEditors = (token: number, workspace: string) => {
+    const { getServerConfig, localPathFor } = client;
+    if (!getServerConfig) return;
+    const where: Promise<LocalPath | null> = localPathFor
+      ? localPathFor(workspace)
+      : Promise.resolve(null);
     track(
-      client.getServerConfig().then(
-        (config) => {
-          editors = (config.availableEditors ?? []).flatMap((id) => {
-            const known = EDITORS.find((editor) => editor.id === id);
-            return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
-          });
-        },
-        () => {},
-      ),
+      where
+        .then((local) => {
+          // A cluster member on this machine offers its own (localPathFor).
+          const member = local !== null && "path" in local && local.environmentId !== undefined;
+          return member ? getServerConfig(workspace) : getServerConfig();
+        })
+        .then(
+          (config) => {
+            if (token !== generation) return;
+            editors = (config.availableEditors ?? []).flatMap((id) => {
+              const known = EDITORS.find((editor) => editor.id === id);
+              return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
+            });
+          },
+          () => {},
+        ),
     );
   };
 
@@ -508,20 +520,20 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     const failed = (error: unknown) =>
       options.status?.(`Could not open ${path} in ${editor.label}: ${errorText(error)}`, "error");
     // Never on the machine the files are on unless the user sits at it.
-    const local = client.localPathFor ? client.localPathFor(cwd) : Promise.resolve(null);
+    const local: Promise<LocalPath> = client.localPathFor
+      ? client.localPathFor(cwd)
+      : Promise.resolve({ problem: FILES_ELSEWHERE });
     track(
       local.then((root) => {
-        if (root === null) {
-          options.status?.(
-            "The files are on another machine and can't be opened here yet.",
-            "error",
-          );
+        if (!("path" in root)) {
+          options.status?.(root.problem, "error");
           return;
         }
-        return mcCall("shell.openInEditor", { cwd: `${root}/${path}`, editor: editor.id }).then(
-          () => options.status?.(`Opened ${path} in ${editor.label}.`, "success"),
-          failed,
-        );
+        return mcCall(
+          "shell.openInEditor",
+          { cwd: `${root.path}/${path}`, editor: editor.id },
+          root.environmentId,
+        ).then(() => options.status?.(`Opened ${path} in ${editor.label}.`, "success"), failed);
       }, failed),
     );
   };
