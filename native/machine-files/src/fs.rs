@@ -7,6 +7,10 @@
 //! project and the file it names are one inode, so an older path may name another
 //! file by now, or none: what reaches an inode by its fid checks it is still that
 //! file, and fails as stale otherwise, which has the kernel look the name up again.
+//!
+//! A lookup may replace an inode's fid while another worker is about to send a
+//! request on it, so each request holds the fid it uses (`Fid`), and a fid is
+//! clunked once no node or request holds it.
 
 use crate::client::Client;
 use crate::p9::{AT_REMOVEDIR, Attr, R, SetAttr, T, Time};
@@ -40,8 +44,20 @@ pub struct MachineFiles {
 }
 
 struct Node {
-    fid: u32,
+    fid: Arc<Fid>,
     lookups: u64,
+}
+
+/// A node's fid, clunked when the last holder lets go of it.
+struct Fid {
+    id: u32,
+    client: Arc<Client>,
+}
+
+impl Drop for Fid {
+    fn drop(&mut self) {
+        let _ = self.client.call(&T::Clunk { fid: self.id });
+    }
 }
 
 /// Set once the MC has attached the root; requests wait for it.
@@ -89,7 +105,10 @@ impl MachineFiles {
         nodes.insert(
             INodeNo::ROOT.0,
             Node {
-                fid: ROOT_FID,
+                fid: Arc::new(Fid {
+                    id: ROOT_FID,
+                    client: client.clone(),
+                }),
                 lookups: u64::MAX,
             },
         );
@@ -109,10 +128,14 @@ impl MachineFiles {
         self.client.call(t).map_err(errno)
     }
 
-    fn fid(&self, ino: INodeNo) -> Result<u32> {
+    /// The fid `ino` is reached by, held until the request using it is done.
+    fn fid(&self, ino: INodeNo) -> Result<Arc<Fid>> {
         self.ready.wait();
         let nodes = self.nodes.lock().unwrap();
-        nodes.get(&ino.0).map(|node| node.fid).ok_or(Errno::ESTALE)
+        nodes
+            .get(&ino.0)
+            .map(|node| node.fid.clone())
+            .ok_or(Errno::ESTALE)
     }
 
     fn new_fid(&self) -> u32 {
@@ -142,9 +165,9 @@ impl MachineFiles {
     }
 
     /// The fid `ino` is reached by and its attributes, if it is still that file.
-    fn node_attr(&self, ino: INodeNo) -> Result<(u32, Attr)> {
+    fn node_attr(&self, ino: INodeNo) -> Result<(Arc<Fid>, Attr)> {
         let fid = self.fid(ino)?;
-        let attr = self.getattr_fid(fid).map_err(stale)?;
+        let attr = self.getattr_fid(fid.id).map_err(stale)?;
         if attr.qid.path == ino.0 {
             Ok((fid, attr))
         } else {
@@ -171,29 +194,25 @@ impl MachineFiles {
                 return Err(e);
             }
         };
-        // The path just looked up names the file now; the one before may not.
-        let replaced = {
+        // The path just looked up names the file now; the one before may not. The
+        // fid it replaces is clunked once the requests holding it are done.
+        let fid = Arc::new(Fid {
+            id: newfid,
+            client: self.client.clone(),
+        });
+        let _replaced = {
             let mut nodes = self.nodes.lock().unwrap();
             match nodes.get_mut(&attr.qid.path) {
                 Some(node) => {
                     node.lookups += 1;
-                    Some(std::mem::replace(&mut node.fid, newfid))
+                    Some(std::mem::replace(&mut node.fid, fid))
                 }
                 None => {
-                    nodes.insert(
-                        attr.qid.path,
-                        Node {
-                            fid: newfid,
-                            lookups: 1,
-                        },
-                    );
+                    nodes.insert(attr.qid.path, Node { fid, lookups: 1 });
                     None
                 }
             }
         };
-        if let Some(old) = replaced {
-            self.clunk(old);
-        }
         Ok(self.file_attr(&attr))
     }
 
@@ -220,7 +239,7 @@ impl MachineFiles {
     }
 
     fn open_fid(&self, ino: INodeNo, flags: OpenFlags) -> Result<u32> {
-        let fid = self.clone_fid(self.fid(ino)?).map_err(stale)?;
+        let fid = self.clone_fid(self.fid(ino)?.id).map_err(stale)?;
         // Creating and truncating come as their own requests.
         let flags = flags.0 & !(libc::O_CREAT | libc::O_EXCL | libc::O_NOCTTY | libc::O_TRUNC);
         match self.call(&T::Lopen {
@@ -278,7 +297,7 @@ impl Filesystem for MachineFiles {
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         match self
             .fid(parent)
-            .and_then(|fid| self.lookup_entry(fid, name))
+            .and_then(|fid| self.lookup_entry(fid.id, name))
         {
             Ok(attr) => reply.entry(&self.ttl, &attr, Generation(0)),
             Err(e) => reply.error(e),
@@ -289,20 +308,18 @@ impl Filesystem for MachineFiles {
         if ino == INodeNo::ROOT {
             return;
         }
-        let gone = {
+        // Dropped, and so clunked once no request holds it, after the lock is let go.
+        let _gone = {
             let mut nodes = self.nodes.lock().unwrap();
             match nodes.get_mut(&ino.0) {
                 Some(node) if node.lookups > nlookup => {
                     node.lookups -= nlookup;
                     None
                 }
-                Some(_) => nodes.remove(&ino.0).map(|node| node.fid),
+                Some(_) => nodes.remove(&ino.0),
                 None => None,
             }
         };
-        if let Some(fid) = gone {
-            self.clunk(fid);
-        }
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, fh: Option<FileHandle>, reply: ReplyAttr) {
@@ -343,14 +360,16 @@ impl Filesystem for MachineFiles {
             mtime: mtime.map(time),
         };
         // By the inode's path only while it names the same file, as truncate(2) asks.
-        let fid = match fh {
-            Some(fh) => Ok(fh.0 as u32),
-            None => self.node_attr(ino).map(|(fid, _)| fid),
+        let (fid, _held) = match fh {
+            Some(fh) => (fh.0 as u32, None),
+            None => match self.node_attr(ino) {
+                Ok((node, _)) => (node.id, Some(node)),
+                Err(e) => return reply.error(e),
+            },
         };
-        let attr = fid.and_then(|fid| {
-            self.call(&T::Setattr { fid, set })?;
-            self.getattr_fid(fid)
-        });
+        let attr = self
+            .call(&T::Setattr { fid, set })
+            .and_then(|_| self.getattr_fid(fid));
         match attr {
             Ok(attr) => reply.attr(&self.ttl, &self.file_attr(&attr)),
             Err(e) => reply.error(e),
@@ -366,15 +385,15 @@ impl Filesystem for MachineFiles {
         umask: u32,
         reply: ReplyEntry,
     ) {
-        let made = self.fid(parent).and_then(|fid| {
+        let made = self.fid(parent).and_then(|dir| {
             let name = name.as_bytes();
             self.call(&T::Mkdir {
-                fid,
+                fid: dir.id,
                 name,
                 mode: mode & !umask,
                 gid: self.gid,
             })?;
-            self.lookup_entry(fid, OsStr::from_bytes(name))
+            self.lookup_entry(dir.id, OsStr::from_bytes(name))
         });
         match made {
             Ok(attr) => reply.entry(&self.ttl, &attr, Generation(0)),
@@ -387,7 +406,7 @@ impl Filesystem for MachineFiles {
         let name = name.as_bytes();
         match dir.and_then(|dir| {
             self.call(&T::Unlinkat {
-                dir,
+                dir: dir.id,
                 name,
                 flags: 0,
             })
@@ -402,7 +421,7 @@ impl Filesystem for MachineFiles {
         let name = name.as_bytes();
         match dir.and_then(|dir| {
             self.call(&T::Unlinkat {
-                dir,
+                dir: dir.id,
                 name,
                 flags: AT_REMOVEDIR,
             })
@@ -428,9 +447,9 @@ impl Filesystem for MachineFiles {
         let renamed = self.fid(parent).and_then(|old_dir| {
             let new_dir = self.fid(newparent)?;
             self.call(&T::Renameat {
-                old_dir,
+                old_dir: old_dir.id,
                 old_name: name.as_bytes(),
-                new_dir,
+                new_dir: new_dir.id,
                 new_name: newname.as_bytes(),
             })
         });
@@ -586,7 +605,10 @@ impl Filesystem for MachineFiles {
     }
 
     fn statfs(&self, _req: &Request, ino: INodeNo, reply: ReplyStatfs) {
-        match self.fid(ino).and_then(|fid| self.call(&T::Statfs { fid })) {
+        match self
+            .fid(ino)
+            .and_then(|fid| self.call(&T::Statfs { fid: fid.id }))
+        {
             Ok(R::Statfs(fs)) => reply.statfs(
                 fs.blocks, fs.bfree, fs.bavail, fs.files, fs.ffree, fs.bsize, fs.namelen, fs.bsize,
             ),
@@ -611,7 +633,7 @@ impl Filesystem for MachineFiles {
         reply: ReplyCreate,
     ) {
         let created = self.fid(parent).and_then(|dir| {
-            let fid = self.clone_fid(dir)?;
+            let fid = self.clone_fid(dir.id)?;
             let made = self.call(&T::Lcreate {
                 fid,
                 name: name.as_bytes(),
@@ -619,7 +641,7 @@ impl Filesystem for MachineFiles {
                 mode: mode & !umask,
                 gid: self.gid,
             });
-            match made.and_then(|_| self.lookup_entry(dir, name)) {
+            match made.and_then(|_| self.lookup_entry(dir.id, name)) {
                 Ok(attr) => Ok((fid, attr)),
                 Err(e) => {
                     self.clunk(fid);
@@ -637,5 +659,79 @@ impl Filesystem for MachineFiles {
             ),
             Err(e) => reply.error(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::p9;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+    use std::thread;
+
+    const QID: [u8; 13] = [0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0];
+
+    /// The filesystem, served by an MC whose every walk reaches file 5, and the
+    /// fids it is told to clunk.
+    fn served() -> (MachineFiles, Receiver<u32>) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let client = Arc::new(Client::new(Box::new(ours.try_clone().unwrap())));
+        {
+            let client = client.clone();
+            thread::spawn(move || client.read_replies(ours));
+        }
+        let (clunks, clunked) = channel();
+        thread::spawn(move || serve(theirs, clunks));
+        let ready = Arc::new(Ready::default());
+        ready.set();
+        (MachineFiles::new(client, ready, Duration::ZERO), clunked)
+    }
+
+    fn serve(mut mc: UnixStream, clunks: Sender<u32>) {
+        let mut head = [0u8; 7];
+        while mc.read_exact(&mut head).is_ok() {
+            let (size, kind, tag) = p9::header(head);
+            let mut body = vec![0u8; size as usize - 7];
+            mc.read_exact(&mut body).unwrap();
+            let fid = u32::from_le_bytes(body[..4].try_into().unwrap());
+            let (kind, reply) = match kind {
+                110 => (111, [&1u16.to_le_bytes()[..], &QID].concat()),
+                24 => {
+                    let mut attr = [0u8; 8].to_vec();
+                    attr.extend(QID);
+                    attr.extend(0o100644u32.to_le_bytes());
+                    attr.extend([0u8; 8]);
+                    attr.extend([0u8; 15 * 8]);
+                    (25, attr)
+                }
+                120 => {
+                    clunks.send(fid).unwrap();
+                    (121, Vec::new())
+                }
+                other => panic!("unexpected T-message {other}"),
+            };
+            let mut out = ((reply.len() + 7) as u32).to_le_bytes().to_vec();
+            out.push(kind);
+            out.extend(tag.to_le_bytes());
+            out.extend(reply);
+            mc.write_all(&out).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_fid_a_request_holds_outlives_the_lookup_that_replaces_it() {
+        let (fs, clunked) = served();
+        fs.lookup_entry(ROOT_FID, OsStr::new("a")).unwrap();
+        // A worker about to send a request on the inode's fid...
+        let held = fs.fid(INodeNo(5)).unwrap();
+        // ...while another looks the inode up again, as by another path.
+        fs.lookup_entry(ROOT_FID, OsStr::new("a")).unwrap();
+        assert_eq!(clunked.try_recv(), Err(TryRecvError::Empty));
+
+        let id = held.id;
+        drop(held);
+        assert_eq!(clunked.try_recv(), Ok(id));
     }
 }
