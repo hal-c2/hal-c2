@@ -11,8 +11,10 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::panel::{PanelObject, RightPanel};
 use hal_c2_shell::controllers::settings::Settings;
+use hal_c2_shell::controllers::terminals::Terminals;
 use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
+use hal_c2_shell::thread_view::agents::AgentsModel;
 use serde_json::json;
 
 use crate::Hub;
@@ -437,6 +439,102 @@ fn the_tab_models_are_the_panel_singletons() {
     assert!(matches!(previews, ljos::prelude::Value::Object(_)));
     let files = hub.engine.read_by_name(obj, "files");
     assert!(matches!(files, ljos::prelude::Value::Null));
+    let agents = hub.engine.read_by_name(obj, "agents");
+    assert!(matches!(agents, ljos::prelude::Value::Object(_)));
+}
+
+/// Whether the panel's Agents tab is told it shows.
+fn agents_shown(hub: &Hub) -> bool {
+    let obj = hub.engine.singleton::<PanelObject>().unwrap();
+    let ljos::prelude::Value::Object(agents) = hub.engine.read_by_name(obj, "agents") else {
+        panic!("the panel has no Agents tab");
+    };
+    AgentsModel::read_core(&hub.engine, agents, |a| a.active()).unwrap()
+}
+
+#[test]
+fn the_agents_tab_is_told_while_it_shows() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    assert!(!agents_shown(&hub));
+    hub.dispatch("rightPanel.add", json!({"kind": "agents"}));
+    assert_eq!(panel(&hub)["activeId"], "agents");
+    assert!(agents_shown(&hub));
+    hub.dispatch("rightPanel.add", json!({"kind": "diff"}));
+    assert!(!agents_shown(&hub));
+    hub.dispatch("rightPanel.activate", json!({"id": "agents"}));
+    assert!(agents_shown(&hub));
+    hub.dispatch("rightPanel.toggle", json!({}));
+    assert!(!agents_shown(&hub));
+}
+
+fn terminal_ids(hub: &Hub) -> Vec<String> {
+    hub.with_controller::<Terminals, _>(|t, _| t.terminal_ids())
+}
+
+#[test]
+fn a_terminal_tab_is_a_terminal_of_its_own_closed_with_it_once_the_user_agrees() {
+    let hub = crate::workspace::on_thread("main", None);
+    assert_eq!(panel(&hub)["canAdd"]["terminal"], true);
+    hub.dispatch("rightPanel.add", json!({"kind": "terminal"}));
+    let tab = panel(&hub)["activeId"].as_str().unwrap().to_owned();
+    assert!(tab.starts_with("terminal:"), "{tab}");
+    assert_eq!(titles(&hub), ["Terminal"]);
+    assert_eq!(terminal_ids(&hub), ["term-1"]);
+    // Another is a tab of its own.
+    hub.dispatch("rightPanel.add", json!({"kind": "terminal"}));
+    assert_eq!(titles(&hub), ["Terminal", "Terminal"]);
+    assert_eq!(terminal_ids(&hub), ["term-1", "term-2"]);
+
+    // Closing asks first: no keeps both.
+    hub.dispatch("rightPanel.close", json!({"id": tab}));
+    let question = hub.published("confirmation");
+    assert_eq!(question["title"], "Close terminal \"Terminal 1\"?");
+    hub.dispatch(
+        "confirmation.answer",
+        json!({"requestId": question["requestId"], "accepted": false}),
+    );
+    assert_eq!(titles(&hub).len(), 2);
+    assert_eq!(terminal_ids(&hub), ["term-1", "term-2"]);
+
+    hub.dispatch("rightPanel.close", json!({"id": tab}));
+    let question = hub.published("confirmation");
+    hub.dispatch(
+        "confirmation.answer",
+        json!({"requestId": question["requestId"], "accepted": true}),
+    );
+    assert_eq!(titles(&hub), ["Terminal"]);
+    assert_eq!(terminal_ids(&hub), ["term-2"]);
+    assert_eq!(
+        crate::page::last(&hub, "env-1", "terminal.close")["terminalId"],
+        "term-1"
+    );
+}
+
+#[test]
+fn a_terminal_tab_goes_when_its_terminals_end() {
+    let hub = crate::workspace::on_thread("main", None);
+    hub.dispatch("rightPanel.add", json!({"kind": "terminal"}));
+    hub.dispatch("rightPanel.add", json!({"kind": "diff"}));
+    assert_eq!(titles(&hub), ["Terminal", "Diff"]);
+    hub.mc.frame_where(
+        &hub.engine,
+        |shape| shape["type"] == "terminal" && shape["input"]["terminalId"] == "term-1",
+        json!({"t": "terminal", "event": {"type": "exited"}}),
+    );
+    assert!(terminal_ids(&hub).is_empty());
+    assert_eq!(titles(&hub), ["Diff"]);
+}
+
+#[test]
+fn a_layout_with_nowhere_to_draw_a_terminal_cannot_add_one() {
+    let hub = crate::workspace::on_thread("main", None);
+    assert_eq!(panel(&hub)["canAdd"]["terminal"], true);
+    hal_c2_shell::controllers::terminals::set_drawn(&hub.engine, false);
+    assert_eq!(panel(&hub)["canAdd"]["terminal"], false);
+    hub.dispatch("rightPanel.add", json!({"kind": "terminal"}));
+    assert!(titles(&hub).iter().all(|t| t != "Terminal"));
+    assert!(terminal_ids(&hub).is_empty());
 }
 
 fn launch(dir: &Path) -> Launch {
