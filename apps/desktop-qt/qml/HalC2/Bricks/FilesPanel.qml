@@ -7,7 +7,8 @@ import HalC2.Shell
 // The right panel's Files tab: the thread's workspace as the MC lists it,
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
 // expanded; typing searches the whole workspace. A file opens read-only
-// below the tree, one row per line.
+// below the tree, one row per line; an image shows as itself, and other media
+// open in the browser.
 //
 //   FilesPanel { anchors.fill: parent; source: Panel.files }
 Rectangle {
@@ -17,6 +18,7 @@ Rectangle {
     readonly property var tree: source?.tree ?? null
     readonly property string rootStatus: tree?.rootStatus ?? "loading"
     readonly property bool fileOpen: (source?.openPath ?? "").length > 0
+    readonly property string mediaKind: source?.mediaKind ?? ""
     readonly property int maxLineColumns: 2000
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -38,6 +40,14 @@ Rectangle {
 
     FileEntryMenu {
         id: entryMenu
+    }
+
+    // "Open in browser", once the address works.
+    Connections {
+        target: root.source
+        function onMediaOpened(url) {
+            Shell.openExternal(url);
+        }
     }
 
     ColumnLayout {
@@ -248,7 +258,7 @@ Rectangle {
                 ShellButton {
                     objectName: "fileEdit"
                     subtle: true
-                    visible: root.source?.fileStatus === "ready"
+                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
                     enabled: root.source?.editable ?? false
                     text: root.source?.editing ? qsTr("Done") : qsTr("Edit")
                     implicitHeight: 26
@@ -270,6 +280,7 @@ Rectangle {
                 ShellButton {
                     objectName: "fileWrap"
                     subtle: true
+                    visible: root.mediaKind.length === 0
                     text: root.source?.wrap ? qsTr("No wrap") : qsTr("Wrap")
                     implicitHeight: 26
                     onClicked: root.source.wrap = !root.source.wrap
@@ -435,6 +446,75 @@ Rectangle {
                     }
                 }
 
+                // A media file, from the URL its environment signed. Only made
+                // while the tab shows, so a hidden tab holds no media.
+                Loader {
+                    objectName: "fileMedia"
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    active: root.visible && root.source?.fileStatus === "ready" && root.mediaKind.length > 0
+                    sourceComponent: root.mediaKind === "image" ? mediaImage : mediaElsewhere
+                }
+                Component {
+                    id: mediaImage
+
+                    Item {
+                        Image {
+                            id: image
+
+                            objectName: "fileImage"
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width, implicitWidth)
+                            height: Math.min(parent.height, implicitHeight)
+                            source: root.source?.mediaUrl ?? ""
+                            // A signed URL is not loaded twice: the next one is another URL.
+                            cache: false
+                            asynchronous: true
+                            fillMode: Image.PreserveAspectFit
+                            // Decoded no larger than a wide view needs, and never enlarged.
+                            sourceSize: Qt.size(1440, 1440)
+                            onStatusChanged: if (status === Image.Error)
+                                root.source.mediaFailed(image.source)
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: image.status === Image.Loading
+                            text: qsTr("Loading...")
+                            color: root.muted
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                        }
+                    }
+                }
+                Component {
+                    id: mediaElsewhere
+
+                    ColumnLayout {
+                        spacing: 10
+
+                        Item {
+                            Layout.fillHeight: true
+                        }
+                        Text {
+                            objectName: "fileMediaNote"
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.mediaKind === "pdf" ? qsTr("This document can't be previewed here.") : root.mediaKind === "video" ? qsTr("This video can't be played here.") : qsTr("This audio can't be played here.")
+                            color: root.muted
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                        ShellButton {
+                            objectName: "fileOpenMedia"
+                            Layout.alignment: Qt.AlignHCenter
+                            text: qsTr("Open in browser")
+                            onClicked: root.source.openMedia()
+                        }
+                        Item {
+                            Layout.fillHeight: true
+                        }
+                    }
+                }
+
                 ColumnLayout {
                     objectName: "fileMessage"
                     anchors.centerIn: parent
@@ -475,7 +555,7 @@ Rectangle {
 
                     objectName: "fileLines"
                     anchors.fill: parent
-                    visible: root.source?.fileStatus === "ready" && !root.source.fileEmpty && !root.source.rendered && !root.source.editing
+                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0 && !root.source.fileEmpty && !root.source.rendered && !root.source.editing
                     clip: true
                     model: root.source?.lines ?? null
                     reuseItems: true

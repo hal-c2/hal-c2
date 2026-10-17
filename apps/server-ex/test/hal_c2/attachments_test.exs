@@ -120,6 +120,35 @@ defmodule HalC2.AttachmentsTest do
              })
   end
 
+  test "media URLs serve audio files" do
+    dir = Application.fetch_env!(:hal_c2, :home)
+
+    for {name, type} <- [
+          {"theme.mp3", "audio/mpeg"},
+          {"theme.wav", "audio/wav"},
+          {"theme.ogg", "audio/ogg"},
+          {"theme.m4a", "audio/mp4"},
+          {"theme.flac", "audio/flac"}
+        ] do
+      File.write!(Path.join(dir, name), "audio")
+
+      assert {:ok, %{"relativeUrl" => url}} =
+               Attachments.create_url(%{
+                 "resource" => %{
+                   "_tag" => "media-file",
+                   "threadId" => "t",
+                   "path" => Path.join(dir, name)
+                 }
+               })
+
+      conn = conn(:get, url) |> HalC2.Web.Router.call([])
+      assert conn.status == 200, name
+      assert conn.resp_body == "audio"
+      assert [content_type] = Plug.Conn.get_resp_header(conn, "content-type")
+      assert String.starts_with?(content_type, type), name
+    end
+  end
+
   test "pasted images are stored straight into the thread" do
     data = "data:image/png;base64," <> Base.encode64(@png)
 

@@ -361,11 +361,22 @@ Feature: Formatted messages
     Then "order.ts" opens beside the conversation
     And "cart-total.ts" is not opened afterwards
 
-  @desktop @backlog
-  Scenario: A linked image or video opens as a preview
+  # The desktop's large preview is the Files tab, which a Ctrl-click on the
+  # link opens too (ThreadView.qml openLink).
+  @desktop
+  Scenario: A linked image opens as a preview
     Given the agent's reply links to the file "assets/logo.png"
-    When the user follows the link
+    When the user opens the menu on the link
+    And the user chooses "Open file" from the link's menu
     Then "assets/logo.png" opens as a large preview
+
+  # The desktop links no video player (Qt Multimedia): it offers the video to
+  # open in the browser.
+  @desktop @backlog
+  Scenario: A linked video opens as a preview
+    Given the agent's reply links to the file "media/intro.mp4"
+    When the user follows the link
+    Then "media/intro.mp4" opens as a large preview
 
   @backlog @mobile
   Scenario Outline: An image in a reply is shown in the reply
