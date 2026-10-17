@@ -37,8 +37,9 @@ ComboBox {
     background: Rectangle {
         radius: Math.min(Theme.radius, 8)
         color: control.down || control.hovered || control.popup.visible ? control.hoverFill : control.outline ? Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32) : Qt.alpha(control.hoverFill, 0)
-        border.color: control.outline ? (control.activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("input", "#27272a")) : "transparent"
-        border.width: control.outline ? 1 : 0
+        // The ghost picker is borderless until the keyboard reaches it.
+        border.color: control.visualFocus || (control.outline && control.activeFocus) ? Theme.palette.color("focus", "#3b82f6") : control.outline ? Theme.palette.color("input", "#27272a") : "transparent"
+        border.width: control.outline || control.visualFocus ? 1 : 0
 
         Behavior on color {
             ColorAnimation {

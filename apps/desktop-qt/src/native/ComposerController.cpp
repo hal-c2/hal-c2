@@ -2712,10 +2712,10 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   }
   QVariant emptyText = QVariant::fromValue(nullptr);
   if (trigger && suggestionList.isEmpty()) {
-    // A path search says nothing until it has answered.
-    const bool waiting = trigger->kind == QLatin1String("path") &&
-                         (trigger->query.isEmpty() || m_paths.target != target || m_paths.query != trigger->query ||
-                          !m_paths.done);
+    // A path search says nothing until it has answered. A bare `@` is not
+    // searched, so it says so at once, as the web's menu did.
+    const bool waiting = trigger->kind == QLatin1String("path") && !trigger->query.isEmpty() &&
+                         (m_paths.target != target || m_paths.query != trigger->query || !m_paths.done);
     if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
   }
 

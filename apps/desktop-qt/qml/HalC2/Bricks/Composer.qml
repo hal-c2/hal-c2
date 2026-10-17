@@ -29,6 +29,8 @@ Rectangle {
     readonly property color canvas: Theme.palette.color("canvas", "#0f0f12")
     readonly property color outline: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.05)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    // Claude's mark colour, as the provider icon draws it.
+    readonly property color claudeOrange: "#d97757"
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
@@ -1125,6 +1127,9 @@ Rectangle {
                                     readonly property bool fast: optionItem.modelData.id === "fastMode"
                                     iconName: fast && checked ? "zap" : ""
                                     iconSize: 14
+                                    // The bolt is filled, in Claude's orange on a Claude model.
+                                    iconFilled: true
+                                    iconTint: Qt.alpha(modelPicker.activeInstance?.driverKind === "claudeAgent" ? composer.claudeOrange : composer.foreground, 0.8)
                                     text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
                                     Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
                                     Accessible.checkable: true

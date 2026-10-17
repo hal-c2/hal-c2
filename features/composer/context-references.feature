@@ -346,6 +346,12 @@ Feature: Referencing files, skills, commands and context
       | a Claude thread                            |
       | a Codex draft that carries an image        |
 
+  @desktop
+  Scenario: A bare @ opens the menu and says nothing matches
+    Given a project with an open thread
+    When the user types "@" into the composer
+    Then the suggestion list says "No matching files or folders."
+
   @backlog @desktop
   Scenario Outline: A suggestion list with nothing to offer says why
     When the user types "<typed>" and <situation>
