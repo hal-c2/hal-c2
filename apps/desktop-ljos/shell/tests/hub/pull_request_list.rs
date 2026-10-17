@@ -2,14 +2,13 @@
 //! environment merged into groups (PullRequestListController.cpp,
 //! features/source-control/).
 
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use hal_c2_shell::Launch;
-use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::McError;
+use ljos::prelude::{Platform, RecordedUrls};
 use serde_json::json;
 
 use crate::Hub;
@@ -363,11 +362,8 @@ fn closing_the_page_stops_following_and_an_environment_coming_online_is_read() {
 #[test]
 fn a_row_opens_its_thread_and_on_its_host() {
     let hub = Hub::clustered();
-    let opened = Rc::new(RefCell::new(Vec::<String>::new()));
-    let sink = opened.clone();
-    Bridge::of(&hub.engine).set_url_opener(&hub.engine, move |url| {
-        sink.borrow_mut().push(url.to_owned())
-    });
+    let opened = RecordedUrls::default();
+    Platform::of(&hub.engine).set_open_url(Rc::new(opened.clone()));
     cluster(&hub, false);
     open(&hub);
     hub.mc.answer_on(
@@ -381,7 +377,7 @@ fn a_row_opens_its_thread_and_on_its_host() {
     let key = "env-1:github.com:acme/app#1";
 
     hub.dispatch("pullRequestList.openOnHost", json!({"key": key}));
-    assert_eq!(*opened.borrow(), ["https://github.com/acme/app/pull/1"]);
+    assert_eq!(opened.urls(), ["https://github.com/acme/app/pull/1"]);
 
     // A failed lookup is said beside the row.
     hub.dispatch("pullRequestList.open", json!({"key": key}));

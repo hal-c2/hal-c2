@@ -288,7 +288,7 @@ pub fn every(
     interval_ms: i32,
     f: impl Fn(&Engine) + 'static,
 ) -> Option<ObjectId> {
-    use ljos_engine::Timer;
+    use ljos::prelude::Timer;
     let native = Timer {
         interval: interval_ms,
         repeat: true,

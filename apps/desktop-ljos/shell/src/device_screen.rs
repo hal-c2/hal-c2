@@ -19,16 +19,18 @@
 use std::fmt;
 use std::rc::Rc;
 
-use ljos::prelude::{Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{MetaRef, NodeId, QmlType};
+use ljos::prelude::{Cx, Engine, EngineError, ObjectId, QmlObject, QmlType, Value, qml_impl};
+// The paint hook is ljos_quick's and speaks its engine-level types; the
+// facade has no way to a custom item yet.
+use ljos_engine::{MetaRef, NodeId};
 use ljos_quick::{Item, ItemPaint};
 use ljos_render::{DisplayListBuilder, ImageHandle, kurbo};
 
 /// Adds the type to the `HalC2.Shell` module.
-pub fn register(engine: &Engine, version: ljos_engine::Version) {
-    let meta = || MetaRef::Static(DeviceScreen::static_meta());
-    engine.register_type(crate::MODULE, version, meta());
-    ljos_quick::register_paint_item(engine, meta(), read_paint);
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [DeviceScreen]));
+    let meta = MetaRef::Static(DeviceScreen::static_meta());
+    ljos_quick::register_paint_item(engine, meta, read_paint);
 }
 
 #[derive(QmlObject)]

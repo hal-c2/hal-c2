@@ -3,9 +3,9 @@
 //! browse, and create, rename, move or trash a folder in, without ever
 //! leaving the root, following a link, or touching a project's folder.
 //!
-//! Ljós has no tree models (its views read flat rows), so the model is the
-//! tree's *visible rows*: a row is an entry under the root whose parents are
-//! all expanded, with its `depth` and whether it is `expanded`.
+//! Ljós has no tree models (its views read flat rows; TODO(ljos#27)), so the
+//! model is the tree's *visible rows*: a row is an entry under the root whose
+//! parents are all expanded, with its `depth` and whether it is `expanded`.
 //! `toggleExpanded` and `setExpanded` open and close a folder, as the
 //! tree view's expand arrow does. A folder is read when it is first opened,
 //! off the Engine thread, and again when the OS says something changed in a
@@ -51,13 +51,8 @@ const NOT_TRASHED: &str =
     "The folder could not be moved to the system trash. It has not been permanently deleted.";
 
 /// Adds the model to the `HalC2.Shell` module.
-pub fn register(engine: &Engine, version: ljos_engine::Version) {
-    use ljos_engine::{MetaRef, QmlType};
-    engine.register_type(
-        crate::MODULE,
-        version,
-        MetaRef::Static(LocalFolderModel::static_meta()),
-    );
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [LocalFolderModel]));
 }
 
 /// What moves a folder to the system Trash; false leaves it where it is.

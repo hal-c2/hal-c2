@@ -31,8 +31,12 @@ mod vt;
 use std::fmt;
 use std::rc::Rc;
 
-use ljos::prelude::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::{Color, Font, MetaRef, NodeId, QmlType, Version};
+use ljos::prelude::{
+    Atom, Color, Cx, Engine, EngineError, ObjectId, QmlObject, QmlType, QmlValue, Value, qml_impl,
+};
+// The item hooks (painting, keys, pointer) are ljos_quick's and speak its
+// engine-level types; the facade has no way to a custom item yet.
+use ljos_engine::{Font, MetaRef, NodeId};
 use ljos_platform::{ClipboardMode, Platform};
 use ljos_quick::flickable::{WheelItem, register_wheel_item};
 use ljos_quick::focus::{FocusReason, force_active_focus};
@@ -49,14 +53,10 @@ use keys::{MouseAction, encode_key, encode_mouse};
 use paint::{Look, Painted};
 use vt::{Pos, Vt};
 
-/// The module the bricks import.
-pub const MODULE: &str = "Ghostty";
-
 /// Adds `Terminal` to module `Ghostty`.
 pub fn register(engine: &Engine) {
-    let v = Version::new(1, 0);
+    engine.register_module(ljos::module!("Ghostty" 1.0 => [Terminal]));
     let meta = || MetaRef::Static(Terminal::static_meta());
-    engine.register_type(MODULE, v, meta());
     register_paint_item(engine, meta(), read_paint);
     register_key_item(
         engine,
@@ -342,12 +342,7 @@ fn vt_mut<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Vt) -> R) -> Option<R
 }
 
 /// Sets a readonly property, notifying only when it changes.
-fn put<T: PartialEq + ljos_engine::QmlValue>(
-    e: &Engine,
-    me: ObjectId,
-    p: ljos_engine::Prop<T>,
-    v: T,
-) {
+fn put<T: PartialEq + QmlValue>(e: &Engine, me: ObjectId, p: ljos_engine::Prop<T>, v: T) {
     if e.get(me, p).ok().as_ref() != Some(&v) {
         let _ = e.set_internal(me, p, v);
     }

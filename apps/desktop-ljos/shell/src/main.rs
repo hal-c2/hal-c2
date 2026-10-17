@@ -38,8 +38,10 @@ use hal_c2_shell::notifications::NativeNotifications;
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::session::{self, Session};
 use hal_c2_shell::storage::{Profile, StoragePaths};
-use hal_c2_shell::{Launch, render, store};
-use ljos::prelude::Engine;
+use hal_c2_shell::{Launch, store};
+use ljos::dev::OnError;
+use ljos::prelude::{Engine, LogLevel};
+use ljos::render::{Fonts, Picture};
 use ljos::{App, ShellConfig};
 use ljos_runtime::CoalesceKey;
 
@@ -162,30 +164,19 @@ fn main() -> ExitCode {
         eprintln!("hal-c2-ljos: {e}");
         return ExitCode::FAILURE;
     }
-    let loaded = match qml::load(&options.roots) {
-        Ok(l) => l,
+    if options.check {
+        return check(&options.roots);
+    }
+    let source = match qml::compile(&options.roots, OnError::Record) {
+        Ok(source) => source,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
             return ExitCode::FAILURE;
         }
     };
-    eprintln!(
-        "hal-c2-ljos: {} of {} QML files compiled",
-        loaded.compiled, loaded.files
-    );
-    for (file, why) in &loaded.errors {
-        eprintln!("  {file}.qml: {why}");
-    }
-    if options.check {
-        return if loaded.errors.is_empty() {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
-    }
     let app = App::new("HAL-C2")
         .register(hal_c2_shell::register)
-        .source(loaded.source)
+        .source(source)
         .root(ROOT);
     let result = match &options.render {
         Some(out) => render_to(app, &options, out),
@@ -193,6 +184,21 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("hal-c2-ljos: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `--check`: whether every QML file compiles, each error on a line.
+fn check(roots: &Roots) -> ExitCode {
+    let files = qml::count(roots);
+    match qml::compile(roots, OnError::Fail).and(files) {
+        Ok(files) => {
+            eprintln!("hal-c2-ljos: {files} of {files} QML files compiled");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
             ExitCode::FAILURE
@@ -294,10 +300,7 @@ fn host_name() -> String {
 fn report_warnings(engine: &Engine) {
     let seen = std::cell::RefCell::new(std::collections::HashSet::new());
     engine.set_log_handler(move |entry| {
-        if matches!(
-            entry.level,
-            ljos_engine::LogLevel::Warning | ljos_engine::LogLevel::Critical
-        ) {
+        if matches!(entry.level, LogLevel::Warning | LogLevel::Critical) {
             let first = entry.message.lines().next().unwrap_or("").trim().to_owned();
             if seen.borrow_mut().insert(first.clone()) {
                 eprintln!("qml: {first}");
@@ -324,8 +327,13 @@ fn dispatch_actions(engine: &Engine, actions: &[String]) {
 /// (what the cache kept, when the MC does not answer in time), or as it
 /// shows disconnected.
 fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
+    // The bundled font: the same picture on every machine.
+    ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
-    let clock = render::prepare(&engine);
+    let picture = Picture::new(options.size.0, options.size.1)
+        .settle(options.settle_ms)
+        .on_scene_message(|message| eprintln!("scene: {message}"));
+    picture.install(&engine);
     report_warnings(&engine);
     let root = match &options.launch.mc_origin {
         Some(origin) => {
@@ -367,7 +375,7 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             root
         }
     };
-    let png = render::picture(&engine, &clock, root, options.size, options.settle_ms)?;
+    let png = picture.png(&engine, root)?;
     store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -418,20 +426,15 @@ fn run(app: App, options: Options) -> Result<(), String> {
             };
             setup.on_message(move |engine: &Engine, message| match message {
                 Message::Wake => {
-                    // A panic here would drop the rest of the inbox's batch.
-                    engine.turn(None, || {
-                        if let Some(connection) = &connection {
-                            connection.deliver(engine);
-                        }
-                        hal_c2_shell::folders::deliver(engine);
-                        hal_c2_shell::controllers::plugin::deliver(engine);
-                    });
+                    if let Some(connection) = &connection {
+                        connection.deliver(engine);
+                    }
+                    hal_c2_shell::folders::deliver(engine);
+                    hal_c2_shell::controllers::plugin::deliver(engine);
                 }
                 Message::Activated(key) => {
-                    engine.turn(None, || {
-                        controller::with::<AlertController, _>(engine, |alerts, engine| {
-                            alerts.open_thread(engine, &key)
-                        });
+                    controller::with::<AlertController, _>(engine, |alerts, engine| {
+                        alerts.open_thread(engine, &key)
                     });
                 }
             });
@@ -441,8 +444,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             #[cfg(all(unix, not(target_os = "macos")))]
             {
                 let clicked = handle.clone();
+                // On the listener thread, which may wait for room: a click
+                // is not dropped for a full inbox.
                 let notifications = NativeNotifications::session(move |key| {
-                    let _ = clicked.send(Message::Activated(key));
+                    let _ = clicked.send_blocking(Message::Activated(key));
                 });
                 controller::with::<AlertController, _>(&engine, |alerts, _| {
                     alerts.set_presenter(Rc::new(notifications))

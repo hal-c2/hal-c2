@@ -13,16 +13,13 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
 
 use crate::bridge::Bridge;
 use crate::json::Json;
 
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either
-// (meta.create is gone), and `engine.singleton` fails.
-#[qml(module = "HalC2.Shell", name = "Theme")]
+#[qml(module = "HalC2.Shell", name = "Theme", uncreatable)]
 #[qml_singleton]
 pub struct ThemeStore {
     #[qml(notify, readonly)]
@@ -338,8 +335,8 @@ fn parse_file(root: &serde_json::Map<String, Json>) -> ThemeFile {
 }
 
 fn resolve_colors(file: &mut ThemeFile, base: &Base) {
-    // Following, the file's variants track the app's appearance. Ljós does
-    // not say the system's, so an app that has not chosen one is dark.
+    // Following, the file's variants track the app's appearance (the theme
+    // controller's, the system's in its system mode); dark before it says.
     if file.follows_system_appearance {
         file.appearance = if base.appearance == "light" {
             "light"
@@ -418,6 +415,7 @@ struct Derived {
 
 impl Derived {
     fn of(file: &ThemeFile, base: &Base) -> Derived {
+        let installed = ljos::font_families();
         let appearance = if file.loaded {
             file.appearance.clone()
         } else {
@@ -435,14 +433,19 @@ impl Derived {
                 &file.font_ui
             },
             true,
+            &installed,
         );
-        let font_mono = first_font_family(
-            if file.font_mono.is_empty() {
-                &base.font_mono
-            } else {
-                &file.font_mono
-            },
-            false,
+        let font_mono = fixed_width(
+            first_font_family(
+                if file.font_mono.is_empty() {
+                    &base.font_mono
+                } else {
+                    &file.font_mono
+                },
+                false,
+                &installed,
+            ),
+            &installed,
         );
         let own = |key: &str| {
             base.theme
@@ -463,12 +466,15 @@ impl Derived {
             font_prompt: if own("fontPrompt").is_empty() {
                 font_ui.clone()
             } else {
-                first_font_family(own("fontPrompt"), false)
+                first_font_family(own("fontPrompt"), false, &installed)
             },
             font_terminal: if own("fontTerminal").is_empty() {
                 font_mono.clone()
             } else {
-                first_font_family(own("fontTerminal"), false)
+                fixed_width(
+                    first_font_family(own("fontTerminal"), false, &installed),
+                    &installed,
+                )
             },
             font_scale: f64::from(size("interface", 16)) / 16.0,
             prompt: size("prompt", 14),
@@ -493,14 +499,13 @@ fn file_radius(value: &str) -> Option<f64> {
     v.strip_suffix("px").unwrap_or(v).trim().parse().ok()
 }
 
-/// The theme's CSS font-family list as one family: the first that is not a
-/// generic one. With `or_system`, a list that names the system's font is
-/// empty instead, which is the system's own font.
-///
-/// desktop-qt takes the first family installed here; Ljós has no font
-/// database to ask, so this takes the first named and leaves a missing
-/// family to Ljós's fallback.
-fn first_font_family(list: &str, or_system: bool) -> String {
+/// The theme's CSS font-family list as one family, for a font that falls
+/// back on its own: the first non-generic family `installed` has (case
+/// aside), else the first non-generic one. With `or_system`, a list that
+/// ends in the system's font (`system-ui`) and has nothing installed is
+/// empty instead: the system's own font, as CSS resolves it, not a
+/// stand-in for a family this machine lacks.
+fn first_font_family(list: &str, or_system: bool, installed: &[String]) -> String {
     const GENERIC: [&str; 8] = [
         "system-ui",
         "sans-serif",
@@ -521,16 +526,30 @@ fn first_font_family(list: &str, or_system: bool) -> String {
     let families: Vec<&str> = list
         .split(',')
         .map(|f| f.trim().trim_matches(|c| c == '"' || c == '\''))
-        .filter(|f| !f.is_empty())
         .collect();
-    if or_system && families.iter().any(|f| SYSTEM.contains(f)) {
-        return String::new();
-    }
-    families
+    let ends_in_system = families.iter().any(|f| SYSTEM.contains(f));
+    let candidates: Vec<&str> = families
         .into_iter()
-        .find(|f| !GENERIC.contains(f))
-        .unwrap_or_default()
-        .to_owned()
+        .filter(|f| !f.is_empty() && !GENERIC.contains(f))
+        .collect();
+    let is_installed = |f: &&&str| installed.iter().any(|i| i.eq_ignore_ascii_case(f));
+    match candidates.iter().find(is_installed) {
+        Some(family) => (*family).to_owned(),
+        None if or_system && ends_in_system => String::new(),
+        None => candidates.first().copied().unwrap_or_default().to_owned(),
+    }
+}
+
+/// A monospace family as the theme names it, followed by the generic
+/// `monospace` when this machine lacks it: Ljós's own stand-in for a missing
+/// family is proportional, which spreads a terminal's cells and unaligns
+/// code (desktop-qt's `fixedWidth`). Ljós reads a family as a CSS-like list.
+fn fixed_width(family: String, installed: &[String]) -> String {
+    if family.is_empty() || installed.iter().any(|i| i.eq_ignore_ascii_case(&family)) {
+        family
+    } else {
+        format!("{family}, monospace")
+    }
 }
 
 /// Sets every property from the file and the base, and tells `palette`'s
@@ -583,4 +602,37 @@ fn show(engine: &Engine) {
         let _ = cx.set(ThemeStore::FRAMELESS, !loaded || file.frameless);
         let _ = cx.notify(ThemeStore::PALETTE.index);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{first_font_family, fixed_width};
+
+    #[test]
+    fn a_font_list_is_its_first_installed_family() {
+        let installed = ["IBM Plex Sans".to_owned(), "Inter".to_owned()];
+        let first = |list, or_system| first_font_family(list, or_system, &installed);
+        assert_eq!(first("Inter", true), "Inter");
+        assert_eq!(first("\"IBM Plex Sans\"", true), "IBM Plex Sans");
+        // Past a family this machine lacks, and whatever the case.
+        assert_eq!(first("\"No Such Family\", inter, system-ui", true), "inter");
+        // Nothing installed: the system's font when the list ends in it...
+        assert_eq!(first("\"No Such Family\", system-ui, sans-serif", true), "");
+        // ...else the first family named, which Ljós falls back from.
+        assert_eq!(
+            first("\"No Such Family\", system-ui", false),
+            "No Such Family"
+        );
+        assert_eq!(first("'No Such Mono', monospace", false), "No Such Mono");
+        assert_eq!(first("monospace", false), "");
+    }
+
+    #[test]
+    fn a_missing_monospace_family_falls_back_on_a_fixed_width_one() {
+        let installed = ["JetBrains Mono".to_owned()];
+        let fixed = |family: &str| fixed_width(family.to_owned(), &installed);
+        assert_eq!(fixed("jetbrains mono"), "jetbrains mono");
+        assert_eq!(fixed("No Such Mono"), "No Such Mono, monospace");
+        assert_eq!(fixed(""), "");
+    }
 }

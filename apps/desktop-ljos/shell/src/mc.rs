@@ -125,9 +125,10 @@ pub trait Mc {
     }
 }
 
-/// What the I/O thread said, waiting for the UI thread. Unbounded: Ljós's
-/// inbox is bounded and drops what does not fit, and a stream with a lost
-/// frame is wrong from then on, so only the wake-up goes through it.
+/// What the I/O thread said, waiting for the UI thread. Only the wake-up
+/// goes through the shell's inbox, coalesced: the UI thread takes whatever
+/// queued in one turn, and the I/O thread never waits on it (as it would
+/// with a message per frame and `send_blocking`).
 #[derive(Clone, Default)]
 pub struct McQueue(Arc<Mutex<VecDeque<McEvent>>>);
 

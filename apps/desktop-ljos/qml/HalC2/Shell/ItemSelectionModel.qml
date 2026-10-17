@@ -1,7 +1,9 @@
 import QtQuick
 
 // Stands in for QtQml.Models.ItemSelectionModel over a list of rows: the
-// current index is a row number, -1 for none.
+// current index is a row number, -1 for none. Ljós has the real one now
+// (ljos#28), but over model indices; this one goes with the TreeView
+// stand-in's rows, and with it once Ljós has tree views (TODO(ljos#27)).
 QtObject {
     id: selection
 

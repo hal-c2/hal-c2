@@ -10,7 +10,7 @@ use std::rc::Rc;
 use common::{call, number, shell, text};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::mc::Disconnected;
-use ljos::prelude::Value;
+use ljos::prelude::{Platform, RecordedUrls, Value};
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -37,6 +37,7 @@ Item {
 
     function dispatch(action, payload) { Shell.dispatch(action, payload) }
     function publish(key, value) { Shell.publish(key, value) }
+    function sameState(key) { return Shell.state[key] === Shell.state[key] }
     function openExternal(url) { Shell.openExternal(url) }
     function windowCommand(command) { Shell.windowCommand(command) }
     function pasteAttaches(text, length) { return Shell.pasteAttaches(text, length) }
@@ -68,6 +69,27 @@ fn qml_publishes_as_rust_does() {
     assert_eq!(
         Bridge::of(&engine).published(&engine, "git"),
         Some(json!({"a": [1, "two", null], "b": {"c": true}}))
+    );
+}
+
+#[test]
+fn a_payload_with_a_function_publishes_the_rest() {
+    let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
+    let payload = common::js_value(&engine, r#"({"a": 1, "f": function () {}})"#);
+    call(&engine, root, "publish", &[Value::string("git"), payload]);
+    assert_eq!(
+        Bridge::of(&engine).published(&engine, "git"),
+        Some(json!({"a": 1}))
+    );
+}
+
+#[test]
+fn a_published_record_is_one_object_to_the_bricks() {
+    let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
+    Bridge::of(&engine).publish(&engine, "git", json!({"files": [{"path": "a"}]}));
+    assert_eq!(
+        call(&engine, root, "sameState", &[Value::string("git")]),
+        Value::Bool(true)
     );
 }
 
@@ -153,9 +175,8 @@ fn an_action_dispatched_while_a_controller_runs_waits_for_it() {
 #[test]
 fn the_apps_own_links_open_in_the_app_and_web_links_outside() {
     let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
-    let opened = Rc::new(RefCell::new(Vec::new()));
-    let log = opened.clone();
-    Bridge::of(&engine).set_url_opener(&engine, move |url| log.borrow_mut().push(url.to_owned()));
+    let opened = RecordedUrls::default();
+    Platform::of(&engine).set_open_url(Rc::new(opened.clone()));
     call(
         &engine,
         root,
@@ -189,7 +210,7 @@ fn the_apps_own_links_open_in_the_app_and_web_links_outside() {
         &[Value::string("javascript:alert(1)")],
     );
     assert_eq!(
-        *opened.borrow(),
+        opened.urls(),
         ["https://example.com/a", "mailto:a@example.com"]
     );
 }

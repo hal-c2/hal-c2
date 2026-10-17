@@ -8,7 +8,7 @@
 //! attributes, so of what the Qt highlighter does only the dimmed markers
 //! (and heading marks) are here. Bold, italic, struck-through and code text,
 //! and `codeFont`, wait for Ljós to paint them. `codeFont` is kept so QML
-//! can set it.
+//! can set it. TODO(ljos#38).
 //!
 //! `document` is the `textDocument` of the composer's `TextEdit`.
 
@@ -75,13 +75,8 @@ fn line_markers(line: &str, offset: usize, color: Color, spans: &mut Vec<Highlig
 }
 
 /// Adds the type to the `HalC2.Shell` module.
-pub fn register(engine: &Engine, version: ljos_engine::Version) {
-    use ljos_engine::{MetaRef, QmlType};
-    engine.register_type(
-        crate::MODULE,
-        version,
-        MetaRef::Static(ComposerHighlighter::static_meta()),
-    );
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [ComposerHighlighter]));
 }
 
 #[derive(QmlObject)]

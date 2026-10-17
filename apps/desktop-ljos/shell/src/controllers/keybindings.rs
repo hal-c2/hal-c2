@@ -43,8 +43,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl};
-use ljos_engine::qml_singleton;
+use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
 use ljos_runtime::{Time, TimerId};
 use serde_json::json;
 
@@ -416,8 +415,8 @@ impl Keymap {
     /// A key went down or up anywhere in the application (Qt::Key): what
     /// desktop-qt's application event filter sees.
     ///
-    /// Ljós has no application-wide key filter, so nothing calls this yet;
-    /// the window must forward its key events.
+    /// Ljós has no application-wide key filter (TODO(ljos#43)), so nothing
+    /// calls this yet; the window must forward its key events.
     pub fn key_event(&self, engine: &Engine, key: i32, pressed: bool) {
         // Qt calls the Command key Control on macOS.
         let modifier = key == qt::KEY_CONTROL || (!self.mac() && key == qt::KEY_META);
@@ -1360,8 +1359,7 @@ fn jump_to(engine: &Engine, key: &str) {
 
 /// `Keybindings` in QML.
 #[derive(Debug, QmlObject)]
-// Not `uncreatable`: Ljós then cannot make the singleton either.
-#[qml(module = "HalC2.Shell", name = "Keybindings")]
+#[qml(module = "HalC2.Shell", name = "Keybindings", uncreatable)]
 #[qml_singleton]
 pub struct KeybindingsObject {
     /// The command registry (CommandRegistry).
@@ -1396,22 +1394,12 @@ impl Default for KeybindingsObject {
     }
 }
 
-fn strings(engine: &Engine, list: Vec<String>) -> Value {
-    json::to_value(engine, &json!(list))
-}
-
-fn object_of(engine: &Engine, value: &Value) -> Option<Json> {
-    let json = json::from_value(engine, value);
-    json.is_object().then_some(json)
-}
-
 #[qml_impl]
 impl KeybindingsObject {
     /// A window shortcut fired; `focus` is {terminal, composer, editable}.
     #[qml(invokable)]
-    fn press(cx: &Cx, sequence: Atom, focus: Value) -> bool {
-        let focus = Focus::from_json(&json::from_value(cx.engine, &focus));
-        Keymap::of(cx.engine).press(cx.engine, &sequence, focus)
+    fn press(cx: &Cx, sequence: Atom, focus: Json) -> bool {
+        Keymap::of(cx.engine).press(cx.engine, &sequence, Focus::from_json(&focus))
     }
 
     #[qml(invokable)]
@@ -1444,42 +1432,34 @@ impl KeybindingsObject {
     }
 
     #[qml(invokable)]
-    fn unknown_variables(cx: &Cx, expression: Atom) -> Value {
-        strings(cx.engine, Keymap::unknown_variables(&expression))
+    fn unknown_variables(_cx: &Cx, expression: Atom) -> Vec<String> {
+        Keymap::unknown_variables(&expression)
     }
 
     #[qml(invokable)]
-    fn conflicts(cx: &Cx, row_id: Atom, key: Atom, when: Atom) -> Value {
-        strings(
-            cx.engine,
-            Keymap::of(cx.engine).conflicts(&row_id, &key, &when),
-        )
+    fn conflicts(cx: &Cx, row_id: Atom, key: Atom, when: Atom) -> Vec<String> {
+        Keymap::of(cx.engine).conflicts(&row_id, &key, &when)
     }
 
     #[qml(invokable)]
-    fn command_options(cx: &Cx) -> Value {
-        strings(cx.engine, Keymap::of(cx.engine).command_options())
+    fn command_options(cx: &Cx) -> Vec<String> {
+        Keymap::of(cx.engine).command_options()
     }
 
     #[qml(invokable)]
-    fn save(cx: &Cx, command: Atom, key: Atom, when: Value, replacing: Value) {
-        let when = match json::from_value(cx.engine, &when) {
-            Json::String(when) => when,
-            _ => String::new(),
-        };
-        let replacing = object_of(cx.engine, &replacing);
-        Keymap::of(cx.engine).save(cx.engine, &command, &key, &when, replacing.as_ref());
+    fn save(cx: &Cx, command: Atom, key: Atom, when: Json, replacing: Json) {
+        let when = when.as_str().unwrap_or_default();
+        let replacing = replacing.is_object().then_some(&replacing);
+        Keymap::of(cx.engine).save(cx.engine, &command, &key, when, replacing);
     }
 
     #[qml(invokable)]
-    fn remove(cx: &Cx, row: Value) {
-        let row = json::from_value(cx.engine, &row);
+    fn remove(cx: &Cx, row: Json) {
         Keymap::of(cx.engine).remove(cx.engine, &row);
     }
 
     #[qml(invokable)]
-    fn reset(cx: &Cx, row: Value) {
-        let row = json::from_value(cx.engine, &row);
+    fn reset(cx: &Cx, row: Json) {
         Keymap::of(cx.engine).reset(cx.engine, &row);
     }
 
