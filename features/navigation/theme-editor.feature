@@ -75,6 +75,13 @@ Feature: Custom themes
       And Escape closes the theme editor and gives the keyboard back
 
     @desktop
+    Scenario: A press outside the theme editor closes it
+      Given the message field has the keyboard
+      And the user opens the theme editor
+      When the user presses in the message field
+      Then the theme editor closes and the message field keeps what is typed there
+
+    @desktop
     Scenario: The theme import dialog takes the keyboard
       Given the message field has the keyboard
       When the user opens the theme import dialog
@@ -92,12 +99,14 @@ Feature: Custom themes
       Given the theme editor is open
       When the user inspects the app and picks the sidebar
       Then the editor shows the color used there and how many places use it
+      And the keyboard is back in the theme editor
 
     @desktop
     Scenario: Escape cancels picking a color
       Given the user is inspecting the app for a color
       When the user presses Escape
       Then nothing is picked
+      And the keyboard is back in the theme editor
 
     # Legacy: apps/web/src/components/settings/ThemeColorPicker.tsx (ThemeColorField)
     @backlog @desktop
@@ -185,6 +194,11 @@ Feature: Custom themes
     Scenario: Duplicating a theme
       When the user duplicates "Nord"
       Then an editable copy of "Nord" is added
+
+    @desktop
+    Scenario: Duplicating the standard theme
+      When the user duplicates the standard theme
+      Then an editable copy of the standard theme is added
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (seedName `${label} copy`)
     @backlog @desktop

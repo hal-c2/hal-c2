@@ -64,9 +64,10 @@ Popup {
     // editor's while it is open. Escape is handled by the content rather than
     // the close policy: a popup that closes on Escape turns the window's
     // shortcuts off while it is open, the editor's own toggle among them.
+    // A press outside closes it, except the one that picks a colour off the app.
     modal: false
     focus: true
-    closePolicy: Popup.NoAutoClose
+    closePolicy: Themes.inspecting ? Popup.NoAutoClose : Popup.CloseOnPressOutside
     padding: 16
     onOpened: name.forceActiveFocus()
     onClosed: Themes.editorOpen = false
@@ -81,6 +82,11 @@ Popup {
             } else {
                 editor.close();
             }
+        }
+
+        // The pick, or Escape, hands the keyboard back from the app to the editor.
+        function onInspectingChanged() {
+            if (!Themes.inspecting && editor.opened) pickButton.forceActiveFocus();
         }
     }
 
@@ -184,6 +190,8 @@ Popup {
             spacing: 8
 
             ShellButton {
+                id: pickButton
+
                 objectName: "pick"
                 subtle: true
                 text: Themes.inspecting ? qsTr("Click the app…") : qsTr("Pick from the app")

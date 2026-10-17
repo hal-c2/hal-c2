@@ -446,6 +446,18 @@ const Steps steps([] {
     expect(duplicate.value(QStringLiteral("colors")) == original.value(QStringLiteral("colors")),
            QStringLiteral("the copy draws %1, the original %2").arg(show(duplicate), show(original)));
   });
+  step(QStringLiteral("the user duplicates the standard theme"), [](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->duplicate(QStringLiteral("hal-c2")).isEmpty(), settings(world)->deviceError());
+  });
+  step(QStringLiteral("an editable copy of the standard theme is added"), [](World& world, const Captures&, const Table&) {
+    const auto copy = offered(world, QStringLiteral("HAL-C2 copy"));
+    expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
+           QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
+    const QVariantMap standard = themes(world)->draft(QStringLiteral("hal-c2"));
+    const QVariantMap duplicate = themes(world)->draft(copy->value(QStringLiteral("id")).toString());
+    expect(duplicate.value(QStringLiteral("colors")) == standard.value(QStringLiteral("colors")),
+           QStringLiteral("the copy draws %1, the standard theme %2").arg(show(duplicate), show(standard)));
+  });
   step(QStringLiteral("the theme cannot be removed"), [](World& world, const Captures&, const Table&) {
     ensureTheme(world, QStringLiteral("My Theme"));
     world.themeDraft = themes(world)->draft(QStringLiteral("My Theme"));

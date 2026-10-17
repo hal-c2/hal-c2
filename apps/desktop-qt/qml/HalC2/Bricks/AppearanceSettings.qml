@@ -257,14 +257,30 @@ SettingsPage {
         }
     }
 
-    // The standard look: no theme chosen, and the way back from one.
-    ThemeChoice {
-        objectName: "theme:hal-c2"
-        text: qsTr("HAL-C2")
-        swatch: Themes.standardSwatch
-        checked: Themes.resolvedId === "hal-c2"
-        Accessible.name: qsTr("Use %1").arg(text)
-        onClicked: Themes.choose("")
+    // The standard look: no theme chosen, and the way back from one. It can
+    // be copied to start a theme of one's own, but not edited or removed.
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        ThemeChoice {
+            objectName: "theme:hal-c2"
+            text: qsTr("HAL-C2")
+            swatch: Themes.standardSwatch
+            checked: Themes.resolvedId === "hal-c2"
+            Accessible.name: qsTr("Use %1").arg(text)
+            onClicked: Themes.choose("")
+        }
+
+        ShellButton {
+            objectName: "duplicate:hal-c2"
+            subtle: true
+            iconName: "copy"
+            Accessible.name: qsTr("Duplicate %1").arg(qsTr("HAL-C2"))
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Duplicate")
+            onClicked: Themes.duplicate("hal-c2")
+        }
     }
 
     Repeater {
