@@ -45,6 +45,7 @@ mod threads;
 mod toasts;
 mod usage;
 mod workspace;
+mod workspace_files;
 mod worktree_setup;
 
 use std::rc::Rc;
