@@ -425,22 +425,6 @@ Feature: Viewing and editing files
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
 
-    # Today the MC starts the editor on its own machine and reports success, so a user on
-    # another computer sees nothing happen.
-    @backlog @desktop @tui
-    Scenario Outline: An editor or file manager is never started on another machine unseen
-      Given the thread runs on <where>
-      When the user looks at <action> for "src/app.ts"
-      Then it is unavailable and the user is told the files are on another machine
-
-      Examples:
-        | where                                              | action                           |
-        | another MC of the cluster                          | opening it in an editor          |
-        | another MC of the cluster                          | revealing it                     |
-        | another MC of the cluster                          | following its path in a terminal |
-        | an MC on another machine the client is paired with | opening it in an editor          |
-        | an MC reached through an SSH port forward          | opening it in an editor          |
-
     # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors)
     @backlog @desktop
     Scenario: Only editors on this computer that can work over SSH are offered for a remote environment
@@ -468,11 +452,15 @@ Feature: Viewing and editing files
       And the user is told the files are on another machine and can't be opened here yet
 
       Examples:
-        | where                     | does                                                                 |
-        | another MC of the cluster | reveals "src/app.ts" in the file manager                             |
-        | another MC of the cluster | follows the path "src/app.ts" in a terminal                          |
-        | another MC of the cluster | opens the thread's workspace in an editor from the thread's details |
-        | another MC of the cluster | opens the thread in their editor                                     |
+        | where                                              | does                                                                 |
+        | another MC of the cluster                          | reveals "src/app.ts" in the file manager                             |
+        | another MC of the cluster                          | follows the path "src/app.ts" in a terminal                          |
+        | another MC of the cluster                          | opens the thread's workspace in an editor from the thread's details |
+        | another MC of the cluster                          | opens the thread in their editor                                     |
+        | an MC on another machine the client is paired with | reveals "src/app.ts" in the file manager                             |
+        | an MC reached through an SSH port forward          | follows the path "src/app.ts" in a terminal                          |
+        | an MC on another machine the client is paired with | opens the thread's workspace in an editor from the thread's details |
+        | an MC reached through an SSH port forward          | opens the thread in their editor                                     |
 
       @tui
       Examples:

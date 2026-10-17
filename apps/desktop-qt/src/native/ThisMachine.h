@@ -17,7 +17,7 @@ namespace thisMachine {
 // The lowercase hex SHA-256 of QSysInfo::machineUniqueId(): what an MC on
 // this machine serves as `platform.machineId`. Empty when this machine has none.
 QString id();
-// Pins id() (tests); nullopt reads the machine again.
+// Pins id() (tests); nullopt goes back to this machine's own.
 void setIdForTesting(const std::optional<QString>& id);
 
 // Whether `host` names this machine's loopback: localhost, all of 127.0.0.0/8, ::1.

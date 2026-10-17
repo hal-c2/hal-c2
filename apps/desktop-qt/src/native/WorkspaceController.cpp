@@ -845,7 +845,12 @@ void WorkspaceController::openHere(const QString& environmentId, const QString& 
                            : thisMachine::hosts(*m_store, *m_client, shellMc)    ? shellMc
                                                                                   : QString();
   if (!local || launcher.isEmpty()) {
-    toasts->error(QStringLiteral("The files are on another machine and can't be opened here yet."));
+    const QString elsewhere = QStringLiteral("The files are on another machine and can't be opened here yet.");
+    if (done) {
+      done(elsewhere);
+    } else {
+      toasts->error(elsewhere);
+    }
     return;
   }
   QJsonObject payload{{QStringLiteral("cwd"), *local}, {QStringLiteral("editor"), editor}};
