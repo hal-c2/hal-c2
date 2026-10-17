@@ -143,7 +143,8 @@ impl Controller for QuitController {
 /// in the window sees it; true when it was the shortcut's, and so not the
 /// window's. The window calls it for every key event it gets.
 ///
-/// Ljós has no application-wide key filter (Qt's `installEventFilter`), so
+/// Ljós has no application-wide key filter (Qt's `installEventFilter`,
+/// TODO(ljos#43)), so
 /// the window host must call this ahead of `QuickScene::key_event`; nothing
 /// in Ljós does yet. Claiming the press also covers Qt's ShortcutOverride:
 /// no `Shortcut` sees a press this took.
@@ -164,7 +165,7 @@ impl QuitController {
                 hook(engine);
             }
             // Qt.quit(): Ljós has no Rust call for it (`Engine::request_quit`
-            // is crate-private), so it goes through JS.
+            // is crate-private, TODO(ljos#44)), so it goes through JS.
             let _ = engine.eval_js("Qt.quit()");
         });
     }

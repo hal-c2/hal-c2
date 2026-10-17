@@ -415,8 +415,8 @@ impl Keymap {
     /// A key went down or up anywhere in the application (Qt::Key): what
     /// desktop-qt's application event filter sees.
     ///
-    /// Ljós has no application-wide key filter, so nothing calls this yet;
-    /// the window must forward its key events.
+    /// Ljós has no application-wide key filter (TODO(ljos#43)), so nothing
+    /// calls this yet; the window must forward its key events.
     pub fn key_event(&self, engine: &Engine, key: i32, pressed: bool) {
         // Qt calls the Command key Control on macOS.
         let modifier = key == qt::KEY_CONTROL || (!self.mac() && key == qt::KEY_META);

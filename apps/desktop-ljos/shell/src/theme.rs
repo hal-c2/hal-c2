@@ -335,8 +335,8 @@ fn parse_file(root: &serde_json::Map<String, Json>) -> ThemeFile {
 }
 
 fn resolve_colors(file: &mut ThemeFile, base: &Base) {
-    // Following, the file's variants track the app's appearance. Ljós does
-    // not say the system's, so an app that has not chosen one is dark.
+    // Following, the file's variants track the app's appearance (the theme
+    // controller's, the system's in its system mode); dark before it says.
     if file.follows_system_appearance {
         file.appearance = if base.appearance == "light" {
             "light"

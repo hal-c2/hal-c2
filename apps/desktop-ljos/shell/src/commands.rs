@@ -281,8 +281,8 @@ impl Commands {
         callback: Value,
         owner: Option<ObjectId>,
     ) {
-        // Ljós cannot say whether a JS value is callable; anything that is
-        // not a JS value certainly is not.
+        // Ljós cannot say whether a JS value is callable (TODO(ljos#42));
+        // anything that is not a JS value certainly is not.
         if !matches!(callback, Value::Js(_)) {
             return;
         }
@@ -391,7 +391,7 @@ impl Commands {
     ///
     /// Ljós tells Rust nothing when an object is destroyed (Qt's
     /// `QObject::destroyed`), so a dead owner's command goes the next time
-    /// the registry is used, not at once.
+    /// the registry is used, not at once. TODO(ljos#41).
     pub fn prune(&self, engine: &Engine) {
         let mut pruned = false;
         loop {
@@ -457,7 +457,7 @@ impl Commands {
                     None
                 }
                 // Ljós's call_js says only that the call threw, not why:
-                // the message is empty.
+                // the message is empty (TODO(ljos#42)).
                 Runner::Js(callback) => engine.call_js(&callback, &[]).is_none().then(String::new),
                 Runner::Menu => {
                     me.emit(engine, &me.0.menu_requested, &command);
