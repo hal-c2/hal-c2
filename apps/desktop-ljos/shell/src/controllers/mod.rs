@@ -30,6 +30,7 @@ pub mod projects;
 pub mod provider_settings;
 pub mod provider_update_notice;
 pub mod pull_request_list;
+pub mod pull_request_thread;
 pub mod quit;
 pub mod rewind;
 pub mod scheduled_tasks;
@@ -137,6 +138,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<pull_request_list::PullRequestList>(
             "pullRequestList",
             &["pullRequestList"],
+            Scope::Window,
+        ),
+        Registration::new::<pull_request_thread::PullRequestThread>(
+            "pullRequestThread",
+            &["pullRequestThread"],
             Scope::Window,
         ),
         Registration::new::<quit::QuitController>("quit", &["quitHint"], Scope::Shared),
