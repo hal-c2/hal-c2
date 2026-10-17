@@ -568,25 +568,30 @@ defmodule HalC2.SlackPropTest do
     watch()
     :sys.suspend(HalC2.Slack.Connections)
     connecting = Task.async(fn -> connect(:good) end)
-    receive_state("connecting")
-    FakeSlack.event(mention_event(n, :ours), %{"event_id" => event_id(n)})
-    FakeSlack.ping()
 
-    # The socket takes frames in order, so an ack would have come before the pong.
-    receive do
-      :fake_slack_pong -> :ok
-    after
-      @wait -> exit(:socket_never_took_the_mention)
-    end
-
+    # Resumed however this ends: a suspended supervisor would stall the runs after it.
     acked =
-      receive do
-        {:fake_slack_ack, _} -> true
+      try do
+        receive_state("connecting")
+        FakeSlack.event(mention_event(n, :ours), %{"event_id" => event_id(n)})
+        FakeSlack.ping()
+
+        # The socket takes frames in order, so an ack would have come before the pong.
+        receive do
+          :fake_slack_pong -> :ok
+        after
+          @wait -> exit(:socket_never_took_the_mention)
+        end
+
+        receive do
+          {:fake_slack_ack, _} -> true
+        after
+          0 -> false
+        end
       after
-        0 -> false
+        :sys.resume(HalC2.Slack.Connections)
       end
 
-    :sys.resume(HalC2.Slack.Connections)
     {Task.await(connecting, @wait), acked}
   end
 

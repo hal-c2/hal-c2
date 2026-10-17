@@ -49,7 +49,8 @@ defmodule HalC2.Slack.Socket do
   @doc """
   Makes the socket hold envelopes unacked again, and answers once it does: none it had
   begun to handle is left to ack afterwards. The owner's call, before it forgets the
-  identity; `:ok` too when the socket has ended, `:timeout` when it did not answer.
+  identity; `:ok` too when the socket has ended. One that does not answer in time is
+  killed, as it could still ack: its connection ends and Slack delivers its events again.
   """
   def deactivate(socket, timeout \\ 5_000) do
     ref = Process.monitor(socket)
@@ -65,7 +66,8 @@ defmodule HalC2.Slack.Socket do
     after
       timeout ->
         Process.demonitor(ref, [:flush])
-        :timeout
+        Process.exit(socket, :kill)
+        :ok
     end
   end
 
