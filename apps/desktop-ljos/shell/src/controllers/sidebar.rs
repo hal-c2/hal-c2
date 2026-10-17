@@ -47,6 +47,7 @@ use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::drafts;
 use crate::controllers::keybindings::Keymap;
+use crate::controllers::mc_plugin;
 use crate::controllers::menus::{Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::settings::Settings;
@@ -270,15 +271,16 @@ fn thread(engine: &Engine, key: &str) -> Option<Thread> {
     store::with(engine, |s| s.thread(key))
 }
 
-/// The store's threads, every one listed.
-///
-/// TODO(port): McPluginController::keepsUnlisted — a running plugin keeps
-/// its unlisted threads out of the list; with no plugins ported, each is
-/// listed as once its plugin no longer runs.
+/// The store's threads; one a plugin keeps unlisted is listed once the
+/// plugin no longer runs.
 fn threads(engine: &Engine) -> Vec<Thread> {
     let mut threads = store::with(engine, |s| s.threads());
     for thread in &mut threads {
-        thread.listed = true;
+        if !thread.listed
+            && !mc_plugin::keeps_unlisted(engine, &thread.environment_id, &thread.plugin_id)
+        {
+            thread.listed = true;
+        }
     }
     threads
 }
@@ -436,6 +438,7 @@ impl Sidebar {
         };
         store::on_changed(engine, later(self.me.clone()));
         drafts::on_changed(engine, later(self.me.clone()));
+        mc_plugin::on_running_changed(engine, later(self.me.clone()));
         Settings::of(engine).on_device_changed(later(self.me.clone()));
         let refresh = later(self.me.clone());
         self.bridge

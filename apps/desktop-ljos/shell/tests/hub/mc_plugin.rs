@@ -411,6 +411,55 @@ fn what_the_window_keeps_out_of_the_sidebar_follows_what_runs() {
     assert!(moved.get() >= 1);
 }
 
+/// The titles the sidebar lists, in order.
+fn sidebar_titles(hub: &Hub) -> Vec<String> {
+    let state = hub.published("sidebar");
+    ["pinned", "active", "snoozed", "settled"]
+        .iter()
+        .flat_map(|section| state[section].as_array().cloned().unwrap_or_default())
+        .map(|row| row["title"].as_str().unwrap_or("").to_owned())
+        .collect()
+}
+
+#[test]
+fn the_sidebar_lists_a_plugins_unlisted_thread_once_it_stops() {
+    let (hub, _) = hub("sidebar");
+    const AT: &str = "2026-09-23T09:00:00Z";
+    let thread = |id: &str, plugin: Json| {
+        json!(["a", id, "thread", {"id": id, "projectId": "p1", "title": id,
+            "createdAt": AT, "updatedAt": AT, "plugin": plugin}])
+    };
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 1,
+                "environment": {"environmentId": "env-1", "label": "Laptop"}}],
+            "rows": [
+                ["a", "p1", "project", {"id": "p1", "title": "P", "workspaceRoot": "/w/p", "createdAt": AT, "updatedAt": AT}],
+                thread("plain", Json::Null),
+                thread("review", json!({"id": "reviews", "kind": "review", "listed": false})),
+            ]}),
+    );
+    hub.advance(0);
+    assert_eq!(
+        sidebar_titles(&hub),
+        ["plain"],
+        "until its plugins are known"
+    );
+    plugins(&hub, "env-1", vec![reviews("r1")]);
+    hub.advance(0);
+    assert_eq!(sidebar_titles(&hub), ["plain"]);
+
+    let mut stopped = reviews("r1");
+    stopped["status"] = json!("stopped");
+    plugins(&hub, "env-1", vec![stopped]);
+    hub.advance(0);
+    let mut titles = sidebar_titles(&hub);
+    titles.sort();
+    assert_eq!(titles, ["plain", "review"]);
+}
+
 #[test]
 fn enabling_asks_for_the_permissions_first_and_only_then_enables() {
     let (hub, _) = hub("enable");

@@ -3,15 +3,13 @@
 //! browse, and create, rename, move or trash a folder in, without ever
 //! leaving the root, following a link, or touching a project's folder.
 //!
-//! Ljós has no tree models (its views read flat rows; TODO(ljos#27)), so the
-//! model is the tree's *visible rows*: a row is an entry under the root whose
-//! parents are all expanded, with its `depth` and whether it is `expanded`.
-//! `toggleExpanded` and `setExpanded` open and close a folder, as the
-//! tree view's expand arrow does. A folder is read when it is first opened,
-//! off the Engine thread, and again when the OS says something changed in a
-//! folder that is open (see `watch.rs`). QML's `rootIndex` is, here, `0`
-//! while there is a root to show and `-1` otherwise, and a row is addressed
-//! by its position (`pathForIndex(row)`).
+//! The model is a tree (a Ljós `ItemTree`) shaped like QFileSystemModel's
+//! with what is above the root cut to one row: the top level is the root
+//! folder itself, and `rootIndex` is that row's index, so a `TreeView` shows
+//! what is in the root. A folder is read off the Engine thread the first
+//! time a view asks how many rows it has, and again when the OS says it
+//! changed (see `watch.rs`) or the model changed it; its rows then come and
+//! go one by one, so the rows a view shows and has open keep their place.
 //!
 //! Not ported: the system file icons (`QFileSystemModel` decoration), and a
 //! write of `rootPath` to the path it already has does not clear `error`.
@@ -21,13 +19,12 @@ mod watch;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ljos::prelude::{
-    Atom, Cx, Engine, EngineError, ModelSignals, ObjectId, QmlListModel, QmlObject, QtObject,
-    Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ItemTree, ObjectId, Platform, QmlObject, QtObject, TreeChange,
+    TreeListener, TreeListeners, Value, qml_impl,
 };
 
 use crate::json::{self, Json};
@@ -92,8 +89,10 @@ pub struct LocalFolderModel {
     /// unacceptable one gives the property back its last good value (none).
     #[qml(notify)]
     root_path: Atom,
+    /// The root folder's index: the top row. The invalid index while there
+    /// is nothing to browse.
     #[qml(notify, readonly)]
-    root_index: i32,
+    root_index: Value,
     #[qml(notify)]
     protected_paths: Value,
     #[qml(notify, readonly)]
@@ -108,7 +107,7 @@ impl Default for LocalFolderModel {
             base: QtObject::default(),
             enabled: false,
             root_path: Atom::from(""),
-            root_index: -1,
+            root_index: Value::Undefined,
             protected_paths: Value::Undefined,
             error: Atom::from(""),
             state: Rc::default(),
@@ -127,10 +126,11 @@ impl LocalFolderModel {
         model.start()
     }
 
-    /// The real path of row `row`, when it is a plain entry inside the root.
+    /// The real path of the entry at model index `index`, when it is a
+    /// plain entry inside the root.
     #[qml(invokable)]
-    fn path_for_index(cx: &Cx, row: i32) -> String {
-        Model::of(cx).map_or_else(String::new, |m| m.path_for_index(row))
+    fn path_for_index(cx: &Cx, index: Value) -> String {
+        Model::of(cx).map_or_else(String::new, |m| m.path_for_index(&index))
     }
 
     #[qml(invokable)]
@@ -170,141 +170,168 @@ impl LocalFolderModel {
     fn trash_folder(cx: &Cx, path: Atom, confirmation_path: Atom) -> bool {
         Model::of(cx).is_some_and(|m| m.trash_folder(&path, &confirmation_path))
     }
-
-    /// Opens or closes the folder at `row`.
-    #[qml(invokable)]
-    fn set_expanded(cx: &Cx, row: i32, expanded: bool) {
-        if let Some(m) = Model::of(cx) {
-            m.set_expanded(row, expanded);
-        }
-    }
-
-    #[qml(invokable)]
-    fn toggle_expanded(cx: &Cx, row: i32) {
-        if let Some(m) = Model::of(cx) {
-            m.toggle_expanded(row);
-        }
-    }
 }
 
 /// An entry of a folder as it was read.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Node {
     name: String,
     path: String,
     is_dir: bool,
 }
 
-/// A visible row.
-#[derive(Clone, Debug, PartialEq)]
-struct Row {
-    node: Node,
-    depth: usize,
-}
-
 #[derive(Default)]
 struct Tree {
-    /// Folders that were read, by path.
+    /// Folders that were read, by path: each folder's rows.
     children: HashMap<String, Vec<Node>>,
-    /// Folders that are open, whether or not they are shown.
-    expanded: HashSet<String>,
-    /// Folders being read.
+    /// Folders being read, or asked for and about to be.
     loading: HashSet<String>,
-    rows: Vec<Row>,
 }
 
-impl Tree {
-    /// The rows under `dir` (at `depth`): its entries, each followed by its
-    /// own when open and read.
-    fn flatten(&self, dir: &str, depth: usize, out: &mut Vec<Row>) {
-        for node in self.children.get(dir).into_iter().flatten() {
-            out.push(Row {
-                node: node.clone(),
-                depth,
-            });
-            if node.is_dir && self.expanded.contains(&node.path) {
-                self.flatten(&node.path, depth + 1, out);
-            }
-        }
-    }
-
-    /// The rows after row `at` that are inside it.
-    fn subtree_end(&self, at: usize) -> usize {
-        let depth = self.rows[at].depth;
-        self.rows[at + 1..]
-            .iter()
-            .position(|r| r.depth <= depth)
-            .map_or(self.rows.len(), |n| at + 1 + n)
-    }
-}
-
-/// The model's own state: what lives beside the properties. The rows are
-/// read through [`Rows`], which Ljós's views follow.
+/// The model's own state: what lives beside the properties. The tree is
+/// read through [`Entries`], which Ljós's views follow.
+#[derive(Default)]
 struct State {
     enabled: Cell<bool>,
     root: RefCell<String>,
     tree: RefCell<Tree>,
-    signals: RefCell<Option<ModelSignals>>,
-    /// Bumped whenever the rows start over: a read that finishes later is
-    /// for rows that are gone.
+    listeners: TreeListeners,
+    /// The object, and its engine's platform: what a view asking for a
+    /// folder that was not read needs to have it read ([`State::want`]).
+    obj: Cell<Option<ObjectId>>,
+    platform: RefCell<Option<Rc<Platform>>>,
+    /// Bumped whenever the tree starts over: a read that finishes later is
+    /// for a tree that is gone.
     generation: Cell<u64>,
     watch: RefCell<Option<watch::Watch>>,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State {
-            enabled: Cell::new(false),
-            root: RefCell::default(),
-            tree: RefCell::default(),
-            signals: RefCell::default(),
-            generation: Cell::new(0),
-            watch: RefCell::default(),
+impl State {
+    /// Browsing: enabled, with a root.
+    fn active(&self) -> bool {
+        self.enabled.get() && !self.root.borrow().is_empty()
+    }
+
+    /// The entry at `path` in the tree: `[0]` is the root folder.
+    fn node_at(&self, path: &[usize]) -> Option<Node> {
+        let (&0, rest) = path.split_first()? else {
+            return None;
+        };
+        if !self.active() {
+            return None;
         }
+        let root = self.root.borrow().clone();
+        let tree = self.tree.borrow();
+        let mut node = None;
+        let mut dir = root.as_str();
+        for &row in rest {
+            let entry = tree.children.get(dir)?.get(row)?;
+            dir = &entry.path;
+            node = Some(entry);
+        }
+        Some(match node {
+            Some(node) => node.clone(),
+            None => Node {
+                name: root.rsplit('/').next().unwrap_or_default().to_owned(),
+                path: root.clone(),
+                is_dir: true,
+            },
+        })
+    }
+
+    /// Where the folder `dir` is in the tree, when it is there.
+    fn place_of(&self, dir: &str) -> Option<Vec<usize>> {
+        if !self.active() {
+            return None;
+        }
+        let root = self.root.borrow().clone();
+        let mut place = vec![0];
+        if dir == root {
+            return Some(place);
+        }
+        let rest = dir.strip_prefix(&root)?.strip_prefix('/')?;
+        let tree = self.tree.borrow();
+        let mut at = root;
+        for name in rest.split('/') {
+            let entries = tree.children.get(&at)?;
+            place.push(entries.iter().position(|n| n.is_dir && n.name == name)?);
+            at = join(&at, name);
+        }
+        Some(place)
+    }
+
+    /// A view asked what is in `dir`, which was not read: it is read from
+    /// the next frame on, once.
+    ///
+    /// TODO(ljos): not filed yet. `ItemTree` has no `hasChildren` or
+    /// `fetchMore`, and its `row_count` is given no engine: the view shows a
+    /// row's arrow when the rows under it count more than none, so a folder
+    /// is read when a view counts its rows, and the read is started through
+    /// the platform's inbox. An empty folder has no arrow (QFileSystemModel
+    /// gave every folder one until it was read).
+    fn want(&self, dir: &str) {
+        if !self.tree.borrow_mut().loading.insert(dir.to_owned()) {
+            return;
+        }
+        let platform = self.platform.borrow().clone();
+        let (Some(obj), Some(platform)) = (self.obj.get(), platform) else {
+            return;
+        };
+        let generation = self.generation.get();
+        let dir = dir.to_owned();
+        platform.expect().send(move |engine: &Engine| {
+            let state = engine.with::<LocalFolderModel, _>(obj, |m| m.state.clone());
+            if let Ok(state) = state
+                && state.generation.get() == generation
+            {
+                Model::new(engine, obj, state).list(&dir);
+            }
+        });
     }
 }
 
-/// `State` as the rows Ljós's views read.
-struct Rows(Rc<State>);
+/// `State` as the tree Ljós's views read.
+struct Entries(Rc<State>);
 
-impl QmlListModel for Rows {
-    fn row_count(&self) -> usize {
-        self.0.tree.borrow().rows.len()
+impl ItemTree for Entries {
+    fn row_count(&self, parent: &[usize]) -> usize {
+        if parent.is_empty() {
+            return usize::from(self.0.active());
+        }
+        let Some(node) = self.0.node_at(parent).filter(|n| n.is_dir) else {
+            return 0;
+        };
+        let count = self.0.tree.borrow().children.get(&node.path).map(Vec::len);
+        count.unwrap_or_else(|| {
+            self.0.want(&node.path);
+            0
+        })
     }
 
     fn role_names(&self) -> Vec<Atom> {
-        [
-            "fileName",
-            "filePath",
-            "isDirectory",
-            "hasChildren",
-            "depth",
-            "expanded",
-        ]
-        .map(Atom::from)
-        .to_vec()
+        ["fileName", "filePath", "isDirectory"]
+            .map(Atom::from)
+            .to_vec()
     }
 
-    fn data(&self, row: usize, role: &str) -> Value {
-        let tree = self.0.tree.borrow();
-        let Some(row) = tree.rows.get(row) else {
+    fn data(&self, _: &Engine, path: &[usize], column: usize, role: &str) -> Value {
+        let Some(node) = self.0.node_at(path).filter(|_| column == 0) else {
             return Value::Undefined;
         };
         match role {
-            "fileName" => Value::from(row.node.name.as_str()),
-            "filePath" => Value::from(row.node.path.as_str()),
-            "isDirectory" | "hasChildren" => Value::Bool(row.node.is_dir),
-            "depth" => Value::Int(row.depth as i32),
-            "expanded" => Value::Bool(row.node.is_dir && tree.expanded.contains(&row.node.path)),
+            "fileName" => Value::from(node.name.as_str()),
+            "filePath" => Value::from(node.path.as_str()),
+            "isDirectory" => Value::Bool(node.is_dir),
             _ => Value::Undefined,
         }
     }
 
-    fn row_key(&self, row: usize) -> u64 {
-        let tree = self.0.tree.borrow();
-        let mut hasher = std::hash::DefaultHasher::new();
-        tree.rows.get(row).map(|r| &r.node.path).hash(&mut hasher);
-        hasher.finish()
+    fn subscribe(&self, listener: TreeListener) -> u64 {
+        self.0.listeners.add(listener)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        self.0.listeners.remove(id);
     }
 }
 
@@ -329,12 +356,16 @@ impl<'e> Model<'e> {
         Cx::new(self.engine, self.obj)
     }
 
-    /// Makes the object the rows' model and follows what QML writes.
+    /// Makes the object the tree's model and follows what QML writes.
     fn start(&self) -> Result<(), EngineError> {
-        let signals = self
-            .engine
-            .set_list_model(self.obj, Rc::new(Rows(self.state.clone())))?;
-        *self.state.signals.borrow_mut() = Some(signals);
+        self.state.obj.set(Some(self.obj));
+        *self.state.platform.borrow_mut() = Some(Platform::of(self.engine));
+        self.engine
+            .set_object_tree(self.obj, Rc::new(Entries(self.state.clone())))?;
+        self.cx().set(
+            LocalFolderModel::ROOT_INDEX,
+            self.engine.invalid_model_index(),
+        )?;
         *self.state.watch.borrow_mut() =
             Some(watch::Watch::new(self.engine, self.obj, &self.state));
         let (engine, obj) = (self.engine, self.obj);
@@ -377,9 +408,8 @@ impl<'e> Model<'e> {
         self.state.root.borrow().clone()
     }
 
-    /// Browsing: enabled, with a root.
     fn active(&self) -> bool {
-        self.enabled() && !self.state.root.borrow().is_empty()
+        self.state.active()
     }
 
     /// Gives `rootPath` the root this holds, which is not what was written
@@ -500,26 +530,25 @@ impl<'e> Model<'e> {
         self.root_changed();
     }
 
-    /// The root, `enabled` or what is shown changed: the rows start over.
+    /// The root or `enabled` changed: the tree starts over.
     fn root_changed(&self) {
         let state = &self.state;
         state.generation.set(state.generation.get() + 1);
-        let had_rows = {
-            let mut tree = state.tree.borrow_mut();
-            let had = !tree.rows.is_empty();
-            *tree = Tree::default();
-            had
-        };
+        *state.tree.borrow_mut() = Tree::default();
         let root = self.root();
         let cx = self.cx();
-        let index = if self.active() { 0 } else { -1 };
+        // A new index each time, as QFileSystemModel's `rootIndex` is told
+        // on every change of the root.
+        let index = if self.active() {
+            self.engine.model_index(Some(self.obj), &[(0, 0)])
+        } else {
+            self.engine.invalid_model_index()
+        };
+        self.tell(&TreeChange::ModelReset);
         self.engine.batch(|| {
             self.show_root(&root);
             let _ = cx.set(LocalFolderModel::ROOT_INDEX, index);
         });
-        if had_rows {
-            self.reset();
-        }
         self.sync_watches();
         let _ = LocalFolderModel::emit_root_changed(&cx);
         if self.active() {
@@ -527,20 +556,14 @@ impl<'e> Model<'e> {
         }
     }
 
-    // ---- the rows
+    // ---- the tree
 
-    fn signals(&self) -> Option<ModelSignals> {
-        self.state.signals.borrow().clone()
-    }
-
-    fn reset(&self) {
-        if let Some(signals) = self.signals() {
-            signals.model_reset(self.engine);
-        }
+    fn tell(&self, change: &TreeChange) {
+        self.state.listeners.emit(self.engine, change);
     }
 
     /// Reads `dir` off the Engine thread. What it finds is shown when the
-    /// rows are still the ones it was asked for.
+    /// tree is still the one it was read for.
     fn list(&self, dir: &str) {
         let generation = self.state.generation.get();
         self.state.tree.borrow_mut().loading.insert(dir.to_owned());
@@ -564,134 +587,73 @@ impl<'e> Model<'e> {
         }
     }
 
-    /// `dir` was read: its rows are the entries, below its own row.
+    /// `dir` was read: its rows are the entries. The rows that went and
+    /// came are told one run at a time, so the rest keep their place.
     fn listed(&self, dir: &str, entries: Vec<Node>) {
-        let root = self.root();
-        let (start, end, depth) = {
-            let mut tree = self.state.tree.borrow_mut();
-            tree.loading.remove(dir);
-            let place = if dir == root {
-                Some((0, tree.rows.len(), 0))
-            } else {
-                tree.rows
-                    .iter()
-                    .position(|r| r.node.path == dir)
-                    .filter(|_| tree.expanded.contains(dir))
-                    .map(|at| (at + 1, tree.subtree_end(at), tree.rows[at].depth + 1))
-            };
-            tree.children.insert(dir.to_owned(), entries);
-            match place {
-                Some(place) => place,
-                None => return,
-            }
-        };
-        let mut shown = Vec::new();
-        self.state.tree.borrow().flatten(dir, depth, &mut shown);
-        let unchanged = self.state.tree.borrow().rows[start..end] == shown[..];
-        if !unchanged {
-            self.replace(start, end, shown);
-        }
-        self.open_unread();
-        self.sync_watches();
-    }
-
-    /// Takes rows `start..end` out and puts `rows` in their place.
-    fn replace(&self, start: usize, end: usize, rows: Vec<Row>) {
-        let signals = self.signals();
-        if end > start {
-            if let Some(s) = &signals {
-                s.rows_about_to_be_removed(self.engine, start, end - start);
-            }
-            self.state.tree.borrow_mut().rows.drain(start..end);
-            if let Some(s) = &signals {
-                s.rows_removed(self.engine, start, end - start);
-            }
-        }
-        if !rows.is_empty() {
-            let count = rows.len();
-            if let Some(s) = &signals {
-                s.rows_about_to_be_inserted(self.engine, start, count);
-            }
-            self.state.tree.borrow_mut().rows.splice(start..start, rows);
-            if let Some(s) = &signals {
-                s.rows_inserted(self.engine, start, count);
-            }
-        }
-    }
-
-    /// Reads the open folders that are shown and were not read yet.
-    fn open_unread(&self) {
-        let unread: Vec<String> = {
-            let tree = self.state.tree.borrow();
-            tree.rows
-                .iter()
-                .filter(|r| {
-                    r.node.is_dir
-                        && tree.expanded.contains(&r.node.path)
-                        && !tree.children.contains_key(&r.node.path)
-                        && !tree.loading.contains(&r.node.path)
-                })
-                .map(|r| r.node.path.clone())
-                .collect()
-        };
-        for dir in unread {
-            self.list(&dir);
-        }
-    }
-
-    fn toggle_expanded(&self, row: i32) {
-        let open = self.row(row).is_some_and(|r| {
-            r.node.is_dir && self.state.tree.borrow().expanded.contains(&r.node.path)
-        });
-        self.set_expanded(row, !open);
-    }
-
-    fn row(&self, row: i32) -> Option<Row> {
-        let at = usize::try_from(row).ok()?;
-        self.state.tree.borrow().rows.get(at).cloned()
-    }
-
-    fn set_expanded(&self, row: i32, expanded: bool) {
-        let Some(row_data) = self.row(row) else {
+        self.state.tree.borrow_mut().loading.remove(dir);
+        // A folder its parent no longer has is not kept.
+        let Some(place) = self.state.place_of(dir) else {
             return;
         };
-        if !row_data.node.is_dir {
-            return;
-        }
-        let at = row as usize;
-        let path = row_data.node.path.clone();
-        let changed = {
-            let mut tree = self.state.tree.borrow_mut();
-            if expanded {
-                tree.expanded.insert(path.clone())
-            } else {
-                tree.expanded.remove(&path)
-            }
+        let old = self.state.tree.borrow().children.get(dir).cloned();
+        let was_empty = old.as_ref().is_none_or(Vec::is_empty);
+        let now_empty = entries.is_empty();
+        let old = old.unwrap_or_default();
+        let (removed, inserted) = {
+            let kept: HashSet<&Node> = entries.iter().collect();
+            let had: HashSet<&Node> = old.iter().collect();
+            let removed: Vec<usize> = (0..old.len())
+                .filter(|&i| !kept.contains(&old[i]))
+                .collect();
+            let inserted: Vec<usize> = (0..entries.len())
+                .filter(|&i| !had.contains(&entries[i]))
+                .collect();
+            (removed, inserted)
         };
-        if !changed {
-            return;
+        self.state
+            .tree
+            .borrow_mut()
+            .children
+            .entry(dir.to_owned())
+            .or_default();
+        for (first, count) in runs(&removed).into_iter().rev() {
+            {
+                let mut tree = self.state.tree.borrow_mut();
+                let rows = tree.children.entry(dir.to_owned()).or_default();
+                let gone: Vec<Node> = rows.drain(first..first + count).collect();
+                // What was read under a folder that went goes with it.
+                tree.children
+                    .retain(|path, _| !gone.iter().any(|g| g.is_dir && within(path, &g.path)));
+            }
+            self.tell(&TreeChange::RowsRemoved {
+                parent: place.clone(),
+                first,
+                count,
+            });
         }
-        if let Some(signals) = self.signals() {
-            signals.data_changed(self.engine, at, 1, &["expanded"]);
+        for (first, count) in runs(&inserted) {
+            {
+                let mut tree = self.state.tree.borrow_mut();
+                let rows = tree.children.entry(dir.to_owned()).or_default();
+                rows.splice(first..first, entries[first..first + count].iter().cloned());
+            }
+            self.tell(&TreeChange::RowsInserted {
+                parent: place.clone(),
+                first,
+                count,
+            });
         }
-        if expanded {
-            let mut shown = Vec::new();
-            self.state
-                .tree
-                .borrow()
-                .flatten(&path, row_data.depth + 1, &mut shown);
-            // What was read before is shown now, and read again below.
-            self.replace(at + 1, at + 1, shown);
-            self.open_unread();
-            self.list(&path);
-        } else {
-            let end = self.state.tree.borrow().subtree_end(at);
-            self.replace(at + 1, end, Vec::new());
+        // The view shows the folder's arrow from how many rows it has.
+        if was_empty != now_empty {
+            self.tell(&TreeChange::DataChanged {
+                path: place,
+                roles: vec![Atom::from("hasChildren")],
+            });
         }
         self.sync_watches();
     }
 
-    /// Watches the root, the folder it is in, and the folders shown open.
+    /// Watches the root, the folder it is in, and every folder read.
     fn sync_watches(&self) {
         let mut dirs = HashSet::new();
         if self.active() {
@@ -701,12 +663,7 @@ impl<'e> Model<'e> {
             }
             dirs.insert(PathBuf::from(&root));
             let tree = self.state.tree.borrow();
-            dirs.extend(
-                tree.rows
-                    .iter()
-                    .filter(|r| r.node.is_dir && tree.expanded.contains(&r.node.path))
-                    .map(|r| PathBuf::from(&r.node.path)),
-            );
+            dirs.extend(tree.children.keys().map(PathBuf::from));
         }
         if let Some(watch) = self.state.watch.borrow_mut().as_mut() {
             watch.set(dirs);
@@ -715,14 +672,20 @@ impl<'e> Model<'e> {
 
     // ---- what QML asks
 
-    fn path_for_index(&self, row: i32) -> String {
+    fn path_for_index(&self, index: &Value) -> String {
         if !self.active() {
             return String::new();
         }
-        let Some(row) = self.row(row) else {
+        let place = self.engine.model_index_place(index, Some(self.obj));
+        let path: Option<Vec<usize>> = place
+            .into_iter()
+            .flatten()
+            .map(|(row, _)| usize::try_from(row).ok())
+            .collect();
+        let Some(node) = path.and_then(|p| self.state.node_at(&p)) else {
             return String::new();
         };
-        match plain_entry(&row.node.path, false) {
+        match plain_entry(&node.path, false) {
             Some(path) if within(&path, &self.root()) => path,
             _ => String::new(),
         }
@@ -920,6 +883,18 @@ impl<'e> Model<'e> {
             self.list(&dir);
         }
     }
+}
+
+/// Indexes in order as runs of neighbours: `(first, count)`.
+fn runs(indexes: &[usize]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for &i in indexes {
+        match out.last_mut() {
+            Some((first, count)) if *first + *count == i => *count += 1,
+            _ => out.push((i, 1)),
+        }
+    }
+    out
 }
 
 fn join(dir: &str, name: &str) -> String {

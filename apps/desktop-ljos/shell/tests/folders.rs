@@ -1,7 +1,7 @@
-//! `LocalFolderModel` as FolderExplorer uses it: the visible rows of a
-//! root's folders, and the guarded changes to them. The folders are real,
-//! under a temporary directory; a read is waited for by draining the
-//! platform inbox, a change made outside by the watcher's waker.
+//! `LocalFolderModel` as FolderExplorer uses it: a root's folders in a
+//! `TreeView`, and the guarded changes to them. The folders are real, under
+//! a temporary directory; a read is waited for by draining the platform
+//! inbox, a change made outside by the watcher's waker.
 
 mod common;
 
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
 
-use common::{call, shell, shell_with, text};
+use common::{call, shell, text};
 use hal_c2_shell::folders::{deliver, set_trash, set_wake};
 use hal_c2_shell::mc::Disconnected;
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
@@ -18,6 +18,8 @@ use tempfile::TempDir;
 
 const MAIN: &str = r#"
 import QtQuick
+import QtQuick.Controls.Basic
+import QtQml.Models
 import HalC2.Shell
 
 Item {
@@ -25,25 +27,11 @@ Item {
     property bool enabled: false
     property string rootPath: ""
     property var protectedPaths: []
+    property string selected: ""
     readonly property string error: folders.error
-    readonly property int rootIndex: folders.rootIndex
-    readonly property int count: rep.count
+    readonly property bool rooted: folders.rootIndex.valid
     readonly property string modelRoot: folders.rootPath
     property int rootChanges: 0
-
-    // Declared before the model: a view resolves its model when it completes,
-    // and completion runs last-made-first (see the README's list-model note).
-    Repeater {
-        id: rep
-        model: folders
-        delegate: Item {
-            required property string fileName
-            required property string filePath
-            required property bool isDirectory
-            required property int depth
-            required property bool expanded
-        }
-    }
 
     LocalFolderModel {
         id: folders
@@ -52,17 +40,43 @@ Item {
         protectedPaths: root.protectedPaths
         onRootChanged: root.rootChanges += 1
     }
+    // The tree as FolderExplorer builds it.
+    TreeView {
+        id: tree
+        width: 300
+        height: 400
+        model: folders.enabled && folders.rootPath.length > 0 ? folders : null
+        rootIndex: folders.rootIndex
+        selectionModel: ItemSelectionModel {
+            model: tree.model
+            onCurrentChanged: root.selected = folders.pathForIndex(currentIndex)
+        }
+        editTriggers: TableView.NoEditTriggers
+        delegate: TreeViewDelegate {
+            required property string fileName
+            required property string filePath
+            required property bool isDirectory
+            implicitWidth: tree.width
+            implicitHeight: 20
+            text: fileName
+        }
+    }
+    // A row each: indented by depth, a folder with `/` and its arrow, `+`
+    // closed or `-` open.
     function rows() {
         var out = []
-        for (var i = 0; i < rep.count; i++) {
-            var r = rep.itemAt(i)
+        for (var r = 0; r < tree.rows; r++) {
+            var c = tree.itemAtCell(Qt.point(0, r))
             var pad = ""
-            for (var d = 0; d < r.depth; d++) pad += "  "
-            out.push(pad + r.fileName + (r.isDirectory ? (r.expanded ? "/-" : "/+") : ""))
+            for (var d = 0; d < c.depth; d++) pad += "  "
+            var arrow = c.hasChildren ? (c.expanded ? "-" : "+") : ""
+            out.push(pad + c.fileName + (c.isDirectory ? "/" + arrow : ""))
         }
         return out.join("|")
     }
-    function pathFor(row) { return folders.pathForIndex(row) }
+    function pathFor(row) { return folders.pathForIndex(tree.index(row, 0)) }
+    function toggle(row) { tree.toggleExpanded(row) }
+    function click(row) { tree.itemAtCell(Qt.point(0, row)).clicked() }
     function isDirectory(p) { return folders.isDirectory(p) }
     function canModify(p) { return folders.canModifyFolder(p) }
     function holdsProject(p) { return folders.holdsProject(p) }
@@ -70,8 +84,6 @@ Item {
     function rename(p, name) { return folders.renameFolder(p, name) }
     function move(p, to) { return folders.moveFolder(p, to) }
     function trash(p, confirm) { return folders.trashFolder(p, confirm) }
-    function toggle(row) { folders.toggleExpanded(row) }
-    function setExpanded(row, open) { folders.setExpanded(row, open) }
 }
 "#;
 
@@ -151,16 +163,6 @@ impl Fixture {
         self.settle();
     }
 
-    fn set_expanded(&self, row: i32, open: bool) {
-        call(
-            &self.engine,
-            self.root,
-            "setExpanded",
-            &[Value::Int(row), Value::Bool(open)],
-        );
-        self.settle();
-    }
-
     fn path_for(&self, row: i32) -> String {
         let value = call(&self.engine, self.root, "pathFor", &[Value::Int(row)]);
         self.engine.to_js_string(&value).to_string()
@@ -181,6 +183,10 @@ impl Fixture {
     fn error(&self) -> String {
         text(&self.engine, self.root, "error")
     }
+
+    fn rooted(&self) -> bool {
+        common::read(&self.engine, self.root, "rooted").to_boolean()
+    }
 }
 
 #[test]
@@ -189,7 +195,7 @@ fn a_disabled_model_neither_browses_nor_changes_anything() {
     f.set("rootPath", Value::string(f.root_path()));
     f.settle();
     assert_eq!(f.rows(), "");
-    assert_eq!(common::number(&f.engine, f.root, "rootIndex"), -1.0);
+    assert!(!f.rooted());
     assert_eq!(f.string("create", &[&f.root_path(), "no"]), "");
     assert!(!Path::new(&f.path("no")).exists());
 }
@@ -201,8 +207,9 @@ fn browsing_lists_folders_first_and_disabling_hides_them() {
     f.touch("plain-file");
     f.touch(".hidden");
     f.browse();
-    assert_eq!(f.rows(), "child/+|plain-file");
-    assert_eq!(common::number(&f.engine, f.root, "rootIndex"), 0.0);
+    // An empty folder has no arrow.
+    assert_eq!(f.rows(), "child/|plain-file");
+    assert!(f.rooted());
     assert_eq!(f.path_for(0), f.path("child"));
     assert!(f.truth("isDirectory", &[&f.root_path()]));
     assert!(f.truth("isDirectory", &[&f.path("child")]));
@@ -210,7 +217,7 @@ fn browsing_lists_folders_first_and_disabling_hides_them() {
     f.set("enabled", Value::Bool(false));
     f.settle();
     assert_eq!(f.rows(), "");
-    assert_eq!(common::number(&f.engine, f.root, "rootIndex"), -1.0);
+    assert!(!f.rooted());
     assert_eq!(f.path_for(0), "");
     assert!(!f.truth("isDirectory", &[&f.root_path()]));
 }
@@ -218,7 +225,7 @@ fn browsing_lists_folders_first_and_disabling_hides_them() {
 #[test]
 fn folders_open_and_close_in_place() {
     let f = Fixture::new();
-    f.mkdir("a/inner");
+    f.mkdir("a/inner/deep");
     f.touch("a/a.txt");
     f.touch("z.txt");
     f.browse();
@@ -226,15 +233,18 @@ fn folders_open_and_close_in_place() {
     f.toggle(0);
     assert_eq!(f.rows(), "a/-|  inner/+|  a.txt|z.txt");
     f.toggle(1);
-    assert_eq!(f.rows(), "a/-|  inner/-|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  a.txt|z.txt");
+    assert_eq!(f.path_for(2), f.path("a/inner/deep"));
     f.toggle(0);
     assert_eq!(f.rows(), "a/+|z.txt");
     // What was open stays open when its parent opens again.
     f.toggle(0);
-    assert_eq!(f.rows(), "a/-|  inner/-|  a.txt|z.txt");
-    // A file does not open.
-    f.set_expanded(3, true);
-    assert_eq!(f.rows(), "a/-|  inner/-|  a.txt|z.txt");
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  a.txt|z.txt");
+    // A folder read again keeps what is open in it open.
+    f.string("create", &[&f.path("a"), "new"]);
+    assert_eq!(f.rows(), "a/-|  inner/-|    deep/|  new/|  a.txt|z.txt");
+    f.string("rename", &[&f.path("a/new"), "after"]);
+    assert_eq!(f.rows(), "a/-|  after/|  inner/-|    deep/|  a.txt|z.txt");
 }
 
 #[test]
@@ -271,13 +281,13 @@ fn create_rename_and_move_keep_the_contents() {
     let source = f.string("create", &[&f.root_path(), "新 folder"]);
     assert_eq!(source, f.path("新 folder"));
     fs::write(Path::new(&source).join("keep.txt"), "preserved").unwrap();
-    assert_eq!(f.rows(), "新 folder/+");
+    assert_eq!(f.rows(), "新 folder/");
     let renamed = f.string("rename", &[&source, "renamed"]);
     assert_eq!(renamed, f.path("renamed"));
     assert!(!Path::new(&source).exists());
     assert_eq!(f.rows(), "renamed/+");
     let destination = f.string("create", &[&f.root_path(), "destination"]);
-    assert_eq!(f.rows(), "destination/+|renamed/+");
+    assert_eq!(f.rows(), "destination/|renamed/+");
     let moved = f.string("move", &[&renamed, &destination]);
     assert_eq!(moved, f.path("destination/renamed"));
     assert_eq!(
@@ -295,9 +305,9 @@ fn a_change_shows_in_the_folders_that_are_open() {
     f.browse();
     f.toggle(0);
     f.string("create", &[&f.path("parent"), "kid"]);
-    assert_eq!(f.rows(), "parent/-|  kid/+");
+    assert_eq!(f.rows(), "parent/-|  kid/");
     f.string("rename", &[&f.path("parent/kid"), "kid2"]);
-    assert_eq!(f.rows(), "parent/-|  kid2/+");
+    assert_eq!(f.rows(), "parent/-|  kid2/");
 }
 
 #[test]
@@ -375,7 +385,7 @@ fn a_root_that_is_not_a_plain_folder_is_not_taken() {
         assert_eq!(text(&f.engine, f.root, "modelRoot"), "");
         assert_ne!(f.error(), "");
         assert_eq!(f.rows(), "");
-        assert_eq!(common::number(&f.engine, f.root, "rootIndex"), -1.0);
+        assert!(!f.rooted());
     }
     f.set("rootPath", Value::string("/"));
     f.settle();
@@ -390,7 +400,7 @@ fn a_root_that_is_not_a_plain_folder_is_not_taken() {
     f.set("rootPath", Value::string(f.root_path()));
     f.settle();
     assert_eq!(f.error(), "");
-    assert_eq!(common::number(&f.engine, f.root, "rootIndex"), 0.0);
+    assert!(f.rooted());
 }
 
 #[cfg(unix)]
@@ -412,7 +422,7 @@ fn a_root_replaced_by_a_link_is_given_up() {
     f.set("enabled", Value::Bool(true));
     f.settle();
     assert_eq!(text(&f.engine, f.root, "modelRoot"), "");
-    assert_eq!(common::number(&f.engine, f.root, "rootIndex"), -1.0);
+    assert!(!f.rooted());
 }
 
 #[test]
@@ -482,7 +492,8 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     f.mkdir("a");
     f.browse();
     f.toggle(0);
-    assert_eq!(f.rows(), "a/-");
+    // An empty folder opens, with no arrow.
+    assert_eq!(f.rows(), "a/");
     let (tx, rx) = mpsc::channel();
     set_wake(&f.engine, move || {
         let _ = tx.send(());
@@ -492,116 +503,22 @@ fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     rx.recv().expect("the watcher saw the change");
     deliver(&f.engine);
     f.settle();
-    assert_eq!(f.rows(), "a/-|  made-elsewhere/+");
+    assert_eq!(f.rows(), "a/-|  made-elsewhere/");
 }
-
-/// The tree the way FolderExplorer builds it: a ListView-based `TreeView`
-/// over the model, its `TreeViewDelegate`s and an `ItemSelectionModel`.
-const TREE: &str = r#"
-import QtQuick
-import HalC2.Shell
-
-Item {
-    id: root
-    property string path: ""
-    property string selected: ""
-    readonly property alias folders: folders
-    LocalFolderModel { id: folders; enabled: root.path.length > 0; rootPath: root.path }
-    TreeView {
-        id: tree
-        width: 300
-        height: 400
-        model: folders.enabled ? folders : null
-        selectionModel: ItemSelectionModel {
-            model: tree.model
-            onCurrentChanged: root.selected = folders.pathForIndex(currentIndex)
-        }
-        delegate: TreeViewDelegate {
-            required property string fileName
-            width: tree.width
-            height: 20
-            text: fileName
-        }
-    }
-    function names() {
-        var out = []
-        for (var i = 0; i < tree.count; i++) out.push(tree.itemAtIndex(i).text + (tree.itemAtIndex(i).expanded ? "-" : ""))
-        return out.join("|")
-    }
-    function toggleArrow(i) { tree.itemAtIndex(i).toggle() }
-    function click(i) { tree.itemAtIndex(i).clicked() }
-}
-"#;
 
 #[test]
-fn the_tree_view_shim_opens_folders_and_selects_rows() {
-    let root_dir = plain_temp();
-    fs::create_dir_all(root_dir.path().join("a/inner")).unwrap();
-    fs::write(root_dir.path().join("a/file.txt"), "").unwrap();
-    let shim = |name: &str| {
-        std::fs::read_to_string(format!(
-            "{}/../qml/HalC2/Shell/{name}.qml",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("shim")
-    };
-    let qmldir = std::fs::read_to_string(format!(
-        "{}/../qml/HalC2/Shell/qmldir",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
-    let files = [
-        ("HalC2/Shell/TreeView", shim("TreeView")),
-        ("HalC2/Shell/TableView", shim("TableView")),
-        ("HalC2/Shell/TreeViewDelegate", shim("TreeViewDelegate")),
-        ("HalC2/Shell/ItemSelectionModel", shim("ItemSelectionModel")),
-        ("Main", TREE.to_owned()),
-    ];
-    let files: Vec<(&str, &str)> = files.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    // Only the shims: the rest of the module's QML needs the whole shell.
-    let qmldir: String = qmldir
-        .lines()
-        .filter(|l| {
-            l.starts_with("module")
-                || [
-                    "TreeView ",
-                    "TreeViewDelegate ",
-                    "TableView ",
-                    "ItemSelectionModel ",
-                ]
-                .iter()
-                .any(|n| l.starts_with(n))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let (engine, root) = shell_with(
-        &files,
-        &[("HalC2/Shell", &qmldir)],
-        Rc::new(Disconnected::default()),
-    );
-    Platform::of(&engine).finish(&engine);
-    engine
-        .write_by_name(
-            root,
-            "path",
-            Value::string(&*root_dir.path().to_string_lossy()),
-        )
-        .unwrap();
-    Platform::of(&engine).finish(&engine);
-    assert_eq!(text_of(&engine, root, "names"), "a");
-    call(&engine, root, "toggleArrow", &[Value::Int(0)]);
-    Platform::of(&engine).finish(&engine);
-    assert_eq!(text_of(&engine, root, "names"), "a-|inner|file.txt");
-    call(&engine, root, "click", &[Value::Int(2)]);
-    assert_eq!(
-        text(&engine, root, "selected"),
-        root_dir.path().join("a/file.txt").to_string_lossy()
-    );
-    call(&engine, root, "toggleArrow", &[Value::Int(0)]);
-    assert_eq!(text_of(&engine, root, "names"), "a");
-}
-
-fn text_of(engine: &Engine, obj: ObjectId, function: &str) -> String {
-    let value = call(engine, obj, function, &[]);
-    engine.to_js_string(&value).to_string()
+fn a_clicked_row_is_the_selected_path() {
+    let f = Fixture::new();
+    f.mkdir("a");
+    f.touch("a/file.txt");
+    f.browse();
+    f.toggle(0);
+    assert_eq!(f.rows(), "a/-|  file.txt");
+    call(&f.engine, f.root, "click", &[Value::Int(1)]);
+    assert_eq!(text(&f.engine, f.root, "selected"), f.path("a/file.txt"));
+    // An index of no row, or of nothing, has no path.
+    assert_eq!(f.path_for(5), "");
+    f.set("enabled", Value::Bool(false));
+    f.settle();
+    assert_eq!(f.path_for(0), "");
 }
