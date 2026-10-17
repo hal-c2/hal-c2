@@ -746,10 +746,6 @@ impl std::fmt::Debug for Inner {
 
 /// A thread's Device tabs, as the right panel hands them to the
 /// DevicePanel brick (`RightPanelController.device`).
-// TODO(port): RightPanelController::device — the right panel owns one
-// (`ThreadDevices::create`), passes it the thread (`set_thread`) and its
-// active Device tab (`set_tab`), titles device tabs with `title_of`, and
-// acts on `on_opened` / `on_closed` / `on_names_changed`.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "ThreadDevices", uncreatable)]
 pub struct ThreadDevices {
