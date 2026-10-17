@@ -42,13 +42,16 @@ defmodule HalC2.Orchestration.Handoff do
   @legacy_header "Imported conversation history from the previous HAL-C2 orchestrator. Use it as context; do not repeat it unless the user asks."
 
   @doc """
-  How run `ordinal` starts in `provider_thread` (nil when the run creates it):
+  How run `ordinal` (of the turn's `ids`) starts in `provider_thread` (nil when the
+  run creates it):
   `%{fork: %{thread: native_id, turn: native_turn_id} | nil, context: text | nil,
   changes: [...]}`, where `changes` settle the transfers the run consumes. A Pi or
   OpenCode fork also names the entry to cut the copy `before` (nil keeps all of it). A carried
   session's fork has `carried: true` and the `fallback` context for a new session.
   """
-  def plan(state, provider_thread, driver, run_id, ordinal, at) do
+  def plan(state, provider_thread, ids, ordinal, at) do
+    {driver, run_id} = {Orchestration.Entities.driver(ids), ids.run}
+
     transfers =
       state
       |> StreamState.list("context-transfer")
@@ -57,7 +60,7 @@ defmodule HalC2.Orchestration.Handoff do
     {fork, fork_context, fork_changes} =
       case Enum.find(transfers, &(&1["type"] == "fork")) do
         nil -> {nil, nil, []}
-        transfer -> resolve_fork(state, transfer, driver, run_id, ordinal, at)
+        transfer -> resolve_fork(state, transfer, ids, ordinal, at)
       end
 
     fresh =
@@ -88,10 +91,10 @@ defmodule HalC2.Orchestration.Handoff do
         true -> delta(state, provider_thread, run_id, ordinal, at)
       end
 
-    {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
+    {merged, merge_changes} = merge_backs(state, transfers, ids, at)
 
     {legacy, legacy_changes} =
-      if fork == nil and fresh, do: legacy_import(state, driver, run_id, at), else: {nil, []}
+      if fork == nil and fresh, do: legacy_import(state, ids, at), else: {nil, []}
 
     %{
       fork: fork,
@@ -194,8 +197,12 @@ defmodule HalC2.Orchestration.Handoff do
     |> Enum.max(fn -> 0 end)
   end
 
-  # Same provider: the run forks the source's native thread at the fork point.
-  defp resolve_fork(state, transfer, driver, run_id, ordinal, at) do
+  # Same provider instance: the run forks the source's native thread at the fork point.
+  # Another instance of the driver keeps its sessions in another home, so it gets the
+  # history instead.
+  defp resolve_fork(state, transfer, ids, ordinal, at) do
+    {driver, run_id} = {Orchestration.Entities.driver(ids), ids.run}
+    instance = Orchestration.Entities.instance(ids)
     point = transfer["sourcePoint"]
     thread_ref = point["providerThreadRef"]
     turn_ref = point["providerTurnRef"]
@@ -203,7 +210,8 @@ defmodule HalC2.Orchestration.Handoff do
     # An ACP agent's driver is its instance's id.
     kind = if driver in @native_forks, do: driver, else: HalC2.Acp.driver(driver)
 
-    if kind in @native_forks and thread_ref["driver"] == driver and turn_ref != nil do
+    if kind in @native_forks and thread_ref["driver"] == driver and turn_ref != nil and
+         (transfer["sourceProviderInstanceId"] || driver) == instance do
       settled =
         settle(state, transfer, run_id, at, %{
           "status" => "consumed",
@@ -232,8 +240,7 @@ defmodule HalC2.Orchestration.Handoff do
         handoff(
           handoff_id,
           transfer,
-          run_id,
-          driver,
+          ids,
           {1, ordinal - 1},
           "full_thread_summary",
           history,
@@ -267,7 +274,7 @@ defmodule HalC2.Orchestration.Handoff do
   end
 
   # Each merge-back brings the fork's work since the fork point, read from the fork.
-  defp merge_backs(state, transfers, driver, run_id, at) do
+  defp merge_backs(state, transfers, ids, at) do
     transfers
     |> Enum.filter(&(&1["type"] == "merge_back"))
     |> Enum.reduce({[], []}, fn transfer, {texts, changes} ->
@@ -281,7 +288,7 @@ defmodule HalC2.Orchestration.Handoff do
       handoff_id = "context-handoff:#{transfer["id"]}"
 
       settled =
-        settle(state, transfer, run_id, at, %{
+        settle(state, transfer, ids.run, at, %{
           "status" => "consumed",
           "resolution" => %{"strategy" => "portable_context", "contextHandoffId" => handoff_id}
         })
@@ -290,8 +297,7 @@ defmodule HalC2.Orchestration.Handoff do
         handoff(
           handoff_id,
           transfer,
-          run_id,
-          driver,
+          ids,
           {from + 1, to},
           "fork_delta_summary",
           text,
@@ -304,14 +310,14 @@ defmodule HalC2.Orchestration.Handoff do
     |> then(fn {texts, changes} -> {Enum.join(texts, "\n\n"), changes} end)
   end
 
-  defp handoff(id, transfer, run_id, driver, {from, to}, strategy, text, at) do
+  defp handoff(id, transfer, ids, {from, to}, strategy, text, at) do
     Orchestration.create("context-handoff", id, %{
       "id" => id,
       "transferId" => transfer["id"],
       "threadId" => transfer["targetThreadId"],
-      "targetRunId" => run_id,
+      "targetRunId" => ids.run,
       "fromProviderThreadIds" => [],
-      "toProviderThreadId" => "provider-thread:#{driver}:#{transfer["targetThreadId"]}",
+      "toProviderThreadId" => ids.provider_thread,
       "coveredRunOrdinals" => %{"from" => max(from, 1), "to" => max(to, max(from, 1))},
       "strategy" => strategy,
       "status" => "ready",
@@ -450,7 +456,7 @@ defmodule HalC2.Orchestration.Handoff do
   # A version 1 thread, imported from an earlier install, with
   # migrated messages and no completed run. A provider thread that already exists has
   # been told, and an imported agent session resumes the agent's own history.
-  defp legacy_import(state, driver, run_id, at) do
+  defp legacy_import(state, ids, at) do
     thread = state |> StreamState.get("thread") |> Map.values() |> List.first()
     items = state |> StreamState.list("turn-item") |> Enum.filter(&(&1["runId"] == nil))
     completed? = state |> StreamState.list("run") |> Enum.any?(&(&1["status"] == "completed"))
@@ -460,10 +466,9 @@ defmodule HalC2.Orchestration.Handoff do
 
       handoff =
         handoff(
-          "context-handoff:legacy:#{run_id}",
+          "context-handoff:legacy:#{ids.run}",
           %{"targetThreadId" => thread["id"]},
-          run_id,
-          driver,
+          ids,
           {1, 1},
           "manual_context",
           text,

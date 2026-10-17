@@ -361,7 +361,8 @@ defmodule HalC2.Orchestration.TurnWriter do
               do: %{"type" => "message"},
               else: %{
                 "type" => "live",
-                "providerSessionId" => "provider-session:#{driver}:#{ids.thread}"
+                "providerSessionId" =>
+                  Entities.provider_session_id(Entities.instance(ids), ids.thread)
               }
             ),
           "createdAt" => at,
@@ -608,7 +609,7 @@ defmodule HalC2.Orchestration.TurnWriter do
       failure && status == "failed" &&
         settle.(
           "provider-session",
-          "provider-session:#{Entities.driver(ids)}:#{ids.thread}",
+          Entities.provider_session_id(Entities.instance(ids), ids.thread),
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
@@ -701,7 +702,12 @@ defmodule HalC2.Orchestration.TurnWriter do
     instance = run["providerInstanceId"]
     driver = Orchestration.driver_for(instance)
     attempt = StreamState.get(stream, "run-attempt")[run["activeAttemptId"]] || %{}
-    session_id = "provider-session:#{driver}:#{thread_id}"
+    # Its provider thread names its session: one made before instances had their own
+    # is under the driver's id.
+    session_id =
+      (StreamState.get(stream, "provider-thread")[run["providerThreadId"]] || %{})[
+        "providerSessionId"
+      ] || Entities.provider_session_id(instance, thread_id)
 
     ids =
       %{

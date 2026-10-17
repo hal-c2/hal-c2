@@ -31,6 +31,33 @@ Feature: Changing model and provider mid-thread
     And a thread-model-selection-updated event is recorded
     And the next run continues the same provider conversation
 
+  # Another instance of a provider runs in its own home and account, so it cannot resume
+  # the session the thread has on the first: it starts its own with the conversation
+  # handed over, and the first keeps its session for when the thread comes back.
+  @mc
+  Scenario: Moving to another instance of the same provider starts a conversation there
+    Given a second Codex instance "codex-work" with its own home
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And a new provider thread is started for "codex-work"
+    And the provider receives the earlier conversation before "where are we"
+    And the run answers on the Codex thread "codex-work-thread-1"
+    When the user switches "t1" back to "codex" and sends a message
+    Then the run resumes the provider thread "codex" had
+
+  # Before each instance had its own, a thread kept the session of whichever instance of
+  # the provider it ran on, under the provider's id.
+  @mc
+  Scenario: A thread from before instances had their own sessions keeps each instance's
+    Given a second Codex instance "codex-work" with its own home
+    And "t1" last ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run resumes the provider thread "codex-work" had
+    When the user switches "t1" back to "codex" and sends a message
+    Then the provider receives the earlier conversation before "where are we"
+    And the run answers on the Codex thread "native-thread-1"
+
   @mc @shared @backlog-desktop @backlog-mobile
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context

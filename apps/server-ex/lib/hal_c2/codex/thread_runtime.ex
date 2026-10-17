@@ -129,6 +129,8 @@ defmodule HalC2.Codex.ThreadRuntime do
        v: @state_version,
        thread_id: thread_id,
        conn: nil,
+       # The provider instance the app-server was started for.
+       instance: nil,
        native_thread_id: nil,
        turn: nil,
        items: %{},
@@ -609,13 +611,28 @@ defmodule HalC2.Codex.ThreadRuntime do
              }
            }) do
       Connection.notify(conn, "initialized", nil)
-      {:ok, %{state | conn: conn}}
+      {:ok, %{state | conn: conn, instance: instance}}
     else
       {:error, reason} -> {:error, reason, state}
     end
   end
 
-  defp connect(state, _turn), do: {:ok, state}
+  # The app-server runs with its instance's command, variables and home, so a turn on
+  # another instance of Codex needs its own: the open one, and the commands it left
+  # running, stop, and the turn opens the thread it has there.
+  defp connect(state, turn) do
+    instance = if ids = turn[:ids], do: Entities.instance(ids)
+
+    # A runtime from before it recorded the instance keeps its app-server.
+    if Map.get(state, :instance, instance) == instance do
+      {:ok, state}
+    else
+      state = end_background(state, "interrupted")
+      Process.unlink(state.conn)
+      Connection.stop(state.conn)
+      connect(%{state | conn: nil, native_thread_id: nil}, turn)
+    end
+  end
 
   # The instance's launch arguments follow `app-server`.
   defp launch_args(instance), do: HalC2.Codex.Provider.launch_args(instance)

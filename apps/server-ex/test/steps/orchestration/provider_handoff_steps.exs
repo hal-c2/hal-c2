@@ -94,6 +94,36 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  # Its fake Codex names its threads and turns after it and cannot resume another
+  # instance's thread (`FAKE_CODEX_INSTANCE`), as a Codex in another home cannot.
+  step "a second Codex instance {string} with its own home", %{args: [instance]} = context do
+    variable = %{"name" => "FAKE_CODEX_INSTANCE", "value" => instance}
+
+    World.merge_settings(%{
+      "providerInstances" => %{
+        instance => %{"driver" => "codex", "enabled" => true, "environment" => [variable]}
+      }
+    })
+
+    context
+  end
+
+  # Before each instance had its own provider thread, a thread kept the session of the
+  # instance of the driver it ran on under the driver's id.
+  step "{string} last ran on {string} when instances shared a provider thread",
+       %{args: [thread, instance]} = context do
+    id = World.thread_id(context, thread)
+    ref = HalC2.Orchestration.Entities.provider_ref("#{instance}-thread-1", "codex")
+    fields = %{"providerInstanceId" => instance, "nativeThreadRef" => ref}
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"provider-thread", "provider-thread:codex:#{id}", %{"s" => fields}}
+      ])
+
+    context
+  end
+
   # --- context occupancy --------------------------------------------------------------
 
   # Codex reports its token usage during a turn; the turn then ends.
@@ -317,6 +347,24 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "the run answers on the Codex thread {string}", %{args: [native]} = context do
+    assert answer(context, context.thread) =~ ~r/^on #{Regex.escape(native)} history /
+    context
+  end
+
+  step "the run resumes the provider thread {string} had", %{args: [instance]} = context do
+    run = World.latest_run(context, context.thread)
+    threads = World.entities(context, context.thread, "provider-thread")
+    thread = Enum.find(threads, &(&1["id"] == run["providerThreadId"]))
+
+    assert %{"providerInstanceId" => ^instance, "nativeThreadRef" => %{"nativeId" => native}} =
+             thread
+
+    assert %{"threadId" => ^native} = List.last(World.codex_requests(context, "thread/resume"))
+    assert answer(context, context.thread) =~ ~r/^on #{Regex.escape(native)} history /
+    context
+  end
+
   step "a new provider thread is started for {string}", %{args: [instance]} = context do
     run = World.await_latest_run(context, context.thread, "completed")
     threads = World.entities(context, context.thread, "provider-thread")
@@ -527,8 +575,8 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   # What the latest run's provider was sent.
   defp prompt(context) do
     case World.latest_run(context, context.thread)["providerInstanceId"] do
-      "codex" -> hd(List.last(World.codex_requests(context, "turn/start"))["input"])["text"]
       "claudeAgent" -> List.last(World.claude_prompts(context))
+      _codex -> hd(List.last(World.codex_requests(context, "turn/start"))["input"])["text"]
     end
   end
 
