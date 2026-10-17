@@ -656,6 +656,24 @@ fn a_mentioned_pull_request_and_the_palette_link_from_the_tab() {
     );
 }
 
+#[test]
+fn the_projects_open_pull_requests_are_read_once_unless_asked_again() {
+    let hub = linked_hub(vec![]);
+    let tab = model(&hub, "pullRequests");
+    let asked = || crate::page::count(&hub, "pullRequests.list");
+    crate::common::call(&hub.engine, tab, "loadProject", &[]);
+    crate::common::call(&hub.engine, tab, "loadProject", &[]);
+    assert_eq!(asked(), 1);
+    assert_eq!(last(&hub, "env-1", "pullRequests.list")["projectId"], "p1");
+    crate::common::call(
+        &hub.engine,
+        tab,
+        "loadProject",
+        &[ljos::prelude::Value::Bool(true)],
+    );
+    assert_eq!(asked(), 2);
+}
+
 /// Whether the panel's Agents tab is told it shows.
 fn agents_shown(hub: &Hub) -> bool {
     let obj = hub.engine.singleton::<PanelObject>().unwrap();

@@ -1153,10 +1153,10 @@ impl ThreadPullRequests {
     }
 
     /// Reads the project's open pull requests, once per thread unless
-    /// `again` (optional, so a Value: a missing bool does not convert).
+    /// `again` (QML may leave it out).
     #[qml(invokable)]
-    fn load_project(cx: &Cx, again: Value) {
-        let again = again.to_boolean();
+    fn load_project(cx: &Cx, again: Option<bool>) {
+        let again = again.unwrap_or(false);
         ThreadPullRequests::update(cx.engine, cx.this, |p| p.load_project(again));
     }
 
