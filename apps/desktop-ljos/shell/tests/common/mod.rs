@@ -96,6 +96,8 @@ pub struct FakeMc {
     resumes: RefCell<Vec<(SubId, Option<Resume>)>>,
     /// Every `more`: the subscription and how many turns it asked for.
     pub mores: RefCell<Vec<(SubId, u32)>>,
+    /// Every origin and token it was opened at, as a pairing does.
+    pub opened: RefCell<Vec<(String, String)>>,
 }
 
 impl FakeMc {
@@ -309,6 +311,11 @@ impl Mc for FakeMc {
 
     fn on_ready_changed(&self, f: OnReady) {
         self.on_ready.borrow_mut().push(f);
+    }
+
+    fn open(&self, origin: &str, token: &str) -> Result<(), String> {
+        self.opened.borrow_mut().push((origin.into(), token.into()));
+        Ok(())
     }
 }
 

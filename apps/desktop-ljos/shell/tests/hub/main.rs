@@ -20,6 +20,7 @@ mod file_actions;
 mod git;
 mod identity;
 mod keybindings;
+mod late_store;
 mod layout;
 mod limit_recovery;
 mod lineage;
