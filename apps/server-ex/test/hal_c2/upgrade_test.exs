@@ -247,10 +247,10 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 6
+    assert state.v == 7
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
-    assert state.by_terminal[{:settings, node()}] == [1]
+    assert state.by_terminal[{:settings, node()}] == %{1 => nil}
     assert state.monitors == %{}
     assert state.shell == %{}
     # A stream followed before sends no tag.
@@ -261,7 +261,7 @@ defmodule HalC2.UpgradeTest do
     tag = {node(), make_ref()}
 
     state = %{
-      v: 6,
+      v: 7,
       session: nil,
       scopes: :all,
       subs: %{2 => {:stream, node(), "th"}},
