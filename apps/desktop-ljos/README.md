@@ -14,9 +14,12 @@ Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native 
 whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
 fails only where it is made, as in Qt. It takes about a second in a debug build.
 
-Not ahead of time: `ljos::build` would compile them in a build script, but only if the native types moved to a
-crate of their own, every QML edit would mean a rebuild where a restart does now, a file that does not compile
-would fail the build, and `--qml-dir` would still need the compiler. A second at start-up does not pay for that.
+Not ahead of time: at the pinned Ljós, `ljos::build` would compile them in a build script only if the native
+types moved to a crate of their own. Every QML edit would also mean a rebuild where a restart does now, a file
+that does not compile would fail the build, and `--qml-dir` would still need the compiler. A second at start-up
+does not pay for that. The next Ljós (hal-c2/ljos-ui#6, f5d77b6) drops the crate split: a test writes
+`ljostypes.json` with `ljos::types::check_file` and the build compiles against it with
+`ljos::build::compile_dirs_with_types`. Take that path after the bump, if the rebuild per edit is worth it.
 
 ## Run, check and render
 
@@ -67,3 +70,7 @@ What the shell still works around, each where it does so:
 - No destroyed signal (#41), and `call_js` neither says why a call threw nor whether a value is callable (#42):
   `commands.rs`.
 - No badge (#45): `notifications.rs`. No tree models (#27): `qml/HalC2/Shell/TreeView.qml`.
+- A record (`Value::Map`, `Value::List`) becomes a new script object on every read, a copy of the whole tree
+  that is never `===` itself, so state QML binds to is handed through a script function once; and a typed `Json`
+  parameter throws the whole call for one field that is not data, so `Shell.dispatch` and `Shell.publish` read
+  a `Value` leniently. Both in `shell/src/json.rs`, whose module doc is how a controller passes JSON.

@@ -37,6 +37,7 @@ Item {
 
     function dispatch(action, payload) { Shell.dispatch(action, payload) }
     function publish(key, value) { Shell.publish(key, value) }
+    function sameState(key) { return Shell.state[key] === Shell.state[key] }
     function openExternal(url) { Shell.openExternal(url) }
     function windowCommand(command) { Shell.windowCommand(command) }
     function pasteAttaches(text, length) { return Shell.pasteAttaches(text, length) }
@@ -68,6 +69,27 @@ fn qml_publishes_as_rust_does() {
     assert_eq!(
         Bridge::of(&engine).published(&engine, "git"),
         Some(json!({"a": [1, "two", null], "b": {"c": true}}))
+    );
+}
+
+#[test]
+fn a_payload_with_a_function_publishes_the_rest() {
+    let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
+    let payload = common::js_value(&engine, r#"({"a": 1, "f": function () {}})"#);
+    call(&engine, root, "publish", &[Value::string("git"), payload]);
+    assert_eq!(
+        Bridge::of(&engine).published(&engine, "git"),
+        Some(json!({"a": 1}))
+    );
+}
+
+#[test]
+fn a_published_record_is_one_object_to_the_bricks() {
+    let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
+    Bridge::of(&engine).publish(&engine, "git", json!({"files": [{"path": "a"}]}));
+    assert_eq!(
+        call(&engine, root, "sameState", &[Value::string("git")]),
+        Value::Bool(true)
     );
 }
 

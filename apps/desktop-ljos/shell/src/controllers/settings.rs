@@ -1223,8 +1223,8 @@ impl SettingsObject {
     }
 
     #[qml(invokable)]
-    fn write(cx: &Cx, path: Atom, value: Value) {
-        let value = tidy(json::from_value(cx.engine, &value));
+    fn write(cx: &Cx, path: Atom, value: Json) {
+        let value = tidy(value);
         Settings::of(cx.engine).write(cx.engine, &path, value);
     }
 
@@ -1234,8 +1234,8 @@ impl SettingsObject {
     }
 
     #[qml(invokable)]
-    fn write_device(cx: &Cx, key: Atom, value: Value) -> bool {
-        let value = tidy(json::from_value(cx.engine, &value));
+    fn write_device(cx: &Cx, key: Atom, value: Json) -> bool {
+        let value = tidy(value);
         Settings::of(cx.engine).write_device(cx.engine, &key, value)
     }
 
@@ -1274,9 +1274,8 @@ impl SettingsObject {
     }
 
     #[qml(invokable)]
-    fn unreachable(cx: &Cx) -> Value {
-        let labels = Settings::of(cx.engine).unreachable(cx.engine);
-        json::to_value(cx.engine, &json!(labels))
+    fn unreachable(cx: &Cx) -> Vec<String> {
+        Settings::of(cx.engine).unreachable(cx.engine)
     }
 
     #[qml(invokable)]
@@ -1290,8 +1289,7 @@ impl SettingsObject {
     }
 
     #[qml(invokable)]
-    fn set(cx: &Cx, key: Atom, value: Value) {
-        let value = json::from_value(cx.engine, &value);
+    fn set(cx: &Cx, key: Atom, value: Json) {
         Settings::of(cx.engine).set(cx.engine, &key, value);
     }
 
@@ -1301,14 +1299,7 @@ impl SettingsObject {
     }
 
     #[qml(invokable)]
-    fn reset_all(cx: &Cx, keys: Value) {
-        let keys: Vec<String> = match json::from_value(cx.engine, &keys) {
-            Json::Array(keys) => keys
-                .into_iter()
-                .filter_map(|k| k.as_str().map(str::to_owned))
-                .collect(),
-            _ => Vec::new(),
-        };
+    fn reset_all(cx: &Cx, keys: Vec<String>) {
         Settings::of(cx.engine).reset_all(cx.engine, &keys);
     }
 }
