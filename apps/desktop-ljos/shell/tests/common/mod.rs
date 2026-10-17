@@ -187,17 +187,26 @@ impl FakeMc {
     /// Sends `frame` (an object with `t`) to every subscription whose shape
     /// is `{type: kind}` for `environment` (any, when empty).
     pub fn frame(&self, engine: &Engine, kind: &str, environment: &str, frame: Json) {
+        self.frame_where(
+            engine,
+            |shape| {
+                shape.get("type").and_then(Json::as_str) == Some(kind)
+                    && (environment.is_empty()
+                        || shape.get("environment").and_then(Json::as_str) == Some(environment))
+            },
+            frame,
+        );
+    }
+
+    /// Sends `frame` to every subscription whose shape `matches`.
+    pub fn frame_where(&self, engine: &Engine, matches: impl Fn(&Json) -> bool, frame: Json) {
         let Json::Object(frame) = frame else {
             panic!("a frame is an object")
         };
         let ids: Vec<SubId> = self
             .subscriptions()
             .into_iter()
-            .filter(|(_, shape)| {
-                shape.get("type").and_then(Json::as_str) == Some(kind)
-                    && (environment.is_empty()
-                        || shape.get("environment").and_then(Json::as_str) == Some(environment))
-            })
+            .filter(|(_, shape)| matches(shape))
             .map(|(id, _)| id)
             .collect();
         for id in ids {
