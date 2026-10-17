@@ -147,6 +147,30 @@ Item {
             verify(toggle.Accessible.name.indexOf("Fast Mode, off") >= 0);
         }
 
+        // The bolt is filled; it is Claude's orange on a Claude model and the
+        // text colour on any other.
+        function test_fastModeBoltIsFilledInTheProvidersColour() {
+            const withDriver = driverKind => ({
+                composer: Object.assign({}, Shell.defaultComposer(), {
+                    selectedInstanceId: "instance",
+                    options: [{ id: "fastMode", label: "Fast Mode", type: "boolean", value: true, choices: [] }]
+                }),
+                modelPicker: Object.assign({}, Shell.defaultModelPicker(), {
+                    instances: [{ instanceId: "instance", driverKind: driverKind, displayName: "Instance", models: [] }]
+                }),
+                workspace: null
+            });
+            const opaque = color => Qt.rgba(color.r, color.g, color.b, 1);
+            Shell.state = withDriver("claudeAgent");
+            let composer = createTemporaryObject(composerComponent, root);
+            const toggle = findChild(composer, "optionToggle:fastMode");
+            const bolt = findChild(toggle, "contents").children[0];
+            compare(bolt.filled, true);
+            compare(opaque(bolt.color), Qt.color("#d97757"));
+            Shell.state = withDriver("codex");
+            compare(opaque(bolt.color), opaque(composer.foreground));
+        }
+
         function test_submitKeepsDraftUntilPageClearsIt() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");
