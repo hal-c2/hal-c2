@@ -16,6 +16,7 @@ mod connection_health;
 mod connections;
 mod device_settings;
 mod diagnostics;
+mod file_actions;
 mod git;
 mod keybindings;
 mod layout;
