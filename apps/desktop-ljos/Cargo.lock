@@ -1790,7 +1790,6 @@ dependencies = [
  "ljos",
  "ljos_controls",
  "ljos_engine",
- "ljos_platform",
  "ljos_quick",
  "ljos_runtime",
  "notify",

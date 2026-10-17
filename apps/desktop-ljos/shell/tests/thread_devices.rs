@@ -422,6 +422,24 @@ fn the_tab_says_it_is_connecting_until_the_first_picture() {
 }
 
 #[test]
+fn a_display_of_finer_pixels_gets_a_finer_picture() {
+    let t = tab();
+    ljos::testing::set_screens(
+        &t.engine,
+        &[ljos::testing::ScreenSpec {
+            scale: 2.0,
+            ..Default::default()
+        }],
+    );
+    t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
+    t.ios_video_sends(ios_video(false));
+    t.decoded();
+    assert!(t.shown());
+    // The 100 by 200 screen, in the display's pixels.
+    assert_eq!(t.script.borrow().maximum, (200, 400));
+}
+
+#[test]
 fn video_that_arrives_in_pieces_still_shows_the_screen() {
     let t = tab();
     t.watching(&[IPHONE_17], &[IPHONE], IPHONE);

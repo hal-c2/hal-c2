@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use ljos::prelude::{Engine, PathEnv};
+use ljos::prelude::{Engine, Location, PathEnv};
 use regex::Regex;
 use serde_json::json;
 
@@ -220,10 +220,10 @@ impl Plan {
 
     fn download(&self, engine: &Engine, plan: &Json) {
         let markdown = text(plan, "markdown");
-        let folder = self.downloads.clone().unwrap_or_else(|| {
-            // TODO(ljos#63): the facade does not name `Location`.
-            ljos_platform::Location::Download.writable(&PathEnv::from_process(), "", "")
-        });
+        let folder = self
+            .downloads
+            .clone()
+            .unwrap_or_else(|| Location::Download.writable(&PathEnv::from_process(), "", ""));
         let path = free_path(&folder, &file_name(markdown));
         match std::fs::create_dir_all(&folder)
             .and_then(|()| std::fs::write(&path, exported(markdown)))
