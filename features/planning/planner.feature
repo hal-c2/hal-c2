@@ -750,6 +750,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then "API" is done
 
+    # No project checks out "acme/other", so its pull request is read through a project on
+    # the host its link names.
+    @mc
+    Scenario: A pull request linked from a GitHub Enterprise host is read through that host
+      Given the MC also has the project "tools" whose remote is "acme/tools" on "github.example.com"
+      And "API" is linked to #12 of "acme/other" at "https://github.example.com/acme/other/pull/12"
+      When #12 of "acme/other" is merged on "github.example.com"
+      And the plugin looks at GitHub
+      Then "API" is done
+
     @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"

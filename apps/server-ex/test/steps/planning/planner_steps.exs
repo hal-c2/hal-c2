@@ -1324,6 +1324,32 @@ defmodule HalC2.Steps.Planning.Planner do
     World.cli_rules(context, [%{"args" => ["pr view #{number}", repository], "stdout" => pr}])
   end
 
+  step "the MC also has the project {string} whose remote is {string} on {string}",
+       %{args: [title, repository, host]} = context do
+    context = World.create_project(context, title)
+
+    World.git!(
+      World.project(context, title).root,
+      ["remote", "add", "origin", "https://#{host}/#{repository}.git"]
+    )
+
+    context
+  end
+
+  step "{string} is linked to \#{int} of {string} at {string}",
+       %{args: [title, number, repository, url]} = context do
+    context |> ensure(title) |> link_prs(title, repository, [number], %{"url" => url})
+  end
+
+  step "\#{int} of {string} is merged on {string}",
+       %{args: [number, repository, host]} = context do
+    pr = Shared.gh_pr(repository, number, %{"state" => "MERGED"})
+
+    World.cli_rules(context, [
+      %{"args" => ["pr view #{number}", "#{host}/#{repository}"], "stdout" => pr}
+    ])
+  end
+
   step "{string} has {int} pull requests updated since \#{int}",
        %{args: [_repository, count, _number]} = context do
     pr_list(%{context | newer_prs: count})
