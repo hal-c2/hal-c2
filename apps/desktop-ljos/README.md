@@ -47,6 +47,15 @@ shell's keymap, not the focused control.
 `DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, on the `vt100`
 crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
 
+## Inspect
+
+Built with the `mcp` feature, the window serves Ljós's MCP inspector (the scene, clicks, timings and how the
+window is painted) when `LJOS_MCP` names its capabilities; the token file goes below `LJOS_MCP_DIR`:
+
+```sh
+LJOS_MCP=inspect,input LJOS_MCP_DIR=.hal-c2 cargo run -p hal_c2_shell --features mcp
+```
+
 ## Tests
 
 ```sh

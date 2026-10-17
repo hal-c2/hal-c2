@@ -11,6 +11,11 @@ publish.workspace = true
 name = "hal-c2-ljos"
 path = "src/main.rs"
 
+[features]
+# Ljós's inspector, served when LJOS_MCP names its capabilities (README,
+# "Inspect").
+mcp = ["ljos/mcp"]
+
 [dependencies]
 # dev-qml: the shell compiles its QML at start-up (the README says why).
 # render: `--render`. media: the Device tab's screen is decoded with Ljós's
