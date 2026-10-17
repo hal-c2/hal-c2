@@ -87,7 +87,15 @@ defmodule HalC2.PreviewForward.Listener do
   # when either is taken.
   defp listen(port) do
     case listen_both(port) do
-      {:error, reason} when reason in [:eaddrinuse, :eacces] and port != 0 -> listen_both(0)
+      {:error, reason} when reason in [:eaddrinuse, :eacces] and port != 0 -> listen_free(3)
+      other -> other
+    end
+  end
+
+  # The port 127.0.0.1 is given may be held at ::1; then another.
+  defp listen_free(tries) do
+    case listen_both(0) do
+      {:error, :eaddrinuse} when tries > 1 -> listen_free(tries - 1)
       other -> other
     end
   end
@@ -105,7 +113,7 @@ defmodule HalC2.PreviewForward.Listener do
 
         # Another process holds ::1 at the port: a browser trying ::1 would
         # reach it instead.
-        {:error, :eaddrinuse} when port != 0 ->
+        {:error, :eaddrinuse} ->
           :gen_tcp.close(v4)
           {:error, :eaddrinuse}
 

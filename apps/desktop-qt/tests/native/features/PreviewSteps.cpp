@@ -4,6 +4,8 @@
 // opened in the user's browser. features/preview/surfaces.feature, and
 // remote.feature's forwarded dev servers (`preview.forward`).
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -127,6 +129,15 @@ const FakeMc::Extension previews([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("preview.forward"), [&mc](const FakeMc::Rpc& rpc) {
     FakePreviews& fake = mc.part<FakePreviews>();
     fake.forwards.append(rpc);
+    // grant.ex: only a port one of the thread's tabs names.
+    const auto names = [&rpc](const QJsonObject& tab) {
+      const QUrl url(tab.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString());
+      return tab.value(QLatin1String("threadId")) == rpc.payload.value(QLatin1String("threadId")) && url.port(80) == rpc.payload.value(QLatin1String("port")).toInt();
+    };
+    if (std::none_of(fake.tabs.cbegin(), fake.tabs.cend(), names)) {
+      mc.refuse(rpc, QStringLiteral("none of the thread's browser tabs is open at that port"));
+      return;
+    }
     mc.reply(rpc, QJsonObject{{QStringLiteral("port"), fake.forwardPort}});
   });
   mc.onRpc(QStringLiteral("preview.close"), [&mc](const FakeMc::Rpc& rpc) {
@@ -528,6 +539,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the system browser opens %1 on the address the desktop's MC forwards to the dev server").arg(q), [](World& world, const Captures& c, const Table&) {
     openedThroughForward(world, QUrl(QStringLiteral("http://localhost:3001") + c[0]));
+  });
+  step(QStringLiteral("the thread gets a browser tab at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const FakePreviews& fake = world.mc.part<FakePreviews>();
+    world.waitFor([&] { return !fake.opens.isEmpty(); }, QStringLiteral("a browser tab to open"));
+    expect(fake.opens == QList<QJsonObject>{{{QStringLiteral("threadId"), kPeerThread}, {QStringLiteral("url"), c[0]}}},
+           QStringLiteral("%1 tabs were opened").arg(fake.opens.size()));
   });
 
   // Closing.

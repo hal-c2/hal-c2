@@ -70,6 +70,10 @@ bool loopback(const QUrl& url) {
   return host == QLatin1String("localhost") || host == QLatin1String("::1") || host.startsWith(QLatin1String("127."));
 }
 
+int portOf(const QUrl& url) {
+  return url.port(url.scheme() == QLatin1String("https") ? 443 : 80);
+}
+
 }  // namespace
 
 ThreadPreviews::ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent)
@@ -244,21 +248,49 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
 }
 
 void ThreadPreviews::openAddress(const QString& address) {
-  openFor(QUrl(address), m_environment, m_thread, m_mc);
+  const QUrl url(address);
+  if (!forwards(url, m_environment, m_thread, m_mc)) {
+    m_open(url);
+    return;
+  }
+  // The thread's MC forwards only a port one of its tabs names, so a link
+  // from elsewhere (a reply) gets a tab first.
+  for (const QJsonObject& snapshot : std::as_const(m_rows)) {
+    const QUrl at(navOf(snapshot).value(QLatin1String("url")).toString());
+    if (loopback(at) && portOf(at) == portOf(url)) {
+      openFor(url, m_environment, m_thread, m_mc);
+      return;
+    }
+  }
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("preview.open"),
+                 QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("url"), url.toString()}},
+                 [this, generation, url, environmentId = m_environment, threadId = m_thread, mc = m_mc](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                     return;
+                   }
+                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   openFor(url, environmentId, threadId, mc);
+                 });
 }
 
-void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) {
+bool ThreadPreviews::forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const {
   const QString connected = m_client->environment();
   // A thread on the connected MC, or on none the cluster knows, opens as it is,
   // and so does any when the connected MC is on another machine: its forward
   // would listen there.
-  if (!loopback(url) || threadId.isEmpty() || mc.isEmpty() || connected.isEmpty() || environmentId == connected ||
-      (m_connectedHere && !m_connectedHere())) {
+  return loopback(url) && !threadId.isEmpty() && !mc.isEmpty() && !connected.isEmpty() && environmentId != connected &&
+         (!m_connectedHere || m_connectedHere());
+}
+
+void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) {
+  if (!forwards(url, environmentId, threadId, mc)) {
     m_open(url);
     return;
   }
-  const int port = url.port(url.scheme() == QLatin1String("https") ? 443 : 80);
-  m_client->call(this, connected, QStringLiteral("preview.forward"),
+  const int port = portOf(url);
+  m_client->call(this, m_client->environment(), QStringLiteral("preview.forward"),
                  QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("threadId"), threadId}, {QStringLiteral("port"), port}},
                  [this, url, port](const QJsonValue& result, const std::optional<QString>& error) {
                    if (error) {
@@ -267,6 +299,9 @@ void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, cons
                    }
                    QUrl forwarded = url;
                    forwarded.setPort(result.toObject().value(QLatin1String("port")).toInt(port));
+                   // The forward listens at 127.0.0.1 and ::1 only, not at
+                   // 127.0.0.1's aliases.
+                   if (forwarded.host().startsWith(QLatin1String("127."))) forwarded.setHost(QStringLiteral("127.0.0.1"));
                    m_open(forwarded);
                  });
 }

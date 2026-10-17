@@ -180,8 +180,10 @@ Feature: Preview across MCs and devices
       When the user opens the tab
       Then the system browser opens the address the desktop's MC forwards to the dev server
 
+    # The second MC forwards only a port one of the thread's tabs names.
     @desktop
     Scenario: A dev server link in a reply opens through the forward
       Given the agent of a thread on the second MC writes "http://localhost:3000/cart"
       When the user opens the link
-      Then the system browser opens "/cart" on the address the desktop's MC forwards to the dev server
+      Then the thread gets a browser tab at "http://localhost:3000/cart"
+      And the system browser opens "/cart" on the address the desktop's MC forwards to the dev server

@@ -28,7 +28,9 @@ class McClient;
 //
 // A page opens with openAddress(): a dev server's loopback address on a
 // thread of another cluster MC opens through the port the connected MC
-// forwards to it (`preview.forward`), its path, query and fragment kept.
+// forwards to it (`preview.forward`), its path, query and fragment kept. The
+// thread's MC forwards only a port one of its tabs names, so an address no tab
+// names (a link in a reply) opens a tab for it first.
 class ThreadPreviews : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -107,6 +109,7 @@ signals:
 private:
   void follow();
   void unfollow();
+  bool forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const;
   void openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc);
   void onEvent(const QJsonObject& event);
   void setStatus(const QString& status, const QString& message = {});
