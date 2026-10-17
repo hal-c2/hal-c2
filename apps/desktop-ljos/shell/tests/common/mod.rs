@@ -316,9 +316,8 @@ pub fn js_value(engine: &Engine, js: &str) -> Value {
 ///
 /// The window's clock would start at the engine's system time, off the
 /// 1 ms grid Ljós rounds timer deadlines up to, and then `advance(n)` stops
-/// short of an `n` ms timer started at once (TODO(ljos): no issue yet; the
-/// port's draft is "TestWindow's clock starts off the timer grid"). A
-/// virtual clock at zero, set first, starts it on the grid.
+/// short of an `n` ms timer started at once (TODO(ljos#65)). A virtual
+/// clock at zero, set first, starts it on the grid.
 pub fn test_window(engine: &Engine, width: f64, height: f64) -> ljos::testing::TestWindow {
     engine.set_clock(Rc::new(ljos_runtime::VirtualClock::new()));
     ljos::testing::TestWindow::new(engine, width, height)

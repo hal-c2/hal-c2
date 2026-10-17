@@ -88,8 +88,8 @@ pub fn install(engine: &Engine) {
 /// desktop-qt also chose the material by `dark` (NSVisualEffectView) and
 /// drew macOS 26's liquid glass instead when `liquid_glass`
 /// (qt-liquid-glass). Ljós's backdrop has one kind and no glass, so both
-/// get the plain blur; the native window (`ljos::App::on_window`) is the
-/// way to either, through AppKit.
+/// get the plain blur. TODO(ljos#66, ljos#67): a glass backdrop and a
+/// material that follows the scheme.
 pub fn apply_window_blur(engine: &Engine, enabled: bool, _dark: bool, _liquid_glass: bool) {
     let state = engine.extension::<Backdrop>();
     state.blur.set(enabled);

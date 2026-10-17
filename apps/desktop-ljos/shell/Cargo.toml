@@ -70,8 +70,7 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 # in and hand them input.
 ljos = { workspace = true, features = ["testing"] }
 # Below the facade: a virtual clock at zero, for a test window to start on
-# the timer grid (tests/common/mod.rs `test_window`; TODO(ljos): no issue
-# yet, the port's draft is "TestWindow's clock starts off the timer grid").
+# the timer grid (tests/common/mod.rs `test_window`; TODO(ljos#65)).
 ljos_runtime.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"
