@@ -23,6 +23,7 @@ pub mod load_balancing;
 pub mod mc_plugin;
 pub mod menus;
 pub mod navigation;
+pub mod palette;
 pub mod panel;
 pub mod plan;
 pub mod plugin;
@@ -124,6 +125,7 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<mc_plugin::McPlugin>("mcPlugins", &["mcPlugins"], Scope::Shared),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<palette::Palette>("palette", &[], Scope::Window),
         Registration::new::<panel::RightPanel>("panel", &["panel"], Scope::Window),
         Registration::new::<plan::Plan>("plan", &[], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),

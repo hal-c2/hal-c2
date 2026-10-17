@@ -303,8 +303,7 @@ impl Keymap {
         settings.on_keybindings_pushed(|engine| Keymap::of(engine).pushed(engine));
         // The terminals controller calls `set_terminal_open` as its drawer
         // opens and closes.
-        // TODO(port): CommandPaletteController::openChanged — the palette
-        // calls `set_palette_open`.
+        // The palette calls `set_palette_open` as it opens and closes.
         // The right panel calls `set_preview_open` (its Previews tab shown).
         // Conditions on the route, the running turn and the composer's draft
         // (draftThreadRoute, turnRunning, composerDraft).

@@ -24,6 +24,7 @@ mod lineage;
 mod mc_plugin;
 mod menus;
 mod page;
+mod palette;
 mod panel;
 mod plan;
 mod plugin;
