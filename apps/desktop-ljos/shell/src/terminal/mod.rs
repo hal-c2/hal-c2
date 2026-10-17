@@ -31,23 +31,24 @@ mod vt;
 use std::fmt;
 use std::rc::Rc;
 
+use ljos::item::{
+    self, DisplayListBuilder, FocusReason, Font, Item, ItemPaint, KeyEvent, KeyItem, Modifiers,
+    TextEngine, TextStyle, WheelEvent, WheelItem, force_active_focus, key, kurbo,
+};
 use ljos::prelude::{
-    Atom, Color, Cx, Engine, EngineError, ObjectId, QmlObject, QmlType, QmlValue, Value, qml_impl,
+    Atom, ClipboardMode, Color, Cx, Engine, EngineError, ObjectId, Platform, QmlObject, QmlType,
+    QmlValue, Value, qml_impl,
 };
-// The item hooks (painting, keys, pointer) are ljos_quick's and speak its
-// engine-level types; the facade has no way to a custom item yet.
-use ljos_engine::{Font, MetaRef, NodeId};
-use ljos_platform::{ClipboardMode, Platform};
-use ljos_quick::flickable::{WheelItem, register_wheel_item};
-use ljos_quick::focus::{FocusReason, force_active_focus};
-use ljos_quick::keys::{
-    KeyItem, Surrounding, TextInputClient, register_key_item, register_text_input_client,
-};
+// ljos::item has no pointer items, no hover motion, no input method client
+// and no way to the scene's text engine or a font's text style, so the
+// Terminal takes those from ljos_quick, which speaks ljos_engine's MetaRef
+// and Prop (hal-c2/ljos-ui facade gaps; see the README).
+use ljos_engine::{MetaRef, Prop};
+use ljos_quick::keys::{Surrounding, TextInputClient, register_text_input_client};
 use ljos_quick::{
-    Item, ItemPaint, KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerItem, WheelEvent,
-    register_hover_move, register_paint_item, register_pointer_item, text_engine, text_style,
+    MouseButtons, PointerEvent, PointerItem, register_hover_move, register_pointer_item,
+    text_engine, text_style,
 };
-use ljos_render::{DisplayListBuilder, kurbo};
 
 use keys::{MouseAction, encode_key, encode_mouse};
 use paint::{Look, Painted};
@@ -57,10 +58,9 @@ use vt::{Pos, Vt};
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("Ghostty" 1.0 => [Terminal]));
     let meta = || MetaRef::Static(Terminal::static_meta());
-    register_paint_item(engine, meta(), read_paint);
-    register_key_item(
+    item::register_paint_item::<Terminal>(engine, read_paint);
+    item::register_key_item::<Terminal>(
         engine,
-        meta(),
         KeyItem {
             shortcut_override: |_, _, _| false,
             press: key_press,
@@ -81,7 +81,7 @@ pub fn register(engine: &Engine) {
     // Motion with no button held reaches only this hook, and only without
     // modifiers or time.
     register_hover_move(engine, meta(), hover_moved);
-    register_wheel_item(engine, meta(), WheelItem { wheel });
+    item::register_wheel_item::<Terminal>(engine, WheelItem { wheel });
     register_text_input_client(engine, meta(), Rc::new(Ime));
 }
 
@@ -91,8 +91,6 @@ struct State {
     /// Made when first needed, so `scrollbackLimit` is read after the QML
     /// has set it.
     vt: Option<Vt>,
-    /// Moves when the cells do, so the scene repaints the item.
-    serial: Option<NodeId>,
     /// The grid has been sized to the item at least once.
     sized: bool,
     /// A selection is being dragged from this cell.
@@ -156,6 +154,12 @@ pub struct Terminal {
     pub scroll_offset: f64,
     #[qml(notify, readonly)]
     pub at_bottom: bool,
+    /// Moves when the cells do; the paint reads it, so each change
+    /// repaints the item. Not qml-ghostty's: Ljós repaints an item only
+    /// when a property its paint read changes, and has no private
+    /// property for it, so the counter shows in QML.
+    #[qml(notify, readonly)]
+    pub revision: i32,
     #[qml(skip)]
     state: State,
 }
@@ -191,6 +195,7 @@ impl Default for Terminal {
             scroll_total: 24.0,
             scroll_offset: 0.0,
             at_bottom: true,
+            revision: 0,
             state: State::default(),
         }
     }
@@ -213,9 +218,6 @@ impl Terminal {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
-        let scope = e.object_scope(me).unwrap_or_else(|| e.graph().root());
-        let serial = e.graph().property(scope, Value::Int(0)).ok();
-        e.with_mut::<Terminal, _>(me, |t| t.state.serial = serial)?;
         // The grid follows the item's size and font.
         e.effect_in(me, move |e| {
             let w = e.read(me, Item::WIDTH.index).to_number();
@@ -342,7 +344,7 @@ fn vt_mut<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Vt) -> R) -> Option<R
 }
 
 /// Sets a readonly property, notifying only when it changes.
-fn put<T: PartialEq + QmlValue>(e: &Engine, me: ObjectId, p: ljos_engine::Prop<T>, v: T) {
+fn put<T: PartialEq + QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
     if e.get(me, p).ok().as_ref() != Some(&v) {
         let _ = e.set_internal(me, p, v);
     }
@@ -362,7 +364,6 @@ fn sync(e: &Engine, me: ObjectId) {
     }) else {
         return;
     };
-    let serial = e.with::<Terminal, _>(me, |t| t.state.serial).ok().flatten();
     e.batch(|| {
         put(e, me, Terminal::SCROLL_TOTAL, total as f64);
         put(e, me, Terminal::SCROLL_OFFSET, top as f64);
@@ -370,10 +371,8 @@ fn sync(e: &Engine, me: ObjectId) {
         put(e, me, Terminal::HAS_SELECTION, selected);
         put(e, me, Terminal::ROWS, i32::from(rows));
         put(e, me, Terminal::COLUMNS, i32::from(cols));
-        if let Some(n) = serial {
-            let next = e.graph().get_untracked(n).to_number() as i32 + 1;
-            e.graph().set(n, Value::Int(next));
-        }
+        let revision = e.get(me, Terminal::REVISION).unwrap_or(0);
+        let _ = e.set_internal(me, Terminal::REVISION, revision.wrapping_add(1));
     });
 }
 
@@ -455,7 +454,7 @@ fn paste_bytes(text: &str, bracketed: bool) -> Option<Vec<u8>> {
 
 // The grid follows the item.
 
-fn font_style(font: &Value) -> ljos_quick::TextStyle {
+fn font_style(font: &Value) -> TextStyle {
     match font {
         Value::Font(f) => text_style(f),
         _ => text_style(&Font::default()),
@@ -506,17 +505,12 @@ fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), font: &Value, padding:
 // Painting.
 
 /// The palette and colours the properties say.
-fn look(e: &Engine, me: ObjectId, style: ljos_quick::TextStyle, cell: (f64, f64)) -> Look {
-    let color = |p: ljos_engine::PropIndex| -> paint::Color {
-        match e.read(me, p) {
-            Value::Color(c) => {
-                let [r, g, b, a] = c.to_rgba_f();
-                [r as f32, g as f32, b as f32, a as f32]
-            }
-            _ => [0.0; 4],
-        }
+fn look(e: &Engine, me: ObjectId, style: TextStyle, cell: (f64, f64)) -> Look {
+    let color = |p: Prop<Color>| -> paint::Color {
+        let [r, g, b, a] = item::prop(e, me, p).to_rgba_f();
+        [r as f32, g as f32, b as f32, a as f32]
     };
-    let optional = |p| matches!(e.read(me, p), Value::Color(c) if c.is_valid()).then(|| color(p));
+    let optional = |p: Prop<Color>| item::prop(e, me, p).is_valid().then(|| color(p));
     let mut palette = paint::default_palette();
     if let Value::List(items) = e.read(me, Terminal::ANSI_COLORS.index) {
         for (slot, v) in palette.iter_mut().zip(items.iter()) {
@@ -527,15 +521,15 @@ fn look(e: &Engine, me: ObjectId, style: ljos_quick::TextStyle, cell: (f64, f64)
         }
     }
     Look {
-        foreground: color(Terminal::FOREGROUND_COLOR.index),
-        background: color(Terminal::BACKGROUND_COLOR.index),
-        cursor: optional(Terminal::CURSOR_COLOR.index),
-        selection: optional(Terminal::SELECTION_COLOR.index),
+        foreground: color(Terminal::FOREGROUND_COLOR),
+        background: color(Terminal::BACKGROUND_COLOR),
+        cursor: optional(Terminal::CURSOR_COLOR),
+        selection: optional(Terminal::SELECTION_COLOR),
         palette,
-        padding: e.read(me, Terminal::PADDING.index).to_number(),
+        padding: item::prop(e, me, Terminal::PADDING),
         style,
         cell,
-        focused: e.read(me, Item::ACTIVE_FOCUS.index).to_boolean(),
+        focused: item::prop(e, me, Item::ACTIVE_FOCUS),
     }
 }
 
@@ -546,19 +540,17 @@ impl ItemPaint for Screen {
     fn paint(
         &self,
         size: kurbo::Size,
-        _: &mut ljos_quick::TextEngine,
+        _: &mut TextEngine,
         out: &mut DisplayListBuilder,
     ) {
         self.0.paint(size, out);
     }
 }
 
-/// Read tracked: the cells, the colours, the font and the focus repaint the
-/// item.
+/// Read tracked: the cells (`revision`), the colours, the font and the
+/// focus repaint the item.
 fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
-    if let Some(n) = e.with::<Terminal, _>(me, |t| t.state.serial).ok().flatten() {
-        let _ = e.graph().get(n);
-    }
+    item::prop(e, me, Terminal::REVISION);
     let style = font_style(&e.read(me, Terminal::FONT.index));
     let te = text_engine();
     let cell = paint::cell_size(&mut te.borrow_mut(), &style);
@@ -578,13 +570,13 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
 fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
     // Shift+PageUp and Shift+PageDown page through history, as in xterm.
     if ev.modifiers == Modifiers::SHIFT
-        && (ev.key == ljos_quick::keys::key::PAGE_UP || ev.key == ljos_quick::keys::key::PAGE_DOWN)
+        && (ev.key == key::PAGE_UP || ev.key == key::PAGE_DOWN)
     {
         let page = vt_mut(e, me, |vt| i64::from(vt.size().0).saturating_sub(1).max(1)).unwrap_or(1);
         scroll(
             e,
             me,
-            if ev.key == ljos_quick::keys::key::PAGE_UP {
+            if ev.key == key::PAGE_UP {
                 -page
             } else {
                 page

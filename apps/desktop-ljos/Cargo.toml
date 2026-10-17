@@ -17,12 +17,8 @@ ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16
 # Behind the facade, for what it does not offer yet (shell/Cargo.toml says
 # what for). Same rev as `ljos`.
 ljos_engine = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
-ljos_platform = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
-ljos_a11y = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
-ljos_render = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a", default-features = false }
-ljos_text = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "d6dfdff5c767994ac7a16a76f4f4469c5db8e97a" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }

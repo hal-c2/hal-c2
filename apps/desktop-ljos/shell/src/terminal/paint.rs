@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use ljos_quick::{TextEngine, TextStyle};
-use ljos_render::{Decorations, DisplayListBuilder, GlyphRun, Rgba, kurbo};
-use ljos_text::LayoutParams;
+use ljos::item::{
+    Decorations, DisplayListBuilder, GlyphRun, LayoutParams, Rgba, TextEngine, TextStyle, kurbo,
+};
 
 use super::vt::Vt;
 

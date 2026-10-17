@@ -15,25 +15,15 @@ path = "src/main.rs"
 # dev-qml: the shell compiles its QML at start-up (the README says why).
 # render: `--render`. No `media`: the bricks play nothing.
 ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
-# Below the facade, for what it does not offer yet. The custom items
-# (Terminal, DeviceScreen, the composer's highlighter) are ljos_quick's
-# hooks over ljos_engine's and ljos_render's types; the facade has no way
-# to one.
+# Below the facade, for what it does not name yet (the README's Ljós
+# section has the issues):
+# - ljos_quick: the Terminal's pointer, hover and input method hooks and the
+#   scene's text engine and font styles; the style hints' colour scheme and
+#   the reduced motion hint (platform_window.rs).
+# - ljos_engine: the MetaRef those hooks take, the `Prop<T>` handle type and
+#   `Engine::connect`'s ConnectionId.
 ljos_engine.workspace = true
 ljos_quick.workspace = true
-ljos_render.workspace = true
-# The layout of a run of terminal cells (LayoutParams, which ljos_quick does
-# not re-export).
-ljos_text.workspace = true
-# What the facade hands out but does not name: the system colour scheme
-# (ljos_quick::color_scheme), the clipboard's mode, the coalescing key of
-# `UiHandle::send_coalesced`, the engine clock's `Time` and `TimerId`.
-ljos_a11y.workspace = true
-ljos_platform.workspace = true
-ljos_runtime.workspace = true
-# The focus state of the application (`Application`), which only QML reads
-# through the facade.
-ljos_controls.workspace = true
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
@@ -76,6 +66,11 @@ libc = "0.2"
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [dev-dependencies]
+# What the tests drive that the facade does not name: a window's scene and
+# the test text engine (ljos_quick), the engine's virtual clock
+# (ljos_runtime) and the application's activity (ljos_controls).
+ljos_controls.workspace = true
+ljos_runtime.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"
 # The fake notification service's signal bodies (tests/notifications.rs).
