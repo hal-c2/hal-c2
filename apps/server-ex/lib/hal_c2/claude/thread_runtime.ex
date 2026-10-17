@@ -258,8 +258,13 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Claude.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
