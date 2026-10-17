@@ -27,12 +27,13 @@ defmodule HalC2.MachineFilesProofTest do
       "HalC2.MachineFiles.Share.list/1" => "share",
       "HalC2.MachineFiles.Share.read/4" => "share",
       "HalC2.MachineFiles.Share.write/4" => "share",
+      "HalC2.MachineFiles.Share.append/3" => "share",
       "HalC2.MachineFiles.Share.fsync/2" => "share",
       "HalC2.MachineFiles.Share.create/2" => "share",
       "HalC2.MachineFiles.Share.mkdir/2" => "share",
       "HalC2.MachineFiles.Share.remove/2" => "share",
       "HalC2.MachineFiles.Share.rename/2" => "share",
-      "HalC2.MachineFiles.Share.setattr/2" => "share",
+      "HalC2.MachineFiles.Share.setattr/3" => "share",
       "HalC2.MachineFiles.Share.roots/0" => "share"
     },
     abstracts: %{

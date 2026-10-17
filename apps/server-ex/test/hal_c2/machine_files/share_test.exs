@@ -87,6 +87,24 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert [{"cart-link.ts", :regular, _}, {"src", :directory, _}] = entries
   end
 
+  test "a link through a link that steps out with .. leaves the root", ctx do
+    private = Path.join(ctx.dir, "private")
+    File.mkdir_p!(Path.join(private, "sub"))
+    File.write!(Path.join(private, "secret"), "private")
+    File.mkdir_p!(Path.join(ctx.shop, "inside"))
+    File.write!(Path.join(ctx.shop, "inside/secret"), "shared")
+    File.ln_s!(Path.join(private, "sub"), Path.join(ctx.shop, "inside/escape"))
+    # The kernel takes `..` from where escape leads, so this is private/secret.
+    File.ln_s!("inside/escape/../secret", Path.join(ctx.shop, "leak"))
+    assert File.read!(Path.join(ctx.shop, "leak")) == "private"
+
+    leak = Path.join(ctx.shop, "leak")
+    assert Share.read(leak, 0, 100) == {:error, :enoent}
+    assert Share.write(leak, 0, "x") == {:error, :enoent}
+    assert Share.stat(leak) == {:error, :enoent}
+    assert File.read!(Path.join(private, "secret")) == "private"
+  end
+
   test "only regular files are opened, so nothing waits on a fifo", ctx do
     fifo = Path.join(ctx.shop, "pipe")
     {_, 0} = System.cmd("mkfifo", [fifo])
@@ -162,6 +180,35 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert Share.fsync(cart, id) == {:error, :estale}
     assert {:ok, %{id: new}} = Share.stat(cart)
     assert Share.read(cart, 0, 6, new) == {:ok, "export"}
+  end
+
+  test "an append lands after what was written there since", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id, size: size}} = Share.stat(cart)
+    # Someone on this machine appends after the mounted side last saw the size.
+    File.write!(cart, "export const total = 0;\n", [:append])
+
+    assert Share.append(cart, "export const tax = 0;\n", id) == {:ok, 22}
+
+    assert File.read!(cart) ==
+             "export const cart = [];\nexport const total = 0;\nexport const tax = 0;\n"
+
+    assert size == 24
+  end
+
+  test "a truncate through an open file leaves a file saved over it alone", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id}} = Share.stat(cart)
+    saved = Path.join(ctx.shop, "src/.cart.ts.swp")
+    File.write!(saved, "export const cart = [2];\n")
+    File.rename!(saved, cart)
+
+    assert Share.setattr(cart, %{size: 0}, id) == {:error, :estale}
+    assert Share.append(cart, "x", id) == {:error, :estale}
+    assert File.read!(cart) == "export const cart = [2];\n"
+
+    # A truncate by name changes whatever the name is now.
+    assert {:ok, %{size: 0}} = Share.setattr(cart, %{size: 0})
   end
 
   test "times are set apart, and only regular files are truncated", ctx do

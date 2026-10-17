@@ -15,7 +15,9 @@ defmodule HalC2.MachineFiles.Session do
 
   A fid opened on a file keeps that file's id (`opened`), and its reads, writes
   and fsyncs fail as stale once the path names another file, as when an editor
-  there saves by renaming a new file over it.
+  there saves by renaming a new file over it. One opened to append (`appends`)
+  writes at the file's end as it is on its machine, not where the kernel here
+  last saw it.
   """
 
   import Bitwise
@@ -45,8 +47,16 @@ defmodule HalC2.MachineFiles.Session do
   @setattr_atime_set 0x80
   @setattr_mtime_set 0x100
   @at_removedir 0x200
+  # Linux's O_APPEND, as lopen and lcreate pass it.
+  @o_append 0o2000
 
-  defstruct msize: 8192, fids: %{}, dirs: %{}, opened: %{}, qids: %{}, next: 2
+  defstruct msize: 8192,
+            fids: %{},
+            dirs: %{},
+            opened: %{},
+            appends: MapSet.new(),
+            qids: %{},
+            next: 2
 
   @type t :: %__MODULE__{}
   @typedoc """
@@ -77,8 +87,7 @@ defmodule HalC2.MachineFiles.Session do
   def handle(s, {:flush, _oldtag}, _folders), do: {:reply, {:flush}, s}
 
   def handle(s, {:clunk, fid}, _folders) do
-    s = %{s | fids: Map.delete(s.fids, fid), dirs: Map.delete(s.dirs, fid)}
-    {:reply, {:clunk}, %{s | opened: Map.delete(s.opened, fid)}}
+    {:reply, {:clunk}, forget(s, fid)}
   end
 
   def handle(s, {:statfs, _fid}, _folders) do
@@ -159,17 +168,23 @@ defmodule HalC2.MachineFiles.Session do
     {:reply, {:lopen, qid, 0}, put_fid(s, fid, at)}
   end
 
-  defp on(s, {:lopen, fid, _flags}, {folder, path} = at, _folders) do
+  defp on(s, {:lopen, fid, flags}, {folder, path} = at, _folders) do
     call(s, folder, :stat, [path], fn s, {:ok, attr} ->
       {qid, s} = qid(s, folder, attr)
-      {{:lopen, qid, 0}, s |> put_fid(fid, at) |> open(fid, attr)}
+      {{:lopen, qid, 0}, s |> put_fid(fid, at) |> open(fid, attr, flags)}
     end)
   end
 
-  defp on(s, {:setattr, _, asked}, {folder, path}, _folders) when path != "/" do
+  # The helper names the open fid for an ftruncate, so it changes only that file.
+  defp on(s, {:setattr, fid, asked}, {folder, path}, _folders) when path != "/" do
     case changes(asked) do
-      none when none == %{} -> {:reply, {:setattr}, s}
-      changes -> call(s, folder, :setattr, [path, changes], fn s, {:ok, _} -> {{:setattr}, s} end)
+      none when none == %{} ->
+        {:reply, {:setattr}, s}
+
+      changes ->
+        call(s, folder, :setattr, [path, changes, s.opened[fid]], fn s, {:ok, _} ->
+          {{:setattr}, s}
+        end)
     end
   end
 
@@ -184,9 +199,12 @@ defmodule HalC2.MachineFiles.Session do
   end
 
   defp on(s, {:write, fid, offset, data}, {folder, path}, _folders) when path != "/" do
-    call(s, folder, :write, [path, offset, data, s.opened[fid]], fn s, {:ok, n} ->
-      {{:write, n}, s}
-    end)
+    {name, args} =
+      if MapSet.member?(s.appends, fid),
+        do: {:append, [path, data, s.opened[fid]]},
+        else: {:write, [path, offset, data, s.opened[fid]]}
+
+    call(s, folder, name, args, fn s, {:ok, n} -> {{:write, n}, s} end)
   end
 
   # On the machine that has the file, if it is one; the top and folders hold none.
@@ -232,13 +250,13 @@ defmodule HalC2.MachineFiles.Session do
 
   # --- changing the tree -------------------------------------------------------------
 
-  defp on(s, {:lcreate, fid, name, _flags, mode}, {folder, dir}, _folders) do
+  defp on(s, {:lcreate, fid, name, flags, mode}, {folder, dir}, _folders) do
     named(s, [name], fn ->
       path = join(dir, name)
 
       call(s, folder, :create, [path, mode], fn s, {:ok, attr} ->
         {qid, s} = qid(s, folder, attr)
-        {{:lcreate, qid, 0}, s |> put_fid(fid, {folder, path}) |> open(fid, attr)}
+        {{:lcreate, qid, 0}, s |> put_fid(fid, {folder, path}) |> open(fid, attr, flags)}
       end)
     end)
   end
@@ -329,14 +347,25 @@ defmodule HalC2.MachineFiles.Session do
   defp join("/", name), do: "/" <> name
   defp join(dir, name), do: dir <> "/" <> name
 
-  defp put_fid(s, fid, at) do
-    s = %{s | fids: Map.put(s.fids, fid, at), dirs: Map.delete(s.dirs, fid)}
-    %{s | opened: Map.delete(s.opened, fid)}
+  defp put_fid(s, fid, at), do: %{forget(s, fid) | fids: Map.put(s.fids, fid, at)}
+
+  defp forget(s, fid) do
+    %{
+      s
+      | fids: Map.delete(s.fids, fid),
+        dirs: Map.delete(s.dirs, fid),
+        opened: Map.delete(s.opened, fid),
+        appends: MapSet.delete(s.appends, fid)
+    }
   end
 
   # A directory's listing is taken when it is read, so only a file keeps its id.
-  defp open(s, _fid, %{type: :directory}), do: s
-  defp open(s, fid, %{id: id}), do: %{s | opened: Map.put(s.opened, fid, id)}
+  defp open(s, _fid, %{type: :directory}, _flags), do: s
+
+  defp open(s, fid, %{id: id}, flags) do
+    s = %{s | opened: Map.put(s.opened, fid, id)}
+    if band(flags, @o_append) != 0, do: %{s | appends: MapSet.put(s.appends, fid)}, else: s
+  end
 
   defp folder_qid(s, folder), do: qid(s, folder, %{type: :directory, id: {:dir, "/"}, mtime: 0})
 

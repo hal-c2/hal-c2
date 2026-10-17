@@ -16,6 +16,7 @@ defmodule HalC2.MachineFiles.SessionTest do
   defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, 13}]), do: {:ok, "cart\n"}
   defp devbox(:read, ["/home/me/shop/cart.ts", 0, _count, {1, _}]), do: {:error, :estale}
   defp devbox(:write, ["/home/me/shop/cart.ts", 0, data, {1, 13}]), do: {:ok, byte_size(data)}
+  defp devbox(:append, [path, data, id]), do: send(self(), {:append, path, data, id}) && {:ok, 3}
   defp devbox(:fsync, [path, id]), do: send(self(), {:fsync, path, id}) && :ok
 
   defp devbox(:list, ["/home/me/shop"]),
@@ -24,8 +25,8 @@ defmodule HalC2.MachineFiles.SessionTest do
   defp devbox(:create, ["/home/me/shop/new.ts", 0o644]), do: {:ok, file(15, 0)}
   defp devbox(:rename, ["/home/me/shop/cart.ts", "/home/me/shop/basket.ts"]), do: :ok
 
-  defp devbox(:setattr, [path, changes]),
-    do: send(self(), {:setattr, path, changes}) && {:ok, file(13, 0)}
+  defp devbox(:setattr, [path, changes, id]),
+    do: send(self(), {:setattr, path, changes, id}) && {:ok, file(13, 0)}
 
   defp dir(inode), do: attr(:directory, inode, 0)
   defp file(inode, size), do: attr(:regular, inode, size)
@@ -181,11 +182,35 @@ defmodule HalC2.MachineFiles.SessionTest do
     asked = %{valid: 0, mode: 0, uid: 0, gid: 0, size: 0, atime: 0, mtime: 0}
 
     assert {{:setattr}, s} = step(s, {:setattr, 2, %{asked | valid: 0x28}})
-    assert_received {:setattr, "/home/me/shop/cart.ts", %{size: 0, mtime: :now}}
+    assert_received {:setattr, "/home/me/shop/cart.ts", %{size: 0, mtime: :now}, nil}
 
     # Only an owner change: nothing to pass on.
-    assert {{:setattr}, _} = step(s, {:setattr, 2, %{asked | valid: 0x2}})
-    refute_received {:setattr, _, _}
+    assert {{:setattr}, s} = step(s, {:setattr, 2, %{asked | valid: 0x2}})
+    refute_received {:setattr, _, _, _}
+
+    # An ftruncate names the open fid: it changes only the file that fid opened.
+    assert {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 2})
+    assert {{:setattr}, _} = step(s, {:setattr, 2, %{asked | valid: 0x8}})
+    assert_received {:setattr, "/home/me/shop/cart.ts", %{size: 0}, {1, 13}}
+  end
+
+  test "a file opened or created to append writes at its end there" do
+    s = at_shop()
+    assert {{:walk, [_]}, s} = step(s, {:walk, 1, 2, ["cart.ts"]})
+    # O_WRONLY | O_APPEND
+    assert {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 0o2001})
+    assert {{:write, 3}, s} = step(s, {:write, 2, 5, "hey"})
+    assert_received {:append, "/home/me/shop/cart.ts", "hey", {1, 13}}
+
+    # Opened again without it, the same fid writes where it is asked to.
+    assert {{:lopen, _, 0}, s} = step(s, {:lopen, 2, 2})
+    assert {{:write, 3}, s} = step(s, {:write, 2, 0, "hey"})
+    refute_received {:append, _, _, _}
+
+    assert {{:walk, []}, s} = step(s, {:walk, 1, 3, []})
+    assert {{:lcreate, _, 0}, s} = step(s, {:lcreate, 3, "new.ts", 0o2101, 0o644})
+    assert {{:write, 3}, _} = step(s, {:write, 3, 0, "new"})
+    assert_received {:append, "/home/me/shop/new.ts", "new", {1, 15}}
   end
 
   test "an unknown fid or message is an error, not a crash" do

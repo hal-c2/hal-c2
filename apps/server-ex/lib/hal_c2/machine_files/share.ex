@@ -156,6 +156,18 @@ defmodule HalC2.MachineFiles.Share do
     end)
   end
 
+  @doc """
+  Appends `data` to the existing file `path`, at its end as it is now even when
+  someone on this machine wrote to it since; the bytes written. With an `id`,
+  `:estale` when `path` is no longer that file.
+  """
+  @spec append(String.t(), binary, term) :: {:ok, non_neg_integer} | {:error, atom}
+  def append(path, data, id \\ nil) when is_binary(path) and is_binary(data) do
+    opened(path, id, [:append], fn fd ->
+      with :ok <- :file.write(fd, data), do: {:ok, byte_size(data)}
+    end)
+  end
+
   @doc "Flushes the file `path`, if it is still the file `id`, to its disk."
   @spec fsync(String.t(), term) :: :ok | {:error, atom}
   def fsync(path, id) when is_binary(path), do: opened(path, id, [:read], &:file.sync/1)
@@ -206,14 +218,16 @@ defmodule HalC2.MachineFiles.Share do
   @doc """
   Changes what `changes` names of `path`: `:size` truncates or extends it, `:mode`
   sets its permissions, `:atime` and `:mtime` set its times, each to a POSIX time
-  or `:now`. The new attributes.
+  or `:now`. The new attributes. With an `id`, `:estale` when `path` is no longer
+  that file.
   """
-  @spec setattr(String.t(), map) :: {:ok, attr} | {:error, atom}
-  def setattr(path, changes) when is_binary(path) and is_map(changes) do
+  @spec setattr(String.t(), map, term) :: {:ok, attr} | {:error, atom}
+  def setattr(path, changes, id \\ nil) when is_binary(path) and is_map(changes) do
     roots = roots()
 
     with {:ok, _} <- real(path, roots),
-         :ok <- truncate(path, changes[:size]),
+         :ok <- still(path, id),
+         :ok <- truncate(path, changes[:size], id),
          :ok <- chmod(path, changes[:mode]),
          :ok <- touch(path, changes[:atime], changes[:mtime]),
          do: stat(path, roots)
@@ -329,6 +343,14 @@ defmodule HalC2.MachineFiles.Share do
     end
   end
 
+  defp still(_path, nil), do: :ok
+
+  defp still(path, id) do
+    with {:ok, stat} <- file_stat(path) do
+      if {stat.major_device, stat.inode} == id, do: :ok, else: {:error, :estale}
+    end
+  end
+
   defp same(_fd, nil), do: :ok
 
   defp same(fd, id) do
@@ -387,17 +409,12 @@ defmodule HalC2.MachineFiles.Share do
     }
   end
 
-  defp truncate(_path, nil), do: :ok
+  defp truncate(_path, nil, _id), do: :ok
 
-  defp truncate(path, size) when is_integer(size) and size >= 0 do
-    with :ok <- regular(path),
-         {:ok, fd} <- :file.open(path, [:read, :write, :raw]) do
-      try do
-        with {:ok, _} <- :file.position(fd, size), do: :file.truncate(fd)
-      after
-        :file.close(fd)
-      end
-    end
+  defp truncate(path, size, id) when is_integer(size) and size >= 0 do
+    opened(path, id, [:read, :write], fn fd ->
+      with {:ok, _} <- :file.position(fd, size), do: :file.truncate(fd)
+    end)
   end
 
   defp chmod(_path, nil), do: :ok
