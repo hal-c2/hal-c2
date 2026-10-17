@@ -293,6 +293,13 @@ Feature: What the engine projects for clients
     And it ends with "… output truncated for transport"
 
   @mc @backlog
+  Scenario: Subagent text that grows is cut to the same text a snapshot shows
+    Given a subagent in "t1" has progress that grows by appends past 32,768 bytes
+    When a client follows "t1"
+    Then the progress it holds is the cut text a fresh read of "t1" shows
+    And the appends past the limit are not sent
+
+  @mc @backlog
   Scenario: A large tool input is sent as its first line
     Given a call to a provider-defined tool in "t1" has an input larger than 16,384 bytes
     When a client reads or follows "t1"

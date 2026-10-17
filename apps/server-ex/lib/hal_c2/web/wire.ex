@@ -4,6 +4,8 @@ defmodule HalC2.Web.Wire do
   output, a file change's diff, and a handoff's history, but clients never show
   them, so they stay off the socket. A failed command keeps the fact that it failed.
   Subagent text and dynamic tool values past their limits are cut or summarized.
+  Subagent text that grows by appends is cut to the same text, so what a client folds
+  from patches is what a snapshot of the same stream shows it.
 
   Events carry patches, not entities, so a patch is trimmed by the type of the turn
   item it changes, which the stream that owns the item knows.
@@ -14,15 +16,16 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 1
+  @version 2
   @max_detail 32_768
+  @cut_keys ~w(prompt progress result)
   @max_dynamic 16_384
   @dropped %{
     "command_execution" => ~w(output),
     "file_change" => ~w(diffStr oldStr newStr)
   }
 
-  @doc "Changes whenever what `entity/2` or `patch/3` leave out does."
+  @doc "Changes whenever what `entity/2` or `patch/4` leave out does."
   def version, do: @version
 
   @doc "A snapshot row's entity, trimmed."
@@ -32,15 +35,29 @@ defmodule HalC2.Web.Wire do
 
   @doc """
   An event's patch, trimmed, or nil when nothing the client would use is left.
-  `type` is the turn item's type when the patch is to one.
+  `type` is the turn item's type when the patch is to one, and `was` the entity just
+  before the patch: how much of a subagent's text the client already holds is read
+  from it. Without `was`, an append is taken to grow an empty field.
   """
-  def patch("turn-item", patch, type),
-    do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch) |> nonempty()
+  def patch(kind, patch, type, was \\ nil)
 
-  def patch("context-handoff", patch, _type),
+  def patch("turn-item", patch, type, was),
+    do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch, was) |> nonempty()
+
+  def patch("context-handoff", patch, _type, _was),
     do: patch |> drop(~w(history delivery)) |> set("summaryText", "") |> nonempty()
 
-  def patch(_kind, patch, _type), do: patch
+  def patch(_kind, patch, _type, _was), do: patch
+
+  @doc """
+  Whether `patch` appends to a subagent text that `entity`, the item as it is now,
+  holds past the limit. A client that has not followed the item's appends one by one
+  (a replay) cannot be handed them cut; it is sent the item whole instead.
+  """
+  def appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity),
+    do: Enum.any?(@cut_keys, &(is_map_key(appended, &1) and size(entity[&1]) > @max_detail))
+
+  def appends_past_limit?(_kind, _patch, _entity), do: false
 
   # --- turn items ----------------------------------------------------------------
 
@@ -51,7 +68,7 @@ defmodule HalC2.Web.Wire do
   defp turn_item(%{"type" => "file_change"} = item), do: Map.drop(item, @dropped["file_change"])
 
   defp turn_item(%{"type" => "subagent"} = item) do
-    Enum.reduce(~w(prompt progress result), item, fn key, item ->
+    Enum.reduce(@cut_keys, item, fn key, item ->
       if is_binary(item[key]), do: Map.put(item, key, cut(item[key])), else: item
     end)
   end
@@ -64,7 +81,7 @@ defmodule HalC2.Web.Wire do
 
   defp turn_item(item), do: item
 
-  defp turn_item_patch(type, patch) when is_map_key(@dropped, type) do
+  defp turn_item_patch(type, patch, _was) when is_map_key(@dropped, type) do
     patch = drop(patch, @dropped[type])
 
     if type == "command_execution",
@@ -72,11 +89,55 @@ defmodule HalC2.Web.Wire do
       else: patch
   end
 
-  defp turn_item_patch("subagent", patch),
-    do: map_set(patch, ~w(prompt progress result), &if(is_binary(&1), do: cut(&1), else: &1))
+  defp turn_item_patch("subagent", patch, was) do
+    patch
+    |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
+    |> cut_appends(was)
+  end
 
-  defp turn_item_patch("dynamic_tool", patch), do: map_set(patch, ~w(input output), &summarize/1)
-  defp turn_item_patch(_type, patch), do: patch
+  defp turn_item_patch("dynamic_tool", patch, _was),
+    do: map_set(patch, ~w(input output), &summarize/1)
+
+  defp turn_item_patch(_type, patch, _was), do: patch
+
+  # The client holds a subagent's text cut, as a snapshot has it. An append that keeps
+  # the text under the limit goes through; one that takes it past is the cut text,
+  # sent as a set; one to text already past it adds nothing, as the cut text is the
+  # same first bytes whatever follows. Sets are cut before this, so a set in the
+  # patch is what the appends are applied to.
+  defp cut_appends(%{"a" => appended} = patch, was) do
+    Enum.reduce(appended, patch, fn
+      {key, suffix}, patch when key in @cut_keys ->
+        held = held(patch, key, was)
+        size = byte_size(held)
+
+        cond do
+          size + byte_size(suffix) <= @max_detail -> patch
+          size > @max_detail -> unappend(patch, key)
+          true -> patch |> unappend(key) |> set(key, cut(held <> suffix))
+        end
+
+      _other, patch ->
+        patch
+    end)
+  end
+
+  defp cut_appends(patch, _was), do: patch
+
+  defp held(patch, key, was) do
+    case get_in(patch, ["s", key]) || (was && was[key]) do
+      text when is_binary(text) -> text
+      _ -> ""
+    end
+  end
+
+  defp unappend(patch, key) do
+    patch = Map.update!(patch, "a", &Map.delete(&1, key))
+    if patch["a"] == %{}, do: Map.delete(patch, "a"), else: patch
+  end
+
+  defp size(text) when is_binary(text), do: byte_size(text)
+  defp size(_text), do: 0
 
   # A command that failed says so without its output.
   defp failed(item, exit_code, flagged) do
