@@ -10,11 +10,23 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init};
+use crate::controllers::settings::Settings;
 use crate::json::Json;
+use crate::platform_window;
 
 pub const SIDEBAR_WIDTH: i32 = 256;
 pub const SIDEBAR_MIN_WIDTH: i32 = 208;
 pub const CONTENT_MIN_WIDTH: i32 = 480;
+
+/// The panel animation's length for the two ways to ask for less motion and
+/// the duration the user chose.
+pub fn panel_animation_ms(system_reduced: bool, setting_reduced: bool, chosen_ms: i64) -> i32 {
+    if system_reduced || setting_reduced {
+        0
+    } else {
+        chosen_ms.clamp(0, 400) as i32
+    }
+}
 
 pub struct Layout {
     bridge: Bridge,
@@ -88,6 +100,23 @@ impl Layout {
             .max(SIDEBAR_MIN_WIDTH)
     }
 
+    /// How long a panel opens or closes over, in ms: none when the system or
+    /// the "Reduce motion" setting asks for less motion, else the
+    /// `panelAnimationDurationMs` setting up to 400.
+    pub fn panel_animation_ms(&self, engine: &Engine) -> i32 {
+        let settings = Settings::of(engine);
+        let setting = |key| settings.setting(engine, key);
+        panel_animation_ms(
+            platform_window::system_reduced_motion(engine),
+            setting("reduceMotion")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            setting("panelAnimationDurationMs")
+                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                .unwrap_or(0),
+        )
+    }
+
     fn set_sidebar_width(&mut self, engine: &Engine, width: i32) {
         let width = width.min(self.sidebar_room()).max(SIDEBAR_MIN_WIDTH);
         if width == self.sidebar_width {
@@ -143,5 +172,23 @@ impl Layout {
                 "zoom": 1.2_f64.powf(self.zoom_level),
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::panel_animation_ms;
+
+    #[test]
+    fn less_motion_from_the_system_or_the_setting_is_none() {
+        assert_eq!(panel_animation_ms(false, false, 150), 150);
+        assert_eq!(panel_animation_ms(true, false, 150), 0);
+        assert_eq!(panel_animation_ms(false, true, 150), 0);
+    }
+
+    #[test]
+    fn the_chosen_duration_stays_within_zero_and_four_hundred() {
+        assert_eq!(panel_animation_ms(false, false, -5), 0);
+        assert_eq!(panel_animation_ms(false, false, 9999), 400);
     }
 }

@@ -13,6 +13,7 @@ pub mod folders;
 pub mod highlighter;
 pub mod json;
 pub mod keybindings;
+pub mod local_transcriber;
 pub mod mc;
 pub mod project;
 pub mod provider;
@@ -20,9 +21,11 @@ pub mod provider;
 // notifications stay quiet (desktop-qt's need HAL_C2_HAS_DBUS too).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod notifications;
+pub mod platform_window;
 pub mod qml;
 pub mod qr;
 pub mod runtime;
+pub mod scripted_run;
 pub mod session;
 pub mod settings_page;
 pub mod sidebar_model;
@@ -57,6 +60,7 @@ pub fn register(engine: &Engine) {
     folders::register(engine);
     highlighter::register(engine);
     device_screen::register(engine);
+    local_transcriber::register(engine);
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
@@ -170,13 +174,17 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         None => {
             engine.extension::<Active>().0.set(true);
             controller::activate(engine);
+            run_when_active(engine);
         }
     }
 }
 
-/// Whether the controllers are active, once the store first synchronized.
+/// Whether the controllers are active, once the store first synchronized,
+/// and what waits for that.
 #[derive(Default)]
-struct Active(std::cell::Cell<bool>);
+struct Active(std::cell::Cell<bool>, std::cell::RefCell<Vec<Waiting>>);
+
+type Waiting = Box<dyn FnOnce(&Engine)>;
 
 /// NativeShell::update: until the MC's first snapshot, the windows preview
 /// what the cache kept; on it, the controllers activate, once.
@@ -194,6 +202,30 @@ fn update(engine: &Engine) {
     }
     active.0.set(true);
     controller::activate(engine);
+    run_when_active(engine);
+}
+
+/// Runs what [`when_active`] kept, in the order it came.
+fn run_when_active(engine: &Engine) {
+    let waiting = std::mem::take(&mut *engine.extension::<Active>().1.borrow_mut());
+    for f in waiting {
+        f(engine);
+    }
+}
+
+/// Runs `f` once the controllers are active: now when they are, else on the
+/// MC's first snapshot (at once without an MC). The scripted run's steps
+/// wait for it, as ScriptedRun waits for the shell to show the MC's state.
+pub fn when_active(engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
+    if active(engine) {
+        f(engine);
+    } else {
+        engine
+            .extension::<Active>()
+            .1
+            .borrow_mut()
+            .push(Box::new(f));
+    }
 }
 
 /// Whether the controllers are active: at once without an MC, else once its

@@ -65,6 +65,10 @@ vt100 = "0.16"
 regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
 
+# The transcription helper's session and its signals (src/local_transcriber).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # System notifications (src/notifications.rs). Already built for Ljós's
 # accessibility; notify-rust's one-handle-per-notification wait cannot hear
 # a click on an older notification, nor close them all.

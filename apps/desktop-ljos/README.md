@@ -38,6 +38,11 @@ reconnects to the MC it paired with last, or runs disconnected. `--home-dir DIR`
 client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
+A scripted run is `--action NAME[=JSON]` and `--key CHORD` steps, replayed in the order given 1.5 s apart once
+the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 when there is no picture) taken
+1.5 s after the last: `hal-c2-ljos --action settings.open --key Ctrl+K --screenshot out.png`. A chord reaches the
+shell's keymap, not the focused control.
+
 `check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
 `DeviceScreen` (a frame the decoder hands it; no decoder here) and `Terminal` (`import Ghostty`, on the `vt100`
 crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
