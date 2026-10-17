@@ -71,7 +71,8 @@ fn clipboard(hub: &Hub) -> Rc<RefCell<Vec<String>>> {
     let copied = Rc::new(RefCell::new(Vec::new()));
     let sink = copied.clone();
     Bridge::of(&hub.engine).set_clipboard_writer(&hub.engine, move |text| {
-        sink.borrow_mut().push(text.to_owned())
+        sink.borrow_mut().push(text.to_owned());
+        true
     });
     copied
 }
@@ -306,6 +307,28 @@ fn copying_puts_the_link_or_the_code_on_the_clipboard_and_revoking_clears_it() {
     );
     assert_eq!(page(&hub)["created"], Json::Null);
     assert_eq!(page(&hub)["notice"]["text"], "Pairing link revoked.");
+}
+
+#[test]
+fn a_refused_copy_leaves_the_link_on_the_page() {
+    let hub = open();
+    Bridge::of(&hub.engine).set_clipboard_writer(&hub.engine, |_| false);
+    hub.dispatch(
+        "connections.pairingLink.create",
+        json!({"scopes": ["read"]}),
+    );
+    hub.mc.answer(
+        &hub.engine,
+        "hal-c2.createPairingLink",
+        Ok(json!({"id": "l9", "credential": "CODE", "address": "http://laptop:4800"})),
+    );
+    hub.dispatch("connections.pairingLink.copy", json!({"what": "url"}));
+    assert_eq!(page(&hub)["revealed"], true);
+    assert_eq!(page(&hub)["notice"]["kind"], "error");
+    assert_eq!(
+        page(&hub)["notice"]["text"],
+        "Could not copy to the clipboard. Copy the link below by hand."
+    );
 }
 
 #[test]

@@ -464,7 +464,8 @@ impl TimelineModel {
         json_of(cx.engine, found.unwrap_or_default())
     }
 
-    /// Puts a message's text on the clipboard; false when the row has none.
+    /// Puts a message's text on the clipboard; false when the row has none
+    /// or the clipboard refused it.
     #[qml(invokable)]
     fn copy(cx: &Cx, row_id: Atom) -> bool {
         let text = TimelineModel::read(cx.engine, cx.this, |t| t.copy_text(&row_id)).flatten();
@@ -473,8 +474,8 @@ impl TimelineModel {
         };
         Platform::of(cx.engine)
             .clipboard()
-            .set_text(ClipboardMode::Clipboard, &text);
-        true
+            .set_text(ClipboardMode::Clipboard, &text)
+            .is_ok()
     }
 
     /// An image on screen wants its address (attachmentWanted, once).

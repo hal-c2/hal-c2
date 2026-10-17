@@ -192,17 +192,27 @@ impl Controller for Connections {
                     .and_then(Json::as_str)
                     .unwrap_or_default();
                 if !text.is_empty() {
-                    self.bridge.copy_to_clipboard(engine, text);
-                    self.state.insert("revealed".into(), false.into());
-                    self.set_notice(
-                        engine,
-                        "success",
-                        if code {
-                            "Pairing code copied."
-                        } else {
-                            "Pairing link copied."
-                        },
-                    );
+                    let copied = self.bridge.copy_to_clipboard(engine, text);
+                    // A clipboard that refuses leaves the link on the page,
+                    // selected to copy by hand.
+                    self.state.insert("revealed".into(), (!copied).into());
+                    if copied {
+                        self.set_notice(
+                            engine,
+                            "success",
+                            if code {
+                                "Pairing code copied."
+                            } else {
+                                "Pairing link copied."
+                            },
+                        );
+                    } else {
+                        self.set_notice(
+                            engine,
+                            "error",
+                            "Could not copy to the clipboard. Copy the link below by hand.",
+                        );
+                    }
                 }
             }
             "connections.pairingLink.revoke" => {

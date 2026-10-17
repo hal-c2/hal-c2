@@ -962,10 +962,12 @@ impl Controller for ProviderSettings {
                 if url.is_empty() {
                     return true;
                 }
-                // Writing the clipboard cannot fail here, so desktop-qt's
-                // "Could not copy the sign-in link." never shows.
-                self.bridge.copy_to_clipboard(engine, &url);
-                if kind == "browser" && bool_at(interaction, "requiresConsent") {
+                if !self.bridge.copy_to_clipboard(engine, &url) {
+                    self.auth_error.insert(
+                        instance_id.clone(),
+                        "Could not copy the sign-in link.".to_owned(),
+                    );
+                } else if kind == "browser" && bool_at(interaction, "requiresConsent") {
                     // The link only works once the environment records consent.
                     let respond = consent(&instance_id, &auth);
                     self.call(
@@ -1015,15 +1017,16 @@ impl Controller for ProviderSettings {
                 if command.is_empty() {
                     return true;
                 }
-                // The clipboard cannot refuse here ("Could not copy the update
-                // command" never shows).
-                self.bridge.copy_to_clipboard(engine, &command);
-                toast(
-                    engine,
-                    "success",
-                    "Update command copied",
-                    "Run it in a terminal when ready.",
-                );
+                if self.bridge.copy_to_clipboard(engine, &command) {
+                    toast(
+                        engine,
+                        "success",
+                        "Update command copied",
+                        "Run it in a terminal when ready.",
+                    );
+                } else {
+                    toast_error(engine, "Could not copy the update command", "");
+                }
             }
             _ => {}
         }

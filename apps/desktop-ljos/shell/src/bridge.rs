@@ -47,7 +47,7 @@ enum Queued {
     Action(String, Json),
     Call(Deferred),
 }
-type ClipboardWriter = Rc<dyn Fn(&str)>;
+type ClipboardWriter = Rc<dyn Fn(&str) -> bool>;
 
 /// `Shell` in `HalC2.Shell`.
 #[derive(Debug, QmlObject)]
@@ -120,7 +120,8 @@ impl ShellBridge {
 
     #[qml(invokable)]
     fn set_clipboard_text(cx: &Cx, text: Atom) {
-        Bridge(cx.this).copy_to_clipboard(cx.engine, &text);
+        // desktop-qt's setClipboardText says nothing either.
+        let _ = Bridge(cx.this).copy_to_clipboard(cx.engine, &text);
     }
 
     /// Whether pasting `text` into a prompt of `prompt_length` characters
@@ -450,22 +451,23 @@ impl Bridge {
         }
     }
 
-    /// Where `setClipboardText` writes instead of the clipboard (tests).
-    pub fn set_clipboard_writer(self, engine: &Engine, write: impl Fn(&str) + 'static) {
+    /// Where `setClipboardText` writes instead of the clipboard (tests); it
+    /// says whether the write happened.
+    pub fn set_clipboard_writer(self, engine: &Engine, write: impl Fn(&str) -> bool + 'static) {
         *BridgeState::of(engine).clipboard_writer.borrow_mut() = Some(Rc::new(write));
     }
 
     /// Puts `text` on the clipboard, as `setClipboardText` does, or where
-    /// [`Bridge::set_clipboard_writer`] says.
-    pub fn copy_to_clipboard(self, engine: &Engine, text: &str) {
+    /// [`Bridge::set_clipboard_writer`] says; false when the clipboard
+    /// refused it (or there is none), for a caller that says "copied".
+    pub fn copy_to_clipboard(self, engine: &Engine, text: &str) -> bool {
         let writer = BridgeState::of(engine).clipboard_writer.borrow().clone();
         match writer {
             Some(write) => write(text),
-            None => {
-                let _ = Platform::of(engine)
-                    .clipboard()
-                    .set_text(ClipboardMode::Clipboard, text);
-            }
+            None => Platform::of(engine)
+                .clipboard()
+                .set_text(ClipboardMode::Clipboard, text)
+                .is_ok(),
         }
     }
 

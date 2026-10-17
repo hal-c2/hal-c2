@@ -271,7 +271,8 @@ impl Terminal {
     fn copy(cx: &Cx) {
         let text = Self::selected_text(cx);
         if !text.is_empty() {
-            Platform::of(cx.engine)
+            // qml-ghostty's copy() says nothing of a failure either.
+            let _ = Platform::of(cx.engine)
                 .clipboard()
                 .set_text(ClipboardMode::Clipboard, &text);
         }

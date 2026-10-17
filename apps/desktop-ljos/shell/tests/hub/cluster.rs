@@ -96,8 +96,10 @@ fn an_invite_is_copied_and_a_loopback_one_is_flagged() {
     let hub = opened();
     let copied = Rc::new(RefCell::new(Vec::<String>::new()));
     let sink = copied.clone();
-    Bridge::of(&hub.engine)
-        .set_clipboard_writer(&hub.engine, move |t| sink.borrow_mut().push(t.to_owned()));
+    Bridge::of(&hub.engine).set_clipboard_writer(&hub.engine, move |t| {
+        sink.borrow_mut().push(t.to_owned());
+        true
+    });
     hub.dispatch("cluster.invite", json!({"tailscale": true}));
     assert_eq!(
         crate::page::last(&hub, "env-1", "cluster.invite"),

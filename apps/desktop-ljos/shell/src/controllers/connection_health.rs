@@ -341,16 +341,20 @@ impl ConnectionHealth {
         if trace_id.is_empty() {
             return;
         }
-        self.bridge.copy_to_clipboard(engine, &trace_id);
+        let copied = self.bridge.copy_to_clipboard(engine, &trace_id);
         controller::with::<Toasts, _>(engine, |toasts, engine| {
-            toasts.show(
-                engine,
-                "success",
-                "Trace ID copied",
-                &trace_id,
-                None,
-                DEFAULT_TIMEOUT_MS,
-            );
+            if copied {
+                toasts.show(
+                    engine,
+                    "success",
+                    "Trace ID copied",
+                    &trace_id,
+                    None,
+                    DEFAULT_TIMEOUT_MS,
+                );
+            } else {
+                toasts.error(engine, "Could not copy trace ID", &trace_id);
+            }
         });
     }
 

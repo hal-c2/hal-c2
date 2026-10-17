@@ -166,6 +166,7 @@ fn the_manifest_goes_to_the_clipboard() {
     let sink = copied.clone();
     Bridge::of(&hub.engine).set_clipboard_writer(&hub.engine, move |text| {
         sink.borrow_mut().push(text.to_owned());
+        true
     });
     hub.dispatch("slackSettings.copyManifest", json!({}));
     assert_eq!(state(&hub)["pending"], "manifest");
