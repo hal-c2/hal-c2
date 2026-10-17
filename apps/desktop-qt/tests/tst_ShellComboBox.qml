@@ -37,6 +37,22 @@ TestCase {
         tryVerify(() => combo.popup.visible && combo.popup.opacity === 1);
     }
 
+    // The ghost picker has no border until the keyboard reaches it; a click
+    // does not draw the ring.
+    function test_ghostPickerShowsAFocusRingWhenTabbedTo() {
+        Theme.colors = {
+            focus: "#ff8800"
+        };
+        const combo = createTemporaryObject(comboComponent, testCase);
+        compare(combo.background.border.width, 0);
+        combo.forceActiveFocus(Qt.MouseFocusReason);
+        compare(combo.background.border.width, 0);
+        combo.focus = false;
+        combo.forceActiveFocus(Qt.TabFocusReason);
+        compare(combo.background.border.width, 1);
+        compare(combo.background.border.color, "#ff8800");
+    }
+
     function test_currentRowIsMarked() {
         Theme.colors = {
             text: "#ff0000",
