@@ -76,6 +76,8 @@ pub(crate) enum Command {
 pub(crate) enum HttpCall {
     /// POSTs JSON to `path`, with the access token.
     Post { path: String, body: Value },
+    /// GETs JSON from `path`, with the access token.
+    Get { path: String },
     /// POSTs bytes to a signed URL; the URL is its own authorization.
     Upload {
         relative_url: String,

@@ -177,9 +177,16 @@ impl FakeMc {
 
     /// The index of the oldest call to `method` not answered yet.
     pub fn pending(&self, method: &str) -> Option<usize> {
+        self.pending_where(method, |_| true)
+    }
+
+    /// The index of the oldest call to `method` whose payload `matches`, not
+    /// answered yet.
+    pub fn pending_where(&self, method: &str, matches: impl Fn(&Json) -> bool) -> Option<usize> {
         let calls = self.calls.borrow();
         let replies = self.replies.borrow();
-        (0..calls.len()).find(|&i| calls[i].1 == method && replies[i].is_some())
+        (0..calls.len())
+            .find(|&i| calls[i].1 == method && replies[i].is_some() && matches(&calls[i].2))
     }
 
     /// The index of the oldest call to `method` on `environment` not

@@ -68,6 +68,19 @@ impl Http {
                     result: posted(answer),
                 }
             }
+            HttpCall::Get { path } => {
+                let url = crate::core::at_path(origin, &path);
+                let answer = answer(
+                    self.open
+                        .get(url.as_str())
+                        .header("Authorization", bearer(token))
+                        .call(),
+                );
+                McEvent::Reply {
+                    id,
+                    result: posted(answer),
+                }
+            }
             HttpCall::Upload {
                 relative_url,
                 bytes,

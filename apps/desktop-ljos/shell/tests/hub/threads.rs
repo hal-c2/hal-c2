@@ -312,7 +312,7 @@ fn an_attachment_is_signed_by_the_mc_that_holds_it() {
     snapshot(&hub, "t1", &[], 1, None);
     let model = threads::timeline(&hub.engine).unwrap();
     TimelineModel::update(&hub.engine, model, |t| t.load_attachment("img-1"));
-    let index = hub.mc.pending("assets.createUrl").expect("asked to sign");
+    let index = signing(&hub).expect("asked to sign");
     let (environment, _, payload) = hub.mc.calls.borrow()[index].clone();
     assert_eq!(environment, "env-1");
     assert_eq!(
@@ -320,22 +320,30 @@ fn an_attachment_is_signed_by_the_mc_that_holds_it() {
         json!({"resource": {"_tag": "attachment", "attachmentId": "img-1", "disposition": "inline"}})
     );
     // Signed until long after the clock's now: asking again asks no more.
-    hub.mc.answer(
+    hub.mc.reply(
         &hub.engine,
-        "assets.createUrl",
+        index,
         Ok(json!({"relativeUrl": "/a/img-1?sig=x", "expiresAt": 4_102_444_800_000_i64})),
     );
     TimelineModel::update(&hub.engine, model, |t| t.load_attachment("img-1"));
-    assert_eq!(hub.mc.pending("assets.createUrl"), None);
+    assert_eq!(signing(&hub), None);
     // A failure lets the next ask try again.
     TimelineModel::update(&hub.engine, model, |t| t.load_attachment("img-2"));
-    hub.mc.answer(
+    hub.mc.reply(
         &hub.engine,
-        "assets.createUrl",
+        signing(&hub).expect("asked to sign"),
         Err(McError::new("not found")),
     );
     TimelineModel::update(&hub.engine, model, |t| t.load_attachment("img-2"));
-    assert!(hub.mc.pending("assets.createUrl").is_some());
+    assert!(signing(&hub).is_some());
+}
+
+/// The oldest unanswered signing of an attachment; the project favicons are
+/// signed through the same call.
+fn signing(hub: &Hub) -> Option<usize> {
+    hub.mc.pending_where("assets.createUrl", |payload| {
+        payload["resource"]["_tag"] == "attachment"
+    })
 }
 
 #[test]

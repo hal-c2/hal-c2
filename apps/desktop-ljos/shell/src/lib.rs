@@ -73,6 +73,7 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::threads::ThreadsObject>(MODULE, v);
     engine.register_singleton::<controllers::panel::PanelObject>(MODULE, v);
     engine.register_singleton::<controllers::terminals::TerminalsObject>(MODULE, v);
+    engine.register_singleton::<controllers::onboarding::OnboardingObject>(MODULE, v);
     thread_view::register(engine);
     bridge::Bridge::of(engine);
 }
@@ -106,29 +107,57 @@ pub struct Launch {
     pub state_dir: Option<PathBuf>,
 }
 
-/// Where [`open`] keeps the session it is given.
+/// What [`open`] needs of the launch: where it keeps the session it is
+/// given, and, for a shell that started without an MC, where the client
+/// cache is and whether local folders stay importable.
 #[derive(Default)]
-struct Kept(std::cell::RefCell<Option<PathBuf>>);
+struct Kept {
+    data_dir: std::cell::RefCell<Option<PathBuf>>,
+    cache_dir: std::cell::RefCell<Option<PathBuf>>,
+    allow_local_folder_import: std::cell::Cell<bool>,
+}
 
 /// Connects to the MC `session` names, as NativeShell::open does: its rows
 /// (what the cache kept of it) show while the socket opens, and the session
 /// is kept for the next start. The shell's drafts, rows and route stay as
-/// they are. An error says why the connection could not be opened; nothing
+/// they are. A shell that started without an MC (nothing kept, no `--pair`)
+/// gets its shell store here, over the cache, as one started with an MC
+/// does; its controllers are active already and follow the MC's rows as
+/// they come. An error says why the connection could not be opened; nothing
 /// has changed then.
 ///
-/// TODO(port): NativeShell::open on a shell that started without an MC: the
-/// store is installed over the MC the shell starts with, so it cannot be
-/// opened later.
+/// A controller may call it from its own callback (an in-app pairing): the
+/// store's listeners hear of the change once no controller is running.
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
     mc.open(&session.origin, &session.token)?;
-    bridge::Bridge::of(engine).set_mc_origin(engine, &session.origin);
-    store::open(engine, &session.origin);
-    if let Some(dir) = engine.extension::<Kept>().0.borrow().as_deref() {
+    let bridge = bridge::Bridge::of(engine);
+    bridge.set_mc_origin(engine, &session.origin);
+    let kept = engine.extension::<Kept>();
+    if !has_mc(engine) {
+        // main.cpp: only a shell with no MC to ask imports from this
+        // machine unless told.
+        bridge.set_local_folder_import_enabled(engine, kept.allow_local_folder_import.get());
+        let cache = kept
+            .cache_dir
+            .borrow()
+            .as_deref()
+            .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
+        store::install(engine, &mc, cache);
+    }
+    let origin = session.origin.clone();
+    bridge.defer(engine, move |engine| store::open(engine, &origin));
+    if let Some(dir) = kept.data_dir.borrow().as_deref() {
         // Not being able to keep it only loses the next start's reconnect.
         let _ = session::save(dir, session);
     }
     Ok(())
+}
+
+/// Whether the shell follows an MC: it started with one, or was
+/// [`open`]ed at one since.
+pub fn has_mc(engine: &Engine) -> bool {
+    store::get(engine).is_some()
 }
 
 /// Gives the registered module what the launch says, then starts the
@@ -146,7 +175,11 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         engine,
         launch.mc_origin.is_none() || launch.allow_local_folder_import,
     );
-    *engine.extension::<Kept>().0.borrow_mut() = launch.data_dir.clone();
+    let kept = engine.extension::<Kept>();
+    *kept.data_dir.borrow_mut() = launch.data_dir.clone();
+    *kept.cache_dir.borrow_mut() = launch.cache_dir.clone();
+    kept.allow_local_folder_import
+        .set(launch.allow_local_folder_import);
     platform_window::install(engine);
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);

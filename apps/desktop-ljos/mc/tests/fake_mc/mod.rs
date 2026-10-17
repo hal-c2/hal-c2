@@ -272,6 +272,16 @@ fn answer(path: &str, request: &str, shared: &Shared) -> (u16, String) {
         }
         // A signed URL: its query is its authorization.
         "/attachments/a1.png?sig=ok" => (200, "png-bytes".to_owned()),
+        // The session's own scopes, for the bearer that asks.
+        "/api/auth/session" => {
+            if header(request, "authorization") != format!("Bearer {TOKEN}") {
+                return (401, json!({"message": "Not signed in."}).to_string());
+            }
+            (
+                200,
+                json!({"authenticated": true, "scopes": ["orchestration:read"]}).to_string(),
+            )
+        }
         "/oauth/token" => {
             let form = request
                 .split_once("\r\n\r\n")

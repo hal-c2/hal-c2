@@ -15,6 +15,7 @@ pub mod drafts;
 pub mod file_actions;
 pub mod folders;
 pub mod git;
+pub mod identity;
 pub mod keybindings;
 pub mod layout;
 pub mod licenses;
@@ -23,6 +24,7 @@ pub mod load_balancing;
 pub mod mc_plugin;
 pub mod menus;
 pub mod navigation;
+pub mod onboarding;
 pub mod panel;
 pub mod plan;
 pub mod plugin;
@@ -109,6 +111,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<file_actions::FileActions>("fileActions", &[], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
         Registration::new::<git::Git>("git", &["git"], Scope::Window),
+        Registration::new::<identity::Identity>(
+            "identity",
+            &["projectIcons", "projectIconPicker", "environmentIcons"],
+            Scope::Window,
+        ),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<licenses::Licenses>("licenses", &["licenses"], Scope::Window),
@@ -125,6 +132,7 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<mc_plugin::McPlugin>("mcPlugins", &["mcPlugins"], Scope::Shared),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<onboarding::Onboarding>("onboarding", &["onboarding"], Scope::Window),
         Registration::new::<panel::RightPanel>("panel", &["panel"], Scope::Window),
         Registration::new::<plan::Plan>("plan", &[], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),

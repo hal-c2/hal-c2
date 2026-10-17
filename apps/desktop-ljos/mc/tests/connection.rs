@@ -203,6 +203,35 @@ fn a_call_gets_its_reply_or_the_mcs_error() {
 }
 
 #[test]
+fn a_get_carries_the_token_and_answers_with_the_json() {
+    let harness = Harness::new();
+    let (answer, reply) = reply_slot();
+    harness.client.get("/api/auth/session", reply);
+    harness.until(|_| answer.borrow().is_some());
+    assert!(
+        answer.take().unwrap().is_err(),
+        "nothing to GET before open"
+    );
+
+    harness.open();
+    harness.ready();
+    let (answer, reply) = reply_slot();
+    harness.client.get("/api/auth/session", reply);
+    harness.until(|_| answer.borrow().is_some());
+    assert_eq!(
+        answer.take(),
+        Some(Ok(
+            json!({"authenticated": true, "scopes": ["orchestration:read"]})
+        ))
+    );
+
+    let (answer, reply) = reply_slot();
+    harness.client.get("/api/nothing-here", reply);
+    harness.until(|_| answer.borrow().is_some());
+    assert!(answer.take().unwrap().is_err());
+}
+
+#[test]
 fn a_new_socket_is_sent_every_subscription_from_where_its_owner_got_to() {
     let harness = Harness::new();
     let offset = Rc::new(Cell::new(0));

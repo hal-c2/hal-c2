@@ -491,6 +491,13 @@ impl McClient {
         self.inner.handle.post(id, path, body);
     }
 
+    /// GETs `path` of the MC's origin (its HTTP API, as `/api/auth/session`)
+    /// with the access token. A refusal reads as a [`McClient::post`]'s does.
+    pub fn get(&self, path: &str, reply: impl FnOnce(Result<Value, CallError>) + 'static) {
+        let id = self.expect(Pending::Value(Box::new(reply)));
+        self.inner.handle.get(id, path);
+    }
+
     /// POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
     /// `attachments.createUploadUrl`'s): the URL is its own authorization.
     pub fn upload(

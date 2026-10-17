@@ -289,17 +289,30 @@ fn calls_to(hub: &Hub, method: &str) -> Vec<(String, Json)> {
         .calls
         .borrow()
         .iter()
-        .filter(|(_, m, _)| m == method)
+        .filter(|(_, m, p)| m == method && !is_favicon(p))
         .map(|(e, _, p)| (e.clone(), p.clone()))
         .collect()
 }
 
-/// Answers the oldest `assets.createUrl` with a URL for `name`, then that
-/// URL's download with `body`.
+/// Whether an `assets.createUrl` signs a project's favicon, which the sidebar
+/// asks for alongside the rewind's attachments.
+fn is_favicon(payload: &Json) -> bool {
+    payload["resource"]["_tag"] == "project-favicon"
+}
+
+/// The oldest unanswered signing of an attachment.
+fn signing(hub: &Hub) -> usize {
+    hub.mc
+        .pending_where("assets.createUrl", |p| !is_favicon(p))
+        .expect("asked to sign an attachment")
+}
+
+/// Answers the oldest attachment's `assets.createUrl` with a URL for `name`,
+/// then that URL's download with `body`.
 fn serve(hub: &Hub, name: &str, body: Result<&str, &str>) {
-    hub.mc.answer(
+    hub.mc.reply(
         &hub.engine,
-        "assets.createUrl",
+        signing(hub),
         Ok(json!({"relativeUrl": format!("/attachments/{name}?sig=1")})),
     );
     hub.mc.answer(
@@ -375,9 +388,9 @@ fn an_attachment_that_cannot_be_read_stops_the_rewind() {
     let (hub, _) = three_turns_with("completed", attachments.clone());
     hub.dispatch("rewind.request", json!({"rowId": "ask-2"}));
     hub.dispatch("rewind.confirm", json!({"restoreFiles": true}));
-    hub.mc.answer(
+    hub.mc.reply(
         &hub.engine,
-        "assets.createUrl",
+        signing(&hub),
         Err(failure("No such attachment")),
     );
     assert_eq!(refusals(&hub), ["No such attachment"]);

@@ -852,7 +852,7 @@ fn thread_sort_timestamp(thread: &Thread, sort_order: &str) -> f64 {
 /// QString::localeAwareCompare, without a locale: case folded first.
 // TODO(port): Settings::locale — collation by the user's locale; Ljós has no
 // QLocale/ICU yet, so titles compare case-insensitively, then exactly.
-fn locale_compare(left: &str, right: &str) -> Ordering {
+pub(crate) fn locale_compare(left: &str, right: &str) -> Ordering {
     left.to_lowercase()
         .cmp(&right.to_lowercase())
         .then_with(|| left.cmp(right))

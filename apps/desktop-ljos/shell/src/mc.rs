@@ -151,6 +151,12 @@ pub trait Mc {
         self.call("", &format!("POST {path}"), body, reply);
     }
 
+    /// GETs `path` of the MC's HTTP API (`/api/auth/session`) with its access
+    /// token. A fake answers it as the call `"GET <path>"` on no environment.
+    fn get(&self, path: &str, reply: Reply) {
+        self.call("", &format!("GET {path}"), Json::Null, reply);
+    }
+
     // Streams on the MC's origin, beside the socket (a device's screen). A
     // fake without them has no origin to open one at.
 
@@ -368,6 +374,12 @@ impl Mc for Connection {
 
     fn post(&self, path: &str, body: Json, reply: Reply) {
         self.client.post(path, body, move |result| {
+            with_delivering(|engine| reply(engine, result.map_err(McError::from)));
+        });
+    }
+
+    fn get(&self, path: &str, reply: Reply) {
+        self.client.get(path, move |result| {
             with_delivering(|engine| reply(engine, result.map_err(McError::from)));
         });
     }
