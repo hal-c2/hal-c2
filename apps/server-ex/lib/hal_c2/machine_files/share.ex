@@ -16,6 +16,11 @@ defmodule HalC2.MachineFiles.Share do
   Nothing here keeps state or starts anything: each call opens, reads or writes,
   and closes. Every function takes an absolute path and answers `{:ok, value}` or
   `{:error, posix}`.
+
+  A call that names a file in a directory may take the id that directory had when
+  the other MC reached it (`dir`), and is `:estale` once the directory's path names
+  another, as when a symlink to it is pointed elsewhere or it is renamed and made
+  again: what a process there opened or stands in stays that directory.
   """
 
   alias HalC2.Workspace
@@ -77,11 +82,15 @@ defmodule HalC2.MachineFiles.Share do
   Walks from `path` through `names`: the attributes of each step as far as it got,
   or the error of the first when it got nowhere.
   """
-  @spec walk(String.t(), [String.t()]) :: {:ok, [attr]} | {:error, atom}
-  def walk(path, names) when is_binary(path) and is_list(names) do
-    case walk(path, names, roots(), []) do
-      {[], reason} when reason != nil -> {:error, reason}
-      {attrs, _} -> {:ok, attrs}
+  @spec walk(String.t(), [String.t()], term) :: {:ok, [attr]} | {:error, atom}
+  def walk(path, names, dir \\ nil) when is_binary(path) and is_list(names) do
+    roots = roots()
+
+    with :ok <- still_dir(path, dir, roots) do
+      case walk(path, names, roots, []) do
+        {[], reason} when reason != nil -> {:error, reason}
+        {attrs, _} -> {:ok, attrs}
+      end
     end
   end
 
@@ -101,11 +110,15 @@ defmodule HalC2.MachineFiles.Share do
   def stat(path) when is_binary(path), do: stat(path, roots())
 
   @doc "The entries of the directory `path` as `{name, type, id}`."
-  @spec list(String.t()) :: {:ok, [{String.t(), atom, term}]} | {:error, atom}
-  def list(path) when is_binary(path) do
+  @spec list(String.t(), term) :: {:ok, [{String.t(), atom, term}]} | {:error, atom}
+  def list(path, dir \\ nil) when is_binary(path) do
     roots = roots()
 
-    case classify(path, roots) do
+    with :ok <- still_dir(path, dir, roots), do: list(path, classify(path, roots), roots)
+  end
+
+  defp list(path, classified, roots) do
+    case classified do
       {:synthetic, names} ->
         entries =
           for name <- Enum.sort(names),
@@ -173,11 +186,12 @@ defmodule HalC2.MachineFiles.Share do
   def fsync(path, id) when is_binary(path), do: opened(path, id, [:read], &:file.sync/1)
 
   @doc "Creates the file `path`, which must not exist yet, with `mode`."
-  @spec create(String.t(), non_neg_integer) :: {:ok, attr} | {:error, atom}
-  def create(path, mode) when is_binary(path) and is_integer(mode) do
+  @spec create(String.t(), non_neg_integer, term) :: {:ok, attr} | {:error, atom}
+  def create(path, mode, dir \\ nil) when is_binary(path) and is_integer(mode) do
     roots = roots()
 
     with {:ok, _} <- under_root(path, roots),
+         :ok <- still_dir(Path.dirname(path), dir, roots),
          {:ok, fd} <- :file.open(path, [:write, :exclusive, :raw]) do
       :file.close(fd)
       _ = chmod(path, mode)
@@ -186,11 +200,12 @@ defmodule HalC2.MachineFiles.Share do
   end
 
   @doc "Creates the directory `path` with `mode`."
-  @spec mkdir(String.t(), non_neg_integer) :: {:ok, attr} | {:error, atom}
-  def mkdir(path, mode) when is_binary(path) and is_integer(mode) do
+  @spec mkdir(String.t(), non_neg_integer, term) :: {:ok, attr} | {:error, atom}
+  def mkdir(path, mode, dir \\ nil) when is_binary(path) and is_integer(mode) do
     roots = roots()
 
     with {:ok, _} <- under_root(path, roots),
+         :ok <- still_dir(Path.dirname(path), dir, roots),
          :ok <- :prim_file.make_dir(path) do
       _ = chmod(path, mode)
       stat(path, roots)
@@ -198,20 +213,28 @@ defmodule HalC2.MachineFiles.Share do
   end
 
   @doc "Removes the file (`:file`) or empty directory (`:dir`) `path`; never a root."
-  @spec remove(String.t(), :file | :dir) :: :ok | {:error, atom}
-  def remove(path, kind) when is_binary(path) and kind in [:file, :dir] do
-    with {:ok, _} <- under_root(path, roots()) do
+  @spec remove(String.t(), :file | :dir, term) :: :ok | {:error, atom}
+  def remove(path, kind, dir \\ nil) when is_binary(path) and kind in [:file, :dir] do
+    roots = roots()
+
+    with {:ok, _} <- under_root(path, roots),
+         :ok <- still_dir(Path.dirname(path), dir, roots) do
       if kind == :dir, do: :prim_file.del_dir(path), else: :prim_file.delete(path)
     end
   end
 
-  @doc "Renames `from` to `to`, both under a root and neither one."
-  @spec rename(String.t(), String.t()) :: :ok | {:error, atom}
-  def rename(from, to) when is_binary(from) and is_binary(to) do
+  @doc """
+  Renames `from` to `to`, both under a root and neither one, from the directory
+  `from_dir` to `to_dir`.
+  """
+  @spec rename(String.t(), String.t(), term, term) :: :ok | {:error, atom}
+  def rename(from, to, from_dir \\ nil, to_dir \\ nil) when is_binary(from) and is_binary(to) do
     roots = roots()
 
     with {:ok, _} <- under_root(from, roots),
          {:ok, _} <- under_root(to, roots),
+         :ok <- still_dir(Path.dirname(from), from_dir, roots),
+         :ok <- still_dir(Path.dirname(to), to_dir, roots),
          do: :prim_file.rename(from, to)
   end
 
@@ -340,6 +363,16 @@ defmodule HalC2.MachineFiles.Share do
       after
         :file.close(fd)
       end
+    end
+  end
+
+  # The directory `path` is still the one `id` names, if one is named.
+  defp still_dir(_path, nil, _roots), do: :ok
+
+  defp still_dir(path, id, roots) do
+    case stat(path, roots) do
+      {:ok, %{type: :directory, id: ^id}} -> :ok
+      _ -> {:error, :estale}
     end
   end
 

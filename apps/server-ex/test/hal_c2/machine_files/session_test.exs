@@ -5,11 +5,13 @@ defmodule HalC2.MachineFiles.SessionTest do
 
   @folders ["devbox"]
 
-  # "devbox" as `HalC2.MachineFiles.Share` there would answer.
-  defp devbox(:walk, ["/", ["home", "me", "shop"]]), do: {:ok, [dir(10), dir(11), dir(12)]}
-  defp devbox(:walk, ["/", ["home", "missing"]]), do: {:ok, [dir(10)]}
-  defp devbox(:walk, ["/", ["etc"]]), do: {:error, :enoent}
-  defp devbox(:walk, ["/home/me/shop", ["cart.ts"]]), do: {:ok, [file(13, 5)]}
+  # "devbox" as `HalC2.MachineFiles.Share` there would answer. The shop is directory
+  # 12; one that is asked about as 99 has been replaced by it since.
+  defp devbox(:walk, ["/", ["home", "me", "shop"], nil]), do: {:ok, [dir(10), dir(11), dir(12)]}
+  defp devbox(:walk, ["/", ["home", "missing"], nil]), do: {:ok, [dir(10)]}
+  defp devbox(:walk, ["/", ["etc"], nil]), do: {:error, :enoent}
+  defp devbox(:walk, ["/home/me/shop", ["cart.ts"], {1, 12}]), do: {:ok, [file(13, 5)]}
+  defp devbox(:walk, ["/home/me/shop", _, {1, 99}]), do: {:error, :estale}
   defp devbox(:stat, ["/home/me/shop/cart.ts"]), do: {:ok, file(13, 5)}
   defp devbox(:stat, ["/home/me/shop"]), do: {:ok, dir(12)}
   # cart.ts is file 13 until it is saved over, as an editor there would.
@@ -19,11 +21,17 @@ defmodule HalC2.MachineFiles.SessionTest do
   defp devbox(:append, [path, data, id]), do: send(self(), {:append, path, data, id}) && {:ok, 3}
   defp devbox(:fsync, [path, id]), do: send(self(), {:fsync, path, id}) && :ok
 
-  defp devbox(:list, ["/home/me/shop"]),
+  defp devbox(:list, ["/home/me/shop", {1, 12}]),
     do: {:ok, [{"cart.ts", :regular, {1, 13}}, {"src", :directory, {1, 14}}]}
 
-  defp devbox(:create, ["/home/me/shop/new.ts", 0o644]), do: {:ok, file(15, 0)}
-  defp devbox(:rename, ["/home/me/shop/cart.ts", "/home/me/shop/basket.ts"]), do: :ok
+  defp devbox(:list, ["/home/me/shop", {1, 99}]), do: {:error, :estale}
+  defp devbox(:create, ["/home/me/shop/new.ts", 0o644, {1, 12}]), do: {:ok, file(15, 0)}
+
+  defp devbox(:rename, ["/home/me/shop/cart.ts", "/home/me/shop/basket.ts", {1, 12}, {1, 12}]),
+    do: :ok
+
+  defp devbox(:remove, [path, kind, {1, 12}]), do: send(self(), {:remove, path, kind}) && :ok
+  defp devbox(:remove, [_path, _kind, {1, 99}]), do: {:error, :estale}
 
   defp devbox(:setattr, [path, changes, id]),
     do: send(self(), {:setattr, path, changes, id}) && {:ok, file(13, 0)}
@@ -165,6 +173,22 @@ defmodule HalC2.MachineFiles.SessionTest do
     assert {{:walk, [_]}, s} = step(s, {:walk, 1, 3, ["cart.ts"]})
     assert {{:renameat}, s} = step(s, {:renameat, 1, "cart.ts", 1, "basket.ts"})
     assert s.fids[3] == {"devbox", "/home/me/shop/basket.ts"}
+  end
+
+  test "what a directory's fid names or lists is in that directory, or stale" do
+    s = at_shop()
+    assert {{:unlinkat}, s} = step(s, {:unlinkat, 1, "cart.ts", 0})
+    assert_received {:remove, "/home/me/shop/cart.ts", :file}
+
+    # Its path names another directory on devbox now; a clone keeps the old one.
+    s = %{s | ids: %{s.ids | 1 => {1, 99}}}
+    assert {{:walk, []}, s} = step(s, {:walk, 1, 2, []})
+
+    for fid <- [1, 2] do
+      assert {{:lerror, 116}, _} = step(s, {:unlinkat, fid, "cart.ts", 0})
+      assert {{:lerror, 116}, _} = step(s, {:walk, fid, 3, ["cart.ts"]})
+      assert {{:lerror, 116}, _} = step(s, {:readdir, fid, 0, 4096})
+    end
   end
 
   test "nothing is renamed between machines or changed in a folder itself" do

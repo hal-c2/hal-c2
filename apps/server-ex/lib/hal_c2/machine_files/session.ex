@@ -6,13 +6,16 @@ defmodule HalC2.MachineFiles.Session do
 
   The tree it serves has one folder per other machine of the cluster at its top,
   each mirroring that machine's absolute paths. A fid stands at `:top`, at
-  `{folder, path}`, or at `:gone` once its folder's machine has left (`left/2`). `handle/3` answers what it can here (the top, the folders
+  `{folder, path}`, or at `:gone` once its folder's machine has left (`left/2`).
+  `handle/3` answers what it can here (the top, the folders
   themselves, statfs) and names the `HalC2.MachineFiles.Share` call on the
   folder's machine that answers the rest, with how its answer becomes the reply.
 
   A qid's path is the helper's inode number: the top is 1, and each file of a
   folder keeps one number for the connection, by the id its machine gives it.
 
+  A fid in a folder keeps the id of what it reached (`ids`), and what it names in
+  that directory, or lists, fails as stale once the path names another directory.
   A fid opened on a file keeps that file's id (`opened`), and its reads, writes
   and fsyncs fail as stale once the path names another file, as when an editor
   there saves by renaming a new file over it. One opened to append (`appends`)
@@ -52,6 +55,7 @@ defmodule HalC2.MachineFiles.Session do
 
   defstruct msize: 8192,
             fids: %{},
+            ids: %{},
             dirs: %{},
             opened: %{},
             appends: MapSet.new(),
@@ -142,17 +146,17 @@ defmodule HalC2.MachineFiles.Session do
 
   defp on(s, _msg, :gone, _folders), do: error(s, :estale)
 
-  defp on(s, {:walk, _, newfid, []}, at, _folders),
-    do: {:reply, {:walk, []}, put_fid(s, newfid, at)}
+  defp on(s, {:walk, fid, newfid, []}, at, _folders),
+    do: {:reply, {:walk, []}, put_fid(s, newfid, at, s.ids[fid])}
 
-  defp on(s, {:walk, _, newfid, names}, at, folders) do
+  defp on(s, {:walk, fid, newfid, names}, at, folders) do
     cond do
       not Enum.all?(names, &name?/1) ->
         error(s, :enoent)
 
       at != :top ->
         {folder, path} = at
-        walk(s, folder, path, names, newfid, [])
+        walk(s, folder, path, s.ids[fid], names, newfid, [])
 
       hd(names) not in folders ->
         error(s, :enoent)
@@ -163,7 +167,7 @@ defmodule HalC2.MachineFiles.Session do
 
         if rest == [],
           do: {:reply, {:walk, [qid]}, put_fid(s, newfid, {folder, "/"})},
-          else: walk(s, folder, "/", rest, newfid, [qid])
+          else: walk(s, folder, "/", nil, rest, newfid, [qid])
     end
   end
 
@@ -194,7 +198,7 @@ defmodule HalC2.MachineFiles.Session do
   defp on(s, {:lopen, fid, flags}, {folder, path} = at, _folders) do
     call(s, folder, :stat, [path], fn s, {:ok, attr} ->
       {qid, s} = qid(s, folder, attr)
-      {{:lopen, qid, 0}, s |> put_fid(fid, at) |> open(fid, attr, flags)}
+      {{:lopen, qid, 0}, s |> put_fid(fid, at, attr.id) |> open(fid, attr, flags)}
     end)
   end
 
@@ -259,7 +263,7 @@ defmodule HalC2.MachineFiles.Session do
         {:reply, {:readdir, page(entries, offset, count)}, s}
 
       _ ->
-        call(s, folder, :list, [path], fn s, {:ok, listed} ->
+        call(s, folder, :list, [path, s.ids[fid]], fn s, {:ok, listed} ->
           {entries, s} =
             Enum.map_reduce(listed, s, fn {name, type, id}, s ->
               {qid, s} = qid(s, folder, %{type: type, id: id, mtime: 0})
@@ -277,38 +281,39 @@ defmodule HalC2.MachineFiles.Session do
     named(s, [name], fn ->
       path = join(dir, name)
 
-      call(s, folder, :create, [path, mode], fn s, {:ok, attr} ->
+      call(s, folder, :create, [path, mode, s.ids[fid]], fn s, {:ok, attr} ->
         {qid, s} = qid(s, folder, attr)
-        {{:lcreate, qid, 0}, s |> put_fid(fid, {folder, path}) |> open(fid, attr, flags)}
+        {{:lcreate, qid, 0}, s |> put_fid(fid, {folder, path}, attr.id) |> open(fid, attr, flags)}
       end)
     end)
   end
 
-  defp on(s, {:mkdir, _, name, mode}, {folder, dir}, _folders) do
+  defp on(s, {:mkdir, fid, name, mode}, {folder, dir}, _folders) do
     named(s, [name], fn ->
-      call(s, folder, :mkdir, [join(dir, name), mode], fn s, {:ok, attr} ->
+      call(s, folder, :mkdir, [join(dir, name), mode, s.ids[fid]], fn s, {:ok, attr} ->
         {qid, s} = qid(s, folder, attr)
         {{:mkdir, qid}, s}
       end)
     end)
   end
 
-  defp on(s, {:unlinkat, _, name, flags}, {folder, dir}, _folders) do
+  defp on(s, {:unlinkat, fid, name, flags}, {folder, dir}, _folders) do
     kind = if band(flags, @at_removedir) != 0, do: :dir, else: :file
+    args = [join(dir, name), kind, s.ids[fid]]
 
     named(s, [name], fn ->
-      call(s, folder, :remove, [join(dir, name), kind], fn s, :ok -> {{:unlinkat}, s} end)
+      call(s, folder, :remove, args, fn s, :ok -> {{:unlinkat}, s} end)
     end)
   end
 
-  defp on(s, {:renameat, _, old_name, new_fid, new_name}, {folder, old_dir}, _folders) do
+  defp on(s, {:renameat, fid, old_name, new_fid, new_name}, {folder, old_dir}, _folders) do
     case s.fids[new_fid] do
       {^folder, new_dir} ->
         named(s, [old_name, new_name], fn ->
           from = join(old_dir, old_name)
           to = join(new_dir, new_name)
 
-          call(s, folder, :rename, [from, to], fn s, :ok ->
+          call(s, folder, :rename, [from, to, s.ids[fid], s.ids[new_fid]], fn s, :ok ->
             {{:renameat}, renamed(s, folder, from, to)}
           end)
         end)
@@ -328,14 +333,15 @@ defmodule HalC2.MachineFiles.Session do
   # --- helpers -----------------------------------------------------------------------
 
   # As far as the walk gets: a fid for its end only if it got there.
-  defp walk(s, folder, path, names, newfid, before) do
+  defp walk(s, folder, path, id, names, newfid, before) do
     finish = fn
       s, {:ok, attrs} ->
         {qids, s} = Enum.map_reduce(attrs, s, &qid(&2, folder, &1))
+        to = {folder, Enum.reduce(names, path, &join(&2, &1))}
 
         s =
           if length(attrs) == length(names),
-            do: put_fid(s, newfid, {folder, Enum.reduce(names, path, &join(&2, &1))}),
+            do: put_fid(s, newfid, to, List.last(attrs).id),
             else: s
 
         {{:walk, before ++ qids}, s}
@@ -347,7 +353,7 @@ defmodule HalC2.MachineFiles.Session do
         {{:lerror, NineP.errno(reason)}, s}
     end
 
-    {:call, folder, :walk, [path, names], finish, s}
+    {:call, folder, :walk, [path, names, id], finish, s}
   end
 
   # A call whose errors are the reply; `finish` sees only an answer.
@@ -370,12 +376,16 @@ defmodule HalC2.MachineFiles.Session do
   defp join("/", name), do: "/" <> name
   defp join(dir, name), do: dir <> "/" <> name
 
-  defp put_fid(s, fid, at), do: %{forget(s, fid) | fids: Map.put(s.fids, fid, at)}
+  defp put_fid(s, fid, at, id \\ nil) do
+    s = forget(s, fid)
+    %{s | fids: Map.put(s.fids, fid, at), ids: if(id, do: Map.put(s.ids, fid, id), else: s.ids)}
+  end
 
   defp forget(s, fid) do
     %{
       s
       | fids: Map.delete(s.fids, fid),
+        ids: Map.delete(s.ids, fid),
         dirs: Map.delete(s.dirs, fid),
         opened: Map.delete(s.opened, fid),
         appends: MapSet.delete(s.appends, fid)

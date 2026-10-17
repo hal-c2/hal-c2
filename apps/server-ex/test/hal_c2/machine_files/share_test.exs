@@ -182,6 +182,33 @@ defmodule HalC2.MachineFiles.ShareTest do
     assert Share.read(cart, 0, 6, new) == {:ok, "export"}
   end
 
+  test "a directory renamed away and made again is stale to whoever stood in it", ctx do
+    src = Path.join(ctx.shop, "src")
+    cart = Path.join(src, "cart.ts")
+    {:ok, %{id: id}} = Share.stat(src)
+    assert {:ok, [_]} = Share.walk(src, ["cart.ts"], id)
+    assert {:ok, [{"cart.ts", :regular, _}]} = Share.list(src, id)
+
+    File.rename!(src, Path.join(ctx.shop, "src-old"))
+    File.mkdir!(src)
+    File.write!(cart, "new")
+    File.write!(Path.join(src, "b.ts"), "b")
+
+    assert Share.walk(src, ["cart.ts"], id) == {:error, :estale}
+    assert Share.list(src, id) == {:error, :estale}
+    assert Share.create(Path.join(src, "c.ts"), 0o644, id) == {:error, :estale}
+    assert Share.mkdir(Path.join(src, "lib"), 0o755, id) == {:error, :estale}
+    assert Share.remove(cart, :file, id) == {:error, :estale}
+    assert Share.rename(cart, Path.join(ctx.shop, "cart.ts"), id, nil) == {:error, :estale}
+
+    assert Share.rename(Path.join(src, "b.ts"), Path.join(src, "c.ts"), nil, id) ==
+             {:error, :estale}
+
+    assert File.read!(cart) == "new"
+    assert {:ok, %{id: new}} = Share.stat(src)
+    assert Share.remove(cart, :file, new) == :ok
+  end
+
   test "an append lands after what was written there since", ctx do
     cart = Path.join(ctx.shop, "src/cart.ts")
     {:ok, %{id: id, size: size}} = Share.stat(cart)

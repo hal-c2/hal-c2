@@ -141,6 +141,28 @@ defmodule HalC2.MachineFiles.MountTest do
     File.close(held)
   end
 
+  # A shell standing in a directory stays in that directory: what it removes there
+  # is never in another that took the directory's path on the member since.
+  test "a directory a shell stands in stays itself when its path names another", ctx do
+    for dir <- ~w(a b d), do: File.mkdir_p!(Path.join(ctx.shop, dir))
+    for dir <- ~w(a b d), do: File.write!(Path.join([ctx.shop, dir, "x"]), dir)
+    File.ln_s!("a", Path.join(ctx.shop, "current"))
+
+    in_shop = fn script ->
+      System.cmd("sh", ["-c", script, "sh", through(ctx, ctx.shop), ctx.shop],
+        stderr_to_stdout: true
+      )
+    end
+
+    # The link is pointed at b while the shell stands in a through it.
+    in_shop.(~s(cd "$1/current" && ln -sfn b "$2/current" && rm x))
+    assert File.read!(Path.join(ctx.shop, "b/x")) == "b"
+
+    # d is renamed away and made again while the shell stands in the old one.
+    in_shop.(~s(cd "$1/d" && mv "$2/d" "$2/d-old" && mkdir "$2/d" && echo new > "$2/d/x" && rm x))
+    assert File.read!(Path.join(ctx.shop, "d/x")) == "new\n"
+  end
+
   test "a member removed from the cluster has no folder", ctx do
     assert File.dir?(Path.join(ctx.root, "devbox"))
     Agent.update(ctx.cluster, fn _ -> [] end)
