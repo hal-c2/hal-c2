@@ -17,6 +17,10 @@ Item {
     property bool streaming: false
     // User messages keep their line breaks.
     property bool lineBreaks: false
+    // The text is the user's own file and not a reply: the task boxes the
+    // Files viewer makes of its checklists (`task:<n>` links) are kept, to be
+    // ticked. A reply must never have them, or it could tick a box in a file.
+    property bool trusted: false
     property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
@@ -153,7 +157,7 @@ Item {
     function sync() {
         if (reading === null)
             reading = Md.state();
-        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks }, reading);
+        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks, tasks: trusted }, reading);
         const roles = ["html", "code", "language", "title", "open", "indent", "payload", "alert", "gap"];
         for (let i = Math.min(reading.stable, segmentModel.count); i < next.length; ++i) {
             const segment = next[i];
@@ -199,6 +203,7 @@ Item {
     onTextChanged: sync()
     onStreamingChanged: sync()
     onLineBreaksChanged: sync()
+    onTrustedChanged: sync()
     Component.onCompleted: sync()
 
     ListModel {
@@ -840,6 +845,7 @@ Item {
                                 brick.fitWidth = Qt.binding(() => root.fitWidth);
                                 // Before the text, which is parsed as it is set.
                                 brick.lineBreaks = Qt.binding(() => root.lineBreaks);
+                                brick.trusted = Qt.binding(() => root.trusted);
                                 brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
