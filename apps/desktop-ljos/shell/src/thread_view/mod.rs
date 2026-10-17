@@ -17,6 +17,22 @@ pub mod time;
 pub mod timeline;
 pub mod timeline_model;
 
+use ljos::prelude::Engine;
+
+/// Registers the thread view's types in `HalC2.Shell`, so the bricks can
+/// name them (and make the creatable ones, `TimelineModel {}`).
+pub fn register(engine: &Engine, version: ljos_engine::Version) {
+    use ljos_engine::{MetaRef, QmlType};
+    for meta in [
+        timeline_model::TimelineModel::static_meta(),
+        diff::DiffModel::static_meta(),
+        file_tree::FileTreeModel::static_meta(),
+        previews::ThreadPreviews::static_meta(),
+    ] {
+        engine.register_type(crate::MODULE, version, MetaRef::Static(meta));
+    }
+}
+
 #[cfg(test)]
 mod timeline_prop;
 #[cfg(test)]

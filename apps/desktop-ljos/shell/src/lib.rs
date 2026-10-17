@@ -61,22 +61,7 @@ pub fn register(engine: &Engine) {
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
-    engine.register_type(
-        MODULE,
-        v,
-        ljos_engine::MetaRef::Static(
-            <thread_view::timeline_model::TimelineModel as ljos_engine::QmlType>::static_meta(),
-        ),
-    );
-    use ljos_engine::QmlType;
-    for meta in [
-        thread_view::timeline_model::TimelineModel::static_meta(),
-        thread_view::diff::DiffModel::static_meta(),
-        thread_view::file_tree::FileTreeModel::static_meta(),
-        thread_view::previews::ThreadPreviews::static_meta(),
-    ] {
-        engine.register_type(MODULE, v, ljos_engine::MetaRef::Static(meta));
-    }
+    thread_view::register(engine, v);
     bridge::Bridge::of(engine);
 }
 
