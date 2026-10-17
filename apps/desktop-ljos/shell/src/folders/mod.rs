@@ -15,7 +15,8 @@
 //! A write of `rootPath` to the path it already has clears `error`, as
 //! `setBrowseRootPath` does before it compares. Nothing hears an equal
 //! write but the property's setter, which cannot reach the Engine: it asks
-//! the watcher's queue for the clearing, which [`deliver`] does.
+//! the watcher's queue for the clearing, which [`deliver`] does
+//! (TODO(ljos#85): a setter that can write `error` itself clears it at once).
 
 mod plain;
 mod watch;
@@ -117,6 +118,7 @@ impl LocalFolderModel {
     /// of the root it already has, which is forgotten as `error`'s last
     /// failure (`setBrowseRootPath` clears the error before it compares).
     /// The model's own give-back of the root (`show_root`) is not a write.
+    /// TODO(ljos#85): clear `error` here once a setter can reach the Engine.
     fn keep_root(&self, path: Atom) -> Option<Atom> {
         let state = &self.state;
         if !state.giving_back.get()
