@@ -4,7 +4,7 @@
 //!
 //! What `App::qml_dirs` does, but for the base URL: the facade gives its
 //! components none, so a brick's `Qt.resolvedUrl` (its icons) would point
-//! nowhere. TODO(ljos): not filed yet; the README's Ljós list has it.
+//! nowhere. TODO(ljos#49).
 
 use std::path::{Path, PathBuf};
 
@@ -64,8 +64,7 @@ pub fn compile(roots: &Roots, on_error: OnError) -> Result<MapSource, String> {
 }
 
 /// How many `.qml` files the roots hold, for `--check` to say: a
-/// `MapSource` does not tell what it holds. TODO(ljos): not filed yet; the
-/// README's Ljós list has it.
+/// `MapSource` does not tell what it holds.
 pub fn count(roots: &Roots) -> Result<usize, String> {
     let mut count = 0;
     let mut dirs = roots.dirs()?;

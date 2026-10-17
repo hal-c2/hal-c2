@@ -309,8 +309,7 @@ impl Controller for ThreadMenu {
             me: init.me,
             write_clipboard: Rc::new(|engine: &Engine, text: &str| {
                 // `ClipboardService::set_text` says nothing of a failure,
-                // so a copy always says it was copied. TODO(ljos): not
-                // filed yet; the README's Ljós list has it.
+                // so a copy always says it was copied. TODO(ljos#54).
                 Bridge::of(engine).copy_to_clipboard(engine, text);
                 true
             }),
