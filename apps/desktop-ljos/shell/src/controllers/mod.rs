@@ -12,6 +12,7 @@ pub mod connections;
 pub mod device_settings;
 pub mod diagnostics;
 pub mod drafts;
+pub mod file_actions;
 pub mod folders;
 pub mod git;
 pub mod keybindings;
@@ -97,6 +98,7 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<drafts::DraftController>("drafts", &["landing"], Scope::Window),
+        Registration::new::<file_actions::FileActions>("fileActions", &[], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
         Registration::new::<git::Git>("git", &["git"], Scope::Window),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
