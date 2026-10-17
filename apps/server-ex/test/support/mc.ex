@@ -3881,6 +3881,10 @@ defmodule HalC2.Test.Mc.Terminal do
     Map.put(context, :terminals_ready, true)
   end
 
+  # Whether the shell is the one `ensure/1` installs, whose prompt `@prompt` matches;
+  # scenarios about which shell the MC picks run others (zsh, fish) that draw their own.
+  defp prompt_known?, do: System.get_env("SHELL") == "/bin/sh"
+
   @doc "Sets (or with `nil` unsets) an OS environment variable until the scenario ends."
   def put_env(key, value) do
     previous = System.get_env(key)
@@ -3922,11 +3926,62 @@ defmodule HalC2.Test.Mc.Terminal do
     {reply, put_input(context, input)}
   end
 
-  @doc "Like `open/3`, asserting success; returns `{snapshot, context}`."
+  @doc """
+  Like `open/3`, asserting success; returns `{snapshot, context}` once the shell has
+  drawn its first prompt (`await_prompt/1`).
+  """
   def open!(context, overrides \\ %{}, name \\ "default") do
     case open(context, overrides, name) do
-      {{:ok, snapshot}, context} -> {snapshot, context}
-      {other, _} -> flunk("terminal.open failed: #{inspect(other)}")
+      {{:ok, snapshot}, context} ->
+        if snapshot["status"] == "running" and prompt_known?(),
+          do: await_prompt(context.terminal)
+
+        {snapshot, context}
+
+      {other, _} ->
+        flunk("terminal.open failed: #{inspect(other)}")
+    end
+  end
+
+  # What an idle shell has last printed: its prompt, which bash follows with the
+  # switch to bracketed paste.
+  @prompt ~r/[$#] (\e\[\?2004h)?\z/
+
+  @doc """
+  Waits until the terminal's shell is idle at its prompt, for steps that type into
+  a shell they just started. Keystrokes sent earlier are echoed at once, and the
+  prompt then lands between that echo and the command's output (`$ hello`), where
+  a match for a line of output no longer finds it.
+
+  Reads the terminal as a raw subscriber of its own, so no client's frames are
+  consumed.
+  """
+  def await_prompt(input) do
+    session = Map.take(input, ["threadId", "terminalId"])
+
+    Task.async(fn ->
+      {:ok, snapshot} = HalC2.Terminal.attach(session, self())
+
+      try do
+        receive_prompt(snapshot["history"])
+      after
+        HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
+      end
+    end)
+    |> Task.await(10_000)
+  end
+
+  defp receive_prompt(output) do
+    unless output =~ @prompt do
+      receive do
+        {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
+          receive_prompt(output <> data)
+
+        {:hal_c2_terminal, _key, _event} ->
+          receive_prompt(output)
+      after
+        5_000 -> flunk("the shell drew no prompt; its output so far is #{inspect(output)}")
+      end
     end
   end
 
@@ -4028,13 +4083,36 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Runs `command` in the terminal the named client is attached to and waits until
-  it finished; returns `{output, context}`.
+  it finished and the shell is back at its prompt (`await_output_idle/4`); returns
+  `{output, context}`.
   """
   def run(context, name, command, input \\ nil) do
     n = System.unique_integer([:positive])
     context = write(context, name, "#{command}; echo __done''_#{n}__\n", input)
-    {output, _events, context} = await_output(context, name, "__done_#{n}__")
+    {output, _events, context} = await_output_idle(context, name, "__done_#{n}__")
     {output, context}
+  end
+
+  @doc """
+  Like `await_output/4`, and waits for the prompt that follows the match too, so
+  the next thing typed reaches a shell that is waiting for it. Typed any sooner,
+  it is echoed first and the prompt then lands in front of its output. Waits for the
+  match alone when the scenario runs a shell whose prompt is not known.
+  """
+  def await_output_idle(context, name, pattern, timeout \\ 5_000) do
+    if prompt_known?() do
+      pattern = if is_binary(pattern), do: Regex.compile!(Regex.escape(pattern)), else: pattern
+
+      idle =
+        Regex.compile!(
+          Regex.source(pattern) <> "(?:[^\\r\\n]*\\r?\\n)?[^\\r\\n]*" <> Regex.source(@prompt),
+          Regex.opts(pattern)
+        )
+
+      await_output(context, name, idle, timeout)
+    else
+      await_output(context, name, pattern, timeout)
+    end
   end
 
   @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
@@ -4063,8 +4141,7 @@ defmodule HalC2.Test.Mc.Terminal do
   def exited(context, text) do
     {_, context} = open!(context)
     {_, context} = attach!(context, "default", Map.delete(context.terminal, "cwd"))
-    # Typed before the shell's first prompt, so the prompt can land ahead of the
-    # output; the leading newline keeps `text` on a line of its own.
+    # The leading newline keeps `text` on a line of its own, whatever the prompt drew.
     context = write(context, "default", "printf '\\n%s\\n' '#{text}'; exit 0\n")
     {_, context} = await_event(context, "default", &(&1["type"] == "exited"))
     context

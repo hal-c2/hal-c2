@@ -83,6 +83,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   step "a new shell starts", context do
     assert %{"status" => "running", "pid" => pid, "exitCode" => nil} = context.snapshot
     assert File.read_link!("/proc/#{pid}/cwd") == context.terminal["cwd"]
+    Terminal.await_prompt(context.terminal)
     context
   end
 
@@ -504,11 +505,12 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     |> Map.put(:snapshot, snapshot)
   end
 
-  # Prints `text` as a line of output; the typed command does not contain it.
+  # Prints `text` as a line of output; the typed command does not contain it. Returns
+  # with the shell back at its prompt, so the next command typed starts a line.
   defp print(context, name, text) do
     {first, rest} = String.split_at(text, 1)
     context = Terminal.write(context, name, "echo #{first}''\"#{rest}\"\n")
-    {_, _, context} = Terminal.await_output(context, name, line(text))
+    {_, _, context} = Terminal.await_output_idle(context, name, line(text))
     context
   end
 
