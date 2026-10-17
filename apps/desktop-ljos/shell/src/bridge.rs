@@ -47,7 +47,6 @@ enum Queued {
     Action(String, Json),
     Call(Deferred),
 }
-type Opener = Rc<dyn Fn(&str)>;
 type ClipboardWriter = Rc<dyn Fn(&str)>;
 
 /// `Shell` in `HalC2.Shell`.
@@ -245,7 +244,6 @@ struct BridgeState {
     /// The queued actions are running, one after another.
     draining: Cell<bool>,
     queued: RefCell<VecDeque<Queued>>,
-    opener: RefCell<Option<Opener>>,
     clipboard_writer: RefCell<Option<ClipboardWriter>>,
     mc_origin: RefCell<String>,
 }
@@ -439,7 +437,8 @@ impl Bridge {
     }
 
     /// Opens a link: the app's own (`hal-c2:`) as `link.open`, a web or mail
-    /// link in the system's handler; anything else is ignored.
+    /// link with the platform's opener (`Qt.openUrlExternally`'s); anything
+    /// else is ignored.
     pub fn open_external(self, engine: &Engine, url: &str) {
         let scheme = url
             .split_once(':')
@@ -452,16 +451,9 @@ impl Bridge {
         if !matches!(scheme.as_str(), "http" | "https" | "mailto") {
             return;
         }
-        let opener = BridgeState::of(engine).opener.borrow().clone();
-        match opener {
-            Some(open) => open(url),
-            None => open_with_system(url),
+        if !Platform::of(engine).open_url().open(url) {
+            eprintln!("hal-c2: cannot open {url}");
         }
-    }
-
-    /// Where `open_external` sends a URL instead of the system (tests).
-    pub fn set_url_opener(self, engine: &Engine, open: impl Fn(&str) + 'static) {
-        *BridgeState::of(engine).opener.borrow_mut() = Some(Rc::new(open));
     }
 
     /// Where `setClipboardText` writes instead of the clipboard (tests).
@@ -526,12 +518,4 @@ fn origin_host(origin: &str) -> String {
         None => authority.split(':').next().unwrap_or(""),
     };
     host.to_ascii_lowercase()
-}
-
-/// Ljós has no service for opening a URL in the system's handler
-/// (openUrlExternally), so `open` hands it to the platform's, detached.
-fn open_with_system(url: &str) {
-    if let Err(e) = open::that_detached(url) {
-        eprintln!("hal-c2: cannot open {url}: {e}");
-    }
 }

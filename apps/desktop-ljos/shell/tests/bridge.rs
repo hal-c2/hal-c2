@@ -10,7 +10,7 @@ use std::rc::Rc;
 use common::{call, number, shell, text};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::mc::Disconnected;
-use ljos::prelude::Value;
+use ljos::prelude::{Platform, RecordedUrls, Value};
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -153,9 +153,8 @@ fn an_action_dispatched_while_a_controller_runs_waits_for_it() {
 #[test]
 fn the_apps_own_links_open_in_the_app_and_web_links_outside() {
     let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
-    let opened = Rc::new(RefCell::new(Vec::new()));
-    let log = opened.clone();
-    Bridge::of(&engine).set_url_opener(&engine, move |url| log.borrow_mut().push(url.to_owned()));
+    let opened = RecordedUrls::default();
+    Platform::of(&engine).set_open_url(Rc::new(opened.clone()));
     call(
         &engine,
         root,
@@ -189,7 +188,7 @@ fn the_apps_own_links_open_in_the_app_and_web_links_outside() {
         &[Value::string("javascript:alert(1)")],
     );
     assert_eq!(
-        *opened.borrow(),
+        opened.urls(),
         ["https://example.com/a", "mailto:a@example.com"]
     );
 }
