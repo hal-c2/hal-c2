@@ -18,7 +18,7 @@ defmodule HalC2.MachineFilesProofTest do
     covers: %{
       "HalC2.MachineFiles handle_info {_, {:data, _}}" =>
         ~w(request-gone request-down request-call flush),
-      "HalC2.MachineFiles handle_info {:answer, _, _}" => ~w(answer answer-dropped),
+      "HalC2.MachineFiles handle_info {:answer, _, _}" => ~w(answer answer-left answer-dropped),
       "HalC2.MachineFiles handle_info {_, {:exit_status, _}}" => "helper-exit",
       "HalC2.MachineFiles handle_info :restart" => "restart",
       "HalC2.MachineFiles handle_info {:hal_c2_shell, _}" => ~w(leave join),
@@ -76,7 +76,7 @@ defmodule HalC2.MachineFilesProofTest do
   # The code's own steps, and the cluster coming back after a fault: a step that can
   # be taken all along is taken in the end. The kernel asking and the faults are not.
   @fair ~w(request-gone request-down request-call flush remote remote-timeout share answer
-           answer-dropped restart peer-start heal)
+           answer-left answer-dropped restart peer-start heal)
 
   for init <- ["start(2)", "outside-start(2)"] do
     test "nothing outside a shared root is read, from #{init}", %{proof: proof} do

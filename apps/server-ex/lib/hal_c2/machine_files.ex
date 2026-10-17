@@ -260,7 +260,13 @@ defmodule HalC2.MachineFiles do
       {nil, _} ->
         {:noreply, state}
 
-      {{tag, folder, finish}, pending} ->
+      {{tag, folder, environment, finish}, pending} ->
+        # From a machine that has since left its folder: the fid it was for is stale.
+        answer =
+          if state.members[folder][:environment] == environment,
+            do: answer,
+            else: {:error, :estale}
+
         {:noreply, answer(%{state | pending: pending}, tag, folder, finish, answer)}
     end
   end
@@ -269,19 +275,24 @@ defmodule HalC2.MachineFiles do
   def handle_info({:EXIT, _port, _reason}, state), do: {:noreply, state}
   def handle_info(_other, state), do: {:noreply, state}
 
+  # Unmounted even with no helper running: one killed while this backs off leaves
+  # its mount behind.
   @impl true
-  def terminate(_reason, %{port: port} = state) when port != nil do
+  def terminate(_reason, state) do
     state.helper.unmount(state.root)
-    state.helper.close(port)
+    if state.port, do: state.helper.close(state.port)
+    :ok
   end
-
-  def terminate(_reason, _state), do: :ok
 
   # --- members ------------------------------------------------------------------------
 
   defp members(state) do
     members = folders(state.environments.())
-    state = %{state | members: members}
+    # A folder whose machine left, even for another that took its name.
+    left =
+      for {folder, m} <- state.members, members[folder][:environment] != m.environment, do: folder
+
+    state = %{state | members: members, session: Session.left(state.session, left)}
     # One that could not start tries again when the cluster changes: FUSE may be in now.
     if members != %{} and (state.status == :idle or match?({:error, _}, state.status)),
       do: start(state),
@@ -396,13 +407,13 @@ defmodule HalC2.MachineFiles do
 
   defp call(state, tag, folder, fun, args, finish) do
     case state.members do
-      %{^folder => %{node: mc}} ->
+      %{^folder => %{node: mc, environment: environment}} ->
         if connected?(mc) do
           ref = make_ref()
           parent = self()
           timeout = state.timeout
           spawn(fn -> send(parent, {:answer, ref, remote(mc, fun, args, timeout)}) end)
-          %{state | pending: Map.put(state.pending, ref, {tag, folder, finish})}
+          %{state | pending: Map.put(state.pending, ref, {tag, folder, environment, finish})}
         else
           answer(state, tag, folder, finish, {:error, :ehostdown})
         end

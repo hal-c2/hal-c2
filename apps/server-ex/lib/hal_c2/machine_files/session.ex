@@ -5,8 +5,8 @@ defmodule HalC2.MachineFiles.Session do
   moves bytes and runs calls on the other machines.
 
   The tree it serves has one folder per other machine of the cluster at its top,
-  each mirroring that machine's absolute paths. A fid stands at `:top` or at
-  `{folder, path}`. `handle/3` answers what it can here (the top, the folders
+  each mirroring that machine's absolute paths. A fid stands at `:top`, at
+  `{folder, path}`, or at `:gone` once its folder's machine has left (`left/2`). `handle/3` answers what it can here (the top, the folders
   themselves, statfs) and names the `HalC2.MachineFiles.Share` call on the
   folder's machine that answers the rest, with how its answer becomes the reply.
 
@@ -117,7 +117,30 @@ defmodule HalC2.MachineFiles.Session do
     end
   end
 
+  @doc """
+  Forgets what `folders` held: their fids fail as stale from now on, and their
+  files get new numbers, so a machine that takes over a folder's name later is
+  never reached by what was opened on the one before.
+  """
+  @spec left(t, [String.t()]) :: t
+  def left(s, []), do: s
+
+  def left(s, folders) do
+    gone? = fn
+      {folder, _} -> folder in folders
+      _top -> false
+    end
+
+    %{
+      s
+      | fids: Map.new(s.fids, fn {fid, at} -> {fid, if(gone?.(at), do: :gone, else: at)} end),
+        qids: Map.reject(s.qids, fn {key, _} -> gone?.(key) end)
+    }
+  end
+
   # --- walking ---------------------------------------------------------------------
+
+  defp on(s, _msg, :gone, _folders), do: error(s, :estale)
 
   defp on(s, {:walk, _, newfid, []}, at, _folders),
     do: {:reply, {:walk, []}, put_fid(s, newfid, at)}

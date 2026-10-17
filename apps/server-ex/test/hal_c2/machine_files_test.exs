@@ -12,8 +12,12 @@ defmodule HalC2.MachineFilesTest do
     @moduledoc false
     def available, do: Application.get_env(:hal_c2, :machine_files_fake_available, :ok)
     def prepare(_root), do: :ok
-    def unmount(_root), do: :ok
     def close(_port), do: :ok
+
+    def unmount(root) do
+      Kernel.send(Application.fetch_env!(:hal_c2, :machine_files_fake), {:unmounted, root})
+      :ok
+    end
 
     def open(root, _opts) do
       test = Application.fetch_env!(:hal_c2, :machine_files_fake)
@@ -39,15 +43,17 @@ defmodule HalC2.MachineFilesTest do
     %{cluster: cluster}
   end
 
-  defp start(%{cluster: cluster}) do
+  defp start(%{cluster: cluster}, opts \\ []) do
     start_supervised!(
       {MachineFiles,
-       enabled: true,
-       subscribe: false,
-       name: nil,
-       root: @root,
-       helper: FakeHelper,
-       environments: fn -> Agent.get(cluster, & &1) end}
+       [
+         enabled: true,
+         subscribe: false,
+         name: nil,
+         root: @root,
+         helper: FakeHelper,
+         environments: fn -> Agent.get(cluster, & &1) end
+       ] ++ opts}
     )
   end
 
@@ -147,6 +153,18 @@ defmodule HalC2.MachineFilesTest do
              {:error, :not_a_member, nil}
   end
 
+  test "a fid in a folder whose machine left is stale, even once another takes its name", ctx do
+    server = start(ctx)
+    put_cluster(ctx, server, [{:devbox@nowhere, @devbox}])
+    attach(server)
+    assert {111, _} = walk(server, 1, ["devbox"])
+
+    # Another machine labelled devbox: what was walked on the first never reaches it.
+    put_cluster(ctx, server, [{node(), %{@devbox | "environmentId" => "env-other"}}])
+    assert {7, <<116::32-little>>} = walk(server, 1, 2, ["home"])
+    assert {111, _} = walk(server, 3, ["devbox"])
+  end
+
   test "a member that is down fails what is asked of it at once, and is said so once", ctx do
     server = start(ctx)
     put_cluster(ctx, server, [{:devbox@nowhere, @devbox}])
@@ -187,6 +205,23 @@ defmodule HalC2.MachineFilesTest do
     # The new helper's fids start over: the old one's are gone.
     {101, _} = t(server, 0xFFFF, 100, <<8192::32-little>> <> s("9P2000.L"))
     assert {7, <<9::32-little>>} = walk(server, 1, ["devbox"])
+  end
+
+  test "stopping while the helper is restarting still unmounts", ctx do
+    server = start(ctx, backoff_base: 60_000)
+    put_cluster(ctx, server, [{node(), @devbox}])
+    assert_received {:opened, @root}
+
+    capture_log(fn ->
+      send(server, {self(), {:exit_status, 1}})
+      assert_receive {:opened, @root}, 5_000
+      # The second exit soon after waits out the backoff, with no helper running.
+      send(server, {self(), {:exit_status, 1}})
+      MachineFiles.sync(server)
+    end)
+
+    stop_supervised!(MachineFiles)
+    assert_received {:unmounted, @root}
   end
 
   test "a machine without FUSE says what to install", ctx do

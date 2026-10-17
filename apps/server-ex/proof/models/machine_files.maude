@@ -15,7 +15,7 @@ mod MACHINE-FILES is
   --- Where a path asked for is on A: under a shared root, outside every root, under a
   --- root by name but through `..`, or through a symlink that leaves the roots.
   ops inside outside dotdot escaping : -> Where [ctor] .
-  ops data enoent ehostdown : -> Answer [ctor] .
+  ops data enoent ehostdown estale : -> Answer [ctor] .
   --- A request as the kernel sees it: waiting for its reply, given up on and waiting
   --- for the Rflush, flushed, ended with the helper's connection, or answered. `late`
   --- is a reply to a request that was already over: answered, flushed or lost.
@@ -85,9 +85,9 @@ mod MACHINE-FILES is
 
   --- request/2 and call/6 ---------------------------------------------------------------
 
-  --- The folder of a machine that left the cluster is not there.
+  --- What was opened in the folder of a machine that left the cluster is stale.
   rl [request-gone] : treq(I, W) h(I, W, S) member(false)
-    => h(I, W, hear(S, enoent)) member(false) .
+    => h(I, W, hear(S, estale)) member(false) .
   --- A member the MC is not connected to fails at once. The MC may still think it is
   --- connected after A went (until the link's tick notices), so request-call can
   --- happen then too.
@@ -111,8 +111,12 @@ mod MACHINE-FILES is
   --- goes; either way the caller tells the MC.
   rl [remote] : caller(I) fromA(I, A) => answer(I, A) .
   rl [remote-timeout] : caller(I) => answer(I, ehostdown) .
-  --- An answer for a pending request is its reply; one the MC forgot is dropped.
-  rl [answer] : answer(I, A) pending(I) h(I, W, S) => h(I, W, hear(S, A)) .
+  --- An answer for a pending request is its reply, stale once A left the folder; one
+  --- the MC forgot is dropped.
+  rl [answer] : answer(I, A) pending(I) h(I, W, S) member(true)
+    => h(I, W, hear(S, A)) member(true) .
+  rl [answer-left] : answer(I, A) pending(I) h(I, W, S) member(false)
+    => h(I, W, hear(S, estale)) member(false) .
   crl [answer-dropped] : { answer(I, A) C } => { C } if not hasPending(I, C) .
 
   --- the helper exiting, exited/1 and restart_later/1 ----------------------------------

@@ -8,8 +8,9 @@ defmodule HalC2.MachineFilesPropTest do
   The promises modelled: the helper starts with the first member and is ready once
   it attaches; a member's folder is there while it is a member and gone once it
   leaves; a request into the folder of a member that is down fails with EHOSTDOWN at
-  once, and is answered again when it is back; one into a folder that went is
-  ENOENT; nothing outside a shared root is answered (the member here shares none);
+  once, and is answered again when it is back; a fid in a folder whose member
+  left, or that another machine took the name of, is stale (ESTALE) and never
+  reaches the machine there now; nothing outside a shared root is answered (the member here shares none);
   a helper that exits is started again with a fresh connection, its old fids gone;
   and `local_path/3` says where a member's file is here, or why it is not.
 
@@ -70,9 +71,9 @@ defmodule HalC2.MachineFilesPropTest do
     Process.put(:cluster, cluster)
 
     environments = fn ->
-      for {name, up} <- Agent.get(cluster, & &1) do
+      for {name, %{up: up, env: env}} <- Agent.get(cluster, & &1) do
         mc = if up, do: node(), else: :"#{name}@nowhere"
-        {mc, %{"environmentId" => "env-#{name}", "label" => name}}
+        {mc, %{"environmentId" => env, "label" => name}}
       end
     end
 
@@ -104,8 +105,9 @@ defmodule HalC2.MachineFilesPropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # members: name => up?; opened: the helper has started; fids: fid => the folder it
-  # was walked to on the helper's current connection.
+  # members: name => %{up, env}, env the machine with that label now; opened: the
+  # helper has started; fids: fid => the folder it was walked to on the helper's
+  # current connection, or :gone once that folder's machine left it.
   def initial_state, do: %{members: %{}, opened: false, fids: %{}}
 
   def command(state) do
@@ -120,6 +122,7 @@ defmodule HalC2.MachineFilesPropTest do
           do: [],
           else: [
             {1, {:call, __MODULE__, :leave, [oneof(members)]}},
+            {1, {:call, __MODULE__, :replace, [oneof(members)]}},
             {2, {:call, __MODULE__, :set_up, [oneof(members), boolean()]}}
           ]
         ) ++
@@ -137,7 +140,7 @@ defmodule HalC2.MachineFilesPropTest do
   def precondition(state, {:call, _, :join, [name, _up, first]}),
     do: not Map.has_key?(state.members, name) and first == not state.opened
 
-  def precondition(state, {:call, _, cmd, [name | _]}) when cmd in [:leave, :set_up],
+  def precondition(state, {:call, _, cmd, [name | _]}) when cmd in [:leave, :replace, :set_up],
     do: Map.has_key?(state.members, name)
 
   def precondition(state, {:call, _, cmd, _}) when cmd in [:open_folder, :read_in, :crash],
@@ -145,14 +148,19 @@ defmodule HalC2.MachineFilesPropTest do
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :join, [name, up, _first]}),
-    do: %{state | members: Map.put(state.members, name, up), opened: true}
+  def next_state(state, _result, {:call, _, :join, [name, up, _first]}) do
+    member = %{up: up, env: "env-#{name}"}
+    %{state | members: Map.put(state.members, name, member), opened: true}
+  end
 
   def next_state(state, _result, {:call, _, :leave, [name]}),
-    do: %{state | members: Map.delete(state.members, name)}
+    do: left(%{state | members: Map.delete(state.members, name)}, name)
+
+  def next_state(state, _result, {:call, _, :replace, [name]}),
+    do: left(update_in(state.members[name].env, &other_env(name, &1)), name)
 
   def next_state(state, _result, {:call, _, :set_up, [name, up]}),
-    do: %{state | members: Map.put(state.members, name, up)}
+    do: put_in(state.members[name].up, up)
 
   def next_state(state, _result, {:call, _, :open_folder, [fid, name]}) do
     if Map.has_key?(state.members, name),
@@ -171,39 +179,45 @@ defmodule HalC2.MachineFilesPropTest do
   def postcondition(state, {:call, _, :read_in, [fid]}, result) do
     case Map.fetch(state.fids, fid) do
       :error -> result == {:error, 9}
-      {:ok, folder} -> result == {:error, read_error(state, folder)}
+      {:ok, :gone} -> result == {:error, 116}
+      # A member down cannot be reached; one up shares nothing outside its roots.
+      {:ok, folder} -> result == {:error, if(state.members[folder].up, do: 2, else: 112)}
     end
   end
 
+  # Asked by the environment id the label's first machine has.
   def postcondition(state, {:call, _, :local_path, [name]}, result) do
+    first = "env-#{name}"
+
     case Map.fetch(state.members, name) do
-      :error -> result == {:error, :not_a_member, nil}
-      {:ok, true} -> result == {:ok, "#{@root}/#{name}/home/me/a.ts"}
-      {:ok, false} -> result == {:error, :unavailable, name}
+      {:ok, %{env: ^first, up: true}} -> result == {:ok, "#{@root}/#{name}/home/me/a.ts"}
+      {:ok, %{env: ^first, up: false}} -> result == {:error, :unavailable, name}
+      _ -> result == {:error, :not_a_member, nil}
     end
   end
 
   def postcondition(_state, _call, result), do: result == :ok
 
-  # A gone folder is not there; a member down cannot be reached; one up shares
-  # nothing outside its roots.
-  defp read_error(state, folder) do
-    case Map.fetch(state.members, folder) do
-      :error -> 2
-      {:ok, false} -> 112
-      {:ok, true} -> 2
-    end
-  end
+  defp left(state, name),
+    do: %{
+      state
+      | fids: Map.new(state.fids, fn {fid, at} -> {fid, if(at == name, do: :gone, else: at)} end)
+    }
+
+  defp other_env(name, env),
+    do: if(env == "env-#{name}", do: "env-#{name}-b", else: "env-#{name}")
 
   # --- commands ---------------------------------------------------------------
 
   def join(name, up, first) do
-    cluster(&Map.put(&1, name, up))
+    cluster(&Map.put(&1, name, %{up: up, env: "env-#{name}"}))
     if first, do: connect(), else: :ok
   end
 
   def leave(name), do: cluster(&Map.delete(&1, name))
-  def set_up(name, up), do: cluster(&Map.put(&1, name, up))
+  # Another machine with the same label: the first left, and this one joined.
+  def replace(name), do: cluster(&update_in(&1[name].env, fn env -> other_env(name, env) end))
+  def set_up(name, up), do: cluster(&put_in(&1[name].up, up))
 
   def open_folder(fid, name) do
     case walk(0, fid, [name]) do
