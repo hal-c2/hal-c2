@@ -12,8 +12,9 @@
 //! it. Its rows then come and go one by one, so the rows a view shows and
 //! has open keep their place.
 //!
-//! Not ported: the system file icons (`QFileSystemModel` decoration), and a
-//! write of `rootPath` to the path it already has does not clear `error`.
+//! A write of `rootPath` to the path it already has should clear `error`,
+//! as `setBrowseRootPath` does before it compares; QML's write of an equal
+//! value never reaches the model (TODO(ljos#78), see `write_root`).
 
 mod plain;
 mod watch;
@@ -427,6 +428,10 @@ impl<'e> Model<'e> {
     /// A write of `rootPath`: setBrowseRootPath.
     fn write_root(&self, path: &str) {
         // The property giving back the root this chose is not a new write.
+        // TODO(ljos#78): a write of the root it already has is not seen at
+        // all (a watch hears changes), so `error` is not cleared by it, as
+        // setBrowseRootPath does; once a native field has a setter, this
+        // guard goes and `writing_the_root_it_already_has_...` is run.
         if *self.state.root.borrow() == path {
             return;
         }
