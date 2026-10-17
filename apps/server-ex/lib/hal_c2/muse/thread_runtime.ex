@@ -24,9 +24,9 @@ defmodule HalC2.Muse.ThreadRuntime do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Muse
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, NativeSubagent}
 
-  @state_version 3
+  @state_version 4
   @registry HalC2.Muse.Registry
   # Muse's "overloaded" and "backpressured": the command may be sent again.
   @retryable [-32001, -32031]
@@ -117,6 +117,8 @@ defmodule HalC2.Muse.ThreadRuntime do
        items: %{},
        # Muse's items as last seen (itemId -> item), for revisions and deltas.
        muse: %{},
+       # Muse's subagents of the running turn (itemId -> the subagent as last shown).
+       subs: %{},
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
@@ -141,6 +143,7 @@ defmodule HalC2.Muse.ThreadRuntime do
       | turn: turn,
         items: %{},
         muse: %{},
+        subs: %{},
         native: Muse.command_id(),
         joined: MapSet.new(),
         compact: false,
@@ -304,6 +307,9 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  # v4 shows Muse's subagents as subagents; one running at the update was a tool call.
+  defp migrate(%{v: 3} = state), do: state |> Map.merge(%{v: 4, subs: %{}}) |> migrate()
 
   # v3 knows whether Muse started the running turn; one running at the update has.
   defp migrate(%{v: 2} = state), do: state |> Map.merge(%{v: 3, started: true}) |> migrate()
@@ -806,6 +812,41 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
+  # Muse's own subagent is a provider-native subagent: its objective is the child
+  # thread's prompt, what Muse says it is doing the progress, its result the answer.
+  # The child's own transcript (`childSessionId`) is not streamed.
+  defp item(state, %{"kind" => "subagent"} = item) do
+    state = flush(state)
+    id = item["itemId"]
+
+    entry =
+      state.subs[id] ||
+        %{
+          sub: NativeSubagent.start(state.turn.ids, id, subagent_task(item)),
+          progress: nil,
+          done: false
+        }
+
+    entry =
+      case status(item) do
+        _ when entry.done ->
+          entry
+
+        "running" ->
+          progress = subagent_progress(item)
+
+          if progress != nil and progress != entry.progress,
+            do: %{entry | sub: NativeSubagent.progress(entry.sub, progress), progress: progress},
+            else: entry
+
+        status ->
+          sub = NativeSubagent.finish(entry.sub, status, subagent_result(item, status))
+          %{entry | sub: sub, done: true}
+      end
+
+    %{state | subs: Map.put(state.subs, id, entry)}
+  end
+
   defp item(state, item) do
     status = status(item)
 
@@ -820,6 +861,41 @@ defmodule HalC2.Muse.ThreadRuntime do
         do: update_item(state, native, fields),
         else: finish_item(state, native, status, &Map.merge(&1, fields))
     end
+  end
+
+  defp subagent_task(item) do
+    title =
+      case String.trim(item["objective"] || "") do
+        "" -> non_empty(item["role"], "Muse agent")
+        text -> text |> String.split("\n") |> hd() |> String.slice(0, 80)
+      end
+
+    %{"prompt" => item["objective"], "title" => title}
+  end
+
+  # What the running subagent is doing: Muse's one-line summary, else its control state.
+  defp subagent_progress(item), do: non_empty(item["fallbackText"], item["controlStatus"])
+
+  # The answer: the result's text, else its summary; none for a failure names its reason.
+  defp subagent_result(item, status) do
+    result = item["result"] || %{}
+
+    answer =
+      Enum.find([result["text"], result["summary"], item["fallbackText"]], &non_empty(&1, nil))
+
+    if status == "completed", do: answer, else: answer || item["failureReason"]
+  end
+
+  # Muse's subagents still running when the turn ends end with it.
+  defp end_subagents(state, status) do
+    state.subs
+    |> Map.values()
+    |> Enum.each(fn
+      %{done: false, sub: sub} -> NativeSubagent.finish(sub, status, nil)
+      _ -> :ok
+    end)
+
+    state
   end
 
   # Text streams through deltas; the completed item's text is authoritative.
@@ -938,7 +1014,6 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     title =
       case item["kind"] do
-        "subagent" -> item["objective"] || item["role"] || "Muse agent"
         "workflow" -> item["entryId"] || "Workflow"
         _ -> name
       end
@@ -1350,7 +1425,9 @@ defmodule HalC2.Muse.ThreadRuntime do
   # --- end of turn -------------------------------------------------------------------
 
   defp end_turn(state, status, failure) do
-    state = state |> flush() |> close_open_items(status) |> cancel_requests()
+    state =
+      state |> flush() |> end_subagents(status) |> close_open_items(status) |> cancel_requests()
+
     finish(state, status, failure)
 
     %{
@@ -1359,6 +1436,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         last_ids: state.turn.ids,
         items: %{},
         muse: %{},
+        subs: %{},
         joined: MapSet.new(),
         compact: false
     }

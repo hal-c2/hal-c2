@@ -45,6 +45,41 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     },
     %{
+      "match" => "delegate the review",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff for bugs\nFocus on app.ts",
+            "role" => "reviewer",
+            "progress" => "Reading the diff",
+            "answer" => "Found one bug in app.ts."
+          }
+        },
+        %{"text" => "Reviewed."}
+      ]
+    },
+    %{
+      "match" => "delegate a failing review",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "answer" => "",
+            "status" => "failed",
+            "failure" => "The reviewer ran out of budget."
+          }
+        },
+        %{"text" => "Gave up."}
+      ]
+    },
+    %{
+      "match" => "delegate and move on",
+      "steps" => [
+        %{"subagent" => %{"objective" => "Review the diff", "progress" => "Reading the diff"}},
+        %{"text" => "Moving on."}
+      ]
+    },
+    %{
       "match" => "a workflow command",
       "steps" => [%{"childShell" => "rm -rf build"}, %{"text" => "Done."}]
     },
@@ -543,6 +578,71 @@ defmodule HalC2.Steps.Providers.Muse do
              %{"text" => "Write", "status" => "running"}
            ] = steps
 
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent that reports progress and answers", context do
+    context |> install() |> FakeAcp.thread() |> turn("delegate the review")
+  end
+
+  step "the subagent is shown as a child of the turn with its progress and its answer", context do
+    state = state(context)
+    [run] = StreamState.list(state, "run")
+
+    assert [
+             %{
+               "origin" => "provider_native",
+               "status" => "completed",
+               "title" => "Review the diff for bugs",
+               "prompt" => "Review the diff for bugs\nFocus on app.ts",
+               "progress" => "Reading the diff",
+               "result" => "Found one bug in app.ts."
+             } = subagent
+           ] = StreamState.list(state, "subagent")
+
+    assert subagent["runId"] == run["id"]
+
+    # One subagent item, not also a bare tool call.
+    assert [%{"status" => "completed", "subagentId" => id}] = items(context, "subagent")
+    assert id == subagent["id"]
+    assert items(context, "tool") == []
+    assert "Reviewed." in replies(context)
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "the user can open the subagent's own thread with its task and its answer", context do
+    child_id = context.subagent["childThreadId"]
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+
+    assert %{
+             "user" => "Review the diff for bugs\nFocus on app.ts",
+             "assistant" => "Found one bug in app.ts."
+           } == child |> StreamState.list("message") |> Map.new(&{&1["role"], &1["text"]})
+
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent that fails", context do
+    context |> install() |> FakeAcp.thread() |> turn("delegate a failing review")
+  end
+
+  step "the subagent is shown as failed with Muse's reason", context do
+    assert [%{"status" => "failed", "result" => "The reviewer ran out of budget."}] =
+             context |> state() |> StreamState.list("subagent")
+
+    assert [%{"status" => "failed"}] = items(context, "subagent")
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent and the turn ends first", context do
+    context |> install() |> FakeAcp.thread() |> turn("delegate and move on")
+  end
+
+  step "the subagent is shown as ended with the turn", context do
+    assert [%{"status" => "completed", "progress" => "Reading the diff"}] =
+             context |> state() |> StreamState.list("subagent")
+
+    assert [%{"status" => "completed"}] = items(context, "subagent")
     context
   end
 

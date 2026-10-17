@@ -138,6 +138,19 @@ Feature: Muse Code
     Given Muse Code shares a plan with a step it cancelled
     Then the plan leaves the cancelled step out
 
+  Scenario: A Muse Code subagent is shown as a subagent with its progress and answer
+    Given Muse Code delegates a review to a subagent that reports progress and answers
+    Then the subagent is shown as a child of the turn with its progress and its answer
+    And the user can open the subagent's own thread with its task and its answer
+
+  Scenario: A Muse Code subagent that fails shows why
+    Given Muse Code delegates a review to a subagent that fails
+    Then the subagent is shown as failed with Muse's reason
+
+  Scenario: A Muse Code subagent still running when the turn ends ends with it
+    Given Muse Code delegates a review to a subagent and the turn ends first
+    Then the subagent is shown as ended with the turn
+
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread
     Then supervised and full access are offered
