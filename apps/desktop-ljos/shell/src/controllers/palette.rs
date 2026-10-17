@@ -866,12 +866,8 @@ fn follow_writes(engine: &Engine, obj: ObjectId, props: &Rc<RefCell<Props>>) {
 }
 
 /// A write to `name` that is not the palette's own (what it shows already)
-/// is handed to `apply`.
-///
-/// TODO(ljos#78): a native property has no setter, so a QML write is stored
-/// and notified before the palette sees it. Qt's setters clamp a highlight
-/// past the rows before storing it; here the palette puts it back from the
-/// notify, and a view hears a change to the value it already had.
+/// is handed to `apply`. The highlight arrives clamped, by its setter
+/// ([`PaletteObject::keep_highlighted`]).
 fn on_write<T: Clone + PartialEq + 'static>(
     engine: &Engine,
     obj: ObjectId,
@@ -2593,7 +2589,7 @@ pub struct PaletteObject {
     placeholder: Atom,
     #[qml(notify)]
     query: Atom,
-    #[qml(notify)]
+    #[qml(notify, write = Self::keep_highlighted)]
     highlighted: i32,
     #[qml(notify, readonly)]
     count: i32,
@@ -2634,6 +2630,25 @@ impl Default for PaletteObject {
             whole_word: false,
             use_regex: false,
         }
+    }
+}
+
+impl PaletteObject {
+    /// The setter of `highlighted`, as `setHighlighted` is in C++: a row
+    /// past the rows shown (or below the first, but in browse mode, which
+    /// leaves nothing highlighted until the user moves) is stored as the
+    /// nearest row, so a view hears nothing when that is the row it has.
+    fn keep_highlighted(&self, row: i32) -> Option<i32> {
+        let lowest = if &*self.mode == Mode::Browse.name() {
+            -1
+        } else {
+            0
+        };
+        Some(if self.count == 0 {
+            lowest
+        } else {
+            row.clamp(lowest, self.count - 1)
+        })
     }
 }
 

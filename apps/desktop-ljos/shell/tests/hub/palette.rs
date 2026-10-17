@@ -233,6 +233,37 @@ fn reopening_keeps_an_unmoved_highlight_quiet() {
     assert_eq!(*changed.borrow(), 0);
 }
 
+/// A highlight written past the rows is stored as the nearest row, so a
+/// view hears nothing when that is the row it has (setHighlighted).
+#[test]
+fn a_highlight_written_past_the_rows_is_clamped_before_it_is_heard() {
+    let (hub, _dir) = hub(&[("t1", "Login")]);
+    invoke(&hub, "show", &[]);
+    let last = prop(&hub, "count").to_number() as i32 - 1;
+    assert!(last >= 0);
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let log = heard.clone();
+    let obj = object(&hub);
+    hub.engine
+        .connect_by_name(obj, "highlightedChanged", move |engine, _| {
+            log.borrow_mut()
+                .push(engine.read_by_name(obj, "highlighted"));
+        })
+        .expect("highlightedChanged");
+    let write = |row: i32| {
+        hub.engine
+            .write_by_name(obj, "highlighted", Value::Int(row))
+            .expect("highlighted is writable");
+    };
+    // Below the first row is the first row, which it already is.
+    write(-5);
+    assert_eq!(prop(&hub, "highlighted").to_number(), 0.0);
+    assert!(heard.borrow().is_empty());
+    write(last + 40);
+    assert_eq!(prop(&hub, "highlighted").to_number(), f64::from(last));
+    assert_eq!(heard.borrow().len(), usize::from(last > 0));
+}
+
 // -- Command mode -------------------------------------------------------------
 
 #[test]
