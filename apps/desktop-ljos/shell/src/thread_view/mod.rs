@@ -13,6 +13,7 @@ pub mod file_tree;
 pub mod previews;
 pub mod rows;
 pub mod summary;
+pub mod thread_diff;
 pub mod time;
 pub mod timeline;
 pub mod timeline_model;
@@ -28,6 +29,7 @@ pub fn register(engine: &Engine, version: ljos_engine::Version) {
         diff::DiffModel::static_meta(),
         file_tree::FileTreeModel::static_meta(),
         previews::ThreadPreviews::static_meta(),
+        thread_diff::ThreadDiff::static_meta(),
     ] {
         engine.register_type(crate::MODULE, version, MetaRef::Static(meta));
     }
