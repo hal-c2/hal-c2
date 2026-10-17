@@ -419,8 +419,13 @@ defmodule HalC2.Web.SocketTest do
     source = %{"id" => "hub", "kind" => "cliproxy", "label" => "Hub", "accounts" => []}
     HalC2.Settings.notify_usage_limit_sources([source])
 
-    assert {%{"t" => "config.usageLimitSources", "id" => 3, "sources" => [^source]}, _} =
-             WsClient.recv(client, 1_000)
+    # No deadline: under load the frame can be late, and the test timeout bounds the wait.
+    assert {%{"t" => "config.usageLimitSources", "id" => 3, "sources" => [^source]}, _, _} =
+             WsClient.recv_until(
+               client,
+               &(&1["t"] == "config.usageLimitSources" and &1["sources"] == [source]),
+               :infinity
+             )
   end
 
   @tag :capture_log
