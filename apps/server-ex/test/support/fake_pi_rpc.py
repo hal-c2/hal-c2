@@ -19,7 +19,9 @@
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
-# abort, or a steer prompt, which it answers), {"exit": code}.
+# abort, or a steer prompt, which it answers), {"settleOnSteer": true} (until an abort, or
+# a steer prompt, which reaches Pi only once this run has settled, and starts a run of
+# its own), {"exit": code}.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -306,6 +308,12 @@ def run_turn(text):
                     said = ["steered: " + msg["message"]]
                     send({"type": "message_update", "message": assistant(said[0]),
                           "assistantMessageEvent": {"type": "text_delta", "delta": said[0]}})
+        elif "settleOnSteer" in step:
+            if not aborted[0]:
+                msg = wait_for(lambda m: m.get("type") == "abort" or steer(m))
+                if steer(msg):
+                    backlog.append(msg)
+                    break
         elif "exit" in step:
             os._exit(step["exit"])
     if aborted[0]:

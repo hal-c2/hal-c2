@@ -710,6 +710,17 @@ defmodule HalC2.Steps.Providers.Opencode do
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
   end
 
+  # OpenCode ends the turn's loop as the steer lands, and answers it in a new loop.
+  step "an OpenCode turn is running that ends as it is steered", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "opencode", "wait, it ends as steered")
+
+    World.await_running(context, @thread)
+    Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
+  end
+
   # The MC talks to OpenCode over ACP, so its event stream is the agent's connection.
   step "an OpenCode turn is streaming", context do
     context =
@@ -758,6 +769,13 @@ defmodule HalC2.Steps.Providers.Opencode do
           ])
     )
 
+    World.await_runs(context, @thread, ["completed"])
+    assert "steered: look here instead" in World.replies(context, @thread)
+    context
+  end
+
+  # The turn waits for the steer's own loop, so its answer is recorded in the turn.
+  step "OpenCode's answer to the message is the turn's", context do
     World.await_runs(context, @thread, ["completed"])
     assert "steered: look here instead" in World.replies(context, @thread)
     context

@@ -738,6 +738,74 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- steering ---
+
+  # Pi's turn says something, then waits: for a steer to join its work ("is still
+  # working"), or until a steer reaches it only after it settled, as one sent just as
+  # its run ended does ("went idle ...").
+  step ~r/^a Pi turn that (?<state>is still working|went idle just before the steer landed)$/,
+       %{args: [state]} = context do
+    wait = if state == "is still working", do: "waitAbort", else: "settleOnSteer"
+
+    turns = [
+      %{"match" => "a steered task", "steps" => [%{"text" => "Working on it."}, %{wait => true}]}
+    ]
+
+    context =
+      context
+      |> with_turns(turns)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    context
+  end
+
+  step "the user steers the thread with {string}", %{args: [text]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "text" => text,
+        "attachments" => [],
+        "deliveryIntent" => "steer"
+      })
+
+    Map.put(context, :steered, text)
+  end
+
+  # One run, which Pi's answer to the steer ends.
+  defp steered_turn(context) do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "completed"}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             FakeAcp.received_type(context, "prompt"),
+             &(&1["streamingBehavior"] == "steer")
+           )
+
+    replies(context)
+  end
+
+  step "the message is queued into the running work", context do
+    assert "steered: #{context.steered}" in steered_turn(context)
+    context
+  end
+
+  step "the message starts new work in the same turn", context do
+    assert Enum.any?(
+             steered_turn(context),
+             &String.starts_with?(&1, "Reply to #{context.steered}")
+           )
+
+    context
+  end
+
   # --- process exit ---
 
   step "a Pi turn is running", context do
