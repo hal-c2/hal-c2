@@ -124,13 +124,7 @@ impl ShellBridge {
 
     #[qml(invokable)]
     fn set_clipboard_text(cx: &Cx, text: Atom) {
-        let writer = BridgeState::of(cx.engine).clipboard_writer.borrow().clone();
-        match writer {
-            Some(write) => write(&text),
-            None => Platform::of(cx.engine)
-                .clipboard()
-                .set_text(ClipboardMode::Clipboard, &text),
-        }
+        Bridge(cx.this).copy_to_clipboard(cx.engine, &text);
     }
 
     /// Whether pasting `text` into a prompt of `prompt_length` characters
@@ -470,6 +464,17 @@ impl Bridge {
     /// Where `setClipboardText` writes instead of the clipboard (tests).
     pub fn set_clipboard_writer(self, engine: &Engine, write: impl Fn(&str) + 'static) {
         *BridgeState::of(engine).clipboard_writer.borrow_mut() = Some(Rc::new(write));
+    }
+
+    /// Puts `text` on the clipboard, as `setClipboardText` does.
+    pub fn copy_to_clipboard(self, engine: &Engine, text: &str) {
+        let writer = BridgeState::of(engine).clipboard_writer.borrow().clone();
+        match writer {
+            Some(write) => write(text),
+            None => Platform::of(engine)
+                .clipboard()
+                .set_text(ClipboardMode::Clipboard, text),
+        }
     }
 
     /// The MC the shell talks to; local folders are its only on loopback.

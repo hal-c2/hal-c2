@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use hal_c2_mc::{McClient, McEvent};
+pub use hal_c2_mc::{Phase, Status};
 use ljos::prelude::Engine;
 
 use crate::json::Json;
@@ -57,6 +58,7 @@ pub type OnFrame = Box<dyn FnMut(&Engine, &Frame)>;
 /// data says where it continues.
 pub type Resume = Box<dyn FnMut() -> Frame>;
 pub type OnReady = Box<dyn FnMut(&Engine, bool)>;
+pub type OnStatus = Box<dyn FnMut(&Engine, &Status)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SubId(pub u64);
@@ -79,6 +81,48 @@ pub trait Mc {
     fn more(&self, id: SubId, items: u32);
     /// Runs `f` whenever the MC becomes ready or stops being so.
     fn on_ready_changed(&self, f: OnReady);
+
+    // The rest is what the connection's health reads and steers. A fake that
+    // does not care for it keeps the defaults: ready when it says so, no
+    // retries to run, nothing to open.
+
+    /// How the connection is doing, as last delivered.
+    fn status(&self) -> Status {
+        let ready = self.is_ready();
+        Status {
+            phase: if ready { Phase::Ready } else { Phase::Closed },
+            connection: ready.then_some(0),
+            environment: self.environment(),
+            ..Status::default()
+        }
+    }
+    /// Runs `f` with every new status (phase, readiness, failure, ...).
+    fn on_status(&self, _f: OnStatus) {}
+    /// Tries again now, whatever the connection was waiting for.
+    fn retry_now(&self) {}
+    /// Drops the socket and connects again.
+    fn reconnect(&self) {}
+    /// The app came to the foreground: a waiting retry runs now, and a ready
+    /// connection is checked.
+    fn wake(&self) {}
+    /// Whether this device has a network; offline, a drop is not retried.
+    fn set_online(&self, _online: bool) {}
+    /// The http(s) origin the MC was opened at, once it was.
+    fn origin(&self) -> Option<String> {
+        None
+    }
+    /// Connects to another MC (or the same with a new session).
+    fn open(&self, _origin: &str, _token: &str) -> Result<(), String> {
+        Err("this shell cannot open another MC".into())
+    }
+    /// `orchestration.dispatchCommand` with a fresh commandId, where
+    /// `environment` is served.
+    fn dispatch_command(&self, environment: &str, mut command: Json, reply: Reply) {
+        if let Json::Object(fields) = &mut command {
+            fields.insert("commandId".into(), hal_c2_mc::new_uuid().into());
+        }
+        self.call(environment, "orchestration.dispatchCommand", command, reply);
+    }
 }
 
 /// What the I/O thread said, waiting for the UI thread. Unbounded: Ljós's
@@ -207,6 +251,39 @@ impl Mc for Connection {
                 with_delivering(|engine| f(engine, status.is_ready()));
             }
         });
+    }
+
+    fn status(&self) -> Status {
+        self.client.status()
+    }
+
+    fn on_status(&self, mut f: OnStatus) {
+        self.client
+            .on_status(move |status| with_delivering(|engine| f(engine, status)));
+    }
+
+    fn retry_now(&self) {
+        self.client.retry_now();
+    }
+
+    fn reconnect(&self) {
+        self.client.reconnect();
+    }
+
+    fn wake(&self) {
+        self.client.wake();
+    }
+
+    fn set_online(&self, online: bool) {
+        self.client.set_online(online);
+    }
+
+    fn origin(&self) -> Option<String> {
+        self.client.origin().map(String::from)
+    }
+
+    fn open(&self, origin: &str, token: &str) -> Result<(), String> {
+        Connection::open(self, origin, token)
     }
 }
 
