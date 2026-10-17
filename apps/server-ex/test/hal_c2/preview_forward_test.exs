@@ -104,6 +104,17 @@ defmodule HalC2.PreviewForwardTest do
       assert Task.await(sender) == :ok
     end
 
+    # The browser's socket kept the listener's buffer, so one read could be several
+    # chunks and put more than the window on the way at once.
+    test "the browser's socket is read a chunk at a time", %{port: port} do
+      socket = connect(port)
+      assert_receive {:dev_server, :accepted, _}
+      [pipe] = Map.keys(:sys.get_state(listener(port)).pipes)
+      %{socket: browser} = :sys.get_state(pipe)
+      assert {:ok, [buffer: 65_536]} = :inet.getopts(browser, [:buffer])
+      :gen_tcp.close(socket)
+    end
+
     test "closed by the browser close at the dev server", %{port: port} do
       socket = connect(port)
       assert_receive {:dev_server, :accepted, conn}

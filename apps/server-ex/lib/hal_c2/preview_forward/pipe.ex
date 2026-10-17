@@ -39,8 +39,10 @@ defmodule HalC2.PreviewForward.Pipe do
   end
 
   @impl true
-  # The listener hands the browser's socket over once this end owns it.
+  # The listener hands the browser's socket over once this end owns it. Its
+  # reads are a chunk at most, as the dev server's are.
   def handle_info({:socket, socket}, %{side: :accept, grant: grant} = state) do
+    _ = :inet.setopts(socket, buffer: @chunk)
     state = %{state | socket: socket}
 
     case :erpc.call(node(grant), HalC2.PreviewForward, :dial, [grant, self()], @dial_timeout) do
@@ -56,10 +58,10 @@ defmodule HalC2.PreviewForward.Pipe do
     :exit, _ -> {:stop, :normal, state}
   end
 
+  # A read is one chunk: the socket's buffer is `@chunk` bytes.
   def handle_info({:tcp, socket, data}, %{socket: socket} = state) do
-    chunks = chunks(data)
-    for chunk <- chunks, do: send(state.peer, {:preview_forward, :data, chunk})
-    {:noreply, arm(%{state | unacked: state.unacked + length(chunks), armed: false})}
+    send(state.peer, {:preview_forward, :data, data})
+    {:noreply, arm(%{state | unacked: state.unacked + 1, armed: false})}
   end
 
   # An app that has closed its end refuses the chunk, which is dropped: the pipe ends
@@ -102,11 +104,6 @@ defmodule HalC2.PreviewForward.Pipe do
 
   defp arm(state), do: state
 
-  defp chunks(<<chunk::binary-size(@chunk), rest::binary>>) when rest != <<>>,
-    do: [chunk | chunks(rest)]
-
-  defp chunks(data), do: [data]
-
   # `localhost` on this machine: IPv4 first, as most dev servers bind, then
   # IPv6. Tests running two MCs on one machine give the thread's MC a loopback
   # address of its own.
@@ -115,12 +112,12 @@ defmodule HalC2.PreviewForward.Pipe do
       {127, 0, 0, 1},
       {0, 0, 0, 0, 0, 0, 0, 1}
     ])
-    |> Enum.reduce_while({:error, :econnrefused}, fn ip, error ->
+    |> Enum.reduce_while({:error, :econnrefused}, fn ip, _error ->
       family = if tuple_size(ip) == 8, do: [:inet6], else: []
 
       case :gen_tcp.connect(ip, port, family ++ @socket, @dial_timeout) do
         {:ok, socket} -> {:halt, {:ok, socket}}
-        {:error, _} -> {:cont, error}
+        {:error, reason} -> {:cont, {:error, reason}}
       end
     end)
   end

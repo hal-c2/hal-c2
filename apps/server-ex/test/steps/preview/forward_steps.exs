@@ -126,11 +126,11 @@ defmodule HalC2.Steps.Preview.Forward do
     port =
       case what do
         "a port none of the thread's tabs names" -> context.dev_port
-        "the second MC's own port, though a tab names it" -> peer(context, HalC2.Web, :port)
-        "the cluster's port, though a tab names it" -> peer(context, HalC2.Cluster, :dist_port)
+        "the second MC's own port, even when a tab names it" -> peer(context, HalC2.Web, :port)
+        "the cluster's port, even when a tab names it" -> peer(context, HalC2.Cluster, :dist_port)
       end
 
-    if what =~ "though a tab names it" do
+    if what =~ "even when a tab names it" do
       input = %{"threadId" => @thread, "url" => "http://localhost:#{port}/"}
 
       {{:ok, _}, _} =
