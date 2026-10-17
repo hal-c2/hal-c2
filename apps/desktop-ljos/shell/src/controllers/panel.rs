@@ -44,6 +44,8 @@ use crate::store;
 use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
 use crate::thread_view::previews::ThreadPreviews;
+use crate::thread_view::pull_request_review::{PullRequestReview, Review};
+use crate::thread_view::pull_requests::{self, ThreadPullRequests};
 use crate::thread_view::thread_diff::ThreadDiff;
 
 /// The kinds of tab the panel shows; a terminal, review or device tab's id
@@ -259,6 +261,8 @@ pub struct RightPanel {
     diff: Option<ObjectId>,
     previews: Option<ObjectId>,
     agents: Option<ObjectId>,
+    pull_requests: Option<ObjectId>,
+    review: Option<ObjectId>,
     /// The thread's checkout, for the Files tab.
     files_root: String,
 }
@@ -301,7 +305,29 @@ impl Controller for RightPanel {
             Bridge::of(e).open_external(e, url)
         });
         let agents = AgentsModel::create(engine, owner, Default::default());
+        let pull_requests = ThreadPullRequests::create(
+            engine,
+            owner,
+            init.mc.clone(),
+            toast,
+            |e, url| Bridge::of(e).open_external(e, url),
+            |e, text| Bridge::of(e).copy_to_clipboard(e, text),
+        );
+        // This pin's copy_to_clipboard says nothing of whether it copied;
+        // the next one returns it, and this hands that on.
+        let review = PullRequestReview::create(
+            engine,
+            owner,
+            init.mc.clone(),
+            toast,
+            |e, url| Bridge::of(e).open_external(e, url),
+            |e, text| {
+                Bridge::of(e).copy_to_clipboard(e, text);
+                true
+            },
+        );
         let (diff, previews, agents) = (diff.ok(), previews.ok(), agents.ok());
+        let (pull_requests, review) = (pull_requests.ok(), review.ok());
         if let Some(obj) = owner {
             let value = |obj: Option<ObjectId>| obj.map_or(Value::Null, Value::Object);
             warn(
@@ -315,6 +341,14 @@ impl Controller for RightPanel {
             warn(
                 engine,
                 engine.set_internal(obj, PanelObject::AGENTS, value(agents)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::PULL_REQUESTS, value(pull_requests)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::REVIEW, value(review)),
             );
         }
         if let Some(previews) = previews {
@@ -349,9 +383,28 @@ impl Controller for RightPanel {
         // TODO(port): ThreadDevices::opened / closed / namesChanged — the
         // devices open and close their tabs (`open_device`, `close_tab_in`)
         // and rename them.
-        // TODO(port): ThreadPullRequests::countChanged / stateChanged — the
-        // add menu and the palette follow the linked pull requests, and the
-        // review its environment going offline and back.
+        if let Some(obj) = pull_requests {
+            // The add menu and the palette follow the linked pull requests,
+            // and the review its environment going offline and back.
+            let hook = me.clone();
+            warn(
+                engine,
+                engine.connect_by_name(obj, "countChanged", move |e, _| {
+                    later(e, &hook, |p, e| {
+                        p.present_commands(e);
+                        p.publish(e);
+                        p.open_proactively(e);
+                    })
+                }),
+            );
+            let hook = me.clone();
+            warn(
+                engine,
+                engine.connect_by_name(obj, "onlineChanged", move |e, _| {
+                    later(e, &hook, Self::update)
+                }),
+            );
+        }
         let hook = me.clone();
         store::on_changed(engine, move |e| {
             later(e, &hook, |p, e| {
@@ -377,6 +430,8 @@ impl Controller for RightPanel {
             diff,
             previews,
             agents,
+            pull_requests,
+            review,
             files_root: String::new(),
         };
         let path = engine.extension::<StorePath>().0.borrow().clone();
@@ -412,24 +467,23 @@ impl Controller for RightPanel {
                     later(e, &me, Self::open_proactively)
                 }),
             );
-            // The layout toggle in a diff's toolbar changes the setting too.
-            // TODO(port): PullRequestReview::model — the review's diff too.
-            if let Some(model) = ThreadDiff::model(engine, diff) {
-                warn(
-                    engine,
-                    engine.connect_by_name(model, "splitChanged", move |e, _| {
-                        let split = e.get(model, DiffModel::SPLIT).unwrap_or(false);
-                        let layout = if split { "split" } else { "stacked" };
-                        Bridge::of(e).defer(e, move |e| {
-                            let settings = Settings::of(e);
-                            let now = settings.setting(e, "diffLayout");
-                            if now.as_ref().and_then(Json::as_str) != Some(layout) {
-                                settings.set(e, "diffLayout", json!(layout));
-                            }
-                        });
-                    }),
-                );
-            }
+        }
+        // The layout toggle in a diff's toolbar changes the setting too.
+        for model in self.diff_models(engine) {
+            warn(
+                engine,
+                engine.connect_by_name(model, "splitChanged", move |e, _| {
+                    let split = e.get(model, DiffModel::SPLIT).unwrap_or(false);
+                    let layout = if split { "split" } else { "stacked" };
+                    Bridge::of(e).defer(e, move |e| {
+                        let settings = Settings::of(e);
+                        let now = settings.setting(e, "diffLayout");
+                        if now.as_ref().and_then(Json::as_str) != Some(layout) {
+                            settings.set(e, "diffLayout", json!(layout));
+                        }
+                    });
+                }),
+            );
         }
         // Its panel groups come and go with their terminals.
         let me = self.me.clone();
@@ -467,7 +521,9 @@ impl Controller for RightPanel {
                 // it is linked.
                 if self.on_thread {
                     self.show_tab(engine, "pull-requests");
-                    // TODO(port): ThreadPullRequests::link(url).
+                    if let Some(obj) = self.pull_requests {
+                        ThreadPullRequests::link(engine, obj, &field("url"));
+                    }
                 }
             }
             "rightPanel.reviewProject" => {
@@ -541,14 +597,19 @@ impl RightPanel {
         labelled("threadPanel.toggle", Self::toggle_details);
         labelled("diff.toggle", Self::toggle_diff);
         labelled("preview.toggle", Self::toggle_previews);
-        // TODO(port): PullRequestReview::copyNumber — while a review tab
-        // shows.
-        labelled("pullRequest.copyNumber", |_, _| {});
+        labelled("pullRequest.copyNumber", |p, e| {
+            if let Some(review) = p.review
+                && p.is_open()
+                && kind_of(&p.active_tab()) == "pull-request"
+            {
+                PullRequestReview::update(e, review, Review::copy_number);
+            }
+        });
         add(
             "thread.showPullRequests",
             "Show linked pull requests",
             |p, e| {
-                if p.pull_request_count() > 0 {
+                if p.pull_request_count(e) > 0 {
                     p.show_tab(e, "pull-requests");
                 }
             },
@@ -591,13 +652,12 @@ impl RightPanel {
                 t.set_default_wrap(wrap);
                 t.set_default_ignore_whitespace(ignore);
             });
-            // TODO(port): PullRequestReview::model — the review's diff too.
-            if let Some(model) = ThreadDiff::model(engine, diff) {
-                DiffModel::update(engine, model, |d| {
-                    d.set_split(split);
-                    d.set_collapsed_by_default(collapsed);
-                });
-            }
+        }
+        for model in self.diff_models(engine) {
+            DiffModel::update(engine, model, |d| {
+                d.set_split(split);
+                d.set_collapsed_by_default(collapsed);
+            });
         }
     }
 
@@ -655,7 +715,9 @@ impl RightPanel {
             // TODO(port): WorkspaceFiles::setTarget(environment, root) and
             // setTimeline(timeline).
             self.files_root = root;
-            // TODO(port): ThreadPullRequests::setThread(threadKey).
+            if let Some(obj) = self.pull_requests {
+                ThreadPullRequests::set_thread(engine, obj, &thread_key);
+            }
             if let Some(previews) = self.previews {
                 ThreadPreviews::update(engine, previews, |p| {
                     p.set_thread(environment, &thread_id, &mc);
@@ -681,8 +743,10 @@ impl RightPanel {
             return;
         }
         // Linked pull requests first: the one there is, else their list.
-        // TODO(port): ThreadPullRequests rows — their keys.
-        let links: Vec<String> = Vec::new();
+        let links = self
+            .pull_requests
+            .and_then(|obj| ThreadPullRequests::read(engine, obj, |p| p.keys()))
+            .unwrap_or_default();
         let mut target = links.join("\n");
         if target.is_empty() {
             // Otherwise the latest turn's diff, when it changed at least 3
@@ -752,14 +816,24 @@ impl RightPanel {
         commands.set_enabled(
             engine,
             "thread.showPullRequests",
-            many && self.pull_request_count() > 0,
+            many && self.pull_request_count(engine) > 0,
         );
     }
 
     /// The thread's linked pull requests.
-    fn pull_request_count(&self) -> usize {
-        // TODO(port): ThreadPullRequests::count.
-        0
+    fn pull_request_count(&self, engine: &Engine) -> usize {
+        self.pull_requests
+            .and_then(|obj| ThreadPullRequests::read(engine, obj, |p| p.count()))
+            .unwrap_or(0)
+    }
+
+    /// The diffs the panel shows: the Diff tab's and a review's.
+    fn diff_models(&self, engine: &Engine) -> Vec<ObjectId> {
+        let diff = self.diff.and_then(|d| ThreadDiff::model(engine, d));
+        let review = self
+            .review
+            .and_then(|r| PullRequestReview::model(engine, r));
+        diff.into_iter().chain(review).collect()
     }
 
     /// The shown thread's terminal groups in the panel; none while the
@@ -938,8 +1012,20 @@ impl RightPanel {
             }
             "pull-request" => {
                 // The first one still open, else the first.
-                // TODO(port): ThreadPullRequests rows (KeyRole, StateRole).
-                self.review_pull_request(engine, "");
+                let key = self
+                    .pull_requests
+                    .and_then(|obj| {
+                        ThreadPullRequests::read(engine, obj, |p| {
+                            let keys = p.keys();
+                            (0..keys.len())
+                                .find(|&row| p.state(row) == "open")
+                                .or((!keys.is_empty()).then_some(0))
+                                .map(|row| keys[row].clone())
+                        })
+                    })
+                    .flatten()
+                    .unwrap_or_default();
+                self.review_pull_request(engine, &key);
             }
             kind if NATIVE_KINDS.contains(&kind) => self.show_tab(engine, kind),
             _ => {}
@@ -974,9 +1060,12 @@ impl RightPanel {
     }
 
     pub fn review_pull_request(&mut self, engine: &Engine, key: &str) {
-        // TODO(port): ThreadPullRequests::indexOf — only a linked pull
-        // request is reviewed; none are known yet.
-        let linked = false;
+        // Only a linked pull request is reviewed.
+        let linked = self
+            .pull_requests
+            .and_then(|obj| ThreadPullRequests::read(engine, obj, |p| p.index_of(key)))
+            .flatten()
+            .is_some();
         if key.is_empty() || !linked {
             return;
         }
@@ -1035,7 +1124,9 @@ impl RightPanel {
             return;
         }
         self.show_tab(engine, "pull-requests");
-        // TODO(port): ThreadPullRequests::setLinkOpen(true).
+        if let Some(obj) = self.pull_requests {
+            ThreadPullRequests::update(engine, obj, |p| p.set_link_open(true));
+        }
     }
 
     pub fn open_thread(&mut self, engine: &Engine, thread_key: &str) {
@@ -1059,7 +1150,7 @@ impl RightPanel {
             icon: icon.into(),
             ..Item::new(id, label)
         };
-        let items = vec![
+        let mut items = vec![
             match file {
                 Some(_) => item("open", "Open file", "file"),
                 None => item("open", "Open link", "external-link"),
@@ -1073,12 +1164,23 @@ impl RightPanel {
                 },
                 "copy",
             ),
-            // TODO(port): ThreadPullRequests::parseUrl — "link-pull-request"
-            // ("Link pull request to thread", git-pull-request) on a thread
-            // whose environment supports threadPullRequests or
-            // threadPullRequestLinking, when the link names a pull request;
-            // choosing it shows the Pull requests tab and links it.
         ];
+        // A link naming a pull request links it to the thread, where its
+        // environment links them.
+        let environment = self.thread.split_once(':').map_or("", |(e, _)| e);
+        if self.on_thread
+            && pull_requests::parse_url(&url).is_some()
+            && store::with(engine, |s| {
+                s.supports(environment, "threadPullRequests")
+                    || s.supports(environment, "threadPullRequestLinking")
+            })
+        {
+            items.push(item(
+                "link-pull-request",
+                "Link pull request to thread",
+                "git-pull-request",
+            ));
+        }
         let x = payload.get("x").and_then(Json::as_f64).unwrap_or(0.0);
         let y = payload.get("y").and_then(Json::as_f64).unwrap_or(0.0);
         let me = self.me.clone();
@@ -1093,6 +1195,15 @@ impl RightPanel {
                     }
                     ("copy", None) => bridge.copy_to_clipboard(e, &url),
                     ("copy", Some((path, _))) => bridge.copy_to_clipboard(e, path),
+                    ("link-pull-request", _) => {
+                        let url = url.clone();
+                        later(e, &me, move |p, e| {
+                            p.show_tab(e, "pull-requests");
+                            if let Some(obj) = p.pull_requests {
+                                ThreadPullRequests::link(e, obj, &url);
+                            }
+                        });
+                    }
                     _ => {}
                 }
             })
@@ -1141,8 +1252,30 @@ impl RightPanel {
         if let Some(agents) = self.agents {
             AgentsModel::set_active(engine, agents, open && active == "agents");
         }
-        // TODO(port): WorkspaceFiles::setActive, ThreadDevices::setTab, and PullRequestReview::setOnline /
-        // setPullRequest / setActive for a review tab.
+        // TODO(port): WorkspaceFiles::setActive, ThreadDevices::setTab.
+        // The review shows the active review tab's pull request, or the last
+        // one shown.
+        if let Some(review) = self.review {
+            let reviewing = kind_of(&active) == "pull-request";
+            if self.on_thread && reviewing {
+                let (host, repository, number) = reviewed_of(&active[REVIEW_TAB.len()..]);
+                let online = self
+                    .pull_requests
+                    .and_then(|obj| ThreadPullRequests::read(engine, obj, |p| p.online()))
+                    .unwrap_or(false);
+                let environment = self.thread.split_once(':').map_or("", |(e, _)| e);
+                let project = store::with(engine, |s| {
+                    s.thread_row(&self.thread)
+                        .map(|row| text(row, "projectId").to_owned())
+                        .unwrap_or_default()
+                });
+                PullRequestReview::update(engine, review, |r| {
+                    r.set_online(online);
+                    r.set_pull_request(environment, &project, &host, &repository, number.into());
+                });
+            }
+            PullRequestReview::update(engine, review, |r| r.set_active(open && reviewing));
+        }
         Keymap::of(engine).set_preview_open(engine, open && active == "previews");
         self.publish(engine);
         self.save();
@@ -1177,7 +1310,7 @@ impl RightPanel {
         })
         .unwrap_or(false);
         let files = !self.files_root.is_empty();
-        let pull_requests = self.pull_request_count() > 0;
+        let pull_requests = self.pull_request_count(engine) > 0;
         let reason = |ok: bool, why: &str| if ok { String::new() } else { why.to_owned() };
         let details = if state.details {
             self.thread_details(engine)
@@ -1418,11 +1551,11 @@ pub struct PanelObject {
     /// The Agents tab's AgentsModel.
     #[qml(notify, readonly)]
     agents: Value,
-    // TODO(port): PullRequestReview — a review tab's.
-    #[qml(readonly)]
+    /// A review tab's PullRequestReview.
+    #[qml(notify, readonly)]
     review: Value,
-    // TODO(port): ThreadPullRequests — the Pull requests tab's.
-    #[qml(readonly)]
+    /// The Pull requests tab's ThreadPullRequests.
+    #[qml(notify, readonly)]
     pull_requests: Value,
     // TODO(port): ThreadDevices — a device tab's.
     #[qml(readonly)]

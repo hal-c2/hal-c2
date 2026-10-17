@@ -15,15 +15,27 @@ use hal_c2_shell::controllers::terminals::Terminals;
 use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::thread_view::agents::AgentsModel;
+use hal_c2_shell::thread_view::pull_request_review::PullRequestReview;
+use ljos::prelude::ObjectId;
 use serde_json::json;
 
 use crate::Hub;
+use crate::page::last;
 
 /// The MC's `shell` frame: project `p1` and `threads`, each row as given
 /// (an id, and what else it carries), its environment's `capabilities`.
 fn shell(hub: &Hub, threads: &[Json], capabilities: Json) {
-    let mut rows =
-        vec![json!(["a", "p1", "project", {"id": "p1", "title": "P", "workspaceRoot": "/work/p"}])];
+    shell_with(
+        hub,
+        json!({"id": "p1", "title": "P", "workspaceRoot": "/work/p"}),
+        threads,
+        capabilities,
+    );
+}
+
+/// The `shell` frame, project p1 being `project`.
+fn shell_with(hub: &Hub, project: Json, threads: &[Json], capabilities: Json) {
+    let mut rows = vec![json!(["a", "p1", "project", project])];
     for row in threads {
         let id = row["id"].as_str().unwrap();
         let mut row = row.clone();
@@ -441,6 +453,207 @@ fn the_tab_models_are_the_panel_singletons() {
     assert!(matches!(files, ljos::prelude::Value::Null));
     let agents = hub.engine.read_by_name(obj, "agents");
     assert!(matches!(agents, ljos::prelude::Value::Object(_)));
+    let pull_requests = hub.engine.read_by_name(obj, "pullRequests");
+    assert!(matches!(pull_requests, ljos::prelude::Value::Object(_)));
+    let review = hub.engine.read_by_name(obj, "review");
+    assert!(matches!(review, ljos::prelude::Value::Object(_)));
+}
+
+/// The Panel singleton's model `name`.
+fn model(hub: &Hub, name: &str) -> ObjectId {
+    let obj = hub.engine.singleton::<PanelObject>().unwrap();
+    match hub.engine.read_by_name(obj, name) {
+        ljos::prelude::Value::Object(model) => model,
+        other => panic!("the panel's {name} is {other:?}"),
+    }
+}
+
+/// A pull request of acme/shop linked to a thread, in `state` (none: not
+/// synced yet).
+fn linked(number: i64, state: Option<&str>) -> Json {
+    let mut link = json!({"host": "github.com", "repository": "acme/shop", "number": number,
+        "url": format!("https://github.com/acme/shop/pull/{number}"), "source": "manual"});
+    if let Some(state) = state {
+        link["snapshot"] = json!({"state": state, "title": format!("PR {number}")});
+    }
+    link
+}
+
+/// Thread t1, linked to `links`, on an environment that keeps them.
+fn linked_hub(links: Vec<Json>) -> Hub {
+    let hub = hub(&["t1"]);
+    shell_with(
+        &hub,
+        json!({"id": "p1", "title": "P", "workspaceRoot": "/work/p",
+            "repositoryIdentity": {"canonicalKey": "github.com/acme/shop"}}),
+        &[json!({"id": "t1", "pullRequests": links})],
+        json!({"threadPullRequests": true}),
+    );
+    open(&hub, "t1");
+    hub
+}
+
+fn command_row(hub: &Hub, command: &str) -> (bool, bool) {
+    Commands::of(&hub.engine)
+        .rows()
+        .into_iter()
+        .find(|r| r.command == command)
+        .map(|r| (r.listed, r.enabled))
+        .unwrap()
+}
+
+fn reviewing(hub: &Hub) -> bool {
+    PullRequestReview::read(&hub.engine, model(hub, "review"), |r| r.active()).unwrap()
+}
+
+#[test]
+fn linked_pull_requests_fill_the_add_menu_and_the_palette() {
+    let hub = linked_hub(vec![linked(41, Some("merged")), linked(42, Some("open"))]);
+    assert_eq!(panel(&hub)["canAdd"]["pullRequests"], true);
+    assert_eq!(panel(&hub)["canAdd"]["pullRequest"], true);
+    assert_eq!(command_row(&hub, "thread.showPullRequests"), (true, true));
+    run(&hub, "thread.showPullRequests");
+    assert_eq!(panel(&hub)["activeId"], "pull-requests");
+    // Unlinked everywhere, the palette and the add menu follow.
+    shell(
+        &hub,
+        &[json!({"id": "t1", "pullRequests": []})],
+        json!({"threadPullRequests": true}),
+    );
+    assert_eq!(command_row(&hub, "thread.showPullRequests"), (true, false));
+    assert_eq!(panel(&hub)["canAdd"]["pullRequests"], false);
+}
+
+#[test]
+fn adding_a_review_reviews_the_first_open_linked_pull_request() {
+    let hub = linked_hub(vec![linked(41, Some("merged")), linked(42, Some("open"))]);
+    assert!(!reviewing(&hub));
+    hub.dispatch("rightPanel.add", json!({"kind": "pull-request"}));
+    assert_eq!(
+        panel(&hub)["activeId"],
+        "pull-request:github.com/acme/shop#42"
+    );
+    assert_eq!(titles(&hub), ["PR #42"]);
+    assert!(reviewing(&hub));
+    // It reads that pull request, and its code over HTTP.
+    let detail = last(&hub, "env-1", "pullRequests.detail");
+    assert_eq!(
+        detail,
+        json!({"projectId": "p1", "host": "github.com", "repository": "acme/shop",
+            "number": 42})
+    );
+    assert!(
+        hub.mc
+            .pending_on("", "POST /api/pull-requests/diff")
+            .is_some()
+    );
+    // Only a linked one is reviewed.
+    hub.dispatch(
+        "rightPanel.review",
+        json!({"key": "github.com/acme/shop#7"}),
+    );
+    assert_eq!(
+        panel(&hub)["activeId"],
+        "pull-request:github.com/acme/shop#42"
+    );
+    hub.dispatch(
+        "rightPanel.review",
+        json!({"key": "github.com/acme/shop#41"}),
+    );
+    assert_eq!(
+        panel(&hub)["activeId"],
+        "pull-request:github.com/acme/shop#41"
+    );
+    assert_eq!(
+        last(&hub, "env-1", "pullRequests.detail")["number"],
+        41,
+        "the review follows the tab"
+    );
+    // Closed, the review is not in view.
+    hub.dispatch("rightPanel.toggle", json!({}));
+    assert!(!reviewing(&hub));
+}
+
+#[test]
+fn the_pull_request_number_is_copied_while_a_review_shows() {
+    let hub = linked_hub(vec![linked(42, Some("open"))]);
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = copied.clone();
+    Bridge::of(&hub.engine)
+        .set_clipboard_writer(&hub.engine, move |t| sink.borrow_mut().push(t.to_owned()));
+    run(&hub, "pullRequest.copyNumber");
+    assert!(copied.borrow().is_empty(), "no review shows");
+    hub.dispatch("rightPanel.add", json!({"kind": "pull-request"}));
+    run(&hub, "pullRequest.copyNumber");
+    assert_eq!(*copied.borrow(), ["#42"]);
+}
+
+#[test]
+fn a_link_naming_a_pull_request_links_it_to_the_thread() {
+    let hub = linked_hub(vec![]);
+    let choose = |url: &str, id: Option<&str>| {
+        hub.dispatch("link.menu", json!({"url": url, "x": 4, "y": 8}));
+        let menu = hub.published("menu");
+        let ids: Vec<String> = menu["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_owned())
+            .collect();
+        hub.dispatch(
+            "menu.select",
+            json!({"requestId": menu["requestId"], "id": id.unwrap_or("none")}),
+        );
+        ids
+    };
+    assert_eq!(choose("https://example.com/x", None), ["open", "copy"]);
+    assert_eq!(
+        choose(
+            "https://github.com/acme/shop/pull/43",
+            Some("link-pull-request")
+        ),
+        ["open", "copy", "link-pull-request"]
+    );
+    assert_eq!(panel(&hub)["activeId"], "pull-requests");
+    let command = last(&hub, "env-1", "orchestration.dispatchCommand");
+    assert_eq!(command["type"], "thread.pull-request.link");
+    assert_eq!(command["threadId"], "t1");
+    assert_eq!(command["number"], 43);
+    // Where the environment links none, it is not offered.
+    let other = self::hub(&["t1"]);
+    open(&other, "t1");
+    other.dispatch(
+        "link.menu",
+        json!({"url": "https://github.com/acme/shop/pull/43", "x": 0, "y": 0}),
+    );
+    assert_eq!(
+        other.published("menu")["items"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn a_mentioned_pull_request_and_the_palette_link_from_the_tab() {
+    let hub = linked_hub(vec![]);
+    hub.dispatch(
+        "rightPanel.linkPullRequest",
+        json!({"url": "https://github.com/acme/shop/pull/44"}),
+    );
+    assert_eq!(panel(&hub)["activeId"], "pull-requests");
+    assert_eq!(
+        last(&hub, "env-1", "orchestration.dispatchCommand")["number"],
+        44
+    );
+    let tab = model(&hub, "pullRequests");
+    assert_eq!(
+        hub.engine.read_by_name(tab, "linkOpen"),
+        ljos::prelude::Value::Bool(false)
+    );
+    run(&hub, "thread.linkPullRequest");
+    assert_eq!(
+        hub.engine.read_by_name(tab, "linkOpen"),
+        ljos::prelude::Value::Bool(true)
+    );
 }
 
 /// Whether the panel's Agents tab is told it shows.
