@@ -125,11 +125,19 @@ Item {
             rows.setProperty(last, "text", rows.get(last).text + "\n\nAnother paragraph of the reply, written just now.");
         }
 
+        // Scrolls up until the end is more than a roomy host's view away
+        // (700 plus a margin). How far a wheel notch carries is the platform's and
+        // the machine's: a short scroll would leave the room the host makes
+        // showing the end, which is not mid-thread.
         function scrollUp(timeline) {
             const list = view(timeline);
-            for (let i = 0; i < 5; ++i)
-                mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
-            tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            const farUp = () => list.originY + list.contentHeight - list.contentY > 900;
+            for (let i = 0; i < 20 && !farUp(); ++i) {
+                for (let notch = 0; notch < 5; ++notch)
+                    mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
+                tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            }
+            verify(farUp(), "the thread is scrolled well away from its end");
         }
 
         // Scenario: The view follows new output while the user is at the end
@@ -287,8 +295,19 @@ Item {
             const list = view(timeline);
             mouseWheel(list, list.width / 2, 100, 0, 120);
             tryVerify(() => timeline.scrolledAway && !list.moving, 5000, "the host makes room once the scroll ends");
-            // The room made shows the end, without the user scrolling there.
-            list.positionViewAtEnd();
+            // The room made shows the end, without the user scrolling there. The
+            // rows at the end are measured as they come into view, so the end
+            // is laid out until it stops changing before the user scrolls down
+            // to it: a row measured under a wheel in flight moves the list and
+            // the view stops following.
+            let measured = -1;
+            tryVerify(() => {
+                list.forceLayout();
+                list.positionViewAtEnd();
+                const settled = list.contentHeight === measured;
+                measured = list.contentHeight;
+                return settled && atEnd(list);
+            }, 5000, "the rows at the end are measured");
             verify(!timeline.following);
             // Down where the list goes no further.
             mouseWheel(list, list.width / 2, 100, 0, -120);

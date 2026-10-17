@@ -970,10 +970,15 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
   return formatIso(wake);
 }
 
+// Newer CLDR data puts a narrow no-break space (U+202F) before AM and PM. It
+// all but vanishes in the monospace meta lines ("8:46AM"), so the stamp
+// carries a plain space.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
-  if (timestampFormat == QLatin1String("12-hour")) return locale.toString(local.time(), QStringLiteral("h:mm AP"));
-  if (timestampFormat == QLatin1String("24-hour")) return locale.toString(local.time(), QStringLiteral("HH:mm"));
-  return locale.toString(local.time(), QLocale::ShortFormat);
+  QString time;
+  if (timestampFormat == QLatin1String("12-hour")) time = locale.toString(local.time(), QStringLiteral("h:mm AP"));
+  else if (timestampFormat == QLatin1String("24-hour")) time = locale.toString(local.time(), QStringLiteral("HH:mm"));
+  else time = locale.toString(local.time(), QLocale::ShortFormat);
+  return time.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
 }
 
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,
