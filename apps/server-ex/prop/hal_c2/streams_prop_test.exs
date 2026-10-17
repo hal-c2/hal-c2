@@ -13,6 +13,9 @@ defmodule HalC2.StreamsPropTest do
   unsubscribe (also by a tag no subscription has), page a window back, crash
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
+  Some turn items are subagents whose progress grows by long appends, past the limit
+  `HalC2.Web.Wire` cuts it at, so a client that folds the appends must hold the cut
+  text a snapshot shows.
   """
 
   use ExUnit.Case, async: false
@@ -148,6 +151,8 @@ defmodule HalC2.StreamsPropTest do
       {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
       {:item, oneof(@items), text},
       {:append, oneof(@items), oneof(["a", "bc", "é"])},
+      {:subagent, oneof(@items), progress()},
+      {:progress, oneof(@items), progress()},
       {:message, oneof(@messages)},
       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
       {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
@@ -155,6 +160,18 @@ defmodule HalC2.StreamsPropTest do
       {:void, oneof(@items)}
     ])
   end
+
+  # A subagent's progress, set or grown by: mostly short, sometimes sized to land the
+  # text just under, on and over the limit (32 KiB), in the middle of a character too.
+  defp progress do
+    frequency([
+      {6, oneof(["", "x", "bc", "é"])},
+      {1, oneof([16_000, 16_383, 16_384, 16_385]) |> let_dup("é")},
+      {1, oneof([20_000, 32_767, 32_768, 40_000]) |> let_dup("x")}
+    ])
+  end
+
+  defp let_dup(sizes, char), do: let(n <- sizes, do: String.duplicate(char, n))
 
   @doc false
   def resolve(intents, st) do
@@ -198,6 +215,21 @@ defmodule HalC2.StreamsPropTest do
     case StreamState.get(st, "turn-item")[id] do
       %{"text" => text} when is_binary(text) -> {"turn-item", id, %{"a" => %{"text" => suffix}}}
       _ -> nil
+    end
+  end
+
+  defp change({:subagent, id, progress}, st) do
+    item = %{"id" => id, "type" => "subagent", "text" => "", "progress" => progress}
+    with %{} = item <- with_run(item, st), do: {"turn-item", id, %{"d" => true, "s" => item}}
+  end
+
+  defp change({:progress, id, suffix}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent", "progress" => text} when is_binary(text) ->
+        {"turn-item", id, %{"a" => %{"progress" => suffix}}}
+
+      _ ->
+        nil
     end
   end
 

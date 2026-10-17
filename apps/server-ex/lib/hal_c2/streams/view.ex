@@ -134,8 +134,8 @@ defmodule HalC2.Streams.View do
   @spec events(t, StreamState.t(), StreamState.t(), [HalC2.Store.event()]) ::
           [HalC2.Store.event()]
   def events(view, stream, before, events) do
-    {sent, settled} =
-      Enum.flat_map_reduce(events, MapSet.new(), fn event, settled ->
+    {sent, {settled, _running}} =
+      Enum.flat_map_reduce(events, {MapSet.new(), %{}}, fn event, {settled, running} = acc ->
         %{kind: kind, entity: id, patch: patch} = event
         was = StreamState.get(before, kind)[id]
         now = StreamState.get(stream, kind)[id]
@@ -144,27 +144,41 @@ defmodule HalC2.Streams.View do
 
         cond do
           StreamState.void?(event) or MapSet.member?(settled, {kind, id}) ->
-            {[], settled}
+            {[], acc}
 
           # Held all along, or made by this commit: its patches are all there is to say.
           holds? and (held? or was == nil) ->
-            case Wire.patch(kind, patch, now["type"]) do
-              nil -> {[], settled}
-              patch -> {[%{event | patch: patch}], settled}
+            {at, running} = running_at(running, kind, id, was, now, patch)
+
+            case Wire.patch(kind, patch, now["type"], at) do
+              nil -> {[], {settled, running}}
+              patch -> {[%{event | patch: patch}], {settled, running}}
             end
 
           holds? ->
-            {[%{event | patch: replacement(kind, now)}], MapSet.put(settled, {kind, id})}
+            {[%{event | patch: replacement(kind, now)}],
+             {MapSet.put(settled, {kind, id}), running}}
 
           held? ->
-            {[%{event | patch: HalC2.Patch.delete()}], MapSet.put(settled, {kind, id})}
+            {[%{event | patch: HalC2.Patch.delete()}], {MapSet.put(settled, {kind, id}), running}}
 
           true ->
-            {[], settled}
+            {[], acc}
         end
       end)
 
     sent ++ rolled(view, stream, before, events, settled)
+  end
+
+  # What a subagent item was just before an event of the commit, for the wire to tell
+  # how much of its text the client holds. Only that kind of item needs the commit's
+  # earlier events folded into `before`.
+  defp running_at(running, kind, id, was, now, patch) do
+    at = Map.get(running, {kind, id}, was)
+
+    if kind == "turn-item" and now["type"] == "subagent",
+      do: {at, Map.put(running, {kind, id}, HalC2.Patch.apply(at, patch))},
+      else: {at, running}
   end
 
   # A run that moves in or out of the window takes its items with it, without an
@@ -215,21 +229,36 @@ defmodule HalC2.Streams.View do
   """
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
-    Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
-      entity = StreamState.get(stream, kind)[id]
+    {sent, _settled} =
+      Enum.flat_map_reduce(events, MapSet.new(), fn
+        %{kind: kind, entity: id, patch: patch} = event, settled ->
+          entity = StreamState.get(stream, kind)[id]
+          void? = StreamState.void?(event)
 
-      sent =
-        with false <- StreamState.void?(event),
-             true <- holds?(view, stream, kind, entity),
-             %{} = patch <- Wire.patch(kind, patch, entity && entity["type"]) do
-          [%{event | patch: patch}]
-        else
-          _ -> []
-        end
+          {sent, settled} =
+            cond do
+              void? or not holds?(view, stream, kind, entity) or
+                  MapSet.member?(settled, {kind, id}) ->
+                {[], settled}
 
-      # Whether or not the client holds runs: its items are what it is owed.
-      sent ++ rolled_since(view, stream, event)
-    end)
+              # What the client held at its offset is not known, so a subagent text that
+              # grew past the limit since cannot be appended to in step: the item is
+              # sent whole once, cut as a snapshot has it.
+              Wire.appends_past_limit?(kind, patch, entity) ->
+                {[%{event | patch: replacement(kind, entity)}], MapSet.put(settled, {kind, id})}
+
+              true ->
+                case Wire.patch(kind, patch, entity && entity["type"]) do
+                  nil -> {[], settled}
+                  patch -> {[%{event | patch: patch}], settled}
+                end
+            end
+
+          # Whether or not the client holds runs: its items are what it is owed.
+          {sent ++ rolled_since(view, stream, event), settled}
+      end)
+
+    sent
   end
 
   defp rolled_since(%{window: window} = view, stream, %{kind: "run", entity: run} = event)

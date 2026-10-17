@@ -1,0 +1,48 @@
+defmodule HalC2.Web.WireTest do
+  use ExUnit.Case, async: true
+
+  alias HalC2.Patch
+  alias HalC2.Web.Wire
+
+  @limit 32_768
+
+  defp item(progress), do: %{"id" => "i", "type" => "subagent", "progress" => progress}
+
+  # What a client holds after folding the wire patches of `suffixes` onto `start`.
+  defp folded(start, suffixes) do
+    {client, _server} =
+      Enum.reduce(suffixes, {Wire.entity("turn-item", start), start}, fn suffix,
+                                                                         {client, server} ->
+        patch = %{"a" => %{"progress" => suffix}}
+        sent = Wire.patch("turn-item", patch, "subagent", server)
+        {if(sent, do: Patch.apply(client, sent), else: client), Patch.apply(server, patch)}
+      end)
+
+    client
+  end
+
+  test "progress that grows past the limit by appends is the cut a snapshot shows" do
+    chunk = String.duplicate("é", 5_000)
+    suffixes = List.duplicate(chunk, 6)
+    server = Enum.reduce(suffixes, item(""), &Patch.apply(&2, %{"a" => %{"progress" => &1}}))
+
+    assert byte_size(server["progress"]) > @limit
+    assert folded(item(""), suffixes) == Wire.entity("turn-item", server)
+  end
+
+  test "an append to text already past the limit sends nothing" do
+    start = item(String.duplicate("x", @limit + 1))
+    assert Wire.patch("turn-item", %{"a" => %{"progress" => "more"}}, "subagent", start) == nil
+  end
+
+  test "an append that stays under the limit goes through as it is" do
+    patch = %{"a" => %{"progress" => "bc"}}
+    assert Wire.patch("turn-item", patch, "subagent", item("a")) == patch
+  end
+
+  test "appends in a replay are sent whole when the text is past the limit" do
+    patch = %{"a" => %{"progress" => "x"}}
+    assert Wire.appends_past_limit?("turn-item", patch, item(String.duplicate("x", @limit + 1)))
+    refute Wire.appends_past_limit?("turn-item", patch, item("x"))
+  end
+end
