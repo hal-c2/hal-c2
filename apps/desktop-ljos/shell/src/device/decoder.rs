@@ -328,7 +328,7 @@ fn work(shared: &Shared) {
                 }
             }
         }
-        // TODO(ljos): the decoder holds a unit until the next one begins, and
+        // TODO(ljos#71): the decoder holds a unit until the next one begins, and
         // a picture until its reorder window fills, which a screen that sends
         // nothing while it is still may never do. Finishing the batch hands
         // out every picture now; the stream decodes on after it.
