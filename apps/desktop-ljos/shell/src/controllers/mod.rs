@@ -11,6 +11,7 @@ pub mod device_settings;
 pub mod diagnostics;
 pub mod drafts;
 pub mod folders;
+pub mod git;
 pub mod keybindings;
 pub mod layout;
 pub mod licenses;
@@ -19,6 +20,10 @@ pub mod mc_plugin;
 pub mod menus;
 pub mod navigation;
 pub mod plugin;
+pub mod project_actions;
+pub mod project_clone;
+pub mod project_settings;
+pub mod projects;
 pub mod provider_settings;
 pub mod provider_update_notice;
 pub mod pull_request_list;
@@ -78,6 +83,7 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<drafts::DraftController>("drafts", &["landing"], Scope::Window),
         Registration::new::<folders::Folders>("folders", &["folders"], Scope::Window),
+        Registration::new::<git::Git>("git", &["git"], Scope::Window),
         Registration::new::<keybindings::KeybindingController>("keybindings", &[], Scope::Window),
         Registration::new::<layout::Layout>("layout", &["layout"], Scope::Window),
         Registration::new::<licenses::Licenses>("licenses", &["licenses"], Scope::Window),
@@ -90,6 +96,18 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),
+        Registration::new::<project_actions::ProjectActions>(
+            "projectActions",
+            &["projectActions"],
+            Scope::Window,
+        ),
+        Registration::new::<project_clone::ProjectClone>("projectClones", &[], Scope::Window),
+        Registration::new::<project_settings::ProjectSettings>(
+            "projectSettings",
+            &["projectSettings"],
+            Scope::Window,
+        ),
+        Registration::new::<projects::Projects>("projects", &["projectRemoval"], Scope::Window),
         Registration::new::<provider_settings::ProviderSettings>(
             "providerSettings",
             &["providerSettings"],
