@@ -110,7 +110,7 @@ pub fn time_of(value: Option<&Json>, zone: Zone) -> Option<DateTime<Utc>> {
     parse_iso(value?.as_str()?, zone)
 }
 
-// TODO(port): SidebarModel::timeOfDay, and QLocale. The time of day in
+// TODO(ljos#76): SidebarModel::timeOfDay, and QLocale. The time of day in
 // the device's timestampFormat, as sidebar::timeOfDay reads it; the
 // sidebar's port should own this once it lands. Only en-US is read:
 // "locale" is its short time ("9:41 AM"), not the system locale's.
@@ -130,7 +130,7 @@ pub fn time_of_day(local: NaiveDateTime, timestamp_format: &str) -> String {
 
 /// en-US's numeric date, as Intl's {month: "numeric", day: "numeric"}
 /// (and year: "numeric" with `with_year`): "9/20", "9/20/2025".
-// TODO(port): QLocale::dateFormat(ShortFormat), only en-US here.
+// TODO(ljos#76): QLocale::dateFormat(ShortFormat), only en-US here.
 pub fn numeric_date(date: NaiveDate, with_year: bool) -> String {
     if with_year {
         format!("{}/{}/{}", date.month(), date.day(), date.year())

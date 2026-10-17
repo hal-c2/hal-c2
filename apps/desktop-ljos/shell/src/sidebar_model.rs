@@ -850,8 +850,8 @@ fn thread_sort_timestamp(thread: &Thread, sort_order: &str) -> f64 {
 }
 
 /// QString::localeAwareCompare, without a locale: case folded first.
-// TODO(port): Settings::locale — collation by the user's locale; Ljós has no
-// QLocale/ICU yet, so titles compare case-insensitively, then exactly.
+// TODO(ljos#75): Settings::locale — collation by the user's locale; Ljós
+// has no collator yet, so titles compare case-insensitively, then exactly.
 pub(crate) fn locale_compare(left: &str, right: &str) -> Ordering {
     left.to_lowercase()
         .cmp(&right.to_lowercase())
@@ -1575,8 +1575,8 @@ pub fn resolve_custom_snooze<Tz: TimeZone>(
 }
 
 /// "12-hour", "24-hour" or "locale", the timestampFormat setting.
-// TODO(port): Settings::locale — "locale" is QLocale's short time format;
-// without locale data it reads as 24-hour "H:mm".
+// TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
+// format; without the system locale from Rust it reads as 24-hour "H:mm".
 pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
     let (hour, minute) = (local.hour(), local.minute());
     match timestamp_format {

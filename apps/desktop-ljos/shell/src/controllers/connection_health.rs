@@ -27,10 +27,10 @@
 //! The app coming to the foreground (`Application.active`) wakes the client:
 //! a waiting retry runs now, and a connection that looks healthy is checked.
 //!
-//! TODO(port): ConnectionHealth::network_changed when the system's
+//! TODO(ljos#74): ConnectionHealth::network_changed when the system's
 //! reachability changes (`QNetworkInformation`): Ljós's facade has no
-//! reachability source (hal-c2/ljos-ui has no issue for it yet), so only
-//! [`ConnectionHealth::set_network`] says a device is offline.
+//! reachability source, so only [`ConnectionHealth::set_network`] says a
+//! device is offline.
 
 use std::net::IpAddr;
 use std::rc::Rc;

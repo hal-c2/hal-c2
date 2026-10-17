@@ -868,7 +868,7 @@ fn follow_writes(engine: &Engine, obj: ObjectId, props: &Rc<RefCell<Props>>) {
 /// A write to `name` that is not the palette's own (what it shows already)
 /// is handed to `apply`.
 ///
-/// Ljós problem: a native property has no setter, so a QML write is stored
+/// TODO(ljos#78): a native property has no setter, so a QML write is stored
 /// and notified before the palette sees it. Qt's setters clamp a highlight
 /// past the rows before storing it; here the palette puts it back from the
 /// notify, and a view hears a change to the value it already had.

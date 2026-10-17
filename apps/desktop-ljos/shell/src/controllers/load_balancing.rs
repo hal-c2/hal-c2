@@ -190,8 +190,8 @@ impl LoadBalancing {
             return;
         }
         // This machine first, the rest by name.
-        // TODO(port): Qt compared with QString::localeAwareCompare; this is
-        // a plain lowercase compare.
+        // TODO(ljos#75): Qt compared with QString::localeAwareCompare; this
+        // is a plain lowercase compare.
         let mut named: Vec<(String, String)> = machines
             .into_iter()
             .map(|id| (scope.label(engine, &id), id))
