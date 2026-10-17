@@ -13,8 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 # dev-qml: the shell compiles its QML at start-up (the README says why).
-# render: `--render`. No `media`: the bricks play nothing.
-ljos = { workspace = true, features = ["shell", "dev-qml", "render"] }
+# render: `--render`. media: the Device tab's screen is decoded with Ljós's
+# stream decoder (src/device/decoder.rs).
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media"] }
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
@@ -45,10 +46,8 @@ vt100 = "0.16"
 # and QTextDocument's markdown as text.
 regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
-# The Device tab's screen (src/device): FFmpeg is loaded at run time, never
-# linked or bundled (it is GPL), and serve-sim's JPEG seed is decoded as Ljós's
-# Image does.
-libloading = "0.8"
+# The Device tab's screen (src/device): serve-sim's JPEG seed is decoded as
+# Ljós's Image does.
 zune-jpeg = "0.5"
 
 # The composer's attachment thumbnails (controllers/composer/attachments.rs),

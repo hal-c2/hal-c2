@@ -22,8 +22,7 @@
 //! dropped connection retries after a second; no picture within the
 //! first-frame timeout, an AVCC body that stops, a refused credential, a
 //! decoder that cannot start, or video it refuses three times running is an
-//! error, and so is FFmpeg not being installed (it is loaded at run time, see
-//! [`ffmpeg`](super::ffmpeg)).
+//! error.
 //!
 //! [`Core`] is the stream: it takes what the connections, timers and decoder
 //! say and answers with [`Effect`]s. [`DeviceStream`] is the object QML binds
@@ -541,12 +540,6 @@ impl Core {
         }
         if !self.active || self.hub_base.is_empty() || self.device.is_empty() {
             self.set_status("idle", "");
-            return;
-        }
-        // Without FFmpeg there is no picture to show: say what to install
-        // rather than connect. reconnect() looks again.
-        if let Err(why) = self.decoder.available() {
-            self.set_status("error", &why);
             return;
         }
         self.running = true;

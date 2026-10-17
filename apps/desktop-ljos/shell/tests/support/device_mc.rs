@@ -274,7 +274,6 @@ pub enum Makes {
 /// What the test and a scripted decoder share.
 #[derive(Debug)]
 pub struct Script {
-    pub available: Result<(), String>,
     pub makes: Makes,
     /// false: each push drops the backlog instead.
     pub keeps_up: bool,
@@ -293,7 +292,6 @@ pub struct Script {
 impl Default for Script {
     fn default() -> Self {
         Script {
-            available: Ok(()),
             makes: Makes::Pictures(72, 160),
             keeps_up: true,
             pushed: Vec::new(),
@@ -311,10 +309,6 @@ impl Default for Script {
 pub struct Scripted(pub Rc<RefCell<Script>>);
 
 impl Decode for Scripted {
-    fn available(&self) -> Result<(), String> {
-        self.0.borrow().available.clone()
-    }
-
     fn reset(&mut self, avcc: Option<Vec<u8>>) {
         let mut s = self.0.borrow_mut();
         s.resets.push(avcc);

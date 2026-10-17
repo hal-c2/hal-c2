@@ -16,9 +16,9 @@ use std::rc::Rc;
 use common::{call, read, text};
 use device_fixture::{android_video, avcc, envelope, ios_video};
 use device_mc::{DeviceMc, Makes, Script, script_decoders};
+use hal_c2_shell::device;
 use hal_c2_shell::device::devices::{ThreadDevices, tab_id_of};
 use hal_c2_shell::device::stream::{self, DeviceStream, FIRST_FRAME_MS, RETRY_MS};
-use hal_c2_shell::device::{self, ffmpeg};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{StreamEnd, StreamEvent, StreamId, StreamMessage};
 use ljos::prelude::{Engine, ObjectId, Value};
@@ -528,19 +528,22 @@ fn a_body_that_goes_quiet_is_an_error() {
 }
 
 #[test]
-fn without_ffmpeg_the_device_tab_explains_what_to_install() {
-    ffmpeg::pretend_missing(true);
+fn a_device_screen_is_decoded_on_the_desktop() {
     let t = tab_with(true);
-    t.devices_are(state(&[IPHONE_17], &[IPHONE]));
-    t.show(&tab_id_of("host-1", IPHONE));
-    ffmpeg::pretend_missing(false);
-    assert_eq!(t.text("status"), "error");
-    let detail = t.text("detail");
-    assert!(
-        detail.starts_with("Install FFmpeg to watch device screens ("),
-        "{detail}"
-    );
-    assert_eq!(t.mc.opened_at("stream.avcc"), 0);
+    let (woke, wakes) = std::sync::mpsc::channel();
+    let woke = std::sync::Mutex::new(woke);
+    device::set_wake(&t.engine, move || {
+        let _ = woke.lock().map(|w| w.send(()));
+    });
+    t.watching(&[PIXEL_9], &[PIXEL], PIXEL);
+    t.android_sends();
+    // A guard, not a pace: the decoder wakes the shell when it has a picture.
+    wakes
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the decoder wakes the shell");
+    t.decoded();
+    assert_eq!(t.text("status"), "streaming");
+    assert!(t.shown());
 }
 
 #[test]

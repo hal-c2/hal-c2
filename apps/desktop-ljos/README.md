@@ -63,7 +63,7 @@ The shell is an application of the `ljos` facade alone (`App`, `#[derive(QmlObje
 
 What the shell still works around, each where it does so:
 
-- Ljós's QtMultimedia cannot play a live stream (#60), so a device's screen is decoded with the system's
-  FFmpeg, loaded at run time as desktop-qt does: `shell/src/device/decoder.rs`.
+- Ljós's stream decoder keeps a live stream's newest picture until more video comes (#71), so a
+  device's screen finishes the decoder after each batch: `shell/src/device/decoder.rs`.
 - The compiler warns on `popup.scale` and `popup.transformOrigin` set through a `ComboBox`'s `popup` (#61), which
   `GitActions.qml` does and Qt accepts; the warning is the only harm.
