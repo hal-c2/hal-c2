@@ -104,6 +104,34 @@ Item {
             compare(scan.iconName, "refresh-cw");
         }
 
+        // The tool an install hint names is set in the monospace face, its backticks gone.
+        function test_an_install_hint_formats_the_command_it_names() {
+            const hint = "GitHub is not authenticated on this server. Sign in using the `gh` tool on the server host.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare(summary.textFormat, Text.StyledText);
+            verify(summary.text.includes("<font face="), summary.text);
+            verify(!summary.text.includes("`"), summary.text);
+            verify(summary.text.includes(">gh</font>"), summary.text);
+            compare(summary.Accessible.name, hint.replace(/`/g, ""));
+        }
+
+        // A disabled button gets no hover, so Rescan stays enabled while it scans and ignores the click.
+        function test_rescan_while_scanning_shows_its_tooltip_and_ignores_clicks() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: true, title: "", detail: "", suffix: "", versionControl: [root.github({})],
+                             providers: [] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            const scan = findChild(page, "scan");
+            verify(scan.enabled);
+            compare(scan.Accessible.name, "Scanning server environment");
+            mouseClick(scan);
+            compare(Shell.dispatchedActions.length, 0);
+        }
+
         // Git's fetch interval is behind a details toggle, collapsed until it is used.
         function test_the_git_fetch_interval_is_behind_a_details_toggle() {
             Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({

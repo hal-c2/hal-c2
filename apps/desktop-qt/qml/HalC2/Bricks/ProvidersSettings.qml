@@ -579,6 +579,79 @@ Rectangle {
                     font.family: "monospace"
                 }
 
+                // The version outside the supported range, or an update: an icon
+                // on the card, the details in a popover, as the web does.
+                ShellButton {
+                    id: advisoryButton
+
+                    objectName: "advisoryButton"
+                    visible: card.advisory !== null
+                    subtle: true
+                    iconName: card.advisory && card.advisory.strong ? "triangle-alert" : "circle-arrow-up"
+                    tint: card.advisory && card.advisory.strong ? page.warning : page.foreground
+                    Accessible.name: card.advisory ? card.advisory.title : ""
+                    onClicked: advisoryPopover.opened ? advisoryPopover.close() : advisoryPopover.open()
+
+                    Popup {
+                        id: advisoryPopover
+
+                        objectName: "advisory"
+
+                        y: advisoryButton.height + 4
+                        width: 320
+                        padding: 12
+
+                        background: Rectangle {
+                            color: Theme.palette.color("surfaceOverlay", "#18181b")
+                            border.color: Qt.alpha(page.foreground, 0.1)
+                            radius: 10
+                        }
+
+                        contentItem: ColumnLayout {
+                            spacing: 6
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: card.advisory ? card.advisory.title : ""
+                                color: card.advisory && card.advisory.strong ? page.warning : page.foreground
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.Wrap
+                            }
+
+                            Note {
+                                text: card.advisory ? card.advisory.detail : ""
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                ShellButton {
+                                    objectName: "update"
+                                    readonly property bool install: (card.provider.installLabel ?? "").length > 0
+                                    visible: card.provider.canUpdate || install || card.provider.updating
+                                    enabled: !card.provider.updating
+                                    text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
+                                    onClicked: page.act(install ? "install" : "update", card.provider)
+                                }
+
+                                // The command is a filesystem path on most installs: copy it, show it only on hover.
+                                ShellButton {
+                                    objectName: "copyUpdateCommand"
+                                    visible: !!(card.advisory && card.advisory.updateCommand)
+                                    subtle: true
+                                    iconName: "copy"
+                                    Accessible.name: qsTr("Copy the update command")
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
+                                    onClicked: page.act("copyUpdateCommand", card.provider)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Item {
                     Layout.fillWidth: true
                 }
@@ -636,52 +709,6 @@ Rectangle {
                     font: email.font
                 }
                 background: null
-            }
-
-            // The version outside the supported range, or an update.
-            ColumnLayout {
-                objectName: "advisory"
-                Layout.fillWidth: true
-                visible: card.advisory !== null
-                spacing: 4
-
-                Label {
-                    Layout.fillWidth: true
-                    text: card.advisory ? card.advisory.title : ""
-                    color: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.weight: Font.DemiBold
-                }
-
-                Note {
-                    text: card.advisory ? card.advisory.detail : ""
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    ShellButton {
-                        objectName: "update"
-                        readonly property bool install: (card.provider.installLabel ?? "").length > 0
-                        visible: card.provider.canUpdate || install || card.provider.updating
-                        enabled: !card.provider.updating
-                        text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
-                        onClicked: page.act(install ? "install" : "update", card.provider)
-                    }
-
-                    // The command is a filesystem path on most installs: copy it, show it only on hover.
-                    ShellButton {
-                        objectName: "copyUpdateCommand"
-                        visible: !!(card.advisory && card.advisory.updateCommand)
-                        subtle: true
-                        iconName: "copy"
-                        Accessible.name: qsTr("Copy the update command")
-                        ToolTip.visible: hovered
-                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
-                        onClicked: page.act("copyUpdateCommand", card.provider)
-                    }
-                }
             }
 
             // The runtime the environment installs itself (Antigravity).

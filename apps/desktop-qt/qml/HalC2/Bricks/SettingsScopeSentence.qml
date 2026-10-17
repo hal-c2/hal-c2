@@ -72,13 +72,30 @@ ColumnLayout {
         }
     }
 
-    Label {
-        objectName: "scopeNotice"
+    // Why the scope cannot be edited: the theme's text with the warning hue as a
+    // stripe, as the connection notice does, since warning-coloured text does
+    // not read on every theme's surface.
+    RowLayout {
         Layout.fillWidth: true
-        visible: text.length > 0
-        text: sentence.scope?.disabledReason ?? ""
-        color: sentence.warning
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        wrapMode: Text.Wrap
+        visible: notice.text.length > 0
+        spacing: 8
+
+        Rectangle {
+            Layout.fillHeight: true
+            implicitWidth: 3
+            radius: 1.5
+            color: sentence.warning
+        }
+
+        Label {
+            id: notice
+
+            objectName: "scopeNotice"
+            Layout.fillWidth: true
+            text: sentence.scope?.disabledReason ?? ""
+            color: Theme.palette.color("text", "#e4e4e7")
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.Wrap
+        }
     }
 }

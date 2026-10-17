@@ -137,4 +137,32 @@ defmodule HalC2.AcpTest do
     assert %{"status" => "disabled", "installed" => false, "version" => nil} =
              HalC2.Acp.entry("antigravity")
   end
+
+  test "a disabled Antigravity with its runtime on this machine is installed but not launched", %{
+    tmp_dir: dir
+  } do
+    {exe, harness} = HalC2.Acp.Antigravity.names()
+
+    for name <- [exe, harness] do
+      File.write!(Path.join(dir, name), "#!/bin/sh\n")
+      File.chmod!(Path.join(dir, name), 0o755)
+    end
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "antigravity" => %{
+              "driver" => "antigravity",
+              "enabled" => false,
+              "config" => %{"binaryPath" => Path.join(dir, exe)}
+            }
+          }
+        },
+        0
+      )
+
+    assert %{"status" => "disabled", "installed" => true, "version" => nil} =
+             HalC2.Acp.entry("antigravity")
+  end
 end

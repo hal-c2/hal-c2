@@ -430,7 +430,7 @@ private:
       summary = QStringLiteral("Available. %1").arg(hint);
     } else if (provider && authStatus == QLatin1String("unauthenticated")) {
       summary = QStringLiteral(
-                    "%1 is not authenticated on this server. Sign in or configure credentials using the %2 tool on the server host to "
+                    "%1 is not authenticated on this server. Sign in or configure credentials using the `%2` tool on the server host to "
                     "enable change request features.")
                     .arg(label, at(item, "executable"));
     } else if (provider) {

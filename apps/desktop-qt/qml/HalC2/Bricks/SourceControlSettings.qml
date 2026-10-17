@@ -27,6 +27,14 @@ SettingsPage {
         Shell.dispatch("sourceControlSettings." + name, payload ?? {});
     }
 
+    // A command in a sentence, `like this`, set in the monospace face (as the web
+    // sets the tool it names): the rest of the sentence is escaped as plain text.
+    function withCode(text) {
+        const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const face = Theme.fontMono.length > 0 ? Theme.fontMono : "monospace";
+        return escaped.replace(/`([^`]+)`/g, '<font face="' + face + '">$1</font>');
+    }
+
     objectName: "sourceControlSettings"
     title: qsTr("Source Control")
 
@@ -174,7 +182,9 @@ SettingsPage {
                     Caption {
                         objectName: "summary"
                         Layout.fillWidth: !tool.modelData.hasAccount
-                        text: tool.modelData.summary
+                        text: tool.sourceControl.withCode(tool.modelData.summary)
+                        textFormat: Text.StyledText
+                        Accessible.name: tool.modelData.summary.replace(/`/g, "")
                     }
 
                     Caption {
@@ -329,15 +339,19 @@ SettingsPage {
             }
 
             ShellButton {
+                // Not disabled while it scans: a disabled button gets no hover, so
+                // its "Scanning…" tooltip would never show. The click is ignored instead.
+                readonly property bool scanning: page.discovery?.scanning ?? false
+
                 objectName: "scan"
                 visible: (page.discovery?.status ?? "none") !== "none"
                 subtle: true
-                enabled: !(page.discovery?.scanning ?? false)
+                opacity: scanning ? 0.64 : 1
                 iconName: "refresh-cw"
-                Accessible.name: page.discovery?.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
+                Accessible.name: scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
                 ToolTip.visible: hovered
-                ToolTip.text: page.discovery?.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
-                onClicked: page.send("scan")
+                ToolTip.text: scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
+                onClicked: if (!scanning) page.send("scan")
             }
         }
 
