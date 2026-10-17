@@ -128,6 +128,31 @@ pub(crate) fn agent(timeout: Option<Duration>) -> Agent {
         .into()
 }
 
+/// GETs `url` for what it serves, at most `limit` bytes of it (one more
+/// than that tells the caller it is larger). Blocking: for a thread of the
+/// caller's own. An error is worded for the user.
+pub fn fetch(url: &str, timeout: Duration, limit: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut response = agent(Some(timeout))
+        .get(url)
+        .call()
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("The server answered {status}."));
+    }
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .with_config()
+        .limit(u64::MAX)
+        .reader()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut body)
+        .map_err(|error| error.to_string())?;
+    Ok(body)
+}
+
 fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }

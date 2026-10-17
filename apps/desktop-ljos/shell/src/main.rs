@@ -220,6 +220,7 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         options.mc_token = kept.token;
     }
     options.launch.cache_dir = Some(paths.cache);
+    options.launch.data_dir = Some(paths.data);
     Ok(())
 }
 
@@ -400,6 +401,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::folders::set_wake(&engine, move || {
                 let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let plugins_handle = handle.clone();
+            hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
+                let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             let (mc, connection): (Rc<dyn Mc>, _) = match &options.launch.mc_origin {
                 Some(origin) => {
                     let wake = handle.clone();
@@ -419,6 +424,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                             connection.deliver(engine);
                         }
                         hal_c2_shell::folders::deliver(engine);
+                        hal_c2_shell::controllers::plugin::deliver(engine);
                     });
                 }
                 Message::Activated(key) => {

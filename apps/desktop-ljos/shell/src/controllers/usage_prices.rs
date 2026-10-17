@@ -92,6 +92,39 @@ pub fn set_environments(engine: &Engine, environments: Vec<Environment>) {
     *engine.extension::<Known>().0.borrow_mut() = Some(environments);
 }
 
+/// The environments the shell knows: a test's, else the store's, else (with
+/// no store) the MC's own alone. The usage page lists the same.
+pub(crate) fn environments_of(engine: &Engine, mc: &dyn Mc) -> Vec<Environment> {
+    if let Some(known) = engine.extension::<Known>().0.borrow().clone() {
+        return known;
+    }
+    if store::get(engine).is_some() {
+        return store::with(engine, |s| {
+            s.environments()
+                .into_iter()
+                .map(|id| Environment {
+                    label: s
+                        .environment(&id)
+                        .get("label")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or_default()
+                        .to_owned(),
+                    online: s.environment_online(&id),
+                    id,
+                })
+                .collect()
+        });
+    }
+    match mc.environment() {
+        id if id.is_empty() => Vec::new(),
+        id => vec![Environment {
+            id,
+            label: String::new(),
+            online: mc.is_ready(),
+        }],
+    }
+}
+
 #[derive(Default)]
 struct Draft {
     model: String,
@@ -213,34 +246,7 @@ impl Controller for UsagePrices {
 
 impl UsagePrices {
     fn environments(&self, engine: &Engine) -> Vec<Environment> {
-        if let Some(known) = engine.extension::<Known>().0.borrow().clone() {
-            return known;
-        }
-        if store::get(engine).is_some() {
-            return store::with(engine, |s| {
-                s.environments()
-                    .into_iter()
-                    .map(|id| Environment {
-                        label: s
-                            .environment(&id)
-                            .get("label")
-                            .and_then(|l| l.as_str())
-                            .unwrap_or_default()
-                            .to_owned(),
-                        online: s.environment_online(&id),
-                        id,
-                    })
-                    .collect()
-            });
-        }
-        match self.mc.environment() {
-            id if id.is_empty() => Vec::new(),
-            id => vec![Environment {
-                id,
-                label: String::new(),
-                online: self.mc.is_ready(),
-            }],
-        }
+        environments_of(engine, self.mc.as_ref())
     }
 
     fn online(&self, engine: &Engine, id: &str) -> bool {

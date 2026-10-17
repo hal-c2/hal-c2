@@ -1777,9 +1777,11 @@ dependencies = [
 name = "hal_c2_shell"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "fancy-regex",
  "hal_c2_mc",
+ "iana-time-zone",
  "interprocess",
  "ljos",
  "ljos_a11y",
