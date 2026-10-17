@@ -19,7 +19,7 @@ import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
 import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
-import { createStore, type StatusKind, type StoreState } from "../store.ts";
+import { createStore, shellSummary, type StatusKind, type StoreState } from "../store.ts";
 import { setNerdFont } from "../icons.ts";
 import { COLOUR_THEME_CHOICES, setColourTheme, type ColourThemeId } from "../theme.ts";
 import { revertableCheckpoints } from "../timeline.ts";
@@ -59,6 +59,7 @@ import {
   type TerminalThread,
 } from "./terminalState.ts";
 import { createLoadBalancingController } from "./loadBalancingState.ts";
+import { createStatusLog } from "./statusLog.ts";
 import { createMoveController } from "./moveState.ts";
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, tuiThemeState, type TuiTheme } from "./theme.ts";
@@ -316,6 +317,18 @@ export function createHost(options: HostOptions): Host {
     updateNotice: null,
   });
 
+  // The errors the status line showed, pinned until acknowledged (statusLog.ts).
+  const statusLog = createStatusLog({
+    state,
+    now,
+    clearCurrent: (errorText) => {
+      const current = store.getState();
+      if (current.statusKind !== "error" || current.status !== errorText) return;
+      store.setStatus(current.shell ? shellSummary(current.shell) : "", "info");
+    },
+    pick: (request) => composer!.pick(request),
+  });
+
   // "reconnecting" is a connection that was up and is lost: the environment is offline.
   let connectionPhase: TuiConnectionPhase = "connecting";
   const offline = () => connectionPhase === "reconnecting";
@@ -547,6 +560,7 @@ export function createHost(options: HostOptions): Host {
       );
     }
     if (!prev || prev.status !== next.status || prev.statusKind !== next.statusKind) {
+      statusLog.note({ kind: next.statusKind, text: next.status });
       state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
     }
     if (
@@ -885,6 +899,7 @@ export function createHost(options: HostOptions): Host {
       ...sections!.commands(),
       ...updateNotice.commands(),
       ...loadBalancing.commands(),
+      ...statusLog.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -912,6 +927,7 @@ export function createHost(options: HostOptions): Host {
     files.sync();
     addProject.relayout();
     features.sync();
+    statusLog.note({ kind: next.statusKind, text: next.status });
     state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
   };
 
@@ -1292,6 +1308,7 @@ export function createHost(options: HostOptions): Host {
         if (cluster.dispatch(action, payload)) return true;
         if (sections!.dispatch(action, payload)) return true;
         if (loadBalancing.dispatch(action, payload)) return true;
+        if (statusLog.dispatch(action)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1401,6 +1418,7 @@ export function createHost(options: HostOptions): Host {
           working:
             (state.get("composer") as { isRunning?: boolean } | undefined)?.isRunning === true,
           draft: page?.kind === "draft",
+          pinnedError: (state.get("statusError") as { text: string } | null)?.text ?? null,
         }),
       );
     });
