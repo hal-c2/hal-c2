@@ -7,7 +7,8 @@
 //! such a call re-run when the theme changes (a call records no dependency).
 //!
 //! Not ported yet: watching theme.json (it is read at start and on
-//! `reload()`), and making `fontUi` the application's font.
+//! `reload()`), and making `fontUi` the application's font
+//! (TODO(ljos#84): it can only be set before the engine is built).
 
 use std::cell::RefCell;
 use std::path::PathBuf;

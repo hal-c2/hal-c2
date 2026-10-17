@@ -240,8 +240,8 @@ fn hour_name(at: DateTime<Utc>, zone: &Zone) -> String {
         if other.date_naive() == local.date_naive()
             && other.format("%H").to_string() == local.format("%H").to_string()
         {
-            // TODO(port): UsageController::hour_name: chrono has no zone
-            // abbreviations ("PST"), so the offset says which hour it was.
+            // TODO(ljos#83): desktop-qt says the zone's abbreviation
+            // ("PST"); there is none to ask for, so the offset says which.
             return format!("{name} {}", local.offset());
         }
     }
