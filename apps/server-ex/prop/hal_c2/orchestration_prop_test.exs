@@ -1070,13 +1070,15 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The runs whose provider turn or provider thread another instance's Codex made: a
-  # run's turn runs on its own instance, in a provider thread of that instance's.
+  # run's turn runs on its own instance, in a provider thread of that instance's. A run
+  # names its provider turn through its active attempt; one not started yet has none.
   defp foreign(state, runs) do
+    attempts = StreamState.get(state, "run-attempt")
     turns = StreamState.get(state, "provider-turn")
     threads = StreamState.get(state, "provider-thread")
 
     for %{"providerInstanceId" => instance} = run <- runs,
-        turn = turns[run["providerTurnId"]],
+        turn = turns[(attempts[run["activeAttemptId"]] || %{})["providerTurnId"]],
         thread = threads[run["providerThreadId"]] || %{},
         not String.starts_with?(native(turn["nativeTurnRef"]), "#{instance}-turn-") or
           not String.starts_with?(native(thread["nativeThreadRef"]), "#{instance}-thread-") or

@@ -2670,23 +2670,59 @@ defmodule HalC2.Orchestration do
      {:ok, if(restart_of, do: {:restart, restart_of}, else: :queued)}}
   end
 
-  # A thread's provider thread on `instance`, and the changes that find it. Before each
-  # instance had its own, every instance of a driver kept its session under the default
-  # instance's id (the driver's). Another instance's session found there moves to that
-  # instance's own id, so it resumes there (its own run writes it, from `new_run/5`'s
-  # upsert); the default instance's run then takes the old id over.
-  defp provider_thread(state, driver, instance, thread_id) do
+  # The changes that bring a thread from before each instance had its own provider
+  # thread up to date. Then every instance of a driver kept its session under the
+  # default instance's id (the driver's), and their runs named it. Another instance's
+  # session found there moves to that instance's own id, and the runs other instances
+  # ran there (their attempts and provider turns too) name their own instance's, so
+  # each resumes, forks and rewinds in its own home. The default id is then the default
+  # instance's; its next run takes it over (`new_run/5`). A thread brought up to date
+  # has nothing left to change.
+  defp relocated(state, driver, thread_id) do
+    legacy_id = Entities.provider_thread_id(driver, thread_id)
     threads = StreamState.get(state, "provider-thread")
-    own = threads[Entities.provider_thread_id(instance, thread_id)]
-    legacy = threads[Entities.provider_thread_id(driver, thread_id)]
+    legacy = threads[legacy_id]
     owner = legacy && legacy["providerInstanceId"]
-    moved = owner && Map.put(legacy, "id", Entities.provider_thread_id(owner, thread_id))
+    moved_id = owner && Entities.provider_thread_id(owner, thread_id)
 
-    cond do
-      owner in [nil, driver] or threads[moved["id"]] != nil -> {own, []}
-      owner == instance -> {moved, []}
-      true -> {own, [create("provider-thread", moved["id"], moved)]}
-    end
+    record =
+      if owner not in [nil, driver] and threads[moved_id] == nil,
+        do: [create("provider-thread", moved_id, Map.put(legacy, "id", moved_id))],
+        else: []
+
+    runs =
+      for {id, run} <- StreamState.get(state, "run"),
+          run["providerThreadId"] == legacy_id,
+          (run["providerInstanceId"] || driver) != driver,
+          into: %{},
+          do: {id, Entities.provider_thread_id(run["providerInstanceId"], thread_id)}
+
+    record ++ if(runs == %{}, do: [], else: references(state, runs))
+  end
+
+  defp references(state, runs) do
+    attempts =
+      for {id, attempt} <- StreamState.get(state, "run-attempt"),
+          to = runs[attempt["runId"]],
+          into: %{},
+          do: {id, to}
+
+    turns =
+      for {id, turn} <- StreamState.get(state, "provider-turn"),
+          to = attempts[turn["runAttemptId"]],
+          do: {id, to}
+
+    for {kind, refs} <- [{"run", runs}, {"run-attempt", attempts}, {"provider-turn", turns}],
+        {id, to} <- refs,
+        change = upsert(state, kind, id, &Map.put(&1, "providerThreadId", to)),
+        do: change
+  end
+
+  # `state` with `changes` made, for what is decided after them in the same commit.
+  defp applied(state, changes) do
+    Enum.reduce(changes, state, fn {kind, id, patch}, state ->
+      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
+    end)
   end
 
   # Starts a run for a message: a new one, or a queued run (with its stored message
@@ -2720,10 +2756,13 @@ defmodule HalC2.Orchestration do
       message: message_id
     }
 
-    {provider_thread, legacy_changes} = provider_thread(state, driver, instance, thread_id)
+    # Everything below, the handoff's plan included, sees the thread brought up to date.
+    legacy_changes = relocated(state, driver, thread_id)
+    state = applied(state, legacy_changes)
+    provider_thread = StreamState.get(state, "provider-thread")[provider_thread_id]
 
     # The default instance's id still holds another instance's session (see
-    # `provider_thread/4`): the run takes it over and starts its own.
+    # `relocated/3`): the run takes it over and starts its own.
     foreign =
       provider_thread != nil and
         (provider_thread["providerInstanceId"] || driver) != instance
@@ -2783,7 +2822,7 @@ defmodule HalC2.Orchestration do
             "provider-thread",
             provider_thread_id,
             # A rolled-back head is where this run resumes the conversation.
-            &((&1 || provider_thread)
+            &(&1
               |> Map.merge(%{
                 "lastRunOrdinal" => ordinal,
                 "providerSessionId" => session_id,

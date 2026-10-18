@@ -58,6 +58,34 @@ Feature: Changing model and provider mid-thread
     Then the provider receives the earlier conversation before "where are we"
     And the run answers on the Codex thread "native-thread-1"
 
+  # Its runs named the shared session too: one another instance ran is still that
+  # instance's to fork, after the provider's own instance has taken the shared id over.
+  @mc
+  Scenario: A fork of a run from before instances had their own sessions forks that instance's
+    Given a second Codex instance "codex-work" with its own home
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" back to "codex" and sends a message
+    And the user forks "t1" after its second run and sends on "codex-work"
+    Then the fork's first turn forks the Codex thread "codex-work-thread-1" after "codex-work-turn-2"
+
+  @mc
+  Scenario: A session carried to a thread from before instances had their own continues on its instance
+    Given a second Codex instance "codex-work" with its own home
+    And "t1" last ran on "codex-work" when instances shared a provider thread and moved here with its session
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run continues the carried Codex session "codex-work-carried"
+
+  # A Codex runtime from before it recorded its instance (updated in place) does not know
+  # which account its app-server runs as.
+  @mc
+  Scenario: A Codex runtime updated in place starts the other instance's Codex for its run
+    Given a second Codex instance "codex-work" with its own home
+    And the Codex runtime of "t1" was started before it recorded its instance
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run answers on the Codex thread "codex-work-thread-1"
+
   @mc @shared @backlog-desktop @backlog-mobile
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context

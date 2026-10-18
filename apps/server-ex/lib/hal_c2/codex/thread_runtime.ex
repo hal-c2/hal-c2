@@ -29,7 +29,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
 
-  @state_version 2
+  @state_version 3
 
   # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}. Auto lets Codex's own reviewer answer what it would ask the user.
   @runtime_policies %{
@@ -129,7 +129,8 @@ defmodule HalC2.Codex.ThreadRuntime do
        v: @state_version,
        thread_id: thread_id,
        conn: nil,
-       # The provider instance the app-server was started for.
+       # The provider instance the app-server was started for; :unknown for one started
+       # before the runtime recorded it (a hot update).
        instance: nil,
        native_thread_id: nil,
        turn: nil,
@@ -432,6 +433,7 @@ defmodule HalC2.Codex.ThreadRuntime do
        state
        |> Map.put_new(:running, %{})
        |> Map.put_new(:background, %{})
+       |> Map.put_new(:instance, :unknown)
        |> Map.put(:v, @state_version)}
 
   # The message, with where its files are, and its images inline.
@@ -619,12 +621,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The app-server runs with its instance's command, variables and home, so a turn on
   # another instance of Codex needs its own: the open one, and the commands it left
-  # running, stop, and the turn opens the thread it has there.
+  # running, stop, and the turn opens the thread it has there. One whose instance is
+  # not known (started before a hot update) may run as another account, so it is
+  # replaced too.
   defp connect(state, turn) do
     instance = if ids = turn[:ids], do: Entities.instance(ids)
 
-    # A runtime from before it recorded the instance keeps its app-server.
-    if Map.get(state, :instance, instance) == instance do
+    if state.instance == instance do
       {:ok, state}
     else
       state = end_background(state, "interrupted")
