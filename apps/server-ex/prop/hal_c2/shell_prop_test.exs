@@ -12,8 +12,9 @@ defmodule HalC2.ShellPropTest do
 
   The promises checked:
 
-    * the shell holds this MC's rows, as the store has them after a restart, and
-      every connected member's rows as that member has them;
+    * the shell holds this MC's rows, as the store has them after a restart, save
+      those of streams an import has not finished, and every connected member's rows
+      as that member has them;
     * a member holds this MC's rows as of the shell's version;
     * a client resuming from a version is sent exactly the rows changed after it,
       or everything with `reset` when the version is of another epoch, and from then
@@ -33,6 +34,9 @@ defmodule HalC2.ShellPropTest do
   @moduletag timeout: :infinity
 
   @streams ~w(s1 s2 s3)
+  # A stream an import left unfinished before the shell first started: its row is
+  # stored, and the shell does not show it.
+  @importing "s4"
   @peers [:"pa@prop.invalid", :"pb@prop.invalid"]
   @clients [:c1, :c2]
 
@@ -77,12 +81,14 @@ defmodule HalC2.ShellPropTest do
   # `:on`, or `{:held, view}` with the shell's view when it went away.
   def initial_state do
     initial = Map.new(@streams, &{&1, {initial_row(&1), 0}})
+    stored = Map.new([@importing | @streams], &{&1, initial_row(&1)})
 
     %{
       run: 0,
       rev: 0,
       rows: initial,
-      stored: Map.new(initial, fn {id, {kind_row, _}} -> {id, kind_row} end),
+      stored: stored,
+      unfinished: MapSet.new([@importing]),
       peers: Map.new(@peers, &{&1, %{run: 0, rev: 0, rows: %{}, connected: false}}),
       held: %{},
       clients: Map.new(@clients, &{&1, :off})
@@ -97,9 +103,11 @@ defmodule HalC2.ShellPropTest do
 
     frequency(
       [
-        {6, {:call, __MODULE__, :put_local, [oneof(@streams), title()]}},
-        {1, {:call, __MODULE__, :put_stored_only, [oneof(@streams), title()]}},
+        {6, {:call, __MODULE__, :put_local, [oneof([@importing | @streams]), title()]}},
+        {1, {:call, __MODULE__, :put_stored_only, [oneof([@importing | @streams]), title()]}},
         {2, {:call, __MODULE__, :restart, []}},
+        {1, {:call, __MODULE__, :import_unfinished, [oneof([@importing | @streams])]}},
+        {1, {:call, __MODULE__, :import_finished, [oneof([@importing | @streams])]}},
         {5, {:call, __MODULE__, :peer_put, [oneof(@peers), stream_id(), title()]}},
         {1, {:call, __MODULE__, :peer_restart, [oneof(@peers)]}},
         {3, {:call, __MODULE__, :check, []}}
@@ -133,6 +141,12 @@ defmodule HalC2.ShellPropTest do
   def precondition(state, {:call, _, :forget, [p]}), do: Map.has_key?(state.held, p)
   def precondition(state, {:call, _, :subscribe, [c, _]}), do: state.clients[c] != :on
   def precondition(state, {:call, _, :disconnect, [c]}), do: state.clients[c] == :on
+  # An import marks a stream before the shell is told of it, and the shell is told
+  # only once the import is done (`HalC2.Import.PreviousInstall`).
+  def precondition(state, {:call, _, :import_unfinished, [id]}),
+    do: not Map.has_key?(state.rows, id)
+
+  def precondition(state, {:call, _, :put_local, [id, _]}), do: id not in state.unfinished
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :put_local, [id, title]}) do
@@ -152,12 +166,24 @@ defmodule HalC2.ShellPropTest do
   def next_state(state, _result, {:call, _, :put_stored_only, [id, title]}),
     do: put_in(state.stored[id], row(id, title))
 
+  def next_state(state, _result, {:call, _, :import_unfinished, [id]}),
+    do: %{state | unfinished: MapSet.put(state.unfinished, id)}
+
+  def next_state(state, _result, {:call, _, :import_finished, [id]}),
+    do: %{state | unfinished: MapSet.delete(state.unfinished, id)}
+
   def next_state(state, _result, {:call, _, :restart, []}) do
     %{
       state
       | run: state.run + 1,
         rev: 0,
-        rows: Map.new(state.stored, fn {id, kind_row} -> {id, {kind_row, 0}} end)
+        rows:
+          for(
+            {id, kind_row} <- state.stored,
+            id not in state.unfinished,
+            into: %{},
+            do: {id, {kind_row, 0}}
+          )
     }
     |> sync_connected()
   end
@@ -316,10 +342,12 @@ defmodule HalC2.ShellPropTest do
 
     sup = HalC2.Prop.start_services([{Store, path: Store.home_path()}])
 
-    for id <- @streams do
+    for id <- [@importing | @streams] do
       {:ok, _} = Store.append([{:thread, id, [{"thread", id, %{"s" => %{"id" => id}}}]}])
       :ok = Store.put_shell(id, 1, initial_row(id))
     end
+
+    :ok = import_unfinished(@importing)
 
     {:ok, _} = Supervisor.start_child(sup, Shell)
 
@@ -378,6 +406,11 @@ defmodule HalC2.ShellPropTest do
     update_world(&%{&1 | seq: &1.seq + 1})
     :ok = Store.put_shell(id, world().seq, row(id, title))
   end
+
+  # An import of the stream stopped partway, or a retry made it whole: the store's
+  # mark `HalC2.Import.PreviousInstall` keeps.
+  def import_unfinished(id), do: Store.put_meta("import.thread." <> id, "files")
+  def import_finished(id), do: Store.delete_meta("import.thread." <> id)
 
   # The server alone stops and starts again, as a crash would.
   def restart do

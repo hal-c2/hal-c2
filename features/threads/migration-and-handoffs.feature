@@ -97,6 +97,64 @@ Feature: Carrying threads and context across servers and agents
     Then the user is told "Alpha" changed here and cannot be continued
     And that install does not offer "Alpha" as imported
 
+  @mc
+  Scenario: A thread whose import stopped partway is imported whole after the MC restarts
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    When the MC restarts
+    Then "Alpha" is not imported
+    And that install does not offer "Alpha" as imported
+    And the last message of "Alpha" in that install can be read again
+    When the user imports "Alpha" from that install
+    Then "Alpha" has all 2502 of its messages
+    And that install offers "Alpha" as imported
+
+  @mc
+  Scenario: A thread whose files could not be brought stays out of sight across a restart
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the attachment of "Alpha" cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    When the MC restarts
+    Then "Alpha" is not imported
+    And that install does not offer "Alpha" as imported
+    And the attachment of "Alpha" can be read again
+    When the user imports "Alpha" from that install
+    Then "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
+    And "Alpha" keeps its tie to the agent's session, with the turn it was running ended
+    And that install offers "Alpha" as imported
+
+  @mc
+  Scenario: A thread whose install now holds less than was imported is not continued
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the more messages of "Alpha" are gone from that install
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" cannot be continued, as its install now holds less
+    And that install does not offer "Alpha" as imported
+
+  @mc
+  Scenario: A thread partly imported into a project deleted since is not continued
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the last message of "Alpha" in that install can be read again
+    And the project "Alpha" was imported into is deleted here
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" cannot be continued, as its project is gone
+    And that install does not offer "Alpha" as imported
+
+  @mc
+  Scenario: A thread being imported is not imported a second time at once
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And an import of "Alpha" from that install is under way
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" is being imported already
+    And once the first import is done, "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
+
   @backlog @mc
   Scenario: A thread that changed here after its import stopped can be imported afresh
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"

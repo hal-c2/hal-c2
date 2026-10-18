@@ -359,6 +359,20 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "Which of `stream_ids` are streams here, as a `MapSet`, in one read of the stream index."
+  def streams_present(path, stream_ids) do
+    with_reader(path, fn db ->
+      {:ok, stmt} =
+        Sqlite3.prepare(
+          db,
+          "SELECT id FROM streams WHERE id IN (SELECT value FROM json_each(?1))"
+        )
+
+      :ok = Sqlite3.bind(stmt, [JSON.encode!(stream_ids)])
+      step_reduce(db, stmt, MapSet.new(), fn [id], acc -> MapSet.put(acc, id) end)
+    end)
+  end
+
   @doc "Latest snapshot of a stream, if any."
   @spec get_snapshot(String.t(), String.t()) :: {non_neg_integer, term} | nil
   def get_snapshot(path, stream_id) do

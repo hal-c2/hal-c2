@@ -156,7 +156,10 @@ defmodule HalC2.Shell do
     for name <- @tables, name not in held, do: :ets.new(name, table_options(name))
     :ok = :net_kernel.monitor_nodes(true)
     path = HalC2.Store.path()
-    stored = HalC2.Store.list_shell(path)
+    # A thread an import has not finished is not shown, nor settled by recovery, which
+    # works from these rows: a write to it here would keep a retry from continuing it.
+    unfinished = HalC2.Import.PreviousInstall.unfinished(path)
+    stored = for {id, _, _} = row <- HalC2.Store.list_shell(path), id not in unfinished, do: row
     forget_former_names()
 
     # This run's version 0 is the rows in the store; rows kept from the last run that
@@ -177,7 +180,7 @@ defmodule HalC2.Shell do
     # Peers already connected (this shell restarted) hold rows of its last run, and
     # it may have missed changes of theirs: each sends the other what it lacks.
     for peer <- connected, do: hello(peer, true)
-    backfill(path, MapSet.new(stored, &elem(&1, 0)))
+    backfill(path, MapSet.union(unfinished, MapSet.new(stored, &elem(&1, 0))))
     identify_repositories()
     {:ok, state}
   end

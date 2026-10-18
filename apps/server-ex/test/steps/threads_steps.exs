@@ -2813,8 +2813,13 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  step "{string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
-       %{args: [title]} = context do
+  step(
+    "{string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
+    %{args: [title]} = context,
+    do: t3_whole(context, title)
+  )
+
+  defp t3_whole(context, title) do
     id = context.t3.ids[title]
 
     texts =
@@ -2963,6 +2968,88 @@ defmodule HalC2.Steps.Threads do
 
     assert message =~ "changed here after its import stopped"
     context
+  end
+
+  step "the more messages of {string} are gone from that install",
+       %{args: [title]} = context do
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, """
+      DELETE FROM orchestration_events
+      WHERE stream_id = ?1 AND occurred_at = '2026-09-01T12:00:00.000Z'
+      """)
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [context.t3.ids[title]])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  step "the project {string} was imported into is deleted here", %{args: [_title]} = context do
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => "v2-project"})
+    HalC2.Streams.flush_shell("v2-project")
+    context
+  end
+
+  step "the user is told {string} cannot be continued, as its install now holds less",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "holds more here than its install now has"
+    context
+  end
+
+  step "the user is told {string} cannot be continued, as its project is gone",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "into a project that is no longer here"
+    context
+  end
+
+  # The import runs in a process of its own, held at its first progress until the
+  # scenario lets it go.
+  step "an import of {string} from that install is under way", %{args: [title]} = context do
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [context.t3.ids[title]]}
+
+    task =
+      Task.async(fn ->
+        HalC2.Import.PreviousInstall.import_threads(input, fn _progress ->
+          if Process.put(:held, true) == nil do
+            send(test, {:import_held, self()})
+            receive do: (:go -> :ok)
+          end
+
+          :ok
+        end)
+      end)
+
+    assert_receive {:import_held, _}, 30_000
+    context |> Map.put(:t3_first_import, task) |> put_in([:threads, title], context.t3.ids[title])
+  end
+
+  step "the user is told {string} is being imported already", %{args: [title]} = context do
+    assert t3_failure(context, title) == "It is being imported already."
+    context
+  end
+
+  step "once the first import is done, {string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
+       %{args: [title]} = context do
+    task = context.t3_first_import
+    send(task.pid, :go)
+    id = context.t3.ids[title]
+    assert {:ok, %{"imported" => [^id], "failed" => []}} = Task.await(task, 30_000)
+
+    t3_whole(context, title)
+  end
+
+  defp t3_failure(context, title) do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    message
   end
 
   defp t3_more_message(id, k) do

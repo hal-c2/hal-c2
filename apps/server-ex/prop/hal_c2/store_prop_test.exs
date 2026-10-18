@@ -70,6 +70,7 @@ defmodule HalC2.StorePropTest do
         {1, {:call, __MODULE__, :meta, [meta_key()]}},
         {1, {:call, __MODULE__, :metas, [oneof(["k", "p.", "p", "p.\u{10FFFF}"])]}},
         {2, {:call, __MODULE__, :stream_tail, [stream_id()]}},
+        {1, {:call, __MODULE__, :streams_present, [resize(4, list(stream_id()))]}},
         {1, {:call, __MODULE__, :list_streams, []}},
         {1, {:call, __MODULE__, :store_id, []}},
         {1, {:call, __MODULE__, :checkpoint, []}},
@@ -256,6 +257,9 @@ defmodule HalC2.StorePropTest do
     result == {length(events), last}
   end
 
+  def postcondition(state, {:call, _, :streams_present, [ids]}, result),
+    do: result == MapSet.new(Enum.filter(ids, &known?(state, &1)))
+
   def postcondition(state, {:call, _, :store_id, []}, result) do
     if state.store_id,
       do: result == state.store_id,
@@ -336,6 +340,7 @@ defmodule HalC2.StorePropTest do
   def delete_meta(key), do: Store.delete_meta(key)
   def metas(prefix), do: Store.metas(Store.path(), prefix)
   def stream_tail(id), do: Store.stream_tail(Store.path(), id)
+  def streams_present(ids), do: Store.streams_present(Store.path(), ids)
   def list_streams, do: Store.list_streams(Store.path())
   def store_id, do: Store.id()
   def checkpoint, do: Store.checkpoint()

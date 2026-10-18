@@ -22,12 +22,14 @@ defmodule HalC2.Import.PreviousInstall do
 
   @databases ~w(statev2.sqlite state.sqlite)
 
-  # The store's mark on a thread being imported: "events" from before its stream is
-  # made until all its events are in (`Import.V2` writes them in batches), then "files"
-  # until its files are brought, when the mark goes.
+  # The store's mark on a thread being imported: "events:" and the project it goes to
+  # from before its stream is made until all its events are in (`Import.V2` writes them
+  # in batches), then "files" until its files are brought, when the mark goes.
   @mark_prefix "import.thread."
-  @events "events"
+  @events "events:"
   @files "files"
+  @project_gone {:error,
+                 "It was partly imported into a project that is no longer here, so it cannot be continued."}
 
   @doc "The installs found on this machine: `[%{\"path\", \"label\"}]`."
   def sources(env \\ System.get_env(), user_home \\ Paths.user_home()) do
@@ -58,7 +60,7 @@ defmodule HalC2.Import.PreviousInstall do
   """
   def scan(%{"source" => path}) do
     with {:ok, index} <- index(path) do
-      done = done()
+      done = done(MapSet.new(Store.list_streams(Store.path()), & &1.id), marks())
 
       threads =
         for thread <- Map.values(index.threads), thread.parent == nil do
@@ -71,7 +73,7 @@ defmodule HalC2.Import.PreviousInstall do
             "updatedAt" => thread.updated_at,
             "subagents" => length(family(index, thread.id)) - 1,
             "settled" => thread.settled,
-            "imported" => todo(index, thread.id, done) == []
+            "imported" => todo(family(index, thread.id), done) == []
           }
         end
 
@@ -111,35 +113,47 @@ defmodule HalC2.Import.PreviousInstall do
   # `report` hears how far the thread is: its events read, then its threads finished.
   # A thread whose stream is here but whose events or files were not all brought (the
   # import failed or the MC stopped) is marked so in the store, and a retry continues it
-  # rather than answering "already here": its events after those already in, then its files.
+  # rather than answering "already here": its events after those already in, then its
+  # files. The marks are state, not a lock: two imports of one thread at once are kept
+  # apart by a lock on it, which goes with the process holding it.
   defp import_thread(path, index, files, id, report) do
-    here = here()
-    marks = marks()
-    done = done(here, marks)
+    case :global.trans(
+           {{__MODULE__, id}, self()},
+           fn -> import_free(path, index, files, id, report) end,
+           [node()],
+           0
+         ) do
+      :aborted -> {:error, "It is being imported already."}
+      result -> result
+    end
+  end
 
+  defp import_free(path, index, files, id, report) do
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
-         [_ | _] = missing <- todo(index, id, done),
-         {:ok, project, target} <- target(index.projects[thread.project]) do
+         family = family(index, id),
+         here = Store.streams_present(Store.path(), family),
+         marks = marks(),
+         [_ | _] = missing <- todo(family, done(here, marks)),
+         # Absent here, or here with only some of their events. `here` and `marks` are
+         # read before the marks below are put, so only streams an earlier import left
+         # resume, and only into the project they were going to.
+         reading = Enum.filter(missing, &(not MapSet.member?(here, &1) or events?(marks[&1]))),
+         resumed = Enum.filter(reading, &MapSet.member?(here, &1)),
+         {:ok, project, target} <- target(index.projects[thread.project], resumed == []),
+         :ok <- same_project(resumed, marks, target["id"]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
 
       events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
       threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
 
-      # Absent here, or here with only some of their events. `here` and `marks` are read
-      # before the marks below are put, so only streams an earlier import left resume.
-      reading = Enum.filter(missing, &(not MapSet.member?(here, &1) or marks[&1] == @events))
-      Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @events)))
+      Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @events <> target["id"])))
 
       if reading != [] do
         {:ok, _} =
           HalC2.Import.V2.run(database(path), Store,
             only: reading,
-            resume:
-              Map.new(
-                Enum.filter(reading, &MapSet.member?(here, &1)),
-                &{&1, Store.stream_tail(Store.path(), &1)}
-              ),
+            resume: Map.new(resumed, &{&1, Store.stream_tail(Store.path(), &1)}),
             rewrite: rewrite,
             progress: events
           )
@@ -164,6 +178,14 @@ defmodule HalC2.Import.PreviousInstall do
     error -> {:error, "It could not be read: #{Exception.message(error)}"}
   end
 
+  # The events already stored were rewritten into the project they were imported into;
+  # the rest must land there too, or the thread would hold two projects' ids.
+  defp same_project(resumed, marks, project_id) do
+    if Enum.all?(resumed, &(marks[&1] == @events <> project_id)), do: :ok, else: @project_gone
+  end
+
+  defp events?(mark), do: is_binary(mark) and String.starts_with?(mark, @events)
+
   # The files of an imported thread, and its row in the sidebar.
   defp finish(path, files, id) do
     state = StreamState.load(Store.path(), id)
@@ -187,19 +209,23 @@ defmodule HalC2.Import.PreviousInstall do
     with {_, _} = kind_row <- HalC2.Projection.rebuild(id), do: HalC2.Shell.put_row(id, kind_row)
   end
 
-  # The project here at the source project's folder, made when there is none.
-  defp target(nil), do: {:error, "Its project is gone from the install."}
+  # The project here at the source project's folder, made when there is none and
+  # `create?` (a thread partly imported is continued only in the project it went to).
+  defp target(nil, _create?), do: {:error, "Its project is gone from the install."}
 
-  defp target(project) do
+  defp target(project, create?) do
     root = Path.expand(project.root)
 
     case Enum.find(ThreadArchive.local_projects(), &(Path.expand(&1["workspaceRoot"]) == root)) do
       %{} = local ->
         {:ok, project, local}
 
+      nil when not create? ->
+        @project_gone
+
       nil ->
-        id =
-          if MapSet.member?(here(), project.id), do: HalC2.Environment.uuid4(), else: project.id
+        taken? = MapSet.member?(Store.streams_present(Store.path(), [project.id]), project.id)
+        id = if taken?, do: HalC2.Environment.uuid4(), else: project.id
 
         input = %{
           "type" => "project.create",
@@ -226,12 +252,10 @@ defmodule HalC2.Import.PreviousInstall do
   defp family(index, id),
     do: [id | Enum.flat_map(Map.get(index.children, id, []), &family(index, &1))]
 
-  defp here, do: MapSet.new(Store.list_streams(Store.path()), & &1.id)
-
   # The threads here whole: their streams are here and no mark says their events or
-  # files are not. Read once for all threads, not one store read per thread.
-  defp done(here \\ here(), marks \\ marks()),
-    do: MapSet.reject(here, &(marks[&1] in [@events, @files]))
+  # files are not. Any mark counts, whatever it says, so one this MC does not know
+  # leaves the thread to be imported again rather than taken as whole.
+  defp done(here, marks), do: MapSet.reject(here, &Map.has_key?(marks, &1))
 
   defp marks do
     for {key, mark} <- Store.metas(Store.path(), @mark_prefix),
@@ -239,8 +263,18 @@ defmodule HalC2.Import.PreviousInstall do
         do: {String.replace_prefix(key, @mark_prefix, ""), mark}
   end
 
+  @doc """
+  The streams an import has not finished bringing here: they are left out of the
+  sidebar until a retry makes them whole (`HalC2.Shell`).
+  """
+  def unfinished(path) do
+    for {key, _} <- Store.metas(path, @mark_prefix),
+        into: MapSet.new(),
+        do: String.replace_prefix(key, @mark_prefix, "")
+  end
+
   # The threads of a family still to bring: absent here, or here without their files.
-  defp todo(index, id, done), do: Enum.reject(family(index, id), &MapSet.member?(done, &1))
+  defp todo(family, done), do: Enum.reject(family, &MapSet.member?(done, &1))
 
   defp mark_key(id), do: @mark_prefix <> id
 

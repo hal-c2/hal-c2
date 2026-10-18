@@ -26,7 +26,10 @@ defmodule HalC2.Import.V2 do
   `%{id => {count, last}}`: their changes there and the last of them (`{kind, entity,
   patch, at}`). The import is deterministic, so those streams continue after their first
   `count` changes; one whose last change is not the import's own raises instead, since
-  something else wrote to it and its history can no longer be continued.
+  something else wrote to it and its history can no longer be continued, and so does
+  one holding more changes than the source now gives. Determinism needs the same
+  `:rewrite` as the stopped import: the caller resumes a stream only into the project
+  it was going to (`HalC2.Import.PreviousInstall`).
   """
 
   @quiet_events ["thread.visited", "thread.marked-unread"]
@@ -178,7 +181,11 @@ defmodule HalC2.Import.V2 do
     }
 
     acc = step(db, stmt, acc, store, stream_kind, stream_id)
-    if acc.skip > 0, do: raise(diverged(stream_id))
+
+    if acc.skip > 0,
+      do:
+        raise("#{stream_id} holds more here than its install now has, so it cannot be continued")
+
     acc = flush(acc, store, stream_kind, stream_id)
     HalC2.Projection.rebuild(store, stream_id)
     Map.take(acc, [:source_events, :events, :source_bytes, :bytes])
