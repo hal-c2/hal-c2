@@ -111,10 +111,20 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  test "an MC that cannot read its own start time records nothing" do
+    # Its records would name an owner no later boot could tell from a live MC.
+    boot(:blind, owner: %{"pid" => String.to_integer(System.pid()), "started" => nil})
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert File.ls!(Orphans.dir()) == []
+    {:ok, _} = Subprocess.stop(sub)
+  end
+
   test "an MC that exited but was not reaped yet is gone" do
-    # A zombie: the shell forks a child that exits, then becomes `sleep`, which never
-    # waits for it.
-    {:ok, holder} = Exile.Process.start_link(["sh", "-c", "true & echo $!; exec sleep 60"])
+    # A zombie: the shell forks a child, then becomes `sleep`, which never waits for it.
+    # The child exits only once its parent is `sleep`, so the shell cannot reap it first.
+    child = ~S{sh -c 'while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done'}
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & echo $!; exec sleep 60"])
     {:ok, line} = Exile.Process.read(holder)
     zombie = line |> String.trim() |> String.to_integer()
     await_zombie(zombie, 500)
@@ -134,9 +144,17 @@ defmodule HalC2.Subprocess.OrphansTest do
   defp await_zombie(pid, tries) when tries > 0 do
     case File.read("/proc/#{pid}/stat") do
       {:ok, stat} ->
-        if stat |> String.split(")") |> List.last() |> String.split() |> hd() == "Z",
-          do: :ok,
-          else: await_zombie(pid, tries - 1)
+        if stat |> String.split(")") |> List.last() |> String.split() |> hd() == "Z" do
+          :ok
+        else
+          Process.sleep(10)
+          await_zombie(pid, tries - 1)
+        end
+
+      {:error, reason} ->
+        flunk("#{pid} was reaped before it was seen as a zombie: #{reason}")
     end
   end
+
+  defp await_zombie(pid, 0), do: flunk("#{pid} never became a zombie")
 end

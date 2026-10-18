@@ -36,10 +36,11 @@ defmodule HalC2.Subprocess.Orphans do
 
   @doc """
   Records the program `os_pid`, run by the Exile process `proc`, until `proc` ends.
-  The caller writes the record itself, so a program started while this service
-  restarts is still on disk for the next boot; only removing the record when the
-  program ends needs the service. `{:error, reason}` when the record could not be
-  written: the caller must stop the program rather than run it untracked. A no-op
+  `track/2` writes the record in the calling process, not in this service, so a
+  program started while the service restarts is still on disk for the next boot; only
+  removing the record when the program ends needs the service. `{:error, reason}` when
+  the record could not be written: the caller must stop the program rather than run it
+  untracked. A program already gone has no start time and nothing to record. A no-op
   when this service has not been started in this VM (tests, Mix tasks).
   """
   @spec track(pid, pos_integer) :: :ok | {:error, term}
@@ -130,7 +131,13 @@ defmodule HalC2.Subprocess.Orphans do
     dir = dir()
     HalC2.Paths.mkdir_private!(dir)
     reap(dir)
-    :persistent_term.put(__MODULE__, %{dir: dir, owner: owner})
+
+    # Without its own start time no later boot could tell this MC from one that reused
+    # its pid, so its records could get a live MC's programs killed: track nothing.
+    if owner["started"],
+      do: :persistent_term.put(__MODULE__, %{dir: dir, owner: owner}),
+      else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+
     {:ok, %{programs: %{}}}
   end
 
@@ -167,19 +174,38 @@ defmodule HalC2.Subprocess.Orphans do
       do: Logger.warning("killed #{length(killed)} programs an earlier MC left running")
   end
 
+  # The group first: the leader's pid names it. A program that survives keeps its
+  # record, so the next boot tries again.
+  defp kill(path, pid, started) do
+    case System.cmd("kill", ["-s", "KILL", "--", "-#{pid}", "#{pid}"], stderr_to_stdout: true) do
+      {_, 0} ->
+        File.rm(path)
+        :killed
+
+      {out, status} ->
+        if running?(%{"pid" => pid, "started" => started}) do
+          Logger.error(
+            "could not kill #{pid}, which an earlier MC left running: #{status} #{out}"
+          )
+
+          :kept
+        else
+          File.rm(path)
+          :killed
+        end
+    end
+  end
+
   defp reap_one(path) do
     with {:ok, text} <- File.read(path),
          {:ok, %{"pid" => pid, "started" => started, "mc" => %{"pid" => mc} = owner}}
-         when is_integer(pid) and is_integer(mc) <- JSON.decode(text) do
+         when is_integer(pid) and pid > 1 and is_integer(mc) <- JSON.decode(text) do
       cond do
         running?(owner) ->
           :kept
 
         started(pid) == started ->
-          # The group first: the leader's pid names it.
-          System.cmd("kill", ["-s", "KILL", "--", "-#{pid}", "#{pid}"], stderr_to_stdout: true)
-          File.rm(path)
-          :killed
+          kill(path, pid, started)
 
         true ->
           File.rm(path)

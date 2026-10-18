@@ -221,7 +221,12 @@ defmodule HalC2.SubprocessOrphansPropTest do
     exit_ref = sub.proc.exit_ref
 
     receive do
-      {:subprocess_eof, ^reader} -> receive(do: ({^exit_ref, {:ok, status}} -> status == 137))
+      {:subprocess_eof, ^reader} ->
+        receive do
+          {^exit_ref, {:ok, status}} -> status == 137
+        after
+          5_000 -> false
+        end
     after
       5_000 -> false
     end
