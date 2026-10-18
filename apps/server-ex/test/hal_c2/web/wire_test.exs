@@ -8,15 +8,23 @@ defmodule HalC2.Web.WireTest do
 
   defp item(progress), do: %{"id" => "i", "type" => "subagent", "progress" => progress}
 
-  # What a client holds after folding the wire patches of `suffixes` onto `start`.
+  # What a client holds after folding the wire patches of `suffixes` onto `start`. The
+  # socket coalesces the events of one flush (`HalC2.Web.Protocol.coalesce/1`), so the
+  # wire patches composed into one must leave the client holding the same.
   defp folded(start, suffixes) do
-    {client, _server} =
-      Enum.reduce(suffixes, {Wire.entity("turn-item", start), start}, fn suffix,
-                                                                         {client, server} ->
+    {sent, _server} =
+      Enum.map_reduce(suffixes, start, fn suffix, server ->
         patch = %{"a" => %{"progress" => suffix}}
-        sent = Wire.patch("turn-item", patch, "subagent", server)
-        {if(sent, do: Patch.apply(client, sent), else: client), Patch.apply(server, patch)}
+        {Wire.patch("turn-item", patch, "subagent", server), Patch.apply(server, patch)}
       end)
+
+    sent = Enum.reject(sent, &is_nil/1)
+    client = Enum.reduce(sent, Wire.entity("turn-item", start), &Patch.apply(&2, &1))
+
+    if sent != [] do
+      composed = Enum.reduce(sent, &Patch.compose(&2, &1))
+      assert Patch.apply(Wire.entity("turn-item", start), composed) == client
+    end
 
     client
   end

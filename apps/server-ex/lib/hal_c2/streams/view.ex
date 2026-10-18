@@ -176,6 +176,9 @@ defmodule HalC2.Streams.View do
   # later event of the commit is to the same item. What is folded is the item's
   # `Wire.cut_basis/1` and the patch's (`Wire.cut_basis_patch/1`), so each view's fold
   # stays within the wire's limit however long the text or an append is.
+  # It goes by the item's type at the end of the commit, where `Wire.patch/4` goes by the
+  # type a patch sets: they agree because an item changes its type only by a
+  # replacement (`"d"` with the whole new item), never by a set of `"type"` alone.
   defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch) do
     at =
       case running do

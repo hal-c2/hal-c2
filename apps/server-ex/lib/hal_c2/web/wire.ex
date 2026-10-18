@@ -56,8 +56,9 @@ defmodule HalC2.Web.Wire do
   holds past the limit. A client that has not followed the item's appends one by one
   (a replay) cannot be handed them cut; it is sent the item whole instead.
   """
-  def appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity),
-    do: Enum.any?(@cut_keys, &(is_map_key(appended, &1) and size(entity[&1]) > @max_detail))
+  def appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity)
+      when is_map(appended),
+      do: Enum.any?(@cut_keys, &(is_map_key(appended, &1) and size(entity[&1]) > @max_detail))
 
   def appends_past_limit?(_kind, _patch, _entity), do: false
 
@@ -152,9 +153,9 @@ defmodule HalC2.Web.Wire do
   # same first bytes whatever follows. The text appended to is the one the rest of
   # the patch leaves, as `HalC2.Patch.apply/2` has it: a delete or an unset empties
   # it, a set (cut before this) replaces it.
-  defp cut_appends(%{"a" => appended} = patch, was) do
+  defp cut_appends(%{"a" => appended} = patch, was) when is_map(appended) do
     Enum.reduce(appended, patch, fn
-      {key, suffix}, patch when key in @cut_keys ->
+      {key, suffix}, patch when key in @cut_keys and is_binary(suffix) ->
         held = held(patch, key, was)
         size = byte_size(held)
 
