@@ -76,6 +76,10 @@ Item {
                                                worktrees: [root.rule({})], artifacts: [] } };
             const page = createTemporaryObject(storageComponent, root);
             compare(findChild(page, "scopeNotice").text, "Reconnect the selected environment to change this setting.");
+            const notice = findChild(page, "scopeNotice");
+            const stripe = findChild(page, "scopeNoticeStripe");
+            verify(notice.height > 0);
+            compare(stripe.height, notice.height, "the stripe is as tall as the notice it marks");
             verify(!findChild(findChild(page, "storageRule:worktreeAfterDays"), "control").enabled);
             // An offline environment is marked where it is chosen.
             verify(findChild(page, "scopeEnvironment").model.indexOf("Build box · Offline") > 0);

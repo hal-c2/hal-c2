@@ -81,6 +81,7 @@ ColumnLayout {
         spacing: 8
 
         Rectangle {
+            objectName: "scopeNoticeStripe"
             Layout.fillHeight: true
             implicitWidth: 3
             radius: 1.5

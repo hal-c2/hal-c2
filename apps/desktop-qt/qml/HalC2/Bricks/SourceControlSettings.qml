@@ -28,11 +28,13 @@ SettingsPage {
     }
 
     // A command in a sentence, `like this`, set in the monospace face (as the web
-    // sets the tool it names): the rest of the sentence is escaped as plain text.
+    // sets the tool it names), for a rich-text label: the rest of the sentence
+    // is escaped as plain text, and so is the face's name (StyledText ignores a
+    // font face, so the span carries it as CSS).
     function withCode(text) {
-        const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const face = Theme.fontMono.length > 0 ? Theme.fontMono : "monospace";
-        return escaped.replace(/`([^`]+)`/g, '<font face="' + face + '">$1</font>');
+        const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"]/g, ""));
+        return escape(text).replace(/`([^`]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
     }
 
     objectName: "sourceControlSettings"
@@ -183,7 +185,7 @@ SettingsPage {
                         objectName: "summary"
                         Layout.fillWidth: !tool.modelData.hasAccount
                         text: tool.sourceControl.withCode(tool.modelData.summary)
-                        textFormat: Text.StyledText
+                        textFormat: Text.RichText
                         Accessible.name: tool.modelData.summary.replace(/`/g, "")
                     }
 

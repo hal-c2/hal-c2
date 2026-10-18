@@ -112,10 +112,10 @@ Item {
                              providers: [root.github({ summary: hint, hasAccount: false })] } }) };
             const page = createTemporaryObject(pageComponent, root);
             const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
-            compare(summary.textFormat, Text.StyledText);
-            verify(summary.text.includes("<font face="), summary.text);
+            compare(summary.textFormat, Text.RichText);
+            verify(summary.text.includes("font-family:"), summary.text);
             verify(!summary.text.includes("`"), summary.text);
-            verify(summary.text.includes(">gh</font>"), summary.text);
+            verify(summary.text.includes(">gh</span>"), summary.text);
             compare(summary.Accessible.name, hint.replace(/`/g, ""));
         }
 
@@ -170,7 +170,8 @@ Item {
             const page = createTemporaryObject(hostedComponent, root).page;
             waitForRendering(page);
             const summary = findChild(findChild(page, "sourceControlTool:gitlab"), "summary");
-            verify(summary.lineCount > 1);
+            // lineCount is not kept for rich text: the wrapped height says so.
+            verify(summary.contentHeight > summary.font.pixelSize * 2, "the summary wraps: " + summary.contentHeight);
             verify(summary.mapToItem(page, summary.width, 0).x <= page.width, "the summary stays on the page");
             const control = findChild(findChild(page, "autoPull"), "control");
             verify(control.mapToItem(page, control.width, 0).x <= page.width, "the page's controls stay on it");

@@ -164,5 +164,9 @@ defmodule HalC2.AcpTest do
 
     assert %{"status" => "disabled", "installed" => true, "version" => nil} =
              HalC2.Acp.entry("antigravity")
+
+    # Launching it would have kept its models or its failure.
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :models}, nil) == nil
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
   end
 end
