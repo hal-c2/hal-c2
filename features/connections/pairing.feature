@@ -49,13 +49,20 @@ Feature: Pairing a client with an environment
   @mc
   Scenario: An installed MC prints a pairing link from its single file
     When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
-    Then the printed link starts with that address
+    Then it prints the address with a one-time token
 
   @mc
   Scenario: A pairing command given an option it does not have says so
     Given an administrator's client
     When an operator asks for a pairing link with the option "--tailnet"
     Then the command fails naming "--tailnet"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A pairing command given two addresses says it takes one
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "https://a.example https://b.example"
+    Then the command fails naming "at most one"
     And no pairing link is listed
 
   @mc

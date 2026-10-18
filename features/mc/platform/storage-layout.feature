@@ -247,6 +247,13 @@ Feature: Where HAL-C2 keeps its files
       Then the developer is told the installed server is not running
       And no pairing token is made
 
+    @mc
+    Scenario: The installed server's own pair command never pairs with a development server
+      Given a development server is running with no HAL-C2 home configured
+      When an operator runs the installed server's own pair command
+      Then the operator is told the installed server is not running
+      And no pairing token is made
+
   Rule: The MC's files are sorted by kind
 
     Background:

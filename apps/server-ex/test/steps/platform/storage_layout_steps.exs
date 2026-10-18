@@ -166,7 +166,11 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     Storage.pair_release(context)
   end
 
-  step "the developer is told the installed server is not running", context do
+  step "an operator runs the installed server's own pair command", context do
+    Storage.pair_from_release(context)
+  end
+
+  step ~r/^the (?:developer|operator) is told the installed server is not running$/, context do
     assert {:error, message} = context.pair_output
     assert message =~ "The installed MC is not running"
     context

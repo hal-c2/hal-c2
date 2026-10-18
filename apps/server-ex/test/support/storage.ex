@@ -173,6 +173,23 @@ defmodule HalC2.Test.Storage do
   """
   def pair_release(context), do: pair_from(context, :dev, ["--release"])
 
+  @doc """
+  Runs the installed MC's own `pair` command (`hal-c2-service pair`: a release, so no
+  Mix and no home configured) whichever server the scenario runs.
+  """
+  def pair_from_release(context) do
+    previous = System.get_env("RELEASE_ROOT")
+    System.put_env("RELEASE_ROOT", Path.join(fs(context), "release"))
+
+    try do
+      pair_from(context, nil, [])
+    after
+      if previous,
+        do: System.put_env("RELEASE_ROOT", previous),
+        else: System.delete_env("RELEASE_ROOT")
+    end
+  end
+
   defp pair_from(context, profile, args) do
     guard!(context, profile)
     Application.put_env(:hal_c2, :home, profile)

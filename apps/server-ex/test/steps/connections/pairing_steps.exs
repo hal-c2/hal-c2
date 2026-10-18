@@ -37,6 +37,11 @@ defmodule HalC2.Steps.Connections.Pairing do
     Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, [option]))
   end
 
+  step "an operator asks for a pairing link with the arguments {string}",
+       %{args: [arguments]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, String.split(arguments)))
+  end
+
   step "the command fails naming {string}", %{args: [option]} = context do
     assert {:error, message} = context.refusal
     assert message =~ option
