@@ -28,6 +28,15 @@ defmodule HalC2.Pi.ThreadRuntime do
   @state_version 2
   @registry HalC2.Pi.Registry
 
+  # How long a call to Pi waits on its answer; the session's stats, read as a turn
+  # settles, wait less, so a slow Pi does not hold the turn's end.
+  @call_ms 60_000
+  @stats_ms 2_000
+  # A steer's caller gives Pi this long to answer it and, if that ends the turn, waits
+  # on the turn's settling too (`settle/1`: one call, then the stats).
+  @steer_answer_ms 33_000
+  @steer_ms @steer_answer_ms + @call_ms + @stats_ms
+
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
@@ -46,14 +55,13 @@ defmodule HalC2.Pi.ThreadRuntime do
   starts a run if the turn settled meanwhile. Either way the turn ends at the
   `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
   Returns once Pi answered: its refusal is the error. A refusal that ends the turn
-  returns once the turn is recorded (`settle/1`, which waits on Pi for up to 62 s),
-  so the wait covers Pi's answer and that.
+  returns once the turn is recorded (`settle/1`), so the wait covers Pi's answer and that.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Pi turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 95_000)
+      pid -> GenServer.call(pid, {:steer, run_id, message}, @steer_ms)
     end
   end
 
@@ -360,7 +368,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp fork_first(_state, turn), do: {:ok, turn}
 
   defp cut(_conn, nil), do: {:ok, nil}
-  defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, 60_000)
+  defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, @call_ms)
 
   # HAL-C2's extension reads the access mode when Pi starts, so a new mode is a new Pi.
   defp open(%{conn: conn, instance: instance, mode: mode} = state, turn)
@@ -430,7 +438,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp remember_model(state, _model), do: state
 
-  defp call(state, type, params), do: Connection.call(state.conn, type, params, 60_000)
+  defp call(state, type, params), do: Connection.call(state.conn, type, params, @call_ms)
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp select_model(state, model)
@@ -900,7 +908,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       end
 
     state =
-      case Connection.call(state.conn, "get_session_stats", %{}, 2_000) do
+      case Connection.call(state.conn, "get_session_stats", %{}, @stats_ms) do
         {:ok, %{"contextUsage" => %{"tokens" => used, "contextWindow" => window}} = stats}
         when is_integer(used) and is_integer(window) and window > 0 ->
           totals = stats["tokens"] || %{}
