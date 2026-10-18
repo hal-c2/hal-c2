@@ -842,11 +842,11 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
   });
   Queued queued;
   for (const QJsonObject& run : waiting) {
+    // Held is the queue's, listed run or not; the card shows it only with a run to list.
+    queued.held = queued.held || run.value(QLatin1String("queueHeld")).toBool();
     const QString runId = run.value(QLatin1String("id")).toString();
     const auto found = messages.constFind(run.value(QLatin1String("userMessageId")).toString());
     if (found == messages.cend()) continue;
-    // Held is read from the runs the card lists, so a queue is never held with nothing to show.
-    queued.held = queued.held || run.value(QLatin1String("queueHeld")).toBool();
     const QJsonObject& message = *found;
     if (message.value(QLatin1String("notification")).isObject() || message.value(QLatin1String("delegatedCompletion")).isObject() ||
         message.value(QLatin1String("providerWake")).toBool()) {

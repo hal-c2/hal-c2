@@ -2089,12 +2089,12 @@ bool ComposerController::resumeQueue() {
   const QString key = m_thread;
   NativeShell* shell = NativeShell::of(this)->shell();
   const QString windowId = NativeShell::of(this)->id();
-  Kept& kept = m_kept;
-  kept.resuming.insert(key);
+  m_kept.resuming.insert(key);
   m_client->dispatchCommand(m_client, thread->environmentId,
                             QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
-                            [shell, &kept, key, windowId](const QJsonValue&, const std::optional<QString>& error) {
-                              kept.resuming.remove(key);
+                            [shell = QPointer<NativeShell>(shell), key, windowId](const QJsonValue&, const std::optional<QString>& error) {
+                              if (!shell) return;
+                              shell->common<Kept>().resuming.remove(key);
                               if (error) {
                                 NativeWindow* window = shell->window(windowId);
                                 if (!window) window = shell->activeWindow();
@@ -2102,10 +2102,15 @@ bool ComposerController::resumeQueue() {
                               }
                               publishEverywhere(shell);
                             });
-  publishEverywhere(shell);
+  // This window greys the button now, so a second click cannot ask again; the
+  // others follow on the next turn of the loop, as a draft change does.
+  publish();
+  spread();
   return true;
 }
 
+// The reply comes from the event loop, not from a command being handled, so
+// every window, this one gone or not, can republish at once.
 void ComposerController::publishEverywhere(NativeShell* shell) {
   for (const auto& window : shell->windows()) {
     if (auto* composer = window->controller<ComposerController>()) composer->publish();
@@ -2397,7 +2402,8 @@ QVariantMap ComposerController::turnState() const {
   const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
   state.insert(QStringLiteral("queue"), queued.queue);
   state.insert(QStringLiteral("waiting"), queued.waiting);
-  state.insert(QStringLiteral("queueHeld"), queued.held);
+  // Held with nothing listed shows no card, so it offers no resume either.
+  state.insert(QStringLiteral("queueHeld"), queued.held && (!queued.queue.isEmpty() || !queued.waiting.isEmpty()));
   return state;
 }
 

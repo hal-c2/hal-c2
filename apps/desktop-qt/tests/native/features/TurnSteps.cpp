@@ -595,6 +595,10 @@ const Steps steps([] {
     const QJsonObject command = lastCommand(world, QStringLiteral("queue.resume"));
     expect(command.value(QLatin1String("threadId")) == kThread, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
+  step(QStringLiteral("the MC is not asked to resume the queue"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> found = commandsOf(world, QStringLiteral("queue.resume"));
+    expect(found.isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
 
   // Editing a queued message.
   step(QStringLiteral("the user starts editing the last queued message from the start of the composer"), [](World& world, const Captures&, const Table&) {

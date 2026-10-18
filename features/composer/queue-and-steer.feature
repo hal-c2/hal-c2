@@ -344,3 +344,13 @@ Feature: Follow-ups while the agent is working
     And the MC refuses "queue.resume" with "thread is archived"
     When the user resumes the queue
     Then the user sees an "error" toast "Failed to resume the queue." saying "thread is archived"
+
+  @desktop
+  Scenario: A resume while reconnecting is refused with a warning
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC stops accepting connections
+    And the MC drops the connection
+    When the user resumes the queue
+    Then the user sees a "warning" toast "Not connected: queue not resumed" saying "Reconnecting to the environment. Try again once it is connected."
+    And the MC is not asked to resume the queue

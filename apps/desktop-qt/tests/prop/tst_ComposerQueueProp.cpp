@@ -6,8 +6,8 @@
 // queues more behind a held one, runs and cancels queued messages, answers a
 // resume late or refuses it, and the connection drops with an answer
 // outstanding, or comes back before the streams are caught up. A second window
-// shows the same thread, and may close with its request outstanding; a refusal
-// shows in the window that asked, else in the main one.
+// shows the same thread or another, and may close with its request outstanding;
+// a refusal shows in the window that asked, else in the main one.
 
 #include "ComposerController.h"
 #include "FakeMc.h"
@@ -37,6 +37,8 @@ QString keyOf(const QString& thread) { return QStringLiteral("env-a:") + thread;
 // What the MC keeps for each thread: the queued runs, each held or not.
 struct Model {
   QString open = QStringLiteral("t1");
+  // The thread the second window shows, which the first window's can differ from.
+  QString secondAt = QStringLiteral("t1");
   QMap<QString, QList<bool>> queued;
   // Resumes sent to the MC, by thread, and the threads whose answer is outstanding.
   QMap<QString, int> resumes;
@@ -216,7 +218,10 @@ struct Sut {
   // Both windows show the thread.
   void open(const QString& thread) {
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(thread)}});
-    if (second) second->bridge()->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(thread)}});
+    if (second) openSecond(thread);
+  }
+  void openSecond(const QString& thread) {
+    second->bridge()->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(thread)}});
   }
 
   void closeSecond() {
@@ -263,10 +268,10 @@ struct Sut {
     RC_ASSERT(prop::until([&] { return done; }));
   }
 
-  void settle(const QString& thread) {
+  void settle(const QString& thread, bool inSecond = false) {
     barrier();
     RC_ASSERT(prop::until([&] {
-      const auto* timeline = native->controller<ThreadStore>()->timeline(keyOf(thread));
+      const auto* timeline = (inSecond ? second->controller<ThreadStore>() : native->controller<ThreadStore>())->timeline(keyOf(thread));
       return timeline && timeline->status() == QLatin1String("live");
     }));
   }
@@ -286,14 +291,17 @@ void verify(const Model& m, Sut& sut) {
   // Until the streams catch up the windows show what they last knew.
   if (m.stale) return;
   sut.settle(m.open);
-  // The windows agree, and a request one asked shows in the other.
+  // A request one window asked shows in the other when it shows the same thread.
   RC_ASSERT(m.secondOpen == !sut.second.isNull());
-  for (const QVariantMap& turn : m.secondOpen ? QList<QVariantMap>{sut.turn(), sut.secondTurn()} : QList<QVariantMap>{sut.turn()}) {
-    RC_ASSERT(turn.value(QStringLiteral("threadKey")).toString() == keyOf(m.open));
-    RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.held(m.open));
-    RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(m.open));
-    RC_ASSERT(int(turn.value(QStringLiteral("queue")).toList().size()) == m.queued.value(m.open).size());
-  }
+  if (m.secondOpen) sut.settle(m.secondAt, true);
+  const auto agrees = [&](const QVariantMap& turn, const QString& thread) {
+    RC_ASSERT(turn.value(QStringLiteral("threadKey")).toString() == keyOf(thread));
+    RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.held(thread));
+    RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(thread));
+    RC_ASSERT(int(turn.value(QStringLiteral("queue")).toList().size()) == m.queued.value(thread).size());
+  };
+  agrees(sut.turn(), m.open);
+  if (m.secondOpen) agrees(sut.secondTurn(), m.secondAt);
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -301,12 +309,24 @@ using Command = rc::state::Command<Model, Sut>;
 struct Open : Command {
   QString thread = pick(kThreads);
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
-  void apply(Model& m) const override { m.open = thread; }
+  void apply(Model& m) const override { m.open = m.secondAt = thread; }
   void run(const Model& m0, Sut& sut) const override {
     sut.open(thread);
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Open(" << thread.toStdString() << ")"; }
+};
+
+// The second window goes to another thread, leaving the first where it is.
+struct OpenSecond : Command {
+  QString thread = pick(kThreads);
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && m.secondOpen); }
+  void apply(Model& m) const override { m.secondAt = thread; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.openSecond(thread);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "OpenSecond(" << thread.toStdString() << ")"; }
 };
 
 // A message queued behind the turn: held when the queue is.
@@ -350,7 +370,7 @@ struct Leave : Command {
   void show(std::ostream& os) const override { os << (cancel ? "Cancel(" : "Start(") << thread.toStdString() << ")"; }
 };
 
-// "Resume queue" on the open thread, in either window. It asks the MC only for
+// "Resume queue" on the thread a window shows, in either window. It asks the MC only for
 // a queue that is held, has no resume outstanding (in any window) and is
 // current (a held one that is not current says it is not connected); the MC answers at once, late, or by refusing, and a refusal leaves
 // the queue held and says so.
@@ -359,16 +379,17 @@ struct Resume : Command {
   explicit Resume(const Model& m) : inSecond(m.secondOpen && *rc::gen::arbitrary<bool>()) {}
   void checkPreconditions(const Model& m) const override { RC_PRE(!inSecond || m.secondOpen); }
   void apply(Model& m) const override {
-    if (m.stale && m.held(m.open)) ++(inSecond ? m.secondWarnings : m.warnings);
-    if (m.stale || !m.held(m.open) || m.pending.contains(m.open)) return;
-    ++m.resumes[m.open];
+    const QString thread = inSecond ? m.secondAt : m.open;
+    if (m.stale && m.held(thread)) ++(inSecond ? m.secondWarnings : m.warnings);
+    if (m.stale || !m.held(thread) || m.pending.contains(thread)) return;
+    ++m.resumes[thread];
     if (m.holding) {
-      m.pending.insert(m.open, m.refusing);
-      m.askedInSecond.insert(m.open, inSecond);
+      m.pending.insert(thread, m.refusing);
+      m.askedInSecond.insert(thread, inSecond);
     } else if (m.refusing) {
       m.fail(inSecond);
     } else {
-      m.queued[m.open].fill(false);
+      m.queued[thread].fill(false);
     }
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -503,7 +524,7 @@ private slots:
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Enqueue, Enqueue, HoldQueue, HoldQueue, Leave,
-                                                                                 Resume, Resume, Resume, Hold, Refuse, AnswerHeld, Drop, CloseSecond,
+                                                                                 Resume, Resume, Resume, OpenSecond, Hold, Refuse, AnswerHeld, Drop, CloseSecond,
                                                                                  Reconnect, CatchUp>()));
       rc::state::runAll(commands, model, sut);
     }));

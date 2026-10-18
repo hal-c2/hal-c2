@@ -575,7 +575,7 @@ Item {
                         objectName: "queueResume"
                         implicitHeight: 24
                         subtle: true
-                        text: qsTr("Resume queue")
+                        text: requests.queueResuming ? qsTr("Resuming…") : qsTr("Resume queue")
                         enabled: !requests.queueResuming
                         onClicked: Shell.dispatch("composer.queue.resume", {})
                     }

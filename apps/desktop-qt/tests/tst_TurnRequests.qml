@@ -249,6 +249,7 @@ Item {
             Shell.publishTurn({ queue: [{ runId: "run-2", text: "later" }], queueHeld: true, queueResuming: true });
             waitForRendering(root);
             verify(!findChild(requests, "queueResume").enabled);
+            compare(findChild(requests, "queueResume").text, "Resuming…");
             // Folded, the held notice stays.
             mouseClick(findChild(requests, "queueToggle"));
             verify(!findChild(requests, "queueList").visible);

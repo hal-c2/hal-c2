@@ -196,8 +196,8 @@ private slots:
     const composer::Queued early = composer::queued({run}, {});
     QVERIFY(early.queue.isEmpty());
     QVERIFY(early.waiting.isEmpty());
-    // Nothing is listed, so nothing is held: the card that offers "Resume" is the list.
-    QVERIFY(!early.held);
+    // The queue is held all the same; the turn shows it only with a run listed.
+    QVERIFY(early.held);
 
     const composer::Queued later = composer::queued(
         {run}, {{QStringLiteral("message:a"),
@@ -205,6 +205,22 @@ private slots:
     QCOMPARE(later.queue.size(), 1);
     QCOMPARE(later.queue.first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("also update docs"));
     QVERIFY(later.held);
+  }
+
+  // A held run whose message has not landed yet, beside a listed run that is
+  // not held: the queue is held, so the card offers "Resume" at once.
+  void aHeldRunWithoutItsMessageHoldsTheListedQueue() {
+    const QJsonObject early{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                            {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                            {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const QJsonObject listed{{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                             {QStringLiteral("queueHeld"), false}, {QStringLiteral("queuePosition"), 1},
+                             {QStringLiteral("userMessageId"), QStringLiteral("message:b")}};
+    const composer::Queued queued = composer::queued(
+        {early, listed}, {{QStringLiteral("message:b"),
+                           {{QStringLiteral("id"), QStringLiteral("message:b")}, {QStringLiteral("text"), QStringLiteral("then this")}}}});
+    QCOMPARE(queued.queue.size(), 1);
+    QVERIFY(queued.held);
   }
 
   // A send the MC refused came back only into an empty draft: when the user

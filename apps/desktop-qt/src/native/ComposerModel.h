@@ -138,7 +138,7 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
 // is not the user's to edit, steer with or remove. A run whose message has not
 // arrived yet is in neither: which it is, and what it says, comes with the
 // message. `held` is the MC keeping the queue for the user (after a restart or a
-// usage limit) until it is resumed.
+// usage limit) until it is resumed, whether or not every run is listed yet.
 struct Queued {
   QVariantList queue;
   QVariantList waiting;
