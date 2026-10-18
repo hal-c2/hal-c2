@@ -354,3 +354,5 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the user sees a "warning" toast "Not connected: queue not resumed" saying "Reconnecting to the environment. Try again once it is connected."
     And the MC is not asked to resume the queue
+    When the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once

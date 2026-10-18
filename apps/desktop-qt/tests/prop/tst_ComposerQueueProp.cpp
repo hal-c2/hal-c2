@@ -3,7 +3,7 @@
 // (after a restart or a usage limit), and "Resume queue" asks the MC to
 // resume it, once at a time per thread (across windows) and only while it is
 // held and the thread's stream is current. The MC holds or releases queues,
-// queues more behind a held one, runs and cancels queued messages, answers a
+// queues more behind a held one (a run may reach the stream before its message), runs and cancels queued messages, answers a
 // resume late or refuses it, and the connection drops with an answer
 // outstanding, or comes back before the streams are caught up. A second window
 // shows the same thread or another, and may close with its request outstanding;
@@ -40,6 +40,10 @@ struct Model {
   // The thread the second window shows, which the first window's can differ from.
   QString secondAt = QStringLiteral("t1");
   QMap<QString, QList<bool>> queued;
+  // Queued runs whose message has not reached the stream: held with the queue, but
+  // not listed, so a queue of only these shows no card. Every run of a queue is held
+  // or none is, so the order of these among the listed ones does not matter.
+  QMap<QString, QList<bool>> unlisted;
   // Resumes sent to the MC, by thread, and the threads whose answer is outstanding.
   QMap<QString, int> resumes;
   QMap<QString, bool> pending;  // thread -> whether the MC will refuse it
@@ -50,7 +54,8 @@ struct Model {
   // asked, or in the main one once the asker has closed.
   int failures = 0;
   int secondFailures = 0;
-  // "Not connected: queue not resumed" warnings, in the window that asked.
+  // "Not connected: queue not resumed" warnings, in the window that asked: one however
+  // often it was asked while the toast showed (the clock is fixed, so it stays).
   int warnings = 0;
   int secondWarnings = 0;
   bool secondOpen = true;
@@ -58,7 +63,14 @@ struct Model {
   // windows show may be out of date.
   bool stale = false;
 
-  bool held(const QString& thread) const { return queued.value(thread).contains(true); }
+  bool held(const QString& thread) const { return queued.value(thread).contains(true) || unlisted.value(thread).contains(true); }
+  // What the composer shows: the queue is held, and a run is listed to resume.
+  bool shown(const QString& thread) const { return held(thread) && !queued.value(thread).isEmpty(); }
+  bool any(const QString& thread) const { return !queued.value(thread).isEmpty() || !unlisted.value(thread).isEmpty(); }
+  void release(const QString& thread) {
+    queued[thread].fill(false);
+    unlisted[thread].fill(false);
+  }
   void fail(bool inSecond) { ++(inSecond && secondOpen ? secondFailures : failures); }
   // The connection dropped: every outstanding resume failed.
   void failPending() {
@@ -76,6 +88,8 @@ struct Sut {
   // Each thread's queued runs and their messages, as its stream holds them.
   QMap<QString, QList<QJsonObject>> runs;
   QMap<QString, QList<QJsonObject>> messages;
+  // The messages of runs enqueued ahead of them, not yet on the stream.
+  QMap<QString, QList<QJsonObject>> late;
   int seq = 0;
   // A second window on the same MC, until it is closed.
   QPointer<NativeWindow> second;
@@ -196,6 +210,29 @@ struct Sut {
     publish(thread, QStringLiteral("run"), queued);
   }
 
+  // A run queued whose message the stream has not brought yet.
+  void enqueueRun(const QString& thread, bool held) {
+    const int n = ++counter;
+    const QString message = QStringLiteral("message-%1").arg(n);
+    const QString run = QStringLiteral("run-%1").arg(n);
+    late[thread].append(QJsonObject{{QStringLiteral("id"), message}, {QStringLiteral("role"), QStringLiteral("user")},
+                                    {QStringLiteral("createdBy"), QStringLiteral("user")},
+                                    {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
+                                    {QStringLiteral("text"), QStringLiteral("queued %1").arg(n)}});
+    const QJsonObject queued{{QStringLiteral("id"), run}, {QStringLiteral("ordinal"), n}, {QStringLiteral("queuePosition"), n},
+                             {QStringLiteral("status"), QStringLiteral("queued")}, {QStringLiteral("userMessageId"), message},
+                             {QStringLiteral("queueHeld"), held}};
+    runs[thread].append(queued);
+    publish(thread, QStringLiteral("run"), queued);
+  }
+
+  // The oldest such run's message reaches the stream.
+  void landMessage(const QString& thread) {
+    const QJsonObject text = late[thread].takeFirst();
+    messages[thread].append(text);
+    publish(thread, QStringLiteral("message"), text);
+  }
+
   // The first queued run of the thread leaves the queue (it starts, or is cancelled).
   void leave(const QString& thread, const QString& status) {
     for (QJsonObject& run : runs[thread]) {
@@ -296,7 +333,7 @@ void verify(const Model& m, Sut& sut) {
   if (m.secondOpen) sut.settle(m.secondAt, true);
   const auto agrees = [&](const QVariantMap& turn, const QString& thread) {
     RC_ASSERT(turn.value(QStringLiteral("threadKey")).toString() == keyOf(thread));
-    RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.held(thread));
+    RC_ASSERT(turn.value(QStringLiteral("queueHeld")).toBool() == m.shown(thread));
     RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(thread));
     RC_ASSERT(int(turn.value(QStringLiteral("queue")).toList().size()) == m.queued.value(thread).size());
   };
@@ -341,11 +378,40 @@ struct Enqueue : Command {
   void show(std::ostream& os) const override { os << "Enqueue(" << thread.toStdString() << ")"; }
 };
 
+// A message queued behind the turn whose run reaches the stream first.
+struct EnqueueRun : Command {
+  QString thread = pick(kThreads);
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(!m.stale && m.queued.value(thread).size() + m.unlisted.value(thread).size() < 3);
+  }
+  void apply(Model& m) const override { m.unlisted[thread].append(m.held(thread)); }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.enqueueRun(thread, m0.held(thread));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "EnqueueRun(" << thread.toStdString() << ")"; }
+};
+
+// The message of the oldest run listed without one arrives: it joins the queue.
+struct MessageLands : Command {
+  QString thread = pick(kThreads);
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && !m.unlisted.value(thread).isEmpty()); }
+  void apply(Model& m) const override { m.queued[thread].append(m.unlisted[thread].takeFirst()); }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.landMessage(thread);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "MessageLands(" << thread.toStdString() << ")"; }
+};
+
 // The MC restarted: what was queued waits for the user.
 struct HoldQueue : Command {
   QString thread = pick(kThreads);
-  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && !m.queued.value(thread).isEmpty()); }
-  void apply(Model& m) const override { m.queued[thread].fill(true); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale && m.any(thread)); }
+  void apply(Model& m) const override {
+    m.queued[thread].fill(true);
+    m.unlisted[thread].fill(true);
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.hold(thread);
     verify(nextState(m0), sut);
@@ -359,7 +425,7 @@ struct Leave : Command {
   QString thread = pick(kThreads);
   bool cancel = *rc::gen::arbitrary<bool>();
   void checkPreconditions(const Model& m) const override {
-    RC_PRE(!m.stale && !m.queued.value(thread).isEmpty());
+    RC_PRE(!m.stale && !m.queued.value(thread).isEmpty() && m.unlisted.value(thread).isEmpty());
     RC_PRE(cancel || !m.held(thread));
   }
   void apply(Model& m) const override { m.queued[thread].removeFirst(); }
@@ -380,8 +446,8 @@ struct Resume : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!inSecond || m.secondOpen); }
   void apply(Model& m) const override {
     const QString thread = inSecond ? m.secondAt : m.open;
-    if (m.stale && m.held(thread)) ++(inSecond ? m.secondWarnings : m.warnings);
-    if (m.stale || !m.held(thread) || m.pending.contains(thread)) return;
+    if (m.stale && m.shown(thread)) (inSecond ? m.secondWarnings : m.warnings) = 1;
+    if (m.stale || !m.shown(thread) || m.pending.contains(thread)) return;
     ++m.resumes[thread];
     if (m.holding) {
       m.pending.insert(thread, m.refusing);
@@ -389,7 +455,7 @@ struct Resume : Command {
     } else if (m.refusing) {
       m.fail(inSecond);
     } else {
-      m.queued[thread].fill(false);
+      m.release(thread);
     }
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -480,7 +546,7 @@ struct AnswerHeld : Command {
       if (it.value()) {
         m.fail(m.askedInSecond.value(it.key()));
       } else {
-        m.queued[it.key()].fill(false);
+        m.release(it.key());
       }
     }
     m.pending.clear();
@@ -523,7 +589,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Enqueue, Enqueue, HoldQueue, HoldQueue, Leave,
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Enqueue, Enqueue, EnqueueRun, MessageLands, HoldQueue, HoldQueue, Leave,
                                                                                  Resume, Resume, Resume, OpenSecond, Hold, Refuse, AnswerHeld, Drop, CloseSecond,
                                                                                  Reconnect, CatchUp>()));
       rc::state::runAll(commands, model, sut);

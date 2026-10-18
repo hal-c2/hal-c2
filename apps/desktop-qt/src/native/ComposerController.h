@@ -461,6 +461,8 @@ private:
   // Where the drafts' images are kept: shell-composer-images.json beside them.
   QString imagesPath() const;
   Kept& m_kept;
+  // This window's "Not connected: queue not resumed" toast, while it may still show.
+  QString m_notConnectedToast;
   QHash<QString, Draft>& m_drafts;
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.

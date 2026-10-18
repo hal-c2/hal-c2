@@ -2081,15 +2081,22 @@ bool ComposerController::resumeQueue() {
   if (!thread || m_kept.resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
   if (!m_client->isReady() || !m_store->synchronized() || !m_store->threadOnline(m_thread) || !m_timeline ||
       m_timeline->threadKey() != m_thread || m_timeline->status() != QLatin1String("live")) {
-    NativeShell::of(this)->controller<ToastController>()->show(
-        QStringLiteral("warning"), QStringLiteral("Not connected: queue not resumed"),
-        QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    // One warning however often the button is pressed while reconnecting: a toast
+    // still showing is renewed rather than stacked.
+    auto* toasts = NativeShell::of(this)->controller<ToastController>();
+    const QString title = QStringLiteral("Not connected: queue not resumed");
+    const QString description = QStringLiteral("Reconnecting to the environment. Try again once it is connected.");
+    if (m_notConnectedToast.isEmpty() || !toasts->replace(m_notConnectedToast, QStringLiteral("warning"), title, description, {}, 5000)) {
+      m_notConnectedToast = toasts->show(QStringLiteral("warning"), title, description);
+    }
     return true;
   }
   const QString key = m_thread;
   NativeShell* shell = NativeShell::of(this)->shell();
   const QString windowId = NativeShell::of(this)->id();
   m_kept.resuming.insert(key);
+  // The client is the reply's context, not this controller: the answer has to
+  // clear `resuming` even when this window has closed (a client drop fails the call).
   m_client->dispatchCommand(m_client, thread->environmentId,
                             QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
                             [shell = QPointer<NativeShell>(shell), key, windowId](const QJsonValue&, const std::optional<QString>& error) {
