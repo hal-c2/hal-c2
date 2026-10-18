@@ -210,6 +210,7 @@ void McPluginController::publish() {
   QVariantList environments;
   QVariantList pages;
   QHash<QString, int> pageAt;
+  QHash<QString, QStringList> offered;  // page key → the urls of its environments' copies that are ready
   QHash<QString, int> tabs;
   QVariantMap threadKinds;
   QVariantList slotParts;
@@ -258,11 +259,13 @@ void McPluginController::publish() {
                                    {QStringLiteral("url"), url(path)},
                                    {QStringLiteral("error"), failed(path)},
                                    {QStringLiteral("environments"), QStringList{environment}}});
+          if (!url(path).isEmpty()) offered[group].append(url(path));
           tabs[pageKey] += 1;
           continue;
         }
         QVariantMap merged = pages.at(pageAt.value(group)).toMap();
         merged.insert(QStringLiteral("environments"), merged.value(QStringLiteral("environments")).toStringList() << environment);
+        if (!url(path).isEmpty()) offered[group].append(url(path));
         if (merged.value(QStringLiteral("url")).toString().isEmpty() && !url(path).isEmpty()) {
           merged.insert(QStringLiteral("url"), url(path));
           merged.insert(QStringLiteral("error"), QString());
@@ -289,6 +292,22 @@ void McPluginController::publish() {
                                     {QStringLiteral("label"), label(environment)},
                                     {QStringLiteral("plugins"), plugins}});
   }
+  // A page keeps the copy it shows while that copy is still ready: the copies of one
+  // revision are interchangeable, and a page made anew from another copy's url would
+  // lose whatever it held. Only the first copy to be ready, or a new revision, sets it.
+  QHash<QString, QString> shown;
+  for (QVariant& value : pages) {
+    QVariantMap page = value.toMap();
+    const QString key = page.value(QStringLiteral("key")).toString();
+    const QString kept = m_pageUrls.value(key);
+    if (!kept.isEmpty() && offered.value(key).contains(kept)) {
+      page.insert(QStringLiteral("url"), kept);
+      page.insert(QStringLiteral("error"), QString());
+      value = page;
+    }
+    if (!page.value(QStringLiteral("url")).toString().isEmpty()) shown.insert(key, page.value(QStringLiteral("url")).toString());
+  }
+  m_pageUrls = shown;
   // A page split by version says which environments each of its tabs is for.
   for (QVariant& value : pages) {
     QVariantMap page = value.toMap();
