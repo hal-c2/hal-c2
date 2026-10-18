@@ -181,8 +181,35 @@ defmodule HalC2.AcpTest do
   end
 
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
-    # The agent tells the test it has the first read through a FIFO, which is the receipt
-    # that the read is in flight, and refuses `initialize` once the test writes to the other.
+    # The agent refuses `initialize` once the instance is forgotten.
+    forgotten_mid_read(dir, """
+    error = {"code": -32603, "message": "refused"}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}), flush=True)
+    """)
+
+    assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+  end
+
+  test "a read that was forgotten while it ran leaves nothing it read behind", %{tmp_dir: dir} do
+    # The agent answers: what it says after the instance is forgotten (its version,
+    # capabilities and models) must not stand as the new state.
+    forgotten_mid_read(dir, """
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+    model = {"id": "model", "currentValue": "stale", "options": [{"value": "stale", "name": "Stale"}]}
+    answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    """)
+
+    for key <- [:version, :capabilities, :models, :config, :error],
+        do: assert(:persistent_term.get({HalC2.Acp, "grok", key}, nil) == nil, inspect(key))
+  end
+
+  # Reads the grok instance from a fake agent that, holding the read's `initialize`
+  # (`request`), waits until the test has forgotten the instance and then runs `script`
+  # (Python). Returns once that read has published what it would and finished. The agent
+  # tells the test it holds the read, and where its probe runs, through a FIFO.
+  defp forgotten_mid_read(dir, script) do
     started = Path.join(dir, "started")
     release = Path.join(dir, "release")
     {_, 0} = System.cmd("mkfifo", [started, release])
@@ -190,12 +217,11 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
-    import json, sys
+    import json, os, sys
     request = json.loads(sys.stdin.readline())
-    open("#{started}", "w").write("started\\n")
+    open("#{started}", "w").write(os.getcwd() + "\\n")
     open("#{release}").read()
-    error = {"code": -32603, "message": "refused"}
-    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}), flush=True)
+    #{script}
     sys.stdin.read()
     """)
 
@@ -219,67 +245,20 @@ defmodule HalC2.AcpTest do
     :ok = HalC2.Settings.watch(self())
 
     # The first listing starts the read; the instance is forgotten while the agent holds
-    # it, as a scenario's teardown or a reload does, and the agent refuses afterwards.
+    # it, as a scenario's teardown or a reload does.
     HalC2.Acp.entry("grok")
     port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
-    assert_receive {^port, {:data, "started\n"}}, 10_000
+    assert_receive {^port, {:data, probe}}, 10_000
     HalC2.Acp.forget("grok")
     File.write!(release, "go\n")
-
-    assert_receive {:hal_c2_providers_changed, _}, 10_000
-    assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+    read_done(String.trim(probe))
   end
 
-  test "a read that was forgotten while it ran leaves nothing it read behind", %{tmp_dir: dir} do
-    # As above, but the agent answers: what it says after the instance is forgotten
-    # (its version, capabilities and models) must not stand as the new state.
-    started = Path.join(dir, "started")
-    release = Path.join(dir, "release")
-    {_, 0} = System.cmd("mkfifo", [started, release])
-    grok = Path.join(dir, "grok")
-
-    File.write!(grok, """
-    #!/usr/bin/env python3
-    import json, sys
-    def answer(request, result):
-        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
-    request = json.loads(sys.stdin.readline())
-    open("#{started}", "w").write("started\\n")
-    open("#{release}").read()
-    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
-    model = {"id": "model", "currentValue": "stale", "options": [{"value": "stale", "name": "Stale"}]}
-    answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
-    sys.stdin.read()
-    """)
-
-    File.chmod!(grok, 0o755)
-
-    {:ok, _} =
-      HalC2.Settings.put(
-        %{
-          "providerInstances" => %{
-            "grok" => %{
-              "driver" => "grok",
-              "enabled" => true,
-              "config" => %{"binaryPath" => grok}
-            }
-          }
-        },
-        0
-      )
-
-    on_exit(fn -> HalC2.Acp.forget("grok") end)
-    :ok = HalC2.Settings.watch(self())
-
-    HalC2.Acp.entry("grok")
-    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
-    assert_receive {^port, {:data, "started\n"}}, 10_000
-    HalC2.Acp.forget("grok")
-    File.write!(release, "go\n")
-
+  # Other services broadcast `providers_changed` too. The read's own broadcast follows
+  # the removal of its probe directory, which follows its publication, so the first
+  # broadcast seen once that directory is gone means the read is done.
+  defp read_done(probe) do
     assert_receive {:hal_c2_providers_changed, _}, 10_000
-
-    for key <- [:version, :capabilities, :models, :config, :error],
-        do: assert(:persistent_term.get({HalC2.Acp, "grok", key}, nil) == nil, inspect(key))
+    if File.exists?(probe), do: read_done(probe)
   end
 end

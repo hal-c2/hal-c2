@@ -2,16 +2,20 @@ defmodule HalC2.DiagnosticsTest do
   use ExUnit.Case, async: true
 
   test "the MC's own processes are listed and can be signalled, but no others" do
-    port = Port.open({:spawn_executable, "/bin/sleep"}, [:binary, args: ["30"]])
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary])
     {:os_pid, pid} = Port.info(port, :os_pid)
+    # Until the child execs, ps shows the kernel's placeholder name; an echo comes from
+    # cat itself, so it has exec'd by then.
+    Port.command(port, "ready\n")
+    assert_receive {^port, {:data, "ready\n"}}
 
     {:ok, %{"processes" => processes, "error" => %{"_tag" => "None"}}} =
-      processes_once_exec_done(pid)
+      HalC2.Diagnostics.processes()
 
     assert [root | _] = processes
     assert root["depth"] == 0
 
-    assert %{"startTimeMs" => started, "command" => "/bin/sleep 30"} =
+    assert %{"startTimeMs" => started, "command" => "/bin/cat"} =
              Enum.find(processes, &(&1["pid"] == pid))
 
     # Not the process that was seen: it restarted, or never was ours.
@@ -43,24 +47,5 @@ defmodule HalC2.DiagnosticsTest do
              HalC2.Diagnostics.host()
 
     assert total > 0 and available > 0 and available <= total
-  end
-
-  # Port.open says nothing about the child's exec, and until it happens ps shows the
-  # kernel's placeholder name ("[sleep]"). No receipt exists for the exec, so the listing
-  # is read again until the child has its command; the bound fails a child that never does.
-  defp processes_once_exec_done(pid, attempts \\ 300) do
-    {:ok, %{"processes" => processes}} = result = HalC2.Diagnostics.processes()
-
-    case Enum.find(processes, &(&1["pid"] == pid)) do
-      %{"command" => "/bin/sleep 30"} ->
-        result
-
-      _ when attempts > 0 ->
-        Process.sleep(10)
-        processes_once_exec_done(pid, attempts - 1)
-
-      _ ->
-        flunk("pid #{pid} never listed as /bin/sleep 30")
-    end
   end
 end

@@ -543,6 +543,7 @@ defmodule HalC2.Acp do
   end
 
   # Serializes a read's publication with `forget/1` for one instance, on this MC.
+  # Held by HalC2.Settings via forget/1: nothing under it may call Settings.
   defp locked(id, fun), do: :global.trans({{__MODULE__, id}, self()}, fun, [node()])
 
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
