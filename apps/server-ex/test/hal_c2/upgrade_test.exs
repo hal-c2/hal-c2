@@ -135,6 +135,43 @@ defmodule HalC2.UpgradeTest do
     assert Upgrade.manifest(unpacked)["marker"] == "second"
   end
 
+  test "a release reload names the installed MC by --root, else by the checkout's own home" do
+    home = &Mix.Tasks.HalC2.Upgrade.installed_home(&1, &2, "/home/u")
+
+    # A checkout's dev profile is not the installed MC's; a HAL_C2_MC_HOME is.
+    assert home.(nil, :dev) == {:ok, nil}
+    assert home.(nil, {:mc, "/srv/mc"}) == {:ok, {:mc, "/srv/mc"}}
+    assert home.("/srv/hal-c2", {:mc, "/srv/mc"}) == {:ok, {:root, "/srv/hal-c2"}}
+
+    # Roots `HalC2.Paths` would quietly trade for the user's profile.
+    for root <- ["/home/u/.t3", "/home/u/.hal-c2", "relative/dir", ""] do
+      assert {:error, reason} = home.(root, :dev)
+      assert reason =~ inspect(root)
+    end
+  end
+
+  test "a bundle replaced in the cache by any writer is unpacked again", %{tmp_dir: dir} do
+    :ok =
+      Source.put(
+        "2.0.0",
+        "darwin-arm64",
+        tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+      )
+
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+
+    # As a download from a peer or the release URL leaves it, or a put that stopped
+    # after writing: the new archive and its checksum, the old unpack still beside them.
+    second = tarball(dir, "second", %{"version" => "2.0.0", "marker" => "second"})
+    archive = Path.join(Source.cache_dir("2.0.0"), Source.file_name("2.0.0", "darwin-arm64"))
+    File.cp!(second, archive)
+    sum = Base.encode16(:crypto.hash(:sha256, File.read!(second)), case: :lower)
+    File.write!(archive <> ".sha256", sum)
+
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "second"
+  end
+
   # A bundle archive whose manifest is `manifest`, packed as `mix hal_c2.bundle` does.
   defp tarball(dir, name, manifest) do
     archive = Path.join(dir, name <> ".tar.gz")
@@ -254,12 +291,34 @@ defmodule HalC2.UpgradeTest do
   test "the step after a hot update is called by name, so the code that loads runs it" do
     # A local call stays in the module version making it, the one being replaced; a
     # call by name reaches the version the update just loaded.
-    {:ok, {HalC2.Upgrade, [imports: imports]}} =
-      :beam_lib.chunks(:code.which(HalC2.Upgrade), [:imports])
+    {:beam_file, HalC2.Upgrade, _, _, _, functions} =
+      :beam_disasm.file(:code.which(HalC2.Upgrade))
 
-    assert {HalC2.Upgrade, :after_hot_update, 2} in imports
+    calls = fn kinds ->
+      for {:function, name, arity, _, code} <- functions,
+          Enum.any?(code, &hot_step?(&1, kinds)),
+          do: {name, arity}
+    end
+
+    # Each path that hot loads code, by name; none of them locally.
+    assert Enum.sort(calls.([:call_ext, :call_ext_only, :call_ext_last])) ==
+             [load: 4, reload_code_path: 0]
+
+    assert calls.([:call, :call_only, :call_last]) == []
     assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
   end
+
+  # A call instruction of one of `kinds` to `after_hot_update/2`, by name or locally.
+  defp hot_step?(instruction, kinds) when is_tuple(instruction) do
+    steps = [
+      {:extfunc, HalC2.Upgrade, :after_hot_update, 2},
+      {HalC2.Upgrade, :after_hot_update, 2}
+    ]
+
+    elem(instruction, 0) in kinds and Enum.any?(Tuple.to_list(instruction), &(&1 in steps))
+  end
+
+  defp hot_step?(_instruction, _kinds), do: false
 
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, and one

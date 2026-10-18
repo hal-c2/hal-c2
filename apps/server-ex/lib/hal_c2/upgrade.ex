@@ -209,6 +209,10 @@ defmodule HalC2.Upgrade do
   # what still needs a restart (`start_new_services/1`).
   # Called by name, never locally: the caller is the module version being replaced, and
   # a local call would run its old copy of this step rather than the one just loaded.
+  # That makes it a contract between versions: every older MC calls it on the version it
+  # just loaded, so its name, arity and the shape of `services` and of what it returns stay
+  # as they are while any MC that calls it this way may still update. The first update to
+  # the version that started calling it by name still ran the old copy, from the old caller.
   @doc false
   def after_hot_update(beams, services) do
     pending =

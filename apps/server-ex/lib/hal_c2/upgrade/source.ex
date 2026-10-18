@@ -53,8 +53,6 @@ defmodule HalC2.Upgrade.Source do
     File.mkdir_p!(Path.dirname(target))
     File.cp!(source_path, target)
     File.write!(target <> ".sha256", sha256(target))
-    # A bundle for the same version unpacked before is stale now.
-    File.rm_rf!(unpacked_dir(version, platform))
     :ok
   end
 
@@ -81,8 +79,6 @@ defmodule HalC2.Upgrade.Source do
     if sha256(incoming) == sum do
       File.rename!(incoming, target)
       File.write!(target <> ".sha256", sum)
-      # A bundle for the same version unpacked before is stale now.
-      File.rm_rf!(unpacked_dir(version, platform))
       :ok
     else
       File.rm(incoming)
@@ -203,12 +199,19 @@ defmodule HalC2.Upgrade.Source do
     end
   end
 
+  # An unpacked bundle is the archive's only while the stamp beside it holds the archive's
+  # SHA-256: whichever source replaced the archive, and wherever an unpack or a writer
+  # stopped, a bundle of the same version built again is unpacked again.
   defp unpack(version, platform) do
     dir = unpacked_dir(version, platform)
+    stamp = dir <> ".sha256"
+    {:ok, sum} = File.read(archive_path(version, platform) <> ".sha256")
+    sum = String.trim(sum)
 
-    if HalC2.Upgrade.manifest(dir) != nil do
+    if File.read(stamp) == {:ok, sum} and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
     else
+      File.rm(stamp)
       File.rm_rf!(dir)
       File.mkdir_p!(dir)
 
@@ -217,6 +220,7 @@ defmodule HalC2.Upgrade.Source do
              {:cwd, String.to_charlist(dir)}
            ]) do
         :ok ->
+          File.write!(stamp, sum)
           {:ok, dir}
 
         {:error, reason} ->

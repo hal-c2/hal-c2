@@ -573,6 +573,60 @@ defmodule HalC2.Steps.Platform.Upgrades do
     bundle(context, %{}, [Mc.variant(HalC2.JsonRpc.Connection)], false)
   end
 
+  step "the MC already unpacked a bundle of the target version", context do
+    upgrade_url(@unreachable)
+    context = bundle(context, %{}, [Mc.variant(HalC2.JsonRpc.Connection)])
+    assert {:ok, _} = Source.fetch(context.target, Upgrade.platform())
+    context
+  end
+
+  step "that version is built again with other code", context do
+    {_, beam} = again = Mc.variant(HalC2.JsonRpc.Connection)
+    archive = Mc.bundle(context.mc, context.target, %{}, [again])
+    :ok = Source.put(context.target, Upgrade.platform(), archive)
+    Map.put(context, :built_last, beam)
+  end
+
+  step "it loads the code built last", context do
+    assert {:ok, %{"targetVersion" => target}} = context.reply
+    assert target == context.target
+
+    {:ok, {_, md5}} = :beam_lib.md5(context.built_last)
+    assert HalC2.JsonRpc.Connection.module_info(:md5) == md5
+
+    context
+  end
+
+  step "an installed MC that keeps its files under a HAL_C2_HOME root", context do
+    Map.put(context, :installed_root, Mc.tmp_dir(context.mc, "installed-root"))
+  end
+
+  step "a developer reloads the installed MC naming that root", context do
+    reload_root(context, context.installed_root)
+  end
+
+  step "a developer reloads the installed MC naming the root {string}",
+       %{args: [root]} = context do
+    user_home = Mc.tmp_dir(context.mc, "user")
+    root = String.replace_prefix(root, "~", user_home)
+    context |> Map.put(:user_home, user_home) |> reload_root(root)
+  end
+
+  step "the reload looks for that MC in the root's MC directories", context do
+    assert {:ok, home} = context.installed_home
+    dirs = HalC2.Paths.mc_dirs(home, %{}, context.user_home)
+
+    assert dirs.data == Path.join([context.installed_root, "data", "elixir"])
+    assert dirs.state == Path.join([context.installed_root, "state", "elixir"])
+    context
+  end
+
+  step "the reload is refused naming that root", context do
+    assert {:error, reason} = context.installed_home
+    assert reason =~ inspect(context.named_root)
+    context
+  end
+
   step "a bundle on this machine the MC has not seen that needs a restart", context do
     bundle(context, %{"otpRelease" => "30"}, [], false)
   end
@@ -845,6 +899,17 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}
+
+  # `mix hal_c2.upgrade --release --root <root>` from a checkout on its dev profile.
+  defp reload_root(context, root) do
+    user_home = Map.get_lazy(context, :user_home, fn -> Mc.tmp_dir(context.mc, "user") end)
+
+    Map.merge(context, %{
+      user_home: user_home,
+      named_root: root,
+      installed_home: Mix.Tasks.HalC2.Upgrade.installed_home(root, :dev, user_home)
+    })
+  end
 
   defp upgrade_url(url) do
     System.put_env("HAL_C2_UPGRADE_URL", url)
