@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
@@ -119,6 +120,19 @@ Item {
             compare(summary.Accessible.name, hint.replace(/`/g, ""));
         }
 
+        // A summary the server leaves out renders empty, as the plain label it replaced did.
+        function test_a_tool_without_a_summary_renders_empty() {
+            const tool = root.github({ hasAccount: false });
+            delete tool.summary;
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [tool] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare(summary.text, "");
+            compare(summary.Accessible.name, "");
+        }
+
         // The hints come from the server and name commands with placeholders, several
         // to a sentence: only the generated spans may be markup.
         function test_an_install_hint_escapes_everything_but_its_command_spans() {
@@ -144,7 +158,12 @@ Item {
             const page = createTemporaryObject(hostedComponent, root).page;
             const scan = findChild(page, "scan");
             verify(scan.enabled);
+            verify(!scan.activeFocusOnTab, "out of the tab order while it scans, as a disabled button would be");
             compare(scan.Accessible.name, "Scanning server environment");
+            mouseMove(scan, scan.width / 2, scan.height / 2);
+            tryCompare(scan, "hovered", true);
+            tryCompare(scan.ToolTip, "visible", true);
+            compare(scan.ToolTip.text, "Scanning…");
             mouseClick(scan);
             compare(Shell.dispatchedActions.length, 0);
         }

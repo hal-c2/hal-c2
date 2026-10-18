@@ -34,7 +34,7 @@ SettingsPage {
     function withCode(text) {
         const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"]/g, ""));
-        return escape(text).replace(/`([^`]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
+        return escape(text ?? "").replace(/`([^`]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
     }
 
     objectName: "sourceControlSettings"
@@ -186,7 +186,7 @@ SettingsPage {
                         Layout.fillWidth: !tool.modelData.hasAccount
                         text: tool.sourceControl.withCode(tool.modelData.summary)
                         textFormat: Text.RichText
-                        Accessible.name: tool.modelData.summary.replace(/`/g, "")
+                        Accessible.name: (tool.modelData.summary ?? "").replace(/`/g, "")
                     }
 
                     Caption {

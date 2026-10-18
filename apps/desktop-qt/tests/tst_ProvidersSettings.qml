@@ -202,7 +202,8 @@ Item {
             tryCompare(popover, "opened", true);
             mouseClick(button);
             tryCompare(popover, "opened", false);
-            wait(50);
+            // Closing it with the press must not reopen it with the click that follows.
+            tryVerify(() => !popover.opened && !popover.visible);
             verify(!popover.opened, "pressing the icon again closes it rather than reopening it");
         }
 
@@ -219,39 +220,75 @@ Item {
         }
 
         // Where the popover opens, the drawn card is inside the window, however far
-        // down or to the right the icon is and however far the page is zoomed.
+        // down or to the right the icon is, however far the page is zoomed and however
+        // small the window is: ShellWindow's minimum is 640x400 and the zoom goes to 5.
+        // A long detail at a small window and a high zoom fits neither below nor above
+        // the icon, so the card is shorter than its text and scrolls.
         function test_the_advisory_popover_stays_inside_the_window() {
-            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
-            for (const [zoom, y, x] of [[1, 0, 0], [1.5, 0, 0], [1, 560, 0], [1.5, 560, 0], [1, 0, 600], [1.5, 0, 400], [1.5, 560, 400]]) {
-                Shell.state = { layout: { zoom: zoom }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
-                const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: zoom, offsetX: x / zoom, offsetY: y / zoom });
-                const card = findChild(body.page, "provider_claudeAgent_work");
-                const button = findChild(card, "advisoryButton");
-                const at = button.mapToItem(null, button.width / 2, button.height / 2);
-                if (at.x < 0 || at.y < 0 || at.x > root.Window.width || at.y > root.Window.height) {
+            const short = "Install v0.51.0.";
+            const long = "This version of the provider is outside the range HAL-C2 supports. Update it to v0.51.0 or newer " +
+                         "so new threads keep working, or keep using the version you have and accept that some features may fail.";
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            // [window width, window height, zoom, icon x, icon y, detail]: the icon's
+            // centre, as a fraction of the window.
+            const cases = [
+                [900, 700, 1, 0.1, 0.1, short], [900, 700, 1.5, 0.1, 0.1, short], [900, 700, 1, 0.1, 0.9, short],
+                [900, 700, 1.5, 0.1, 0.9, short], [900, 700, 1, 0.9, 0.1, short], [900, 700, 1.5, 0.7, 0.1, short],
+                [900, 700, 1.5, 0.7, 0.9, short], [900, 700, 1, 0.9, 0.9, long],
+                [640, 400, 1, 0.1, 0.1, long], [640, 400, 2, 0.1, 0.1, long], [640, 400, 2, 0.1, 0.5, long],
+                [640, 400, 2, 0.5, 0.3, long], [640, 400, 2, 0.95, 0.5, long], [640, 400, 3, 0.1, 0.1, long],
+                [640, 400, 3, 0.6, 0.6, long], [640, 400, 5, 0.2, 0.2, long]];
+            let exercised = 0, flipped = 0, shifted = 0, scrolled = 0;
+            try {
+                for (const [width, height, zoom, fractionX, fractionY, detail] of cases) {
+                    win.width = width;
+                    win.height = height;
+                    const advisory = { title: "Update available", detail: detail, updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+                    Shell.state = { layout: { zoom: zoom }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+                    const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: zoom });
+                    const card = findChild(body.page, "provider_claudeAgent_work");
+                    const button = findChild(card, "advisoryButton");
+                    const label = `${width}x${height} zoom ${zoom} at ${fractionX},${fractionY}`;
+                    // Moves the page so that the icon's centre is where the case asks.
+                    const home = button.mapToItem(null, button.width / 2, button.height / 2);
+                    body.offsetX = (width * fractionX - home.x) / zoom;
+                    body.offsetY = (height * fractionY - home.y) / zoom;
+                    const at = button.mapToItem(null, button.width / 2, button.height / 2);
+                    verify(at.x > 0 && at.y > 0 && at.x < width && at.y < height, label + ": the icon is in the window");
+                    mouseClick(button);
+                    const popover = findChild(card, "advisory");
+                    tryCompare(popover, "opened", true);
+                    const topLeft = popover.background.mapToItem(null, 0, 0);
+                    const bottomRight = popover.background.mapToItem(null, popover.background.width, popover.background.height);
+                    verify(topLeft.x >= 7 && topLeft.y >= 7, label + ": the popover starts inside the window " + topLeft);
+                    verify(bottomRight.x <= width - 7 && bottomRight.y <= height - 7, label + ": the popover ends inside the window " + bottomRight);
+                    // Flipped or shifted, it stays against the icon and the window edge, not
+                    // a zoom-multiple away from them.
+                    const iconTop = button.mapToItem(null, 0, 0).y;
+                    if (popover.upward) {
+                        flipped++;
+                        if (popover.nudge === 0)
+                            verify(Math.abs(bottomRight.y - iconTop) <= 4 * zoom + 1, label + ": the flipped popover sits against the icon");
+                    }
+                    if (popover.shift !== 0) {
+                        shifted++;
+                        verify(Math.abs(bottomRight.x - (width - 8)) <= 1 || Math.abs(topLeft.x - 8) <= 1, label + ": the shifted popover sits against the window edge");
+                    }
+                    if (popover.contentItem.contentHeight > popover.contentItem.height + 1)
+                        scrolled++;
+                    exercised++;
+                    popover.close();
                     body.destroy();
-                    continue;
                 }
-                mouseClick(button);
-                const popover = findChild(card, "advisory");
-                tryCompare(popover, "opened", true);
-                const topLeft = popover.contentItem.mapToItem(null, 0, 0);
-                const bottomRight = popover.contentItem.mapToItem(null, popover.contentItem.width, popover.contentItem.height);
-                const label = `zoom ${zoom} at ${x},${y}`;
-                verify(topLeft.x >= 0 && topLeft.y >= 0, label + ": the popover starts inside the window");
-                verify(bottomRight.x <= root.Window.width && bottomRight.y <= root.Window.height, label + ": the popover ends inside the window");
-                // Flipped or shifted, it stays against the icon and the window edge, not
-                // a zoom-multiple away from them.
-                const card_ = popover.background.mapToItem(null, 0, 0);
-                const cardEnd = popover.background.mapToItem(null, popover.background.width, popover.background.height);
-                const iconTop = button.mapToItem(null, 0, 0).y;
-                if (popover.upward)
-                    verify(Math.abs(cardEnd.y - iconTop) <= 4 * zoom + 1, label + ": the flipped popover sits against the icon");
-                if (popover.shift !== 0)
-                    verify(Math.abs(cardEnd.x - (root.Window.width - 8)) <= 1, label + ": the shifted popover sits against the window edge");
-                popover.close();
-                body.destroy();
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
             }
+            compare(exercised, cases.length);
+            verify(flipped > 0, "a case opens upward");
+            verify(shifted > 0, "a case is shifted left");
+            verify(scrolled > 0, "a case is too tall for the window and scrolls");
         }
 
         // Qt closes a popup whose icon is hidden; this pins that it stays so.

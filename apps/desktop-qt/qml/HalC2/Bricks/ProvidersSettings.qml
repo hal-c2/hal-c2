@@ -602,21 +602,37 @@ Rectangle {
                         // draws as the page's own content does.
                         scale: Shell.state.layout?.zoom ?? 1
                         transformOrigin: Item.TopLeft
-                        // Opens upward and leftward when the window has no room below or to
-                        // the right of the icon, set as it shows (the icon does not move while
-                        // it is open). The window is measured in drawn pixels (the size times
-                        // the zoom), but x and y are local to the icon, which the zoomed body
-                        // scales, so the offsets given to them are in local units.
+                        // Kept inside the window, set as it shows (the icon does not move
+                        // while it is open). The window is measured in drawn pixels (the
+                        // size times the zoom), but x and y are local to the icon, which the
+                        // zoomed body scales, so the offsets given to them are in local
+                        // units. It is no wider or taller than the window leaves room for
+                        // (the text scrolls when it is taller), opens on the side of the icon
+                        // with more room, and is then slid to keep eight pixels from every
+                        // edge.
+                        readonly property real windowWidth: advisoryButton.Window.width
+                        readonly property real windowHeight: advisoryButton.Window.height
                         property bool upward: false
                         property real shift: 0
+                        property real nudge: 0
                         x: shift
-                        y: upward ? -implicitHeight - 4 : advisoryButton.height + 4
+                        y: (upward ? -implicitHeight - 4 : advisoryButton.height + 4) + nudge
                         onAboutToShow: {
-                            const below = advisoryButton.mapToItem(null, 0, advisoryButton.height);
-                            upward = below.y + (implicitHeight + 4) * scale > advisoryButton.Window.height - 8;
-                            shift = -Math.max(0, below.x + width * scale - (advisoryButton.Window.width - 8)) / scale;
+                            const iconBottom = advisoryButton.mapToItem(null, 0, advisoryButton.height);
+                            const iconTop = iconBottom.y - advisoryButton.height * scale;
+                            const drawnHeight = implicitHeight * scale;
+                            const gap = 4 * scale;
+                            const roomBelow = windowHeight - 8 - iconBottom.y;
+                            upward = drawnHeight + gap > roomBelow && iconTop - 8 > roomBelow;
+                            const top = upward ? iconTop - gap - drawnHeight : iconBottom.y + gap;
+                            nudge = (Math.max(8, Math.min(top, windowHeight - 8 - drawnHeight)) - top) / scale;
+                            const drawnWidth = width * scale;
+                            shift = Math.max((8 - iconBottom.x) / scale, Math.min(0, (windowWidth - 8 - drawnWidth - iconBottom.x) / scale));
                         }
-                        width: 320
+                        // The most the content may be tall, in local units; never nothing,
+                        // for a window that is not laid out yet.
+                        readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
+                        width: windowWidth > 0 ? Math.min(320, (windowWidth - 16) / scale) : 320
                         padding: 12
                         // Focus is what lets Escape close it here instead of leaving
                         // Settings. Pressing the icon again closes it through onClicked.
@@ -629,45 +645,62 @@ Rectangle {
                             radius: 10
                         }
 
-                        contentItem: ColumnLayout {
-                            spacing: 6
+                        contentItem: Flickable {
+                            id: advisoryScroll
 
-                            Label {
-                                Layout.fillWidth: true
-                                text: card.advisory ? card.advisory.title : ""
-                                color: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.Wrap
+                            clip: true
+                            contentWidth: width
+                            contentHeight: advisoryColumn.implicitHeight
+                            implicitHeight: Math.min(advisoryColumn.implicitHeight, advisoryPopover.contentRoom)
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: ScrollBar {
+                                policy: ScrollBar.AsNeeded
+                                Accessible.name: qsTr("Scroll the details")
                             }
 
-                            Note {
-                                text: card.advisory ? card.advisory.detail : ""
-                            }
+                            ColumnLayout {
+                                id: advisoryColumn
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
+                                width: advisoryScroll.width
+                                spacing: 6
 
-                                ShellButton {
-                                    objectName: "update"
-                                    readonly property bool install: (card.provider.installLabel ?? "").length > 0
-                                    visible: card.provider.canUpdate || install || card.provider.updating
-                                    enabled: !card.provider.updating
-                                    text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
-                                    onClicked: page.act(install ? "install" : "update", card.provider)
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: card.advisory ? card.advisory.title : ""
+                                    color: card.advisory && card.advisory.strong ? page.warning : page.foreground
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.Wrap
                                 }
 
-                                // The command is a filesystem path on most installs: copy it, show it only on hover.
-                                ShellButton {
-                                    objectName: "copyUpdateCommand"
-                                    visible: !!(card.advisory && card.advisory.updateCommand)
-                                    subtle: true
-                                    iconName: "copy"
-                                    Accessible.name: qsTr("Copy the update command")
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
-                                    onClicked: page.act("copyUpdateCommand", card.provider)
+                                Note {
+                                    text: card.advisory ? card.advisory.detail : ""
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+
+                                    ShellButton {
+                                        objectName: "update"
+                                        readonly property bool install: (card.provider.installLabel ?? "").length > 0
+                                        visible: card.provider.canUpdate || install || card.provider.updating
+                                        enabled: !card.provider.updating
+                                        text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
+                                        onClicked: page.act(install ? "install" : "update", card.provider)
+                                    }
+
+                                    // The command is a filesystem path on most installs: copy it, show it only on hover.
+                                    ShellButton {
+                                        objectName: "copyUpdateCommand"
+                                        visible: !!(card.advisory && card.advisory.updateCommand)
+                                        subtle: true
+                                        iconName: "copy"
+                                        Accessible.name: qsTr("Copy the update command")
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
+                                        onClicked: page.act("copyUpdateCommand", card.provider)
+                                    }
                                 }
                             }
                         }
