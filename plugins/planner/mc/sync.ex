@@ -857,7 +857,8 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   What GitHub is asked when the plan syncs both ways and `new` (in `items`) differs
   from what GitHub has of it (`synced`, see `synced/3`): the issue's title, body,
-  state, assignee (the new owner added, only the old one removed) and labels, its
+  state, assignees (the new owner added and the old one removed, one login at a time,
+  so the issue's other assignees stay) and labels, its
   blocking issues and sub-issues, its dates on the
   board, and a milestone's title, date and the issues it holds. Each op is
   `{method, input, took}` for `HalC2.Plugins.Host.issues/3`, the method `:board`
@@ -964,15 +965,19 @@ defmodule HalC2Plugins.Planner.Sync do
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
   defp owner_pushes(base, synced, new, differs) do
+    changed? = differs.("owner")
+    old = synced["owner"]
+    login = new["owner"]
+
     off =
-      for old <- [synced["owner"]],
-          old != nil and differs.("owner"),
-          do: {"removeAssignees", Map.put(base, "assignees", [old]), &Map.put(&1, "owner", nil)}
+      if changed? and old,
+        do: [{"removeAssignees", Map.put(base, "assignees", [old]), &Map.put(&1, "owner", nil)}],
+        else: []
 
     on =
-      for login <- [new["owner"]],
-          login != nil and differs.("owner"),
-          do: {"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}
+      if changed? and login,
+        do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
+        else: []
 
     off ++ on
   end

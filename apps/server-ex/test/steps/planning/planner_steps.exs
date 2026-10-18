@@ -3201,7 +3201,8 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :answer, List.last(FakeSlack.responses())["body"])
   end
 
-  # GitHub's list of the open issues: #`number`, named `title`.
+  # GitHub was asked to `method` ("POST" adds, "DELETE" removes) `login` alone on
+  # issue `number`'s assignees.
   defp assert_assignees(context, method, number, login) do
     calls = GitHubIssues.rest_calls(context, method, "/issues/#{number}/assignees")
 
@@ -3211,6 +3212,7 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # GitHub's list of the open issues: #`number`, named `title`.
   defp listed(context, number, title) do
     issue =
       GitHubIssues.issue(context.repository, number, %{"title" => title, "body" => "First notes"})
