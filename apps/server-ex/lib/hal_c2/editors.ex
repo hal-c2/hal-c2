@@ -92,25 +92,42 @@ defmodule HalC2.Editors do
   end
 
   # The default editor's arguments with `file` in them: where the registered command line
-  # puts it (`{:file, "--open=%1"}`, from Windows), else last.
+  # puts it (`{:file, "--open=%1"}`, from Windows), else last. An argument that is left
+  # empty (a bare `%2`, which the shell fills with the extra parameter there is none of)
+  # is dropped, as the shell's command line parsing drops it.
   defp with_file(args, file) do
     if Enum.any?(args, &match?({:file, _}, &1)) do
-      for arg <- args do
-        case arg do
-          {:file, template} -> String.replace(template, file_placeholder(), fn _ -> file end)
-          arg -> arg
-        end
-      end
+      Enum.flat_map(args, fn
+        {:file, template} ->
+          case String.replace(template, file_placeholder(), &placeholder_value(&1, file)) do
+            "" -> []
+            arg -> [arg]
+          end
+
+        arg ->
+          [arg]
+      end)
     else
       args ++ [file]
     end
   end
 
-  # `%1`, `%L` and `%l` in a registered command line stand for the file, and so does `%*`
-  # (all arguments), as the file is the only one given. The file is put in by a function
-  # because a replacement string would read the backslashes of a Windows path (`\\2`) as
-  # group references.
-  defp file_placeholder, do: ~r/%[1lL*]/
+  # The shell parameters of a registered command line. `%1`, `%L` and `%l` stand for the
+  # file, and so does `%*` (all arguments), as the file is the only one given. The others
+  # get what the shell gives a program started without them: `%S` the show command
+  # (normal), `%H` and `%I` no window or DDE handle, `%W` the working directory (there is
+  # none per call) and `%2` to `%9` the extra parameters (there are none). The values are
+  # put in by a function because a replacement string would read the backslashes of a
+  # Windows path (`\\2`) as group references.
+  defp file_placeholder, do: ~r/%[1lL*SHIW2-9]/
+
+  defp placeholder_value("%S", _file), do: "1"
+  defp placeholder_value("%" <> parameter, _file) when parameter in ["H", "I"], do: "0"
+
+  defp placeholder_value("%" <> parameter, _file) when parameter in ["W" | ~w(2 3 4 5 6 7 8 9)],
+    do: ""
+
+  defp placeholder_value(_file_parameter, file), do: file
 
   defp args(style, target) do
     case {style, Regex.run(~r/^(.*?):(\d+)(?::(\d+))?$/, target)} do
@@ -150,22 +167,44 @@ defmodule HalC2.Editors do
   # `shell\open\command`. Nil without one. A Store app's class names no command line (it
   # activates through `DelegateExecute`), and `reg` then prints the localized text
   # "(value not set)" as the data, so the program must resolve to an executable: that also
-  # drops an association to an uninstalled editor. Like xdg-mime, it runs while a client
-  # waits for the server config, so the three queries share one 2 s deadline. On timeout
-  # the task is killed, which closes its port but may leave a hung `reg.exe` to exit on its
-  # own: the deadline protects the client, not the process table.
-  defp windows_text_editor do
-    task = Task.async(&registered_text_editor/0)
+  # drops an association to an uninstalled editor, and a command line whose program is an
+  # unquoted path with spaces (`C:\Program Files\Editor\e.exe %1` splits after `Program`).
+  # That is left as no editor on purpose: if prefix matching is ever added it must try the
+  # longest join of leading words first, never CreateProcess's shortest-first order, which
+  # runs a planted `C:\Program.exe`. Two more divergences from Explorer: the `UserChoice`
+  # `Hash` is not validated (Windows ignores a choice whose hash does not match) and
+  # `UserChoiceLatest` is not read, so the MC can name an editor Explorer would not use.
+  # Like xdg-mime, it runs while a client waits for the server config, so the three queries
+  # share one 2 s deadline (`lookup/2`). On timeout the task is killed, which closes its
+  # port but may leave a hung `reg.exe` to exit on its own: the deadline protects the
+  # client, not the process table.
+  defp windows_text_editor, do: lookup(&registered_text_editor/0, nil)
+
+  # Runs `fun` in a task for at most 2 s: a lookup that hangs, raises (a program path that
+  # is not valid UTF-8, a vanished executable) or exits counts as `default`, and never
+  # takes the caller down with it.
+  defp lookup(fun, default) do
+    task =
+      Task.async(fn ->
+        try do
+          fun.()
+        rescue
+          _ -> default
+        catch
+          _, _ -> default
+        end
+      end)
 
     case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, editor} -> editor
-      nil -> nil
+      {:ok, value} -> value
+      _ -> default
     end
   end
 
   defp registered_text_editor do
     explorer = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"
 
+    # The `UserChoice` ProgId is taken as it stands (see `windows_text_editor/0`).
     with reg when reg != nil <- System.find_executable("reg"),
          class when class != nil <-
            reg_value(reg, [explorer <> "\\.txt\\UserChoice", "/v", "ProgId"]) ||
@@ -185,10 +224,12 @@ defmodule HalC2.Editors do
 
   # The data of the value `reg query` prints for `args`, or nil. `reg` writes in the
   # console's code page, so a path with characters outside ASCII can come back as invalid
-  # UTF-8 and the launch then fails; a PowerShell query or `chcp 65001` would fix that.
+  # UTF-8, which counts as no value (no editor offered); a PowerShell query or `chcp 65001`
+  # would read it.
   defp reg_value(reg, args) do
     with {out, 0} <- System.cmd(reg, ["query" | args], stderr_to_stdout: true),
-         [_, data] <- Regex.run(~r/^\s+\S.*?\s+REG_[A-Z_]+\s+(\S.*?)\s*$/m, out) do
+         [_, data] <- Regex.run(~r/^\s+\S.*?\s+REG_[A-Z_]+\s+(\S.*?)\s*$/m, out),
+         true <- String.valid?(data) do
       data
     else
       _ -> nil
@@ -206,7 +247,8 @@ defmodule HalC2.Editors do
   # space separates arguments outside quotes, and a quote starts or ends quoted text inside
   # an argument (`--dir="C:\My Data"` is one argument). Backslashes only count before a
   # quote: 2n of them give n backslashes and the quote opens or closes quoted text, 2n+1
-  # give n backslashes and a literal quote.
+  # give n backslashes and a literal quote. Inside quoted text a doubled quote is one
+  # literal quote and the text stays quoted (`"a""b"` is `a"b`).
   @doc false
   def command_words(line), do: split_words(line, nil, false, [])
 
@@ -234,6 +276,9 @@ defmodule HalC2.Editors do
     end
   end
 
+  defp split_words(<<?", ?", rest::binary>>, word, true, words),
+    do: split_words(rest, (word || "") <> ~s("), true, words)
+
   defp split_words(<<?", rest::binary>>, word, quoted, words),
     do: split_words(rest, word || "", not quoted, words)
 
@@ -244,20 +289,14 @@ defmodule HalC2.Editors do
   # waits for the server config, so a hung xdg-mime (a broken D-Bus or desktop session)
   # counts as no default after 2 s; killing the task takes xdg-mime with it.
   defp text_plain_handler(xdg_mime) do
-    task =
-      Task.async(fn ->
-        try do
-          Exile.stream!([xdg_mime, "query", "default", "text/plain"], stderr: :disable)
-          |> Enum.join()
-        rescue
-          _ -> ""
-        end
-      end)
-
-    case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, id} -> String.trim(id)
-      nil -> ""
-    end
+    lookup(
+      fn ->
+        Exile.stream!([xdg_mime, "query", "default", "text/plain"], stderr: :disable)
+        |> Enum.join()
+      end,
+      ""
+    )
+    |> String.trim()
   end
 
   # The file of desktop entry `id`, searched for as the XDG base directory spec says: a

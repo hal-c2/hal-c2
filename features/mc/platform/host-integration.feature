@@ -80,6 +80,18 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad with the file where the command line puts it
 
   @mc
+  Scenario: On Windows the other shell parameters of the registered command line get what the shell gives
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" %S %2 --dir=%W %H %I'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the other parameters filled in
+
+  @mc
+  Scenario: On Windows a doubled quote inside quoted text is one quote
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" "say ""hi"" there"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the doubled quotes read as quotes
+
+  @mc
   Scenario: On Windows a path with backslashes reaches the editor as it is
     Given the MC runs on Windows and opens text files in Notepad
     When a client opens the path "C:\Projects\2024\app.ts" in the default editor
@@ -96,6 +108,17 @@ Feature: The MC working with its host machine
     Given the MC runs on Windows and reg never answers
     When a client reads the MC's server config
     Then the default editor is not offered
+
+  @mc
+  Scenario Outline: A registered program path the MC cannot read does not offer a default editor on Windows
+    Given the MC runs on Windows and reg prints the program path "<path>"
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+    Examples:
+      | path       |
+      | \377\376   |
+      | a\000b    |
 
   @mc
   Scenario: On Windows a Store app's text association does not offer a default editor

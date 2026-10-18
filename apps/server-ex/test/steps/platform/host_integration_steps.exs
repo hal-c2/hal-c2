@@ -284,6 +284,24 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], "(value not set)")
   end
 
+  # `path` is printf escapes: bytes that are not UTF-8 (`\377`) or a NUL (`\000`) in
+  # the program of the registered command line.
+  step ~r/^the MC runs on Windows and reg prints the program path "(?<path>[^"]+)"$/,
+       %{args: [path]} = context do
+    World.put_app_env(:os_type, {:win32, :nt})
+
+    body =
+      """
+      case "$2" in
+        *UserChoice*) printf '\\nHKEY\\n    ProgId    REG_SZ    txtfile\\n' ;;
+        *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\nHKEY\\n    (Default)    REG_SZ    "#{path}" %%1\\n' ;;
+        *) exit 1 ;;
+      esac
+      """
+
+    install_script(bin(context), "reg", body)
+  end
+
   step "the MC runs on Windows and reg never answers", context do
     World.put_app_env(:os_type, {:win32, :nt})
     install_script(bin(context), "reg", "exec sleep 30")
@@ -319,6 +337,23 @@ defmodule HalC2.Steps.Platform.HostIntegration do
              "C:\\Dir\\"
            ]
 
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the other parameters filled in$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S is "1", %2 and %W leave nothing (a bare %2 is dropped), %H and %I are "0".
+    assert argv == ["notepad", context.target, "1", "--dir=", "0", "0"]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the doubled quotes read as quotes$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target, "say \"hi\" there"]
     :gen_tcp.close(conn)
     context
   end

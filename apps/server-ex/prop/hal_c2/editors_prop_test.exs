@@ -18,28 +18,46 @@ defmodule HalC2.EditorsPropTest do
     end
   end
 
-  # Quotes `arg` so the splitter reads it back as one argument: backslashes are doubled
-  # before a quote and at the end, and a quote is escaped.
-  defp quote_argument(""), do: ~s("")
+  # How a quote inside quoted text is written: `\"` (after any backslashes, doubled), `""`
+  # (which no backslash may precede), or the two in turn.
+  defp quote_style, do: oneof([:backslash, :double, :mixed])
 
-  defp quote_argument(arg) do
-    if String.match?(arg, ~r/[\s"]/), do: ~s(") <> escape(arg, 0, "") <> ~s("), else: arg
+  # Quotes `arg` so the splitter reads it back as one argument: backslashes are doubled
+  # before a quote and at the end, and a quote is escaped in the `style`.
+  defp quote_argument(arg, style)
+
+  defp quote_argument("", _style), do: ~s("")
+
+  defp quote_argument(arg, style) do
+    if String.match?(arg, ~r/[\s"]/),
+      do: ~s(") <> escape(arg, 0, "", style, 0) <> ~s("),
+      else: arg
   end
 
-  defp escape("", slashes, acc), do: acc <> String.duplicate("\\", slashes * 2)
-  defp escape("\\" <> rest, slashes, acc), do: escape(rest, slashes + 1, acc)
+  defp escape("", slashes, acc, _style, _quotes), do: acc <> String.duplicate("\\", slashes * 2)
 
-  defp escape(~s(") <> rest, slashes, acc),
-    do: escape(rest, 0, acc <> String.duplicate("\\", slashes * 2 + 1) <> ~s("))
+  defp escape("\\" <> rest, slashes, acc, style, quotes),
+    do: escape(rest, slashes + 1, acc, style, quotes)
 
-  defp escape(<<c, rest::binary>>, slashes, acc),
-    do: escape(rest, 0, acc <> String.duplicate("\\", slashes) <> <<c>>)
+  defp escape(~s(") <> rest, slashes, acc, style, quotes) do
+    doubled? = slashes == 0 and (style == :double or (style == :mixed and rem(quotes, 2) == 1))
+
+    escaped =
+      if doubled?,
+        do: ~s(""),
+        else: String.duplicate("\\", slashes * 2 + 1) <> ~s(")
+
+    escape(rest, 0, acc <> escaped, style, quotes + 1)
+  end
+
+  defp escape(<<c, rest::binary>>, slashes, acc, style, quotes),
+    do: escape(rest, 0, acc <> String.duplicate("\\", slashes) <> <<c>>, style, quotes)
 
   property "splitting a quoted argument list gives the list back",
     numtests: HalC2.Prop.numtests(300),
     max_size: 40 do
-    forall args <- resize(5, list(argument())) do
-      line = Enum.map_join(args, " ", &quote_argument/1)
+    forall {args, style} <- {resize(5, list(argument())), quote_style()} do
+      line = Enum.map_join(args, " ", &quote_argument(&1, style))
       Editors.command_words(line) == args
     end
   end
@@ -47,14 +65,14 @@ defmodule HalC2.EditorsPropTest do
   property "white space between arguments does not change them",
     numtests: HalC2.Prop.numtests(200),
     max_size: 40 do
-    forall {args, gaps} <-
+    forall {args, gaps, style} <-
              {resize(5, non_empty(list(argument()))),
-              resize(5, non_empty(list(oneof([" ", "  ", "\t", " \t "]))))} do
+              resize(5, non_empty(list(oneof([" ", "  ", "\t", " \t "])))), quote_style()} do
       line =
         args
         |> Enum.with_index()
         |> Enum.map_join(fn {arg, i} ->
-          quote_argument(arg) <> Enum.at(gaps, rem(i, length(gaps)))
+          quote_argument(arg, style) <> Enum.at(gaps, rem(i, length(gaps)))
         end)
 
       Editors.command_words(" " <> line) == args
