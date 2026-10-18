@@ -2073,8 +2073,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # Sends the turn's prompt; its answer ends the turn (`answer/3`). It goes out before
-  # this returns, so a steer or a cancel sent next reaches the agent after it.
+  # Sends the turn's prompt; its answer ends the turn (`answer/3`). It is in the
+  # connection's mailbox before this returns, and a steer or a cancel this process sends
+  # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)}
     prompt = acp_prompt(turn, state.capabilities, state.announce)
