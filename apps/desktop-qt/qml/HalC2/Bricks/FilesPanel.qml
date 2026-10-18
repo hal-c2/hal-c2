@@ -21,6 +21,8 @@ Rectangle {
     readonly property string mediaKind: source?.mediaKind ?? ""
     readonly property int maxLineColumns: 2000
     // Whether the tree shows beside an open file; with no file open it always shows.
+    // Hiding it is a preference, kept across files and threads (the next file opens
+    // with the tree still hidden), not a state of the file that was open.
     property bool explorerOpen: true
     readonly property bool explorerShown: !fileOpen || explorerOpen
 
@@ -482,7 +484,7 @@ Rectangle {
         Rectangle {
             Layout.fillHeight: true
             Layout.preferredWidth: 1
-            visible: root.fileOpen && root.explorerOpen
+            visible: root.fileOpen && root.explorerShown
             color: root.borderColor
         }
 
@@ -491,6 +493,10 @@ Rectangle {
             Layout.fillHeight: true
             Layout.fillWidth: !root.fileOpen
             Layout.preferredWidth: root.fileOpen ? Math.min(352, root.width * 0.46) : -1
+            // The share is a cap, not a preference: the column gives way to its
+            // content's minimum, so a narrow tab keeps the file beside the tree.
+            Layout.maximumWidth: root.fileOpen ? Math.min(352, root.width * 0.46) : Infinity
+            Layout.minimumWidth: 0
             visible: root.explorerShown
             spacing: 0
 
@@ -504,6 +510,7 @@ Rectangle {
 
                     objectName: "filesSearch"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     placeholderText: qsTr("Search files")
                     enabled: (root.source?.root ?? "").length > 0
                     text: root.source?.query ?? ""

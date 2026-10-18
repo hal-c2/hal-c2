@@ -513,9 +513,28 @@ Item {
             verify(explorer.visible);
             verify(toggle.checked, "a shown tree is pressed again");
 
+            // Hiding is a preference: the next file opens with the tree still hidden.
+            tryVerify(() => viewer.x + viewer.width <= explorer.x, 5000, "the file settles beside the tree before the next click");
+            mouseClick(toggle);
+            verify(!explorer.visible);
+            const path = source.openPath;
             source.openPath = "";
             tryVerify(() => !viewer.visible);
             tryCompare(explorer, "width", files.width, 5000, "with no file the tree is the whole tab");
+            source.openPath = path;
+            tryVerify(() => viewer.visible);
+            verify(!explorer.visible, "the tree stays hidden for the next file");
+            mouseClick(toggle);
+            verify(explorer.visible);
+        }
+
+        // Past the width where 46% would be more than the tree needs, the cap is 352px.
+        function test_theTreeBesideAFileIsCappedInAWideTab() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source, width: 1200 });
+            const explorer = findChild(files, "filesExplorer");
+            tryVerify(() => findChild(files, "fileViewer").visible);
+            tryCompare(explorer, "width", 352);
         }
 
         function test_revertAsksFirstAndCanKeepOrRestoreTheFiles() {

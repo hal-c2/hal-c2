@@ -253,7 +253,10 @@ Feature: Viewing and editing files
       Given the user opened "src/app.ts"
       When the user hides the file explorer
       Then the file viewer takes the whole Files tab
-      When the user closes the file
+      When the user shows the file explorer
+      Then the file tree is a column beside the file
+      When the user hides the file explorer
+      And the user closes the file
       Then the file tree takes the whole Files tab
 
     @desktop
