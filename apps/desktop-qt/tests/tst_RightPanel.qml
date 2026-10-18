@@ -492,6 +492,7 @@ Item {
             const viewer = findChild(files, "fileViewer");
             const explorer = findChild(files, "filesExplorer");
             const lines = findChild(files, "fileLines");
+            verify(viewer && explorer && lines);
             tryVerify(() => viewer.visible);
             compare(viewer.height, files.height, "the file has the tab's whole height");
             compare(explorer.height, files.height);
@@ -502,11 +503,15 @@ Item {
             verify(viewer.x + viewer.width <= explorer.x && explorer.x + explorer.width <= files.width + 1, "viewer " + viewer.x + "+" + viewer.width + " tree " + explorer.x + "+" + explorer.width);
             verify(lines.height > 100, "lines " + lines.height);
 
-            mouseClick(findChild(files, "fileExplorerToggle"));
+            const toggle = findChild(files, "fileExplorerToggle");
+            verify(toggle && toggle.checkable && toggle.checked, "the shown tree is a pressed toggle");
+            mouseClick(toggle);
             verify(!explorer.visible);
+            verify(!toggle.checked, "a hidden tree is an unpressed one");
             tryCompare(viewer, "width", files.width, 5000, "a hidden tree gives the file the whole tab");
-            mouseClick(findChild(files, "fileExplorerToggle"));
+            mouseClick(toggle);
             verify(explorer.visible);
+            verify(toggle.checked, "a shown tree is pressed again");
 
             source.openPath = "";
             tryVerify(() => !viewer.visible);

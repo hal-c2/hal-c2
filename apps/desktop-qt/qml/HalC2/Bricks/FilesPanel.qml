@@ -121,9 +121,13 @@ Rectangle {
                     onClicked: root.source.wrap = !root.source.wrap
                 }
                 ShellButton {
+                    id: explorerToggle
+
                     objectName: "fileExplorerToggle"
                     subtle: true
-                    checked: root.explorerOpen
+                    // A toggle for assistive tech too; its state is the panel's, so
+                    // the click's own flip is put back by the Binding below.
+                    checkable: true
                     iconName: "folder-tree"
                     iconSize: 13
                     iconTint: root.muted
@@ -131,6 +135,12 @@ Rectangle {
                     implicitHeight: 26
                     Accessible.name: root.explorerOpen ? qsTr("Hide file explorer") : qsTr("Show file explorer")
                     onClicked: root.explorerOpen = !root.explorerOpen
+
+                    Binding {
+                        target: explorerToggle
+                        property: "checked"
+                        value: root.explorerOpen
+                    }
                 }
                 ShellButton {
                     objectName: "fileClose"
