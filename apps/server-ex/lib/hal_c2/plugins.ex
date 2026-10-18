@@ -1144,12 +1144,38 @@ defmodule HalC2.Plugins do
     end
   end
 
-  # A module that fails to compile is unloaded, though its processes still run the
-  # old code; the file's last good modules are loaded again.
+  # The file's last good modules are loaded again wherever the code now loaded is not
+  # theirs: a module that failed to compile is unloaded, and one a refused update loaded
+  # is current (`unload/1` cannot delete it while the last good code, now the module's old
+  # code, is still being run). Loading needs the old code gone, so a process still in it is
+  # killed: running the last good version is worth more than finishing a call in it, and
+  # its supervisor starts it again.
   defp restore([%{file: file, binaries: binaries} | _]) do
-    for {module, binary} <- binaries, :code.is_loaded(module) == false do
-      :code.soft_purge(module)
+    for {module, binary} <- binaries, not current?(module, binary) do
+      purge(module, file)
       :code.load_binary(module, String.to_charlist(file), binary)
+      # The refused version is now the old code; a process still in it would keep the
+      # next update from loading.
+      purge(module, file)
+    end
+  end
+
+  defp purge(module, file) do
+    unless :code.soft_purge(module) do
+      Logger.warning(
+        "plugin #{Path.basename(file)}: stopping processes still in #{inspect(module)}"
+      )
+
+      :code.purge(module)
+    end
+  end
+
+  defp current?(module, binary) do
+    with true <- :code.is_loaded(module) != false,
+         {:ok, {^module, md5}} <- :beam_lib.md5(binary) do
+      md5 == module.module_info(:md5)
+    else
+      _ -> false
     end
   end
 
