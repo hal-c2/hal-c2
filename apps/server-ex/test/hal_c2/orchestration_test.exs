@@ -1667,6 +1667,41 @@ defmodule HalC2.OrchestrationTest do
       _ = await_statuses(thread_id, ["completed", "completed"])
     end
 
+    # Another instance of Claude runs with its own variables and home, so its turn needs
+    # its own CLI even when it launches Claude as the first does. A runtime updated in
+    # place from before launches recorded their instance knows the one its CLI runs.
+    test "a turn on another instance of Claude starts its own CLI" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      work = %{"claude-work" => %{"driver" => "claudeAgent", "enabled" => true}}
+      {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      %{session: session} = :sys.get_state(pid)
+
+      :ok = :sys.suspend(pid)
+
+      :sys.replace_state(
+        pid,
+        &update_in(&1.launch, fn launch -> Map.delete(launch, :instance) end)
+      )
+
+      :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 9, nil)
+      :ok = :sys.resume(pid)
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "again")
+      _ = await_statuses(thread_id, ["completed", "completed"])
+      assert %{session: ^session} = :sys.get_state(pid)
+
+      elsewhere = %{"modelSelection" => %{"instanceId" => "claude-work", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "msg-user-3", "elsewhere", elsewhere)
+      _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+      assert %{session: other, launch: %{instance: "claude-work"}} = :sys.get_state(pid)
+      refute other == session
+    end
+
     defp wake_text(id, text),
       do: %{
         "type" => "assistant",
