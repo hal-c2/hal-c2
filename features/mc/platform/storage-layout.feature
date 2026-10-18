@@ -289,11 +289,32 @@ Feature: Where HAL-C2 keeps its files
       Then the developer is told the installed server is not running
       And the developer is not told to leave --release out
 
+    # A checkout's own server ignores HAL_C2_HOME, but the installed server it names is
+    # still the one a checkout's --release pairs with.
     @mc
-    Scenario: Asking for the installed server's pairing link keeps a chosen home
-      Given HAL_C2_MC_HOME is "/srv/mc"
+    Scenario Outline: Asking for the installed server's pairing link keeps a chosen home
+      Given <variable> is "<home>"
       And the server of that home is running
       When a developer asks a checkout for the installed server's pairing link
+      Then it prints a pairing link for that server
+
+      Examples:
+        | variable       | home        |
+        | HAL_C2_MC_HOME | /srv/mc     |
+        | HAL_C2_HOME    | /srv/hal-c2 |
+
+    @mc
+    Scenario: A checkout with no server of its own pairs with the server of its HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When a developer asks a checkout for a pairing link
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: The installed server's single file pairs with the server of a HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When an operator runs "pair" on the installed MC's command line
       Then it prints a pairing link for that server
 
   Rule: The MC's files are sorted by kind

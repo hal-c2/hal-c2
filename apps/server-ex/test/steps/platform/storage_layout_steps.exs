@@ -166,6 +166,10 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     Storage.pair_release(context)
   end
 
+  step "a developer asks a checkout for a pairing link", context do
+    Storage.pair_checkout(context, [])
+  end
+
   step "an operator runs the installed server's own pair command", context do
     Storage.pair_from_release(context)
   end

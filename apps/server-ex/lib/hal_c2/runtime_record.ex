@@ -34,16 +34,20 @@ defmodule HalC2.RuntimeRecord do
   (`own` is its `:home`, `nil` or `:dev`): `{home, record}` of the profile that has a
   live record, the tool's own profile first, or nil when neither runs. So
   `mix hal_c2.pair` from a checkout finds the installed MC, and the other way round.
-  A tool given a chosen home looks at that home alone.
+  `installed` is where the installed MC keeps its files when that is not the installed
+  profile (a `HAL_C2_HOME` root a checkout's own `:home` ignores). A tool given a
+  chosen home looks at that home alone.
   """
-  def locate(own) when own in [nil, :dev] do
-    Enum.find_value([own | [nil, :dev] -- [own]], fn home ->
+  def locate(own, installed \\ nil)
+
+  def locate(own, installed) when own in [nil, :dev] do
+    Enum.find_value(Enum.uniq([own, installed, :dev]), fn home ->
       if record = running(home), do: {home, record}
     end)
   end
 
   # A chosen home (`HAL_C2_HOME`, `HAL_C2_MC_HOME`) is one MC's own: no other profile to try.
-  def locate(own), do: if(record = running(own), do: {own, record})
+  def locate(own, _installed), do: if(record = running(own), do: {own, record})
 
   @doc """
   The live record of the MC of one home (`nil` the installed profile, `:dev` one run

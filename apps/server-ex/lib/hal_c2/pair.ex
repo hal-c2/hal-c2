@@ -8,18 +8,20 @@ defmodule HalC2.Pair do
       pair --tailscale [--tailscale-serve-port PORT]
       pair --release [BASE_URL | --tailscale]
 
-  `BASE_URL` is an http or https address with no query or fragment, and defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
+  `BASE_URL` is an http or https address with a host and no credentials, query or
+  fragment, and defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
   `http://127.0.0.1:3790` for the installed MC (`:3780` for one run from a checkout), or
   the LAN or tailnet address it was bound to.
 
   From a checkout with no HAL-C2 home configured it pairs with the MC that is running,
-  whether that is the installed one or a development one (`HalC2.RuntimeRecord.locate/1`).
+  whether that is the installed one or a development one (`HalC2.RuntimeRecord.locate/2`).
   When both run, that is the one of the profile the command was run from, so a checkout
   pairs with its own; `--release` pairs with the installed MC instead. The installed
   MC's own command (`hal-c2-service pair`) is always the installed profile's: it never
   pairs with a development MC, and fails when the installed one is not running. An
   installed MC started with `HAL_C2_HOME` or `HAL_C2_MC_HOME` is paired with by the
-  same variables on this command.
+  same variables on this command, from a checkout too, though a checkout's own MC
+  ignores `HAL_C2_HOME` (config/runtime.exs).
 
   `--tailscale` publishes the MC over Tailscale Serve HTTPS (port 443 unless
   `--tailscale-serve-port` names another, 1 to 65535) and pairs through the machine's
@@ -54,21 +56,15 @@ defmodule HalC2.Pair do
 
     with :ok <- check_options(invalid, rest, opts),
          {:ok, located} <- locate(opts[:release]) do
-      running =
-        case located do
-          {home, record} ->
-            Application.put_env(:hal_c2, :home, home)
-            record
-
-          nil ->
-            nil
-        end
-
+      # The located MC's store takes the token. The app env is left alone, so a caller
+      # in a running MC keeps its own home.
+      {home, running} = located || {Application.get_env(:hal_c2, :home), nil}
       port = (running && running["port"]) || Application.get_env(:hal_c2, :port, 3780)
       serve_port = opts[:tailscale_serve_port] || HalC2.TailscaleServe.default_port()
 
       with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running) do
-        token = HalC2.Auth.create_pairing_token(HalC2.Store.home_path())
+        data = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).data
+        token = HalC2.Auth.create_pairing_token(Path.join(data, "hal-c2.sqlite"))
         link = "#{String.trim_trailing(base, "/")}/?token=#{token}"
 
         if opts[:tailscale] do
@@ -92,12 +88,14 @@ defmodule HalC2.Pair do
     do: if(HalC2.Upgrade.release_root(), do: "hal-c2-service pair", else: "mix hal_c2.pair")
 
   # The link is the address with `/?token=` after it, so an address with its own query or
-  # fragment, or without a scheme and host, would mint a token into a link nothing opens.
+  # fragment, without a scheme and host, with a space or a port no socket has, would mint
+  # a token into a link nothing opens. Credentials would be printed in the link, and
+  # `http://trusted@other-host` reads as the wrong destination.
   defp base_url?(url) do
     case URI.parse(url) do
-      %URI{scheme: scheme, host: host, query: nil, fragment: nil}
-      when scheme in ["http", "https"] and host not in [nil, ""] ->
-        true
+      %URI{scheme: scheme, host: host, port: port, userinfo: nil, query: nil, fragment: nil}
+      when scheme in ["http", "https"] and host not in [nil, ""] and port in 1..65_535 ->
+        not String.match?(url, ~r/\s/u)
 
       _ ->
         false
@@ -117,7 +115,7 @@ defmodule HalC2.Pair do
 
       match?([_], rest) and not base_url?(hd(rest)) ->
         {:error,
-         "BASE_URL must be an http or https address with no query or fragment, such as http://127.0.0.1:3780, not #{hd(rest)}"}
+         "BASE_URL must be an http or https address with a host, a port from 1 to 65535 if any, and no credentials, spaces, query or fragment, such as http://127.0.0.1:3780, not #{hd(rest)}"}
 
       port && !opts[:tailscale] ->
         {:error, "`--tailscale-serve-port` only applies with `--tailscale`"}
@@ -149,13 +147,23 @@ defmodule HalC2.Pair do
   # mint into a store nothing serves.
   defp locate(release) do
     home = Application.get_env(:hal_c2, :home)
-    chosen = if home not in [nil, :dev], do: home
+    installed = installed_home(home)
 
     if release == true or HalC2.Upgrade.release_root() do
-      installed(chosen)
+      installed(installed)
     else
-      {:ok, HalC2.RuntimeRecord.locate(home)}
+      {:ok, HalC2.RuntimeRecord.locate(home, installed)}
     end
+  end
+
+  # The home the installed MC runs with in this environment: the `:home` a release or
+  # `HAL_C2_MC_HOME` gave this command, else a `HAL_C2_HOME` root, which config/runtime.exs
+  # applies to a release only, so a checkout's `:dev` does not carry it.
+  defp installed_home(home) when home not in [nil, :dev], do: home
+
+  defp installed_home(_home) do
+    root = System.get_env("HAL_C2_HOME")
+    if root && HalC2.Paths.root?(root, :root, HalC2.Paths.user_home()), do: {:root, root}
   end
 
   defp installed(home) do

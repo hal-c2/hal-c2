@@ -10,16 +10,21 @@ defmodule HalC2.Steps.Connections.Pairing do
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
+  # hal_c2 eval EXPR ARGS...: applies this build's config as a release does
+  # (`HalC2.Test.Storage.boot_config/2` under :prod), so the HAL_C2_* variables it inherits
+  # give it its home, or is told a test MC's directory home (STAND_IN_HOME).
   @stand_in """
   #!/bin/sh
-  # hal_c2 eval EXPR ARGS...: a release applies runtime.exs to the home; this one is told it
-  # (STAND_IN_HOME), and has none when it is not.
   [ "$1" = eval ] || exit 64
   expr="$2"
   shift 2
-  exec elixir -pa "$STAND_IN_CODE" \\
-    -e 'with home when home != nil <- System.get_env("STAND_IN_HOME"), do: Application.put_env(:hal_c2, :home, home)' \\
-    -e "$expr" -- "$@"
+  exec elixir -pa "$STAND_IN_CODE" -e '
+    config = System.fetch_env!("STAND_IN_CONFIG")
+    read = &Config.Reader.read!(Path.join(config, &1), env: :prod, target: :host)
+    Application.put_all_env(Config.Reader.merge(read.("config.exs"), read.("runtime.exs")))
+    with home when home != nil <- System.get_env("STAND_IN_HOME"),
+      do: Application.put_env(:hal_c2, :home, home)
+  ' -e "$expr" -- "$@"
   """
 
   # --- printed on the host ---------------------------------------------------------
@@ -43,6 +48,11 @@ defmodule HalC2.Steps.Connections.Pairing do
     Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, String.split(arguments)))
   end
 
+  step "an operator asks for a pairing link for the one address {string}",
+       %{args: [address]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, [address]))
+  end
+
   step "the command fails naming {string}", %{args: [option]} = context do
     assert {:error, message} = context.refusal
     assert message =~ option
@@ -63,8 +73,8 @@ defmodule HalC2.Steps.Connections.Pairing do
 
     [command | args] = String.split(line)
 
-    # The scenario's home is passed on when it is a directory (the test MC's); one that is
-    # the installed profile or a checkout's is the environment's to find, as in a release.
+    # The scenario's home is passed on when it is a directory (the test MC's), a layout no
+    # variable names; any other comes from the HAL_C2_* variables the command inherits.
     home =
       case Application.fetch_env!(:hal_c2, :home) do
         home when is_binary(home) -> [{"STAND_IN_HOME", home}]
@@ -72,25 +82,53 @@ defmodule HalC2.Steps.Connections.Pairing do
       end
 
     {out, status} =
-      System.cmd(wrapper, [command | args],
-        env: [
-          {"STAND_IN_CODE", Path.join(Mix.Project.build_path(), "lib/*/ebin")},
-          {"RELEASE_ROOT", root} | home
-        ],
-        stderr_to_stdout: true
-      )
+      run(wrapper, [command | args], [
+        {"STAND_IN_CODE", Path.join(Mix.Project.build_path(), "lib/*/ebin")},
+        {"STAND_IN_CONFIG", Path.expand("../../../config", __DIR__)},
+        {"RELEASE_ROOT", root} | home
+      ])
 
     out = String.trim(out)
 
     case {status, Enum.reject(args, &String.starts_with?(&1, "--"))} do
       {0, [base | _]} ->
-        context |> Map.put(:base, base) |> Map.put(:printed, out)
+        context |> Map.put(:base, base) |> Map.put(:printed, out) |> Map.put(:pair_output, [out])
 
       {0, []} ->
-        context |> Map.put(:base, "http://127.0.0.1:#{context.mc.port}") |> Map.put(:printed, out)
+        context
+        |> Map.put(:base, "http://127.0.0.1:#{context.mc.port}")
+        |> Map.put(:printed, out)
+        |> Map.put(:pair_output, [out])
 
       {_, _} ->
         Map.put(context, :pair_output, {:error, out})
+    end
+  end
+
+  # `System.cmd/3` that fails the scenario, and kills the command, when it has not exited
+  # within a minute, so a stand-in that hangs fails the run instead of hanging it.
+  defp run(executable, args, env) do
+    port =
+      Port.open({:spawn_executable, executable}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: args,
+        env: Enum.map(env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+      ])
+
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    collect(port, pid, [])
+  end
+
+  defp collect(port, pid, acc) do
+    receive do
+      {^port, {:data, data}} -> collect(port, pid, [acc | data])
+      {^port, {:exit_status, status}} -> {IO.iodata_to_binary(acc), status}
+    after
+      60_000 ->
+        System.cmd("kill", ["-KILL", Integer.to_string(pid)])
+        flunk("#{inspect(Port.info(port, :name))} did not exit: #{IO.iodata_to_binary(acc)}")
     end
   end
 
