@@ -186,7 +186,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
   # It leaves the registry before it answers: the registry drops a dead runtime's key
   # only when it gets to its exit, so a lookup right after the release would find a pid
-  # that is gone.
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself.
   def handle_call(:release, _from, %{turn: nil} = state) do
     Registry.unregister(HalC2.Codex.Registry, state.thread_id)
     {:stop, {:shutdown, :released}, :ok, state}

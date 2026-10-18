@@ -546,10 +546,15 @@ defmodule HalC2.Orchestration do
 
       message && target && target["status"] in @active_statuses &&
         steerable?(target, queued["providerInstanceId"]) &&
-          runtime(target["providerInstanceId"]).steer(
-            thread_id,
-            target["id"],
-            steer_input(message)
+          session_call(
+            fn ->
+              runtime(target["providerInstanceId"]).steer(
+                thread_id,
+                target["id"],
+                steer_input(message)
+              )
+            end,
+            :gone
           ) == :ok ->
         promoted(thread_id, queued, target, message)
 
@@ -969,7 +974,9 @@ defmodule HalC2.Orchestration do
         runtimes(:respond, 3),
         {:error, "no pending request"},
         fn runtime ->
-          if runtime.respond(thread_id, request_id, response) == :ok, do: :ok
+          if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
+               :ok,
+             do: :ok
         end
       )
 
@@ -1462,6 +1469,15 @@ defmodule HalC2.Orchestration do
     end) || interrupt_undriven(thread_id, run_id)
   end
 
+  # A runtime call to a thread's session. A session that stopped after the runtime looked
+  # it up, however it stopped (released as idle, crashed), answers `gone`, as one the
+  # lookup did not find would; one that is only slow still exits the caller.
+  defp session_call(call, gone) do
+    call.()
+  catch
+    :exit, {why, _} when why != :timeout -> gone
+  end
+
   # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
@@ -1697,7 +1713,9 @@ defmodule HalC2.Orchestration do
   defp steer(thread_id, run, command) do
     instance = run["providerInstanceId"] || "codex"
 
-    case runtime(instance).steer(thread_id, run["id"], steer_input(command)) do
+    steer = fn -> runtime(instance).steer(thread_id, run["id"], steer_input(command)) end
+
+    case session_call(steer, {:error, "its session stopped"}) do
       :ok ->
         HalC2.Streams.transact(thread_id, :thread, fn state ->
           at = Entities.now()

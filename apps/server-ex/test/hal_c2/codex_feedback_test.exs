@@ -37,4 +37,13 @@ defmodule HalC2.Codex.FeedbackTest do
                ThreadRuntime.upload_feedback("t1", "wrong answer")
     end
   end
+
+  # A call that times out exits `{:timeout, {GenServer, :call, _}}`, as one to a session
+  # that stops with `:timeout` does, without the wait: a slow session is not a gone one.
+  test "a session that only times out still exits the caller" do
+    session_stopping_with("t1", :timeout)
+
+    assert {:timeout, {GenServer, :call, _}} =
+             catch_exit(ThreadRuntime.upload_feedback("t1", "wrong answer"))
+  end
 end

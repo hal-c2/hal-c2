@@ -78,6 +78,35 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  # The registry still has a session that stops as it is asked (released as idle,
+  # crashed): the answer finds no pending request, as with no session at all.
+  for reason <- [{:shutdown, :released}, :killed] do
+    test "an answer to a session that stops with #{inspect(reason)} as it is asked finds no request" do
+      test = self()
+
+      # Not linked: its exit would take the test with it.
+      session =
+        spawn(fn ->
+          {:ok, _} = Registry.register(HalC2.Codex.Registry, "t-gone", nil)
+          send(test, :registered)
+
+          receive do
+            {:"$gen_call", _from, {:respond, _, _}} -> exit(unquote(Macro.escape(reason)))
+          end
+        end)
+
+      assert_receive :registered
+      on_exit(fn -> Process.exit(session, :kill) end)
+
+      assert {:error, "no pending request"} =
+               Orchestration.dispatch(%{
+                 "type" => "thread.user-input.dismiss",
+                 "threadId" => "t-gone",
+                 "requestId" => "q1"
+               })
+    end
+  end
+
   test "a message runs a Codex turn and streams it into the thread" do
     thread_id = launch("list the files")
     state = await_run(thread_id, "completed")
