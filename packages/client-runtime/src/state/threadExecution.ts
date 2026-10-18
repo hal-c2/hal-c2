@@ -46,6 +46,20 @@ function summarizeThreadRun(
   };
 }
 
+/**
+ * The newest run that began: a queued message is not a turn yet, and a held one that a
+ * newer message passed sits above that message until it starts. The newest run of all
+ * when none began.
+ */
+export function latestBegunRun(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["runs"][number] | null {
+  return (
+    latestMatchingRun(projection, (run) => run.status !== "queued") ??
+    latestMatchingRun(projection, () => true)
+  );
+}
+
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
@@ -71,7 +85,7 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const latestRunProjection = latestMatchingRun(projection, () => true);
+  const latestRunProjection = latestBegunRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,

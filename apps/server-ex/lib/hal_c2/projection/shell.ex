@@ -155,20 +155,18 @@ defmodule HalC2.Projection.Shell do
   end
 
   @doc """
-  The thread's latest run among `runs`: the one with the highest ordinal, the order runs
-  start in, which a held queued run that a newer message passed takes only when it starts.
-  The order of `runs` (the order they were made) only breaks ties among runs stored
-  without an ordinal. Passes over queued messages held for the user
-  (`queueHeld`): those wait behind the run that stopped, so a usage limit's stop stays
-  the thread's latest run until the queue resumes.
+  The run with the highest ordinal, passing over queued runs held for the user
+  (`queueHeld`): they wait behind the run that stopped, so a usage limit's stop stays
+  the thread's latest run until the queue resumes. Runs stored without an ordinal fall
+  back to the order they were made (the order of `runs`).
   """
   @spec latest_run([map]) :: map | nil
   def latest_run(runs) do
     runs
     |> Enum.reverse()
-    # Stable: of runs stored without an ordinal, the newest is still first.
-    |> Enum.sort_by(&(get(&1, "ordinal") || 0), :desc)
-    |> Enum.find(&(get(&1, "status") != "queued" or get(&1, "queueHeld") != true))
+    |> Enum.reject(&(get(&1, "status") == "queued" and get(&1, "queueHeld") == true))
+    # The first of equals: of runs stored without an ordinal, the newest.
+    |> Enum.max_by(&(get(&1, "ordinal") || 0), fn -> nil end)
   end
 
   defp interruptible?(run), do: get(run, "status") in @interruptible

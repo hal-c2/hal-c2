@@ -13,6 +13,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  latestBegunRun,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 import { threadRuntimeCanArchive, type ThreadRuntimeSummary } from "./models.ts";
@@ -104,6 +105,16 @@ describe("thread execution presentation", () => {
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+  });
+
+  it("takes the newest run that began as the latest turn, over a queued run above it", () => {
+    // A held message that a newer one passed is renumbered above it until it starts.
+    const passed = run("run-passed", 2, "completed");
+    const held = run("run-held", 3, "queued");
+    const projection = { ...v2Projection, runs: [held, passed], updatedAt: now };
+
+    expect(latestBegunRun(projection)?.id).toBe(passed.id);
+    expect(latestBegunRun({ ...projection, runs: [held] })?.id).toBe(held.id);
   });
 
   it("does not expose a queued-only run as interruptible", () => {

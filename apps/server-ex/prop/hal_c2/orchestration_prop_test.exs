@@ -585,7 +585,8 @@ defmodule HalC2.OrchestrationPropTest do
   defp in_start_order(thread, msg) do
     {[run], others} = Enum.split_with(thread.runs, &(&1.msg == msg))
     {waiting, left} = Enum.split_with(others, &(&1.status == :queued))
-    waiting = Enum.sort_by(waiting, fn run -> Enum.find_index(thread.queue, &(&1 == run.msg)) end)
+    position = thread.queue |> Enum.with_index() |> Map.new()
+    waiting = Enum.sort_by(waiting, &Map.get(position, &1.msg))
     %{thread | runs: left ++ [run] ++ waiting}
   end
 

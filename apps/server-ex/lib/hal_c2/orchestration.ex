@@ -3078,11 +3078,13 @@ defmodule HalC2.Orchestration do
     {changes ++ handoff.changes, {:ok, turn}}
   end
 
-  # Runs are numbered in the order they start, which is what checkpoints (ref
+  # Runs are numbered in the order they leave the queue, which is what checkpoints (ref
   # `ordinal - 1` is a run's baseline), handoff deltas and windows count by: a run
   # takes the ordinal after every run that left the queue, and the runs still waiting
   # (a held queue a newer message passed, say) move up behind it in queue order.
   # Without a hold nothing moves: the queue's first run already has the next ordinal.
+  # A run cancelled while queued left it too, so it keeps its number, and the run after
+  # it has no checkpoint at `ordinal - 1` to start from.
   defp start_ordinal(state, runs, run) do
     own = run && run["id"]
 
