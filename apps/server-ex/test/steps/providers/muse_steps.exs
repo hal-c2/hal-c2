@@ -614,10 +614,14 @@ defmodule HalC2.Steps.Providers.Muse do
     child_id = context.subagent["childThreadId"]
     child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
 
-    assert %{
-             "user" => "Review the diff for bugs\nFocus on app.ts",
-             "assistant" => "Found one bug in app.ts."
-           } == child |> StreamState.list("message") |> Map.new(&{&1["role"], &1["text"]})
+    assert [
+             {"user", "Review the diff for bugs\nFocus on app.ts"},
+             {"assistant", "Found one bug in app.ts."}
+           ] ==
+             child
+             |> StreamState.list("message")
+             |> Enum.sort_by(& &1["createdAt"])
+             |> Enum.map(&{&1["role"], &1["text"]})
 
     context
   end
@@ -638,11 +642,12 @@ defmodule HalC2.Steps.Providers.Muse do
     context |> install() |> FakeAcp.thread() |> turn("delegate and move on")
   end
 
-  step "the subagent is shown as ended with the turn", context do
-    assert [%{"status" => "completed", "progress" => "Reading the diff"}] =
+  step "the subagent is shown as stopped with the turn, without an answer", context do
+    assert [%{"status" => "interrupted", "progress" => "Reading the diff"} = subagent] =
              context |> state() |> StreamState.list("subagent")
 
-    assert [%{"status" => "completed"}] = items(context, "subagent")
+    assert subagent["result"] in [nil, ""]
+    assert [%{"status" => "interrupted"}] = items(context, "subagent")
     context
   end
 

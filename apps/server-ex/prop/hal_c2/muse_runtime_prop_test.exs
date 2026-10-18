@@ -243,9 +243,17 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
 
+  # A subagent the turn ends before it answers is interrupted, even by a turn that completed.
   defp end_turn(%{turn: %{msg: msg}} = state, status) do
-    ended = fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end
-    %{state | runs: Enum.map(state.runs, ended), subs: Enum.map(state.subs, ended), turn: nil}
+    ended = fn status -> fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end end
+    sub_status = if status == "completed", do: "interrupted", else: status
+
+    %{
+      state
+      | runs: Enum.map(state.runs, ended.(status)),
+        subs: Enum.map(state.subs, ended.(sub_status)),
+        turn: nil
+    }
   end
 
   def postcondition(state, call, {reply, projection}) do

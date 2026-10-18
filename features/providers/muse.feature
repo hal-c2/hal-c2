@@ -147,9 +147,9 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent that fails
     Then the subagent is shown as failed with Muse's reason
 
-  Scenario: A Muse Code subagent still running when the turn ends ends with it
+  Scenario: A Muse Code subagent still running when the turn ends stops with it
     Given Muse Code delegates a review to a subagent and the turn ends first
-    Then the subagent is shown as ended with the turn
+    Then the subagent is shown as stopped with the turn, without an answer
 
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread

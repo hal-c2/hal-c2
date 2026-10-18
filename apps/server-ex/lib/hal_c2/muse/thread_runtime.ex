@@ -901,8 +901,13 @@ defmodule HalC2.Muse.ThreadRuntime do
     if status == "completed", do: answer, else: answer || item["failureReason"]
   end
 
-  # Muse's subagents still running when the turn ends end with it.
+  # Muse's subagents still running when the turn ends end with it, unanswered: as
+  # interrupted when the turn completed, so none reads as finished work. Their answer,
+  # should Muse send one later, belongs to no turn. (ACP keeps a running subagent as
+  # background work instead: its agents report them past the turn.)
   defp end_subagents(state, status) do
+    status = if status == "completed", do: "interrupted", else: status
+
     state.subs
     |> Map.values()
     |> Enum.each(fn
