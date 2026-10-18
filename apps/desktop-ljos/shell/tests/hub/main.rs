@@ -13,6 +13,7 @@ mod client_activity_prop;
 mod cluster;
 mod commands;
 mod composer;
+mod composer_brick;
 mod composer_prop;
 mod connection_health;
 mod connections;
@@ -151,6 +152,14 @@ impl Hub {
         Window(self.test_window.clone())
     }
 
+    /// The hub's window showing `root` of `source` (QML compiled in the
+    /// test, as `common::compile` or with the checkout's bricks).
+    pub fn show(&self, source: ljos::MapSource, root: &str) -> (ljos::prelude::ObjectId, Window) {
+        let root = ljos::create_root(&self.engine, source, root).expect("the root");
+        self.test_window.borrow_mut().show(root).expect("a root");
+        (root, Window(self.test_window.clone()))
+    }
+
     /// Runs `f` on the controller `C`, as another controller would.
     pub fn with_controller<C: hal_c2_shell::controller::Controller, R>(
         &self,
@@ -160,7 +169,7 @@ impl Hub {
     }
 }
 
-/// A window with nothing in it ([`Hub::window`]).
+/// The hub's window ([`Hub::window`], [`Hub::show`]).
 pub struct Window(Rc<RefCell<TestWindow>>);
 
 impl Window {
