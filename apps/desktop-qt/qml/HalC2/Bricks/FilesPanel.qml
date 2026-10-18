@@ -21,10 +21,14 @@ Rectangle {
     readonly property string mediaKind: source?.mediaKind ?? ""
     readonly property int maxLineColumns: 2000
     // Whether the tree shows beside an open file; with no file open it always shows.
-    // Hiding it is a preference, kept across files and threads (the next file opens
+    // Hiding it is a preference, kept while this panel lives (the next file opens
     // with the tree still hidden), not a state of the file that was open.
     property bool explorerOpen: true
     readonly property bool explorerShown: !fileOpen || explorerOpen
+    // What the tree takes beside an open file: at most 352px or 46% of the tab, and
+    // never so much that the file (whose header buttons are its minimum width) is
+    // pushed under it. A row layout does not shrink a fixed-size column on its own.
+    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -62,9 +66,10 @@ Rectangle {
         spacing: 0
 
         ColumnLayout {
+            id: fileViewer
+
             objectName: "fileViewer"
             Layout.fillWidth: true
-            Layout.minimumWidth: 0
             Layout.fillHeight: true
             visible: root.fileOpen
             spacing: 0
@@ -130,6 +135,8 @@ Rectangle {
                     // A toggle for assistive tech too; its state is the panel's, so
                     // the click's own flip is put back by the Binding below.
                     checkable: true
+                    Accessible.checkable: true
+                    Accessible.checked: checked
                     iconName: "folder-tree"
                     iconSize: 13
                     iconTint: root.muted
@@ -492,10 +499,8 @@ Rectangle {
             objectName: "filesExplorer"
             Layout.fillHeight: true
             Layout.fillWidth: !root.fileOpen
-            Layout.preferredWidth: root.fileOpen ? Math.min(352, root.width * 0.46) : -1
-            // The share is a cap, not a preference: the column gives way to its
-            // content's minimum, so a narrow tab keeps the file beside the tree.
-            Layout.maximumWidth: root.fileOpen ? Math.min(352, root.width * 0.46) : Infinity
+            Layout.preferredWidth: root.fileOpen ? root.explorerShare : -1
+            Layout.maximumWidth: root.fileOpen ? root.explorerShare : Infinity
             Layout.minimumWidth: 0
             visible: root.explorerShown
             spacing: 0

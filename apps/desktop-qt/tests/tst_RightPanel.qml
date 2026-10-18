@@ -110,6 +110,8 @@ Item {
                     text: "export const rates = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7];"
                 }
             }
+            property int closed: 0
+            function closeFile() { closed += 1; }
             signal revealRequested
         }
     }
@@ -526,6 +528,29 @@ Item {
             verify(!explorer.visible, "the tree stays hidden for the next file");
             mouseClick(toggle);
             verify(explorer.visible);
+        }
+
+        // In a phone-wide tab the header's buttons are the file's minimum: the tree gives
+        // way, so none of them ends up under it.
+        function test_theHeaderButtonsStayInTheFileInANarrowTab() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.renderKind = "markdown";
+            const files = createTemporaryObject(filesComponent, root, { source: source, width: 360 });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            tryVerify(() => viewer.visible);
+            verify(explorer.visible);
+            for (const name of ["fileRender", "fileEdit", "fileWrap", "fileExplorerToggle", "fileClose"]) {
+                const button = findChild(files, name);
+                verify(button.visible, name);
+                const end = button.mapToItem(files, button.width, 0).x;
+                verify(end <= explorer.x + 0.5, name + " ends at " + end + " but the tree starts at " + explorer.x);
+            }
+            verify(viewer.x + viewer.width <= explorer.x + 0.5, "the file ends where the tree starts");
+            verify(explorer.x + explorer.width <= files.width + 0.5, "tree " + explorer.x + "+" + explorer.width + " of " + files.width + ", file " + viewer.x + "+" + viewer.width);
+            const close = findChild(files, "fileClose");
+            mouseClick(close);
+            compare(source.closed, 1, "the close button is reachable");
         }
 
         // Past the width where 46% would be more than the tree needs, the cap is 352px.
