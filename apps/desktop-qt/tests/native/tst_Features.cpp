@@ -123,7 +123,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:An edit whose message starts running*"),
     QStringLiteral("composer/queue-and-steer.feature:Leaving the thread ends the edit"),
     QStringLiteral("composer/queue-and-steer.feature:A held queue*"),
-    QStringLiteral("composer/queue-and-steer.feature:A resume the MC refuses*"),
+    QStringLiteral("composer/queue-and-steer.feature:A resume that the MC refuses*"),
     QStringLiteral("composer/context-references.feature:A terminal excerpt*"),
     QStringLiteral("composer/context-references.feature:A removed terminal excerpt*"),
     QStringLiteral("composer/context-references.feature:A send the MC rejects gives its terminal excerpt back"),

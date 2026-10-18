@@ -2098,7 +2098,7 @@ bool ComposerController::resumeQueue() {
                               if (error) {
                                 NativeWindow* window = shell->window(windowId);
                                 if (!window) window = shell->activeWindow();
-                                window->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                                if (window) window->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
                               }
                               publishEverywhere(shell);
                             });

@@ -338,7 +338,7 @@ Feature: Follow-ups while the agent is working
     Then the MC is asked to resume the queue
 
   @desktop
-  Scenario: A resume the MC refuses is reported
+  Scenario: A resume that the MC refuses is reported
     Given "later" was queued when the MC restarted
     And the MC comes back
     And the MC refuses "queue.resume" with "thread is archived"
