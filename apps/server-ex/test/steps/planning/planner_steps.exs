@@ -2212,6 +2212,7 @@ defmodule HalC2.Steps.Planning.Planner do
     context
     |> assert_assignees("DELETE", number, old)
     |> assert_assignees("POST", number, owner)
+    |> assert_assignee_order(number, [{"DELETE", old}, {"POST", owner}])
   end
 
   step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
@@ -3209,6 +3210,21 @@ defmodule HalC2.Steps.Planning.Planner do
     assert %{"assignees" => [login]} in calls,
            "GitHub was not asked to #{method} #{login} on ##{number}: #{inspect(calls)}"
 
+    context
+  end
+
+  # GitHub was asked to change issue `number`'s assignees in the order of `changes`, as
+  # `{method, login}`: the calls to GitHub are logged in the order they were made.
+  defp assert_assignee_order(context, number, changes) do
+    asked =
+      for call <- World.cli_calls(context, "/issues/#{number}/assignees"),
+          "--method" in call["args"],
+          method = Enum.at(call["args"], Enum.find_index(call["args"], &(&1 == "--method")) + 1),
+          %{"assignees" => [login]} <- [JSON.decode!(call["stdin"])],
+          {method, login} in changes,
+          do: {method, login}
+
+    assert Enum.dedup(asked) == changes, "GitHub was asked #{inspect(asked)}"
     context
   end
 
