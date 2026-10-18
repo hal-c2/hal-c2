@@ -171,6 +171,7 @@ Item {
             compare(alphaOf(bolt.color), 0.8);
             Shell.state = withDriver("codex");
             tryVerify(() => Qt.colorEqual(opaque(bolt.color), opaque(composer.foreground)));
+            compare(bolt.filled, true);
             compare(alphaOf(bolt.color), alphaOf(composer.foreground));
         }
 
