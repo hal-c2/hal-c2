@@ -463,14 +463,16 @@ defmodule HalC2.Issues do
     end
   end
 
-  # GitHub allows ten assignees on an issue; a login is text with no blanks around it.
-  defp logins([_ | _] = logins) when length(logins) <= 10 do
-    trimmed =
-      for login <- logins, is_binary(login), String.trim(login) != "", do: String.trim(login)
+  # GitHub allows ten assignees on an issue; a login is text with no blanks in or around
+  # it. GitHub reads logins whatever their case, so the case-variants of one are one.
+  defp logins([_ | _] = logins) when length(logins) <= 100 do
+    trimmed = for login <- logins, is_binary(login), do: String.trim(login)
+    unique = Enum.uniq_by(trimmed, &String.downcase/1)
 
-    if length(trimmed) == length(logins),
-      do: {:ok, Enum.uniq(trimmed)},
-      else: {:error, "assignees must be a list of logins."}
+    if length(trimmed) == length(logins) and length(unique) <= 10 and
+         Enum.all?(unique, &(&1 != "" and not String.match?(&1, ~r/\s/))),
+       do: {:ok, unique},
+       else: {:error, "assignees must be a list of logins."}
   end
 
   defp logins(_), do: {:error, "assignees must be a list of logins."}

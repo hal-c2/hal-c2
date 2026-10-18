@@ -2195,6 +2195,10 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user clears the owner of \#{int}'s task", %{args: [number]} = context do
+    update_task(context, number, %{"owner" => nil})
+  end
+
   step "the user makes {string} the owner of \#{int}'s task",
        %{args: [owner, number]} = context do
     update_task(context, number, %{"owner" => owner})
@@ -2205,6 +2209,18 @@ defmodule HalC2.Steps.Planning.Planner do
     context
     |> GitHubIssues.assert_patched(number, %{"title" => title})
     |> assert_assignees("POST", number, owner)
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees and nothing else",
+       %{args: [old, number]} = context do
+    context
+    |> assert_assignees("DELETE", number, old)
+    |> assert_assignee_order(number, [{"DELETE", old}])
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees once and to add {string} twice",
+       %{args: [old, number, owner]} = context do
+    assert_assignee_order(context, number, [{"DELETE", old}, {"POST", owner}, {"POST", owner}])
   end
 
   step "GitHub is asked to take {string} off \#{int}'s assignees and to add {string}",
@@ -2326,6 +2342,17 @@ defmodule HalC2.Steps.Planning.Planner do
     )
   end
 
+  step "GitHub refuses adding assignees to \#{int}", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+        "exit" => 1,
+        "stderr" =>
+          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/assignees#add-assignees-to-an-issue)\n"
+      }
+    ])
+  end
+
   step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
     World.cli_rules(
       context,
@@ -2390,6 +2417,14 @@ defmodule HalC2.Steps.Planning.Planner do
       GitHubIssues.issue(repository, number, %{
         "assignees" => %{"nodes" => [%{"login" => first}, %{"login" => second}]}
       })
+    ])
+  end
+
+  step "GitHub lists \#{int} as assigned to {string}", %{args: [number, login]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"assignees" => %{"nodes" => [%{"login" => login}]}})
     ])
   end
 

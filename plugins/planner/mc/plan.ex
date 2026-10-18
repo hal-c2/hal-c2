@@ -173,6 +173,10 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp field("progress", _), do: {:error, "progress is a number from 0 to 100."}
 
+  # An owner is a login, which GitHub reads whatever its case and not with spaces around.
+  defp field("owner", value) when is_binary(value),
+    do: {:ok, if(String.trim(value) == "", do: nil, else: String.trim(value))}
+
   defp field(id, value) when id in ~w(parent owner projectId) and value in [nil, ""],
     do: {:ok, nil}
 

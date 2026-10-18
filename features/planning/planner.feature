@@ -1319,6 +1319,31 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is owned by "dana"
 
+    # Clearing the owner takes only them off the issue, as a new owner replaces only the
+    # old one, so an issue others are assigned to stays assigned to them and the task
+    # follows the first of them again.
+    @mc
+    Scenario: Clearing a task's owner takes only them off the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user clears the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and nothing else
+      When GitHub lists #7 as assigned to "bob"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "bob"
+
+    # The old owner comes off first and stays off, so the retry adds only the new one.
+    @mc
+    Scenario: An owner GitHub refused to add goes again without taking the old owner off again
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses adding assignees to #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees once and to add "dana" twice
+      And #7's task is named "Rate limiting" and marked as synced
+
     @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways

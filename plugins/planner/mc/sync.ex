@@ -971,10 +971,11 @@ defmodule HalC2Plugins.Planner.Sync do
   # The task holds one of the issue's assignees, so a new owner replaces only the old
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
-  defp owner_pushes(base, synced, new, differs) do
-    changed? = differs.("owner")
+  defp owner_pushes(base, synced, new, _differs) do
     old = synced["owner"]
     login = new["owner"]
+    # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
+    changed? = old != login and not same?(old, login)
 
     off =
       if changed? and old,
