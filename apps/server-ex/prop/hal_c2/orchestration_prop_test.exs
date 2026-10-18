@@ -1106,7 +1106,8 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The texts of the `turn/steer` requests Codex was sent for these messages, once for
-  # every request.
+  # every request. Every generated text names its message (`wait m3`, `wait m3 edit
+  # 1`), so a text is one message's, and a message steered twice is in the list twice.
   defp provider_steers(texts) do
     log = Process.get(:codex_log)
     texts = MapSet.new(texts)
