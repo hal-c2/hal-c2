@@ -977,11 +977,14 @@ defmodule HalC2.Web.Socket do
   end
 
   # Lets go of subscription `id`'s ref on the service it watches; the service keeps
-  # this socket's others.
+  # this socket's others. The subscriptions an upgrade carried over (version 7) share
+  # one watch without a ref, let go of with the last of them.
   defp unwatch(state, id, shape) do
     {key, mc, module, _sub, unsub, args} = watch_spec(shape)
     {ref, ids} = Map.pop(Map.get(state.by_terminal, key, %{}), id)
-    :erpc.cast(mc, module, unsub, args ++ [ref])
+
+    if ref != nil or nil not in Map.values(ids),
+      do: :erpc.cast(mc, module, unsub, args ++ [ref])
 
     by_terminal =
       if ids == %{},

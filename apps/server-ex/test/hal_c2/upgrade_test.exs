@@ -257,6 +257,55 @@ defmodule HalC2.UpgradeTest do
     assert state.by_stream == %{"th-old" => {2, nil}}
   end
 
+  test "config subscriptions an upgrade carried over keep their one watch until the last goes" do
+    # Stands in for HalC2.Settings: says which unwatches reach it.
+    test = self()
+
+    settings =
+      spawn_link(fn ->
+        Process.register(self(), HalC2.Settings)
+        send(test, :registered)
+
+        Stream.repeatedly(fn ->
+          receive do: ({:"$gen_cast", {:unwatch, _pid, ref}} -> send(test, {:unwatched, ref}))
+        end)
+        |> Stream.run()
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(settings, :kill) end)
+
+    # Two pages showing settings on a socket from before refs, which shared one watch.
+    old = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{1 => {:config, node()}, 2 => {:config, node()}},
+      by_stream: %{},
+      by_terminal: %{{:settings, node()} => [1, 2]},
+      monitors: %{},
+      shell: %{},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    unsub = fn id, state ->
+      {:ok, state} =
+        HalC2.Web.Socket.handle_in({~s({"t":"unsub","id":#{id}}), [opcode: :text]}, state)
+
+      state
+    end
+
+    state = unsub.(1, old)
+    assert state.by_terminal[{:settings, node()}] == %{2 => nil}
+    # Only how long the unwatch a bug would send is looked for.
+    refute_receive {:unwatched, _}, 200
+
+    state = unsub.(2, state)
+    refute Map.has_key?(state.by_terminal, {:settings, node()})
+    assert_receive {:unwatched, nil}
+  end
+
   test "a message without a tag is only for a stream followed before an upgrade" do
     tag = {node(), make_ref()}
 
