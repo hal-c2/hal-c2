@@ -2673,7 +2673,8 @@ defmodule HalC2.Orchestration do
   # The changes that bring a thread from before each instance had its own provider
   # thread up to date. Then every instance of a driver kept its session under the
   # default instance's id (the driver's), and their runs named it. Another instance's
-  # session found there moves to that instance's own id, and the runs other instances
+  # provider thread found there moves to that instance's own id, naming that instance's
+  # provider session (made by its next run), and the runs other instances
   # ran there (their attempts and provider turns too) name their own instance's, so
   # each resumes, forks and rewinds in its own home. The default id is then the default
   # instance's; its next run takes it over (`new_run/5`). A thread brought up to date
@@ -2687,7 +2688,16 @@ defmodule HalC2.Orchestration do
 
     record =
       if owner not in [nil, driver] and threads[moved_id] == nil,
-        do: [create("provider-thread", moved_id, Map.put(legacy, "id", moved_id))],
+        do: [
+          create(
+            "provider-thread",
+            moved_id,
+            Map.merge(legacy, %{
+              "id" => moved_id,
+              "providerSessionId" => Entities.provider_session_id(owner, thread_id)
+            })
+          )
+        ],
         else: []
 
     runs =

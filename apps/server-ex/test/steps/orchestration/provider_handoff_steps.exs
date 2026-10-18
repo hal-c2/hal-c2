@@ -426,6 +426,19 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "the provider thread of {string} on {string} names that instance's session",
+       %{args: [thread, instance]} = context do
+    id = World.thread_id(context, thread)
+
+    assert %{"providerSessionId" => session} =
+             World.state(context, thread).entities["provider-thread"][
+               Entities.provider_thread_id(instance, id)
+             ]
+
+    assert session == Entities.provider_session_id(instance, id)
+    context
+  end
+
   step "the run continues the carried Codex session {string}", %{args: [native]} = context do
     run = World.await_latest_run(context, context.thread, "completed")
     assert %{"threadId" => ^native} = List.last(World.codex_requests(context, "thread/fork"))
