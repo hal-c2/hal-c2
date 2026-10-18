@@ -1846,7 +1846,13 @@ defmodule HalC2.PlannerPropTest do
           ref = Process.monitor(launcher)
           Process.exit(launcher, :kill)
 
-          receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+          receive do
+            {:DOWN, ^ref, :process, _, _} -> :ok
+          after
+            15_000 -> problem("the killed launcher never went down")
+          end
+      after
+        15_000 -> problem("the worktree setup was never asked to hold the launch")
       end
     end
 

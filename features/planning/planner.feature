@@ -1343,6 +1343,16 @@ Feature: Planner
       Then GitHub names #7 "Rate limits" last
       And #7's task is named "Rate limits" and marked as synced
 
+    # The restarted plugin has read no project yet when GitHub answers, so the push that
+    # follows the answer does not wait on a look.
+    @mc
+    Scenario: A rename made before a restart of the plugin is pushed when GitHub answers the one before it
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" at once
+      When the user renames #7's task to "Rate limiting", then to "Rate limits", then "planner" is restarted before GitHub answers
+      Then GitHub names #7 "Rate limits" last
+      And #7's task is named "Rate limits" and marked as synced
+
     @mc
     Scenario: A change GitHub takes after a restart of the plugin clears the mark of one it refused
       Given "planner" syncs "acme/api" both ways

@@ -1150,10 +1150,12 @@ defmodule HalC2.Steps.Planning.Planner do
   step "the user starts work on {string} and its thread start is killed",
        %{args: [title]} = context do
     context = start_work(context, title)
+    # The launcher's call to the held setup times out 5s after it is made, so the kill
+    # follows the call at once and its wait stays under that.
     assert_receive {:setup_held, launcher}, 10_000
     ref = Process.monitor(launcher)
     Process.exit(launcher, :kill)
-    assert_receive {:DOWN, ^ref, :process, _, :killed}, 10_000
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 3_000
     context
   end
 
@@ -2212,6 +2214,26 @@ defmodule HalC2.Steps.Planning.Planner do
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then to {string}, then {string} is restarted before GitHub answers",
+       %{args: [number, first, second, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    context = update_task(context, number, %{"title" => second})
+
+    # The restarted plugin's first look waits, so it has read no project when GitHub
+    # answers the rename.
+    gate = Path.join(context.mc.home, "look-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    wait = "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}'; fi"
+    listing = Map.put(listed(context, number, second), "run", wait)
+    context = World.cli_rules(context, [listing])
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    File.write!(gate, "go", [:raw])
     context
   end
 

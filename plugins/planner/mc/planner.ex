@@ -562,7 +562,7 @@ defmodule HalC2Plugins.Planner do
 
   defp effects(effects, settings) do
     for {id, token, ops, synced} <- Map.get(effects, :pushes, []),
-        do: push(id, token, ops, synced)
+        do: push(id, token, ops, synced, settings)
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
     :ok
@@ -571,8 +571,9 @@ defmodule HalC2Plugins.Planner do
   # Asks GitHub for a push of the task `id`, tells the server how it went and runs the
   # push it answers with, the task's change made while GitHub had this one, until none
   # is left. A push that raised is one GitHub did not take, so the task is not left
-  # waiting on it.
-  defp push(id, token, ops, synced) do
+  # waiting on it. The server hears with the MC's projects as read here, so a chained
+  # push does not depend on a look having read them since the server started.
+  defp push(id, token, ops, synced, settings) do
     {error, extra} =
       try do
         Sync.run(ops, synced)
@@ -582,8 +583,8 @@ defmodule HalC2Plugins.Planner do
            %{"synced" => synced}}
       end
 
-    case server({:pushed, id, token, error, extra}) do
-      {:push, ops, synced} -> push(id, token, ops, synced)
+    case decide({:pushed, id, token, error, extra}, settings) do
+      {:push, ops, synced} -> push(id, token, ops, synced, settings)
       :ok -> :ok
     end
   end
@@ -1943,14 +1944,28 @@ defmodule HalC2Plugins.Planner do
     }
   end
 
+  # Names this MC run: an OS pid alone can come back after a restart (in a container the
+  # MC may be pid 1 every time), and the node's creation is 0 unless it is distributed.
+  defp run_id do
+    case :persistent_term.get({__MODULE__, :run}, nil) do
+      nil ->
+        id = {System.pid(), Base.encode16(:crypto.strong_rand_bytes(8))}
+        :persistent_term.put({__MODULE__, :run}, id)
+        id
+
+      id ->
+        id
+    end
+  end
+
   # The runner and token of a push `save/1` wrote, if this MC run wrote it: a pid an
   # earlier run wrote may name another process now.
   defp runner(saved) do
-    os_pid = System.pid()
+    run_id = run_id()
 
     with true <- is_binary(saved),
          {:ok, binary} <- Base.decode64(saved),
-         {^os_pid, runner, token} when is_pid(runner) and is_reference(token) <-
+         {^run_id, runner, token} when is_pid(runner) and is_reference(token) <-
            :erlang.binary_to_term(binary, [:safe]) do
       {runner, token}
     else
@@ -1970,7 +1985,7 @@ defmodule HalC2Plugins.Planner do
       "board" => state.settings["board"] || "",
       "pushing" =>
         Map.new(state.pushing, fn {id, flight} ->
-          runner = {System.pid(), flight.runner, flight.token}
+          runner = {run_id(), flight.runner, flight.token}
           runner = runner |> :erlang.term_to_binary() |> Base.encode64()
           {id, %{"runner" => runner, "changed" => flight.changed, "board" => flight.board}}
         end)
