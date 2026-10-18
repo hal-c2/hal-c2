@@ -43,13 +43,22 @@ describe("status log", () => {
     const { state, log } = setup();
     log.note({ kind: "warning", text: "Enter a whole number of days" });
     expect(state.get("statusError")).toBeNull();
-    expect(log.commands().map((command) => command.id)).toEqual(["status.history"]);
+    expect(log.commands().map((command) => command.id)).toEqual([]);
+  });
+
+  it("offers the history only once an error has been logged", () => {
+    const { log } = setup();
+    const ids = () => log.commands().map((command) => command.id);
+    expect(ids()).toEqual([]);
+    log.note(error("boom"));
+    log.dispatch("status.dismiss");
+    expect(ids()).toEqual(["status.history"]);
   });
 
   it("offers dismissal only while an error is pinned, and clears the line it was on", () => {
     const { log, state, cleared } = setup();
     const ids = () => log.commands().map((command) => command.id);
-    expect(ids()).toEqual(["status.history"]);
+    expect(ids()).toEqual([]);
     log.note(error("boom"));
     expect(ids()).toEqual(["status.dismiss", "status.history"]);
     expect(log.dispatch("status.dismiss")).toBe(true);

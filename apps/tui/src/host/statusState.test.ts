@@ -47,4 +47,28 @@ describe("status row beside a pinned error", () => {
     expect(state.label).toBe("✗ Offline");
     expect(state.errorPinned).toBe(true);
   });
+
+  it("shares at most half of a narrow row, below the 32-cell floor", () => {
+    const state = row({
+      mainWidth: 50,
+      status: { kind: "success", text: "Setting saved" },
+      pinnedError: "x".repeat(300),
+    });
+    // 50 columns: the status takes 25 cells, the key hints keep the rest of the 48.
+    expect(Bun.stringWidth(state.pinned) + Bun.stringWidth(state.label)).toBeLessThanOrEqual(25);
+    expect(Bun.stringWidth(state.hint)).toBeGreaterThanOrEqual(23);
+    expect(state.pinned.length).toBeGreaterThan(" · ".length);
+  });
+
+  it("counts a wide-character error in terminal cells, not UTF-16 units", () => {
+    const wide = "接続できません".repeat(10);
+    const state = row({
+      mainWidth: 100,
+      status: { kind: "success", text: "Pulled." },
+      pinnedError: wide,
+    });
+    // Half of 100 columns is 50 cells; the error is cut to what is left of that.
+    expect(Bun.stringWidth(state.pinned) + Bun.stringWidth(state.label)).toBeLessThanOrEqual(50);
+    expect(Bun.stringWidth(state.pinned)).toBeGreaterThan(30);
+  });
 });

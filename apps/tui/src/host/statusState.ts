@@ -71,11 +71,15 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
     !(input.status.kind === "error" && input.status.text === input.pinnedError);
   const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
   const room = Math.max(0, input.mainWidth - 2);
-  // Beside an error the two share what they need, at least 32 cells and at most half the row.
-  const besideNeed = pinnedLabel.length + PINNED_SEPARATOR.length + statusLabel.length;
+  // Widths are terminal cells, as `clip` counts them: a wide character takes two.
+  const statusCells = Bun.stringWidth(statusLabel);
+  const pinnedCells = Bun.stringWidth(pinnedLabel);
+  // Beside an error the two share what they need: at least 32 cells where half the row allows
+  // it, and never more than half the row.
+  const besideNeed = pinnedCells + PINNED_SEPARATOR.length + statusCells;
   const statusWidth = beside
-    ? Math.min(room, Math.max(32, Math.min(besideNeed, Math.floor(input.mainWidth / 2))))
-    : Math.min(room, Math.max(8, Math.min(32, statusLabel.length)));
+    ? Math.min(room, Math.floor(input.mainWidth / 2), Math.max(32, besideNeed))
+    : Math.min(room, Math.max(8, Math.min(32, statusCells)));
   const hintWidth = Math.max(0, room - statusWidth);
   if (!beside) {
     return {
@@ -89,11 +93,8 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   // The newer message keeps what it needs up to a third of the shared width, or more
   // when the error is short enough to leave it room; the error takes the rest.
   const labelWidth = Math.min(
-    statusLabel.length,
-    Math.max(
-      Math.floor(statusWidth / 3),
-      statusWidth - PINNED_SEPARATOR.length - pinnedLabel.length,
-    ),
+    statusCells,
+    Math.max(Math.floor(statusWidth / 3), statusWidth - PINNED_SEPARATOR.length - pinnedCells),
   );
   const pinnedWidth = Math.max(0, statusWidth - PINNED_SEPARATOR.length - labelWidth);
   return {

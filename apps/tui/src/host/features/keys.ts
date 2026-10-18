@@ -98,7 +98,7 @@ export function createKeysFeature(
   const rebind = (action: string, title: string, text: string) => {
     const chord = normalizeChord(text);
     if (chord === null) {
-      kit.status(`"${text}" is not a key chord.`, "error");
+      kit.status(`"${text}" is not a key chord.`, "warning");
       return;
     }
     const owner = chordsFor("compose").find(
@@ -108,7 +108,7 @@ export function createKeysFeature(
     if (owner) {
       kit.status(
         `${chordLabel(chord)} is already ${describeAction(owner[1], "compose")}.`,
-        "error",
+        "warning",
       );
       return;
     }

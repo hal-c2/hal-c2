@@ -87,7 +87,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
   const edit = (path: string, line: number | null) => {
     const workspace = kit.workspace();
     if (!workspace) {
-      kit.status("Open a thread to edit its files.", "error");
+      kit.status("Open a thread to edit its files.", "warning");
       return;
     }
     const { cwd } = workspace;

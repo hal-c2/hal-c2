@@ -78,12 +78,17 @@ export function createStatusLog(ctx: {
               action: "status.dismiss",
             },
           ]),
-      {
-        id: "status.history",
-        title: "Show status history",
-        keywords: "errors failures messages log",
-        action: "status.history",
-      },
+      // Nothing to list until the first error: an empty picker is a dead end.
+      ...(history.length === 0
+        ? []
+        : [
+            {
+              id: "status.history",
+              title: "Show status history",
+              keywords: "errors failures messages log",
+              action: "status.history",
+            },
+          ]),
     ],
     dispatch: (action: string): boolean => {
       if (action === "status.dismiss") {

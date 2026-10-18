@@ -699,7 +699,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       let tabs = updateTabs(thread.threadId, (current) => current ?? initialTabs())!;
       if (busy.has(paneKey(thread.threadId, tabs.activeId))) {
         if (tabs.ids.length >= MAX_TERMINALS_PER_THREAD) {
-          store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`, "error");
+          store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`, "warning");
           return true;
         }
         tabs = updateTabs(thread.threadId, (current) => addTab(current))!;

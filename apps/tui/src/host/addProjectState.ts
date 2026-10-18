@@ -474,7 +474,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     const existing = findProjectByPath(projects(), resolution.path);
@@ -506,7 +506,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
   const submitRepository = (current: Extract<Flow, { step: "repository" }>) => {
     const repositoryInput = query.trim();
     if (repositoryInput.length === 0) {
-      store.setStatus("Enter a repository or Git URL.", "error");
+      store.setStatus("Enter a repository or Git URL.", "warning");
       return;
     }
     if (current.source === "url") {
@@ -551,7 +551,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     store.setStatus("Cloning repository…", "busy");

@@ -111,7 +111,7 @@ export function projectsSection(
 
   const run = (target: ShellProject, script: ProjectScript) => {
     if (!options.runAction(target.id, script)) {
-      host.status(`Open a thread in ${target.title} to run its actions.`, "error");
+      host.status(`Open a thread in ${target.title} to run its actions.`, "warning");
     }
   };
 
@@ -281,7 +281,7 @@ export function projectsSection(
       host.ask({ label, value: script[field] }, (text) => {
         const problem = validateProjectAction({ ...script, [field]: text });
         if (problem) {
-          host.status(problem, "error");
+          host.status(problem, "warning");
           return;
         }
         if (text !== script[field]) change({ [field]: text }, "Action saved.");
@@ -392,7 +392,7 @@ export function projectsSection(
             const problem = validateProjectAction(form);
             if (problem) {
               form.problem = problem;
-              host.status(problem, "error");
+              host.status(problem, "warning");
               host.refresh();
               return;
             }

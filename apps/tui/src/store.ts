@@ -17,11 +17,13 @@ import {
 // imperative subscription plumbing stays out of the component tree, at a scale
 // that fits a single-environment terminal client.
 
-/** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
 /**
- * "warning" is a hint about the user's last input ("Enter a whole number of days"):
- * it reads like an error but is not pinned (host/statusLog.ts), so it does not
- * outlive the correction.
+ * Tone of a status-line message — drives its glyph + colour, like the web toasts.
+ * "warning" is the client declining the user's last input or action before trying
+ * it ("Enter a whole number of days", "Open a thread to edit its files."): it reads
+ * like an error but is not pinned (host/statusLog.ts), so it does not outlive the
+ * correction. "error" is for something that was attempted and failed, or a system
+ * state the user cannot fix by typing something else (offline, not connected).
  */
 export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 

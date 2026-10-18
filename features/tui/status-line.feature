@@ -11,8 +11,10 @@ Feature: Errors stay on the terminal client's status line
   terminal. An error would be gone before it was read, so it stays until the user dismisses it
   (clicking it, or the palette's "Dismiss the status error") or a newer error takes its place.
   Messages that follow it show beside it. "Show status history" lists the recent errors. A hint
-  about what the user just typed ("Commit needs a message.") is a warning, not an error: it
-  does not stay once the next message arrives.
+  about what the user just typed or asked for ("Commit needs a message.", "Open a thread to edit
+  its files.") is a warning, not an error: the client declined it before trying anything, and it
+  does not stay once the next message arrives. An error is something that was attempted and
+  failed, or a state the user cannot fix by typing something else.
 
   Background:
     Given the terminal client is open on a thread whose workspace is a git repository
@@ -84,6 +86,11 @@ Feature: Errors stay on the terminal client's status line
     And the user pulls the branch
     Then the status line shows "Pulled."
     And the status line no longer shows "Pull failed"
+
+  @tui
+  Scenario: The status history is offered once there is an error to list
+    Given the terminal is 160 columns wide
+    Then the palette does not offer "Show status history"
 
   @tui
   Scenario: The status history lists the recent errors, newest first

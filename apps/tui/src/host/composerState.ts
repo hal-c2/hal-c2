@@ -1305,7 +1305,7 @@ export function createComposer(options: ComposerOptions): Composer {
       if (started && changes && (locked(current) || locked(selection))) {
         store.setStatus(
           `Start a new thread (^N) to use ${option.label}: ${option.providerLabel} cannot change models once a conversation has started.`,
-          "error",
+          "warning",
         );
         return;
       }
@@ -1671,7 +1671,7 @@ export function createComposer(options: ComposerOptions): Composer {
       branch: draft.branch,
     });
     if (invalid) {
-      store.setStatus(newThreadValidationMessage(invalid), "error");
+      store.setStatus(newThreadValidationMessage(invalid), "warning");
       return;
     }
     if (!project || !modelSelection) return;
@@ -1866,18 +1866,18 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const canAttach = (key: string | null): key is string => {
     if (!key) {
-      store.setStatus("Select a thread before attaching an image.", "error");
+      store.setStatus("Select a thread before attaching an image.", "warning");
       return false;
     }
     const detail = selectedDetail();
     if (!newDraft && detail && derivePendingUserInputs(detail.activities).length > 0) {
-      store.setStatus("Answer the pending question before attaching an image.", "error");
+      store.setStatus("Answer the pending question before attaching an image.", "warning");
       return false;
     }
     if (draftFor(key).images.length + imageLoads >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       store.setStatus(
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-        "error",
+        "warning",
       );
       return false;
     }
@@ -1927,7 +1927,7 @@ export function createComposer(options: ComposerOptions): Composer {
   const attachPath = (rawPath: string) => {
     const key = target();
     if (!key) {
-      store.setStatus("Select a thread before attaching an image.", "error");
+      store.setStatus("Select a thread before attaching an image.", "warning");
       return;
     }
     void track(loadImage(key, rawPath));
@@ -1938,7 +1938,7 @@ export function createComposer(options: ComposerOptions): Composer {
     if (!canAttach(key)) return;
     const extension = imageExtensionForMimeType(mimeType);
     if (!extension) {
-      store.setStatus("Paste a supported image format.", "error");
+      store.setStatus("Paste a supported image format.", "warning");
       return;
     }
     clipboardSequence += 1;
@@ -1953,7 +1953,7 @@ export function createComposer(options: ComposerOptions): Composer {
             store.setStatus(`Attached ${image.upload.name}.`, "success");
           },
           // A decoder failure means the bytes are not an image we can show.
-          () => store.setStatus("Paste a supported image format.", "error"),
+          () => store.setStatus("Paste a supported image format.", "warning"),
         )
         .finally(() => {
           imageLoads = Math.max(0, imageLoads - 1);

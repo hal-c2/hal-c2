@@ -137,7 +137,7 @@ export function createPlansFeature(kit: FeatureKit): Feature {
     const plan = latestPlan();
     const workspace = kit.workspace();
     if (!plan || !workspace) {
-      kit.status("This thread has no plan to save.", "error");
+      kit.status("This thread has no plan to save.", "warning");
       return;
     }
     const name = planFileName(plan.planMarkdown);
