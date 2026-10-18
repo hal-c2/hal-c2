@@ -72,13 +72,15 @@ Item {
         }
     }
 
+    readonly property int roomyHeight: 700
+
     // A host that gives the timeline more room while the user reads, as the
     // composer resting on one line does (Composer.conversationScrolled).
     Component {
         id: roomyTimelineComponent
         Timeline {
             width: 600
-            height: scrolledAway ? 700 : 400
+            height: scrolledAway ? roomyHeight : 400
             model: rows
         }
     }
@@ -126,12 +128,12 @@ Item {
         }
 
         // Scrolls up until the end is more than a roomy host's view away
-        // (700 plus a margin). How far a wheel notch carries is the platform's and
+        // (the roomy host's height plus a margin). How far a wheel notch carries is the platform's and
         // the machine's: a short scroll would leave the room the host makes
         // showing the end, which is not mid-thread.
         function scrollUp(timeline) {
             const list = view(timeline);
-            const farUp = () => list.originY + list.contentHeight - list.contentY > 900;
+            const farUp = () => list.originY + list.contentHeight - list.contentY > root.roomyHeight + 200;
             for (let i = 0; i < 20 && !farUp(); ++i) {
                 for (let notch = 0; notch < 5; ++notch)
                     mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
