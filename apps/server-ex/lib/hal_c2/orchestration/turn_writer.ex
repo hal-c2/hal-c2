@@ -609,7 +609,7 @@ defmodule HalC2.Orchestration.TurnWriter do
       failure && status == "failed" &&
         settle.(
           "provider-session",
-          Entities.provider_session_id(Entities.instance(ids), ids.thread),
+          session_id(stream, ids),
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
@@ -702,12 +702,6 @@ defmodule HalC2.Orchestration.TurnWriter do
     instance = run["providerInstanceId"]
     driver = Orchestration.driver_for(instance)
     attempt = StreamState.get(stream, "run-attempt")[run["activeAttemptId"]] || %{}
-    # Its provider thread names its session: one made before instances had their own
-    # is under the driver's id.
-    session_id =
-      (StreamState.get(stream, "provider-thread")[run["providerThreadId"]] || %{})[
-        "providerSessionId"
-      ] || Entities.provider_session_id(instance, thread_id)
 
     ids =
       %{
@@ -723,8 +717,15 @@ defmodule HalC2.Orchestration.TurnWriter do
         &if(turn = attempt["providerTurnId"], do: Map.put(&1, :provider_turn, turn), else: &1)
       )
 
-    cwd = (StreamState.get(stream, "provider-session")[session_id] || %{})["cwd"]
+    cwd = (StreamState.get(stream, "provider-session")[session_id(stream, ids)] || %{})["cwd"]
     %{thread_id: thread_id, turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"]}}
+  end
+
+  # The session a run ran in, as its provider thread names it: one made before instances
+  # had their own is under the driver's id.
+  defp session_id(stream, ids) do
+    (StreamState.get(stream, "provider-thread")[ids.provider_thread] || %{})["providerSessionId"] ||
+      Entities.provider_session_id(Entities.instance(ids), ids.thread)
   end
 
   # The items, nodes, provider subagents and prompts a run left open, and its message

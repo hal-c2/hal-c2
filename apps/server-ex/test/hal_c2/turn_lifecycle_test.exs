@@ -162,6 +162,31 @@ defmodule HalC2.TurnLifecycleTest do
     assert ["failed", "running"] = statuses(thread_id)
   end
 
+  # Before each instance had its own, a run on another instance of the driver named the
+  # driver's provider thread, and so the driver's session.
+  test "a run from before instances had their own sessions fails into the session it ran in",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1", "say done")
+    [first] = await_statuses(thread_id, ["completed"])
+
+    legacy = %{
+      "id" => "run-legacy",
+      "threadId" => thread_id,
+      "status" => "running",
+      "ordinal" => 2,
+      "rootNodeId" => nil,
+      "providerInstanceId" => "codex-work",
+      "providerThreadId" => first["providerThreadId"]
+    }
+
+    {:ok, _} = HalC2.Streams.commit(thread_id, :thread, [{"run", legacy["id"], %{"s" => legacy}}])
+    :ok = TurnWriter.abandon(thread_id, legacy["id"], "failed", "codex-work stopped")
+    session = HalC2.Orchestration.Entities.provider_session_id("codex", thread_id)
+
+    assert %{"lastError" => "codex-work stopped"} =
+             StreamState.get(current(thread_id), "provider-session")[session]
+  end
+
   # IdleSessions found the thread idle and released its runtime just as a message
   # started a run there: the runtime stopped under the start, and the run failed.
   test "a turn that starts as its idle runtime is released runs on a new one",
