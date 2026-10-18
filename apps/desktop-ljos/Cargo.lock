@@ -1297,7 +1297,6 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
- "epaint_default_fonts",
  "font-types",
  "harfrust",
  "log",
@@ -1311,12 +1310,6 @@ dependencies = [
  "unicode-segmentation",
  "vello_cpu 0.1.0",
 ]
-
-[[package]]
-name = "epaint_default_fonts"
-version = "0.36.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
 
 [[package]]
 name = "equivalent"
@@ -1434,7 +1427,7 @@ checksum = "f4beca3cb2444e3304ac30843cc091f44ed58932353cd492ce740067bfce6b12"
 [[package]]
 name = "filmcraft-aac"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "thiserror 2.0.21",
@@ -1443,7 +1436,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-ac3"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1451,7 +1444,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-apv"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1461,7 +1454,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-av1"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1471,17 +1464,17 @@ dependencies = [
 [[package]]
 name = "filmcraft-avi"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-bitstream"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-codecs"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-aac",
  "filmcraft-ac3",
@@ -1518,7 +1511,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-color"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "serde",
 ]
@@ -1526,7 +1519,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-dng"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "rayon",
  "thiserror 2.0.21",
@@ -1535,7 +1528,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-dnx"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1545,7 +1538,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-frame"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-color",
  "filmcraft-time",
@@ -1556,7 +1549,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-h264"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1566,7 +1559,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-hevc"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1576,7 +1569,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-isobmff"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "thiserror 2.0.21",
@@ -1585,12 +1578,12 @@ dependencies = [
 [[package]]
 name = "filmcraft-matroska"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-media"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-color",
  "filmcraft-dng",
@@ -1605,7 +1598,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-mpa"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "thiserror 2.0.21",
@@ -1614,7 +1607,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-mpeg2v"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "rayon",
  "thiserror 2.0.21",
@@ -1623,7 +1616,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-mpegts"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1631,22 +1624,22 @@ dependencies = [
 [[package]]
 name = "filmcraft-mxf"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-ogg"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-opus"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "filmcraft-prores"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1656,7 +1649,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-time"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "serde",
 ]
@@ -1664,7 +1657,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-vp8"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1672,7 +1665,7 @@ dependencies = [
 [[package]]
 name = "filmcraft-vp9"
 version = "0.8.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -1973,15 +1966,6 @@ dependencies = [
  "libc",
  "r-efi 6.0.0",
  "rand_core",
-]
-
-[[package]]
-name = "gif"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
-dependencies = [
- "weezl",
 ]
 
 [[package]]
@@ -2684,7 +2668,7 @@ dependencies = [
  "bytemuck",
  "byteorder-lite",
  "color_quant",
- "gif 0.14.2",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
@@ -2994,13 +2978,14 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 [[package]]
 name = "ljos"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
  "ljos_controls",
  "ljos_dev",
  "ljos_engine",
+ "ljos_i18n",
  "ljos_media",
  "ljos_platform",
  "ljos_quick",
@@ -3015,7 +3000,7 @@ dependencies = [
 [[package]]
 name = "ljos_a11y"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "accesskit",
 ]
@@ -3023,7 +3008,7 @@ dependencies = [
 [[package]]
 name = "ljos_compiler"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3044,7 +3029,7 @@ dependencies = [
 [[package]]
 name = "ljos_controls"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
@@ -3061,7 +3046,7 @@ dependencies = [
 [[package]]
 name = "ljos_dev"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "blake3",
  "ljos_a11y",
@@ -3078,6 +3063,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slotmap",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3085,7 +3071,7 @@ dependencies = [
 [[package]]
 name = "ljos_egui"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "egui",
  "ljos_a11y",
@@ -3093,13 +3079,14 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
+ "ljos_text",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "ljos_engine"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "arcstr",
  "bitflags 2.13.2",
@@ -3115,13 +3102,14 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 2.0.21",
+ "tracing",
  "url",
 ]
 
 [[package]]
 name = "ljos_host"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -3134,21 +3122,24 @@ dependencies = [
 [[package]]
 name = "ljos_i18n"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "icu_calendar",
  "icu_datetime",
  "icu_decimal",
  "icu_locale",
  "icu_plurals",
+ "icu_time",
+ "libc",
  "thiserror 2.0.21",
+ "windows-sys 0.52.0",
  "writeable",
 ]
 
 [[package]]
 name = "ljos_ir"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "blake3",
  "postcard",
@@ -3159,10 +3150,11 @@ dependencies = [
 [[package]]
 name = "ljos_js"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "ljos_runtime",
  "rquickjs",
+ "rustc-hash 2.1.3",
  "slotmap",
  "thiserror 2.0.21",
  "tracing",
@@ -3171,7 +3163,7 @@ dependencies = [
 [[package]]
 name = "ljos_macros"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3182,7 +3174,7 @@ dependencies = [
 [[package]]
 name = "ljos_mcp_core"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "bytes",
  "constant_time_eq",
@@ -3204,7 +3196,7 @@ dependencies = [
 [[package]]
 name = "ljos_media"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "filmcraft-bitstream",
  "filmcraft-codecs",
@@ -3224,7 +3216,7 @@ dependencies = [
 [[package]]
 name = "ljos_oxc_parser"
 version = "0.144.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "bitflags 2.13.2",
  "cow-utils",
@@ -3247,7 +3239,7 @@ dependencies = [
 [[package]]
 name = "ljos_platform"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "arboard",
  "futures",
@@ -3268,11 +3260,11 @@ dependencies = [
 [[package]]
 name = "ljos_quick"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "bitflags 2.13.2",
  "fancy-regex",
- "gif 0.13.3",
+ "gif",
  "jpeg-decoder",
  "ljos_a11y",
  "ljos_engine",
@@ -3295,7 +3287,7 @@ dependencies = [
 [[package]]
 name = "ljos_reactive"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "slotmap",
  "smallvec",
@@ -3305,7 +3297,7 @@ dependencies = [
 [[package]]
 name = "ljos_render"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "bitflags 2.13.2",
  "egui",
@@ -3325,7 +3317,7 @@ dependencies = [
 [[package]]
 name = "ljos_runtime"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "bitflags 2.13.2",
  "smallvec",
@@ -3335,7 +3327,7 @@ dependencies = [
 [[package]]
 name = "ljos_shader"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "naga",
  "serde",
@@ -3346,7 +3338,7 @@ dependencies = [
 [[package]]
 name = "ljos_shell"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "block2 0.6.2",
  "blocking",
@@ -3380,7 +3372,7 @@ dependencies = [
 [[package]]
 name = "ljos_text"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "ljos_render",
  "parley",
@@ -4698,7 +4690,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 [[package]]
 name = "qml_front"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "oxc_ast_visit",
  "oxc_syntax",
@@ -4710,7 +4702,7 @@ dependencies = [
 [[package]]
 name = "qml_syntax"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 dependencies = [
  "ljos_oxc_parser",
  "oxc_allocator",
@@ -4728,7 +4720,7 @@ checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 [[package]]
 name = "qt_types"
 version = "0.0.0"
-source = "git+https://github.com/hal-c2/ljos-ui?rev=91caa0172e636c9f85f0c10af2aec10e76ee0202#91caa0172e636c9f85f0c10af2aec10e76ee0202"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=985d34193d0bdcc41814d891d3d6dbba787531fb#985d34193d0bdcc41814d891d3d6dbba787531fb"
 
 [[package]]
 name = "quick-error"
@@ -4957,12 +4949,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67e3803f97b999e80cbf7c6ecdd07a8102204d92e1633cf48783720c521196bd"
 dependencies = [
  "bytemuck",
+ "gif",
+ "image-webp",
  "log",
  "pico-args",
  "rgb",
  "svgtypes",
  "tiny-skia 0.12.0",
  "usvg",
+ "zune-jpeg",
 ]
 
 [[package]]
