@@ -227,46 +227,40 @@ defmodule HalC2.Streams.View do
   defp replacement(kind, entity), do: %{"d" => true, "s" => Wire.entity(kind, entity)}
 
   @doc """
-  The log's events since a client's offset as they go to it, merged per entity and
-  trimmed. What the client held at its offset is not known here, only what it holds
-  now, so an entity held now is taken to have been held then. A run out of the
+  The log's events since a client's offset as they go to it, trimmed. `events` are
+  merged per entity (`HalC2.Web.Protocol.coalesce/1`), one patch each from the
+  offset to now. What the client held at its offset is not known here, only what it
+  holds now, so an entity held now is taken to have been held then. A run out of the
   window deletes its items, and one waiting in the queue, which may have rejoined
   it, sends its message again: all it holds before it runs.
   """
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
-    {sent, _settled} =
-      Enum.flat_map_reduce(events, MapSet.new(), fn
-        %{kind: kind, entity: id, patch: patch} = event, settled ->
-          entity = StreamState.get(stream, kind)[id]
-          void? = StreamState.void?(event)
+    Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
+      entity = StreamState.get(stream, kind)[id]
 
-          {sent, settled} =
-            cond do
-              void? or not holds?(view, stream, kind, entity) or
-                  MapSet.member?(settled, {kind, id}) ->
-                {[], settled}
+      sent =
+        cond do
+          StreamState.void?(event) or not holds?(view, stream, kind, entity) ->
+            []
 
-              # What the client held at its offset is not known, so a subagent text that
-              # is past the limit now cannot be appended to in step: the item is sent
-              # whole, cut as a snapshot has it, and its later events are left out. One
-              # that was past it and has been reset below since is replayed as it went,
-              # so the client can hold uncut text until the reset later in the replay.
-              Wire.appends_past_limit?(kind, patch, entity) ->
-                {[%{event | patch: replacement(kind, entity)}], MapSet.put(settled, {kind, id})}
+          # The text a merged append grows is not known, so one to a subagent text
+          # past the limit now is sent as the item, cut as a snapshot has it.
+          Wire.appends_past_limit?(kind, patch, entity) ->
+            [%{event | patch: replacement(kind, entity)}]
 
-              true ->
-                case Wire.patch(kind, patch, entity && entity["type"]) do
-                  nil -> {[], settled}
-                  patch -> {[%{event | patch: patch}], settled}
-                end
+          # Text within the limit now was within it at the offset too, unless the
+          # patch resets it, which `Wire.patch/4` reads from the patch itself.
+          true ->
+            case Wire.patch(kind, patch, entity && entity["type"], nil) do
+              nil -> []
+              patch -> [%{event | patch: patch}]
             end
+        end
 
-          # Whether or not the client holds runs: its items are what it is owed.
-          {sent ++ rolled_since(view, stream, event), settled}
-      end)
-
-    sent
+      # Whether or not the client holds runs: its items are what it is owed.
+      sent ++ rolled_since(view, stream, event)
+    end)
   end
 
   defp rolled_since(%{window: window} = view, stream, %{kind: "run", entity: run} = event)

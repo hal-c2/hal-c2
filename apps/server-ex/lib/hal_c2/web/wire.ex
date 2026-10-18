@@ -36,10 +36,12 @@ defmodule HalC2.Web.Wire do
   @doc """
   An event's patch, trimmed, or nil when nothing the client would use is left.
   `type` is the turn item's type when the patch is to one, and `was` the entity just
-  before the patch: how much of a subagent's text the client already holds is read
-  from it. Without `was`, an append is taken to grow an empty field.
+  before the patch (or its `cut_basis/1`): how much of a subagent's text the client
+  already holds is read from it. With `was` nil an append is taken to grow an empty
+  field, which is right only where the text appended to is known to be within the
+  limit (`appends_past_limit?/3`).
   """
-  def patch(kind, patch, type, was \\ nil)
+  def patch(kind, patch, type, was)
 
   def patch("turn-item", patch, type, was),
     do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch, was) |> nonempty()
