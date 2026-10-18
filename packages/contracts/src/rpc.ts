@@ -52,6 +52,9 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  FilesLocalPathError,
+  FilesLocalPathInput,
+  FilesLocalPathResult,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -232,6 +235,9 @@ import {
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewForwardError,
+  PreviewForwardInput,
+  PreviewForwardResult,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -350,6 +356,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesLocalPath: "files.localPath",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -407,6 +414,7 @@ export const WS_METHODS = {
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
+  previewForward: "preview.forward",
   previewReportStatus: "preview.reportStatus",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
@@ -1169,6 +1177,13 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+// Answered by the client's own MC: where a file on a cluster member is on its machine.
+const WsFilesLocalPathRpc = Rpc.make(WS_METHODS.filesLocalPath, {
+  payload: FilesLocalPathInput,
+  success: FilesLocalPathResult,
+  error: Schema.Union([FilesLocalPathError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1394,6 +1409,12 @@ const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   payload: PreviewListInput,
   success: PreviewListResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsPreviewForwardRpc = Rpc.make(WS_METHODS.previewForward, {
+  payload: PreviewForwardInput,
+  success: PreviewForwardResult,
+  error: Schema.Union([PreviewForwardError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
@@ -1778,6 +1799,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesLocalPathRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
@@ -1817,6 +1839,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
+  WsPreviewForwardRpc,
   WsPreviewReportStatusRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,

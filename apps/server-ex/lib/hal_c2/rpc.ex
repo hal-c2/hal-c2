@@ -106,6 +106,7 @@ defmodule HalC2.Rpc do
 
   def handle("filesystem.browse", input), do: HalC2.Projects.browse(input)
   def handle("shell.openInEditor", input), do: HalC2.Editors.open(input)
+  def handle("files.localPath", input), do: HalC2.MachineFiles.handle_rpc(input)
   def handle("server.discoverSourceControl", input), do: HalC2.SourceControl.discover(input)
   def handle("sourceControl.lookupRepository", input), do: HalC2.SourceControl.lookup(input)
   def handle("sourceControl.cloneRepository", input), do: HalC2.SourceControl.clone(input)
@@ -139,6 +140,7 @@ defmodule HalC2.Rpc do
   def handle("preview.refresh", input), do: HalC2.Preview.refresh(input)
   def handle("preview.close", input), do: HalC2.Preview.close(input)
   def handle("preview.list", input), do: HalC2.Preview.list(input)
+  def handle("preview.forward", input), do: HalC2.PreviewForward.request(input)
 
   def handle("previewAutomation.respond", input) do
     :ok = HalC2.PreviewAutomation.respond(input)
@@ -307,7 +309,8 @@ defmodule HalC2.Rpc do
     server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
     server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list
     sourceControl.lookupRepository projects.listEntries projects.readFile
-    projects.searchContents projects.searchEntries filesystem.browse agentSessions.scan
+    projects.searchContents projects.searchEntries filesystem.browse files.localPath
+    agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest
   )

@@ -37,6 +37,8 @@ defmodule HalC2.Application do
       HalC2.Settings,
       HalC2.Streams,
       HalC2.Shell,
+      # The other members' files, as folders on this machine.
+      HalC2.MachineFiles,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,
@@ -55,6 +57,8 @@ defmodule HalC2.Application do
       HalC2.ScheduledTasks,
       HalC2.ProjectClones,
       HalC2.Preview,
+      # Dev servers on another MC, reached from this machine's browser.
+      HalC2.PreviewForward,
       HalC2.PreviewAutomation,
       HalC2.LocalServers,
       HalC2.Devices,

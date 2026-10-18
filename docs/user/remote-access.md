@@ -116,6 +116,34 @@ and so do links to it in the desktop app.
 To copy a thread between machines that are not in one cluster, see
 [Copying a thread to another machine](./thread-migration.md#copying-a-thread-to-another-machine).
 
+### Dev servers on another machine
+
+A thread on another machine runs its dev servers there. When you open one of its browser
+tabs in your own browser from the desktop app, or a `localhost` link in its replies, the
+machine you are connected to forwards that port, so the page opens on this machine's
+`localhost`, on the same port when it is free here. Only a port one of the thread's browser
+tabs has open is forwarded. The forward closes with the thread's last tab at that port, or
+when the other machine stops answering.
+
+This needs the desktop app connected to the machine it runs on, which reaches the rest of the
+cluster for it. Connected straight to another machine, a `localhost` link opens as it is, on
+your own machine.
+
+### Open another machine's files here
+
+When your client is connected to the HAL-C2 on the machine in front of you, opening a
+file of a thread on another machine of the cluster (in an editor, in the file manager,
+or from a path in a terminal) opens it with this machine's apps. HAL-C2 shows each other
+machine as a folder, named after it, under
+`~/.local/state/hal-c2/elixir/machines`, holding that machine's projects and worktrees at
+their own paths. Saving there saves on the other machine, and nothing is started there.
+
+This needs FUSE 3 on Linux (the `fuse3` package). macOS and Windows do not have it yet.
+A machine that is offline keeps its folder, but what is read through it fails until the
+machine is back. Only your user can open the folder. A client paired with a HAL-C2 on
+another computer, or reaching one through an SSH port forward, still can't open its
+files here.
+
 ### Balance new threads across machines
 
 Load balancing is off by default. Once the cluster has two or more machines, turn it on

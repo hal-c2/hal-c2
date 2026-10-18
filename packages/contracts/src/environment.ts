@@ -51,6 +51,12 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
       signal (containers, Windows, unknown DMI), on servers that predate it, or
       when a newer server names a kind this build cannot draw. */
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
+  /** Lowercase hex SHA-256 of the host's machine id, the bytes Qt's
+      `QSysInfo::machineUniqueId()` returns there. A client compares it with its
+      own to know whether the environment runs on the machine the user sits at,
+      the only place it may start an editor or a file manager. Absent when the
+      host has none, or on servers that predate it. */
+  machineId: Schema.optionalKey(Schema.String),
 });
 
 /**

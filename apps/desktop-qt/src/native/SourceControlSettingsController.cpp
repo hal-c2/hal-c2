@@ -184,14 +184,17 @@ public:
     if (m_active) return;
     m_active = true;
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-    connect(navigation, &NavigationController::changed, this, [this, navigation] {
+    const auto route = [this, navigation] {
       const bool open = navigation->route().kind == QLatin1String("settings") && navigation->route().section == kSection;
       if (open == m_open) return;
       m_open = open;
       m_scanned.clear();
       follow();
-    });
+    };
+    connect(navigation, &NavigationController::changed, this, route);
     connect(scope(), &SettingsScopeController::changed, this, &SourceControlSettingsController::follow);
+    // A window restored on this page has its route before this activates.
+    route();
     publish();
   }
 

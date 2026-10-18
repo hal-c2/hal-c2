@@ -292,7 +292,7 @@ ColumnLayout {
 
                 Label {
                     visible: modelItem.modelData.options.length > 0
-                    text: qsTr("%n option(s)", "", modelItem.modelData.options.length)
+                    text: modelItem.modelData.options.length === 1 ? qsTr("%n option", "", 1) : qsTr("%n options", "", modelItem.modelData.options.length)
                     color: models.muted
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                 }

@@ -224,20 +224,24 @@ defmodule HalC2.Test.Mc do
   The first frame matching each predicate, in predicate order, whatever order
   they arrive in (an RPC's reply and the push it causes race).
   """
-  def await_all(client, preds), do: await_all(client, Enum.with_index(preds), %{})
+  def await_all(client, preds, timeout \\ 30_000),
+    do: await_all(client, Enum.with_index(preds), %{}, timeout)
 
-  defp await_all(client, [], found),
+  # `timeout` only bounds how long a missing frame takes to fail the test, as in `await/3`:
+  # a shape's first frames come when the MC has computed them, which on a loaded
+  # runner takes longer than any short deadline.
+  defp await_all(client, [], found, _timeout),
     do: {found |> Enum.sort() |> Enum.map(&elem(&1, 1)), client}
 
-  defp await_all(client, pending, found) do
-    {frame, client} = WsClient.recv(client, 2_000)
+  defp await_all(client, pending, found, timeout) do
+    {frame, client} = WsClient.recv(client, timeout)
 
     case Enum.find(pending, fn {pred, _} -> pred.(frame) end) do
       nil ->
-        await_all(client, pending, found)
+        await_all(client, pending, found, timeout)
 
       {_, index} = hit ->
-        await_all(client, List.delete(pending, hit), Map.put(found, index, frame))
+        await_all(client, List.delete(pending, hit), Map.put(found, index, frame), timeout)
     end
   end
 
@@ -270,8 +274,11 @@ defmodule HalC2.Test.Mc do
   Starts a second MC joined to this one: a `:peer` VM running the whole app in
   its own home under the scenario's `mc.home`. This VM becomes distributed on
   first use. Returns the peer's MC name; the peer stops when the scenario ends.
+
+  `opts`: `:env`, more of the peer's `:hal_c2` settings; `stoppable: true` lets
+  the scenario stop the MC itself (`:init.stop/0`) and still clean up after it.
   """
-  def start_peer(mc) do
+  def start_peer(mc, opts \\ []) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
@@ -283,13 +290,17 @@ defmodule HalC2.Test.Mc do
         name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
+        peer_down: if(opts[:stoppable], do: :continue, else: :stop),
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
       })
 
     ExUnit.Callbacks.on_exit(fn -> :peer.stop(peer) end)
 
     # A peer MC does not read Mix config, so it gets the MC settings directly.
-    for {key, value} <- [start_mc: true, home: Path.join(mc.home, "peer"), port: 0],
+    env =
+      [start_mc: true, home: Path.join(mc.home, "peer"), port: 0] ++ Keyword.get(opts, :env, [])
+
+    for {key, value} <- env,
         do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
@@ -847,6 +858,9 @@ defmodule HalC2.Test.Mc.World do
     thread = thread_id(context, title)
     before = System.os_time(:millisecond)
     {:ok, _} = HalC2.Streams.commit(thread, :thread, [{kind, id, patch}])
+    # The stream puts its row after a debounce; flushing it is the receipt that the row
+    # holds the commit, so the wait below does not depend on how long the debounce took.
+    :ok = HalC2.Streams.flush_shell(thread)
     await_row(thread, &(HalC2.Projection.JS.epoch_ms(&1["updatedAt"]) >= before))
     context
   end

@@ -923,6 +923,14 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   # --- signing in on the host ----------------------------------------------------------------
 
   step "an operator runs the connect command on the host", context do
+    # The operator sits at the host: a test run over SSH must not pick the headless sign-in.
+    ssh = Map.new(["SSH_CONNECTION", "SSH_TTY"], &{&1, System.get_env(&1)})
+    Enum.each(ssh, fn {name, _} -> System.delete_env(name) end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Enum.each(ssh, fn {name, value} -> value && System.put_env(name, value) end)
+    end)
+
     context |> operator_host() |> Map.put(:connect, run_connect())
   end
 
