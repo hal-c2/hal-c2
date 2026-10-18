@@ -1932,16 +1932,16 @@ defmodule HalC2.PlannerPropTest do
 
   defp pull_ref(pr), do: %{"repository" => @repository, "number" => pr}
 
-  # `gh pr view` of the pull request `n` of `@lone` on the host that serves it. No rule is
-  # made for `:unknown`, which nothing may ask: the call would fail, and `lone_routes/0`
-  # says it was made.
+  # `gh pr view` of the pull request `n` of `@lone` on the host that serves it (the arg ends
+  # in a space so that #5 does not match #55). No rule is made for `:unknown`, which
+  # nothing may ask: the call would fail, and `lone_routes/0` says it was made.
   defp lone_view(n, state) do
     host = if elem(@lone_pulls[n], 0) == :enterprise, do: @enterprise, else: "github.com"
 
     pr = %{
       "number" => n,
       "title" => "Pull request #{n}",
-      "url" => "https://#{@enterprise}/#{@lone}/pull/#{n}",
+      "url" => "https://#{host}/#{@lone}/pull/#{n}",
       "author" => %{"login" => "octocat"},
       "headRefName" => "feature/#{n}",
       "baseRefName" => "main",
