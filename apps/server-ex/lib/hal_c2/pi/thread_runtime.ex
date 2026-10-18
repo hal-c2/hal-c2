@@ -45,13 +45,15 @@ defmodule HalC2.Pi.ThreadRuntime do
   like a turn's: Pi delivers it before the running turn's next model call, or
   starts a run if the turn settled meanwhile. Either way the turn ends at the
   `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
-  Returns once Pi answered: its refusal is the error.
+  Returns once Pi answered: its refusal is the error. A refusal that ends the turn
+  returns once the turn is recorded (`settle/1`, which waits on Pi for up to 62 s),
+  so the wait covers Pi's answer and that.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Pi turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 30_000)
+      pid -> GenServer.call(pid, {:steer, run_id, message}, 95_000)
     end
   end
 
