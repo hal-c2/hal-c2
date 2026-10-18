@@ -579,6 +579,33 @@ fn list(value: &Json) -> impl Iterator<Item = &Json> {
     value.as_array().into_iter().flatten()
 }
 
+/// What [`images_signature`] says of the JSON of `lists`, without making
+/// it: a save compares it with the images last written.
+fn signature(lists: &BTreeMap<&str, &[Attachment]>) -> String {
+    let mut lines = Vec::new();
+    for (key, list) in lists {
+        for attachment in *list {
+            let (remote_id, upload) = if attachment.file {
+                (attachment.remote_id.as_str(), attachment.upload.as_str())
+            } else {
+                ("", "")
+            };
+            lines.push(format!("{key}/{}/{remote_id}{upload}", attachment.id));
+        }
+    }
+    lines.join("\n")
+}
+
+fn images_json(lists: &BTreeMap<&str, &[Attachment]>) -> Map<String, Json> {
+    lists
+        .iter()
+        .map(|(key, list)| {
+            let list = list.iter().map(attachment_json).collect();
+            ((*key).to_owned(), Json::Array(list))
+        })
+        .collect()
+}
+
 /// Writes what is kept where [`load`] said, whole or not at all: a write cut
 /// short would lose every thread's draft. The images go apart, rewritten
 /// only when they change.
@@ -623,7 +650,7 @@ pub fn save(engine: &Engine) {
             })
             .collect();
         let mut unsent = Vec::new();
-        let mut unsent_images = Map::new();
+        let mut unsent_images = BTreeMap::new();
         for entry in &d.unsent {
             let mut kept = json!({
                 "target": entry.target,
@@ -643,10 +670,7 @@ pub fn save(engine: &Engine) {
             }
             unsent.push(kept);
             if !entry.attachments.is_empty() {
-                unsent_images.insert(
-                    entry.message_id.clone(),
-                    Json::Array(entry.attachments.iter().map(attachment_json).collect()),
-                );
+                unsent_images.insert(entry.message_id.as_str(), entry.attachments.as_slice());
             }
         }
         let mut stored = json!({"targets": targets});
@@ -665,24 +689,18 @@ pub fn save(engine: &Engine) {
                 .collect();
             stored["lastModels"] = Json::Object(models);
         }
-        let mut images = Map::new();
-        for (key, kept) in &d.drafts {
-            if !kept.attachments.is_empty() {
-                images.insert(
-                    key.clone(),
-                    Json::Array(kept.attachments.iter().map(attachment_json).collect()),
-                );
-            }
-        }
-        let joined = format!(
-            "{}\n{}",
-            images_signature(&images),
-            images_signature(&unsent_images)
-        );
+        let images: BTreeMap<&str, &[Attachment]> = d
+            .drafts
+            .iter()
+            .filter(|(_, kept)| !kept.attachments.is_empty())
+            .map(|(key, kept)| (key.as_str(), kept.attachments.as_slice()))
+            .collect();
+        let joined = format!("{}\n{}", signature(&images), signature(&unsent_images));
+        // The images' JSON holds their bytes: made only when it is written.
         let images = (joined != d.images).then(|| {
-            let mut kept = json!({"targets": images});
+            let mut kept = json!({"targets": images_json(&images)});
             if !unsent_images.is_empty() {
-                kept["unsent"] = Json::Object(unsent_images);
+                kept["unsent"] = Json::Object(images_json(&unsent_images));
             }
             (joined, kept)
         });
@@ -719,4 +737,39 @@ pub fn find_attachment(engine: &Engine, id: &str) -> Option<Attachment> {
             .find(|a| a.id == id)
             .cloned()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A save tells changed images by [`signature`], a load by
+    /// [`images_signature`] of what it read: were they to differ, every save
+    /// after a load would write the images again.
+    #[test]
+    fn the_saved_signature_is_the_loaded_one() {
+        let image = Attachment {
+            id: "a".into(),
+            data_url: "data:image/png;base64,AAAA".into(),
+            ..Attachment::default()
+        };
+        let file = Attachment {
+            id: "b".into(),
+            file: true,
+            remote_id: "r1".into(),
+            upload: String::new(),
+            ..Attachment::default()
+        };
+        let failed = Attachment {
+            id: "c".into(),
+            file: true,
+            upload: "failed".into(),
+            ..Attachment::default()
+        };
+        let one = [image, file];
+        let other = [failed];
+        let lists = BTreeMap::from([("t2", &other[..]), ("t1", &one[..])]);
+        assert_eq!(signature(&lists), images_signature(&images_json(&lists)));
+        assert_eq!(signature(&lists), "t1/a/\nt1/b/r1\nt2/c/failed");
+    }
 }
