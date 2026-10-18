@@ -841,12 +841,18 @@ defmodule HalC2Plugins.Planner.Sync do
   # A relation made again, as one GitHub was never asked to drop from an issue no project
   # has, is had once.
   defp relate(synced, "after", id, ref),
-    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref)
+    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref) |> placed(id)
 
   defp relate(synced, "parent", id, ref), do: synced |> Map.put("parent", id) |> remember(id, ref)
 
-  defp unrelate(synced, "after", id), do: Map.update!(synced, "after", &(&1 -- [id]))
+  defp unrelate(synced, "after", id),
+    do: synced |> Map.update!("after", &(&1 -- [id])) |> placed(id)
+
   defp unrelate(synced, "parent", _id), do: Map.put(synced, "parent", nil)
+
+  # A task related to the milestone or off it is no longer misplaced in it.
+  defp placed(%{"misplaced" => at} = synced, id), do: %{synced | "misplaced" => Map.delete(at, id)}
+  defp placed(synced, _id), do: synced
 
   defp remember(synced, id, ref),
     do: Map.put(synced, "refs", Map.put(synced["refs"] || %{}, id, ref))
@@ -1052,11 +1058,11 @@ defmodule HalC2Plugins.Planner.Sync do
     # (`reasserts/4`) go to the milestone holding them, or out of any, until one push
     # takes: that move is not asked by the holder, which asked once and may have been
     # asked first.
-    misplaced = for id <- synced["misplaced"] || [], id not in new["after"], do: id
+    misplaced = for {id, _} = at <- synced["misplaced"] || %{}, id not in new["after"], do: at
 
     moves =
       for(
-        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- misplaced,
+        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- Enum.map(misplaced, &elem(&1, 0)),
         not holds?.(id) or not kept?.(id),
         issue = had(synced, items, id),
         do: {id, issue, nil, &unrelate(&1, "after", id)}
@@ -1065,12 +1071,16 @@ defmodule HalC2Plugins.Planner.Sync do
             issue = ref(items, id),
             do: {id, issue, ref["number"], &relate(&1, "after", id, issue)}
 
+    # The issue a correction was made for is the one it goes to, whatever the task names
+    # now: a task relinked or unlinked since no longer holds it, so it leaves any
+    # milestone, as the removal of an issue a task left does.
     corrections =
-      for id <- misplaced,
-          issue = had(synced, items, id),
+      for {id, issue} <- misplaced,
           do:
-            {id, issue, List.first(holders(items, ref["repository"], id)),
-             &corrected(&1, id)}
+            {id, issue,
+             if(Plan.same_ref?(issue, ref(items, id)),
+               do: List.first(holders(items, ref["repository"], id))
+             ), &unrelate(&1, "after", id)}
 
     for {id, issue, milestone, took} <- moves ++ corrections,
         same?(issue["repository"], ref["repository"]),
@@ -1106,8 +1116,8 @@ defmodule HalC2Plugins.Planner.Sync do
   `pushes/5` does; none goes for an issue the milestone's own `ops` move, or whose last
   move is where the plan has it, so a move that sets one right is only checked again,
   once it took. The op takes the task off the milestone's `synced` `misplaced`, which
-  `misplaced/2` puts it on, so a refusal of the op leaves it for the milestone's next
-  push (`held_pushes/4`).
+  `misplaced/2` puts it on with the issue, so a refusal of the op leaves it for the
+  milestone's next push (`held_pushes/4`), whichever issue the task names by then.
   """
   def reasserts(moved, ops, items, projects) do
     sent = for {"update", %{"milestone" => _} = input, _} <- ops, do: key(input)
@@ -1124,22 +1134,18 @@ defmodule HalC2Plugins.Planner.Sync do
           {task["id"],
            {"update",
             Map.merge(issue, %{"projectId" => project, "milestone" => List.first(held)}),
-            &corrected(&1, task["id"])}}
+            &unrelate(&1, "after", task["id"])}}
   end
 
   @doc """
   `synced`, what GitHub has of a milestone, with the tasks of `reasserts` (`reasserts/4`)
-  on it as misplaced, whose issues GitHub still has in the milestone until their ops took.
+  on it as misplaced, each with the issue GitHub still has in the milestone until its op
+  took.
   """
-  def misplaced(synced, reasserts),
-    do: Map.update(synced, "misplaced", ids(reasserts), &Enum.uniq(&1 ++ ids(reasserts)))
-
-  defp ids(reasserts), do: for({id, _op} <- reasserts, do: id)
-
-  # What GitHub has of a milestone once its issue of the task `id` is where the plan has
-  # it, no longer in the milestone.
-  defp corrected(synced, id),
-    do: synced |> unrelate("after", id) |> Map.update("misplaced", [], &(&1 -- [id]))
+  def misplaced(synced, reasserts) do
+    at = for {id, {"update", input, _}} <- reasserts, into: %{}, do: {id, Map.take(input, ~w(repository number))}
+    Map.update(synced, "misplaced", at, &Map.merge(&1, at))
+  end
 
   @doc """
   `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on

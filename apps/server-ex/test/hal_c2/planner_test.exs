@@ -1,4 +1,4 @@
-for file <- ~w(plan slack),
+for file <- ~w(plan slack sync),
     do: Code.require_file("../../../../plugins/planner/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.PlannerTest do
@@ -11,7 +11,7 @@ defmodule HalC2.PlannerTest do
   """
   use ExUnit.Case, async: true
 
-  alias HalC2Plugins.Planner.{Plan, Slack}
+  alias HalC2Plugins.Planner.{Plan, Slack, Sync}
 
   @now "2026-10-15T09:00:00Z"
   @today "2026-10-15"
@@ -534,6 +534,60 @@ defmodule HalC2.PlannerTest do
 
       assert Slack.actions("", actions, "/planner") =~
                ~r"^Name the action to run\..*\n/planner run status — Write status update\n"
+    end
+  end
+
+  describe "a milestone's correction GitHub refused" do
+    @repo "acme/api"
+    @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]
+
+    # The milestone "ms" kept the correction of the issue #7 of the task "t" (`misplaced`),
+    # which "mr" holds now; `task` is what "t" is by then.
+    defp corrected(task) do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items = Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task}])
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+      input
+    end
+
+    defp task(issue), do: %{"id" => "t", "projectId" => "p", "after" => [], "issue" => issue}
+
+    test "goes again to the milestone holding the task that still names the issue" do
+      input = corrected(task(%{"repository" => @repo, "number" => 7}))
+      assert %{"number" => 7, "milestone" => 4} = input
+    end
+
+    test "takes the issue out of any milestone once the task names another" do
+      input = corrected(task(%{"repository" => @repo, "number" => 8}))
+      assert %{"number" => 7, "milestone" => nil} = input
+    end
+
+    test "takes the issue out of any milestone once the task names none" do
+      input = corrected(Map.delete(task(nil), "issue"))
+      assert %{"number" => 7, "milestone" => nil} = input
     end
   end
 end
