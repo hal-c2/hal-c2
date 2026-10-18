@@ -42,6 +42,26 @@ defmodule HalC2.StreamsServerTest do
     assert_receive {:hal_c2_stream, "th-1", {:live, ^last, _handle}}
   end
 
+  # The second append is cut from what the first left, not from the text before them.
+  test "appends to a subagent in one commit reach a client as the snapshot has them" do
+    item = %{"type" => "subagent", "runId" => "r1", "progress" => ""}
+    {:ok, _} = Streams.commit("th-1", :thread, [{"turn-item", "i1", %{"s" => item}}])
+    :ok = Streams.subscribe("th-1", self(), nil, %{kinds: nil})
+    assert_receive {:hal_c2_stream, "th-1", {:live, _, _handle}}
+    chunk = String.duplicate("x", 20_000)
+
+    {:ok, last} =
+      Streams.commit("th-1", :thread, [
+        {"turn-item", "i1", %{"a" => %{"progress" => chunk}}},
+        {"turn-item", "i1", %{"a" => %{"progress" => chunk}}}
+      ])
+
+    assert_receive {:hal_c2_stream, "th-1", {:events, events, ^last}}
+    client = Enum.reduce(events, item, &HalC2.Patch.apply(&2, &1.patch))
+    server = HalC2.Patch.apply(item, %{"a" => %{"progress" => chunk <> chunk}})
+    assert client == HalC2.Web.Wire.entity("turn-item", server)
+  end
+
   test "a transaction that raises fails its caller and leaves the stream serving" do
     :ok = Streams.subscribe("th-1", self(), nil)
     pid = Streams.ensure("th-1")

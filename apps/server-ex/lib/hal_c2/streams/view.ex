@@ -172,14 +172,20 @@ defmodule HalC2.Streams.View do
 
   # What a subagent item was just before an event of the commit, for the wire to tell
   # how much of its text the client holds. Only that kind of item needs the commit's
-  # earlier events folded into `before`.
-  defp running_at(running, kind, id, was, now, patch) do
-    at = Map.get(running, {kind, id}, was)
+  # earlier events folded into `before`, and an event's patch is applied only when a
+  # later event of the commit is to the same item: its text can be large, and each
+  # view folds it.
+  defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch) do
+    at =
+      case running do
+        %{^id => {base, last}} -> HalC2.Patch.apply(base, last)
+        _ -> was
+      end
 
-    if kind == "turn-item" and now["type"] == "subagent",
-      do: {at, Map.put(running, {kind, id}, HalC2.Patch.apply(at, patch))},
-      else: {at, running}
+    {at, Map.put(running, id, {at, patch})}
   end
+
+  defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}
 
   # A run that moves in or out of the window takes its items with it, without an
   # event to any of them: the ones the client held go, the ones it comes to hold
