@@ -18,10 +18,18 @@ defmodule HalC2.Subprocess.Orphans do
   SIGKILL rather than a polite signal: once `kill` returns the program runs no more
   code, so nothing the boot resumes races it.
 
+  The group is as far as the kill reaches. A descendant that started a session or
+  group of its own (`setsid`, `setpgid`: a shell on a pty, a `node` child spawned
+  `detached`) is not in it and keeps running, a dev server holding its port with it.
+  The agent that would resume is dead either way. Reaching those would take a cgroup,
+  or the ancestry recorded at spawn (hal-c2/hal-c2#387).
+
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
   against, and macOS has none. A release under systemd loses the unit's processes
   when the MC stops anyway (`KillMode=mixed`).
+
+  macOS reads processes with `ps` and kills with BSD `kill`; no test runs there.
   """
 
   use GenServer
@@ -41,22 +49,52 @@ defmodule HalC2.Subprocess.Orphans do
   removing the record when the program ends needs the service. `{:error, reason}` when
   the record could not be written: the caller must stop the program rather than run it
   untracked. A program already gone has no start time and nothing to record. A no-op
-  when this service has not been started in this VM (tests, Mix tasks).
+  when this service has not been started in this VM (tests, Mix tasks); an MC that
+  runs its services logs that once, as a program it starts then is not recorded.
   """
   @spec track(pid, pos_integer) :: :ok | {:error, term}
   def track(proc, os_pid) do
-    with %{dir: dir, owner: owner} <- :persistent_term.get(__MODULE__, nil),
-         started when started != nil <- started(os_pid) do
-      # The start time in the name keeps a reused pid's record apart from the one before.
-      path = Path.join(dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
-      record = %{"pid" => os_pid, "started" => started, "mc" => owner}
-
-      with :ok <- File.write(path, JSON.encode!(record)) do
-        GenServer.cast(__MODULE__, {:watch, proc, path})
-      end
-    else
-      _ -> :ok
+    case :persistent_term.get(__MODULE__, nil) do
+      %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid)
+      nil -> untracked()
     end
+  end
+
+  defp record(dir, owner, proc, os_pid) do
+    case started(os_pid) do
+      nil ->
+        :ok
+
+      started ->
+        # The start time in the name keeps a reused pid's record apart from the one
+        # before.
+        path = Path.join(dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
+        record = %{"pid" => os_pid, "started" => started, "mc" => owner}
+
+        # Written whole under another name, then renamed, so a VM that dies mid-write
+        # leaves no partial record. `reap/1` reads a `.tmp` like any record, and drops
+        # one that does not parse.
+        tmp = path <> ".tmp"
+
+        with :ok <- File.write(tmp, JSON.encode!(record)),
+             :ok <- File.rename(tmp, path) do
+          GenServer.cast(__MODULE__, {:watch, proc, path})
+        else
+          error ->
+            File.rm(tmp)
+            error
+        end
+    end
+  end
+
+  defp untracked do
+    if Application.fetch_env!(:hal_c2, :start_mc) and
+         not :persistent_term.get({__MODULE__, :untracked}, false) do
+      :persistent_term.put({__MODULE__, :untracked}, true)
+      Logger.warning("programs are not tracked: #{inspect(__MODULE__)} is not running")
+    end
+
+    :ok
   end
 
   @doc """
@@ -70,8 +108,9 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # Whether `owner` is that MC and still running. One that exited but that its parent
-  # has not reaped yet keeps its pid and start time, as a zombie.
+  # Whether the process a record names (a program, or the MC that ran it) is still that
+  # process and alive. One that exited but that its parent has not reaped yet keeps its
+  # pid and start time, as a zombie.
   defp running?(%{"pid" => pid, "started" => started}) do
     case process(pid) do
       {state, ^started} -> state not in ["Z", "X"]
@@ -105,7 +144,7 @@ defmodule HalC2.Subprocess.Orphans do
   defp ps_process(pid) do
     case System.cmd("ps", ["-o", "state=,lstart=", "-p", "#{pid}"], stderr_to_stdout: true) do
       {out, 0} ->
-        case String.split(String.trim(out), " ", parts: 2) do
+        case String.split(String.trim(out), ~r/\s+/, parts: 2) do
           [state, started] -> {String.first(state), String.trim(started)}
           _ -> nil
         end
@@ -158,6 +197,8 @@ defmodule HalC2.Subprocess.Orphans do
 
   # Stopped on purpose, programs are untracked again. A crash keeps tracking on, so
   # the programs started before the supervisor brings this back are still recorded.
+  # The ones still running then lose their monitors, so their records stay on disk until
+  # the next boot reaps them. They name this MC, which that boot finds gone: leave them.
   @impl true
   def terminate(reason, _state) do
     if reason in [:normal, :shutdown] or match?({:shutdown, _}, reason),
@@ -182,9 +223,11 @@ defmodule HalC2.Subprocess.Orphans do
         File.rm(path)
         :killed
 
+      # One target failed (the group, when the program led none; a member it may not
+      # signal), and the program may yet show as running for a moment after SIGKILL.
       {out, status} ->
         if running?(%{"pid" => pid, "started" => started}) do
-          Logger.error(
+          Logger.warning(
             "could not kill #{pid}, which an earlier MC left running: #{status} #{out}"
           )
 

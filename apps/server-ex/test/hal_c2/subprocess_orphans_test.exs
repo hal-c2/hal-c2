@@ -44,6 +44,22 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  test "a record a VM that died while writing it left is reaped when whole, dropped when not" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # Died after the write but before the rename, and mid-write of another record.
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, path <> ".tmp")
+    File.write!(Path.join(Orphans.dir(), "1-1.json.tmp"), ~s({"pid": 1))
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
   test "a program of an MC still running is left alone when the service restarts" do
     boot(:first)
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
