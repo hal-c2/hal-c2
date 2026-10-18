@@ -2243,11 +2243,8 @@ defmodule HalC2.Steps.Planning.Planner do
     assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
     {_, context} = await_topic(context, "plan", &(item(&1, title)["syncError"] != nil))
 
-    # Killing the runner may have taken GitHub's call with it, so nobody may be reading
-    # the gate: a read-write open does not wait for one.
-    {:ok, file} = File.open(context.gh_gate, [:read, :write, :raw])
-    :ok = :file.write(file, "answer")
-    File.close(file)
+    # Killing the runner may have taken GitHub's call with it.
+    release(context.gh_gate, "answer")
     Task.shutdown(renaming, :brutal_kill)
     context
   end
@@ -2272,7 +2269,7 @@ defmodule HalC2.Steps.Planning.Planner do
       answer_late(context)
       assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     after
-      File.write!(gate, "go", [:raw])
+      release(gate, "go")
     end
 
     context
@@ -3317,6 +3314,14 @@ defmodule HalC2.Steps.Planning.Planner do
   # Lets the late rename's gh answer, once it is waiting. The fifo is opened raw: through
   # the file server, the open would hold every other file call until gh reads it, the
   # rename's own on its way to gh included.
+  # Lets go of whatever waits on the fifo `gate`, if anything does: a read-write open
+  # does not wait for a reader the way a write does.
+  defp release(gate, word) do
+    {:ok, file} = File.open(gate, [:read, :write, :raw])
+    :ok = :file.write(file, word)
+    File.close(file)
+  end
+
   defp answer_late(context), do: File.write!(context.gh_gate, "answer", [:raw])
   defp answer_late(context, title), do: File.write!(context.gh_gates[title], "answer", [:raw])
 
