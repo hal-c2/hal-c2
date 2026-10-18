@@ -106,9 +106,13 @@ defmodule HalC2.Orchestration.Entities do
   def provider_ref(native_id, driver \\ "codex"),
     do: %{"driver" => driver, "nativeId" => native_id, "strength" => "strong"}
 
-  @doc "The provider driver and instance of a turn (`ids.driver`, `ids.instance`)."
+  @doc """
+  The provider driver and instance of a turn (`ids.driver`, `ids.instance`). Ids that
+  name no instance, or a nil one (a provider thread from before threads recorded it),
+  are on the driver's default instance.
+  """
   def driver(ids), do: Map.get(ids, :driver, "codex")
-  def instance(ids), do: Map.get(ids, :instance, driver(ids))
+  def instance(ids), do: Map.get(ids, :instance) || driver(ids)
 
   @doc """
   A thread's provider thread and session on provider instance `instance`. Each instance

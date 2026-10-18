@@ -299,7 +299,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # What an app-server stopped for another instance's (`connect/2`) had already sent
+  # belongs to no turn of this one.
   @impl true
+  def handle_info({:json_rpc, conn, _message}, %{conn: current} = state) when conn != current,
+    do: {:noreply, state}
+
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
     do: {:noreply, notification(method, params || %{}, state)}
 
@@ -632,9 +637,16 @@ defmodule HalC2.Codex.ThreadRuntime do
     else
       state = end_background(state, "interrupted")
       Process.unlink(state.conn)
-      Connection.stop(state.conn)
+      stop_conn(state.conn)
       connect(%{state | conn: nil, native_thread_id: nil}, turn)
     end
+  end
+
+  # An app-server that has just exited (its `:EXIT` not handled yet) is already stopped.
+  defp stop_conn(conn) do
+    Connection.stop(conn)
+  catch
+    :exit, _ -> :ok
   end
 
   # The instance's launch arguments follow `app-server`.

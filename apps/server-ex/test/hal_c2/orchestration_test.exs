@@ -211,6 +211,40 @@ defmodule HalC2.OrchestrationTest do
     assert [%{"status" => "interrupted"}] = StreamState.list(state, "run-attempt")
   end
 
+  # A turn on another instance stops the app-server the runtime had; what it had sent
+  # by then is still in the runtime's mailbox.
+  test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do
+    thread_id = launch("wait for me")
+    await_provider_turn(thread_id)
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    %{turn: %{native_turn_id: turn}, native_thread_id: native} = :sys.get_state(pid)
+    stopped = spawn(fn -> :ok end)
+
+    send(
+      pid,
+      {:json_rpc, stopped,
+       {:notification, "turn/completed",
+        %{"threadId" => native, "turn" => %{"id" => turn, "status" => "completed"}}}}
+    )
+
+    assert %{turn: %{native_turn_id: ^turn}} = :sys.get_state(pid)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_run(thread_id, "interrupted")
+  end
+
+  defp await_provider_turn(thread_id) do
+    if StreamState.list(current(thread_id), "provider-turn") == [] do
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> await_provider_turn(thread_id)
+      after
+        5_000 -> flunk("no provider turn")
+      end
+    end
+  end
+
   test "a message's image upload reaches codex inline, with where it is saved" do
     png = <<137, 80, 78, 71, 13, 10, 26, 10>>
 
@@ -2065,6 +2099,27 @@ defmodule HalC2.OrchestrationTest do
                StreamState.get(state, "checkpoint")[
                  HalC2.Checkpoint.checkpoint_id(HalC2.Checkpoint.scope_id(thread_id), 3)
                ]
+    end
+
+    # One from before provider threads recorded their instance is the driver's own.
+    test "a Codex provider thread that names no instance rolls back in the app-server it ran in",
+         %{work: work} do
+      thread_id = launch_in(work, "write a.txt", "codex")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+      await_statuses(thread_id, ["completed", "completed"])
+      [%{"id" => provider_thread}] = StreamState.list(current(thread_id), "provider-thread")
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"provider-thread", provider_thread, %{"s" => %{"providerInstanceId" => nil}}}
+        ])
+
+      [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      %{conn: conn} = :sys.get_state(pid)
+
+      assert {:ok, _} = rollback(thread_id, 1)
+      assert %{conn: ^conn} = :sys.get_state(pid)
     end
 
     test "a legacy Codex thread drops its later turns by count", %{work: work} do
