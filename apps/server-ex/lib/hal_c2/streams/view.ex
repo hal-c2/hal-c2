@@ -173,13 +173,14 @@ defmodule HalC2.Streams.View do
   # What a subagent item was just before an event of the commit, for the wire to tell
   # how much of its text the client holds. Only that kind of item needs the commit's
   # earlier events folded into `before`, and an event's patch is applied only when a
-  # later event of the commit is to the same item: its text can be large, and each
-  # view folds it.
+  # later event of the commit is to the same item. What is folded is the item's
+  # `Wire.cut_basis/1`, so each view's fold stays within the wire's limit however long
+  # the text grows.
   defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch) do
     at =
       case running do
-        %{^id => {base, last}} -> HalC2.Patch.apply(base, last)
-        _ -> was
+        %{^id => {base, last}} -> Wire.cut_basis(HalC2.Patch.apply(base, last))
+        _ -> Wire.cut_basis(was)
       end
 
     {at, Map.put(running, id, {at, patch})}

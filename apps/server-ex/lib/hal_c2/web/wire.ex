@@ -61,6 +61,23 @@ defmodule HalC2.Web.Wire do
 
   def appends_past_limit?(_kind, _patch, _entity), do: false
 
+  @doc """
+  What `patch/4` reads of a subagent item as `was`: its texts, each kept to the bytes
+  that decide how it is cut (the first `#{@max_detail}` and whether there are more),
+  however long it has grown.
+  """
+  def cut_basis(nil), do: nil
+
+  def cut_basis(item) do
+    Map.new(Map.take(item, @cut_keys), fn
+      {key, text} when is_binary(text) and byte_size(text) > @max_detail ->
+        {key, binary_part(text, 0, @max_detail + 1)}
+
+      field ->
+        field
+    end)
+  end
+
   # --- turn items ----------------------------------------------------------------
 
   defp turn_item(%{"type" => "command_execution"} = item) do
