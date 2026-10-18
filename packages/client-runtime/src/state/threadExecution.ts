@@ -47,17 +47,14 @@ function summarizeThreadRun(
 }
 
 /**
- * The newest run that began: a queued message is not a turn yet, and a held one that a
- * newer message passed sits above that message until it starts. The newest run of all
- * when none began.
+ * The run with the highest ordinal, passing over queued runs held for the user: a run
+ * that passed a held queue is numbered below it until it starts. As the MC's
+ * `HalC2.Projection.Shell.latest_run/1`.
  */
-export function latestBegunRun(
+export function latestUnheldRun(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
-  return (
-    latestMatchingRun(projection, (run) => run.status !== "queued") ??
-    latestMatchingRun(projection, () => true)
-  );
+  return latestMatchingRun(projection, (run) => !(run.status === "queued" && run.queueHeld));
 }
 
 export function deriveLatestThreadRun(
@@ -85,7 +82,7 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const latestRunProjection = latestBegunRun(projection);
+  const latestRunProjection = latestUnheldRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,

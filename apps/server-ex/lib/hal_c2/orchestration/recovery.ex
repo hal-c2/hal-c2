@@ -106,7 +106,7 @@ defmodule HalC2.Orchestration.Recovery do
   # The background commands of the thread's finished latest run that are still marked
   # active: they ran in the provider process, which is gone.
   defp ended_background(state) do
-    with %{"status" => "completed"} = run <- latest_begun(state),
+    with %{"status" => "completed"} = run <- latest_run(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]],
          [_ | _] = commands <-
@@ -212,28 +212,23 @@ defmodule HalC2.Orchestration.Recovery do
         Enum.map_join(commands, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
 
-  # A message the user sent since takes precedence; one that waits in the queue (held
-  # since the restart) does not.
+  # A message the user sent since takes precedence; a held one does not (the restart
+  # held the queue, and a run that passed a held queue was sent after it).
   defp latest?(thread_id, run) do
     state = HalC2.Streams.state(thread_id)
-
-    Enum.all?(
-      StreamState.list(state, "run"),
-      &(&1["status"] == "queued" or &1["ordinal"] <= run["ordinal"])
-    )
+    Enum.all?(StreamState.list(state, "run"), &(held?(&1) or &1["ordinal"] <= run["ordinal"]))
   end
 
-  # The thread's newest run that left the queue. A queued run is numbered above every
-  # run that started before it, until it starts itself (`Orchestration.start_ordinal/3`).
-  defp latest_begun(state) do
-    state
-    |> StreamState.list("run")
-    |> Enum.reject(&(&1["status"] == "queued"))
-    |> Enum.max_by(& &1["ordinal"], fn -> nil end)
-  end
+  # The thread's latest run, passing over held queued runs: a run that passed a held
+  # queue is numbered below it until it starts (`Orchestration.start_ordinal/3`). A
+  # queue that is not held was sent after the latest run that began, and is latest.
+  defp latest_run(state),
+    do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
+
+  defp held?(run), do: run["status"] == "queued" and run["queueHeld"] == true
 
   defp continuable(state) do
-    with %{"status" => "running"} = run <- latest_begun(state),
+    with %{"status" => "running"} = run <- latest_run(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]] do
       run

@@ -13,7 +13,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadActivityRun,
   deriveThreadRuntime,
-  latestBegunRun,
+  latestUnheldRun,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 import { threadRuntimeCanArchive, type ThreadRuntimeSummary } from "./models.ts";
@@ -107,14 +107,15 @@ describe("thread execution presentation", () => {
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
   });
 
-  it("takes the newest run that began as the latest turn, over a queued run above it", () => {
+  it("passes over a held queued run that the latest run passed", () => {
     // A held message that a newer one passed is renumbered above it until it starts.
     const passed = run("run-passed", 2, "completed");
-    const held = run("run-held", 3, "queued");
-    const projection = { ...v2Projection, runs: [held, passed], updatedAt: now };
+    const held = { ...run("run-held", 3, "queued"), queueHeld: true };
+    const queued = run("run-queued", 3, "queued");
 
-    expect(latestBegunRun(projection)?.id).toBe(passed.id);
-    expect(latestBegunRun({ ...projection, runs: [held] })?.id).toBe(held.id);
+    expect(latestUnheldRun({ ...v2Projection, runs: [held, passed] })?.id).toBe(passed.id);
+    // A queue that is not held was sent after the latest run, and is latest.
+    expect(latestUnheldRun({ ...v2Projection, runs: [queued, passed] })?.id).toBe(queued.id);
   });
 
   it("does not expose a queued-only run as interruptible", () => {

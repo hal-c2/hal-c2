@@ -14,7 +14,7 @@ import { deriveThreadCheckpointSummaries } from "@hal-c2/client-runtime/state/th
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
-  latestBegunRun,
+  latestUnheldRun,
 } from "@hal-c2/client-runtime/state/thread-execution";
 import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -567,15 +567,14 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
     projection.providerThreads.at(-1);
   const contextUsage = providerThread?.contextUsage ?? null;
-  // A queued message is not a turn yet: the latest turn is the newest run that began
-  // (`latestBegunRun`).
+  // A queued message is not a turn yet: the latest turn is the newest run that began.
   const begun = projection.runs.filter((run) => run.status !== "queued");
   const settled =
     begun.length > 0 && begun.length < projection.runs.length
       ? { ...projection, runs: begun }
       : projection;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
-    latestRun: latestBegunRun(projection),
+    latestRun: latestUnheldRun(projection),
     providerThreads: projection.providerThreads,
     turnItems: projection.turnItems,
     activeProviderThreadId: thread.activeProviderThreadId,
