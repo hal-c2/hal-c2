@@ -29,7 +29,9 @@ defmodule HalC2.Subprocess.Orphans do
   against, and macOS has none. A release under systemd loses the unit's processes
   when the MC stops anyway (`KillMode=mixed`).
 
-  macOS reads processes with `ps` and kills with BSD `kill`; no test runs there.
+  macOS reads processes with `ps` and kills with BSD `kill`; no test runs there but
+  the one of how `ps` output is read. Windows has neither `/proc` nor `ps`, so an MC
+  there cannot read its own start time and tracks no programs.
   """
 
   use GenServer
@@ -88,7 +90,7 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   defp untracked do
-    if Application.fetch_env!(:hal_c2, :start_mc) and
+    if Application.get_env(:hal_c2, :start_mc, false) and
          not :persistent_term.get({__MODULE__, :untracked}, false) do
       :persistent_term.put({__MODULE__, :untracked}, true)
       Logger.warning("programs are not tracked: #{inspect(__MODULE__)} is not running")
@@ -99,11 +101,13 @@ defmodule HalC2.Subprocess.Orphans do
 
   @doc """
   When the process `pid` started, as a string that differs between two processes that
-  had the same pid, or nil when there is no such process.
+  had the same pid, or nil when there is no such process. On macOS it is to the
+  second, so two that had the same pid differ only when they started in different
+  seconds.
   """
   def started(pid) do
     case process(pid) do
-      {_state, started} -> started
+      {_state, started, _group} -> started
       nil -> nil
     end
   end
@@ -113,19 +117,25 @@ defmodule HalC2.Subprocess.Orphans do
   # pid and start time, as a zombie.
   defp running?(%{"pid" => pid, "started" => started}) do
     case process(pid) do
-      {state, ^started} -> state not in ["Z", "X"]
+      {state, ^started, _group} -> state not in ["Z", "X"]
       _ -> false
     end
   end
 
-  # `{state, started}` of the process `pid`, or nil.
+  # `{state, started, process group}` of the process `pid`, or nil.
   defp process(pid) do
     case File.read("/proc/#{pid}/stat") do
-      # Fields 3 and 22, the state and the start time in ticks since boot, counted
-      # after the command name, which may hold spaces and parentheses.
+      # Fields 3, 5 and 22, the state, the group and the start time in ticks since boot,
+      # counted after the command name, which may hold spaces and parentheses. A process
+      # exiting as it is read can leave less.
       {:ok, stat} ->
-        [state | rest] = stat |> String.split(")") |> List.last() |> String.split()
-        {state, "#{boot_id()}:#{Enum.at(rest, 18)}"}
+        case stat |> String.split(")") |> List.last() |> String.split() do
+          [state, _parent, group | rest] when length(rest) >= 17 ->
+            {state, "#{boot_id()}:#{Enum.at(rest, 16)}", String.to_integer(group)}
+
+          _ ->
+            nil
+        end
 
       {:error, _} ->
         if File.dir?("/proc/self"), do: nil, else: ps_process(pid)
@@ -140,20 +150,29 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # macOS: the state's first letter, and the wall-clock start time to the second.
+  # macOS. `lstart` is written in the locale's words, so the locale is pinned: an MC
+  # read under another one would look like a different process, and be taken for gone.
   defp ps_process(pid) do
-    case System.cmd("ps", ["-o", "state=,lstart=", "-p", "#{pid}"], stderr_to_stdout: true) do
-      {out, 0} ->
-        case String.split(String.trim(out), ~r/\s+/, parts: 2) do
-          [state, started] -> {String.first(state), String.trim(started)}
-          _ -> nil
-        end
-
-      _ ->
-        nil
+    case System.cmd("ps", ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"],
+           stderr_to_stdout: true,
+           env: [{"LC_ALL", "C"}]
+         ) do
+      {out, 0} -> parse_ps(out)
+      _ -> nil
     end
   rescue
     _ -> nil
+  end
+
+  @doc false
+  # The state's first letter, the group, and the wall-clock start time to the second.
+  def parse_ps(out) do
+    with [state, group, started] <- String.split(String.trim(out), ~r/\s+/, parts: 3),
+         {group, ""} <- Integer.parse(group) do
+      {String.first(state), String.trim(started), group}
+    else
+      _ -> nil
+    end
   end
 
   @impl true
@@ -167,9 +186,12 @@ defmodule HalC2.Subprocess.Orphans do
         %{"pid" => pid, "started" => started(pid)}
       end)
 
+    # Tracking still on is a restart inside this MC, after a crash: a program may be
+    # being recorded right now, so its record's `.tmp` is not this reap's to drop.
+    restart? = :persistent_term.get(__MODULE__, nil) != nil
     dir = dir()
     HalC2.Paths.mkdir_private!(dir)
-    reap(dir)
+    reap(dir, restart?)
 
     # Without its own start time no later boot could tell this MC from one that reused
     # its pid, so its records could get a live MC's programs killed: track nothing.
@@ -205,20 +227,24 @@ defmodule HalC2.Subprocess.Orphans do
       do: :persistent_term.erase(__MODULE__)
   end
 
-  defp reap(dir) do
+  defp reap(dir, restart?) do
     killed =
-      for name <- File.ls!(dir), path = Path.join(dir, name), reap_one(path) == :killed do
-        path
-      end
+      for name <- File.ls!(dir),
+          not (restart? and String.ends_with?(name, ".tmp")),
+          path = Path.join(dir, name),
+          reap_one(path) == :killed,
+          do: path
 
     if killed != [],
       do: Logger.warning("killed #{length(killed)} programs an earlier MC left running")
   end
 
-  # The group first: the leader's pid names it. A program that survives keeps its
-  # record, so the next boot tries again.
-  defp kill(path, pid, started) do
-    case System.cmd("kill", ["-s", "KILL", "--", "-#{pid}", "#{pid}"], stderr_to_stdout: true) do
+  # The group first, when the program still leads it: the leader's pid names it. A
+  # program that survives keeps its record, so the next boot tries again.
+  defp kill(path, pid, started, leader?) do
+    targets = if leader?, do: ["-#{pid}", "#{pid}"], else: ["#{pid}"]
+
+    case System.cmd("kill", ["-s", "KILL", "--" | targets], stderr_to_stdout: true) do
       {_, 0} ->
         File.rm(path)
         :killed
@@ -239,25 +265,40 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
+  # A record that is not one this module writes is dropped. Nothing here may stop the
+  # MC from booting: a record that cannot be dealt with (no `kill` to run) is kept for a
+  # later boot.
   defp reap_one(path) do
     with {:ok, text} <- File.read(path),
-         {:ok, %{"pid" => pid, "started" => started, "mc" => %{"pid" => mc} = owner}}
-         when is_integer(pid) and pid > 1 and is_integer(mc) <- JSON.decode(text) do
-      cond do
-        running?(owner) ->
-          :kept
+         {:ok,
+          %{
+            "pid" => pid,
+            "started" => started,
+            "mc" => %{"pid" => mc, "started" => mc_started} = owner
+          }}
+         when is_integer(pid) and pid > 1 and is_binary(started) and is_integer(mc) and mc > 0 and
+                is_binary(mc_started) <- JSON.decode(text) do
+      if running?(owner) do
+        :kept
+      else
+        # Read again right before the signal, with the group the program leads now.
+        case process(pid) do
+          {_state, ^started, group} ->
+            kill(path, pid, started, group == pid)
 
-        started(pid) == started ->
-          kill(path, pid, started)
-
-        true ->
-          File.rm(path)
-          :gone
+          _ ->
+            File.rm(path)
+            :gone
+        end
       end
     else
       _ ->
         File.rm(path)
         :gone
     end
+  rescue
+    e ->
+      Logger.warning("could not reap #{path}, kept for the next boot: #{Exception.message(e)}")
+      :kept
   end
 end

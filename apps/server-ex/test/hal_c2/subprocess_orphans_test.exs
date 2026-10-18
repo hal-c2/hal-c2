@@ -60,6 +60,101 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  test "a record that is not one this MC writes is dropped, and the boot goes on" do
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    pid = Subprocess.os_pid(sub)
+    File.mkdir_p!(Orphans.dir())
+    mc = dead_mc()
+
+    records = [
+      %{"pid" => pid, "started" => Orphans.started(pid), "mc" => %{"pid" => mc["pid"]}},
+      %{"pid" => pid, "started" => nil, "mc" => mc},
+      %{"pid" => "#{pid}", "started" => Orphans.started(pid), "mc" => mc},
+      %{"pid" => pid, "started" => Orphans.started(pid), "mc" => %{mc | "started" => 1}},
+      %{"pid" => pid, "started" => Orphans.started(pid), "mc" => mc["pid"]},
+      [pid],
+      pid
+    ]
+
+    for {record, n} <- Enum.with_index(records),
+        do: File.write!(Path.join(Orphans.dir(), "#{n}.json"), JSON.encode!(record))
+
+    boot(:next)
+
+    alive!(sub)
+    assert File.ls!(Orphans.dir()) == []
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "a boot with no kill to run keeps the record, and a later one kills the program" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    path = System.get_env("PATH")
+    System.put_env("PATH", Path.join(Orphans.dir(), "no-bin"))
+
+    try do
+      boot(:blind)
+    after
+      System.put_env("PATH", path)
+    end
+
+    alive!(sub)
+    assert [_record] = File.ls!(Orphans.dir())
+    :ok = stop_supervised(:blind)
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a program that leads no group is killed alone" do
+    # The background `sleep` is in the shell's group, which a group kill would end; the
+    # shell says how it ended, then carries on.
+    script = ~s(sleep 60 & echo $!; wait $!; echo "ended $?"; ) <> @echo
+    {:ok, sub} = Subprocess.start(["sh", "-c", script])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader
+    Subprocess.ack(sub)
+    sleep = String.to_integer(line)
+    File.mkdir_p!(Orphans.dir())
+
+    File.write!(
+      Path.join(Orphans.dir(), "#{sleep}-1.json"),
+      JSON.encode!(%{"pid" => sleep, "started" => Orphans.started(sleep), "mc" => dead_mc()})
+    )
+
+    boot(:next)
+
+    assert_receive {:subprocess_lines, reader, ["ended 137"]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    alive!(sub)
+    assert File.ls!(Orphans.dir()) == []
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "a restart leaves the record a program is being given" do
+    {:ok, tracker} = GenServer.start(Orphans, [owner: dead_mc()], name: Orphans)
+    ref = Process.monitor(tracker)
+    Process.exit(tracker, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+    # Half written by a `Subprocess.start` racing the restart.
+    in_flight = Path.join(Orphans.dir(), "1-1.json.tmp")
+    File.write!(in_flight, ~s({"pid": 1))
+
+    boot(:again)
+
+    assert File.exists?(in_flight)
+  end
+
+  test "ps output is read with its group and start time" do
+    assert {"S", "Sat Oct 18 12:00:00 2026", 123} =
+             Orphans.parse_ps("Ss     123 Sat Oct 18 12:00:00 2026\n")
+
+    assert Orphans.parse_ps("") == nil
+    assert Orphans.parse_ps("Ss x Sat Oct 18 12:00:00 2026") == nil
+  end
+
   test "a program of an MC still running is left alone when the service restarts" do
     boot(:first)
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])

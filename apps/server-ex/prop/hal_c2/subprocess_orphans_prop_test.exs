@@ -6,7 +6,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   ending while its programs keep running. Each boot after a death must kill exactly
   the programs the dead MC left, each with its background command, and spare the
   rest; there is a record for each program running, and one that a service which
-  restarted no longer tracks stays until the next boot.
+  restarted no longer tracks stays until the next boot. A restart leaves a record
+  being written alone.
   """
 
   use ExUnit.Case, async: false
@@ -157,11 +158,15 @@ defmodule HalC2.SubprocessOrphansPropTest do
     {status, records()}
   end
 
-  # The service crashes and its supervisor starts it again, inside the same MC.
-  # Returns the programs that still answer, and the records.
+  # The service crashes and its supervisor starts it again, inside the same MC, while
+  # a program's record is half written. Returns the programs that still answer, and
+  # the records, once that write is done; it fails when the restart dropped the write.
   def restart_service do
     kill_service()
+    in_flight = Path.join(Orphans.dir(), "#{System.pid()}-0.json.tmp")
+    File.write!(in_flight, ~s({"pid": ))
     start_service()
+    :ok = File.rm(in_flight)
     {for({id, sub} <- subs(), alive?(sub), do: id) |> Enum.sort(), records()}
   end
 
@@ -182,6 +187,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
     mc = Process.delete(:mc)
     :ok = Exile.Process.kill(mc, :sigkill)
     {:ok, _} = Exile.Process.await_exit(mc)
+    # The VM's terms go with it: the next boot is not a restart.
+    :persistent_term.erase(Orphans)
     Process.put(:orphans, for({id, _} <- subs(), do: id))
     :ok
   end
