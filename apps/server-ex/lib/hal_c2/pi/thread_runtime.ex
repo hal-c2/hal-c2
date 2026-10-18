@@ -845,8 +845,10 @@ defmodule HalC2.Pi.ThreadRuntime do
     {answer, state} =
       case reply do
         {:reply, {:ok, _}} -> {:ok, %{state | settled: false}}
-        {:reply, {:error, %{"message" => message}}} -> {{:error, message}, state}
-        _closed -> {{:error, "Pi exited"}, state}
+        {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, state}
+        {:reply, {:error, reason}} -> {{:error, format(reason)}, state}
+        # The connection itself is gone.
+        {:error, _down} -> {{:error, "Pi exited"}, state}
       end
 
     state =
