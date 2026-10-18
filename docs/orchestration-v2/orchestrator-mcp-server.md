@@ -140,7 +140,7 @@ reason. Use `hal_c2_thread_interrupt` to interrupt a later follow-up run.
 
 ### `create_threads`
 
-Creates between one and twenty ordinary top-level HAL-C2 threads:
+Creates between one and twenty ordinary top-level HAL-C2 threads.
 
 Each entry independently resolves provider, model, and modes. The new threads
 inherit the parent's project, branch, and worktree path, but they have no
