@@ -37,7 +37,8 @@ defmodule HalC2.Orchestration.Delegation do
       |> Enum.filter(&(&1["status"] in @active))
       |> Enum.max_by(& &1["ordinal"], fn -> nil end)
 
-    with :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
+    with :ok <- task_given(input["task"]),
+         :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
@@ -76,6 +77,7 @@ defmodule HalC2.Orchestration.Delegation do
     run = StreamState.get(parent, "run")[run_id]
 
     with %{} <- thread || {:error, "Thread #{parent_id} was not found."},
+         :ok <- task_given(command["task"]),
          :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
@@ -760,6 +762,17 @@ defmodule HalC2.Orchestration.Delegation do
     do: %{"type" => "existing_worktree", "worktreePath" => path, "branch" => branch}
 
   defp workspace(_thread), do: %{"type" => "root"}
+
+  # The task is the child's whole first message, so a call without one (an agent that
+  # called it `prompt`, say) is refused where the agent can read why. Otherwise the child
+  # starts on an empty message and answers that it came through empty.
+  defp task_given(task) do
+    if is_binary(task) and String.trim(task) != "",
+      do: :ok,
+      else:
+        {:error, "invalid_task",
+         "Delegated tasks need a `task`: the full prompt for the child, as a non-empty string."}
+  end
 
   defp not_active,
     do:

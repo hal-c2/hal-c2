@@ -1,0 +1,19 @@
+[package]
+name = "hal-c2-machine-files"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Linux only for now: macOS (FUSE-T, macFUSE) and Windows (WinFsp) build a stub that
+# says so, and the MC reports that this machine cannot show another's files.
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure Rust: mounts through fusermount3, no libfuse.
+fuser = { version = "0.18.0", default-features = false }
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true

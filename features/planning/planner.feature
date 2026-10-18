@@ -880,6 +880,18 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is to do
 
+    # The merge did not touch the issue, such as one into a branch other than the default,
+    # so GitHub did not count it as an update to it. An open issue is listed every look
+    # whether it changed or not.
+    @mc
+    Scenario: A closing pull request merged without closing its issue leaves the task to do
+      Given "planner" follows the issues of "acme/api"
+      And #7 is closed by the pull request #12
+      And the plugin looks at GitHub
+      When #12 is merged
+      And the plugin looks at GitHub
+      Then #7's task is to do
+
     @mc
     Scenario: A pull request linked by hand to an open issue's task still makes it done when it merges
       Given "planner" follows the issues of "acme/api"

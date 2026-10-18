@@ -128,6 +128,21 @@ This needs the desktop app connected to the machine it runs on, which reaches th
 cluster for it. Connected straight to another machine, a `localhost` link opens as it is, on
 your own machine.
 
+### Open another machine's files here
+
+When your client is connected to the HAL-C2 on the machine in front of you, opening a
+file of a thread on another machine of the cluster (in an editor, in the file manager,
+or from a path in a terminal) opens it with this machine's apps. HAL-C2 shows each other
+machine as a folder, named after it, under
+`~/.local/state/hal-c2/elixir/machines`, holding that machine's projects and worktrees at
+their own paths. Saving there saves on the other machine, and nothing is started there.
+
+This needs FUSE 3 on Linux (the `fuse3` package). macOS and Windows do not have it yet.
+A machine that is offline keeps its folder, but what is read through it fails until the
+machine is back. Only your user can open the folder. A client paired with a HAL-C2 on
+another computer, or reaching one through an SSH port forward, still can't open its
+files here.
+
 ### Balance new threads across machines
 
 Load balancing is off by default. Once the cluster has two or more machines, turn it on
