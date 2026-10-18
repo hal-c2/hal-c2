@@ -604,15 +604,17 @@ Rectangle {
                         transformOrigin: Item.TopLeft
                         // Opens upward and leftward when the window has no room below or to
                         // the right of the icon, set as it shows (the icon does not move while
-                        // it is open); the drawn size is the size times the zoom.
+                        // it is open). The window is measured in drawn pixels (the size times
+                        // the zoom), but x and y are local to the icon, which the zoomed body
+                        // scales, so the offsets given to them are in local units.
                         property bool upward: false
                         property real shift: 0
                         x: shift
-                        y: upward ? -implicitHeight * scale - 4 : advisoryButton.height + 4
+                        y: upward ? -implicitHeight - 4 : advisoryButton.height + 4
                         onAboutToShow: {
                             const below = advisoryButton.mapToItem(null, 0, advisoryButton.height);
-                            upward = below.y + implicitHeight * scale + 4 > advisoryButton.Window.height - 8;
-                            shift = -Math.max(0, below.x + width * scale - (advisoryButton.Window.width - 8));
+                            upward = below.y + (implicitHeight + 4) * scale > advisoryButton.Window.height - 8;
+                            shift = -Math.max(0, below.x + width * scale - (advisoryButton.Window.width - 8)) / scale;
                         }
                         width: 320
                         padding: 12

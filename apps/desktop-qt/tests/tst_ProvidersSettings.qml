@@ -18,6 +18,30 @@ Item {
         }
     }
 
+    // The shell's body, which the page lives in: scaled by the zoom about its corner, so
+    // a popup positioned from the page has its local offsets multiplied by the zoom.
+    Component {
+        id: zoomedBodyComponent
+        Item {
+            property real zoom: 1
+            property real offsetX: 0
+            property real offsetY: 0
+            property alias page: inner
+            width: root.width / zoom
+            height: root.height / zoom
+            scale: zoom
+            transformOrigin: Item.TopLeft
+
+            ProvidersSettings {
+                id: inner
+                x: offsetX
+                y: offsetY
+                width: 880
+                height: 680
+            }
+        }
+    }
+
     function provider(overrides) {
         return Object.assign({
             instanceId: "claudeAgent_work", driver: "claudeAgent", name: "Claude Work", version: "v2.1.0",
@@ -198,14 +222,14 @@ Item {
         // down or to the right the icon is and however far the page is zoomed.
         function test_the_advisory_popover_stays_inside_the_window() {
             const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
-            for (const [zoom, y, x] of [[1, 0, 0], [1.5, 0, 0], [1, 560, 0], [1.5, 560, 0], [1, 0, 600], [1.5, 560, 600]]) {
+            for (const [zoom, y, x] of [[1, 0, 0], [1.5, 0, 0], [1, 560, 0], [1.5, 560, 0], [1, 0, 600], [1.5, 0, 400], [1.5, 560, 400]]) {
                 Shell.state = { layout: { zoom: zoom }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
-                const page = createTemporaryObject(settingsComponent, root, { x: x, y: y });
-                const card = findChild(page, "provider_claudeAgent_work");
+                const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: zoom, offsetX: x / zoom, offsetY: y / zoom });
+                const card = findChild(body.page, "provider_claudeAgent_work");
                 const button = findChild(card, "advisoryButton");
                 const at = button.mapToItem(null, button.width / 2, button.height / 2);
                 if (at.x < 0 || at.y < 0 || at.x > root.Window.width || at.y > root.Window.height) {
-                    page.destroy();
+                    body.destroy();
                     continue;
                 }
                 mouseClick(button);
@@ -216,9 +240,31 @@ Item {
                 const label = `zoom ${zoom} at ${x},${y}`;
                 verify(topLeft.x >= 0 && topLeft.y >= 0, label + ": the popover starts inside the window");
                 verify(bottomRight.x <= root.Window.width && bottomRight.y <= root.Window.height, label + ": the popover ends inside the window");
+                // Flipped or shifted, it stays against the icon and the window edge, not
+                // a zoom-multiple away from them.
+                const card_ = popover.background.mapToItem(null, 0, 0);
+                const cardEnd = popover.background.mapToItem(null, popover.background.width, popover.background.height);
+                const iconTop = button.mapToItem(null, 0, 0).y;
+                if (popover.upward)
+                    verify(Math.abs(cardEnd.y - iconTop) <= 4 * zoom + 1, label + ": the flipped popover sits against the icon");
+                if (popover.shift !== 0)
+                    verify(Math.abs(cardEnd.x - (root.Window.width - 8)) <= 1, label + ": the shifted popover sits against the window edge");
                 popover.close();
-                page.destroy();
+                body.destroy();
             }
+        }
+
+        // Qt closes a popup whose icon is hidden; this pins that it stays so.
+        function test_the_advisory_popover_closes_when_the_advisory_goes_away() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: null })] }) };
+            tryCompare(popover, "opened", false);
         }
 
         // A version outside the supported range is told apart on the card itself.

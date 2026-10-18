@@ -346,6 +346,8 @@ SettingsPage {
                 readonly property bool scanning: page.discovery?.scanning ?? false
 
                 objectName: "scan"
+                // Out of the tab order while scanning, as a disabled button would be.
+                activeFocusOnTab: !scanning
                 visible: (page.discovery?.status ?? "none") !== "none"
                 subtle: true
                 opacity: scanning ? 0.64 : 1

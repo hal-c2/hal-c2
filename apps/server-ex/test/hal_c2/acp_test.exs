@@ -6,6 +6,9 @@ defmodule HalC2.AcpTest do
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
     start_supervised!(HalC2.Settings)
+    # What a test makes it load or fail to load is kept in :persistent_term.
+    HalC2.Acp.forget("antigravity")
+    on_exit(fn -> HalC2.Acp.forget("antigravity") end)
     :ok
   end
 
