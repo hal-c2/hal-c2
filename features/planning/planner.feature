@@ -952,6 +952,22 @@ Feature: Planner
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
       And that look read the closed #7 alone
 
+    # A look that could not read a closed issue alone does not hold its old copy for the
+    # day: the next look reads it again.
+    @mc
+    Scenario: A closed issue the daily read failed to read is read alone again at the next look
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      And GitHub fails to read the closed #7 alone
+      And the plugin looks at GitHub again, with nothing there changed since
+      And the planner reads every closed issue alone once a day
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read the closed #7 alone
+
     @mc
     Scenario: A closed issue read alone is not read alone again until the next day
       Given #7's task is in progress

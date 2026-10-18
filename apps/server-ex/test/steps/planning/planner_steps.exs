@@ -1728,6 +1728,17 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "GitHub fails to read the closed \#{int} alone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["{ ...IssueFields", ~s("number":#{number})],
+        "exit" => 1,
+        "stderr" => "HTTP 502: Bad Gateway\n"
+      }
+    ])
+  end
+
   step "the planner reads every closed issue alone once a day", context do
     World.put_app_env(:planner_full_read_seconds, 86_400)
     context

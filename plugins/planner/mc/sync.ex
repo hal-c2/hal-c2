@@ -33,8 +33,12 @@ defmodule HalC2Plugins.Planner.Sync do
   linked issues not among its open ones come from one listing of its issues updated
   since that look began, and one not updated since is the detail that look had, so
   only an issue neither has is read alone, or every one the listing lacks when it
-  fails or is cut short. Without a `before` the look is a full one, `full: true` in what
-  it finds: every linked issue not among the open ones is read alone.
+  fails or is cut short. Without a `before` the look that reads issues is a full one,
+  `full: true` in what it finds: every linked issue not among the open ones is read
+  alone, a call for each, four at a time. A look that reads no issues (sync is off, or
+  the MC's projects could not be read) is never full. One issue whose read failed is
+  absent from the `details` the look finds, so the next look reads it alone again
+  whether or not it is the day for it.
   """
   def look(settings, items, before) do
     at = System.monotonic_time()
@@ -48,7 +52,7 @@ defmodule HalC2Plugins.Planner.Sync do
           at: at,
           started: started,
           problem: nil,
-          full: before == nil,
+          full: false,
           unwatched: [],
           projects: projects,
           issues: [],
@@ -158,7 +162,10 @@ defmodule HalC2Plugins.Planner.Sync do
           end
       end
 
-    problem(%{found | issues: listed, details: details, unwatched: unwatched}, problems)
+    problem(
+      %{found | issues: listed, details: details, unwatched: unwatched, full: before == nil},
+      problems
+    )
   end
 
   # Of the linked issues `refs` of `repo` missing from its open ones, those GitHub lists
