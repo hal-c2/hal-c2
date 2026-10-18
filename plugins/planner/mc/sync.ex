@@ -1143,9 +1143,23 @@ defmodule HalC2Plugins.Planner.Sync do
   took.
   """
   def misplaced(synced, reasserts) do
-    at = for {id, {"update", input, _}} <- reasserts, into: %{}, do: {id, Map.take(input, ~w(repository number))}
+    at =
+      for {id, {"update", input, _}} <- reasserts,
+          into: %{},
+          do: {id, Map.take(input, ~w(repository number))}
+
     Map.update(synced, "misplaced", at, &Map.merge(&1, at))
   end
+
+  @doc """
+  `synced` without the tasks the milestone `item` holds again as misplaced: GitHub has
+  their issues in it, as the plan does, so there is nothing to correct and no push
+  would clear them.
+  """
+  def settled(%{"misplaced" => at} = synced, %{"after" => held}),
+    do: %{synced | "misplaced" => Map.drop(at, held)}
+
+  def settled(synced, _item), do: synced
 
   @doc """
   `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on

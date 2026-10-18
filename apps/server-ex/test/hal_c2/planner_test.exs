@@ -580,6 +580,17 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 7, "milestone" => 4} = input
     end
 
+    test "is dropped once the milestone holds the task again" do
+      synced = %{
+        "after" => ["t"],
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      assert %{"misplaced" => %{}} = Sync.settled(synced, %{"after" => ["t"]})
+      assert %{"misplaced" => %{"t" => _}} = Sync.settled(synced, %{"after" => []})
+      assert Sync.settled(nil, %{"after" => ["t"]}) == nil
+    end
+
     test "takes the issue out of any milestone once the task names another" do
       input = corrected(task(%{"repository" => @repo, "number" => 8}))
       assert %{"number" => 7, "milestone" => nil} = input
