@@ -1575,11 +1575,16 @@ defmodule HalC2.PlannerPropTest do
         do: MapSet.subset?(alone, MapSet.difference(closed, before.had)),
         else: alone == closed
 
-    ok? or
+    if ok? do
+      true
+    else
       IO.puts(
         "read alone #{inspect(alone)} of the closed #{inspect(closed)}, " <>
           "having copies of #{inspect(before.had)} at #{inspect(before.age)}"
-      ) == :ok
+      )
+
+      false
+    end
   end
 
   defp read_alone?(_before, _call, _alone), do: true

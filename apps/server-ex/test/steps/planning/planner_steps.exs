@@ -1728,6 +1728,11 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the planner reads every closed issue alone once a day", context do
+    World.put_app_env(:planner_full_read_seconds, 86_400)
+    context
+  end
+
   step "\#{int} is reopened on GitHub without the label", %{args: [number]} = context do
     off_the_list(context, GitHubIssues.issue(context.repository, number))
   end
@@ -1745,16 +1750,16 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
-  step "that look read the closed \#{int} alone", context do
-    assert reads(context) == context.reads + 1
+  step "that look read the closed \#{int} alone", %{args: [number]} = context do
+    assert [%{"number" => ^number}] = reads(context) -- context.reads
     context
   end
 
   defp count_reads(context), do: Map.put(context, :reads, reads(context))
 
-  # How many issues were read one at a time so far.
+  # The issues read one at a time so far, as the variables they were asked with.
   defp reads(context),
-    do: length(GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields"))
+    do: GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields")
 
   step "\#{int}'s task is done", %{args: [number]} = context do
     assert task_of(plan!(context), number)["status"] == "done"

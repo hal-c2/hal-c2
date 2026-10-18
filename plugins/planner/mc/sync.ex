@@ -136,13 +136,22 @@ defmodule HalC2Plugins.Planner.Sync do
           project = project_of(github, repo)
           {known, alone} = updated(project, repo, refs, before)
 
-          for %{"number" => number} <- alone, reduce: {known ++ details, problems} do
+          # A full look reads each closed issue alone, a few at a time.
+          read =
+            alone
+            |> Task.async_stream(
+              fn %{"number" => number} ->
+                input = %{"projectId" => project["id"], "repository" => repo, "number" => number}
+                {number, Host.issues(@id, "detail", input)}
+              end,
+              max_concurrency: 4,
+              timeout: :infinity
+            )
+            |> Enum.map(fn {:ok, read} -> read end)
+
+          for {number, answer} <- read, reduce: {known ++ details, problems} do
             {details, problems} ->
-              case Host.issues(@id, "detail", %{
-                     "projectId" => project["id"],
-                     "repository" => repo,
-                     "number" => number
-                   }) do
+              case answer do
                 {:ok, issue} -> {[issue | details], problems}
                 {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
               end

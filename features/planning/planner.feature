@@ -953,6 +953,17 @@ Feature: Planner
       And that look read the closed #7 alone
 
     @mc
+    Scenario: A closed issue read alone is not read alone again until the next day
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      And the plugin looks at GitHub again, with nothing there changed since
+      And the planner reads every closed issue alone once a day
+      When the plugin looks at GitHub again, with nothing there changed since
+      Then that look read no issue alone
+
+    @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again
       Given "planner" follows the issues of "acme/api" labelled "roadmap"
       And "acme/api" has the open issue #7 "Rate limits" assigned to "dana" with the label "roadmap"
