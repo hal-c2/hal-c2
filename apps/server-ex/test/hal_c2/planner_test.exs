@@ -248,8 +248,20 @@ defmodule HalC2.PlannerTest do
       assert url.("https://github.com@evil.example/acme/api/pull/4", "pullRequest") ==
                "https://evil.example/acme/api/pull/4"
 
-      assert url.("https://ghe.example.com:8443/acme/api/pull/4/files", "pullRequest") ==
-               "https://ghe.example.com:8443/acme/api/pull/4/files"
+      # The path is made over, so the same pull request is one address however it was
+      # given, and nothing odd after the number stays.
+      for path <- ["/files", "/../../evil", "/", "/%2e%2e/x"] do
+        assert url.("https://ghe.example.com:8443/acme/api/pull/4#{path}", "pullRequest") ==
+                 "https://ghe.example.com:8443/acme/api/pull/4"
+      end
+
+      assert url.("https://ghe.example.com/ACME/Api/PULL/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      # A literal IPv6 host keeps its brackets, so the address reads back to that host.
+      stored = url.("https://[::1]:8443/acme/api/pull/4", "pullRequest")
+      assert stored == "https://[::1]:8443/acme/api/pull/4"
+      assert URI.parse(stored).host == "::1"
 
       assert url.("https://ghe.example.com:443/acme/api/pull/4", "pullRequest") ==
                "https://ghe.example.com/acme/api/pull/4"

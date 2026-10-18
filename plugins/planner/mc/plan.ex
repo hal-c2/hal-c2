@@ -436,8 +436,11 @@ defmodule HalC2Plugins.Planner.Plan do
   ("issue"; any `kind` else takes either), as it names the host a repository the MC has
   no checkout of is read through (`Sync.look/3`, by host alone, the port left out as
   the remotes of a project leave it out); whether that host is one of the MC's is that
-  read's to say. What stays is rebuilt from the scheme, host, any port that is not the
-  scheme's own, and path, so credentials, a query and a fragment do not.
+  read's to say. What stays is rebuilt from the scheme, host and any port that is not the
+  scheme's own, with the path made over from the repository, kind and number (a deep
+  link like `/files`, dot segments and odd characters do not stay), so credentials, a
+  query and a fragment do not either, and the same pull request is always the same
+  address. A host that is an IPv6 literal keeps its brackets.
   """
   def ref(value, kind \\ nil)
 
@@ -460,9 +463,17 @@ defmodule HalC2Plugins.Planner.Plan do
         name = Regex.escape(String.downcase(repository))
         segment = %{"pullRequest" => "pull", "issue" => "issues"}[kind] || "pull|issues"
 
-        if String.downcase(path) =~ ~r{\A/#{name}/(#{segment})/#{number}(/|\z)} do
-          port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
-          "#{scheme}://#{host}#{port}#{path}"
+        case Regex.run(~r{\A/#{name}/(#{segment})/#{number}(/|\z)}, String.downcase(path)) do
+          [_, found | _] ->
+            URI.to_string(%URI{
+              scheme: scheme,
+              host: host,
+              port: port,
+              path: "/#{repository}/#{found}/#{number}"
+            })
+
+          nil ->
+            nil
         end
 
       _ ->

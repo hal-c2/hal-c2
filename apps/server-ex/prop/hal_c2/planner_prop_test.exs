@@ -157,7 +157,9 @@ defmodule HalC2.PlannerPropTest do
     53 => {:plain, 53},
     54 => {:plain, "not a url"},
     55 => {:plain, nil},
-    56 => {:unknown, "https://ghe.elsewhere.example/acme/other/pull/56"}
+    56 => {:unknown, "https://ghe.elsewhere.example/acme/other/pull/56"},
+    # A deep link with credentials, a query and a fragment is stored as the plain address.
+    57 => {:enterprise, "https://user:token@github.example.com/acme/other/pull/57/files?x=1#y"}
   }
   @bad_ref %{"repository" => 7, "number" => 1}
   @due "2026-10-30"
