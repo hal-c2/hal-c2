@@ -1828,7 +1828,8 @@ defmodule HalC2.PlannerPropTest do
     holder =
       spawn(fn ->
         receive do
-          {:"$gen_call", {caller, _}, _} -> send(test, {:setup_held, caller})
+          {:"$gen_call", {caller, _}, {:start, _, _, _, _, _}} ->
+            send(test, {:setup_held, caller})
         end
 
         receive do: (:done -> :ok)

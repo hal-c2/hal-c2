@@ -1353,6 +1353,22 @@ Feature: Planner
       Then GitHub names #7 "Rate limits" last
       And #7's task is named "Rate limits" and marked as synced
 
+    # The push of an MC run before is not one this run can hear from, so its task is
+    # marked and its next change sends what GitHub lacks again.
+    @mc
+    Scenario: A push of an earlier MC run is marked as stopped when the plugin starts
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted by a new MC run before GitHub answers
+      Then #7's task is marked as not synced
+
+    @mc
+    Scenario: A push whose runner stops after a restart of the plugin is marked as stopped
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted and the push is stopped before GitHub answers
+      Then #7's task is marked as not synced
+
     @mc
     Scenario: A change GitHub takes after a restart of the plugin clears the mark of one it refused
       Given "planner" syncs "acme/api" both ways

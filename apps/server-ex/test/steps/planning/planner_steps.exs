@@ -2217,6 +2217,41 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # A restart of the MC itself, which a restart of the plugin within one VM cannot reach:
+  # the push of the run before has no runner this run knows.
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted by a new MC run before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    :persistent_term.erase({HalC2Plugins.Planner, :run})
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  # The push's runner stops after the restart took the push on, before GitHub answers.
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted and the push is stopped before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    %{pushing: %{} = pushing} = :sys.get_state(HalC2Plugins.Planner)
+    assert [%{runner: runner}] = Map.values(pushing)
+    ref = Process.monitor(runner)
+    Process.exit(runner, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
+    {_, context} = await_topic(context, "plan", &(item(&1, title)["syncError"] != nil))
+
+    # Killing the runner may have taken GitHub's call with it, so nobody may be reading
+    # the gate: a read-write open does not wait for one.
+    {:ok, file} = File.open(context.gh_gate, [:read, :write, :raw])
+    :ok = :file.write(file, "answer")
+    File.close(file)
+    Task.shutdown(renaming, :brutal_kill)
+    context
+  end
+
   step "the user renames \#{int}'s task to {string}, then to {string}, then {string} is restarted before GitHub answers",
        %{args: [number, first, second, id]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
@@ -2231,9 +2266,15 @@ defmodule HalC2.Steps.Planning.Planner do
     listing = Map.put(listed(context, number, second), "run", wait)
     context = World.cli_rules(context, [listing])
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
-    answer_late(context)
-    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
-    File.write!(gate, "go", [:raw])
+
+    # Whatever happens, the look is let go, or it would wedge the plugin's poll.
+    try do
+      answer_late(context)
+      assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    after
+      File.write!(gate, "go", [:raw])
+    end
+
     context
   end
 

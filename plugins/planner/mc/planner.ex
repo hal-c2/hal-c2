@@ -1707,6 +1707,8 @@ defmodule HalC2Plugins.Planner do
               {runner, _} = from
               token = Process.monitor(runner)
               board = state.settings["board"] || ""
+              # The token names the push to its runner, and the monitor is this server's
+              # watch on it: they part when a restart takes the flight on (`load/1`).
               flight = %{token: token, monitor: token, runner: runner, changed: false, board: board}
               state = put_in(state.pushing[id], flight)
               {[{id, token, ops, synced} | pushes], state}
