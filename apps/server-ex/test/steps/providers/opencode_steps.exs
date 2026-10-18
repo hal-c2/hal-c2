@@ -728,7 +728,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   # A steer, as the composer sends one into the running turn. Its text says how the
   # fake answers it: "never answered", "keeps working" (a loop that runs until the
-  # turn is stopped), "its loop fails".
+  # turn is stopped or steered again), "its loop fails".
   step "the user steers the OpenCode turn with {string}", %{args: [text]} = context do
     {{:ok, _}, context} =
       World.dispatch(context, %{
@@ -745,10 +745,10 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   # The steer's own loop started, after the turn's prompt answered: its message is
-  # there (its text streams by paragraph, so it may not be yet) and the turn still runs.
+  # there and the turn still runs.
   step "OpenCode answers the turn's prompt and the message in a loop of its own", context do
     World.await_value(context, @thread, fn state ->
-      Enum.any?(StreamState.list(state, "message"), &String.ends_with?(&1["id"], ":msg-steer"))
+      Enum.any?(StreamState.list(state, "message"), &String.contains?(&1["id"], ":msg-steer"))
     end)
 
     World.await_runs(context, @thread, ["running"])

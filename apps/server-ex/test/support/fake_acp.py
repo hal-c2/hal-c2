@@ -2,9 +2,10 @@
 # until session/cancel, or until another prompt joins it (one that also says "ends as
 # steered" ends just before, or "fails as steered" fails just before, so the joining
 # prompt runs a loop of its own: one that says "its loop fails" fails, "keeps working"
-# runs until session/cancel). A prompt saying "never answered" is never answered;
-# "approve" asks permission for a command first, offering
-# "Always allow" unless the prompt says "once only". Title and commit prompts (without
+# writes a paragraph and waits as a "wait" prompt does, so the next one joins it or, as
+# above, ends or fails it). Each steer answers with a message of its own. A prompt
+# saying "never answered" is never answered; "approve" asks permission for a command
+# first, offering "Always allow" unless the prompt says "once only". Title and commit prompts (without
 # FAKE_TEXT_LOG) ask to run a tool, then answer JSON naming the permission outcome.
 # With FAKE_ACP_LOG set, every permission answer is appended to that file as a JSON line;
 # FAKE_ACP_TRACE collects the argv and every message read.
@@ -320,16 +321,18 @@ for line in sys.stdin:
             if "its loop fails" in text:
                 send({"id": mid, "error": {"code": -32603, "message": "The steer's loop failed"}})
                 continue
-            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer", "content": {"type": "text", "text": "steered: " + text}})
+            # A loop that keeps working has written a paragraph so far, which the thread shows.
+            answer = "steered: " + text + ("\n\n" if "keeps working" in text else "")
+            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer-%s" % mid, "content": {"type": "text", "text": answer}})
             if "keeps working" in text:
-                waiting = (mid, sid, None)
+                waiting = (mid, sid, steered_end(text))
             else:
                 end_prompt(mid, sid)
             continue
         if waiting and waiting[1] == sid:
             # A prompt during a waiting turn joins it, as OpenCode's running loop takes
             # it: the turn answers it, then both prompts end.
-            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer", "content": {"type": "text", "text": "steered: " + text}})
+            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer-%s" % mid, "content": {"type": "text", "text": "steered: " + text}})
             end_prompt(waiting[0], sid)
             send({"id": mid, "result": {"stopReason": "end_turn"}})
             waiting = None
