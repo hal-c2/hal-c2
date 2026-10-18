@@ -291,8 +291,9 @@ defmodule HalC2.PlannerPropTest do
   # `pulls`: its pull requests, `[{number, from_issue (linked as one its issue names),
   # state (:open or :merged, as the plugin last read it)}]` in the order linked. `age`:
   # the seconds since a look read every closed issue alone (the one the plugin makes as it
-  # starts counts), nil in the model between a restart and that look; `had`: the closed issues linked tasks had at the look before, whose
-  # copies the next look reuses until the age passes `@full_read`.
+  # starts counts), nil in the model between a restart and that look; `had`: the closed
+  # issues linked tasks had at the look before, whose copies the next look reuses until
+  # the age passes `@full_read`.
   def initial_state,
     do: %{
       age: 0,
@@ -2247,7 +2248,7 @@ defmodule HalC2.PlannerPropTest do
     pid = Process.whereis(@server)
 
     :sys.replace_state(pid, fn state ->
-      %{state | full_at: DateTime.add(state.full_at, -@shift, :second)}
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -@shift, :second)}
     end)
 
     observe(:ok)

@@ -950,6 +950,7 @@ Feature: Planner
       When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
       And the plugin looks at GitHub again
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read the closed #7 alone
 
     @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again

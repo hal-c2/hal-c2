@@ -1745,6 +1745,11 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "that look read the closed \#{int} alone", context do
+    assert reads(context) == context.reads + 1
+    context
+  end
+
   defp count_reads(context), do: Map.put(context, :reads, reads(context))
 
   # How many issues were read one at a time so far.
