@@ -60,6 +60,7 @@ defmodule HalC2.OrchestrationPropTest do
         Process.put(:codex_log, log)
         Process.put(:reject_steer, Path.join(home, "reject-steer"))
         Process.put(:refused_steers, [])
+        Process.put(:steer_log, {0, []})
 
         Application.put_env(:hal_c2, :codex_command, [
           "env",
@@ -1150,16 +1151,37 @@ defmodule HalC2.OrchestrationPropTest do
     |> Enum.sort()
   end
 
-  # The texts of every `turn/steer` Codex was sent, in order.
+  # The texts of every `turn/steer` Codex was sent, in order. Each call reads only
+  # the lines the log gained since the last (`:steer_log` holds where it stopped and
+  # what it read), up to the last complete one.
   defp steer_requests do
-    log = Process.get(:codex_log)
+    {offset, texts} = Process.get(:steer_log)
 
-    if File.exists?(log) do
-      for line <- File.stream!(log),
-          %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
-          do: hd(params["input"])["text"]
-    else
-      []
-    end
+    added =
+      case File.open(Process.get(:codex_log), [:read, :binary]) do
+        {:ok, io} ->
+          {:ok, _} = :file.position(io, offset)
+          data = IO.binread(io, :eof)
+          File.close(io)
+          if is_binary(data), do: data, else: ""
+
+        {:error, :enoent} ->
+          ""
+      end
+
+    complete =
+      case :binary.matches(added, "\n") do
+        [] -> ""
+        newlines -> binary_part(added, 0, elem(List.last(newlines), 0) + 1)
+      end
+
+    texts =
+      texts ++
+        for line <- String.split(complete, "\n", trim: true),
+            %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
+            do: hd(params["input"])["text"]
+
+    Process.put(:steer_log, {offset + byte_size(complete), texts})
+    texts
   end
 end
