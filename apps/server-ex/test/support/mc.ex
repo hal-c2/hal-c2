@@ -3869,7 +3869,7 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Starts the MC's terminal services and makes `/bin/sh` the user's shell for
-  the scenario (quick, and it reads no rc files).
+  the scenario (quick, and it reads no rc files), with a prompt of `$ `.
   """
   def ensure(%{terminals_ready: true} = context), do: context
 
@@ -3878,6 +3878,8 @@ defmodule HalC2.Test.Mc.Terminal do
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
     put_env("SHELL", "/bin/sh")
+    # The terminal passes the MC's environment on, so an exported PS1 would be the prompt.
+    put_env("PS1", "$ ")
     Map.put(context, :terminals_ready, true)
   end
 
@@ -3931,10 +3933,13 @@ defmodule HalC2.Test.Mc.Terminal do
   drawn its first prompt (`await_prompt/1`).
   """
   def open!(context, overrides \\ %{}, name \\ "default") do
+    context = ensure(context)
+    restored = restored_history(context, overrides)
+
     case open(context, overrides, name) do
       {{:ok, snapshot}, context} ->
         if snapshot["status"] == "running" and prompt_known?(),
-          do: await_prompt(context.terminal)
+          do: await_prompt(context.terminal, restored)
 
         {snapshot, context}
 
@@ -3953,22 +3958,41 @@ defmodule HalC2.Test.Mc.Terminal do
   prompt then lands between that echo and the command's output (`$ hello`), where
   a match for a line of output no longer finds it.
 
+  `restored` is scrollback the shell did not print, which a reopened terminal starts
+  with (`restored_history/2`); its own trailing prompt is not the new shell's.
+
   Reads the terminal as a raw subscriber of its own, so no client's frames are
   consumed.
   """
-  def await_prompt(input) do
+  def await_prompt(input, restored \\ "") do
     session = Map.take(input, ["threadId", "terminalId"])
 
     Task.async(fn ->
       {:ok, snapshot} = HalC2.Terminal.attach(session, self())
 
       try do
-        receive_prompt(snapshot["history"])
+        receive_prompt(String.replace_prefix(snapshot["history"], restored, ""))
       after
         HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
       end
     end)
     |> Task.await(10_000)
+  end
+
+  @doc """
+  The scrollback a `terminal.open` of the scenario's terminal (with `overrides`) will
+  restore from disk: what a closed terminal saved. Empty when the terminal is running,
+  whose own scrollback is the shell's.
+  """
+  def restored_history(context, overrides \\ %{}) do
+    input = input(context, overrides)
+
+    with [] <- Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}),
+         {:ok, saved} <- File.read(history_file(context, input)) do
+      saved
+    else
+      _ -> ""
+    end
   end
 
   defp receive_prompt(output) do
