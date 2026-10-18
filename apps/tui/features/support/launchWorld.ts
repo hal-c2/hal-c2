@@ -13,9 +13,15 @@ import type { World } from "./world.ts";
 const TUI_DIR = NodePath.resolve(import.meta.dir, "../..");
 const CLIENT_ENTRY = NodePath.join(TUI_DIR, "src/index.ts");
 
-/** How long a process gets to draw its first frame, or to exit once asked. */
-const DRAW_TIMEOUT_MS = 12_000;
-const EXIT_TIMEOUT_MS = 6_000;
+/**
+ * How long a process gets to draw its first frame, or to exit once asked. The
+ * draw and the exit are the signals the steps wait on, and both always arrive
+ * (a client that fails exits instead of drawing); these only guard a hang and
+ * put the client's stderr in the failure. A cold bun start on a loaded machine
+ * takes many seconds with the CPU idle, so they sit well above that.
+ */
+const DRAW_TIMEOUT_MS = 30_000;
+const EXIT_TIMEOUT_MS = 15_000;
 
 export const ENTER_ALT_SCREEN = "\x1b[?1049h";
 export const LEAVE_ALT_SCREEN = "\x1b[?1049l";

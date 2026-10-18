@@ -20,7 +20,9 @@ import {
 import { matchStep, type StepContext } from "./steps.ts";
 
 const FEATURES_ROOT = NodePath.resolve(import.meta.dir, "../../../features");
-const SCENARIO_TIMEOUT_MS = 20_000;
+// A hang guard above the longest chain of process waits in tui/launch.feature
+// (launchWorld.ts): a scenario fails by not finishing, never by being slow.
+const SCENARIO_TIMEOUT_MS = 90_000;
 const includeBacklog = process.env.TUI_INCLUDE_BACKLOG === "1";
 
 function selectedPatterns(): string[] {

@@ -8,10 +8,12 @@
 // The model is where the shell may start one: the environment says it is on
 // this machine, or, saying nothing, it is the shell's own MC on a loopback
 // address (the fake MC's). Every open there asks that environment's MC to
-// start it on the path; every other open asks no MC anything and tells the
-// user the files are on another machine. Whichever thread is open, the editors
-// offered are this machine's: the thread's environment's when it runs here,
-// else the shell's own.
+// start it on the path. A member's file elsewhere opens from the folder the
+// shell's MC keeps for it, when that MC runs here and answers files.localPath
+// with one (an older MC answers null, one without FUSE says why); the shell's
+// MC starts it there. Every other open asks no MC to start anything and tells
+// the user why. Whichever thread is open, the editors offered are this
+// machine's: the thread's environment's when it runs here, else the shell's own.
 
 #include "Prop.h"
 
@@ -40,13 +42,20 @@ const QString kHere = QStringLiteral("5e1f00000000000000000000000000000000000000
 const QString kElsewhere = QStringLiteral("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1");
 const QString kMember = QStringLiteral("env-c");
 const QString kTold = QStringLiteral("The files are on another machine and can't be opened here yet.");
+const QString kFolders = QStringLiteral("/home/user/.local/state/hal-c2/elixir/machines");
+const QString kNoFuse = QStringLiteral("The file is on \"env-c\". To open it here, install FUSE 3 (fuse3).");
 const QDateTime kEpoch(QDate(2026, 10, 16), QTime(9, 0), QTimeZone::UTC);
 
 enum class Machine { Here, Elsewhere, Unsaid };
 enum class Open { File, Reveal, Workspace };
+// How the shell's MC answers files.localPath for the member.
+enum class Folder { Older, Mounted, NoFuse };
 
 void showValue(Machine machine, std::ostream& os) {
   os << (machine == Machine::Here ? "here" : machine == Machine::Elsewhere ? "elsewhere" : "unsaid");
+}
+void showValue(Folder folder, std::ostream& os) {
+  os << (folder == Folder::Older ? "older" : folder == Folder::Mounted ? "mounted" : "no fuse");
 }
 void showValue(Open open, std::ostream& os) {
   os << (open == Open::File ? "file" : open == Open::Reveal ? "reveal" : "workspace");
@@ -68,6 +77,7 @@ struct Model {
   Machine member = Machine::Unsaid;
   bool joined = false;
   bool connected = true;
+  Folder folder = Folder::Older;
   // The thread open: -1 none, 0 the MC's own, 1 the member's.
   int route = -1;
 
@@ -84,6 +94,7 @@ struct Sut {
   std::unique_ptr<NativeShell> native;
   // Every `shell.openInEditor`: the environment it was for and its payload.
   QList<std::pair<QString, QJsonObject>> opened;
+  Folder folder = Folder::Older;
 
   Sut() {
     thisMachine::setIdForTesting(kHere);
@@ -98,6 +109,22 @@ struct Sut {
     mc.onRpc(QStringLiteral("shell.openInEditor"), [this](const FakeMc::Rpc& rpc) {
       opened.append({rpc.environment.isEmpty() ? mc.environmentId : rpc.environment, rpc.payload});
       mc.reply(rpc, QJsonValue::Null);
+    });
+    mc.onRpc(QStringLiteral("files.localPath"), [this](const FakeMc::Rpc& rpc) {
+      // Asked of the shell's own MC, for the member's file.
+      const QString environment = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
+      if (environment != mc.environmentId || rpc.payload.value(QLatin1String("environmentId")).toString() != kMember) {
+        mc.refuse(rpc, QStringLiteral("files.localPath was asked of %1 for %2").arg(environment, rpc.payload.value(QLatin1String("environmentId")).toString()));
+        return;
+      }
+      const QString path = rpc.payload.value(QLatin1String("path")).toString();
+      if (folder == Folder::Older) {
+        mc.reply(rpc, QJsonValue::Null);
+      } else if (folder == Folder::Mounted) {
+        mc.reply(rpc, QJsonObject{{QStringLiteral("path"), kFolders + QLatin1Char('/') + kMember + path}});
+      } else {
+        mc.reply(rpc, QJsonObject{{QStringLiteral("reason"), QStringLiteral("no_fuse")}, {QStringLiteral("machine"), kMember}, {QStringLiteral("message"), kNoFuse}});
+      }
     });
     mc.projects.insert(QStringLiteral("p1"), project(QStringLiteral("p1"), QStringLiteral("/work/p1")));
     mc.threads.insert(QStringLiteral("t1"), thread(QStringLiteral("t1"), QStringLiteral("p1")));
@@ -232,6 +259,18 @@ struct Go : Command {
   void show(std::ostream& os) const override { os << "Go(" << (which == 0 ? "own" : "member") << ")"; }
 };
 
+struct Answer : Command {
+  explicit Answer(const Model&) {}
+  Folder folder = *rc::gen::element(Folder::Older, Folder::Mounted, Folder::NoFuse);
+  void apply(Model& model) const override { model.folder = folder; }
+  void run(const Model&, Sut& sut) const override { sut.folder = folder; }
+  void show(std::ostream& os) const override {
+    os << "Answer(";
+    showValue(folder, os);
+    os << ")";
+  }
+};
+
 struct Drop : Command {
   explicit Drop(const Model&) {}
   void checkPreconditions(const Model& model) const override { RC_PRE(model.connected); }
@@ -282,19 +321,24 @@ struct OpenIt : Command {
     } else {
       RC_ASSERT(sut.workspace()->openInEditor(open == Open::Reveal ? QString() : editor, path, open == Open::Reveal));
     }
+    // Two round trips: the shell may ask where the file is here before it asks to open it.
+    sut.sync();
     sut.sync();
     const auto [toastId, toastTitle] = sut.newestToast();
-    if (model.here(which)) {
-      QJsonObject payload{{QStringLiteral("cwd"), path}, {QStringLiteral("editor"), editor}};
+    // A member's file elsewhere is in the shell's MC's folder for it, when that MC runs here.
+    const bool asked = !model.here(which) && which == 1 && model.here(0);
+    const bool mounted = asked && model.folder == Folder::Mounted;
+    if (model.here(which) || mounted) {
+      QJsonObject payload{{QStringLiteral("cwd"), mounted ? kFolders + QLatin1Char('/') + kMember + path : path}, {QStringLiteral("editor"), editor}};
       if (open == Open::Reveal) payload.insert(QStringLiteral("reveal"), true);
       RC_ASSERT(sut.opened.size() == before + 1);
-      RC_ASSERT(sut.opened.last().first == Sut::environmentOf(which));
+      RC_ASSERT(sut.opened.last().first == (mounted ? Sut::environmentOf(0) : Sut::environmentOf(which)));
       RC_ASSERT(sut.opened.last().second == payload);
       RC_ASSERT(toastId == toastBefore);
     } else {
       RC_ASSERT(sut.opened.size() == before);
       RC_ASSERT(toastId != toastBefore);
-      RC_ASSERT(toastTitle == kTold);
+      RC_ASSERT(toastTitle == (asked && model.folder == Folder::NoFuse ? kNoFuse : kTold));
     }
   }
   void show(std::ostream& os) const override {
@@ -314,7 +358,7 @@ private slots:
     QVERIFY(rc::check("an editor or the file manager starts only on this machine, whatever the MCs say and when", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Announce, Announce, Announce, Join, Go, Go, Drop, Reconnect, OpenIt, OpenIt, OpenIt>());
+                       rc::state::gen::execOneOfWithArgs<Announce, Announce, Announce, Join, Go, Go, Answer, Drop, Reconnect, OpenIt, OpenIt, OpenIt>());
     }));
   }
 };

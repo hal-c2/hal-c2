@@ -8,12 +8,15 @@ defmodule HalC2.PreviewForwardProofTest do
   @fair ~w(granted refused unavailable accept ask ask-failed dial-call dial-gone answer
            answer-failed dial dial-refused tcp data ack closed down killed
            grant-closed grant-down listener-down)
+  # The widest checks run once per kind of fault, which between them cover the one fault
+  # of any kind (the model's `initial`), so no one search holds all of its states.
+  @kinds %{"killing" => "kill", "stopping" => "MC stopping", "parting" => "parting"}
 
   use HalC2.Proof,
     model: "preview_forward.maude",
     module: "PREVIEW-FORWARD",
     check: "PREVIEW-FORWARD-PROPS",
-    # Its liveness check takes about two minutes alone, and longer on a CI runner.
+    # Its widest check takes about a minute alone, and longer on a CI runner.
     timeout: 900_000,
     code: [
       {:exports, HalC2.PreviewForward},
@@ -85,12 +88,22 @@ defmodule HalC2.PreviewForwardProofTest do
       ]
     }
 
-  test "no more chunks a way are unacked than the window", %{proof: proof} do
-    refute_reachable(proof, "initial(3, 2, 2, 1)", "overdrawn", [])
-  end
+  for {kind, fault} <- @kinds do
+    test "no more chunks a way are unacked than the window, with up to one #{fault}",
+         %{proof: proof} do
+      refute_reachable(proof, "initial(3, 2, 2, 1, #{unquote(kind)})", "overdrawn", [])
+    end
 
-  test "chunks arrive in order, each once", %{proof: proof} do
-    refute_reachable(proof, "initial(3, 2, 2, 1)", "disordered", [])
+    test "chunks arrive in order, each once, with up to one #{fault}", %{proof: proof} do
+      refute_reachable(proof, "initial(3, 2, 2, 1, #{unquote(kind)})", "disordered", [])
+    end
+
+    test "a connection one end closes ends on both MCs, with up to one #{fault}",
+         %{proof: proof} do
+      assert_ltl(proof, "initial(1, 1, 1, 1, #{unquote(kind)})", "[] (shut -> <> gone)",
+        fair: @fair
+      )
+    end
   end
 
   test "a forward lasts while its tab names the port and nothing fails", %{proof: proof} do
@@ -104,9 +117,5 @@ defmodule HalC2.PreviewForwardProofTest do
   test "a forward whose tab closes, or that a fault strikes, ends on both MCs",
        %{proof: proof} do
     assert_ltl(proof, "initial(1, 0, 1, 1)", "[] (over -> <> ended)", fair: @fair)
-  end
-
-  test "a connection one end closes ends on both MCs", %{proof: proof} do
-    assert_ltl(proof, "initial(1, 1, 1, 1)", "[] (shut -> <> gone)", fair: @fair)
   end
 end

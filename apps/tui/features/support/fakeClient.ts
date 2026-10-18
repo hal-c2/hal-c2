@@ -230,7 +230,7 @@ export function fakeClient({
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
   // The fake MC runs on this machine.
-  localPathFor = async (path: string) => path,
+  localPathFor = async (path: string) => ({ path }),
   listModels = providers
     ? async () => flattenModelOptions(providers)
     : async () =>

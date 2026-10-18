@@ -2,6 +2,8 @@
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor starts the editor on the MC's own machine)
 #   apps/server-ex/lib/hal_c2/workspace.ex (what a project lets a client read and write)
 #   apps/server-ex/lib/hal_c2/cluster/distribution.ex (the cluster link the share rides on)
+#   apps/server-ex/lib/hal_c2/machine_files.ex (the folders, files.localPath), machine_files/share.ex (what a member answers), machine_files/helper.ex (the mount)
+#   native/machine-files (the FUSE helper, a 9P2000.L client of the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp, FileActionsController.cpp, TerminalController.cpp
 #   apps/web/src/remoteOpen.ts (upstream opened a remote environment's files over SSH instead)
 #   Cross-domain: connections/ owns clustering; file-viewer-and-editing.feature owns opening on this machine.
@@ -9,14 +11,15 @@
 # The MC serves its projects' files to the cluster over 9P, as WSL does to Windows, and the
 # MC on the user's machine shows each member's share as a folder of its own through FUSE.
 # The user's own editor and file manager open a file of another machine from that folder.
-@backlog
+# Linux only for now: on macOS (FUSE-T or macFUSE) and Windows (WinFsp) files.localPath
+# answers that opening another machine's files is not supported yet.
 Feature: Files on another machine
   A thread's files live on the machine its MC runs on. The user's own editor, file manager
   and terminal links open them all the same, from a folder this machine keeps for each
   other machine of the cluster.
 
   Background:
-    Given the client is connected to the MC on its own machine
+    Given the client is connected to the MC on the user's machine
     And that MC is in a cluster with "devbox"
     And "devbox" has the project "shop" at "/home/me/shop"
 
@@ -70,18 +73,23 @@ Feature: Files on another machine
     When "devbox" is removed from the cluster
     Then this machine no longer keeps a folder for "devbox"
 
-  @desktop @tui
+  # The TUI opens files only in an editor: it has no file manager or terminal links to follow.
+  @desktop
   Scenario Outline: A file of a thread on another machine opens in this machine's apps
     Given a thread of "shop" runs on "devbox"
-    When the user <action> "src/cart.ts"
-    Then <app> on this machine opens it from the folder kept for "devbox"
+    When the user <does>
+    Then <app> on this machine opens "src/cart.ts" from the folder kept for "devbox"
     And nothing is started on "devbox"
 
     Examples:
-      | action                       | app              |
-      | opens in "VS Code"           | "VS Code"        |
-      | reveals                      | the file manager |
-      | follows a terminal's path to | the editor       |
+      | does                                         | app              |
+      | reveals "src/cart.ts" in the file manager    | the file manager |
+      | follows the path "src/cart.ts" in a terminal | the editor       |
+
+    @tui
+    Examples:
+      | does                             | app       |
+      | opens "src/cart.ts" in "VS Code" | "VS Code" |
 
   @desktop @tui
   Scenario: A machine that cannot show the folder says what it needs

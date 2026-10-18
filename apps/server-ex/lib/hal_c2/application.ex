@@ -37,6 +37,8 @@ defmodule HalC2.Application do
       HalC2.Settings,
       HalC2.Streams,
       HalC2.Shell,
+      # The other members' files, as folders on this machine.
+      HalC2.MachineFiles,
       # Before anything resumes a provider session: kills the programs an MC that
       # died left running, so no thread gets a second agent.
       HalC2.Subprocess.Orphans,

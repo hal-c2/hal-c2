@@ -4,6 +4,7 @@
 #MISE depends=["install:js"]
 set -euo pipefail
 # install:js: the release bundles the Cursor sidecar with packages/cursor-acp's esbuild.
+# On Linux it also builds native/machine-files with cargo into priv/bin.
 
 # A local build is versioned by its commit (scripts/local-version). A single-file MC
 # unpacks only a version it has not installed yet. A published release sets HAL_C2_MC_VERSION.

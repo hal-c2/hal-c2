@@ -308,6 +308,38 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a delegation without a task" do
+    # An agent that names the prompt `prompt` instead of `task` (hal-c2/hal-c2#258) started
+    # a child that was sent an empty message and answered that it came through empty.
+    test "is refused instead of starting a child with an empty prompt" do
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{"modelSelection" => %{"instanceId" => "codex", "model" => "m"}}),
+          run("pr", 1, "running", %{"providerInstanceId" => "codex"})
+        ])
+
+      for input <- [
+            %{"prompt" => "look", "title" => "Look"},
+            %{"task" => "", "title" => "Look"},
+            %{"task" => "  \n", "title" => "Look"}
+          ] do
+        assert {:error, "invalid_task", message} =
+                 Delegation.delegate(%{"id" => "p"}, "codex", input)
+
+        assert message =~ "`task`"
+      end
+
+      assert {:error, "Delegated tasks need a `task`" <> _} =
+               Delegation.request(%{
+                 "parentThreadId" => "p",
+                 "parentRunId" => "pr",
+                 "task" => nil
+               })
+
+      assert StreamState.list(HalC2.Streams.state("p"), "subagent") == []
+    end
+  end
+
   describe "a parent with no runtime or interaction mode" do
     test "starts its task instead of looping" do
       {:ok, _} =
