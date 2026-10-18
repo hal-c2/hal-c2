@@ -22,8 +22,8 @@
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
 # text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
-# one saying "vanish" makes Pi exit before answering it; one saying "decline" is rejected
-# only once it reaches Pi after the run settled.
+# one saying "vanish" makes Pi exit before answering it; one saying "decline" is rejected,
+# and one saying "ignore" never answered, only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -394,6 +394,9 @@ def command(msg):
     elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
         # A steer saying "decline" that reaches Pi once its run settled is rejected.
         respond(msg, error="Pi cannot start this message")
+    elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
+        # A steer saying "ignore" that reaches Pi once its run settled is never answered.
+        pass
     elif kind == "prompt":
         respond(msg)
         run_turn(msg.get("message", ""))

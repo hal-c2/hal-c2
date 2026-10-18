@@ -565,6 +565,11 @@ Feature: Pi
     When the user steers the thread with two messages at once that Pi declines
     Then each message is sent on its own after the turn
 
+  Scenario: A message Pi never answers once its run settled stays in the turn
+    Given a Pi turn that went idle just before the steer landed
+    When the user steers the thread with a message Pi never answers
+    Then the turn ends with the message in it
+
   Scenario: A message Pi exits on is sent on its own once the turn failed
     Given a Pi turn that is still working
     When the user steers the thread with a message Pi exits on

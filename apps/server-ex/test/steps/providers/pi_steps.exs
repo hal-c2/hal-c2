@@ -812,6 +812,27 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # The fake never answers a steer that says "ignore" once its run settled; the runtime
+  # gives it a short answer budget here.
+  step "the user steers the thread with a message Pi never answers", context do
+    Application.put_env(:hal_c2, :pi_steer_answer_ms, 200)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_steer_answer_ms) end)
+    {:ok, _} = steer(context, "ignore this one")
+    Map.put(context, :steered, "ignore this one")
+  end
+
+  step "the turn ends with the message in it", context do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "completed", "id" => run}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "user" and &1["text"] == context.steered and &1["runId"] == run)
+           )
+
+    context
+  end
+
   # The fake exits on a steer that says "vanish", before answering it.
   step "the user steers the thread with a message Pi exits on", context do
     {:ok, _} = steer(context, "vanish now")

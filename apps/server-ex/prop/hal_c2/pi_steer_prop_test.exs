@@ -6,8 +6,10 @@ defmodule HalC2.PiSteerPropTest do
   before the steer lands (so Pi answers it in a run of its own), or just before two
   steers sent at once land; steer the running turn, with a message Pi takes, one it
   refuses, one it refuses only once the run settled (which finds the turn over, so it
-  is sent as a message of its own), or one Pi exits on before answering (which fails
-  the turn, so it is sent on its own too); steer it twice at once; interrupt it.
+  is sent as a message of its own), one Pi exits on before answering (which fails
+  the turn, so it is sent on its own too), or one Pi never answers once the run settled
+  (which the runtime takes as taken once its answer budget, shortened here, runs out);
+  steer it twice at once; interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -38,6 +40,7 @@ defmodule HalC2.PiSteerPropTest do
   @finished ~w(completed failed interrupted cancelled)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
+  @answer_ms 2_000
 
   property "a Pi thread records every steer's answer in the turn it steered",
     numtests: HalC2.Prop.numtests(20),
@@ -72,6 +75,7 @@ defmodule HalC2.PiSteerPropTest do
         ])
 
         HalC2.Acp.forget("pi")
+        Application.put_env(:hal_c2, :pi_steer_answer_ms, @answer_ms)
 
         {:ok, _} =
           HalC2.Settings.put(
@@ -84,6 +88,7 @@ defmodule HalC2.PiSteerPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         HalC2.Acp.forget("pi")
+        Application.delete_env(:hal_c2, :pi_steer_answer_ms)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -129,6 +134,7 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :steer, [id(next), :refused]}},
       {1, {:call, __MODULE__, :steer, [id(next), :declined]}},
       {1, {:call, __MODULE__, :steer, [id(next), :vanishes]}},
+      {1, {:call, __MODULE__, :steer, [id(next), :ignored]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -140,6 +146,8 @@ defmodule HalC2.PiSteerPropTest do
   def precondition(%{how: how}, {:call, _, :steer_pair, _}), do: how == :pair
 
   def precondition(%{how: :pair}, {:call, _, :steer, [_, kind]}), do: kind == :refused
+  # A turn taking a steer in answers it; one that settled as it landed never does.
+  def precondition(%{how: how}, {:call, _, :steer, [_, :ignored]}), do: how == :ends
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
   def next_state(state, _result, {:call, _, :send, [msg, how]}) do
@@ -172,6 +180,11 @@ defmodule HalC2.PiSteerPropTest do
         %{state | how: :joins}
     end
   end
+
+  # Pi never answers: once the budget ran out the steer is taken, and the turn ends with
+  # it and no reply.
+  def next_state(state, _result, {:call, _, :steer, [_msg, :ignored]}),
+    do: end_turn(%{state | next: state.next + 1}, "completed")
 
   # Pi exits with the steer unanswered: the turn fails, and the message runs on its own.
   def next_state(state, _result, {:call, _, :steer, [msg, :vanishes]}) do
@@ -250,8 +263,8 @@ defmodule HalC2.PiSteerPropTest do
   end
 
   # `kind`: whether Pi takes the steer (:taken), which ends the turn, refuses it, refuses
-  # it only once the run settled (:declined), which a turn taking it in takes, or exits
-  # before answering it (:vanishes).
+  # it only once the run settled (:declined), which a turn taking it in takes, exits
+  # before answering it (:vanishes), or never answers it once the run settled (:ignored).
   def steer(msg, kind) do
     {text, ending} = steer_text(msg, kind)
     result = Orchestration.dispatch(message(msg, text, "start_immediately", "steer"))
@@ -264,6 +277,7 @@ defmodule HalC2.PiSteerPropTest do
   defp steer_text(msg, :refused), do: {"refuse #{msg}", []}
   defp steer_text(msg, :declined), do: {"steer #{msg}, declined once settled", active_runs()}
   defp steer_text(msg, :vanishes), do: {"steer #{msg}, vanish on it", active_runs()}
+  defp steer_text(msg, :ignored), do: {"steer #{msg}, ignore it", active_runs()}
   # A steer whose own run matches the "joins" turn, which works on.
   defp steer_text(msg, :joins), do: {"steer #{msg}, joins the work", []}
 

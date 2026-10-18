@@ -32,10 +32,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   # settles, wait less, so a slow Pi does not hold the turn's end.
   @call_ms 60_000
   @stats_ms 2_000
-  # A steer's caller gives Pi this long to answer it and, if that ends the turn, waits
-  # on the turn's settling too (`settle/1`: one call, then the stats).
+  # Pi does not bound its answer to a steer, so the runtime gives it this long and
+  # then takes it as taken (`steer_timeout/2`). The steer's caller waits on that and,
+  # if it ends the turn, on the turn's settling too (`settle/1`: one call, then the stats).
   @steer_answer_ms 33_000
-  @steer_ms @steer_answer_ms + @call_ms + @stats_ms
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -56,14 +56,25 @@ defmodule HalC2.Pi.ThreadRuntime do
   `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
   Returns once Pi answered: its refusal is the error. A refusal that ends the turn
   returns once the turn is recorded (`settle/1`), so the wait covers Pi's answer and that.
+  A steer Pi has not answered in `@steer_answer_ms` is taken as taken: Pi still holds it,
+  and may act on it, so the message is the turn's.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
-      nil -> {:error, "no active Pi turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, @steer_ms)
+      nil ->
+        {:error, "no active Pi turn in this thread"}
+
+      pid ->
+        GenServer.call(pid, {:steer, run_id, message}, steer_answer_ms() + @call_ms + @stats_ms)
     end
+  catch
+    # Only a runtime stuck past its own answer budget gets here: the steer is taken, as
+    # one Pi answers too late is.
+    :exit, {:timeout, _} -> :ok
   end
+
+  defp steer_answer_ms, do: Application.get_env(:hal_c2, :pi_steer_answer_ms, @steer_answer_ms)
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
@@ -138,9 +149,9 @@ defmodule HalC2.Pi.ThreadRuntime do
        requests: %{},
        # Confirmations the user allowed for the session.
        allowed: MapSet.new(),
-       # Steers Pi has not answered yet (`Connection.request/5`), labelled with their
-       # callers, and whether Pi settled while one was out and nothing it took has
-       # started since.
+       # Steers Pi has not answered yet (`Connection.request/5`), labelled
+       # `{caller, timer}` (`steer_timeout/2`), and whether Pi settled while one was out
+       # and nothing it took has started since.
        steers: :gen_server.reqids_new(),
        settled: false,
        # Callers of steers Pi refused while that settle waits on other steers, or left
@@ -206,7 +217,8 @@ defmodule HalC2.Pi.ThreadRuntime do
       |> HalC2.Attachments.prompt_text(steer.attachments)
 
     params = %{"message" => message, "streamingBehavior" => "steer"}
-    steers = Connection.request(state.conn, "prompt", params, from, state.steers)
+    label = {from, Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())}
+    steers = Connection.request(state.conn, "prompt", params, label, state.steers)
     {:noreply, %{state | steers: steers}}
   end
 
@@ -313,10 +325,16 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
 
+  def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
+
   def handle_info(message, state) do
     case :gen_server.check_response(message, state.steers, true) do
-      {reply, from, steers} -> {:noreply, steered(%{state | steers: steers}, from, reply)}
-      _ -> {:noreply, state}
+      {reply, {from, timer}, steers} ->
+        Process.cancel_timer(timer)
+        {:noreply, steered(%{state | steers: steers}, from, reply)}
+
+      _ ->
+        {:noreply, state}
     end
   end
 
@@ -335,7 +353,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
 
-  defp migrate(%{v: 2} = state), do: Map.merge(state, %{v: 3, refused: []})
+  # Steers out at the upgrade get their answer budget from now.
+  defp migrate(%{v: 2} = state) do
+    steers =
+      for {request, from} <- :gen_server.reqids_to_list(state.steers),
+          reduce: :gen_server.reqids_new() do
+        steers ->
+          timer = Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())
+          :gen_server.reqids_add(request, {from, timer}, steers)
+      end
+
+    Map.merge(state, %{v: 3, steers: steers, refused: []})
+  end
 
   # --- session -------------------------------------------------------------------
 
@@ -887,6 +916,30 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
+  # A steer Pi has not answered in its budget is taken as taken, as a Codex steer whose
+  # answer is late is (`HalC2.Orchestration`): Pi still holds it and may act on it, so
+  # its message is the turn's. A settle that waited on it alone ends the turn now, and
+  # Pi's late answer is dropped.
+  defp steer_timeout(state, from) do
+    {late, others} =
+      state.steers
+      |> :gen_server.reqids_to_list()
+      |> Enum.split_with(&match?({_, {^from, _}}, &1))
+
+    if late == [] do
+      state
+    else
+      GenServer.reply(from, :ok)
+
+      steers =
+        for {request, label} <- others,
+            reduce: :gen_server.reqids_new(),
+            do: (steers -> :gen_server.reqids_add(request, label, steers))
+
+      settle_held(%{state | steers: steers})
+    end
+  end
+
   defp settle_held(state) do
     if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
       do: settle(state),
@@ -975,8 +1028,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   # Steers whose turn ended before Pi answered them: their callers hear the turn is gone,
   # and send the message on its own.
   defp unanswered(steers) do
-    for {_request, from} <- :gen_server.reqids_to_list(steers),
-        do: GenServer.reply(from, {:error, "the turn ended"})
+    for {_request, {from, timer}} <- :gen_server.reqids_to_list(steers) do
+      Process.cancel_timer(timer)
+      GenServer.reply(from, {:error, "the turn ended"})
+    end
 
     :gen_server.reqids_new()
   end
