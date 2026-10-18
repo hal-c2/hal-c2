@@ -22,8 +22,8 @@ defmodule HalC2.Pair do
   same variables on this command.
 
   `--tailscale` publishes the MC over Tailscale Serve HTTPS (port 443 unless
-  `--tailscale-serve-port` names another) and pairs through the machine's tailnet
-  name. The mapping stays in tailscaled across restarts; a port that already serves
+  `--tailscale-serve-port` names another, 1 to 65535) and pairs through the machine's
+  tailnet name; it takes no BASE_URL. The mapping stays in tailscaled across restarts; a port that already serves
   something else is left alone.
 
   Runs in a release (`eval`), where Mix does not exist: the Mix task only prints.
@@ -52,7 +52,7 @@ defmodule HalC2.Pair do
         strict: [release: :boolean, tailscale: :boolean, tailscale_serve_port: :integer]
       )
 
-    with :ok <- check_options(invalid, rest),
+    with :ok <- check_options(invalid, rest, opts),
          {:ok, located} <- locate(opts[:release]) do
       running =
         case located do
@@ -91,12 +91,29 @@ defmodule HalC2.Pair do
   def command_name,
     do: if(HalC2.Upgrade.release_root(), do: "hal-c2-service pair", else: "mix hal_c2.pair")
 
-  defp check_options([], [_, _ | _]),
+  defp check_options([], [_, _ | _], _opts),
     do: {:error, "`#{command_name()}` takes at most one BASE_URL"}
 
-  defp check_options([], _rest), do: :ok
+  defp check_options([], rest, opts) do
+    port = opts[:tailscale_serve_port]
 
-  defp check_options(invalid, _rest) do
+    cond do
+      rest != [] and opts[:tailscale] ->
+        {:error,
+         "`#{command_name()} --tailscale` pairs through the tailnet name; it takes no BASE_URL"}
+
+      port && !opts[:tailscale] ->
+        {:error, "`--tailscale-serve-port` only applies with `--tailscale`"}
+
+      port && port not in 1..65_535 ->
+        {:error, "`--tailscale-serve-port` must be a port from 1 to 65535, not #{port}"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp check_options(invalid, _rest, _opts) do
     options =
       Enum.map_join(invalid, ", ", fn
         {option, nil} -> option
@@ -109,17 +126,30 @@ defmodule HalC2.Pair do
   # With no home configured, a checkout pairs with the MC that is running, in the
   # installed profile or the development one: its store takes the token and its
   # address goes in the link. `--release` names the installed one outright, and a release
-  # is the installed profile, so its own command never looks at a development MC.
+  # is the installed profile, so its own command never looks at a development MC. A
+  # chosen home (`HAL_C2_HOME`, `HAL_C2_MC_HOME`) is one MC's own: the release and
+  # `--release` pair with the MC of that home, and fail when it is not running rather than
+  # mint into a store nothing serves.
   defp locate(release) do
     home = Application.get_env(:hal_c2, :home)
+    chosen = home not in [nil, :dev]
 
-    if release == true or (HalC2.Upgrade.release_root() && home == nil) do
-      case HalC2.RuntimeRecord.running(nil) do
-        nil -> {:error, not_running()}
-        record -> {:ok, {nil, record}}
-      end
-    else
-      {:ok, HalC2.RuntimeRecord.locate(home)}
+    cond do
+      chosen and (release == true or HalC2.Upgrade.release_root()) ->
+        installed(home)
+
+      release == true or (HalC2.Upgrade.release_root() && home == nil) ->
+        installed(nil)
+
+      true ->
+        {:ok, HalC2.RuntimeRecord.locate(home)}
+    end
+  end
+
+  defp installed(home) do
+    case HalC2.RuntimeRecord.running(home) do
+      nil -> {:error, not_running()}
+      record -> {:ok, {home, record}}
     end
   end
 

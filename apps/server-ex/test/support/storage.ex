@@ -171,18 +171,21 @@ defmodule HalC2.Test.Storage do
   server the scenario runs: what it printed, or `{:error, message}`, is
   `context.pair_output`.
   """
-  def pair_release(context), do: pair_from(context, :dev, ["--release"])
+  def pair_release(context), do: pair_from(context, chosen_home(context) || :dev, ["--release"])
+
+  # The `:home` a scenario chose with `HAL_C2_HOME` or `HAL_C2_MC_HOME`, else nil.
+  defp chosen_home(context), do: if(match?({_, _}, context.mc.spec), do: context.mc.spec)
 
   @doc """
   Runs the installed MC's own `pair` command (`hal-c2-service pair`: a release, so no
-  Mix and no home configured) whichever server the scenario runs.
+  Mix, and the home the scenario chose, else none) whichever server the scenario runs.
   """
   def pair_from_release(context) do
     previous = System.get_env("RELEASE_ROOT")
     System.put_env("RELEASE_ROOT", Path.join(fs(context), "release"))
 
     try do
-      pair_from(context, nil, [])
+      pair_from(context, chosen_home(context), [])
     after
       if previous,
         do: System.put_env("RELEASE_ROOT", previous),
@@ -198,7 +201,7 @@ defmodule HalC2.Test.Storage do
       try do
         Mc.run_task(Mix.Tasks.HalC2.Pair, args)
       after
-        Application.put_env(:hal_c2, :home, context.running_profile)
+        Application.put_env(:hal_c2, :home, context[:running_profile])
       end
 
     Map.put(context, :pair_output, lines)

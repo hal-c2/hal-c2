@@ -254,6 +254,34 @@ Feature: Where HAL-C2 keeps its files
       Then the operator is told the installed server is not running
       And no pairing token is made
 
+    @mc
+    Scenario: The installed server's single file never pairs with a development server
+      Given a development server is running with no HAL-C2 home configured
+      When an operator runs "pair" on the installed MC's command line
+      Then the operator is told the installed server is not running
+
+    @mc
+    Scenario: The installed server's own pair command pairs with the server of a chosen home
+      Given HAL_C2_MC_HOME is "/srv/mc"
+      And the server of that home is running
+      When an operator runs the installed server's own pair command
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: The installed server's own pair command says so when the server of a chosen home is not running
+      Given a development server is running with no HAL-C2 home configured
+      And HAL_C2_MC_HOME is "/srv/mc"
+      When an operator runs the installed server's own pair command
+      Then the operator is told the installed server is not running
+      And no store is made at the chosen home
+
+    @mc
+    Scenario: Asking for the installed server's pairing link keeps a chosen home
+      Given HAL_C2_MC_HOME is "/srv/mc"
+      And the server of that home is running
+      When a developer asks a checkout for the installed server's pairing link
+      Then it prints a pairing link for that server
+
   Rule: The MC's files are sorted by kind
 
     Background:

@@ -176,6 +176,19 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
+  # Starts the MC as a release does with the home the scenario chose.
+  step "the server of that home is running", context do
+    context = Storage.start(context)
+    assert File.exists?(HalC2.RuntimeRecord.path())
+    Map.put(context, :running_profile, context.mc.spec)
+  end
+
+  step "no store is made at the chosen home", context do
+    dirs = Paths.mc_dirs(context.mc.spec, System.get_env(), Paths.user_home())
+    refute File.exists?(Path.join(dirs.data, "hal-c2.sqlite"))
+    context
+  end
+
   step "no pairing token is made", context do
     assert HalC2.Auth.pairing_links() == []
     installed = Paths.mc_dirs(nil, System.get_env(), Paths.user_home())

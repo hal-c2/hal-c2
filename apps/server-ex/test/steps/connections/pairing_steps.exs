@@ -12,12 +12,13 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   @stand_in """
   #!/bin/sh
-  # hal_c2 eval EXPR ARGS...: a release applies runtime.exs to the home; this one is told it.
+  # hal_c2 eval EXPR ARGS...: a release applies runtime.exs to the home; this one is told it
+  # (STAND_IN_HOME), and has none when it is not.
   [ "$1" = eval ] || exit 64
   expr="$2"
   shift 2
   exec elixir -pa "$STAND_IN_CODE" \\
-    -e 'Application.put_env(:hal_c2, :home, System.fetch_env!("STAND_IN_HOME"))' \\
+    -e 'with home when home != nil <- System.get_env("STAND_IN_HOME"), do: Application.put_env(:hal_c2, :home, home)' \\
     -e "$expr" -- "$@"
   """
 
@@ -61,19 +62,36 @@ defmodule HalC2.Steps.Connections.Pairing do
     File.chmod!(stand_in, 0o755)
 
     [command | args] = String.split(line)
-    [base | _] = Enum.reject(args, &String.starts_with?(&1, "--"))
 
-    {out, 0} =
+    # The scenario's home is passed on when it is a directory (the test MC's); one that is
+    # the installed profile or a checkout's is the environment's to find, as in a release.
+    home =
+      case Application.fetch_env!(:hal_c2, :home) do
+        home when is_binary(home) -> [{"STAND_IN_HOME", home}]
+        _ -> []
+      end
+
+    {out, status} =
       System.cmd(wrapper, [command | args],
         env: [
           {"STAND_IN_CODE", Path.join(Mix.Project.build_path(), "lib/*/ebin")},
-          {"STAND_IN_HOME", Application.fetch_env!(:hal_c2, :home)},
-          {"RELEASE_ROOT", root}
+          {"RELEASE_ROOT", root} | home
         ],
         stderr_to_stdout: true
       )
 
-    context |> Map.put(:base, base) |> Map.put(:printed, String.trim(out))
+    out = String.trim(out)
+
+    case {status, Enum.reject(args, &String.starts_with?(&1, "--"))} do
+      {0, [base | _]} ->
+        context |> Map.put(:base, base) |> Map.put(:printed, out)
+
+      {0, []} ->
+        context |> Map.put(:base, "http://127.0.0.1:#{context.mc.port}") |> Map.put(:printed, out)
+
+      {_, _} ->
+        Map.put(context, :pair_output, {:error, out})
+    end
   end
 
   step "it prints the address with a one-time token", context do

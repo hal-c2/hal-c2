@@ -72,6 +72,27 @@ Feature: Pairing a client with an environment
     Then the command fails naming "--tailscale-serve-port=foo"
     And no pairing link is listed
 
+  @mc
+  Scenario: A Tailscale pairing command given an address says it takes none
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "--tailscale https://a.example"
+    Then the command fails naming "takes no BASE_URL"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A Tailscale Serve port without Tailscale says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailscale-serve-port=8443"
+    Then the command fails naming "only applies with `--tailscale`"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A Tailscale Serve port outside the port range says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "--tailscale --tailscale-serve-port 70000"
+    Then the command fails naming "1 to 65535"
+    And no pairing link is listed
+
   @backlog @mc
   Scenario: A pairing link keeps its token out of the address a server sees
     When an operator asks the MC for a pairing link
