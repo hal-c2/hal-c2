@@ -2074,7 +2074,8 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
 // held: a click on a stale card, after another device resumed it, asks nothing.
 // The thread's stream has to be caught up too: the held flag a reconnected
 // window still shows may be one the MC has since cleared. The answer is
-// handled apart from this window, which may close before it comes.
+// handled apart from this window, which may close before it comes: a refusal
+// is told in the window that asked, else in the one the user is in.
 bool ComposerController::resumeQueue() {
   const auto thread = m_store->thread(m_thread);
   if (!thread || m_kept.resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
@@ -2087,13 +2088,18 @@ bool ComposerController::resumeQueue() {
   }
   const QString key = m_thread;
   NativeShell* shell = NativeShell::of(this)->shell();
+  const QString windowId = NativeShell::of(this)->id();
   Kept& kept = m_kept;
   kept.resuming.insert(key);
   m_client->dispatchCommand(m_client, thread->environmentId,
                             QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
-                            [shell, &kept, key](const QJsonValue&, const std::optional<QString>& error) {
+                            [shell, &kept, key, windowId](const QJsonValue&, const std::optional<QString>& error) {
                               kept.resuming.remove(key);
-                              if (error) shell->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                              if (error) {
+                                NativeWindow* window = shell->window(windowId);
+                                if (!window) window = shell->activeWindow();
+                                window->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                              }
                               publishEverywhere(shell);
                             });
   publishEverywhere(shell);

@@ -6,7 +6,8 @@
 // queues more behind a held one, runs and cancels queued messages, answers a
 // resume late or refuses it, and the connection drops with an answer
 // outstanding, or comes back before the streams are caught up. A second window
-// shows the same thread, and may close with its request outstanding.
+// shows the same thread, and may close with its request outstanding; a refusal
+// shows in the window that asked, else in the main one.
 
 #include "ComposerController.h"
 #include "FakeMc.h"
@@ -24,6 +25,8 @@ namespace prop = halc2::prop;
 namespace {
 
 const QStringList kThreads{QStringLiteral("t1"), QStringLiteral("t2")};
+QDateTime fixedClock() { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); }
+
 const QString kFailure = QStringLiteral("Failed to resume the queue.");
 
 QString pick(const QStringList& pool) { return *rc::gen::elementOf(std::vector<QString>(pool.cbegin(), pool.cend())); }
@@ -37,15 +40,26 @@ struct Model {
   // Resumes sent to the MC, by thread, and the threads whose answer is outstanding.
   QMap<QString, int> resumes;
   QMap<QString, bool> pending;  // thread -> whether the MC will refuse it
+  QMap<QString, bool> askedInSecond;  // thread -> whether the second window asked for the outstanding resume
   bool holding = false;         // the MC holds its answers
   bool refusing = false;
-  int failures = 0;  // "Failed to resume the queue." toasts
+  // "Failed to resume the queue." toasts: a failure shows in the window that
+  // asked, or in the main one once the asker has closed.
+  int failures = 0;
+  int secondFailures = 0;
   bool secondOpen = true;
   // Reconnected, but the MC has not caught the thread streams up: what the
   // windows show may be out of date.
   bool stale = false;
 
   bool held(const QString& thread) const { return queued.value(thread).contains(true); }
+  void fail(bool inSecond) { ++(inSecond && secondOpen ? secondFailures : failures); }
+  // The connection dropped: every outstanding resume failed.
+  void failPending() {
+    for (auto it = askedInSecond.cbegin(); it != askedInSecond.cend(); ++it) fail(it.value());
+    pending.clear();
+    askedInSecond.clear();
+  }
 };
 
 struct Sut {
@@ -99,6 +113,7 @@ struct Sut {
     });
     start();
     second = native->openWindow();
+    second->controller<ToastController>()->setClock(fixedClock);
     open(QStringLiteral("t1"));
     settle(QStringLiteral("t1"));
   }
@@ -115,7 +130,7 @@ struct Sut {
     native->setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")),
                          home.filePath(QStringLiteral("cache")));
     // Toasts stay until the user closes them.
-    native->controller<ToastController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
+    native->controller<ToastController>()->setClock(fixedClock);
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
     RC_ASSERT(prop::until([this] { return online(); }));
@@ -227,7 +242,7 @@ struct Sut {
     return count;
   }
 
-  int failures() const {
+  static int failures(const ShellBridge* bridge) {
     int count = 0;
     for (const QVariant& toast : bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
       if (toast.toMap().value(QStringLiteral("title")) == kFailure) ++count;
@@ -258,7 +273,8 @@ struct Sut {
 void verify(const Model& m, Sut& sut) {
   sut.barrier();
   for (const QString& thread : kThreads) RC_ASSERT(sut.resumes(thread) == m.resumes.value(thread));
-  RC_ASSERT(sut.failures() == m.failures);
+  RC_ASSERT(Sut::failures(sut.bridge.get()) == m.failures);
+  if (m.secondOpen) RC_ASSERT(Sut::failures(sut.second->bridge()) == m.secondFailures);
   // Until the streams catch up the windows show what they last knew.
   if (m.stale) return;
   sut.settle(m.open);
@@ -339,8 +355,9 @@ struct Resume : Command {
     ++m.resumes[m.open];
     if (m.holding) {
       m.pending.insert(m.open, m.refusing);
+      m.askedInSecond.insert(m.open, inSecond);
     } else if (m.refusing) {
-      ++m.failures;
+      m.fail(inSecond);
     } else {
       m.queued[m.open].fill(false);
     }
@@ -356,7 +373,10 @@ struct Resume : Command {
 // window still shows it, and the answer still clears it.
 struct CloseSecond : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(m.secondOpen); }
-  void apply(Model& m) const override { m.secondOpen = false; }
+  void apply(Model& m) const override {
+    m.secondOpen = false;
+    m.secondFailures = 0;
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.closeSecond();
     verify(nextState(m0), sut);
@@ -370,8 +390,7 @@ struct CloseSecond : Command {
 struct Reconnect : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
   void apply(Model& m) const override {
-    m.failures += int(m.pending.size());
-    m.pending.clear();
+    m.failPending();
     m.holding = false;
     m.stale = true;
   }
@@ -428,12 +447,13 @@ struct AnswerHeld : Command {
     m.holding = false;
     for (auto it = m.pending.cbegin(); it != m.pending.cend(); ++it) {
       if (it.value()) {
-        ++m.failures;
+        m.fail(m.askedInSecond.value(it.key()));
       } else {
         m.queued[it.key()].fill(false);
       }
     }
     m.pending.clear();
+    m.askedInSecond.clear();
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.mc.answerHeld();
@@ -447,8 +467,7 @@ struct AnswerHeld : Command {
 struct Drop : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.stale); }
   void apply(Model& m) const override {
-    m.failures += int(m.pending.size());
-    m.pending.clear();
+    m.failPending();
     m.holding = false;
   }
   void run(const Model& m0, Sut& sut) const override {
