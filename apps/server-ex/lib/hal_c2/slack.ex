@@ -17,8 +17,9 @@ defmodule HalC2.Slack do
   `failed` and forgets them; a Slack unreachable, rate limiting or failing in any other
   way keeps retrying with them.
 
-  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), status}` on every change,
-  and the plugins granted `slack:read` a `slack.status` event when it connects or stops,
+  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), status}` on every change (one
+  that subscribed under a ref gets it wrapped as `HalC2.Watchers` sends it), and the
+  plugins granted `slack:read` a `slack.status` event when it connects or stops,
   in order.
   """
 
@@ -101,7 +102,8 @@ defmodule HalC2.Slack do
 
   @doc """
   Sends `pid` `{:hal_c2_slack, node(), status}` on every change until it unsubscribes
-  `ref` or exits (`HalC2.Watchers`); answers the status now.
+  `ref` or exits; answers the status now. Under a `ref`, the message comes as
+  `{:hal_c2_watched, refs, message}` (`HalC2.Watchers`).
   """
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
 

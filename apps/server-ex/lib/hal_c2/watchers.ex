@@ -49,8 +49,7 @@ defmodule HalC2.Watchers do
 
   @doc "Sends `message` to every watcher."
   def notify(watchers, message) do
-    for {pid, entry} <- watchers, do: tell(pid, entry, message)
-    :ok
+    Enum.each(watchers, fn {pid, entry} -> tell(pid, entry, message) end)
   end
 
   @doc "`add/3` for one entry, nil when `pid` has none (a service keeping entries itself)."
