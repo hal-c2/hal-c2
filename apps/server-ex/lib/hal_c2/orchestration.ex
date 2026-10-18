@@ -1748,7 +1748,10 @@ defmodule HalC2.Orchestration do
   # A steer is recorded in the running turn before the provider is asked to take it
   # (`steer/4`), in the transaction that decided it. A repeat of its message id then
   # finds it sent, so the provider is asked once, and the message sits in the
-  # transcript ahead of whatever the provider answers it with.
+  # transcript ahead of whatever the provider answers it with. The repeat answers for
+  # what the first send has done so far: if the provider then refuses the first, the
+  # repeat has already heard it was sent, and the sender learns otherwise from the
+  # first send's error and the message leaving the turn.
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
@@ -1825,6 +1828,7 @@ defmodule HalC2.Orchestration do
       message == nil or message["runId"] != run["id"] ->
         {[], :refused}
 
+      # The send woke the thread (`woken/2`) and it stays awake: its turn still runs.
       status in @active_statuses ->
         {released, :refused}
 
