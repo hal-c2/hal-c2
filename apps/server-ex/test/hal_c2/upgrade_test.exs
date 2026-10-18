@@ -144,9 +144,22 @@ defmodule HalC2.UpgradeTest do
     assert home.("/srv/hal-c2", {:mc, "/srv/mc"}) == {:ok, {:root, "/srv/hal-c2"}}
 
     # Roots `HalC2.Paths` would quietly trade for the user's profile.
-    for root <- ["/home/u/.t3", "/home/u/.hal-c2", "relative/dir", ""] do
+    for root <- ["/home/u/.t3", "/home/u/.hal-c2", "/home/u/.t3/sub", "relative/dir", ""] do
       assert {:error, reason} = home.(root, :dev)
       assert reason =~ inspect(root)
+    end
+  end
+
+  test "--root is refused, before any build, unless it comes with --release alone" do
+    for args <- [
+          ["--root", "/srv/hal-c2"],
+          ["--root", "/srv/hal-c2", "--dev"],
+          ["--root", "/srv/hal-c2", "hal_c2@host"],
+          ["--root", "/srv/hal-c2", "--release", "hal_c2@host"]
+        ] do
+      assert_raise Mix.Error, ~r/use it with --release alone/, fn ->
+        Mix.Tasks.HalC2.Upgrade.run(args)
+      end
     end
   end
 
@@ -305,6 +318,8 @@ defmodule HalC2.UpgradeTest do
              [load: 4, reload_code_path: 0]
 
     assert calls.([:call, :call_only, :call_last]) == []
+    # `function_exported?/3` does not load the module, and no other test may have yet.
+    Code.ensure_loaded!(HalC2.Upgrade)
     assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
   end
 

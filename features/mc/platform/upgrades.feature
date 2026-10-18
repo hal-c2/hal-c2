@@ -303,6 +303,7 @@ Feature: MC self-update and hot upgrades
       | root         |
       | ~/.t3        |
       | ~/.hal-c2    |
+      | ~/.t3/sub    |
       | relative/dir |
 
   @mc

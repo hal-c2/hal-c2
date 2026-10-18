@@ -167,15 +167,18 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   def installed_home(nil, :dev, _user_home), do: {:ok, nil}
   def installed_home(nil, configured, _user_home), do: {:ok, configured}
 
+  # `HalC2.Paths` only refuses an old home itself as a root; a root typed here is refused
+  # inside one too, the rule it keeps for an MC's own directory.
   def installed_home(root, _configured, user_home) do
-    if HalC2.Paths.root?(root, :root, user_home),
+    if HalC2.Paths.root?(root, :mc, user_home),
       do: {:ok, {:root, String.trim(root)}},
       else:
         {:error,
          "--root #{inspect(root)} is not an absolute HAL_C2_HOME root outside ~/.t3 and ~/.hal-c2"}
   end
 
-  # The version an app's build was compiled as, or nil when there is none.
+  # The version an app's build was compiled as, or nil when there is none. mise-tasks/release/mc
+  # reads it the same way (`file:consult/1`); change both together.
   defp built_version(lib) do
     case :file.consult(Path.join([lib, "ebin", "#{Path.basename(lib)}.app"])) do
       {:ok, [{:application, _, props}]} -> to_string(props[:vsn])
