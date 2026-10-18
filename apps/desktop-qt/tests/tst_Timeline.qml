@@ -127,13 +127,14 @@ Item {
             rows.setProperty(last, "text", rows.get(last).text + "\n\nAnother paragraph of the reply, written just now.");
         }
 
-        // Scrolls up until the end is more than a roomy host's view away
-        // (the roomy host's height plus a margin). How far a wheel notch carries is the platform's and
-        // the machine's: a short scroll would leave the room the host makes
-        // showing the end, which is not mid-thread.
-        function scrollUp(timeline) {
+        // Scrolls up until the end is more than `room` (the host's own height
+        // by default, a roomy host's when it makes room) plus a margin away.
+        // How far a wheel notch carries is the platform's and the machine's: a
+        // short scroll would leave the room the host makes showing the end,
+        // which is not mid-thread.
+        function scrollUp(timeline, room = timeline.height) {
             const list = view(timeline);
-            const farUp = () => list.originY + list.contentHeight - list.contentY > root.roomyHeight + 200;
+            const farUp = () => list.originY + list.contentHeight - list.contentY > room + 200;
             for (let i = 0; i < 20 && !farUp(); ++i) {
                 for (let notch = 0; notch < 5; ++notch)
                     mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
@@ -287,7 +288,7 @@ Item {
             wait(0);
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
-            compare(timeline.height, 700);
+            compare(timeline.height, root.roomyHeight);
             verify(findChild(timeline, "jumpToLatest").visible);
         }
 
@@ -323,7 +324,7 @@ Item {
         function test_scrollingDownMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const away = list.contentY;
             mouseWheel(list, list.width / 2, 100, 0, -120);
             tryVerify(() => !list.moving && list.contentY > away, 5000, "the view scrolls down");
@@ -335,7 +336,7 @@ Item {
         function test_scrollingDownOverTheJumpButtonMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const jump = findChild(timeline, "jumpToLatest");
             verify(jump.visible);
             mouseWheel(jump, jump.width / 2, jump.height / 2, 0, -120);
@@ -349,7 +350,7 @@ Item {
         function test_anotherThreadOpensAtItsEnd() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             tryVerify(() => timeline.scrolledAway, 5000);
             otherRows.clear();
             for (let i = 0; i < 30; ++i) {
