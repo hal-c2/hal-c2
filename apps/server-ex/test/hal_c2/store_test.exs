@@ -2,6 +2,7 @@ defmodule HalC2.StoreTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Store
+  alias Exqlite.Sqlite3
 
   @moduletag :tmp_dir
 
@@ -62,6 +63,45 @@ defmodule HalC2.StoreTest do
     assert [%{id: "t1"}] = Store.list_streams(path)
   end
 
+  # Without the trap the stop would kill the store inside the call: before its COMMIT
+  # the write is lost to this caller, and after it a retry would append it twice.
+  test "a write the store has taken when it is stopped is answered before it stops",
+       %{path: path} do
+    # Under a supervisor of the test's own, which another process can stop it with.
+    :ok = stop_supervised(Store)
+
+    sup =
+      start_supervised!(%{
+        id: :store_sup,
+        start: {Supervisor, :start_link, [[{Store, path: path}], [strategy: :one_for_one]]},
+        type: :supervisor
+      })
+
+    store = Process.whereis(Store)
+    # Another connection holds the write lock, so the store's append waits inside its
+    # BEGIN IMMEDIATE until this test lets it go.
+    {:ok, db} = Sqlite3.open(path)
+    :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
+    :erlang.trace(store, true, [:call, :receive])
+    :erlang.trace_pattern({Sqlite3, :execute, 2}, [{[:_, "BEGIN IMMEDIATE"], [], []}], [])
+
+    write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+    assert_receive {:trace, ^store, :call, {Sqlite3, :execute, [_, "BEGIN IMMEDIATE"]}}
+
+    stop = Task.async(fn -> Supervisor.terminate_child(sup, Store) end)
+    assert_receive {:trace, ^store, :receive, {:EXIT, _, :shutdown}}
+    :ok = Sqlite3.execute(db, "ROLLBACK")
+
+    assert {:ok, 1} = Task.await(write)
+    assert :ok = Task.await(stop)
+    refute Process.whereis(Store)
+    :erlang.trace_pattern({Sqlite3, :execute, 2}, false, [])
+    Sqlite3.close(db)
+
+    assert [%{id: "t1"}] = Store.list_streams(path)
+    assert [_] = Store.reduce_stream(path, "t1", 0, [], &[&1 | &2], [])
+  end
+
   test "a stray message leaves the store running", %{path: path} do
     store = Process.whereis(Store)
 
@@ -74,6 +114,21 @@ defmodule HalC2.StoreTest do
     assert log =~ "the store ignored an unexpected message: :unexpected"
     assert Process.whereis(Store) == store
     assert [%{id: "t1"}] = Store.list_streams(path)
+  end
+
+  @tag capture_log: true
+  test "a checkpointer that dies takes the store down, and its writes survive the restart",
+       %{path: path} do
+    store = Process.whereis(Store)
+    ref = Process.monitor(store)
+    {:ok, 1} = Store.append([{:thread, "t1", [change("t1")]}])
+
+    Process.exit(:sys.get_state(store).checkpointer, :boom)
+    assert_receive {:DOWN, ^ref, :process, ^store, :boom}
+
+    # The test's supervisor starts it again, and the write waits for it.
+    assert {:ok, 2} = Store.append([{:thread, "t2", [change("t2")]}])
+    assert Enum.map(Store.list_streams(path), & &1.id) |> Enum.sort() == ["t1", "t2"]
   end
 
   test "the time of an append is only given with its store" do
