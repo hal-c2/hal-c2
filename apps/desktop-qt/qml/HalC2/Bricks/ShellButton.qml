@@ -83,6 +83,7 @@ Button {
             spacing: 6
 
             ShellIcon {
+                objectName: "buttonIcon"
                 visible: control.iconName.length > 0
                 name: control.iconName
                 size: control.iconSize

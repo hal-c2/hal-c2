@@ -164,11 +164,11 @@ Item {
             Shell.state = withDriver("claudeAgent");
             let composer = createTemporaryObject(composerComponent, root);
             const toggle = findChild(composer, "optionToggle:fastMode");
-            const bolt = findChild(toggle, "contents").children[0];
+            const bolt = findChild(toggle, "buttonIcon");
             compare(bolt.filled, true);
-            compare(opaque(bolt.color), Qt.color("#d97757"));
+            tryVerify(() => Qt.colorEqual(opaque(bolt.color), Qt.color("#d97757")));
             Shell.state = withDriver("codex");
-            compare(opaque(bolt.color), opaque(composer.foreground));
+            tryVerify(() => Qt.colorEqual(opaque(bolt.color), opaque(composer.foreground)));
         }
 
         function test_submitKeepsDraftUntilPageClearsIt() {

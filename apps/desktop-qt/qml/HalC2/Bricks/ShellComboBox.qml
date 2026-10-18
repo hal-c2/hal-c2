@@ -21,6 +21,9 @@ ComboBox {
     property string iconName: ""
     property real iconSize: 16
     property real chevronSize: 14
+    // The ghost picker is borderless until the keyboard reaches it; the outline one
+    // also shows its ring when it holds focus.
+    readonly property bool showFocusRing: control.visualFocus || (control.outline && control.activeFocus)
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
     readonly property color hoverFill: Qt.alpha(accentSurface, accentSurface.a * (outline ? 0.5 : 1))
     readonly property color labelColor: control.hovered || control.down || control.popup.visible ? Theme.palette.color("text", "#e4e4e7") : Theme.palette.color("secondaryLabel", "#a1a1aa")
@@ -37,9 +40,8 @@ ComboBox {
     background: Rectangle {
         radius: Math.min(Theme.radius, 8)
         color: control.down || control.hovered || control.popup.visible ? control.hoverFill : control.outline ? Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32) : Qt.alpha(control.hoverFill, 0)
-        // The ghost picker is borderless until the keyboard reaches it.
-        border.color: control.visualFocus || (control.outline && control.activeFocus) ? Theme.palette.color("focus", "#3b82f6") : control.outline ? Theme.palette.color("input", "#27272a") : "transparent"
-        border.width: control.outline || control.visualFocus ? 1 : 0
+        border.color: control.showFocusRing ? Theme.palette.color("focus", "#3b82f6") : control.outline ? Theme.palette.color("input", "#27272a") : "transparent"
+        border.width: control.outline || control.showFocusRing ? 1 : 0
 
         Behavior on color {
             ColorAnimation {
