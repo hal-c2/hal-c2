@@ -507,8 +507,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     # gh in a directory with a space, as under a home or install path that has one.
     dir = Mc.tmp_dir(context.mc, "gh cli")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
-    # The host has no SSH agent unless a step gives it one (the developer's has).
+    # The host has no SSH agent unless a step gives it one (the developer's has), and
+    # git none of the developer's own config.
     World.put_os_env("SSH_AUTH_SOCK", nil)
+    user_config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(user_config, "")
+    World.put_os_env("GIT_CONFIG_GLOBAL", user_config)
+    World.put_os_env("GIT_CONFIG_NOSYSTEM", "1")
     gh = Path.join(dir, "gh")
 
     File.write!(gh, """
@@ -573,6 +578,14 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^the user's own git config has an? (?<rule>insteadOf|pushInsteadOf) rule sending "(?<from>[^"]+)" to "(?<to>[^"]+)"$/,
+       %{args: [rule, from, to]} = context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(config, "[url \"#{to}\"]\n\t#{rule} = #{from}\n")
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
   # Without waiting for SSH, as the upgrader at boot.
   step "the MC begins setting up the git it starts", context do
     set_up_git(context)
@@ -608,13 +621,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
   end
 
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out)$/,
+       %{args: [change]} = context do
+    sign_in_or_out(context, change)
+    context
+  end
+
   step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
        %{args: [change]} = context do
-    hosts = Path.join(context.gh_config, "hosts.yml")
-
-    if change == "signs out",
-      do: File.rm!(hosts),
-      else: File.write!(hosts, "github.com:\n    user: acme\n")
+    sign_in_or_out(context, change)
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
@@ -645,13 +660,21 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
-    repo = Mc.tmp_dir(context.mc, "push")
-    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
-    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
-    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+  step ~r/^git fetches "(?<url>[^"]+)" from "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+    assert String.trim(fetched) == expected
+    context
+  end
 
-    assert String.trim(pushed) == url
+  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
+    assert pushes_to(context, url) == url
+    context
+  end
+
+  step ~r/^git pushes "(?<url>[^"]+)" to "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    assert pushes_to(context, url) == expected
     context
   end
 
@@ -666,6 +689,22 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     assert answer =~ "password=from-gh"
     context
+  end
+
+  defp sign_in_or_out(context, change) do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+  end
+
+  defp pushes_to(context, url) do
+    repo = Mc.tmp_dir(context.mc, "push")
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
+    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+    String.trim(pushed)
   end
 
   # Gone, or a zombie no one has reaped yet: either way it runs no more.

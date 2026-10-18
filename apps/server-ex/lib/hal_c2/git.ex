@@ -23,11 +23,13 @@ defmodule HalC2.Git do
 
     case within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) do
       {:ok, result} -> result
+      {:exit, reason} -> {:error, "git #{hd(args)} exited: #{inspect(reason)}"}
       :timeout -> {:error, "git #{hd(args)} timed out after #{opts[:timeout]} ms"}
     end
   end
 
   # Killing the task takes the program with it: Exile stops a process its owner left.
+  # A task that exits abnormally takes a caller that does not trap exits with it.
   defp within(nil, fun), do: {:ok, fun.()}
 
   defp within(ms, fun) do
@@ -35,6 +37,7 @@ defmodule HalC2.Git do
 
     case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> {:ok, result}
+      {:exit, reason} -> {:exit, reason}
       nil -> :timeout
     end
   end
@@ -188,35 +191,54 @@ defmodule HalC2.Git do
   stays off the network here, and an MC without an agent stays on HTTPS even where
   a key file without a passphrase would answer.
 
+  On SSH, git reaches GitHub's addresses as it is configured, and `gh auth
+  git-credential` still answers for its HTTPS ones.
+
   Asking does not hold up the caller (the upgrader, at boot). It runs in a process
-  of its own; until SSH answers or is refused, git keeps the route the last call
-  chose (HTTPS when there was none), and an SSH that cannot reach GitHub or runs past
-  its time leaves that route as it is. A later call stops an earlier one still
-  asking. Returns `{:asking, pid}` while it asks, the process ending once git has the
-  answer, and `:ok` when there was nothing to ask. Each choice is logged with why.
+  of its own; until SSH answers or is refused, git keeps SSH if the last call chose
+  it and goes over HTTPS otherwise, and an SSH that cannot reach GitHub or runs past
+  its time leaves that route as it is. Calls run one at a time, and a later one stops
+  an earlier one still asking. Returns `{:asking, pid}` while it asks, the process
+  ending once git has the answer, and `:ok` when there was nothing to ask. Each
+  choice is logged with why.
 
   A user's own `https://github.com/` rule would undo the rewrite (git rewrites an
   address once, by the longest matching prefix, and the first one on a tie), so the
   file also holds a rule for each first character of an owner's name, one character
   longer than theirs, that keeps the address on HTTPS. It beats any rule for the
   whole host, one to an HTTPS mirror as much as one to SSH. A rule for one owner
-  (`https://github.com/acme/`) is longer and still wins for a fetch; a push stays on
-  HTTPS, as git takes a `pushInsteadOf` over any `insteadOf`.
+  (`https://github.com/acme/`) is longer and still wins: an `insteadOf` for a fetch
+  (a push stays on HTTPS, as git takes a `pushInsteadOf` over any `insteadOf`), a
+  `pushInsteadOf` for a push.
 
   Git includes a file the MC owns and writes again on each call (at boot and after
   a hot update), so a later sign-in or sign-out reaches git already running too.
   """
   def use_gh_for_github do
     file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
+    # The upgrader calls at boot, and a hot update from whichever process asks for it.
+    :global.trans({@asking, self()}, fn -> set_up_github(file) end, [node()])
+  end
+
+  defp set_up_github(file) do
     include(file)
     stop_asking()
 
     case github_route() do
-      {:ask, ssh, https} ->
-        # A file left empty by the last call is git on SSH, which stands until SSH answers.
-        if File.read(file) != {:ok, ""}, do: write_config(file, https)
+      {:ask, ssh, %{https: https, ssh: on_ssh} = configs} ->
+        # SSH the last call chose stands until SSH answers otherwise.
+        if File.read(file) != {:ok, on_ssh}, do: write_config(file, https)
 
-        {:ok, pid} = Task.start(fn -> receive(do: (:ask -> ask_ssh(file, ssh, https))) end)
+        # Bounded, so a caller that died before `:ask` leaves nothing waiting.
+        {:ok, pid} =
+          Task.start(fn ->
+            receive do
+              :ask -> ask_ssh(file, ssh, configs)
+            after
+              10_000 -> :ok
+            end
+          end)
+
         Process.register(pid, @asking)
         send(pid, :ask)
         {:asking, pid}
@@ -249,40 +271,60 @@ defmodule HalC2.Git do
          do: File.rename(tmp, file)
   end
 
-  # The config git gets, or `{:ask, ssh, https}` when SSH may answer for GitHub instead
-  # of the HTTPS config.
+  # The config git gets, or `{:ask, ssh, %{https: config, ssh: config}}` when SSH may
+  # answer for GitHub, so git gets the SSH config instead of the HTTPS one.
   defp github_route do
-    with gh when is_binary(gh) <- System.find_executable("gh"),
-         true <- gh_signed_in?() do
-      https = https_config(gh)
+    gh = System.find_executable("gh")
 
-      with sock when sock not in [nil, ""] <- System.get_env("SSH_AUTH_SOCK"),
-           ssh when is_binary(ssh) <- System.find_executable("ssh") do
-        {:ask, ssh, https}
-      else
-        _ ->
-          Logger.info(
-            "Git reaches GitHub over HTTPS with the GitHub CLI's sign-in: no SSH agent."
-          )
-
-          https
-      end
-    else
-      _ ->
-        Logger.info("Git reaches GitHub as it is configured: the GitHub CLI is not signed in.")
-        ""
+    cond do
+      gh == nil -> as_configured("the GitHub CLI is not installed")
+      not gh_signed_in?() -> as_configured("the GitHub CLI is not signed in")
+      true -> github_route(gh)
     end
   end
 
-  defp https_config(gh) do
-    # Git runs the helper through a shell, which would split a path with a space.
-    helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+  defp github_route(gh) do
+    https = https_config(gh)
+    ssh = System.find_executable("ssh")
 
+    cond do
+      System.get_env("SSH_AUTH_SOCK") in [nil, ""] -> over_https(https, "no SSH agent")
+      ssh == nil -> over_https(https, "no ssh is installed")
+      true -> {:ask, ssh, %{https: https, ssh: ssh_config(gh)}}
+    end
+  end
+
+  defp as_configured(why) do
+    Logger.info("Git reaches GitHub as it is configured: #{why}.")
+    ""
+  end
+
+  defp over_https(https, why) do
+    Logger.info("Git reaches GitHub over HTTPS with the GitHub CLI's sign-in: #{why}.")
+    https
+  end
+
+  defp https_config(gh) do
     """
     [url "https://github.com/"]
     \tinsteadOf = git@github.com:
     \tinsteadOf = ssh://git@github.com/
     #{keep_https_rules()}\
+    #{credential_config(gh)}\
+    """
+  end
+
+  # Also what tells a call that the last one chose SSH, apart from a signed-out file.
+  defp ssh_config(gh) do
+    "# GitHub answers SSH: git reaches it as configured, with gh for HTTPS.\n" <>
+      credential_config(gh)
+  end
+
+  defp credential_config(gh) do
+    # Git runs the helper through a shell, which would split a path with a space.
+    helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+
+    """
     [credential "https://github.com"]
     \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
     \thelper =
@@ -311,7 +353,7 @@ defmodule HalC2.Git do
 
   # Runs as `@asking`. An ssh past its time is not left behind: `within/2` kills the
   # task that owns it, and Exile then the program. An agent without keys is refused too.
-  defp ask_ssh(file, ssh, https) do
+  defp ask_ssh(file, ssh, %{https: https, ssh: on_ssh}) do
     ms = Application.get_env(:hal_c2, :github_ssh_timeout, 8_000)
 
     argv = [
@@ -326,7 +368,7 @@ defmodule HalC2.Git do
           # GitHub greets a key it knows and then exits 1, as it gives no shell.
           said =~ "successfully authenticated" ->
             Logger.info("Git stays on SSH for GitHub, which answers it.")
-            write_config(file, "")
+            write_config(file, on_ssh)
 
           said =~ "Permission denied" ->
             Logger.info(
@@ -344,6 +386,9 @@ defmodule HalC2.Git do
 
       {:ok, {:error, reason}} ->
         Logger.info("Git keeps its route to GitHub: #{reason}.")
+
+      {:exit, reason} ->
+        Logger.info("Git keeps its route to GitHub: ssh exited: #{inspect(reason)}.")
 
       :timeout ->
         Logger.info("Git keeps its route to GitHub: SSH did not answer in #{ms} ms.")

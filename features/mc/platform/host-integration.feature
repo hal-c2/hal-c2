@@ -320,6 +320,7 @@ Feature: The MC working with its host machine
     And an SSH agent runs on the host and SSH to GitHub <ssh>
     When the MC sets up the git it starts
     Then git fetches "git@github.com:acme/shop.git" over <transport>
+    And the GitHub CLI answers git's request for a GitHub credential
 
     Examples:
       | ssh         | transport |
@@ -359,6 +360,16 @@ Feature: The MC working with its host machine
       | is answered | SSH       |
       | is refused  | HTTPS     |
 
+  # Git as configured while signed out was never an answer from SSH.
+  @mc
+  Scenario: A sign-in made while SSH cannot reach GitHub goes over HTTPS
+    Given the GitHub CLI on the host is not signed in
+    And the MC sets up the git it starts
+    And the GitHub CLI signs in to github.com
+    And an SSH agent runs on the host and SSH to GitHub cannot reach it
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over HTTPS
+
   # Git matches its rules' prefixes by case, so each first character of an owner counts.
   @mc
   Scenario Outline: A user's own rule sending HTTPS to SSH does not send git back to SSH
@@ -373,6 +384,20 @@ Feature: The MC working with its host machine
       | acme   |
       | Acme   |
       | 9lives |
+
+  # Git takes the longest matching prefix, and a pushInsteadOf over any insteadOf for a push.
+  @mc
+  Scenario Outline: A user's own rule for one owner still applies where git would take it
+    Given the GitHub CLI on the host is signed in to github.com
+    And the user's own git config has <rule> rule sending "https://github.com/acme/" to "git@github.com:acme/"
+    When the MC sets up the git it starts
+    Then git fetches "https://github.com/acme/shop.git" from "<fetch>"
+    And git pushes "https://github.com/acme/shop.git" to "<push>"
+
+    Examples:
+      | rule            | fetch                            | push                             |
+      | an insteadOf    | git@github.com:acme/shop.git     | https://github.com/acme/shop.git |
+      | a pushInsteadOf | https://github.com/acme/shop.git | git@github.com:acme/shop.git     |
 
   @mc
   Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update

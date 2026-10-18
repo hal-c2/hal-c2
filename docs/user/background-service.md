@@ -91,12 +91,14 @@ remotes from it. GitHub still works when the GitHub CLI is signed in
 (`gh auth login`): HAL-C2 and its agents reach `git@github.com:` remotes over HTTPS
 with that sign-in, even if your own git config sends all of `https://github.com/`
 to SSH or a mirror. A rule of yours for one owner, such as `https://github.com/acme/`,
-still applies to fetches. Signing in or out later takes effect when HAL-C2 next
-starts or updates.
+still applies: an `insteadOf` rule to fetches, a `pushInsteadOf` rule to pushes.
+Signing in or out later takes effect when HAL-C2 next starts or updates.
 
 Where an SSH agent is running and GitHub accepts SSH from that machine, HAL-C2
-leaves git on SSH instead. It checks when it starts or updates, without holding up
-either; if GitHub cannot be reached then, git keeps the way it went before. If a
+leaves git on SSH instead, and the GitHub CLI's sign-in still answers for
+`https://github.com/` remotes. It checks when it starts or updates, without holding
+up either; if GitHub cannot be reached then, git stays on SSH if it was on it and
+goes over HTTPS otherwise. If a
 push that changes a workflow is refused for a missing `workflow` scope and you push
 with the GitHub CLI's sign-in, run `gh auth refresh -s workflow` on that machine.
 

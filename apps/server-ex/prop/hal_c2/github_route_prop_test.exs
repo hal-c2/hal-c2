@@ -1,11 +1,13 @@
 defmodule HalC2.GitHubRoutePropTest do
   @moduledoc """
   `HalC2.Git.use_gh_for_github/0` against a model of the route git takes to GitHub:
-  git as configured (an empty include), or HTTPS with the GitHub CLI's sign-in. The
-  GitHub CLI signs in and out, an SSH agent comes and goes, and SSH to GitHub is
-  answered, refused or cannot reach it, or hangs past the time it is given or stalls
-  until a later call, between calls made at boot and at hot updates. A call never waits for SSH: until it answers, git keeps the route it had;
-  a later call stops an earlier one still asking; and no ssh outlives the asking.
+  git as configured because the GitHub CLI is signed out (an empty include), git on
+  SSH because GitHub answers it, or HTTPS with the GitHub CLI's sign-in. The GitHub
+  CLI signs in and out, an SSH agent comes and goes, and SSH to GitHub is answered,
+  refused or cannot reach it, or hangs past the time it is given or stalls until a
+  later call, between calls made at boot and at hot updates. A call never waits for
+  SSH: until it answers, git keeps SSH if it had it and goes over HTTPS otherwise; a
+  later call stops an earlier one still asking; and no ssh outlives the asking.
   """
 
   use ExUnit.Case, async: false
@@ -106,7 +108,7 @@ defmodule HalC2.GitHubRoutePropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # routes: what the include may hold, :missing, :git (empty) or :https. asking: the
+  # routes: what the include may hold, :missing, :git (signed out), :ssh or :https. asking: the
   # process of the last call while it may still ask, and settles: the routes it
   # leaves. An asking no command waited for may have ended already, so a route is the
   # set of those it may be.
@@ -161,12 +163,12 @@ defmodule HalC2.GitHubRoutePropTest do
 
       true ->
         before = if state.asking, do: state.routes ++ state.settles, else: state.routes
-        # An empty include is git on SSH already, which stands until SSH answers.
-        routes = before |> Enum.map(&if(&1 == :git, do: :git, else: :https)) |> Enum.uniq()
+        # SSH chosen before stands until SSH answers; a signed-out include is no choice.
+        routes = before |> Enum.map(&if(&1 == :ssh, do: :ssh, else: :https)) |> Enum.uniq()
 
         settles =
           case state.ssh do
-            :answers -> [:git]
+            :answers -> [:ssh]
             :refused -> [:https]
             _ -> routes
           end
@@ -238,6 +240,9 @@ defmodule HalC2.GitHubRoutePropTest do
 
       {:ok, ""} ->
         :git
+
+      {:ok, "# GitHub answers SSH" <> _ = text} ->
+        if text =~ "insteadOf", do: {:unexpected, text}, else: :ssh
 
       {:ok, text} ->
         if text =~ "insteadOf = git@github.com:", do: :https, else: {:unexpected, text}
