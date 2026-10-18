@@ -658,8 +658,10 @@ defmodule HalC2.Orchestration do
     promoted =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         runs = StreamState.get(state, "run")
+        # As it is now: a queued message can be edited until it leaves the queue.
+        message = StreamState.get(state, "message")[message["id"]]
 
-        if runs[queued["id"]]["status"] == "queued" and
+        if message != nil and runs[queued["id"]]["status"] == "queued" and
              runs[target["id"]]["status"] in @active_statuses do
           at = Entities.now()
 
@@ -679,14 +681,14 @@ defmodule HalC2.Orchestration do
             ] ++
               steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
 
-          {Enum.reject(changes, &is_nil/1), :promoted}
+          {Enum.reject(changes, &is_nil/1), {:promoted, message}}
         else
           {[], runs[queued["id"]]["status"]}
         end
       end)
 
     case promoted do
-      :promoted ->
+      {:promoted, message} ->
         case ask_steer(
                target["providerInstanceId"] || "codex",
                thread_id,
