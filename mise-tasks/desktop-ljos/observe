@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Open Ljós's observer (processes, mailboxes, objects, traces) on the shell desktop-ljos:inspect runs"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+root="$(cd ../.. && pwd)"
+exec "$(dirname "$0")/cli" observe "${LJOS_MCP_DIR:-$root/.hal-c2/desktop-ljos}" "$@"

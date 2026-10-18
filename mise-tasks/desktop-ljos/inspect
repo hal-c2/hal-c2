@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Open the desktop shell on Ljós as mise run desktop-ljos does, serving Ljós's MCP inspector (LJOS_MCP, default inspect,input,mutate,eval) for desktop-ljos:observe and desktop-ljos:attach"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+export LJOS_MCP="${LJOS_MCP:-inspect,input,mutate,eval}"
+exec "$(dirname "$0")/_default" "$@"

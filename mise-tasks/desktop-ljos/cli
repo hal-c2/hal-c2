@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Run Ljós's own command line (ljos), built at the rev desktop-ljos pins: mise run desktop-ljos:cli observe DIR"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+root="$(cd ../.. && pwd)"
+rev="$(grep -Eo 'ljos-ui", rev = "[0-9a-f]{40}' Cargo.toml | grep -Eo '[0-9a-f]{40}$')"
+prefix="$root/.hal-c2/ljos-cli"
+# Built again only when the pin moves; the first build compiles Ljós (minutes).
+if [[ "$(cat "$prefix/rev" 2>/dev/null)" != "$rev" ]]; then
+  echo "building ljos at ${rev:0:9}..." >&2
+  mise exec -- cargo install -q --locked --git https://github.com/hal-c2/ljos-ui --rev "$rev" \
+    ljos_cli --root "$prefix" --target-dir target/ljos-cli
+  echo "$rev" >"$prefix/rev"
+fi
+exec "$prefix/bin/ljos" "$@"
