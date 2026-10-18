@@ -531,26 +531,44 @@ Item {
         }
 
         // In a phone-wide tab the header's buttons are the file's minimum: the tree gives
-        // way, so none of them ends up under it.
+        // way, so none of them ends up under it. An editor installed adds its button.
         function test_theHeaderButtonsStayInTheFileInANarrowTab() {
+            Shell.state = Object.assign({}, Shell.state, { workspace: { editors: [{ id: "vscode", label: "VS Code" }] } });
             const source = createTemporaryObject(fakeFiles, root);
             source.renderKind = "markdown";
             const files = createTemporaryObject(filesComponent, root, { source: source, width: 360 });
             const viewer = findChild(files, "fileViewer");
             const explorer = findChild(files, "filesExplorer");
             tryVerify(() => viewer.visible);
-            verify(explorer.visible);
-            for (const name of ["fileRender", "fileEdit", "fileWrap", "fileExplorerToggle", "fileClose"]) {
+            tryVerify(() => explorer.visible && viewer.x + viewer.width <= explorer.x + 0.5, 5000, "the file settles beside the tree");
+            const names = ["fileRender", "fileEdit", "fileOpenInEditor", "fileWrap", "fileExplorerToggle", "fileClose"];
+            for (const name of names) {
                 const button = findChild(files, name);
                 verify(button.visible, name);
                 const end = button.mapToItem(files, button.width, 0).x;
                 verify(end <= explorer.x + 0.5, name + " ends at " + end + " but the tree starts at " + explorer.x);
             }
-            verify(viewer.x + viewer.width <= explorer.x + 0.5, "the file ends where the tree starts");
             verify(explorer.x + explorer.width <= files.width + 0.5, "tree " + explorer.x + "+" + explorer.width + " of " + files.width + ", file " + viewer.x + "+" + viewer.width);
             const close = findChild(files, "fileClose");
             mouseClick(close);
             compare(source.closed, 1, "the close button is reachable");
+        }
+
+        // A tab too narrow to leave the tree room beside the header's buttons shows the
+        // file alone: no sliver of a tree that still takes focus.
+        function test_aTabTooNarrowForTheTreeShowsTheFileAlone() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.renderKind = "markdown";
+            const files = createTemporaryObject(filesComponent, root, { source: source, width: 280 });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            tryVerify(() => viewer.visible);
+            tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
+            verify(files.explorerShare < files.explorerMinimum, "share " + files.explorerShare);
+            verify(findChild(files, "filesSearch").visible === false, "the search field is not reachable");
+            verify(findChild(files, "fileExplorerToggle").checked, "the preference to show the tree is kept");
+            files.width = 600;
+            tryVerify(() => explorer.visible && explorer.width >= files.explorerMinimum, 5000, "a wider tab brings the tree back");
         }
 
         // Past the width where 46% would be more than the tree needs, the cap is 352px.

@@ -24,11 +24,15 @@ Rectangle {
     // Hiding it is a preference, kept while this panel lives (the next file opens
     // with the tree still hidden), not a state of the file that was open.
     property bool explorerOpen: true
-    readonly property bool explorerShown: !fileOpen || explorerOpen
     // What the tree takes beside an open file: at most 352px or 46% of the tab, and
     // never so much that the file (whose header buttons are its minimum width) is
     // pushed under it. A row layout does not shrink a fixed-size column on its own.
     readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
+    // Below this the tree has no room for more than its margins and expand button (46px),
+    // so a file that leaves it less is open without the tree rather than beside a sliver
+    // of it that still takes focus.
+    readonly property int explorerMinimum: 72
+    readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -38,6 +42,8 @@ Rectangle {
 
     objectName: "filesPanel"
     color: Theme.palette.color("surface", "#0f0f11")
+    // A file whose header is wider than the tab overflows it; the panel's edge cuts it off.
+    clip: true
 
     TextMetrics {
         id: glyph
@@ -128,13 +134,12 @@ Rectangle {
                     onClicked: root.source.wrap = !root.source.wrap
                 }
                 ShellButton {
-                    id: explorerToggle
-
                     objectName: "fileExplorerToggle"
                     subtle: true
-                    // A toggle for assistive tech too; its state is the panel's, so
-                    // the click's own flip is put back by the Binding below.
+                    // A toggle for assistive tech too; the click's own flip and the
+                    // panel's flip of explorerOpen land on the same value.
                     checkable: true
+                    checked: root.explorerOpen
                     Accessible.checkable: true
                     Accessible.checked: checked
                     iconName: "folder-tree"
@@ -144,12 +149,6 @@ Rectangle {
                     implicitHeight: 26
                     Accessible.name: root.explorerOpen ? qsTr("Hide file explorer") : qsTr("Show file explorer")
                     onClicked: root.explorerOpen = !root.explorerOpen
-
-                    Binding {
-                        target: explorerToggle
-                        property: "checked"
-                        value: root.explorerOpen
-                    }
                 }
                 ShellButton {
                     objectName: "fileClose"
