@@ -2217,7 +2217,7 @@ export function ChatView({
         .readFileBase64(composerCwd, row.path)
         .then((file) => {
           if (!file) throw new Error("Could not read the image.");
-          return prepareComposerImage(row.path, file);
+          return prepareComposerImage(row.path, file, decodeImage);
         })
         .then((image) => {
           updateActiveComposerImages((current) => [...current, image]);

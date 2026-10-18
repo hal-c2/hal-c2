@@ -43,6 +43,30 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+const PNG_PREVIEW = {
+  source: Uint8Array.from(Buffer.from(PNG_BASE64, "base64")),
+  imageWidth: 1,
+  imageHeight: 1,
+} satisfies ImagePreview;
+
+// The native decode takes a varying time, and the staged image appears only once it
+// returns. A test that pastes an image injects this decoder: `started` resolves when the
+// paste reached the decode (everything before it, like reading the file, is done), and the
+// image stays unstaged until the test calls `release`.
+function gatedImageDecoder() {
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  return {
+    decodeImage: async () => {
+      started.resolve();
+      await gate.promise;
+      return PNG_PREVIEW;
+    },
+    started: started.promise,
+    release: () => gate.resolve(),
+  };
+}
+
 function containsId(root: Renderable, id: string): boolean {
   const queue = [root];
   while (queue.length > 0) {
@@ -1097,26 +1121,9 @@ describe("ChatView acknowledged submissions", () => {
         calls.push(args);
       },
     });
-    // The decode is native and its duration varies, so the test holds it open and
-    // releases it once the busy status shows, instead of racing a frame budget.
-    let finishDecode: () => void = () => {};
-    const decodeFinished = new Promise<void>((resolve) => {
-      finishDecode = resolve;
-    });
-    const preview = {
-      source: Uint8Array.from(Buffer.from(PNG_BASE64, "base64")),
-      imageWidth: 1,
-      imageHeight: 1,
-    } satisfies ImagePreview;
+    const decoder = gatedImageDecoder();
     const setup = await testRender(
-      <ChatView
-        client={fake.client}
-        onExit={() => {}}
-        decodeImage={async () => {
-          await decodeFinished;
-          return preview;
-        }}
-      />,
+      <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
       { width: 110, height: 28 },
     );
 
@@ -1130,9 +1137,9 @@ describe("ChatView acknowledged submissions", () => {
       await setup.renderOnce();
     });
     await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
+    await decoder.started;
     await React.act(async () => {
-      finishDecode();
-      await decodeFinished;
+      decoder.release();
     });
     await setup.waitForFrame(
       (frame) => frame.includes("explain this screenshot") && frame.includes("clipboard-i"),
@@ -1173,10 +1180,11 @@ describe("ChatView acknowledged submissions", () => {
         calls.push(args);
       },
     });
-    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-      width: 110,
-      height: 28,
-    });
+    const decoder = gatedImageDecoder();
+    const setup = await testRender(
+      <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
+      { width: 110, height: 28 },
+    );
 
     await selectThread(setup, fake.connect);
     await React.act(async () => {
@@ -1185,15 +1193,17 @@ describe("ChatView acknowledged submissions", () => {
       );
       await setup.renderOnce();
     });
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("error screenshot.png") &&
-        !frame.includes("/workspace/project-one/docs/error"),
-    );
+    // The decode starts once the workspace read resolved; the image is staged after it.
+    await decoder.started;
     expect(reads).toEqual([
       { cwd: "/workspace/project-one", relativePath: "docs/error screenshot.png" },
     ]);
 
+    await React.act(async () => {
+      decoder.release();
+    });
+    // The busy status also names the file, so wait for the staged chip itself.
+    await setup.waitForFrame((frame) => frame.includes("× error scree"));
     await React.act(async () => {
       await setup.mockInput.typeText("explain this image");
       await setup.renderOnce();
@@ -1226,10 +1236,11 @@ describe("ChatView acknowledged submissions", () => {
           return null;
         },
       });
-      const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-        width: 110,
-        height: 28,
-      });
+      const decoder = gatedImageDecoder();
+      const setup = await testRender(
+        <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
+        { width: 110, height: 28 },
+      );
 
       await selectThread(setup, fake.connect);
       const escapedImagePath = imagePath.replaceAll(" ", "\\ ");
@@ -1237,9 +1248,14 @@ describe("ChatView acknowledged submissions", () => {
         await setup.mockInput.pasteBracketedText(`Please inspect ${escapedImagePath}`);
         await setup.renderOnce();
       });
+      // The decode starts once the file is read from disk; the image is staged after it.
+      await decoder.started;
+      await React.act(async () => {
+        decoder.release();
+      });
       await setup.waitForFrame(
         (frame) =>
-          frame.includes("outside wor") &&
+          frame.includes("× outside wor") &&
           frame.includes("Please inspect") &&
           !frame.includes(directory),
       );
