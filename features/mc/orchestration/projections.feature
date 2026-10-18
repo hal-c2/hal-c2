@@ -292,7 +292,7 @@ Feature: What the engine projects for clients
     Then the text is cut at 32,768 bytes without splitting a character
     And it ends with "… output truncated for transport"
 
-  @mc @backlog
+  @mc
   Scenario: Subagent text that grows is cut to the same text a snapshot shows
     Given a subagent in "t1" has progress that grows by appends past 32,768 bytes
     When a client follows "t1"
