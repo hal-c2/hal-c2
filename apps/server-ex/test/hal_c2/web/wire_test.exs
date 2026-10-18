@@ -90,6 +90,29 @@ defmodule HalC2.Web.WireTest do
     sent_matches_snapshot(start, %{"u" => ["progress"], "a" => %{"progress" => over}})
   end
 
+  test "a patch appending to two texts cuts each from what it holds" do
+    start = Map.put(item("short"), "result", String.duplicate("r", @limit - 1))
+    over = String.duplicate("é", @limit)
+    sent_matches_snapshot(start, %{"a" => %{"progress" => " more", "result" => over}})
+    sent_matches_snapshot(start, %{"a" => %{"progress" => over, "result" => "r"}})
+  end
+
+  test "a subagent's cut basis is cut as the item is, however long its text" do
+    long = item(String.duplicate("é", @limit))
+    basis = Wire.cut_basis(long)
+    assert byte_size(basis["progress"]) == @limit + 1
+
+    for suffix <- ["", "x", String.duplicate("é", 10)] do
+      patch = %{"a" => %{"progress" => suffix}}
+
+      assert Wire.patch("turn-item", patch, "subagent", basis) ==
+               Wire.patch("turn-item", patch, "subagent", long)
+    end
+
+    reset = %{"s" => %{"progress" => "a"}, "a" => %{"progress" => "b"}}
+    assert Wire.patch("turn-item", reset, "subagent", basis) == reset
+  end
+
   test "appends in a replay are sent whole when the text is past the limit" do
     patch = %{"a" => %{"progress" => "x"}}
     assert Wire.appends_past_limit?("turn-item", patch, item(String.duplicate("x", @limit + 1)))
