@@ -156,7 +156,10 @@ Feature: Launching and leaving the terminal client
       | wezterm   |
       | alacritty |
       | foot      |
+      | rio       |
+      | contour   |
       | iTerm     |
+      | vscode    |
 
   @tui
   Scenario: A colour setting the shell already made is left alone

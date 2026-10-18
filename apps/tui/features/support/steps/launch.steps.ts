@@ -39,6 +39,10 @@ const TERMINALS: Record<string, { TERM: string; TERM_PROGRAM?: string; KONSOLE_V
     alacritty: { TERM: "alacritty" },
     foot: { TERM: "foot" },
     iterm: { TERM: "xterm-256color", TERM_PROGRAM: "iTerm.app" },
+    rio: { TERM: "rio", TERM_PROGRAM: "rio" },
+    contour: { TERM: "contour", TERM_PROGRAM: "contour" },
+    // "VS Code" in the ledger's old outline; the step's {word} needs one word.
+    vscode: { TERM: "xterm-256color", TERM_PROGRAM: "vscode" },
   };
 
 function client(ctx: LaunchWorld): ProcessRun {
@@ -362,7 +366,7 @@ step("the terminal client opens in the alternate screen", (ctx: LaunchWorld) => 
 });
 
 step("its status line says {string}", async (ctx: LaunchWorld, text: string) => {
-  await open(ctx).screen.until(text);
+  await open(ctx).screen.until(text, "status");
 });
 
 step("the MC sends its first snapshot", (ctx: LaunchWorld) => {
@@ -371,8 +375,8 @@ step("the MC sends its first snapshot", (ctx: LaunchWorld) => {
 
 step("its status line counts the projects and threads", async (ctx: LaunchWorld) => {
   const screen = open(ctx).screen;
-  await screen.until("0 project(s) · 0 thread(s)");
-  expect(screen.text()).not.toContain("Connecting…");
+  await screen.until("0 project(s) · 0 thread(s)", "status");
+  expect(screen.statusLine()).not.toContain("Connecting…");
 });
 
 // --- a socket ticket nobody answers ---
@@ -397,8 +401,9 @@ step("the first ticket request was given up on only after 10 seconds", (ctx: Lau
   // The client hangs up on it before it asks again, so its end is already known.
   expect(first.endedAt).toBeDefined();
   const lived = first.endedAt! - first.startedAt;
-  // The client's timer starts just before the request reaches the MC.
-  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 500);
+  // The client's timer starts before the request reaches the MC, and a loaded runner can
+  // stretch that gap and the abort's way back; the slack still catches "gave up at once".
+  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_500);
   expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
 });
 

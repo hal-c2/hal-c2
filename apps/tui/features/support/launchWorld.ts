@@ -93,7 +93,8 @@ export function orderLog(ctx: LaunchWorld): string[] {
 /**
  * A preload that notes `alt-screen` in the order log when the renderer's
  * `setupTerminal` (which enters the alternate screen) returns, before
- * `createCliRenderer` hands the renderer back. The renderer class is resolved from
+ * `createCliRenderer` hands the renderer back. Every call is noted, so a client that
+ * set the terminal up twice would show `alt-screen` twice. The renderer class is resolved from
  * the client's directory, so it is the module the client loads.
  */
 export function orderPreload(ctx: LaunchWorld): string {
@@ -103,6 +104,9 @@ export function orderPreload(ctx: LaunchWorld): string {
     `import { appendFileSync } from "node:fs";
 const { CliRenderer } = await import(Bun.resolveSync("@opentui/core", ${JSON.stringify(TUI_DIR)}));
 const setupTerminal = CliRenderer.prototype.setupTerminal;
+if (typeof setupTerminal !== "function") {
+  throw new Error("orderPreload: @opentui/core's CliRenderer no longer has setupTerminal; update the order patch");
+}
 CliRenderer.prototype.setupTerminal = async function (...args: unknown[]) {
   const result = await setupTerminal.apply(this, args);
   appendFileSync(process.env.HAL_C2_TEST_ORDER!, "alt-screen\\n");
@@ -155,7 +159,13 @@ interface Spawned {
   readonly drawn: Promise<boolean>;
   readonly exited: Promise<number>;
   /** The terminal the client's output draws, as the user would see it. */
-  readonly screen: { text(): string; until(text: string): Promise<void> };
+  readonly screen: {
+    text(): string;
+    /** The screen's last non-blank row: where the client draws its status line. */
+    statusLine(): string;
+    /** Resolves once the screen, or just its status line, shows `text`. */
+    until(text: string, where?: "screen" | "status"): Promise<void>;
+  };
 }
 
 function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Spawned {
@@ -186,6 +196,10 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     }
     return lines.join("\n");
   };
+  const statusLine = () =>
+    screenText()
+      .split("\n")
+      .findLast((line) => line.trim() !== "") ?? "";
   const readOut = (async () => {
     for await (const chunk of proc.stdout) {
       output.stdout += decoder.decode(chunk, { stream: true });
@@ -198,14 +212,15 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
   })();
   const screen = {
     text: screenText,
-    until: (text: string) =>
+    statusLine,
+    until: (text: string, where = "screen") =>
       new Promise<void>((resolve, reject) => {
         const settle = () => {
           clearTimeout(timer);
           screenWaiters.delete(waiter);
         };
         const waiter = () => {
-          if (!screenText().includes(text)) return;
+          if (!(where === "status" ? statusLine() : screenText()).includes(text)) return;
           settle();
           resolve();
         };
@@ -214,7 +229,7 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
           settle();
           reject(
             new Error(
-              `the screen never showed ${JSON.stringify(text)}; it shows:\n${screenText()}\nstderr:\n${output.stderr}`,
+              `the ${where === "status" ? "status line" : "screen"} never showed ${JSON.stringify(text)}; the screen shows:\n${screenText()}\nstderr:\n${output.stderr}`,
             ),
           );
         }, SCREEN_TIMEOUT_MS);
@@ -281,7 +296,13 @@ export function clientLog(ctx: LaunchWorld): string {
 
 /** A fake MC on this machine, recorded under the `--base-dir`; started once per scenario. */
 export function runningMc(ctx: LaunchWorld, options: FakeMcOptions = {}): FakeMc {
-  if (ctx.mc) return ctx.mc;
+  if (ctx.mc) {
+    // The MC is already up with its own options; a Given asking for others would silently get these.
+    if (Object.keys(options).length > 0) {
+      throw new Error("an MC is already running in this scenario; ask for its options first");
+    }
+    return ctx.mc;
+  }
   const running = fakeMc(ctx, options);
   writeMcRecord(ctx, {
     pid: process.pid,

@@ -100,7 +100,7 @@ export interface FakeMcOptions {
   readonly pairingToken?: string;
   /** Answer no socket ticket request, as an MC that accepts the connection and never replies. */
   readonly silentTickets?: boolean;
-  /** Keep the first `shell` snapshot back until `releaseShell()`. */
+  /** Keep every `shell` snapshot the client asks for back until `releaseShell()`. */
   readonly holdShell?: boolean;
 }
 
@@ -236,6 +236,9 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
       },
       close: (ws) => {
         open.delete(ws);
+        for (let i = heldShells.length - 1; i >= 0; i--) {
+          if (heldShells[i]!.ws === ws) heldShells.splice(i, 1);
+        }
       },
       message: (ws, raw) => {
         const frame = JSON.parse(String(raw)) as {
