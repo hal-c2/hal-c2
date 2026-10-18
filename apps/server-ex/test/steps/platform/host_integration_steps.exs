@@ -279,6 +279,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
   end
 
+  # A Store app registers no command line, so `reg query /ve` prints a placeholder as data.
+  step "the MC runs on Windows and the text association names no command line", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], "(value not set)")
+  end
+
   step "the MC runs on Windows and reg never answers", context do
     World.put_app_env(:os_type, {:win32, :nt})
     install_script(bin(context), "reg", "exec sleep 30")

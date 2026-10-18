@@ -147,9 +147,13 @@ defmodule HalC2.Editors do
 
   # The program Windows opens `.txt` files with, from the registry through `reg query`: the
   # user's choice, else the class registered for the extension, and that class's
-  # `shell\open\command`. Nil without one, and for a Store app, whose class names no command
-  # line (it activates through `DelegateExecute`). Like xdg-mime, it runs while a client
-  # waits for the server config, so the three queries share one 2 s deadline.
+  # `shell\open\command`. Nil without one. A Store app's class names no command line (it
+  # activates through `DelegateExecute`), and `reg` then prints the localized text
+  # "(value not set)" as the data, so the program must resolve to an executable: that also
+  # drops an association to an uninstalled editor. Like xdg-mime, it runs while a client
+  # waits for the server config, so the three queries share one 2 s deadline. On timeout
+  # the task is killed, which closes its port but may leave a hung `reg.exe` to exit on its
+  # own: the deadline protects the client, not the process table.
   defp windows_text_editor do
     task = Task.async(&registered_text_editor/0)
 
@@ -168,7 +172,8 @@ defmodule HalC2.Editors do
              reg_value(reg, ["HKCR\\.txt", "/ve"]),
          line when line != nil <-
            reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]),
-         [command | args] <- command_words(expand_variables(line)) do
+         [program | args] <- command_words(expand_variables(line)),
+         command when command != nil <- System.find_executable(program) do
       {command,
        for arg <- args do
          if String.match?(arg, file_placeholder()), do: {:file, arg}, else: arg
@@ -202,7 +207,8 @@ defmodule HalC2.Editors do
   # an argument (`--dir="C:\My Data"` is one argument). Backslashes only count before a
   # quote: 2n of them give n backslashes and the quote opens or closes quoted text, 2n+1
   # give n backslashes and a literal quote.
-  defp command_words(line), do: split_words(line, nil, false, [])
+  @doc false
+  def command_words(line), do: split_words(line, nil, false, [])
 
   defp split_words("", nil, _quoted, words), do: Enum.reverse(words)
   defp split_words("", word, _quoted, words), do: Enum.reverse([word | words])

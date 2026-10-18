@@ -98,6 +98,12 @@ Feature: The MC working with its host machine
     Then the default editor is not offered
 
   @mc
+  Scenario: On Windows a Store app's text association does not offer a default editor
+    Given the MC runs on Windows and the text association names no command line
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
   Scenario: A Windows host without a text association does not offer a default editor
     Given the MC runs on Windows with no program for text files
     When a client reads the MC's server config
