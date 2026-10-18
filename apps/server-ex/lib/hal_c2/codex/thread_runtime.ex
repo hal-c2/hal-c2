@@ -100,13 +100,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     gone = {:error, "The provider session is no longer running. Send a message first."}
 
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      # A session that stopped after the lookup is as gone as one the lookup did not find.
+      # A session that stopped after the lookup, however it stopped, is as gone as one
+      # the lookup did not find. One that is only slow still exits the caller.
       [{pid, _}] ->
         try do
           GenServer.call(pid, {:upload_feedback, reason}, 60_000)
         catch
-          :exit, {why, _} when why in [:noproc, :normal, :shutdown] -> gone
-          :exit, {{:shutdown, _}, _} -> gone
+          :exit, {why, _} when why != :timeout -> gone
         end
 
       [] ->

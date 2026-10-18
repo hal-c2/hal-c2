@@ -14,19 +14,22 @@ defmodule HalC2.Codex.FeedbackTest do
   defp session_stopping_with(thread_id, reason) do
     test = self()
 
-    spawn(fn ->
-      {:ok, _} = Registry.register(HalC2.Codex.Registry, thread_id, nil)
-      send(test, :registered)
+    # Not linked: its exit would take the test with it.
+    session =
+      spawn(fn ->
+        {:ok, _} = Registry.register(HalC2.Codex.Registry, thread_id, nil)
+        send(test, :registered)
 
-      receive do
-        {:"$gen_call", _from, {:upload_feedback, _}} -> exit(reason)
-      end
-    end)
+        receive do
+          {:"$gen_call", _from, {:upload_feedback, _}} -> exit(reason)
+        end
+      end)
 
     assert_receive :registered
+    on_exit(fn -> Process.exit(session, :kill) end)
   end
 
-  for reason <- [{:shutdown, :released}, :shutdown, :normal] do
+  for reason <- [{:shutdown, :released}, :shutdown, :normal, :killed, {:badarg, []}] do
     test "a session that stops with #{inspect(reason)} during the call is gone" do
       session_stopping_with("t1", unquote(Macro.escape(reason)))
 
