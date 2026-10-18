@@ -91,6 +91,14 @@ Feature: Launching a thread with its first message
     And no turn starts yet
 
   @mc
+  Scenario: A launch retried the moment its thread exists still waits for the new worktree
+    When a client launches a thread in "demo" in a new worktree and retries it the moment the thread exists
+    Then the launch reports the thread was not resumed
+    And the retry reports the thread was resumed
+    And the first run is preparing
+    And no turn starts yet
+
+  @mc
   Scenario: A prepared worktree releases the waiting run
     Given a launched thread's first run is preparing its worktree
     When the worktree and its setup script are ready
