@@ -58,6 +58,13 @@ Feature: Pairing a client with an environment
     Then the command fails naming "--tailnet"
     And no pairing link is listed
 
+  @mc
+  Scenario: A pairing command given a bad value says which one
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailscale-serve-port=foo"
+    Then the command fails naming "--tailscale-serve-port=foo"
+    And no pairing link is listed
+
   @backlog @mc
   Scenario: A pairing link keeps its token out of the address a server sees
     When an operator asks the MC for a pairing link

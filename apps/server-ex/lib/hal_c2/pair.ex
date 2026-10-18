@@ -89,7 +89,12 @@ defmodule HalC2.Pair do
   defp check_options([]), do: :ok
 
   defp check_options(invalid) do
-    options = Enum.map_join(invalid, ", ", fn {option, _} -> option end)
+    options =
+      Enum.map_join(invalid, ", ", fn
+        {option, nil} -> option
+        {option, value} -> "#{option}=#{value}"
+      end)
+
     {:error, "Not an option of `#{command_name()}`, or given a bad value: #{options}"}
   end
 
