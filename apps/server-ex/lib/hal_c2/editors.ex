@@ -101,7 +101,7 @@ defmodule HalC2.Editors do
     end
   end
 
-  # `%1`, `%L` (and `%*`) in a registered command line stand for the file.
+  # `%1`, `%L`, `%l` and `%*` in a registered command line stand for the file.
   defp file_placeholder, do: ~r/%[1lL*]/
 
   defp args(style, target) do
@@ -181,9 +181,10 @@ defmodule HalC2.Editors do
   end
 
   # A Windows command line split into arguments by the rules of `CommandLineToArgvW`: white
-  # space separates them outside quotes, a quote starts or ends quoted text inside a word
-  # (`--dir="C:\\My Data"` is one argument), and backslashes only count before a quote: 2n
-  # of them make n and the quote quotes, 2n+1 make n and a literal quote.
+  # space separates arguments outside quotes, and a quote starts or ends quoted text inside
+  # an argument (`--dir="C:\My Data"` is one argument). Backslashes only count before a
+  # quote: 2n of them give n backslashes and the quote opens or closes quoted text, 2n+1
+  # give n backslashes and a literal quote.
   defp command_words(line), do: split_words(line, nil, false, [])
 
   defp split_words("", nil, _quoted, words), do: Enum.reverse(words)
