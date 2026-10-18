@@ -180,7 +180,13 @@ defmodule HalC2.WorktreeSetup do
   end
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
-    watchers = Map.new(state.watchers, fn {id, w} -> {id, HalC2.Watchers.down(w, ref, pid)} end)
+    watchers =
+      for {id, w} <- state.watchers,
+          w = HalC2.Watchers.down(w, ref, pid),
+          w != %{},
+          into: %{},
+          do: {id, w}
+
     {:noreply, %{state | watchers: watchers}}
   end
 

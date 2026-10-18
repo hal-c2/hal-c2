@@ -78,7 +78,7 @@ defmodule HalC2.Watchers do
   def tell(pid, entry, message) do
     {_monitor, refs} = entry(entry)
 
-    if MapSet.equal?(refs, MapSet.new([nil])),
+    if MapSet.size(refs) == 1 and MapSet.member?(refs, nil),
       do: send(pid, message),
       else: send(pid, {:hal_c2_watched, MapSet.to_list(refs), message})
   end

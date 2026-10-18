@@ -164,6 +164,21 @@ defmodule HalC2.WorktreeSetupTest do
     refute HalC2.Git.branch_path_taken_by?(["hal-c2/other"], "hal-c2/42a5d641")
   end
 
+  # A thread's watchers went with their last pid, and kept the thread for no one.
+  test "a thread's last watcher exiting leaves nothing kept for the thread" do
+    server = Process.whereis(HalC2.WorktreeSetup)
+    watcher = spawn(fn -> receive(do: (:never -> :ok)) end)
+    HalC2.WorktreeSetup.subscribe("thread-gone", watcher, make_ref())
+
+    # The trace of the server taking the `:DOWN` orders the read after it.
+    :erlang.trace(server, true, [:receive])
+    Process.exit(watcher, :kill)
+    assert_receive {:trace, ^server, :receive, {:DOWN, _, :process, ^watcher, _}}, 5_000
+    :erlang.trace(server, false, [:receive])
+
+    refute Map.has_key?(:sys.get_state(server).watchers, "thread-gone")
+  end
+
   test "a blocking setup script runs in the worktree before the agent", %{repo: repo} do
     project(repo, [
       %{

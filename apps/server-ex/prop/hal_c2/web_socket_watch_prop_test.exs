@@ -52,8 +52,13 @@ defmodule HalC2.WebSocketWatchPropTest do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         start()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        stop()
+
+        {history, state, result} =
+          try do
+            run_commands(__MODULE__, cmds)
+          after
+            stop()
+          end
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
