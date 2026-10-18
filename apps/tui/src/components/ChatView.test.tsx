@@ -53,7 +53,7 @@ const PNG_PREVIEW = {
 // returns. A test that pastes an image injects this decoder: `started` resolves when the
 // paste reached the decode (everything before it, like reading the file, is done), and the
 // image stays unstaged until the test calls `release`. It gates one image: a second call
-// passes the already-released gate at once, so a multi-image test needs one decoder per image.
+// passes the already-released gate at once, so a multi-image test would need a per-call gate here.
 function gatedImageDecoder() {
   const started = deferred<void>();
   const gate = deferred<void>();
@@ -1194,7 +1194,7 @@ describe("ChatView acknowledged submissions", () => {
       );
       await setup.renderOnce();
     });
-    // The busy status shows first, so a paste that never reaches the decode fails with a frame.
+    // The busy status shows first, so a paste that is never recognised fails with a frame.
     await setup.waitForFrame((frame) => frame.includes("Adding error screenshot.png"));
     // The decode starts once the workspace read resolved; the image is staged after it.
     await decoder.started;
@@ -1254,7 +1254,7 @@ describe("ChatView acknowledged submissions", () => {
         await setup.mockInput.pasteBracketedText(`Please inspect ${escapedImagePath}`);
         await setup.renderOnce();
       });
-      // The busy status shows first, so a paste that never reaches the decode fails with a frame.
+      // The busy status shows first, so a paste that is never recognised fails with a frame.
       await setup.waitForFrame((frame) => frame.includes("Adding outside workspace.png"));
       // The decode starts once the file is read from disk; the image is staged after it.
       await decoder.started;
