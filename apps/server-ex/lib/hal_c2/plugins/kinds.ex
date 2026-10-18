@@ -39,6 +39,11 @@ defmodule HalC2.Plugins.ProviderAdapter do
   that calls `started/1` drives the turn: if it crashes before `finish/3`, the MC
   ends the turn as failed.
 
+  A turn names its provider instance (`turn.ids.instance`) and that instance's own
+  provider thread: another instance of one driver runs with its own settings, home and
+  account. A process serving a thread on one instance is replaced when a turn names
+  another, as the bundled adapters' are.
+
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 
     * `driver`: the driver instances name (default: the plugin id).
