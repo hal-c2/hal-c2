@@ -80,6 +80,9 @@ Item {
             const stripe = findChild(page, "scopeNoticeStripe");
             verify(notice.height > 0);
             compare(stripe.height, notice.height, "the stripe is as tall as the notice it marks");
+            // The warning hue is the stripe's; the words are the theme's text, which reads on every theme.
+            compare(notice.color, Theme.palette.color("text", "#e4e4e7"));
+            verify(notice.color !== stripe.color, "the notice is not warning-coloured");
             verify(!findChild(findChild(page, "storageRule:worktreeAfterDays"), "control").enabled);
             // An offline environment is marked where it is chosen.
             verify(findChild(page, "scopeEnvironment").model.indexOf("Build box · Offline") > 0);

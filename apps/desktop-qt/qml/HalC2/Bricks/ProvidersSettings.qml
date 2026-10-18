@@ -13,6 +13,8 @@ Rectangle {
 
     objectName: "providersSettings"
 
+    // How far the page is scrolled: an open advisory popover closes when it changes.
+    readonly property real scrollY: pageScroll.contentY
     readonly property var model: Shell.state.providerSettings ?? null
     readonly property var environments: model ? model.environments : []
     readonly property var providers: model ? model.providers : []
@@ -602,8 +604,11 @@ Rectangle {
                         // draws as the page's own content does.
                         scale: Shell.state.layout?.zoom ?? 1
                         transformOrigin: Item.TopLeft
-                        // Kept inside the window, set as it shows (the icon does not move
-                        // while it is open). The window is measured in drawn pixels (the
+                        // Kept inside the window, set as it shows. It is not kept up as the
+                        // icon moves: the page scrolling, the window resizing or the zoom
+                        // changing while it is open closes it instead (a popover that
+                        // followed the icon could be carried off an edge it was nudged
+                        // away from). The window is measured in drawn pixels (the
                         // size times the zoom), but x and y are local to the icon, which the
                         // zoomed body scales, so the offsets given to them are in local
                         // units. It is no wider or taller than the window leaves room for
@@ -638,6 +643,20 @@ Rectangle {
                         // Settings. Pressing the icon again closes it through onClicked.
                         focus: true
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                        onWindowWidthChanged: close()
+                        onWindowHeightChanged: close()
+                        onScaleChanged: close()
+                        Connections {
+                            target: page
+
+                            function onScrollYChanged() {
+                                advisoryPopover.close();
+                            }
+                        }
+
+                        // The keyboard user who opened it gets their place back; a press on
+                        // some other control has already moved the focus there.
+                        onAboutToHide: if (activeFocus) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
 
                         background: Rectangle {
                             color: Theme.palette.color("surfaceOverlay", "#18181b")
@@ -1250,6 +1269,9 @@ Rectangle {
     }
 
     Flickable {
+        id: pageScroll
+
+        objectName: "providersScroll"
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48
         clip: true

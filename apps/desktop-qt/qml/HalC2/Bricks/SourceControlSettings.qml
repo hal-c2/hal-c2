@@ -34,7 +34,7 @@ SettingsPage {
     function withCode(text) {
         const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"]/g, ""));
-        return escape(text ?? "").replace(/`([^`]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
+        return escape(text ?? "").replace(/`([^`\n]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
     }
 
     objectName: "sourceControlSettings"
@@ -350,7 +350,9 @@ SettingsPage {
                 activeFocusOnTab: !scanning
                 visible: (page.discovery?.status ?? "none") !== "none"
                 subtle: true
-                opacity: scanning ? 0.64 : 1
+                // Dimmed through its tint (an `opacity` would composite the button
+                // into its own surface for as long as the scan runs).
+                tint: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), scanning ? 0.64 : 1)
                 iconName: "refresh-cw"
                 Accessible.name: scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
                 ToolTip.visible: hovered

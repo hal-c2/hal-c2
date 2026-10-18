@@ -120,6 +120,19 @@ Item {
             compare(summary.Accessible.name, hint.replace(/`/g, ""));
         }
 
+        // A stray backtick in a hint pairs only within its line: it cannot mono-format the prose after it.
+        function test_a_stray_backtick_does_not_span_lines() {
+            const hint = "Sign in with `gh.\nThen run `gh auth login` on the server host.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare((summary.text.match(/<span /g) ?? []).length, 1);
+            verify(summary.text.includes(">gh auth login</span>"), summary.text);
+            verify(summary.text.includes("`gh."), "the unpaired backtick stays as it was written");
+        }
+
         // A summary the server leaves out renders empty, as the plain label it replaced did.
         function test_a_tool_without_a_summary_renders_empty() {
             const tool = root.github({ hasAccount: false });
@@ -164,6 +177,8 @@ Item {
             tryCompare(scan, "hovered", true);
             tryCompare(scan.ToolTip, "visible", true);
             compare(scan.ToolTip.text, "Scanning…");
+            verify(scan.tint.a < 1, "dimmed through its tint");
+            compare(scan.opacity, 1, "not through a whole-button opacity");
             mouseClick(scan);
             compare(Shell.dispatchedActions.length, 0);
         }

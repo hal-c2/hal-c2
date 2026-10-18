@@ -207,6 +207,72 @@ Item {
             verify(!popover.opened, "pressing the icon again closes it rather than reopening it");
         }
 
+        // The popover is placed as it opens and does not follow the icon: the page scrolling,
+        // the window resizing or the zoom changing under it closes it instead.
+        function test_the_advisory_popover_closes_when_the_icon_moves_under_it() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            const many = [];
+            for (let i = 0; i < 12; i++)
+                many.push(root.provider({ instanceId: "claudeAgent_" + i, name: "Claude " + i, advisory: i === 0 ? advisory : null }));
+            Shell.state = { providerSettings: root.settings({ providers: many }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_0");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const open = () => {
+                mouseClick(button);
+                tryCompare(popover, "opened", true);
+            };
+            try {
+                open();
+                const flick = findChild(page, "providersScroll");
+                verify(flick, "the page's scroll area is found");
+                flick.contentY = 40;
+                tryCompare(popover, "opened", false);
+
+                open();
+                win.height = full.height - 60;
+                tryCompare(popover, "opened", false);
+                win.height = full.height;
+
+                open();
+                win.width = full.width - 60;
+                tryCompare(popover, "opened", false);
+                win.width = full.width;
+
+                open();
+                Shell.state = { layout: { zoom: 1.25 }, providerSettings: root.settings({ providers: many }) };
+                tryCompare(popover, "opened", false);
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
+            }
+        }
+
+        // The keyboard opens it, reaches its actions, and gets the icon back when it closes.
+        function test_the_advisory_popover_is_keyboard_reachable_and_returns_focus() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const update = findChild(card, "update");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            for (let i = 0; i < 4 && !update.activeFocus; i++)
+                keyClick(Qt.Key_Tab);
+            verify(update.activeFocus, "Tab reaches Update now from inside the popover");
+            keyClick(Qt.Key_Space);
+            compare(Shell.dispatchedActions[0].action, "providerSettings.update");
+            keyClick(Qt.Key_Escape);
+            tryCompare(popover, "opened", false);
+            tryVerify(() => button.activeFocus, 1000);
+        }
+
         function test_the_advisory_popover_keeps_the_settings_zoom() {
             const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
             Shell.state = { layout: { zoom: 1.5 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
