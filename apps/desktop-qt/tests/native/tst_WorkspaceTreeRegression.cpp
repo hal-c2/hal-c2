@@ -77,6 +77,15 @@ private slots:
     QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("b file")}));
   }
 
+  // Two entries for one path that disagree keep the first one listed.
+  void aPathListedTwiceWithDifferentKindsKeepsTheFirst() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), true, false}, {QStringLiteral("a"), false, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory")}));
+  }
+
   // Retrying a folder during a search marked the search's copy loading and
   // left the user's tree failed, so the listing never showed in either.
   void retryDuringASearchListsTheFolderAgain() {

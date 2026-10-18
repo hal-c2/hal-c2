@@ -130,14 +130,17 @@ void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entrie
   Folder& entry = m_folders[folder];
   entry.state = State::Loaded;
   entry.problem.clear();
-  // A listing that names a path twice shows it once (the first), as a search does.
-  entry.children.clear();
+  // A listing that names a path twice shows it once, as a search does; if the
+  // two disagree (a file and a directory, say) the first one listed is kept.
+  // Built apart, so a caller handing back this folder's own children is safe.
+  QList<Entry> unique;
   QSet<QString> listed;
   for (const Entry& child : entries) {
     if (listed.contains(child.path)) continue;
     listed.insert(child.path);
-    entry.children.append(child);
+    unique.append(child);
   }
+  entry.children = unique;
   sortEntries(entry.children);
   settle(folder);
   if (m_expandAll) expandUnder(folder);

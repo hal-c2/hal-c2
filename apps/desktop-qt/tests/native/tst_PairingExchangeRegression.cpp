@@ -15,6 +15,13 @@ QString linkOf(qsizetype size) {
   return link + QStringLiteral("#token=abc");
 }
 
+// A pairing link of exactly `size` UTF-16 units.
+QString linkOfExactly(qsizetype size) {
+  const QString head = QStringLiteral("https://mc.example.test/pair?p=");
+  const QString tail = QStringLiteral("#token=abc");
+  return head + QString(size - head.size() - tail.size(), QLatin1Char('a')) + tail;
+}
+
 }  // namespace
 
 class PairingExchangeRegression : public QObject {
@@ -47,6 +54,32 @@ private slots:
     const auto carried = pairing::readInvitation(wrapped(link));
     QVERIFY(carried);
     QCOMPARE(carried->link, link);
+  }
+
+  // Surrogate pairs cost two units and twelve characters once encoded, so six
+  // a unit, under the nine the longest wrapped link allows for.
+  void aLinkOfSurrogatePairsIsReadWrappedToo() {
+    QString padding;
+    for (int i = 0; i < 1000; ++i) padding += QStringLiteral("\U0001F600");
+    const QString link = QStringLiteral("https://mc.example.test/pair?padding=") + padding + QStringLiteral("#token=abc");
+    QVERIFY(link.size() > 2000 && link.size() <= 2048);
+    QVERIFY(pairing::readInvitation(link));
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
+  // The cap is on the link's length in UTF-16 units: exactly the cap is read,
+  // plain or wrapped, and one unit over is turned away either way.
+  void theCapIsExact() {
+    const QString atCap = linkOfExactly(2048);
+    QCOMPARE(atCap.size(), 2048);
+    QVERIFY(pairing::readInvitation(atCap));
+    QVERIFY(pairing::readInvitation(wrapped(atCap)));
+    const QString overCap = linkOfExactly(2049);
+    QCOMPARE(overCap.size(), 2049);
+    QVERIFY(!pairing::readInvitation(overCap));
+    QVERIFY(!pairing::readInvitation(wrapped(overCap)));
   }
 
   // The cap on the link itself holds whether or not it is wrapped.

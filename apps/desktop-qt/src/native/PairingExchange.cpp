@@ -123,9 +123,11 @@ std::optional<Link> readLink(const QString& entered) {
 
 std::optional<Invitation> readInvitation(const QString& received) {
   // A QR code holds under 3000 characters, and a pairing link a fraction of
-  // that. The cap is on the link itself; the app's own link wraps it
-  // percent-encoded, so it is let longer: a character outside ASCII is up to
-  // three UTF-8 bytes, nine characters once encoded.
+  // that. The cap is on the link itself, in UTF-16 units (QString::size); the
+  // app's own link wraps it percent-encoded, so it is let longer. A unit costs
+  // at most nine characters once encoded: three UTF-8 bytes for a BMP
+  // character, and six for each half of a surrogate pair (four bytes, twelve
+  // characters, over two units).
   constexpr qsizetype kLongest = 2048;
   constexpr qsizetype kLongestWrapped = 9 * kLongest + 64;
   QString text = received.trimmed();
