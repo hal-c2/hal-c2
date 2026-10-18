@@ -248,8 +248,10 @@ defmodule HalC2.Streams.View do
                 {[], settled}
 
               # What the client held at its offset is not known, so a subagent text that
-              # grew past the limit since cannot be appended to in step: the item is
-              # sent whole once, cut as a snapshot has it.
+              # is past the limit now cannot be appended to in step: the item is sent
+              # whole, cut as a snapshot has it, and its later events are left out. One
+              # that was past it and has been reset below since is replayed as it went,
+              # so the client can hold uncut text until the reset later in the replay.
               Wire.appends_past_limit?(kind, patch, entity) ->
                 {[%{event | patch: replacement(kind, entity)}], MapSet.put(settled, {kind, id})}
 

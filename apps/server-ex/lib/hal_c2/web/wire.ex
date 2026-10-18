@@ -89,6 +89,8 @@ defmodule HalC2.Web.Wire do
       else: patch
   end
 
+  # Sets are cut first: `cut_appends/2` measures an append against the set it follows
+  # as the client holds it, so a set past the limit leaves nothing to append to.
   defp turn_item_patch("subagent", patch, was) do
     patch
     |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
