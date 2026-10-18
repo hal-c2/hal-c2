@@ -2382,6 +2382,22 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "GitHub lists \#{int} as assigned to {string} and {string}",
+       %{args: [number, first, second]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{
+        "assignees" => %{"nodes" => [%{"login" => first}, %{"login" => second}]}
+      })
+    ])
+  end
+
+  step "\#{int}'s task is owned by {string}", %{args: [number, owner]} = context do
+    assert task_of(plan!(context), number)["owner"] == owner
+    context
+  end
+
   step "\#{int} is in the milestone {string} and \#{int} in {string} on GitHub",
        %{args: [one, first, two, second]} = context do
     in_milestones(context, [{one, first}, {two, second}])
@@ -3221,10 +3237,9 @@ defmodule HalC2.Steps.Planning.Planner do
           "--method" in call["args"],
           method = Enum.at(call["args"], Enum.find_index(call["args"], &(&1 == "--method")) + 1),
           %{"assignees" => [login]} <- [JSON.decode!(call["stdin"])],
-          {method, login} in changes,
           do: {method, login}
 
-    assert Enum.dedup(asked) == changes, "GitHub was asked #{inspect(asked)}"
+    assert asked == changes, "GitHub was asked #{inspect(asked)}"
     context
   end
 

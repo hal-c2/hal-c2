@@ -463,9 +463,13 @@ defmodule HalC2.Issues do
     end
   end
 
-  defp logins([_ | _] = logins) do
-    if Enum.all?(logins, &(is_binary(&1) and &1 != "")),
-      do: {:ok, logins},
+  # GitHub allows ten assignees on an issue; a login is text with no blanks around it.
+  defp logins([_ | _] = logins) when length(logins) <= 10 do
+    trimmed =
+      for login <- logins, is_binary(login), String.trim(login) != "", do: String.trim(login)
+
+    if length(trimmed) == length(logins),
+      do: {:ok, Enum.uniq(trimmed)},
       else: {:error, "assignees must be a list of logins."}
   end
 

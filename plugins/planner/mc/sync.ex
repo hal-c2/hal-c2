@@ -494,7 +494,7 @@ defmodule HalC2Plugins.Planner.Sync do
           Map.merge(status, %{
             "title" => issue["title"],
             "notes" => issue["body"] || "",
-            "owner" => List.first(issue["assignees"] || []),
+            "owner" => owner(item, issue),
             "labels" => issue["labels"] || []
           })
 
@@ -515,6 +515,13 @@ defmodule HalC2Plugins.Planner.Sync do
 
         Map.put(items, item["id"], prs_of(item, issue, now))
     end
+  end
+
+  # The task's owner is one of the issue's assignees: the one it has while the issue
+  # still lists them, as a push adds the new owner after the others, else the first.
+  defp owner(item, issue) do
+    assignees = issue["assignees"] || []
+    Enum.find(assignees, &same?(&1, item["owner"])) || List.first(assignees)
   end
 
   # The pull requests GitHub says close the issue, linked and marked as the issue's.

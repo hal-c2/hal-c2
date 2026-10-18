@@ -174,12 +174,20 @@ defmodule HalC2.IssuesTest do
     assert [%{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
     assert [%{"assignees" => ["alice"]}] = rest_inputs(dir, "DELETE")
 
-    assert {:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", []))
+    for bad <- [[], [" "], ["dana", 7], Enum.map(1..11, &"user#{&1}")],
+        do: assert({:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", bad)))
+
     assert length(calls(dir)) == 2
+
+    # A login is trimmed, and named once.
+    assert {:ok, _} =
+             Issues.handle("addAssignees", Map.put(input, "assignees", [" dana ", "dana"]))
+
+    assert [_, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
 
     # The endpoint takes several logins in one request.
     assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
-    assert [_, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
+    assert [_, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
   end
 
   test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do

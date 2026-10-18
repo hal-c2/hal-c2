@@ -1308,6 +1308,17 @@ Feature: Planner
       And GitHub is never asked to set #7's assignees outright
       And #7's task is marked as synced
 
+    # A push adds the new owner after the assignees the issue has, so GitHub does not list
+    # them first.
+    @mc
+    Scenario: A task's owner stays while GitHub lists them among the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And the user makes "dana" the owner of #7's task
+      When GitHub lists #7 as assigned to "bob" and "dana"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "dana"
+
     @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways
