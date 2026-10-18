@@ -275,8 +275,9 @@ defmodule HalC2.Upgrade do
   @impl true
   def init(nil) do
     # Here rather than in HalC2.Application, which a hot update cannot change: the
-    # agents, terminals and pulls started after this reach GitHub through gh too.
-    :ok = HalC2.Git.use_gh_for_github()
+    # agents, terminals and pulls started after this reach GitHub through gh too. It
+    # asks SSH off this process, so the services after this one do not wait for it.
+    _ = HalC2.Git.use_gh_for_github()
     {:ok, nil, {:continue, :outcome}}
   end
 

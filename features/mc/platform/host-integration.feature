@@ -315,26 +315,64 @@ Feature: The MC working with its host machine
     Then git fetches "git@github.com:acme/shop.git" over SSH
 
   @mc
-  Scenario: Git stays on SSH where an SSH agent answers for GitHub
+  Scenario Outline: Git stays on SSH where GitHub answers it, and goes to the GitHub CLI's sign-in where it refuses it
     Given the GitHub CLI on the host is signed in to github.com
-    And an SSH agent on the host answers for GitHub
+    And an SSH agent runs on the host and SSH to GitHub <ssh>
     When the MC sets up the git it starts
-    Then git fetches "git@github.com:acme/shop.git" over SSH
+    Then git fetches "git@github.com:acme/shop.git" over <transport>
+
+    Examples:
+      | ssh         | transport |
+      | is answered | SSH       |
+      | is refused  | HTTPS     |
+
+  # Asking SSH is a network round trip, at boot and after every hot update.
+  @mc
+  Scenario: The MC does not wait for SSH to answer for GitHub
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub hangs
+    When the MC begins setting up the git it starts
+    Then the MC is still asking whether SSH answers for GitHub
+    And git fetches "git@github.com:acme/shop.git" over HTTPS
 
   @mc
-  Scenario: An SSH agent that GitHub does not answer to leaves git on the GitHub CLI's sign-in
+  Scenario: An SSH that runs past its time is stopped and leaves git on its route
     Given the GitHub CLI on the host is signed in to github.com
-    And an SSH agent on the host holds no key GitHub accepts
+    And an SSH agent runs on the host and SSH to GitHub hangs
+    And SSH is given 1000 ms to answer
     When the MC sets up the git it starts
-    Then git fetches "git@github.com:acme/shop.git" over HTTPS
+    Then the ssh the MC started has stopped
+    And git fetches "git@github.com:acme/shop.git" over HTTPS
 
+  # A network that is down for one boot does not move git off a route that works.
   @mc
-  Scenario: A user's own rule sending HTTPS to SSH does not send git back to SSH
+  Scenario Outline: An SSH that cannot reach GitHub keeps the route git had
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub <before>
+    And the MC sets up the git it starts
+    And an SSH agent runs on the host and SSH to GitHub cannot reach it
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over <transport>
+
+    Examples:
+      | before      | transport |
+      | is answered | SSH       |
+      | is refused  | HTTPS     |
+
+  # Git matches its rules' prefixes by case, so each first character of an owner counts.
+  @mc
+  Scenario Outline: A user's own rule sending HTTPS to SSH does not send git back to SSH
     Given the GitHub CLI on the host is signed in to github.com
     And the user's own git config sends "https://github.com/" to SSH
     When the MC sets up the git it starts
-    Then git fetches "https://github.com/acme/shop.git" over HTTPS
-    And git pushes to "https://github.com/acme/shop.git" over HTTPS
+    Then git fetches "https://github.com/<owner>/shop.git" over HTTPS
+    And git pushes to "https://github.com/<owner>/shop.git" over HTTPS
+
+    Examples:
+      | owner  |
+      | acme   |
+      | Acme   |
+      | 9lives |
 
   @mc
   Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update

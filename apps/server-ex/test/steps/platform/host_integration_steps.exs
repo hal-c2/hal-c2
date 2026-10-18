@@ -526,21 +526,37 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :gh_config, config)
   end
 
-  step ~r/^an SSH agent on the host (?<state>answers for GitHub|holds no key GitHub accepts)$/,
-       %{args: [state]} = context do
+  # A stand-in for ssh: what `ssh -T git@github.com` gets from GitHub, as the row names.
+  step ~r/^an SSH agent runs on the host and SSH to GitHub (?<outcome>is answered|is refused|cannot reach it|hangs)$/,
+       %{args: [outcome]} = context do
     dir = Mc.tmp_dir(context.mc, "ssh")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
     World.put_os_env("SSH_AUTH_SOCK", Path.join(dir, "agent.sock"))
+    pid_file = Path.join(dir, "ssh.pid")
 
-    greeting =
-      if state == "answers for GitHub",
-        do:
-          "Hi acme! You've successfully authenticated, but GitHub does not provide shell access.",
-        else: "git@github.com: Permission denied (publickey)."
+    # GitHub greets a key it knows and exits 1; ssh exits 255 when it fails.
+    script =
+      case outcome do
+        "is answered" ->
+          "echo \"Hi acme! You've successfully authenticated, but GitHub does not provide shell access.\" >&2\nexit 1"
 
-    File.write!(Path.join(dir, "ssh-add"), "#!/bin/sh\necho '256 SHA256:x key (ED25519)'\n")
-    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\necho \"#{greeting}\" >&2\nexit 1\n")
-    for program <- ~w(ssh-add ssh), do: File.chmod!(Path.join(dir, program), 0o755)
+        "is refused" ->
+          "echo 'git@github.com: Permission denied (publickey).' >&2\nexit 255"
+
+        "cannot reach it" ->
+          "echo 'ssh: Could not resolve hostname github.com: Name or service not known' >&2\nexit 255"
+
+        "hangs" ->
+          "echo $$ > '#{pid_file}'\nexec sleep 600"
+      end
+
+    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\n#{script}\n")
+    File.chmod!(Path.join(dir, "ssh"), 0o755)
+    Map.put(context, :ssh_pid_file, pid_file)
+  end
+
+  step ~r/^SSH is given (?<ms>\d+) ms to answer$/, %{args: [ms]} = context do
+    World.put_app_env(:github_ssh_timeout, String.to_integer(ms))
     context
   end
 
@@ -557,15 +573,33 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  # Without waiting for SSH, as the upgrader at boot.
+  step "the MC begins setting up the git it starts", context do
+    set_up_git(context)
+  end
+
   step "the MC sets up the git it starts", context do
-    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+    context = set_up_git(context)
 
-    ExUnit.Callbacks.on_exit(fn ->
-      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
-      System.put_env(before)
-    end)
+    if pid = context[:asking] do
+      ref = Process.monitor(pid)
+      # Asking ends once git has the answer, or at the time SSH is given.
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 30_000
+    end
 
-    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step "the MC is still asking whether SSH answers for GitHub", context do
+    assert Process.alive?(context.asking)
+    context
+  end
+
+  step "the ssh the MC started has stopped", context do
+    os_pid = context.ssh_pid_file |> File.read!() |> String.trim()
+    # Exile's watcher stops the program after its owner dies, and says nothing when it
+    # has: this waits for that, never longer than its signals take with room to spare.
+    assert stopped_within?(os_pid, 250)
     context
   end
 
@@ -632,5 +666,46 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     assert answer =~ "password=from-gh"
     context
+  end
+
+  # Gone, or a zombie no one has reaped yet: either way it runs no more.
+  defp stopped?(os_pid) do
+    case File.read("/proc/#{os_pid}/stat") do
+      {:ok, stat} -> stat |> String.split(") ") |> List.last() |> String.starts_with?("Z")
+      {:error, _} -> true
+    end
+  end
+
+  defp set_up_git(context) do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    case HalC2.Git.use_gh_for_github() do
+      :ok ->
+        context
+
+      {:asking, pid} ->
+        # Stopped with the scenario, and its ssh with it, so none outlives the run.
+        ExUnit.Callbacks.on_exit(fn ->
+          ref = Process.monitor(pid)
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+
+          with {:ok, os_pid} <- File.read(context[:ssh_pid_file] || ""),
+               do: stopped_within?(String.trim(os_pid), 250)
+        end)
+
+        Map.put(context, :asking, pid)
+    end
+  end
+
+  defp stopped_within?(_os_pid, 0), do: false
+
+  defp stopped_within?(os_pid, tries) do
+    stopped?(os_pid) || (Process.sleep(20) == :ok and stopped_within?(os_pid, tries - 1))
   end
 end

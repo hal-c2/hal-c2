@@ -4,6 +4,11 @@ defmodule HalC2.Git do
   and reported as truncated, so a huge diff never lands in memory whole.
   """
 
+  require Logger
+
+  # The process asking whether SSH answers for GitHub (`use_gh_for_github/0`).
+  @asking HalC2.Git.GitHubSsh
+
   @type result :: %{status: integer | term, out: binary, err: binary, truncated: boolean}
 
   @doc """
@@ -14,22 +19,27 @@ defmodule HalC2.Git do
   """
   @spec run(Path.t(), [String.t()], keyword) :: {:ok, result} | {:error, String.t()}
   def run(cwd, args, opts \\ []) do
-    case opts[:timeout] do
-      nil ->
-        stream(cwd, args, opts)
+    argv = [Application.get_env(:hal_c2, :git_command, "git") | args]
 
-      ms ->
-        # Killing the task takes git with it: Exile stops a process its owner left.
-        task = Task.async(fn -> stream(cwd, args, opts) end)
-
-        case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
-          {:ok, result} -> result
-          nil -> {:error, "git #{hd(args)} timed out after #{ms} ms"}
-        end
+    case within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) do
+      {:ok, result} -> result
+      :timeout -> {:error, "git #{hd(args)} timed out after #{opts[:timeout]} ms"}
     end
   end
 
-  defp stream(cwd, args, opts) do
+  # Killing the task takes the program with it: Exile stops a process its owner left.
+  defp within(nil, fun), do: {:ok, fun.()}
+
+  defp within(ms, fun) do
+    task = Task.async(fun)
+
+    case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> {:ok, result}
+      nil -> :timeout
+    end
+  end
+
+  defp stream(name, argv, cwd, opts) do
     max = Keyword.get(opts, :max_bytes, 50_000_000)
 
     # Git that closed its output gets time to exit before it is killed: on a machine
@@ -45,7 +55,7 @@ defmodule HalC2.Git do
         if(input = opts[:input], do: [input: [input]], else: [])
 
     {out, err, size, status} =
-      [Application.get_env(:hal_c2, :git_command, "git") | args]
+      argv
       |> Exile.stream(exile_opts)
       |> Enum.reduce({[], [], 0, nil}, fn
         {:stdout, data}, {out, err, size, status} when size < max ->
@@ -71,10 +81,10 @@ defmodule HalC2.Git do
        truncated: size > max
      }}
   rescue
-    error -> {:error, "git could not be started: #{Exception.message(error)}"}
+    error -> {:error, "#{name} could not be started: #{Exception.message(error)}"}
   catch
-    # Exile exits the caller when git outlives every signal (`:kill_timeout`).
-    :exit, reason -> {:error, "git did not exit: #{inspect(reason)}"}
+    # Exile exits the caller when the program outlives every signal (`:kill_timeout`).
+    :exit, reason -> {:error, "#{name} did not exit: #{inspect(reason)}"}
   end
 
   @doc "Runs git and returns its stdout when it exits 0."
@@ -171,28 +181,54 @@ defmodule HalC2.Git do
   HTTPS, and `gh auth git-credential` answers for them. An MC running as a service
   has no SSH agent, so a key behind a passphrase never answers there.
 
-  Where an SSH agent does answer for GitHub, git is left on SSH: the CLI's sign-in
-  has no `workflow` scope when it was made for SSH, and HTTPS would refuse a push
-  that changes a workflow.
+  Where SSH does answer for GitHub, git is left on SSH: the CLI's sign-in has no
+  `workflow` scope when it was made for SSH, and HTTPS would refuse a push that
+  changes a workflow. Only an MC with an SSH agent asks (`ssh -T git@github.com`,
+  which GitHub greets for a key it takes, the agent's or a file's), so a service
+  stays off the network here, and an MC without an agent stays on HTTPS even where
+  a key file without a passphrase would answer.
 
-  A user's own `https://github.com/` to SSH rule would undo the rewrite (git
-  rewrites an address once, by the longest matching prefix, and the first one on a
-  tie), so the file also holds a rule for each first character of an owner's name,
-  one character longer than theirs, that keeps the address on HTTPS.
+  Asking does not hold up the caller (the upgrader, at boot). It runs in a process
+  of its own; until SSH answers or is refused, git keeps the route the last call
+  chose (HTTPS when there was none), and an SSH that cannot reach GitHub or runs past
+  its time leaves that route as it is. A later call stops an earlier one still
+  asking. Returns `{:asking, pid}` while it asks, the process ending once git has the
+  answer, and `:ok` when there was nothing to ask. Each choice is logged with why.
+
+  A user's own `https://github.com/` rule would undo the rewrite (git rewrites an
+  address once, by the longest matching prefix, and the first one on a tie), so the
+  file also holds a rule for each first character of an owner's name, one character
+  longer than theirs, that keeps the address on HTTPS. It beats any rule for the
+  whole host, one to an HTTPS mirror as much as one to SSH. A rule for one owner
+  (`https://github.com/acme/`) is longer and still wins for a fetch; a push stays on
+  HTTPS, as git takes a `pushInsteadOf` over any `insteadOf`.
 
   Git includes a file the MC owns and writes again on each call (at boot and after
   a hot update), so a later sign-in or sign-out reaches git already running too.
   """
   def use_gh_for_github do
     file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
-    tmp = file <> ".tmp"
+    include(file)
+    stop_asking()
 
-    # A file that could not be written is left out: git skips a missing include.
-    with :ok <- File.mkdir_p(Path.dirname(file)),
-         :ok <- File.write(tmp, github_config()),
-         do: File.rename(tmp, file)
+    case github_route() do
+      {:ask, ssh, https} ->
+        # A file left empty by the last call is git on SSH, which stands until SSH answers.
+        if File.read(file) != {:ok, ""}, do: write_config(file, https)
 
-    # GIT_CONFIG_COUNT entries come after every config file, as `-c` does.
+        {:ok, pid} = Task.start(fn -> receive(do: (:ask -> ask_ssh(file, ssh, https))) end)
+        Process.register(pid, @asking)
+        send(pid, :ask)
+        {:asking, pid}
+
+      config ->
+        write_config(file, config)
+        :ok
+    end
+  end
+
+  # GIT_CONFIG_COUNT entries come after every config file, as `-c` does.
+  defp include(file) do
     count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
 
     unless Enum.any?(0..(count - 1)//1, &(System.get_env("GIT_CONFIG_VALUE_#{&1}") == file)) do
@@ -202,30 +238,56 @@ defmodule HalC2.Git do
         "GIT_CONFIG_COUNT" => Integer.to_string(count + 1)
       })
     end
-
-    :ok
   end
 
-  defp github_config do
-    with gh when is_binary(gh) <- System.find_executable("gh"),
-         true <- gh_signed_in?(),
-         false <- ssh_answers_for_github?() do
-      # Git runs the helper through a shell, which would split a path with a space.
-      helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+  # A file that could not be written is left out: git skips a missing include.
+  defp write_config(file, config) do
+    tmp = file <> ".tmp"
 
-      """
-      [url "https://github.com/"]
-      \tinsteadOf = git@github.com:
-      \tinsteadOf = ssh://git@github.com/
-      #{keep_https_rules()}\
-      [credential "https://github.com"]
-      \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
-      \thelper =
-      \thelper = "#{String.replace(helper, ~w(\\ "), &("\\" <> &1))}"
-      """
+    with :ok <- File.mkdir_p(Path.dirname(file)),
+         :ok <- File.write(tmp, config),
+         do: File.rename(tmp, file)
+  end
+
+  # The config git gets, or `{:ask, ssh, https}` when SSH may answer for GitHub instead
+  # of the HTTPS config.
+  defp github_route do
+    with gh when is_binary(gh) <- System.find_executable("gh"),
+         true <- gh_signed_in?() do
+      https = https_config(gh)
+
+      with sock when sock not in [nil, ""] <- System.get_env("SSH_AUTH_SOCK"),
+           ssh when is_binary(ssh) <- System.find_executable("ssh") do
+        {:ask, ssh, https}
+      else
+        _ ->
+          Logger.info(
+            "Git reaches GitHub over HTTPS with the GitHub CLI's sign-in: no SSH agent."
+          )
+
+          https
+      end
     else
-      _ -> ""
+      _ ->
+        Logger.info("Git reaches GitHub as it is configured: the GitHub CLI is not signed in.")
+        ""
     end
+  end
+
+  defp https_config(gh) do
+    # Git runs the helper through a shell, which would split a path with a space.
+    helper = "!'#{String.replace(gh, "'", "'\\''")}' auth git-credential"
+
+    """
+    [url "https://github.com/"]
+    \tinsteadOf = git@github.com:
+    \tinsteadOf = ssh://git@github.com/
+    #{keep_https_rules()}\
+    [credential "https://github.com"]
+    \t# An empty helper drops the ones configured before, as `gh auth setup-git` does.
+    \thelper =
+    \thelper = "#{String.replace(helper, ~w(\\ "), &("\\" <> &1))}"
+    """
   end
 
   # `https://github.com/a` kept as it is, for a..z, A..Z and 0..9 (the first character
@@ -239,43 +301,56 @@ defmodule HalC2.Git do
     end
   end
 
-  # Whether the SSH agent holds a key that GitHub takes. Only an agent with keys is
-  # asked, so a service without one does not touch the network here.
-  defp ssh_answers_for_github? do
-    with sock when sock not in [nil, ""] <- System.get_env("SSH_AUTH_SOCK"),
-         add when is_binary(add) <- System.find_executable("ssh-add"),
-         ssh when is_binary(ssh) <- System.find_executable("ssh"),
-         {:ok, {_, 0}} <- bounded_cmd(add, ["-l"], 3_000),
-         {:ok, {out, _}} <-
-           bounded_cmd(
-             ssh,
-             ~w(-T -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=3 git@github.com),
-             8_000
-           ) do
-      # GitHub greets a key it knows and then exits 1, as it gives no shell.
-      out =~ "successfully authenticated"
-    else
-      _ -> false
+  defp stop_asking do
+    with pid when is_pid(pid) <- Process.whereis(@asking) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+      receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
     end
   end
 
-  defp bounded_cmd(command, args, timeout) do
-    # A program that cannot run is no answer, and must not take the caller (the
-    # upgrader, at boot) down with its linked task.
-    task =
-      Task.async(fn ->
-        try do
-          System.cmd(command, args, stderr_to_stdout: true)
-        rescue
-          _ -> {"", 127}
+  # Runs as `@asking`. An ssh past its time is not left behind: `within/2` kills the
+  # task that owns it, and Exile then the program. An agent without keys is refused too.
+  defp ask_ssh(file, ssh, https) do
+    ms = Application.get_env(:hal_c2, :github_ssh_timeout, 8_000)
+
+    argv = [
+      ssh | ~w(-T -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=3 git@github.com)
+    ]
+
+    case within(ms, fn -> stream("ssh", argv, Path.dirname(file), max_bytes: 65_536) end) do
+      {:ok, {:ok, %{out: out, err: err}}} ->
+        said = String.trim(out <> err)
+
+        cond do
+          # GitHub greets a key it knows and then exits 1, as it gives no shell.
+          said =~ "successfully authenticated" ->
+            Logger.info("Git stays on SSH for GitHub, which answers it.")
+            write_config(file, "")
+
+          said =~ "Permission denied" ->
+            Logger.info(
+              "Git reaches GitHub over HTTPS with the GitHub CLI's sign-in: " <>
+                "GitHub refused SSH (#{last_line(said)})."
+            )
+
+            write_config(file, https)
+
+          true ->
+            Logger.info(
+              "Git keeps its route to GitHub: SSH did not reach it (#{last_line(said)})."
+            )
         end
-      end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> {:ok, result}
-      _ -> :error
+      {:ok, {:error, reason}} ->
+        Logger.info("Git keeps its route to GitHub: #{reason}.")
+
+      :timeout ->
+        Logger.info("Git keeps its route to GitHub: SSH did not answer in #{ms} ms.")
     end
   end
+
+  defp last_line(text), do: text |> String.split("\n") |> List.last()
 
   # Read from gh's hosts file rather than asked of gh, which would open the keyring
   # holding the token at boot.

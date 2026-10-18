@@ -89,12 +89,16 @@ Downloads, it may need Full Disk Access for the executable listed in
 The service has no SSH agent, so an SSH key with a passphrase cannot reach your
 remotes from it. GitHub still works when the GitHub CLI is signed in
 (`gh auth login`): HAL-C2 and its agents reach `git@github.com:` remotes over HTTPS
-with that sign-in, even if your own git config sends `https://github.com/` to SSH.
-Signing in or out later takes effect when HAL-C2 next starts or updates.
+with that sign-in, even if your own git config sends all of `https://github.com/`
+to SSH or a mirror. A rule of yours for one owner, such as `https://github.com/acme/`,
+still applies to fetches. Signing in or out later takes effect when HAL-C2 next
+starts or updates.
 
-Where an SSH agent holding a key GitHub accepts is running, HAL-C2 leaves git on SSH
-instead. If a push that changes a workflow is refused for a missing `workflow` scope,
-run `gh auth refresh -s workflow` on that machine.
+Where an SSH agent is running and GitHub accepts SSH from that machine, HAL-C2
+leaves git on SSH instead. It checks when it starts or updates, without holding up
+either; if GitHub cannot be reached then, git keeps the way it went before. If a
+push that changes a workflow is refused for a missing `workflow` scope and you push
+with the GitHub CLI's sign-in, run `gh auth refresh -s workflow` on that machine.
 
 For failures after signing in to HAL-C2 Connect, see
 [connection troubleshooting](./remote-access.md#hal-c2-connect-troubleshooting).
