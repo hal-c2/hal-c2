@@ -15,6 +15,12 @@ import glob, json, os, re, sys, time, uuid
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
 TRACE = os.environ.get("FAKE_CODEX_TRACE")
+# A steer's answer is an item of its own. Its id is unique across fake processes, as
+# Codex's are: request ids start over with a new process, so they would name an
+# earlier process's answer, and the MC would move that answer into this turn.
+def steer_item_id():
+    return f"msg-steer-{uuid.uuid4().hex}"
+
 def trace(entry):
     if TRACE:
         with open(TRACE, "a") as f:
@@ -397,8 +403,9 @@ for line in sys.stdin:
             # The turn took the steer and ended before its answer got back.
             closing = False
             text = "steered: " + params["input"][0]["text"]
-            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
-            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
+            item_id = steer_item_id()
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
             send({"id": mid, "result": {"turnId": ctx["turnId"]}})
             continue
@@ -413,8 +420,9 @@ for line in sys.stdin:
         # A running turn passes on a new quota reading, as Codex does alongside token usage.
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
-        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": ""}}})
-        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-steer-{mid}", "text": text}}})
+        item_id = steer_item_id()
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
