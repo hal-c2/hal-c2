@@ -477,6 +477,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   # failure, and it is the turn's once every prompt has answered. A steer answering
   # before the turn's prompt ran in the prompt's loop, whose answer is the turn's.
   # Interrupted, the turn ends at the first answer once its prompt's is in.
+  # Taking the last answer as the loop's relies on every prompt OpenCode took into one
+  # loop answering with that loop's one result. OpenCode 1.19 does: a prompt to a
+  # running session awaits the running loop's own result (`Runner.ensureRunning`), and
+  # each prompt's answer is built from it, so a joined steer answers as its loop did.
   defp answer(state, label, result) do
     answer = if label == :prompt or state.answer != nil, do: result
 
