@@ -2223,8 +2223,15 @@ defmodule HalC2.Steps.Planning.Planner do
        %{args: [number, title, id]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, title)
+
+    # Erased while the plugin is stopped, so no save of the old server can mint the new
+    # run's id and stamp the saved push with it.
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
     :persistent_term.erase({HalC2Plugins.Planner, :run})
-    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => id, "acceptPermissions" => []})
+
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     context
@@ -3311,17 +3318,19 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # Lets go of whatever waits on the fifo `gate`, if anything does: a read-write open
+  # does not wait for a reader the way a write does, and a fifo already gone (a gate
+  # script removes its own once read) is nothing waiting.
+  defp release(gate, word) do
+    with {:ok, file} <- File.open(gate, [:read, :write, :raw]) do
+      :ok = :file.write(file, word)
+      File.close(file)
+    end
+  end
+
   # Lets the late rename's gh answer, once it is waiting. The fifo is opened raw: through
   # the file server, the open would hold every other file call until gh reads it, the
   # rename's own on its way to gh included.
-  # Lets go of whatever waits on the fifo `gate`, if anything does: a read-write open
-  # does not wait for a reader the way a write does.
-  defp release(gate, word) do
-    {:ok, file} = File.open(gate, [:read, :write, :raw])
-    :ok = :file.write(file, word)
-    File.close(file)
-  end
-
   defp answer_late(context), do: File.write!(context.gh_gate, "answer", [:raw])
   defp answer_late(context, title), do: File.write!(context.gh_gates[title], "answer", [:raw])
 

@@ -418,8 +418,9 @@ defmodule HalC2Plugins.Planner do
 
   def call_agent_tool(@report_tool, arguments, %{thread_id: thread_id, settings: settings}) do
     with {:ok, report} <- report(arguments),
-         {:ok, run, effects} <- decide({:report, thread_id, report}, settings) do
-      effects(effects, settings)
+         projects = projects(settings),
+         {:ok, run, effects} <- decide({:report, thread_id, report}, projects) do
+      effects(effects, settings, projects)
 
       {:ok,
        %{
@@ -442,8 +443,9 @@ defmodule HalC2Plugins.Planner do
 
   def call_agent_tool(@progress_tool, arguments, %{thread_id: thread_id, settings: settings}) do
     with {:ok, progress} <- progress(arguments),
-         {:ok, item, effects} <- decide({:progress, thread_id, progress}, settings) do
-      effects(effects, settings)
+         projects = projects(settings),
+         {:ok, item, effects} <- decide({:progress, thread_id, progress}, projects) do
+      effects(effects, settings, projects)
 
       {:ok,
        %{
@@ -535,8 +537,10 @@ defmodule HalC2Plugins.Planner do
   # A change to the plan, then what it sends on: its pushes to GitHub, each told back to
   # the server, and its posts to Slack. An item in the reply is read again after them.
   defp change(message, settings) do
-    with {:ok, reply, effects} <- decide(message, settings) do
-      effects(effects, settings)
+    projects = projects(settings)
+
+    with {:ok, reply, effects} <- decide(message, projects) do
+      effects(effects, settings, projects)
 
       case reply do
         %{"item" => %{"id" => id}} when effects != %{} ->
@@ -548,21 +552,25 @@ defmodule HalC2Plugins.Planner do
     end
   end
 
-  # Asks the server for a change. A plan that syncs both ways pushes it, naming the
-  # project each push asks GitHub through, so the MC's projects are read here first:
-  # reading them runs git for each project, which the server is not held up by.
-  defp decide(message, %{"sync" => "twoWay"}) do
+  # The MC's projects, for a plan that syncs both ways: its pushes name the project each
+  # asks GitHub through. Reading them runs git for each project, which the server is not
+  # held up by, so they are read once for a change and go with every link of its pushes.
+  defp projects(%{"sync" => "twoWay"}) do
     case Host.projects(@id) do
-      {:ok, projects} -> server({:projects, projects, message})
-      _ -> server(message)
+      {:ok, projects} -> projects
+      _ -> nil
     end
   end
 
-  defp decide(message, _settings), do: server(message)
+  defp projects(_settings), do: nil
 
-  defp effects(effects, settings) do
+  # Asks the server for a change, with the projects `projects/1` read when it has them.
+  defp decide(message, nil), do: server(message)
+  defp decide(message, projects), do: server({:projects, projects, message})
+
+  defp effects(effects, settings, projects) do
     for {id, token, ops, synced} <- Map.get(effects, :pushes, []),
-        do: push(id, token, ops, synced, settings)
+        do: push(id, token, ops, synced, settings, projects)
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
     :ok
@@ -571,9 +579,9 @@ defmodule HalC2Plugins.Planner do
   # Asks GitHub for a push of the task `id`, tells the server how it went and runs the
   # push it answers with, the task's change made while GitHub had this one, until none
   # is left. A push that raised is one GitHub did not take, so the task is not left
-  # waiting on it. The server hears with the MC's projects as read here, so a chained
-  # push does not depend on a look having read them since the server started.
-  defp push(id, token, ops, synced, settings) do
+  # waiting on it. The server hears with the MC's projects as the change read them, so a
+  # chained push does not depend on a look having read them since the server started.
+  defp push(id, token, ops, synced, settings, projects) do
     {error, extra} =
       try do
         Sync.run(ops, synced)
@@ -583,8 +591,8 @@ defmodule HalC2Plugins.Planner do
            %{"synced" => synced}}
       end
 
-    case decide({:pushed, id, token, error, extra}, settings) do
-      {:push, ops, synced} -> push(id, token, ops, synced, settings)
+    case decide({:pushed, id, token, error, extra}, projects) do
+      {:push, ops, synced} -> push(id, token, ops, synced, settings, projects)
       :ok -> :ok
     end
   end

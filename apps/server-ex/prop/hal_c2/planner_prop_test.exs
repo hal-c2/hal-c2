@@ -1836,29 +1836,38 @@ defmodule HalC2.PlannerPropTest do
       end)
 
     Process.register(holder, HalC2.WorktreeSetup)
-    input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "api"}
-    {reply, value} = call("run", input)
 
-    if reply == :ok do
-      Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+    # The fake is a throwaway, so it goes whatever failed between: the name freed for
+    # the next case and the holder killed, not waited on for its mailbox.
+    reply =
+      try do
+        input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "api"}
+        {reply, value} = call("run", input)
 
-      receive do
-        {:setup_held, launcher} ->
-          ref = Process.monitor(launcher)
-          Process.exit(launcher, :kill)
+        if reply == :ok do
+          Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
 
           receive do
-            {:DOWN, ^ref, :process, _, _} -> :ok
-          after
-            15_000 -> problem("the killed launcher never went down")
-          end
-      after
-        15_000 -> problem("the worktree setup was never asked to hold the launch")
-      end
-    end
+            {:setup_held, launcher} ->
+              ref = Process.monitor(launcher)
+              Process.exit(launcher, :kill)
 
-    Process.unregister(HalC2.WorktreeSetup)
-    send(holder, :done)
+              receive do
+                {:DOWN, ^ref, :process, _, _} -> :ok
+              after
+                15_000 -> problem("the killed launcher never went down")
+              end
+          after
+            15_000 -> problem("the worktree setup was never asked to hold the launch")
+          end
+        end
+
+        reply
+      after
+        Process.unregister(HalC2.WorktreeSetup)
+        Process.exit(holder, :kill)
+      end
+
     observe(reply)
   end
 
