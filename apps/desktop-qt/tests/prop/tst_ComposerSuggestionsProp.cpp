@@ -20,14 +20,31 @@ namespace prop = halc2::prop;
 
 namespace {
 
-// Typed with the cursor at the end: no menu, a bare @, and words after it that
-// the workspace's one file, src/main.cpp, does and does not match.
-const QStringList kTexts{QString(), QStringLiteral("hello"), QStringLiteral("@"), QStringLiteral("@s"), QStringLiteral("@sr"),
-                         QStringLiteral("@zz")};
+// Typed with the cursor at the end: no menu, a bare @, and words after it, at
+// the start of the text or after another word, that the workspace's one file,
+// src/main.cpp, does and does not match.
+const QStringList kTexts{QString(),
+                         QStringLiteral("hello"),
+                         QStringLiteral("@"),
+                         QStringLiteral("@s"),
+                         QStringLiteral("@sr"),
+                         QStringLiteral("@m"),
+                         QStringLiteral("@ss"),
+                         QStringLiteral("@zz"),
+                         QStringLiteral("hello @"),
+                         QStringLiteral("hello @s"),
+                         QStringLiteral("hello@s")};
 const QString kNothing = QStringLiteral("No matching files or folders.");
 
-// What the workspace's search finds for a query: the folder src and no more.
-int matchesOf(const QString& query) { return query.contains(QLatin1String("s"), Qt::CaseInsensitive) ? 1 : 0; }
+// What the workspace's search finds for a query: the folder src and the file
+// src/main.cpp, each when its last segment contains the query.
+int matchesOf(const QString& query) {
+  int found = 0;
+  for (const QString& name : {QStringLiteral("src"), QStringLiteral("main.cpp")}) {
+    if (name.contains(query, Qt::CaseInsensitive)) ++found;
+  }
+  return found;
+}
 
 struct Model {
   QString text;
@@ -36,7 +53,12 @@ struct Model {
   QString searched;
   bool answered = false;
 
-  QString query() const { return text.startsWith(QLatin1Char('@')) ? text.mid(1) : QString(); }
+  // The word after an @ that starts the text or follows a space.
+  int at() const {
+    const int index = int(text.lastIndexOf(QLatin1Char('@')));
+    return index == 0 || (index > 0 && text.at(index - 1).isSpace()) ? index : -1;
+  }
+  QString query() const { return at() < 0 ? QString() : text.mid(at() + 1); }
 };
 
 struct Sut {
@@ -118,7 +140,7 @@ struct Sut {
 bool menuIs(const Model& m, const Sut& sut) {
   const QVariantMap shown = sut.shown();
   if (shown.value(QStringLiteral("text")).toString() != m.text) return false;
-  const bool path = m.text.startsWith(QLatin1Char('@'));
+  const bool path = m.at() >= 0;
   if (shown.value(QStringLiteral("triggerKind")).toString() != (path ? QStringLiteral("path") : QString())) return false;
   const QVariant empty = shown.value(QStringLiteral("suggestionsEmptyText"));
   const int count = int(shown.value(QStringLiteral("suggestions")).toList().size());

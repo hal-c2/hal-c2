@@ -53,6 +53,22 @@ TestCase {
         compare(combo.background.border.color, "#ff8800");
     }
 
+    // A bordered picker (Settings) rings on any focus, mouse included.
+    function test_outlinePickerRingsOnAnyFocus() {
+        Theme.colors = {
+            focus: "#ff8800",
+            input: "#333333"
+        };
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            outline: true
+        });
+        compare(combo.background.border.width, 1);
+        compare(combo.background.border.color, "#333333");
+        combo.forceActiveFocus(Qt.MouseFocusReason);
+        compare(combo.background.border.width, 1);
+        compare(combo.background.border.color, "#ff8800");
+    }
+
     function test_currentRowIsMarked() {
         Theme.colors = {
             text: "#ff0000",
