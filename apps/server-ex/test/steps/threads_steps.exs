@@ -2896,6 +2896,84 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  step "{string} holds {int} more messages in that install, the last of which cannot be read",
+       %{args: [title, n]} = context do
+    id = context.t3.ids[title]
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, """
+      INSERT INTO orchestration_events (aggregate_kind, stream_id, event_type, payload_json,
+        occurred_at, application_event_version)
+      VALUES ('thread', ?1, 'message.sent', ?2, '2026-09-01T12:00:00.000Z', 2)
+      """)
+
+    for k <- 1..n do
+      payload = if k == n, do: "{", else: JSON.encode!(t3_more_message(id, k))
+      :ok = Exqlite.Sqlite3.bind(stmt, [id, payload])
+      :done = Exqlite.Sqlite3.step(db, stmt)
+    end
+
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    Map.put(context, :t3_more, n)
+  end
+
+  step "the last message of {string} in that install can be read again",
+       %{args: [title]} = context do
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "UPDATE orchestration_events SET payload_json = ?1 WHERE sequence = (SELECT MAX(sequence) FROM orchestration_events)"
+      )
+
+    message = t3_more_message(context.t3.ids[title], context.t3_more)
+    :ok = Exqlite.Sqlite3.bind(stmt, [JSON.encode!(message)])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  # The thread's stream as the stopped import left it, written to by something else.
+  step "{string} is renamed here", %{args: [title]} = context do
+    id = context.t3.ids[title]
+    patch = HalC2.Patch.diff(%{}, %{"title" => "Renamed here"})
+    {:ok, _} = HalC2.Store.append([{:thread, id, [{"thread", id, patch}]}])
+    context
+  end
+
+  step "{string} has all {int} of its messages", %{args: [title, n]} = context do
+    assert length(HalC2.StreamState.list(World.stream(context, title), "message")) == n
+    context
+  end
+
+  step "the user is told {string} changed here and cannot be continued",
+       %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    assert message =~ "changed here after its import stopped"
+    context
+  end
+
+  defp t3_more_message(id, k) do
+    %{
+      "id" => "#{id}-more#{k}",
+      "threadId" => id,
+      "role" => "user",
+      "text" => "more #{k}",
+      "attachments" => [],
+      "createdAt" => "2026-09-01T12:00:00.000Z"
+    }
+  end
+
   defp t3_offered(context) do
     {:ok, %{"threads" => offered}} =
       HalC2.Cluster.Command.request(:post, "/api/previous-installs/threads", %{

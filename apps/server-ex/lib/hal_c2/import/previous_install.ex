@@ -22,10 +22,12 @@ defmodule HalC2.Import.PreviousInstall do
 
   @databases ~w(statev2.sqlite state.sqlite)
 
-  # The store's mark on an imported thread: "unfinished" from when its streams are made
-  # until its files are brought, "finished" after.
+  # The store's mark on an imported thread: "events" from before its stream is made
+  # until all its events are in (`Import.V2` writes them in batches), "files" until its
+  # files are brought, "finished" after.
   @mark_prefix "import.thread."
-  @unfinished "unfinished"
+  @events "events"
+  @files "files"
   @finished "finished"
 
   @doc "The installs found on this machine: `[%{\"path\", \"label\"}]`."
@@ -108,12 +110,13 @@ defmodule HalC2.Import.PreviousInstall do
   def import_threads(_, _), do: {:error, "Name the install and the threads to import."}
 
   # `report` hears how far the thread is: its events read, then its threads finished.
-  # A thread whose streams are here but whose files were not all brought (the import
-  # failed or the MC stopped in `finish/3`) is marked unfinished in the store, so a retry
-  # finishes it rather than answering "already here".
+  # A thread whose stream is here but whose events or files were not all brought (the
+  # import failed or the MC stopped) is marked so in the store, and a retry continues it
+  # rather than answering "already here": its events after those already in, then its files.
   defp import_thread(path, index, files, id, report) do
     here = here()
-    done = MapSet.difference(here, unfinished())
+    marks = marks()
+    done = done(here, marks)
 
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
          [_ | _] = missing <- todo(index, id, done),
@@ -124,16 +127,20 @@ defmodule HalC2.Import.PreviousInstall do
       events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
       threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
 
-      fresh = Enum.reject(missing, &MapSet.member?(here, &1))
-      for id <- fresh, do: :ok = Store.put_meta(mark_key(id), @unfinished)
+      # Absent here, or here with only some of their events.
+      reading = Enum.filter(missing, &(not MapSet.member?(here, &1) or marks[&1] == @events))
+      for id <- reading, do: :ok = Store.put_meta(mark_key(id), @events)
 
-      if fresh != [] do
+      if reading != [] do
         {:ok, _} =
           HalC2.Import.V2.run(database(path), Store,
-            only: fresh,
+            only: reading,
+            resume: Map.new(Enum.filter(reading, &MapSet.member?(here, &1)), &{&1, stored(&1)}),
             rewrite: rewrite,
             progress: events
           )
+
+        for id <- reading, do: :ok = Store.put_meta(mark_key(id), @files)
       end
 
       threads.(0)
@@ -217,14 +224,22 @@ defmodule HalC2.Import.PreviousInstall do
 
   defp here, do: MapSet.new(Store.list_streams(Store.path()), & &1.id)
 
-  # The threads here with their files: their streams are here and no unfinished mark
-  # says the files are not. Read once for all threads, not one store read per thread.
-  defp done, do: MapSet.difference(here(), unfinished())
+  # The threads here whole: their streams are here and no mark says their events or
+  # files are not. Read once for all threads, not one store read per thread.
+  defp done(here \\ here(), marks \\ marks()),
+    do: MapSet.reject(here, &(marks[&1] in [@events, @files]))
 
-  defp unfinished do
-    for {key, @unfinished} <- Store.metas(Store.path(), @mark_prefix),
-        into: MapSet.new(),
-        do: String.replace_prefix(key, @mark_prefix, "")
+  defp marks do
+    for {key, mark} <- Store.metas(Store.path(), @mark_prefix),
+        into: %{},
+        do: {String.replace_prefix(key, @mark_prefix, ""), mark}
+  end
+
+  # How much of a stream a stopped import left here: `Import.V2`'s `:resume`.
+  defp stored(id) do
+    Store.reduce_stream(Store.path(), id, 0, {0, nil}, fn e, {n, _} ->
+      {n + 1, {e.kind, e.entity, e.patch, e.at}}
+    end)
   end
 
   # The threads of a family still to bring: absent here, or here without their files.

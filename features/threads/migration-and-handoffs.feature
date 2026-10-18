@@ -73,6 +73,29 @@ Feature: Carrying threads and context across servers and agents
     And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
     And that install offers "Alpha" as imported
 
+  @mc
+  Scenario: A thread whose import stopped partway through its history is imported whole
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    And that install does not offer "Alpha" as imported
+    And the last message of "Alpha" in that install can be read again
+    When the user imports "Alpha" from that install
+    Then "Alpha" has all 2502 of its messages
+    And that install offers "Alpha" as imported
+
+  @mc
+  Scenario: A thread changed here after its import stopped partway is not continued
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the last message of "Alpha" in that install can be read again
+    And "Alpha" is renamed here
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" changed here and cannot be continued
+    And that install does not offer "Alpha" as imported
+
   @backlog @mc
   Scenario: Threads from the first version are migrated once
     Given the first version's database holds the thread "Legacy work"

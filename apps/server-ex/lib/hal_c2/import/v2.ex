@@ -22,6 +22,11 @@ defmodule HalC2.Import.V2 do
 
   Options: `:only`, the stream ids to import, and `:rewrite`, a function every event's
   payload goes through first (`HalC2.ThreadArchive.rewriter/4`, to land in another project).
+  `:resume` names streams an import that stopped partway left in the store, as
+  `%{id => {count, last}}`: their changes there and the last of them (`{kind, entity,
+  patch, at}`). The import is deterministic, so those streams continue after their first
+  `count` changes; one whose last change is not the import's own raises instead, since
+  something else wrote to it and its history can no longer be continued.
   """
 
   @quiet_events ["thread.visited", "thread.marked-unread"]
@@ -44,6 +49,7 @@ defmodule HalC2.Import.V2 do
 
     try do
       streams = source_streams(db, Keyword.get(opts, :only))
+      resume = Keyword.get(opts, :resume, %{})
       totals = %{streams: 0, source_events: 0, events: 0, source_bytes: 0, bytes: 0}
       progress = progress(db, streams, opts[:progress])
 
@@ -56,6 +62,7 @@ defmodule HalC2.Import.V2 do
               aggregate,
               stream_id,
               legacy?,
+              Map.get(resume, stream_id, {0, nil}),
               opts[:rewrite] || (& &1),
               &progress.(totals.source_events + &1)
             )
@@ -141,7 +148,7 @@ defmodule HalC2.Import.V2 do
 
   # A thread with any v2 event was migrated by an earlier install; its v1 events are
   # history the v2 ones already carry.
-  defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite, progress) do
+  defp import_stream(db, store, aggregate, stream_id, legacy?, {skip, last}, rewrite, progress) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
       SELECT event_type, payload_json, occurred_at FROM orchestration_events
@@ -162,6 +169,8 @@ defmodule HalC2.Import.V2 do
       progress: progress,
       pending: [],
       pending_count: 0,
+      skip: skip,
+      last: last,
       source_events: 0,
       events: 0,
       source_bytes: 0,
@@ -169,6 +178,7 @@ defmodule HalC2.Import.V2 do
     }
 
     acc = step(db, stmt, acc, store, stream_kind, stream_id)
+    if acc.skip > 0, do: raise(diverged(stream_id))
     acc = flush(acc, store, stream_kind, stream_id)
     HalC2.Projection.rebuild(store, stream_id)
     Map.take(acc, [:source_events, :events, :source_bytes, :bytes])
@@ -298,8 +308,21 @@ defmodule HalC2.Import.V2 do
       )
   end
 
-  defp push(acc, change),
+  defp push(%{skip: 0} = acc, change),
     do: %{acc | pending: [change | acc.pending], pending_count: acc.pending_count + 1}
+
+  # A change a stopped import already stored; the last of them must be the stored one.
+  defp push(%{skip: 1} = acc, {kind, entity, patch, at}) do
+    if {kind, entity, JSON.decode!(JSON.encode!(patch)), at} != acc.last,
+      do: raise(diverged(acc.stream_id))
+
+    %{acc | skip: 0}
+  end
+
+  defp push(acc, _change), do: %{acc | skip: acc.skip - 1}
+
+  defp diverged(stream_id),
+    do: "#{stream_id} changed here after its import stopped, so it cannot be continued"
 
   defp flush(%{pending: []} = acc, _store, _kind, _id), do: acc
 
