@@ -29,6 +29,22 @@ defmodule HalC2.StoreTest do
     assert {:ok, 1} = Task.await(write)
   end
 
+  # A stream's sidebar write was queued at the store when the thread-move property
+  # restarted it, and took the stream down with it (hal-c2/hal-c2#399).
+  test "a write the store is stopped before taking waits for it to restart", %{path: path} do
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+    :erlang.trace(store, true, [:receive])
+    write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+    assert_receive {:trace, ^store, :receive, {:"$gen_call", _, {:append, _, _}}}
+
+    :ok = stop_supervised(Store)
+    start_supervised!({Store, path: path})
+
+    assert {:ok, 1} = Task.await(write)
+    assert [%{id: "t1"}] = Store.list_streams(path)
+  end
+
   test "the time of an append is only given with its store" do
     assert {:ok, 1} = Store.append(Store, [{:thread, "t1", [change("t1")]}], 1_700_000_000_000)
 

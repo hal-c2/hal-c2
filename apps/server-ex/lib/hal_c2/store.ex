@@ -147,21 +147,23 @@ defmodule HalC2.Store do
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
     do: write(store, {:put_shell, stream_id, seq, kind, row})
 
-  # A write waits out a restart of a named store: a call that found no store wrote
-  # nothing, so it is made again once the store is back. Nothing says when that is, so
-  # it looks every few milliseconds. A call the store took and then crashed on may
-  # have landed, and fails as it did.
+  # A write waits out a restart of a named store: a call that found no store, or that
+  # was still queued when the store was stopped (`init/1` traps exits), wrote nothing,
+  # so it is made again once the store is back. Nothing says when that is, so it looks
+  # every few milliseconds. A call the store took and then crashed on may have landed,
+  # and fails as it did. (A checkpoint the checkpointer answers may run twice, which
+  # does no harm.)
   defp write(store, request, deadline \\ nil) do
     GenServer.call(store, request, @write_timeout)
   catch
-    :exit, {:noproc, _} = reason when is_atom(store) ->
+    :exit, {reason, _} = exit when reason in [:noproc, :shutdown] and is_atom(store) ->
       deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
 
       if System.monotonic_time(:millisecond) < deadline do
         Process.sleep(@restart_poll)
         write(store, request, deadline)
       else
-        exit(reason)
+        exit(exit)
       end
   end
 
@@ -356,6 +358,10 @@ defmodule HalC2.Store do
 
   @impl true
   def init(path) do
+    # A stop (a supervisor restarting the store) then ends it between calls: the one in
+    # hand is answered, and the ones queued behind it exit `:shutdown` having written
+    # nothing, which `write/3` makes again.
+    Process.flag(:trap_exit, true)
     # First, so a reader that finds this store by name finds its path too.
     :persistent_term.put(path_key(self()), path)
     File.mkdir_p!(Path.dirname(path))
@@ -611,6 +617,12 @@ defmodule HalC2.Store do
 
     {:noreply, state}
   end
+
+  # A linked process (the checkpointer) takes the store down as it did before the store
+  # trapped exits.
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+  def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
 
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
