@@ -2672,15 +2672,15 @@ defmodule HalC2.Orchestration do
 
   # The changes that bring a thread from before each instance had its own provider
   # thread up to date. Then every instance of a driver kept its session under the
-  # default instance's id (the driver's), and their runs named it. Another instance's
-  # provider thread found there moves to that instance's own id, naming that instance's
-  # provider session (made by its next run), and the runs other instances
-  # ran there (their attempts and provider turns too) name their own instance's, so
-  # each resumes, forks and rewinds in its own home. The default id is then the default
-  # instance's; its next run takes it over (`new_run/5`). The provider thread is then
-  # marked `perInstance`, so later runs skip the scan: from then on every run names its
-  # own instance's provider thread.
-  defp relocated(state, driver, thread_id) do
+  # default instance's id (the driver's), and their runs named it. Each other instance
+  # that ran there gets a provider thread of its own, which its runs (their attempts and
+  # provider turns too) then name, so each resumes, forks and rewinds in its own home.
+  # One whose own provider thread exists already keeps its runs where they were, as
+  # runs of another instance's provider thread (`HalC2.Orchestration.Fork` gives them
+  # the history). The default id is then the default instance's; its next run takes it
+  # over (`new_run/5`). The provider thread is then marked `perInstance`, so later runs
+  # skip the scan: from then on every run names its own instance's provider thread.
+  defp relocated(state, driver, thread_id, at) do
     legacy_id = Entities.provider_thread_id(driver, thread_id)
     threads = StreamState.get(state, "provider-thread")
     legacy = threads[legacy_id]
@@ -2688,32 +2688,54 @@ defmodule HalC2.Orchestration do
     if legacy == nil or legacy["perInstance"] do
       []
     else
-      owner = legacy["providerInstanceId"]
-      moved_id = owner && Entities.provider_thread_id(owner, thread_id)
+      owner = legacy["providerInstanceId"] || driver
 
-      record =
-        if owner not in [nil, driver] and threads[moved_id] == nil,
-          do: [
+      homeless =
+        state
+        |> StreamState.list("run")
+        |> Enum.filter(&(&1["providerThreadId"] == legacy_id))
+        |> Enum.group_by(&(&1["providerInstanceId"] || driver))
+        |> Map.put_new(owner, [])
+        |> Map.delete(driver)
+        |> Map.reject(fn {instance, _} ->
+          threads[Entities.provider_thread_id(instance, thread_id)]
+        end)
+
+      # Each takes its own provider session, made by its next run. The instance that ran
+      # last there takes the native thread along. The shared provider thread only ever
+      # held the last one's, so another starts a new native thread, which the runs it had
+      # there are not in (`nativeSinceRunOrdinal`).
+      homes =
+        for {instance, runs} <- homeless do
+          id = Entities.provider_thread_id(instance, thread_id)
+          session_id = Entities.provider_session_id(instance, thread_id)
+
+          if instance == owner do
             create(
               "provider-thread",
-              moved_id,
-              Map.merge(legacy, %{
-                "id" => moved_id,
-                "providerSessionId" => Entities.provider_session_id(owner, thread_id)
-              })
+              id,
+              Map.merge(legacy, %{"id" => id, "providerSessionId" => session_id})
             )
-          ],
-          else: []
+          else
+            ran = for %{"activeAttemptId" => attempt} = run <- runs, attempt, do: run["ordinal"]
+            last = Enum.max(ran, fn -> nil end)
+
+            record =
+              Entities.provider_thread(id, thread_id, session_id, last, at, driver, instance)
+              |> Map.put("nativeSinceRunOrdinal", last && last + 1)
+
+            create("provider-thread", id, record)
+          end
+        end
 
       runs =
-        for {id, run} <- StreamState.get(state, "run"),
-            run["providerThreadId"] == legacy_id,
-            (run["providerInstanceId"] || driver) != driver,
+        for {instance, runs} <- homeless,
+            run <- runs,
             into: %{},
-            do: {id, Entities.provider_thread_id(run["providerInstanceId"], thread_id)}
+            do: {run["id"], Entities.provider_thread_id(instance, thread_id)}
 
       marked = upsert(state, "provider-thread", legacy_id, &Map.put(&1, "perInstance", true))
-      record ++ if(runs == %{}, do: [], else: references(state, runs)) ++ [marked]
+      homes ++ if(runs == %{}, do: [], else: references(state, runs)) ++ [marked]
     end
   end
 
@@ -2774,7 +2796,7 @@ defmodule HalC2.Orchestration do
     }
 
     # Everything below, the handoff's plan included, sees the thread brought up to date.
-    legacy_changes = relocated(state, driver, thread_id)
+    legacy_changes = relocated(state, driver, thread_id, at)
     state = applied(state, legacy_changes)
     provider_thread = StreamState.get(state, "provider-thread")[provider_thread_id]
 
@@ -2809,10 +2831,14 @@ defmodule HalC2.Orchestration do
       Entities.provider_session(session_id, cwd, selection["model"], at, driver, instance)
 
     # A session made by an older server takes on what this one can do, and the
-    # instance that now runs it.
+    # instance that now runs it. One another instance had under the default id is that
+    # instance's (its model, its last error): the run taking the id over replaces it.
     session_change =
-      if StreamState.get(state, "provider-session")[session_id],
-        do:
+      cond do
+        foreign ->
+          upsert(state, "provider-session", session_id, fn _ -> fresh_session end)
+
+        StreamState.get(state, "provider-session")[session_id] ->
           upsert(
             state,
             "provider-session",
@@ -2824,8 +2850,11 @@ defmodule HalC2.Orchestration do
               "cwd" => cwd,
               "providerInstanceId" => instance
             })
-          ),
-        else: create("provider-session", session_id, fresh_session)
+          )
+
+        true ->
+          create("provider-session", session_id, fresh_session)
+      end
 
     # Its earlier runs' native turns are in the native thread it no longer has
     # (`HalC2.Orchestration.Fork`).

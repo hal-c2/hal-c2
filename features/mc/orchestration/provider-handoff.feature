@@ -57,6 +57,7 @@ Feature: Changing model and provider mid-thread
     When the user switches "t1" back to "codex" and sends a message
     Then the provider receives the earlier conversation before "where are we"
     And the run answers on the Codex thread "native-thread-1"
+    And the session "codex" runs "t1" in is its own
 
   # Its runs named the shared session too: one another instance ran is still that
   # instance's to fork, after the provider's own instance has taken the shared id over.
@@ -77,6 +78,21 @@ Feature: Changing model and provider mid-thread
     And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
     When the user switches "t1" back to "codex" and sends a message
     And the user forks "t1" after its first run and sends on "codex"
+    Then the fork's first turn starts a new Codex thread with the conversation
+
+  # The shared provider thread named only the conversation of the instance that ran
+  # there last. Another instance's runs from before are in none it has, even once it has
+  # started one of its own.
+  @mc
+  Scenario: A fork of a run another instance ran before the last one to share the provider thread gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And another Codex instance "codex-other" with its own home
+    And the first run of "t1" ran on "codex-other" when instances shared a provider thread
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" to "codex-other" with model "gpt-5.4"
+    Then the next run starts on "codex-other"
+    And the run answers on the Codex thread "codex-other-thread-1"
+    When the user forks "t1" after its first run and sends on "codex-other"
     Then the fork's first turn starts a new Codex thread with the conversation
 
   @mc

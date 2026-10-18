@@ -97,7 +97,8 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
 
   # Its fake Codex names its threads and turns after it and cannot resume another
   # instance's thread (`FAKE_CODEX_INSTANCE`), as a Codex in another home cannot.
-  step "a second Codex instance {string} with its own home", %{args: [instance]} = context do
+  step ~r/^an?(?:other| second) Codex instance "(?<instance>[^"]+)" with its own home$/,
+       %{args: [instance]} = context do
     variable = %{"name" => "FAKE_CODEX_INSTANCE", "value" => instance}
 
     World.merge_settings(%{
@@ -117,12 +118,17 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     shared(context, thread, %{"providerInstanceId" => instance, "nativeThreadRef" => ref})
   end
 
-  # Its runs named the shared provider thread too: the latest one, its attempt and its
-  # provider turn become that instance's.
-  step "the latest run of {string} ran on {string} when instances shared a provider thread",
-       %{args: [thread, instance]} = context do
+  # Its runs named the shared provider thread too: the run, its attempt and its provider
+  # turn become that instance's, and the instance the last to run there.
+  step ~r/^the (?<nth>first|latest) run of "(?<thread>[^"]+)" ran on "(?<instance>[^"]+)" when instances shared a provider thread$/,
+       %{args: [nth, thread, instance]} = context do
     id = World.thread_id(context, thread)
-    run = World.latest_run(context, thread)
+
+    run =
+      if nth == "first",
+        do: Enum.find(World.entities(context, thread, "run"), &(&1["ordinal"] == 1)),
+        else: World.latest_run(context, thread)
+
     attempt = run["activeAttemptId"]
 
     turn =
@@ -445,6 +451,18 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "the session {string} runs {string} in is its own",
+       %{args: [instance, thread]} = context do
+    id = World.thread_id(context, thread)
+
+    assert %{"providerInstanceId" => ^instance, "model" => "gpt-5.4", "lastError" => nil} =
+             World.state(context, thread).entities["provider-session"][
+               Entities.provider_session_id(instance, id)
+             ]
+
+    context
+  end
+
   step "the run continues the carried Codex session {string}", %{args: [native]} = context do
     run = World.await_latest_run(context, context.thread, "completed")
     assert %{"threadId" => ^native} = List.last(World.codex_requests(context, "thread/fork"))
@@ -666,14 +684,23 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   end
 
   # Fields of the provider thread every instance of Codex shared, under Codex's id, from
-  # before the MC brought it up to date (`perInstance`).
+  # before the MC brought it up to date (`perInstance`). The session there was the
+  # instance's too, its model and last error included.
   defp shared(context, thread, fields) do
     id = World.thread_id(context, thread)
+    instance = fields["providerInstanceId"]
+
+    session = %{
+      "providerInstanceId" => instance,
+      "model" => "#{instance}-model",
+      "lastError" => "#{instance} is out of credits"
+    }
 
     {:ok, _} =
       HalC2.Streams.commit(id, :thread, [
         {"provider-thread", Entities.provider_thread_id("codex", id),
-         %{"s" => fields, "u" => ["perInstance"]}}
+         %{"s" => fields, "u" => ["perInstance"]}},
+        {"provider-session", Entities.provider_session_id("codex", id), %{"s" => session}}
       ])
 
     context
