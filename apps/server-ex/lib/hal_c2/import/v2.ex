@@ -312,6 +312,9 @@ defmodule HalC2.Import.V2 do
     do: %{acc | pending: [change | acc.pending], pending_count: acc.pending_count + 1}
 
   # A change a stopped import already stored; the last of them must be the stored one.
+  # The replay is deterministic, so a write here after the stop moves that last change,
+  # and checking it alone is enough. The patch goes through JSON to compare in the form
+  # the store keeps it (string keys, lists for tuples).
   defp push(%{skip: 1} = acc, {kind, entity, patch, at}) do
     if {kind, entity, JSON.decode!(JSON.encode!(patch)), at} != acc.last,
       do: raise(diverged(acc.stream_id))

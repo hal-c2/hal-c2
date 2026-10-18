@@ -227,15 +227,19 @@ defmodule HalC2.Store do
   def metas(path, prefix) do
     with_reader(path, fn db ->
       {:ok, stmt} =
-        Sqlite3.prepare(db, "SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1")
+        Sqlite3.prepare(db, "SELECT key, value FROM meta WHERE key >= ?1 AND key < ?2")
 
-      :ok = Sqlite3.bind(stmt, [prefix])
+      # The keys from `prefix` up to `prefix` and a 0xFF byte, which no UTF-8 holds, so
+      # exactly the keys that start with it: a seek on the key's index, not a scan.
+      :ok = Sqlite3.bind(stmt, [prefix, prefix <> <<0xFF>>])
       step_reduce(db, stmt, %{}, fn [key, value], acc -> Map.put(acc, key, value) end)
     end)
   end
 
   def put_meta(store \\ __MODULE__, key, value),
     do: write(store, {:put_meta, key, value})
+
+  def delete_meta(store \\ __MODULE__, key), do: write(store, {:delete_meta, key})
 
   @doc """
   Copies the WAL back into the database now rather than at the next periodic
@@ -324,6 +328,34 @@ defmodule HalC2.Store do
       step_reduce(db, stmt, acc, fn [seq, kind, entity, patch, at], acc ->
         fun.(%{seq: seq, kind: kind, entity: entity, patch: decode_patch(patch), at: at}, acc)
       end)
+    end)
+  end
+
+  @doc """
+  How many events a stream holds and the last of them as `{kind, entity, patch, at}`
+  (`nil` when it has none), without reading the rest.
+  """
+  def stream_tail(path, stream_id) do
+    with_reader(path, fn db ->
+      {:ok, stmt} =
+        Sqlite3.prepare(db, """
+        SELECT count(*), max(e.seq) FROM events e JOIN streams s ON s.key = e.stream
+        WHERE s.id = ?1
+        """)
+
+      :ok = Sqlite3.bind(stmt, [stream_id])
+      {:row, [count, seq]} = Sqlite3.step(db, stmt)
+      :ok = Sqlite3.release(db, stmt)
+
+      {:ok, stmt} =
+        Sqlite3.prepare(db, "SELECT kind, entity, patch, at FROM events WHERE seq = ?1")
+
+      :ok = Sqlite3.bind(stmt, [seq])
+
+      case Sqlite3.step(db, stmt) do
+        {:row, [kind, entity, patch, at]} -> {count, {kind, entity, decode_patch(patch), at}}
+        :done -> {count, nil}
+      end
     end)
   end
 
@@ -579,6 +611,11 @@ defmodule HalC2.Store do
   def handle_call(:checkpoint, from, state) do
     send(state.checkpointer, {:checkpoint, from})
     {:noreply, state}
+  end
+
+  def handle_call({:delete_meta, key}, _from, state) do
+    :ok = exec(state.db, "DELETE FROM meta WHERE key = ?1", [key])
+    {:reply, :ok, state}
   end
 
   def handle_call({:put_meta, key, value}, _from, state) do

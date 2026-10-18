@@ -22,13 +22,12 @@ defmodule HalC2.Import.PreviousInstall do
 
   @databases ~w(statev2.sqlite state.sqlite)
 
-  # The store's mark on an imported thread: "events" from before its stream is made
-  # until all its events are in (`Import.V2` writes them in batches), "files" until its
-  # files are brought, "finished" after.
+  # The store's mark on a thread being imported: "events" from before its stream is
+  # made until all its events are in (`Import.V2` writes them in batches), then "files"
+  # until its files are brought, when the mark goes.
   @mark_prefix "import.thread."
   @events "events"
   @files "files"
-  @finished "finished"
 
   @doc "The installs found on this machine: `[%{\"path\", \"label\"}]`."
   def sources(env \\ System.get_env(), user_home \\ Paths.user_home()) do
@@ -127,20 +126,25 @@ defmodule HalC2.Import.PreviousInstall do
       events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
       threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
 
-      # Absent here, or here with only some of their events.
+      # Absent here, or here with only some of their events. `here` and `marks` are read
+      # before the marks below are put, so only streams an earlier import left resume.
       reading = Enum.filter(missing, &(not MapSet.member?(here, &1) or marks[&1] == @events))
-      for id <- reading, do: :ok = Store.put_meta(mark_key(id), @events)
+      Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @events)))
 
       if reading != [] do
         {:ok, _} =
           HalC2.Import.V2.run(database(path), Store,
             only: reading,
-            resume: Map.new(Enum.filter(reading, &MapSet.member?(here, &1)), &{&1, stored(&1)}),
+            resume:
+              Map.new(
+                Enum.filter(reading, &MapSet.member?(here, &1)),
+                &{&1, Store.stream_tail(Store.path(), &1)}
+              ),
             rewrite: rewrite,
             progress: events
           )
 
-        for id <- reading, do: :ok = Store.put_meta(mark_key(id), @files)
+        Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files)))
       end
 
       threads.(0)
@@ -149,7 +153,7 @@ defmodule HalC2.Import.PreviousInstall do
       |> Enum.with_index(1)
       |> Enum.each(fn {id, n} ->
         finish(path, files, id)
-        :ok = Store.put_meta(mark_key(id), @finished)
+        :ok = Store.delete_meta(mark_key(id))
         threads.(n)
       end)
     else
@@ -233,13 +237,6 @@ defmodule HalC2.Import.PreviousInstall do
     for {key, mark} <- Store.metas(Store.path(), @mark_prefix),
         into: %{},
         do: {String.replace_prefix(key, @mark_prefix, ""), mark}
-  end
-
-  # How much of a stream a stopped import left here: `Import.V2`'s `:resume`.
-  defp stored(id) do
-    Store.reduce_stream(Store.path(), id, 0, {0, nil}, fn e, {n, _} ->
-      {n + 1, {e.kind, e.entity, e.patch, e.at}}
-    end)
   end
 
   # The threads of a family still to bring: absent here, or here without their files.

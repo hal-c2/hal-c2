@@ -2872,17 +2872,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # A directory where the attachment was, which cannot be copied as a file even by
+  # root (a mode of 0 would not stop root reading it).
   step "the attachment of {string} cannot be read", %{args: [title]} = context do
     path = t3_attachment(context, title)
-    mode = File.stat!(path).mode
-    File.chmod!(path, 0o000)
-    # Restored even if the scenario fails before the step that does it.
-    ExUnit.Callbacks.on_exit(fn -> File.chmod(path, mode) end)
+    File.rename!(path, t3_kept(context, path))
+    File.mkdir!(path)
     context
   end
 
   step "the attachment of {string} can be read again", %{args: [title]} = context do
-    File.chmod!(t3_attachment(context, title), 0o644)
+    path = t3_attachment(context, title)
+    File.rmdir!(path)
+    File.rename!(t3_kept(context, path), path)
     context
   end
 
@@ -2985,6 +2987,9 @@ defmodule HalC2.Steps.Threads do
 
   defp t3_attachment(context, title),
     do: Path.join([context.t3.dir, "attachments", "#{context.t3.ids[title]}-img.png"])
+
+  # Where an attachment is kept while it cannot be read: outside the install's attachments.
+  defp t3_kept(context, path), do: Path.join(context.t3.dir, Path.basename(path) <> ".kept")
 
   step "the project {string} is at the folder that install worked in",
        %{args: [title]} = context do

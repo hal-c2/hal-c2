@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   apps/server-ex/lib/hal_c2/import/previous_install.ex
 #   apps/server-ex/lib/hal_c2/import/picker.ex
+#   https://github.com/hal-c2/hal-c2/issues/392 (a way out for a thread whose import cannot be continued)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 # Moving a thread to another machine, where the handoff is the fallback: threads/moving-between-machines.feature.
 
@@ -95,6 +96,19 @@ Feature: Carrying threads and context across servers and agents
     When the user imports "Alpha" from that install
     Then the user is told "Alpha" changed here and cannot be continued
     And that install does not offer "Alpha" as imported
+
+  @backlog @mc
+  Scenario: A thread that changed here after its import stopped can be imported afresh
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And "Alpha" holds 2500 more messages in that install, the last of which cannot be read
+    And the user imported "Alpha" from that install
+    And the last message of "Alpha" in that install can be read again
+    And "Alpha" is renamed here
+    And the user is told "Alpha" changed here and cannot be continued
+    When the user removes the partly imported "Alpha" here
+    And the user imports "Alpha" from that install
+    Then "Alpha" has all 2502 of its messages
+    And that install offers "Alpha" as imported
 
   @backlog @mc
   Scenario: Threads from the first version are migrated once
