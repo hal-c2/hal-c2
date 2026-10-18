@@ -235,6 +235,57 @@ defmodule HalC2.OrchestrationTest do
     _ = await_run(thread_id, "interrupted")
   end
 
+  # Only a thread from before instances had their own provider threads has anything to
+  # bring up to date; one this MC started is never rewritten for it.
+  test "a thread's next run leaves the provider thread this MC made for it as it was" do
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    {:ok, _} = send_message(thread_id, "msg-user-2", "again")
+    _ = await_statuses(thread_id, ["completed", "completed"])
+    id = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+
+    [created | updates] =
+      HalC2.Store.reduce_stream(HalC2.Store.path(), thread_id, 0, [], fn e, acc ->
+        if e.entity == id, do: [e.patch | acc], else: acc
+      end)
+      |> Enum.reverse()
+
+    assert %{"s" => %{"perInstance" => true}} = created
+    refute Enum.any?(updates, &Map.has_key?(&1["s"] || %{}, "perInstance"))
+  end
+
+  # Of a thread from before instances had their own provider threads: an instance that
+  # did not run there last gets a provider thread of its own covering the runs it had.
+  test "a provider thread made for an instance's earlier runs spans them" do
+    thread_id = launch("one")
+    _ = await_statuses(thread_id, ["completed"])
+
+    for {n, done} <- [{2, 2}, {3, 3}] do
+      {:ok, _} = send_message(thread_id, "msg-user-#{n}", "more")
+      _ = await_statuses(thread_id, List.duplicate("completed", done))
+    end
+
+    [one, two, three] = runs(current(thread_id))
+    shared = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+    on = &%{"s" => %{"providerInstanceId" => &1}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", one["id"], on.("codex-other")},
+        {"run", two["id"], on.("codex-other")},
+        {"run", three["id"], on.("codex-work")},
+        {"provider-thread", shared,
+         %{"s" => %{"providerInstanceId" => "codex-work"}, "u" => ["perInstance"]}}
+      ])
+
+    {:ok, _} = send_message(thread_id, "msg-user-4", "back home")
+    state = await_statuses(thread_id, List.duplicate("completed", 4))
+    other = HalC2.Orchestration.Entities.provider_thread_id("codex-other", thread_id)
+
+    assert %{"firstRunOrdinal" => 1, "lastRunOrdinal" => 2, "nativeSinceRunOrdinal" => 3} =
+             StreamState.get(state, "provider-thread")[other]
+  end
+
   defp await_provider_turn(thread_id) do
     if StreamState.list(current(thread_id), "provider-turn") == [] do
       receive do

@@ -41,8 +41,9 @@ defmodule HalC2.Plugins.ProviderAdapter do
 
   A turn names its provider instance (`turn.ids.instance`) and that instance's own
   provider thread: another instance of one driver runs with its own settings, home and
-  account. A process serving a thread on one instance is replaced when a turn names
-  another, as the bundled adapters' are.
+  account. The MC only calls `start_turn/2`, so replacing the thread's process is the
+  adapter's job: an adapter must replace a process serving a thread on one instance
+  when a turn names another (the bundled adapters do).
 
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 

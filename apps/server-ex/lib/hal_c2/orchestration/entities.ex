@@ -190,6 +190,8 @@ defmodule HalC2.Orchestration.Entities do
       "lastRunOrdinal" => run_ordinal,
       "handoffIds" => [],
       "forkedFrom" => nil,
+      # Made per instance, so `new_run/5` has nothing to bring up to date.
+      "perInstance" => true,
       "createdAt" => at,
       "updatedAt" => at
     }

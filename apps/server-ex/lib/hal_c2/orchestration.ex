@@ -2675,11 +2675,15 @@ defmodule HalC2.Orchestration do
   # default instance's id (the driver's), and their runs named it. Each other instance
   # that ran there gets a provider thread of its own, which its runs (their attempts and
   # provider turns too) then name, so each resumes, forks and rewinds in its own home.
+  # Their nodes, turn items and the checkpoint scope keep naming the old id on purpose:
+  # nothing reads `providerThreadId` there (readers go through the run or provider turn),
+  # and leaving them keeps the one-time rewrite small (`references/2`).
   # One whose own provider thread exists already keeps its runs where they were, as
   # runs of another instance's provider thread (`HalC2.Orchestration.Fork` gives them
   # the history). The default id is then the default instance's; its next run takes it
   # over (`new_run/5`). The provider thread is then marked `perInstance`, so later runs
-  # skip the scan: from then on every run names its own instance's provider thread.
+  # skip the scan: from then on every run names its own instance's provider thread. One
+  # this server made is `perInstance` from birth (`Entities.provider_thread/7`).
   defp relocated(state, driver, thread_id, at) do
     legacy_id = Entities.provider_thread_id(driver, thread_id)
     threads = StreamState.get(state, "provider-thread")
@@ -2722,6 +2726,7 @@ defmodule HalC2.Orchestration do
 
             record =
               Entities.provider_thread(id, thread_id, session_id, last, at, driver, instance)
+              |> Map.put("firstRunOrdinal", Enum.min(ran, fn -> nil end))
               |> Map.put("nativeSinceRunOrdinal", last && last + 1)
 
             create("provider-thread", id, record)
@@ -2739,6 +2744,8 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Points the relocated runs, their attempts and their provider turns at their new
+  # provider threads; nodes and turn items stay as they were (`relocated/4`).
   defp references(state, runs) do
     attempts =
       for {id, attempt} <- StreamState.get(state, "run-attempt"),
@@ -2801,7 +2808,7 @@ defmodule HalC2.Orchestration do
     provider_thread = StreamState.get(state, "provider-thread")[provider_thread_id]
 
     # The default instance's id still holds another instance's session (see
-    # `relocated/3`): the run takes it over and starts its own.
+    # `relocated/4`): the run takes it over and starts its own.
     foreign =
       provider_thread != nil and
         (provider_thread["providerInstanceId"] || driver) != instance
