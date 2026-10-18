@@ -566,8 +566,15 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
     projection.providerThreads.at(-1);
   const contextUsage = providerThread?.contextUsage ?? null;
+  // A queued message is not a turn yet: the latest turn is the newest run that began.
+  // A held one a newer message passed sits above it until it starts.
+  const begun = projection.runs.filter((run) => run.status !== "queued");
+  const settled =
+    begun.length > 0 && begun.length < projection.runs.length
+      ? { ...projection, runs: begun }
+      : projection;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
-    latestRun: projection.runs.reduce<OrchestrationV2Run | null>(
+    latestRun: settled.runs.reduce<OrchestrationV2Run | null>(
       (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
       null,
     ),
@@ -576,12 +583,6 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     activeProviderThreadId: thread.activeProviderThreadId,
     runs: projection.runs,
   });
-  // A queued message is not a turn yet: the latest turn is the newest run that began.
-  const begun = projection.runs.filter((run) => run.status !== "queued");
-  const settled =
-    begun.length > 0 && begun.length < projection.runs.length
-      ? { ...projection, runs: begun }
-      : projection;
   const latestRun = deriveLatestThreadRun(settled);
   const runtime = deriveThreadRuntime(settled);
   const proposedPlans = projection.plans.flatMap((plan) => {
