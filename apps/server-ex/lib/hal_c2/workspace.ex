@@ -532,22 +532,36 @@ defmodule HalC2.Workspace do
     end
   end
 
-  defp within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
+  @doc "Whether `path` is `root` or under it; both absolute and normalized."
+  def within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
 
-  # The real path of `path`, or of its nearest existing ancestor joined with the rest.
-  defp real(path), do: real(Path.split(Path.expand(path)), "/", 0)
+  @doc """
+  The real path of `path`, or of its nearest existing ancestor joined with the rest:
+  what a path under a root must still be under once symlinks resolve
+  (`HalC2.MachineFiles.Share` holds another machine's reads to the same rule).
+  Resolved one name at a time as the kernel does: a `..` leaves the directory a
+  link led to, not the link's name.
+  """
+  def real(path), do: real(Path.split(Path.absname(path)), "/", 0)
 
   # A link loop resolves no further than this.
   defp real(parts, acc, links) when links > 40, do: Path.join([acc | parts])
   defp real([], acc, _links), do: acc
-  defp real(["/" | rest], acc, links), do: real(rest, acc, links)
+  defp real(["/" | rest], _acc, links), do: real(rest, "/", links)
+  defp real(["." | rest], acc, links), do: real(rest, acc, links)
+  defp real([".." | rest], acc, links), do: real(rest, Path.dirname(acc), links)
 
   defp real([part | rest], acc, links) do
     next = Path.join(acc, part)
 
-    case File.read_link(next) do
-      {:ok, target} -> real(Path.split(Path.expand(target, acc)) ++ rest, "/", links + 1)
-      {:error, _} -> real(rest, next, links)
+    # Not through the file server (`HalC2.MachineFiles.Share` runs this).
+    case :prim_file.read_link(next) do
+      {:ok, target} ->
+        target = IO.chardata_to_string(target)
+        real(Path.split(target) ++ rest, acc, links + 1)
+
+      {:error, _} ->
+        real(rest, next, links)
     end
   end
 

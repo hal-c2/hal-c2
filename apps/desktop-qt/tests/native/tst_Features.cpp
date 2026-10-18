@@ -520,6 +520,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("files/project-identity.feature"),
     QStringLiteral("files/file-explorer.feature"),
     QStringLiteral("files/file-viewer-and-editing.feature"),
+    QStringLiteral("files/files-on-another-machine.feature"),
     QStringLiteral("navigation/layout.feature:Opening and closing the right panel"),
     QStringLiteral("navigation/layout.feature:Switching between right panel tabs"),
     QStringLiteral("navigation/layout.feature:Closing a right panel tab"),

@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
+#   apps/server-ex/lib/hal_c2/machine_files.ex (files.localPath)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
 #   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
 #   Counts: 173 contract methods; 170 aligned, 3 dropped.
@@ -119,6 +120,7 @@ Feature: RPC parity with the TypeScript server
       | projects.mutate                          | projects          | rpc                                                                       |
       | shell.openInEditor                       | shell             | rpc                                                                       |
       | filesystem.browse                        | filesystem        | rpc                                                                       |
+      | files.localPath                          | files             | rpc                                                                       |
       | agentSessions.scan                       | agentSessions     | rpc                                                                       |
       | agentSessions.import                     | agentSessions     | rpc                                                                       |
       | assets.createUrl                         | assets            | rpc                                                                       |

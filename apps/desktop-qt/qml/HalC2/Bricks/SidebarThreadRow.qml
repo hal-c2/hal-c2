@@ -484,7 +484,6 @@ Item {
             color: row.showStatus ? row.statusColor : row.secondaryColor
             font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.Medium
-            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
         }
     }
 
@@ -512,7 +511,6 @@ Item {
             text: row.oneLineTitle
             color: Qt.alpha(row.secondaryColor, 0.7)
             font.pixelSize: Math.round(14 * Theme.fontScale)
-            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             elide: Text.ElideRight
         }
 
@@ -549,7 +547,6 @@ Item {
                 color: row.projectColor
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 elide: Text.ElideRight
             }
 
@@ -568,7 +565,6 @@ Item {
             color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
             font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.Medium
-            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             elide: Text.ElideRight
         }
 
@@ -590,7 +586,6 @@ Item {
                 text: row.item.branch ?? ""
                 color: row.branchColor
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 elide: Text.ElideRight
             }
         }

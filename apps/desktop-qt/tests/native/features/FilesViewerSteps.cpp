@@ -111,10 +111,35 @@ QString taskLink(World& world, const QString& task) {
   fail(QStringLiteral("the rendered file has no task \"%1\": %2").arg(task, files(world).renderedText()));
 }
 
+// Where the box of the task named `task` is drawn, in window coordinates: the
+// prose of the rendered view that has it, and the box's place in that prose.
+QPoint taskBox(World& world, const QString& task) {
+  const QRegularExpression box(QStringLiteral("[☐☑] ") + QRegularExpression::escape(task) + QStringLiteral("(?:[\\s\\x{2028}\\x{2029}]|$)"));
+  QList<QQuickItem*> pending{world.brick->item(QStringLiteral("fileRenderedMarkdown"))};
+  QStringList seen;
+  while (!pending.isEmpty()) {
+    QQuickItem* item = pending.takeFirst();
+    pending.append(item->childItems());
+    if (item->objectName() != QLatin1String("markdownProse")) continue;
+    QString drawn;
+    QMetaObject::invokeMethod(item, "getText", Q_RETURN_ARG(QString, drawn), Q_ARG(int, 0), Q_ARG(int, item->property("length").toInt()));
+    seen.append(drawn);
+    const QRegularExpressionMatch match = box.match(drawn);
+    if (!match.hasMatch()) continue;
+    QRectF place;
+    QMetaObject::invokeMethod(item, "positionToRectangle", Q_RETURN_ARG(QRectF, place), Q_ARG(int, int(match.capturedStart())));
+    const QPoint point = item->mapToScene(QPointF(place.x() + 4, place.center().y())).toPoint();
+    expect(QRect(QPoint(0, 0), world.brick->window().size()).contains(point), QStringLiteral("the box of \"%1\" is drawn out of the window at %2,%3").arg(task).arg(point.x()).arg(point.y()));
+    return point;
+  }
+  fail(QStringLiteral("the rendered view draws no box for the task \"%1\": %2").arg(task, seen.join(QLatin1String(" | "))));
+}
+
+// Clicks the task's box, as the user does.
 void tick(World& world, const QString& task) {
-  QQuickItem* markdown = world.brick->item(QStringLiteral("fileRenderedMarkdown"));
+  const QPoint point = taskBox(world, task);
   const qsizetype before = writes(world).size();
-  QMetaObject::invokeMethod(markdown, "linkActivated", Q_ARG(QString, taskLink(world, task)));
+  QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, point);
   world.waitFor([&] { return writes(world).size() > before; }, QStringLiteral("the file to be written"));
   world.sync();
 }

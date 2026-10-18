@@ -46,6 +46,49 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  # Like `install/2`, but also reports whether the program's standard streams lead to
+  # /dev/null, then its process id and process group: `name`, the arguments, then
+  # `in out err pid pgid`. Only POSIX tools, so it runs on macOS as well as Linux.
+  defp install_probe(context, name) do
+    context = install(context, name)
+
+    File.write!(Path.join(context.bin, name), """
+    #!/usr/bin/env bash
+    exec 3<>/dev/tcp/127.0.0.1/$HAL_C2_TEST_LAUNCH_PORT
+    printf '%s\\x1f' "#{name}" "$@" >&3
+    for fd in 0 1 2; do
+      if [ /dev/fd/$fd -ef /dev/null ]; then printf 'null ' >&3; else printf 'other ' >&3; fi
+    done
+    printf '%s %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' ')" >&3
+    read -r -u 3 _
+    """)
+
+    context
+  end
+
+  # Takes setsid off PATH, leaving what the fake programs and the perl fallback need.
+  defp without_setsid(context) do
+    context = bin(context)
+    tools = Mc.tmp_dir(context.mc, "tools")
+
+    for tool <- ~w(env bash ps tr perl), path = System.find_executable(tool) do
+      File.ln_s!(path, Path.join(tools, tool))
+    end
+
+    World.put_os_env("PATH", context.bin <> ":" <> tools)
+    context
+  end
+
+  # The ports the MC has open to the shell or the program it starts for a client; other
+  # ports to external programs (the MC's own helpers) come and go on their own.
+  defp program_ports do
+    for p <- Port.list(),
+        {:name, name} <- [Port.info(p, :name)],
+        List.to_string(name) in ["/bin/sh", "/usr/bin/sh", "xdg-open"] or
+          String.ends_with?(List.to_string(name), "/xdg-open"),
+        do: p
+  end
+
   defp listen(%{launches: _} = context), do: context
 
   defp listen(context) do
@@ -245,6 +288,54 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert argv == ["xdg-open", context.target]
     :gen_tcp.close(conn)
     context
+  end
+
+  step "a Linux host with a display and xdg-open installed", context do
+    with_display(context)
+  end
+
+  step "the host's file manager shows the folder that holds the file", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["xdg-open", Path.dirname(context.target)]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "a client opens a file in the file manager", context do
+    context = install_probe(context, "xdg-open")
+    file = Path.join(Mc.tmp_dir(context.mc, "project"), "README.md")
+    File.write!(file, "# hi\n")
+    before = program_ports()
+    context = context |> Map.put(:target, file) |> Map.put(:ports_before, before)
+    open(context, %{"cwd" => file, "editor" => "file-manager"})
+  end
+
+  step "the program runs in a session of its own with no input or output shared with the MC",
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    [_name, _file, report] = argv
+    [fd0, fd1, fd2, pid, pgid] = String.split(report)
+    assert [fd0, fd1, fd2] == ["null", "null", "null"]
+
+    {mc_pgid, 0} = System.cmd("ps", ["-o", "pgid=", "-p", to_string(:os.getpid())])
+    refute pgid == String.trim(mc_pgid)
+    # A new session's leader is the only member of its process group.
+    assert pgid == pid
+    Map.put(context, :editor_conn, conn)
+  end
+
+  step "the MC holds no process or port for it", context do
+    # The program is still running, waiting on this socket.
+    assert program_ports() -- context.ports_before == []
+    assert :ok = :gen_tcp.send(context.editor_conn, "exit\n")
+    :gen_tcp.close(context.editor_conn)
+    context
+  end
+
+  step "the host has no setsid program", context do
+    without_setsid(context)
   end
 
   step "a Linux host with no display", context do
