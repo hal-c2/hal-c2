@@ -115,7 +115,9 @@ public:
   Q_INVOKABLE QString duplicate(const QString& id);
   // The same for the standard look, which is no theme offered: apart from
   // duplicate() so that a saved theme whose id is the standard look's (made
-  // before it was kept from them) is not copied for it.
+  // before it was kept from them) is not copied for it. The copy is the standard
+  // look as drawn now, in the appearance showing: a saved theme has no light and
+  // dark halves, so it does not follow the system's.
   Q_INVOKABLE QString duplicateStandard();
   // Removes a saved theme; a choice that named it goes back to the standard look.
   Q_INVOKABLE bool removeCustom(const QString& id);
@@ -149,7 +151,8 @@ public:
   QStringList importConflicts() const;
   Q_INVOKABLE bool importText(const QString& json);
   Q_INVOKABLE void importFiles(const QStringList& paths);
-  // `choice` is update, copy or cancel.
+  // `choice` is update, copy or cancel. Safe with nothing pending: the import
+  // dialog calls it with "cancel" on every close, whichever way it closed.
   Q_INVOKABLE void resolveImport(const QString& choice);
   Q_INVOKABLE void clearImport();
   // Writes the theme `id` as a theme file other clients import.

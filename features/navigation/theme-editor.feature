@@ -198,7 +198,7 @@ Feature: Custom themes
     @desktop
     Scenario: Duplicating the standard theme
       When the user duplicates the standard theme
-      Then an editable copy of the standard theme is added
+      Then an editable copy of the standard theme as drawn now is added
 
     @desktop
     Scenario: A saved theme with the standard theme's id does not stand in for it
@@ -556,6 +556,7 @@ Feature: Custom themes
         | uses a color that is not a literal CSS color  | The color for "accent" must be a literal CSS color such as oklch(0.62 0.2 280). |
         | has an id with capitals or spaces             | Theme ids may only contain lowercase letters, numbers, and hyphens.  |
         | takes the id of a built-in theme              | The theme id "default" is reserved.                                  |
+        | takes the id of the standard theme            | The theme id "hal-c2" is reserved.                                   |
         | has a variant that repeats the base appearance | Theme variants must not repeat the base appearance "dark".           |
 
     @backlog @desktop

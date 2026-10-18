@@ -6,6 +6,7 @@
 #include <QDirIterator>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
@@ -149,6 +150,23 @@ private slots:
     QCOMPARE(themes()->resolvedId(), QStringLiteral("grove"));
     QVERIFY(canvas() != QStringLiteral("#010101"));
     QCOMPARE(canvas(), ThemeController::canonicalColor(QStringLiteral("oklch(0.972369 0.005497 157.15)")));
+  }
+
+  // The standard look has no row of its own to give way, so an imported file
+  // may not take its id, named or made from the name "HAL-C2".
+  void anImportedThemeCannotTakeTheStandardLooksId() {
+    const QVariantList before = themes()->available();
+    for (const QJsonObject& extra : {QJsonObject{{QStringLiteral("id"), QStringLiteral("hal-c2")}}, QJsonObject{}}) {
+      QJsonObject file{{QStringLiteral("version"), 1},
+                       {QStringLiteral("name"), QStringLiteral("HAL-C2")},
+                       {QStringLiteral("appearance"), QStringLiteral("dark")},
+                       {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#101010")}}}};
+      for (auto it = extra.begin(); it != extra.end(); ++it) file.insert(it.key(), it.value());
+      QVERIFY(!themes()->importText(QString::fromUtf8(QJsonDocument(file).toJson())));
+      QCOMPARE(themes()->importError(), QStringLiteral("The theme id \"hal-c2\" is reserved."));
+      themes()->clearImport();
+    }
+    QCOMPARE(themes()->available(), before);
   }
 
   void savedThemesWinOverPublishedOnes() {

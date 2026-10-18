@@ -1057,7 +1057,7 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
   if (id.size() > 48 || !valid.match(id).hasMatch()) {
     return refuse(tr("Theme ids may only contain lowercase letters, numbers, and hyphens."));
   }
-  if (builtIns().reserved.contains(id)) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
+  if (builtIns().reserved.contains(id) || id == kStandardId) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
   for (const QJsonValue& value : builtIns().themes) {
     if (value.toObject().value(QLatin1String("id")).toString() == id) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
   }

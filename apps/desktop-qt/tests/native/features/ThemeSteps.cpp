@@ -449,7 +449,7 @@ const Steps steps([] {
   step(QStringLiteral("the user duplicates the standard theme"), [](World& world, const Captures&, const Table&) {
     expect(!themes(world)->duplicateStandard().isEmpty(), settings(world)->deviceError());
   });
-  step(QStringLiteral("an editable copy of the standard theme is added"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("an editable copy of the standard theme as drawn now is added"), [](World& world, const Captures&, const Table&) {
     const auto copy = offered(world, QStringLiteral("HAL-C2 copy"));
     expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
            QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
