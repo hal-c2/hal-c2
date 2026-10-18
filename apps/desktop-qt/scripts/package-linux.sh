@@ -116,7 +116,7 @@ if [ -n "${wayland}" ]; then
     --deploy-deps-only "${app_dir}/usr/plugins/wayland-graphics-integration-client" \
     --deploy-deps-only "${app_dir}/usr/plugins/wayland-decoration-client"
 fi
-"$(dirname "$0")/check-sqlite-driver.sh" "${app_dir}/usr/plugins/sqldrivers"
+"$(dirname "$0")/check-sqlite-driver.sh" "${app_dir}/usr/plugins/sqldrivers" libqsqlite.so
 export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
 echo "AppImage at ${LDAI_OUTPUT}"

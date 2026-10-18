@@ -35,7 +35,7 @@ find "${app}/Contents/PlugIns" -name '*.dylib' | while read -r plugin; do
     fi
   done
 done
-"$(dirname "$0")/check-sqlite-driver.sh" "${app}/Contents/PlugIns/sqldrivers"
+"$(dirname "$0")/check-sqlite-driver.sh" "${app}/Contents/PlugIns/sqldrivers" libqsqlite.dylib
 # Each QML module links to its plugin; a link to one just removed fails the signature check.
 find "${app}/Contents/Resources/qml" -type l ! -exec test -e {} \; -delete
 # Apple silicon runs only signed code, and the bundle changed after macdeployqt signed it.

@@ -52,10 +52,14 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
   });
 
   describe("check-sqlite-driver.sh", () => {
-    const check = (drivers: string) =>
+    const check = (drivers: string, name = "libqsqlite.so") =>
       NodeChildProcess.spawnSync(
         "bash",
-        [NodeURL.fileURLToPath(new URL("./check-sqlite-driver.sh", import.meta.url)), drivers],
+        [
+          NodeURL.fileURLToPath(new URL("./check-sqlite-driver.sh", import.meta.url)),
+          drivers,
+          name,
+        ],
         { encoding: "utf8" },
       );
 
@@ -63,7 +67,7 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const drivers = NodePath.join(temporaryDirectory(), "br[ack]et", "sqldrivers");
       NodeFS.mkdirSync(drivers, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.dylib"), "driver");
-      expect(check(drivers).status).toBe(0);
+      expect(check(drivers, "libqsqlite.dylib").status).toBe(0);
     });
 
     it("names a missing sqldrivers directory", () => {
@@ -76,13 +80,26 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const drivers = temporaryDirectory();
       const empty = check(drivers);
       expect(empty.status).toBe(1);
-      expect(empty.stderr).toContain("has no libqsqlite.so or libqsqlite.dylib");
+      expect(empty.stderr).toContain("has no libqsqlite.so as a non-empty regular file");
       NodeFS.mkdirSync(NodePath.join(drivers, "libqsqlite.so"));
       NodeFS.symlinkSync(
         NodePath.join(drivers, "gone"),
         NodePath.join(drivers, "libqsqlite.dylib"),
       );
       expect(check(drivers).status).toBe(1);
+      expect(check(drivers, "libqsqlite.dylib").status).toBe(1);
+    });
+
+    it("wants the driver of the bundle's own platform", () => {
+      const drivers = temporaryDirectory();
+      NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.dylib"), "driver");
+      const linux = check(drivers, "libqsqlite.so");
+      expect(linux.status).toBe(1);
+      expect(linux.stderr).toContain("has no libqsqlite.so");
+      NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.so"), "driver");
+      expect(check(drivers, "libqsqlite.so").status).toBe(0);
+      NodeFS.rmSync(NodePath.join(drivers, "libqsqlite.dylib"));
+      expect(check(drivers, "libqsqlite.dylib").status).toBe(1);
     });
 
     it("rejects an empty driver file and copies that are not named like Qt's driver", () => {
@@ -93,12 +110,17 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       expect(check(drivers).status).toBe(1);
     });
 
-    it("accepts a symlink to a real driver", () => {
+    // The bundle carries the link, not its target, which need not exist where the app runs.
+    it("rejects a symlink, whether it points out of the bundle or into it", () => {
       const drivers = temporaryDirectory();
-      const real = NodePath.join(temporaryDirectory(), "libqsqlite.real");
-      NodeFS.writeFileSync(real, "driver");
-      NodeFS.symlinkSync(real, NodePath.join(drivers, "libqsqlite.so"));
-      expect(check(drivers).status).toBe(0);
+      const outside = NodePath.join(temporaryDirectory(), "libqsqlite.real");
+      NodeFS.writeFileSync(outside, "driver");
+      NodeFS.symlinkSync(outside, NodePath.join(drivers, "libqsqlite.so"));
+      expect(check(drivers).status).toBe(1);
+      const inside = temporaryDirectory();
+      NodeFS.writeFileSync(NodePath.join(inside, "libqsqlite.real"), "driver");
+      NodeFS.symlinkSync("libqsqlite.real", NodePath.join(inside, "libqsqlite.so"));
+      expect(check(inside).status).toBe(1);
     });
   });
 
