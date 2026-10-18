@@ -39,6 +39,13 @@ describe("status log", () => {
     expect(state.get("statusError")).toEqual({ text: "second" });
   });
 
+  it("does not pin a warning, which is a hint about the user's input", () => {
+    const { state, log } = setup();
+    log.note({ kind: "warning", text: "Enter a whole number of days" });
+    expect(state.get("statusError")).toBeNull();
+    expect(log.commands().map((command) => command.id)).toEqual(["status.history"]);
+  });
+
   it("offers dismissal only while an error is pinned, and clears the line it was on", () => {
     const { log, state, cleared } = setup();
     const ids = () => log.commands().map((command) => command.id);

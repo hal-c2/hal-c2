@@ -10,7 +10,9 @@ Feature: Errors stay on the terminal client's status line
   The status line holds one message, and the desktop's toasts have no counterpart in a
   terminal. An error would be gone before it was read, so it stays until the user dismisses it
   (clicking it, or the palette's "Dismiss the status error") or a newer error takes its place.
-  Messages that follow it show beside it. "Show status history" lists the recent errors.
+  Messages that follow it show beside it. "Show status history" lists the recent errors. A hint
+  about what the user just typed ("Commit needs a message.") is a warning, not an error: it
+  does not stay once the next message arrives.
 
   Background:
     Given the terminal client is open on a thread whose workspace is a git repository
@@ -24,6 +26,16 @@ Feature: Errors stay on the terminal client's status line
     When pulling will succeed
     And the user pulls the branch
     Then the status line shows "Pull failed: Error: offline" before "Pulled."
+
+  @tui
+  Scenario: A hint about the user's input does not stay on the line
+    Given the terminal is 160 columns wide
+    And the user submits an empty commit message
+    And the status line shows "Commit needs a message."
+    And pulling will succeed
+    When the user pulls the branch
+    Then the status line shows "Pulled."
+    And the status line no longer shows "Commit needs a message."
 
   @tui
   Scenario: A newer error takes the place of the one on the line

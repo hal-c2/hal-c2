@@ -931,7 +931,6 @@ export function createHost(options: HostOptions): Host {
     files.sync();
     addProject.relayout();
     features.sync();
-    statusLog.note({ kind: next.statusKind, text: next.status });
     state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
   };
 

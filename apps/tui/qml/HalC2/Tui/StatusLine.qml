@@ -65,7 +65,9 @@ Rectangle {
                 ? Theme.colors.success
                 : line.row.kind === "error"
                     ? Theme.colors.error
-                    : line.row.kind === "busy" ? Theme.colors.accent : Theme.colors.faint
+                    : line.row.kind === "warning"
+                        ? Theme.colors.warning
+                        : line.row.kind === "busy" ? Theme.colors.accent : Theme.colors.faint
         }
     }
 }

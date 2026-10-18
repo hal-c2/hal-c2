@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 
 import type { TuiSelectState } from "../../../src/host/composerState.ts";
 import { step } from "../../steps.ts";
-import { ready, settle } from "../gitWorld.ts";
+import { changes, ready, runAction, setCheckout, settle, vcsStatus } from "../gitWorld.ts";
 import { chooseCommand, clickText, palette } from "../threadUi.ts";
 import { pressKey, typeText, type World } from "../world.ts";
 
@@ -26,6 +26,13 @@ step("the user pulls the branch", async (ctx: World) => {
   await ready(ctx);
   // What the panel's Pull row and the palette's command both fire.
   ctx.host!.dispatch("git.pull");
+  await settle(ctx);
+});
+
+step("the user submits an empty commit message", async (ctx: World) => {
+  setCheckout(ctx, vcsStatus(changes("src/tax.ts")));
+  await runAction(ctx, "Commit");
+  ctx.host!.dispatch("git.commit", { message: "" });
   await settle(ctx);
 });
 

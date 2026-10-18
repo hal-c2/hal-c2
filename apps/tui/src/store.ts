@@ -18,7 +18,12 @@ import {
 // that fits a single-environment terminal client.
 
 /** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
-export type StatusKind = "info" | "success" | "error" | "busy";
+/**
+ * "warning" is a hint about the user's last input ("Enter a whole number of days"):
+ * it reads like an error but is not pinned (host/statusLog.ts), so it does not
+ * outlive the correction.
+ */
+export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
@@ -327,7 +332,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       if (state.gitBusy) return;
       const message = commitMessage?.trim();
       if (gitActionNeedsCommitMessage(action) && !message && !runOptions.generateMessage) {
-        set({ status: "Commit needs a message.", statusKind: "error" });
+        set({ status: "Commit needs a message.", statusKind: "warning" });
         return;
       }
       const cwd = currentCwd();

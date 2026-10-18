@@ -26,7 +26,7 @@ export interface TuiStatusRowInput {
  * draws it. `hint` (dim) is cut to leave `label` (the status glyph and
  * message, in the status colour) its room of up to 32 cells. While an error is
  * pinned and a newer message has come after it, `pinned` carries the error
- * (glyph included) ahead of `label`, and the two share half the row. Otherwise
+ * (glyph included) ahead of `label`, and the two share up to half the row. Otherwise
  * `pinned` is empty and the error, if any, is `label` itself.
  */
 export interface TuiStatusRowState {
@@ -71,8 +71,10 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
     !(input.status.kind === "error" && input.status.text === input.pinnedError);
   const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
   const room = Math.max(0, input.mainWidth - 2);
+  // Beside an error the two share what they need, at least 32 cells and at most half the row.
+  const besideNeed = pinnedLabel.length + PINNED_SEPARATOR.length + statusLabel.length;
   const statusWidth = beside
-    ? Math.min(room, Math.max(32, Math.floor(input.mainWidth / 2)))
+    ? Math.min(room, Math.max(32, Math.min(besideNeed, Math.floor(input.mainWidth / 2))))
     : Math.min(room, Math.max(8, Math.min(32, statusLabel.length)));
   const hintWidth = Math.max(0, room - statusWidth);
   if (!beside) {
@@ -84,8 +86,15 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
       errorPinned: input.pinnedError !== null,
     };
   }
-  // The newer message keeps what it needs up to a third of the shared width; the error takes the rest.
-  const labelWidth = Math.min(statusLabel.length, Math.floor(statusWidth / 3));
+  // The newer message keeps what it needs up to a third of the shared width, or more
+  // when the error is short enough to leave it room; the error takes the rest.
+  const labelWidth = Math.min(
+    statusLabel.length,
+    Math.max(
+      Math.floor(statusWidth / 3),
+      statusWidth - PINNED_SEPARATOR.length - pinnedLabel.length,
+    ),
+  );
   const pinnedWidth = Math.max(0, statusWidth - PINNED_SEPARATOR.length - labelWidth);
   return {
     hint: clip(hint, hintWidth),

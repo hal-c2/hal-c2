@@ -11,7 +11,7 @@ export interface StatusErrorEntry {
   readonly at: string;
 }
 
-/** Published under `statusError`: the error the user has not acknowledged, or null. */
+/** Published under `statusError` as `TuiStatusErrorState | null`: the error the user has not acknowledged, or null. */
 export interface TuiStatusErrorState {
   readonly text: string;
 }
@@ -59,7 +59,6 @@ export function createStatusLog(ctx: {
   };
 
   return {
-    pinned: (): string | null => pinned,
     /** Every status the store reports, in order; only errors are kept. */
     note: (status: { readonly kind: StatusKind; readonly text: string }) => {
       if (status.kind !== "error" || status.text === pinned) return;

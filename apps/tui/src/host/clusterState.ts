@@ -176,7 +176,7 @@ export function createClusterController(ctx: {
         case "cluster.join": {
           const link = String(field("link") ?? "").trim();
           if (link === "") {
-            store.setStatus("Paste the invite link from the other machine.", "error");
+            store.setStatus("Paste the invite link from the other machine.", "warning");
             return true;
           }
           closeJoin();
