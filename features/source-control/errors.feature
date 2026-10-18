@@ -75,7 +75,7 @@ Feature: When source control goes wrong
   Scenario: A push refused for a missing workflow scope says how to give it
     Given GitHub refuses the push because the sign-in lacks the workflow scope
     When the user runs "Commit & push"
-    Then the failure tells the user to run "gh auth refresh -s workflow"
+    Then the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
 
   @mc
   Scenario: A failed git command keeps its command and exit code

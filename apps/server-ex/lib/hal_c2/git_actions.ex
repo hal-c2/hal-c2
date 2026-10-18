@@ -628,13 +628,16 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # GitHub turns away a workflow change pushed with a sign-in that lacks the scope
-  # (the GitHub CLI's, when it was made for SSH; see `HalC2.Git.use_gh_for_github/0`).
+  # GitHub turns away a workflow change pushed with a credential that lacks the scope:
+  # the GitHub CLI's sign-in when it was made for SSH (see
+  # `HalC2.Git.use_gh_for_github/0`), but a token of the user's own as well, which gh
+  # cannot widen.
   defp hint(["push" | _], err) do
     if err =~ ~r/without `workflow` scope/,
       do:
-        " Run `gh auth refresh -s workflow` on this machine to let the GitHub CLI's " <>
-          "sign-in push workflow changes, then try again.",
+        " If this machine pushes with the GitHub CLI's sign-in, run " <>
+          "`gh auth refresh -s workflow` here, then try again; a token of your own " <>
+          "needs the workflow scope.",
       else: ""
   end
 

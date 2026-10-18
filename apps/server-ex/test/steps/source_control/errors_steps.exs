@@ -67,8 +67,11 @@ defmodule HalC2.Steps.SourceControl.Errors do
     context
   end
 
-  step "the failure tells the user to run {string}", %{args: [command]} = context do
-    assert World.failure(context) =~ "Run `#{command}`"
+  step "the failure tells a user pushing with the GitHub CLI's sign-in to run {string}",
+       %{args: [command]} = context do
+    assert World.failure(context) =~
+             "If this machine pushes with the GitHub CLI's sign-in, run `#{command}`"
+
     context
   end
 
