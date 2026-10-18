@@ -567,7 +567,7 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     projection.providerThreads.at(-1);
   const contextUsage = providerThread?.contextUsage ?? null;
   // A queued message is not a turn yet: the latest turn is the newest run that began.
-  // A held one a newer message passed sits above it until it starts.
+  // A held one that a newer message passed sits above it until it starts.
   const begun = projection.runs.filter((run) => run.status !== "queued");
   const settled =
     begun.length > 0 && begun.length < projection.runs.length

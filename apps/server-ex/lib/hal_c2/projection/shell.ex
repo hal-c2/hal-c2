@@ -155,9 +155,10 @@ defmodule HalC2.Projection.Shell do
   end
 
   @doc """
-  The thread's latest run among `runs` (in the order they were made): the one with the
-  highest ordinal, the order runs start in, which a held queued run that a newer message
-  passed takes only when it starts. Passes over queued messages held for the user
+  The thread's latest run among `runs`: the one with the highest ordinal, the order runs
+  start in, which a held queued run that a newer message passed takes only when it starts.
+  The order of `runs` (the order they were made) only breaks ties among runs stored
+  without an ordinal. Passes over queued messages held for the user
   (`queueHeld`): those wait behind the run that stopped, so a usage limit's stop stays
   the thread's latest run until the queue resumes.
   """
