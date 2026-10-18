@@ -667,7 +667,7 @@ Feature: Writing to an agent from a phone
   Scenario: A queue held after a restart is resumed from the queued messages
     Given "also update docs" was queued when "My MacBook" restarted
     When the user opens the queued messages
-    Then the user is told the queue is held after restart
+    Then the user is told the queue is held
     When the user resumes the queue
     Then "also update docs" runs after the current turn
 

@@ -28,6 +28,7 @@ const QStringList kThreads{QStringLiteral("t1"), QStringLiteral("t2")};
 QDateTime fixedClock() { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); }
 
 const QString kFailure = QStringLiteral("Failed to resume the queue.");
+const QString kNotConnected = QStringLiteral("Not connected: queue not resumed");
 
 QString pick(const QStringList& pool) { return *rc::gen::elementOf(std::vector<QString>(pool.cbegin(), pool.cend())); }
 
@@ -47,6 +48,9 @@ struct Model {
   // asked, or in the main one once the asker has closed.
   int failures = 0;
   int secondFailures = 0;
+  // "Not connected: queue not resumed" warnings, in the window that asked.
+  int warnings = 0;
+  int secondWarnings = 0;
   bool secondOpen = true;
   // Reconnected, but the MC has not caught the thread streams up: what the
   // windows show may be out of date.
@@ -242,10 +246,10 @@ struct Sut {
     return count;
   }
 
-  static int failures(const ShellBridge* bridge) {
+  static int toasts(const ShellBridge* bridge, const QString& title) {
     int count = 0;
     for (const QVariant& toast : bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
-      if (toast.toMap().value(QStringLiteral("title")) == kFailure) ++count;
+      if (toast.toMap().value(QStringLiteral("title")) == title) ++count;
     }
     return count;
   }
@@ -273,8 +277,12 @@ struct Sut {
 void verify(const Model& m, Sut& sut) {
   sut.barrier();
   for (const QString& thread : kThreads) RC_ASSERT(sut.resumes(thread) == m.resumes.value(thread));
-  RC_ASSERT(Sut::failures(sut.bridge.get()) == m.failures);
-  if (m.secondOpen) RC_ASSERT(Sut::failures(sut.second->bridge()) == m.secondFailures);
+  RC_ASSERT(Sut::toasts(sut.bridge.get(), kFailure) == m.failures);
+  RC_ASSERT(Sut::toasts(sut.bridge.get(), kNotConnected) == m.warnings);
+  if (m.secondOpen) {
+    RC_ASSERT(Sut::toasts(sut.second->bridge(), kFailure) == m.secondFailures);
+    RC_ASSERT(Sut::toasts(sut.second->bridge(), kNotConnected) == m.secondWarnings);
+  }
   // Until the streams catch up the windows show what they last knew.
   if (m.stale) return;
   sut.settle(m.open);
@@ -344,13 +352,14 @@ struct Leave : Command {
 
 // "Resume queue" on the open thread, in either window. It asks the MC only for
 // a queue that is held, has no resume outstanding (in any window) and is
-// current; the MC answers at once, late, or by refusing, and a refusal leaves
+// current (a held one that is not current says it is not connected); the MC answers at once, late, or by refusing, and a refusal leaves
 // the queue held and says so.
 struct Resume : Command {
   bool inSecond;
   explicit Resume(const Model& m) : inSecond(m.secondOpen && *rc::gen::arbitrary<bool>()) {}
   void checkPreconditions(const Model& m) const override { RC_PRE(!inSecond || m.secondOpen); }
   void apply(Model& m) const override {
+    if (m.stale && m.held(m.open)) ++(inSecond ? m.secondWarnings : m.warnings);
     if (m.stale || !m.held(m.open) || m.pending.contains(m.open)) return;
     ++m.resumes[m.open];
     if (m.holding) {
@@ -376,6 +385,7 @@ struct CloseSecond : Command {
   void apply(Model& m) const override {
     m.secondOpen = false;
     m.secondFailures = 0;
+    m.secondWarnings = 0;
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.closeSecond();

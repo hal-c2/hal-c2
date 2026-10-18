@@ -527,7 +527,7 @@ Item {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: requests.queueHeld ? qsTr("Queue held after restart") : qsTr("Queued")
+                            text: requests.queueHeld ? qsTr("Queue held") : qsTr("Queued")
                             color: requests.muted
                             font.family: requests.uiFont
                             font.pixelSize: Math.round(12 * Theme.fontScale)

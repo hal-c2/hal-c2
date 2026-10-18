@@ -190,17 +190,21 @@ private slots:
   void aQueuedRunWithoutItsMessageIsNotListed() {
     const QJsonObject run{{QStringLiteral("id"), QStringLiteral("run-a")},
                           {QStringLiteral("status"), QStringLiteral("queued")},
+                          {QStringLiteral("queueHeld"), true},
                           {QStringLiteral("queuePosition"), 0},
                           {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
     const composer::Queued early = composer::queued({run}, {});
     QVERIFY(early.queue.isEmpty());
     QVERIFY(early.waiting.isEmpty());
+    // Nothing is listed, so nothing is held: the card that offers "Resume" is the list.
+    QVERIFY(!early.held);
 
     const composer::Queued later = composer::queued(
         {run}, {{QStringLiteral("message:a"),
                  {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("text"), QStringLiteral("also update docs")}}}});
     QCOMPARE(later.queue.size(), 1);
     QCOMPARE(later.queue.first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("also update docs"));
+    QVERIFY(later.held);
   }
 
   // A send the MC refused came back only into an empty draft: when the user

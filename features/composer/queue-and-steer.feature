@@ -328,7 +328,7 @@ Feature: Follow-ups while the agent is working
   Scenario: A held queue says its messages are safe
     Given "later" was queued when the MC restarted
     When the MC comes back
-    Then the queue is headed "Queue held after restart" and says "Messages stay saved until you resume."
+    Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
 
   @desktop
   Scenario: A held queue is resumed from the composer
