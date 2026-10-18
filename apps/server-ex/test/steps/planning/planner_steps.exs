@@ -2204,6 +2204,20 @@ defmodule HalC2.Steps.Planning.Planner do
     update_task(context, number, %{"owner" => owner})
   end
 
+  step "the user tries to make {string} the owner of \#{int}'s task",
+       %{args: [owner, number]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    fields = %{"owner" => owner}
+    {reply, context} = plugin(context, "updateItem", %{"id" => task["id"], "fields" => fields})
+    Map.put(context, :update_reply, reply)
+  end
+
+  step "the change is refused saying {string} is not a login", %{args: [owner]} = context do
+    assert {:error, message, _} = context.update_reply
+    assert message =~ "owner: #{inspect(owner)} is not a login."
+    context
+  end
+
   step "GitHub is asked to rename \#{int} to {string} and to add {string} to its assignees",
        %{args: [number, title, owner]} = context do
     context

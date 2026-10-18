@@ -173,9 +173,15 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp field("progress", _), do: {:error, "progress is a number from 0 to 100."}
 
-  # An owner is a login, which GitHub reads whatever its case and not with spaces around.
-  defp field("owner", value) when is_binary(value),
-    do: {:ok, if(String.trim(value) == "", do: nil, else: String.trim(value))}
+  # An owner is a login, which GitHub reads whatever its case and has no blanks in it or
+  # around it; the blanks around are trimmed, those inside refuse the owner here, where
+  # it is made, instead of every push of the task failing at the host.
+  defp field("owner", value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> {:ok, nil}
+      login -> if login =~ ~r/\s/, do: {:error, "owner: #{inspect(login)} is not a login."}, else: {:ok, login}
+    end
+  end
 
   defp field(id, value) when id in ~w(parent owner projectId) and value in [nil, ""],
     do: {:ok, nil}

@@ -41,6 +41,7 @@ defmodule HalC2.Issues do
 
   @page 100
   @repository ~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+  @login ~r/^[A-Za-z0-9][A-Za-z0-9_-]{0,38}(\[bot\])?$/
   @date ~r/^\d{4}-\d{2}-\d{2}$/
   @scope "gh may not read boards with its current login. Run `gh auth refresh -s project` and try again."
 
@@ -463,14 +464,15 @@ defmodule HalC2.Issues do
     end
   end
 
-  # GitHub allows ten assignees on an issue; a login is text with no blanks in or around
-  # it. GitHub reads logins whatever their case, so the case-variants of one are one.
+  # GitHub allows ten assignees on an issue; a login is trimmed, then is letters, digits,
+  # hyphens and underscores (managed users have them) from 1 to 39 long, or a bot's `[bot]`.
+  # GitHub reads logins whatever their case, so the case-variants of one are one.
   defp logins([_ | _] = logins) when length(logins) <= 100 do
     trimmed = for login <- logins, is_binary(login), do: String.trim(login)
     unique = Enum.uniq_by(trimmed, &String.downcase/1)
 
     if length(trimmed) == length(logins) and length(unique) <= 10 and
-         Enum.all?(unique, &(&1 != "" and not String.match?(&1, ~r/\s/))),
+         Enum.all?(unique, &String.match?(&1, @login)),
        do: {:ok, unique},
        else: {:error, "assignees must be a list of logins."}
   end

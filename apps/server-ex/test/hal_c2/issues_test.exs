@@ -174,7 +174,17 @@ defmodule HalC2.IssuesTest do
     assert [%{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
     assert [%{"assignees" => ["alice"]}] = rest_inputs(dir, "DELETE")
 
-    for bad <- [[], [" "], ["da na"], ["dana", 7], Enum.map(1..11, &"user#{&1}")],
+    for bad <- [
+          [],
+          [" "],
+          ["da na"],
+          ["dana", 7],
+          Enum.map(1..11, &"user#{&1}"),
+          ["a/b"],
+          [".."],
+          ["-dana"],
+          [String.duplicate("a", 40)]
+        ],
         do: assert({:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", bad)))
 
     assert length(calls(dir)) == 2
@@ -199,6 +209,18 @@ defmodule HalC2.IssuesTest do
     # The endpoint takes several logins in one request.
     assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
     assert [_, _, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
+
+    # Managed users' underscores, a bot's suffix and the longest login are logins.
+    longest = String.duplicate("a", 39)
+
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", ["dana_acme", "copilot[bot]", longest])
+             )
+
+    assert [_, _, _, _, %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}] =
+             rest_inputs(dir, "POST")
   end
 
   test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do

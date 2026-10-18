@@ -87,6 +87,13 @@ defmodule HalC2.PlannerTest do
       assert {:error, "late is not a field a change can set."} =
                Plan.add(%{}, "a", %{"title" => "a", "late" => true}, @now)
 
+      # An owner is a login: the blanks around it go, those inside refuse it.
+      assert {:error, "owner: \"da na\" is not a login."} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " da na "}, @now)
+
+      assert {:ok, %{"a" => %{"owner" => "dana"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
+
       items = plan([{"a", %{}}])
 
       {:ok, _items, old, new} =

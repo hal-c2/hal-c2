@@ -1332,6 +1332,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is owned by "bob"
 
+    # An owner is a login, so one with a blank inside is refused where it is made, rather
+    # than refusing every push of the task.
+    @mc
+    Scenario: An owner with a blank inside is refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user tries to make "da na" the owner of #7's task
+      Then the change is refused saying "da na" is not a login
+      And #7's task is owned by "alice"
+
     # The old owner comes off first and stays off, so the retry adds only the new one.
     @mc
     Scenario: An owner GitHub refused to add goes again without taking the old owner off again

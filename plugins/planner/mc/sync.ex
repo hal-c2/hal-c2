@@ -521,7 +521,7 @@ defmodule HalC2Plugins.Planner.Sync do
   # still lists them, as a push adds the new owner after the others, else the first.
   defp owner(item, issue) do
     assignees = issue["assignees"] || []
-    Enum.find(assignees, &same?(&1, item["owner"])) || List.first(assignees)
+    Enum.find(assignees, &login?(&1, item["owner"])) || List.first(assignees)
   end
 
   # The pull requests GitHub says close the issue, linked and marked as the issue's.
@@ -909,7 +909,7 @@ defmodule HalC2Plugins.Planner.Sync do
         ],
         else: []
 
-    update = update ++ owner_pushes(base, synced, new, differs)
+    update = update ++ owner_pushes(base, synced, new)
 
     # GitHub has the relations of `synced` on the issue they were made on, `was`: a task
     # linked to another issue since drops them from that one and makes them anew on its
@@ -971,11 +971,11 @@ defmodule HalC2Plugins.Planner.Sync do
   # The task holds one of the issue's assignees, so a new owner replaces only the old
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
-  defp owner_pushes(base, synced, new, _differs) do
+  defp owner_pushes(base, synced, new) do
     old = synced["owner"]
     login = new["owner"]
     # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
-    changed? = old != login and not same?(old, login)
+    changed? = old != login and not login?(old, login)
 
     off =
       if changed? and old,
@@ -1275,6 +1275,10 @@ defmodule HalC2Plugins.Planner.Sync do
     do: String.downcase(a) == String.downcase(b)
 
   defp same?(_, _), do: false
+
+  # Logins also compare without the blanks a stored owner may have around it.
+  defp login?(a, b) when is_binary(a) and is_binary(b), do: same?(String.trim(a), String.trim(b))
+  defp login?(_, _), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
 
