@@ -94,15 +94,17 @@ export function createStatusLog(ctx: {
       if (action !== "status.history") return false;
       // Opening the history is reading the error.
       dismiss();
+      // The list as the picker showed it: errors arriving while it is open must not shift its values.
+      const shown = history.slice();
       ctx.pick({
         title: "Status history",
-        options: history.map((entry, index) => ({
+        options: shown.map((entry, index) => ({
           label: entry.text,
           description: new Date(entry.at).toLocaleTimeString(),
           value: String(index),
         })),
         onChoose: (value) => {
-          const entry = history[Number(value)];
+          const entry = shown[Number(value)];
           if (!entry) return;
           if (ctx.copy(entry.text)) ctx.say("Error copied to clipboard.", "success");
           else ctx.say("Clipboard unavailable here.", "info");

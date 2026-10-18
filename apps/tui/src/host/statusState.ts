@@ -84,7 +84,7 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
       errorPinned: input.pinnedError !== null,
     };
   }
-  // The newer message keeps what it needs up to a third of the room; the error takes the rest.
+  // The newer message keeps what it needs up to a third of the shared width; the error takes the rest.
   const labelWidth = Math.min(statusLabel.length, Math.floor(statusWidth / 3));
   const pinnedWidth = Math.max(0, statusWidth - PINNED_SEPARATOR.length - labelWidth);
   return {

@@ -83,4 +83,13 @@ describe("status log", () => {
     expect(copied).toEqual([long]);
     expect(said.at(-1)).toBe("Clipboard unavailable here.");
   });
+
+  it("copies the entry the picker listed even when a newer error arrived while it was open", () => {
+    const { log, picks, copied } = setup();
+    log.note(error("older"));
+    log.dispatch("status.history");
+    log.note(error("newer"));
+    picks[0]!.onChoose("0");
+    expect(copied).toEqual(["older"]);
+  });
 });

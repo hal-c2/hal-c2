@@ -324,7 +324,9 @@ export function createHost(options: HostOptions): Host {
     clearCurrent: (errorText) => {
       const current = store.getState();
       if (current.statusKind !== "error" || current.status !== errorText) return;
-      store.setStatus(current.shell ? shellSummary(current.shell) : "", "info");
+      // The resting message: the shell's summary, or the store's own before it has one.
+      if (current.shell) store.setStatus(shellSummary(current.shell), "info");
+      else store.setStatus("Connecting…", "busy");
     },
     pick: (request) => composer!.pick(request),
     copy: (text) => options.copyToClipboard?.(text) === true,
