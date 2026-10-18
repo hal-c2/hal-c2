@@ -80,7 +80,7 @@ Item {
         id: roomyTimelineComponent
         Timeline {
             width: 600
-            height: scrolledAway ? roomyHeight : 400
+            height: scrolledAway ? root.roomyHeight : 400
             model: rows
         }
     }
@@ -131,10 +131,12 @@ Item {
         // by default, a roomy host's when it makes room) plus a margin away.
         // How far a wheel notch carries is the platform's and the machine's: a
         // short scroll would leave the room the host makes showing the end,
-        // which is not mid-thread.
+        // which is not mid-thread. The margin is what the tests that then
+        // scroll one notch down rely on, whatever the batch overshoots by: a
+        // notch is a fraction of it, so it cannot reach the end.
         function scrollUp(timeline, room = timeline.height) {
             const list = view(timeline);
-            const farUp = () => list.originY + list.contentHeight - list.contentY > room + 200;
+            const farUp = () => list.originY + list.contentHeight - list.contentY > room + 300;
             for (let i = 0; i < 20 && !farUp(); ++i) {
                 for (let notch = 0; notch < 5; ++notch)
                     mouseWheel(list, list.width / 2, list.height / 2, 0, 360);

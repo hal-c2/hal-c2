@@ -973,9 +973,10 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
 // Newer CLDR data puts a narrow no-break space (U+202F) before AM and PM. It
 // all but vanishes in the monospace meta lines ("8:46AM"), so the stamp
 // carries a plain space. Every such space in the stamp becomes one, not only
-// the one before AM/PM. The stamp and the snooze labels built from it are all
-// single-line labels, so they give up the no-break property; this is why it is
-// done here and not in the timeline's stamp alone.
+// the one before AM/PM. Some locales use a no-break space (U+00A0) for the
+// same separator, so both are replaced. The stamp and the snooze labels built
+// from it are all single-line labels, so they give up the no-break property;
+// this is why it is done here and not in the timeline's stamp alone.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
   QString time;
   if (timestampFormat == QLatin1String("12-hour")) time = locale.toString(local.time(), QStringLiteral("h:mm AP"));
