@@ -7,7 +7,7 @@ use serde_json::json;
 use super::attachments::shown_attachments;
 use super::kept::{self, Attachment};
 use super::text::{self, approval_title, default_approval_options, items_of, review_label};
-use super::{Composer, PathSearch, back, setting, thread_of};
+use super::{Composer, PathSearch, back, later, setting, thread_of};
 use crate::composer_model::{self as model, Instance, Suggestion, Trigger};
 use crate::controllers::drafts;
 use crate::controllers::keybindings::Keymap;
@@ -584,7 +584,9 @@ impl Composer {
     }
 
     /// The composer's chips for `attachments`, each image with its
-    /// thumbnail, made once per image.
+    /// thumbnail, made once per image on the compute pool: decoding a
+    /// screenshot takes longer than a frame. A chip shows no thumbnail until
+    /// its own arrives, which publishes again.
     fn shown_with_previews(&mut self, engine: &Engine, attachments: &[Attachment]) -> Vec<Json> {
         let missing: Vec<&Attachment> = attachments
             .iter()
@@ -602,13 +604,45 @@ impl Composer {
                     .collect()
             });
             self.previews.retain(|id, _| held.contains(id));
+            self.making.retain(|id, _| held.contains(id));
             for image in missing {
-                self.previews.insert(
-                    image.id.clone(),
-                    super::attachments::thumbnail(&image.data_url),
-                );
+                self.previews.insert(image.id.clone(), String::new());
+                self.make_thumbnail(engine, &image.id, &image.data_url);
             }
         }
         shown_attachments(attachments, Some(&self.previews))
+    }
+
+    /// Makes image `id`'s thumbnail off the Engine thread; its answer counts
+    /// only while `id` still waits on this generation.
+    fn make_thumbnail(&mut self, engine: &Engine, id: &str, data_url: &str) {
+        self.generation += 1;
+        let generation = self.generation;
+        self.making.insert(id.to_owned(), generation);
+        let me = self.me.clone();
+        let made_for = id.to_owned();
+        let image = data_url.to_owned();
+        let spawned = ljos::task::spawn(
+            engine,
+            move || super::attachments::thumbnail(&image),
+            move |engine, made| {
+                later(&me, engine, move |c, engine| {
+                    if c.making.get(&made_for) != Some(&generation) {
+                        return;
+                    }
+                    c.making.remove(&made_for);
+                    // A thumbnail that panicked is none, as one that does
+                    // not decode.
+                    c.previews.insert(made_for, made.unwrap_or_default());
+                    c.publish(engine);
+                });
+            },
+        );
+        if spawned.is_err() {
+            // The pool is full: made here, once.
+            self.making.remove(id);
+            self.previews
+                .insert(id.to_owned(), super::attachments::thumbnail(data_url));
+        }
     }
 }

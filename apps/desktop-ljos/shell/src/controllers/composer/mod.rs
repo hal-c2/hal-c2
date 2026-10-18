@@ -117,8 +117,15 @@ pub struct Composer {
     closed: HashSet<String>,
     /// Drafts whose first send is on its way.
     launching: HashSet<String>,
-    /// Each image's thumbnail by attachment id.
+    /// Each image's thumbnail by attachment id; empty while it is made.
     previews: HashMap<String, String>,
+    /// The thumbnails being made and the files being read on the compute
+    /// pool, by attachment id, each with the generation that asked for it:
+    /// only that one's answer counts.
+    making: HashMap<String, u64>,
+    reading: HashMap<String, u64>,
+    /// The newest generation handed to the pool.
+    generation: u64,
     stash_open: bool,
     catalogue: Vec<Instance>,
     paths: PathSearch,
@@ -214,6 +221,9 @@ impl Controller for Composer {
             closed: HashSet::new(),
             launching: HashSet::new(),
             previews: HashMap::new(),
+            making: HashMap::new(),
+            reading: HashMap::new(),
+            generation: 0,
             stash_open: false,
             catalogue: Vec::new(),
             paths: PathSearch::default(),

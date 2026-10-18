@@ -12,7 +12,7 @@ use serde_json::json;
 
 use super::kept::{self, Attachment, Excerpt};
 use super::text::{self, CITATION_CONTEXT_LENGTH, MAX_CITATION_LENGTH, left, right};
-use super::{Composer, back, string, thread_of, toast, toast_error, uuid};
+use super::{Composer, back, later, string, thread_of, toast, toast_error, uuid};
 use crate::composer_model as model;
 use crate::controllers::keybindings::Keymap;
 use crate::json::Json;
@@ -53,6 +53,19 @@ pub(super) fn thumbnail(data_url: &str) -> String {
         "data:image/png;base64,{}",
         STANDARD.encode(png.into_inner())
     )
+}
+
+/// How many bytes `encoded` (standard base64, padded) holds, without
+/// decoding a screenshot to count them.
+fn decoded_len(encoded: &str) -> usize {
+    let encoded = encoded.trim_end();
+    let padding = encoded
+        .bytes()
+        .rev()
+        .take_while(|&b| b == b'=')
+        .count()
+        .min(2);
+    (encoded.len() / 4 * 3).saturating_sub(padding)
 }
 
 /// What the composer shows of each: {id, name, kind, status, error,
@@ -242,7 +255,7 @@ impl Composer {
                 let name = string(file, "name");
                 let mime_type = string(file, "mimeType");
                 if let Some(encoded) = file.get("base64").and_then(Json::as_str) {
-                    let size = STANDARD.decode(encoded).map_or(0, |b| b.len());
+                    let size = decoded_len(encoded);
                     kept.attachments.push(Attachment {
                         id: uuid(),
                         name,
@@ -419,7 +432,7 @@ impl Composer {
 
     /// `attachments.createUploadUrl`, then the bytes to the URL it answers
     /// with; the message later names the upload, and the MC moves it into
-    /// the thread.
+    /// the thread. A file on disk is read on the compute pool first.
     pub(super) fn upload_file(&mut self, engine: &Engine, id: &str, environment_id: &str) {
         let started = with_attachment(engine, id, |attachment| {
             attachment.upload = "uploading".into();
@@ -436,21 +449,71 @@ impl Composer {
         let Some((name, mime_type, path, content)) = started else {
             return;
         };
-        let bytes = if path.is_empty() {
-            content
-        } else {
+        self.publish(engine);
+        let file = File {
+            id: id.to_owned(),
+            environment_id: environment_id.to_owned(),
+            name,
+            mime_type,
+        };
+        if path.is_empty() {
+            self.upload_bytes(file, content);
+            return;
+        }
+        self.generation += 1;
+        let generation = self.generation;
+        self.reading.insert(file.id.clone(), generation);
+        let me = self.me.clone();
+        let on_pool = path.clone();
+        let read_file = file.clone();
+        let spawned = ljos::task::spawn(
+            engine,
+            move || std::fs::read(on_pool).ok(),
+            move |engine, read| {
+                let file = read_file;
+                later(&me, engine, move |c, engine| {
+                    // Read again since, as a retry does.
+                    if c.reading.get(&file.id) != Some(&generation) {
+                        return;
+                    }
+                    c.reading.remove(&file.id);
+                    // Removed while it was read.
+                    if kept::find_attachment(engine, &file.id).is_none() {
+                        return;
+                    }
+                    match read.ok().flatten() {
+                        Some(bytes) => c.upload_bytes(file, bytes),
+                        None => {
+                            let why = format!("{} could not be read.", file.name);
+                            c.upload_failed(engine, &file.id, &why);
+                        }
+                    }
+                });
+            },
+        );
+        if spawned.is_err() {
+            // The pool is full: read here, once.
+            self.reading.remove(id);
             match std::fs::read(&path) {
-                Ok(bytes) => bytes,
+                Ok(bytes) => self.upload_bytes(file, bytes),
                 Err(_) => {
-                    self.upload_failed(engine, id, &format!("{name} could not be read."));
-                    return;
+                    let why = format!("{} could not be read.", file.name);
+                    self.upload_failed(engine, id, &why);
                 }
             }
-        };
-        self.publish(engine);
-        let id = id.to_owned();
-        self.mc.call(
+        }
+    }
+
+    /// The bytes of `file` to the MC.
+    fn upload_bytes(&mut self, file: File, bytes: Vec<u8>) {
+        let File {
+            id,
             environment_id,
+            name,
+            mime_type,
+        } = file;
+        self.mc.call(
+            &environment_id,
             "attachments.createUploadUrl",
             json!({"type": "file", "name": name, "mimeType": mime_type, "sizeBytes": bytes.len()}),
             back(&self.me, move |c, engine, result| {
@@ -653,6 +716,15 @@ impl Composer {
     }
 }
 
+/// A file on its way to the MC.
+#[derive(Clone)]
+struct File {
+    id: String,
+    environment_id: String,
+    name: String,
+    mime_type: String,
+}
+
 /// Changes the kept attachment `id`, a draft's or a question's answer's.
 fn with_attachment<R>(
     engine: &Engine,
@@ -671,4 +743,16 @@ fn with_attachment<R>(
             .find(|a| a.id == id)
             .map(f)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_decoded_length_is_counted_from_the_encoding() {
+        for bytes in [&b""[..], b"a", b"ab", b"abc", b"abcd", &[0u8; 1000]] {
+            assert_eq!(decoded_len(&STANDARD.encode(bytes)), bytes.len());
+        }
+    }
 }
