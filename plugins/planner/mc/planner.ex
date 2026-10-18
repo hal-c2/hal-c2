@@ -56,8 +56,9 @@ defmodule HalC2Plugins.Planner do
   - health: on-track, at-risk or off-track, when you judge how the plan is going
   - changes: each with an op and a reason. update gives itemId and fields; add gives \
   fields and a ref that later changes may name in parent and after; remove gives \
-  itemId; link gives itemId and fields {"pullRequest": {repository, number}} or \
-  {"issue": {repository, number}}. fields are title, notes, kind (task or milestone), \
+  itemId; link gives itemId and fields {"pullRequest": {repository, number, url}} or \
+  {"issue": {repository, number, url}}, the url being its web address when it is not \
+  github.com's. fields are title, notes, kind (task or milestone), \
   status (todo, doing, blocked, done, dropped), start and due (YYYY-MM-DD), progress \
   (0 to 100), parent, after (the ids it waits for), labels and owner
   - feedback: notes on one task ({itemId, text}) or on the whole plan ({text})\
@@ -338,7 +339,7 @@ defmodule HalC2Plugins.Planner do
     fields = %{
       "type" => "object",
       "description" =>
-        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number}}"
+        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number, url (its web address, when its host is not github.com)}}"
     }
 
     %{
@@ -385,7 +386,14 @@ defmodule HalC2Plugins.Planner do
     ref = %{
       "type" => "object",
       "required" => ["repository", "number"],
-      "properties" => %{"repository" => %{"type" => "string"}, "number" => %{"type" => "integer"}}
+      "properties" => %{
+        "repository" => %{"type" => "string"},
+        "number" => %{"type" => "integer"},
+        "url" => %{
+          "type" => "string",
+          "description" => "Its web address; names its host when that is not github.com."
+        }
+      }
     }
 
     %{
@@ -500,7 +508,7 @@ defmodule HalC2Plugins.Planner do
     pr =
       if is_nil(arguments["pullRequest"]),
         do: {:ok, nil},
-        else: Plan.ref(arguments["pullRequest"])
+        else: Plan.ref(arguments["pullRequest"], "pullRequest")
 
     taken =
       arguments
@@ -1500,7 +1508,7 @@ defmodule HalC2Plugins.Planner do
     how =
       if run["kind"] == "work",
         do:
-          "Tell the plan how the work goes with the `planner_progress` tool of the hal-c2 MCP server: its progress (0 to 100), its status (doing, blocked or done), a short note, and the pull request you open as {repository, number}. The task is #{values["item.id"]}.",
+          "Tell the plan how the work goes with the `planner_progress` tool of the hal-c2 MCP server: its progress (0 to 100), its status (doing, blocked or done), a short note, and the pull request you open as {repository, number, url}. The task is #{values["item.id"]}.",
         else: @report
 
     String.trim(Plan.fill(action["prompt"], values)) <> "\n\n" <> how

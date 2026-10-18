@@ -425,43 +425,52 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp target("threadId", value) when is_binary(value), do: {:ok, %{"threadId" => value}}
   defp target("threadId", _value), do: :error
-  defp target(kind, value), do: with({:ok, ref} <- ref(value), do: {:ok, %{kind => ref}})
+  defp target(kind, value), do: with({:ok, ref} <- ref(value, kind), do: {:ok, %{kind => ref}})
 
   @doc """
   `{:ok, ref}` with what the plan takes of a pull request or an issue a client or an
   agent names as {repository, number}, or `:error`. The rest it gives is dropped: the
   state is GitHub's, so a link starts open and the next look reads it, and a pull
   request linked once it merged moves its task as one seen to merge. A `url` stays when
-  it is a web address of that very pull request or issue, as it names the host a
-  repository the MC has no checkout of is read through (`Sync.look/3`, by host alone,
-  the port left out as the remotes of a project leave it out); whether that host is one
-  of the MC's is that read's to say.
+  it is a web address of that very pull request (`kind` "pullRequest") or issue
+  ("issue"; any `kind` else takes either), as it names the host a repository the MC has
+  no checkout of is read through (`Sync.look/3`, by host alone, the port left out as
+  the remotes of a project leave it out); whether that host is one of the MC's is that
+  read's to say. What stays is rebuilt from the scheme, host, any port that is not the
+  scheme's own, and path, so credentials, a query and a fragment do not.
   """
-  def ref(%{"repository" => repository, "number" => number} = value)
+  def ref(value, kind \\ nil)
+
+  def ref(%{"repository" => repository, "number" => number} = value, kind)
       when is_binary(repository) and is_integer(number) do
     ref = %{"repository" => repository, "number" => number}
 
-    case web_url(value["url"], repository, number) do
+    case web_url(value["url"], repository, number, kind) do
       nil -> {:ok, ref}
       url -> {:ok, Map.put(ref, "url", url)}
     end
   end
 
-  def ref(_value), do: :error
+  def ref(_value, _kind), do: :error
 
-  defp web_url(url, repository, number) when is_binary(url) do
+  defp web_url(url, repository, number, kind) when is_binary(url) do
     case URI.parse(url) do
-      %URI{scheme: scheme, host: host, path: path}
+      %URI{scheme: scheme, host: host, port: port, path: path}
       when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) ->
         name = Regex.escape(String.downcase(repository))
-        if String.downcase(path) =~ ~r{\A/#{name}/(pull|issues)/#{number}(/|\z)}, do: url
+        segment = %{"pullRequest" => "pull", "issue" => "issues"}[kind] || "pull|issues"
+
+        if String.downcase(path) =~ ~r{\A/#{name}/(#{segment})/#{number}(/|\z)} do
+          port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
+          "#{scheme}://#{host}#{port}#{path}"
+        end
 
       _ ->
         nil
     end
   end
 
-  defp web_url(_url, _repository, _number), do: nil
+  defp web_url(_url, _repository, _number, _kind), do: nil
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
@@ -593,7 +602,13 @@ defmodule HalC2Plugins.Planner.Plan do
   # linked again does not read as newly closed.
   def link(item, %{"issue" => %{"repository" => repository, "number" => number} = ref}, now) do
     if same_ref?(item["issue"], ref) do
-      item
+      # Linked again with the address of the host serving it, as a pull request is, only
+      # its address changes: what GitHub last had of the issue stays.
+      url = ref["url"]
+
+      if url && item["issue"]["url"] != url,
+        do: %{item | "issue" => Map.put(item["issue"], "url", url), "updatedAt" => now},
+        else: item
     else
       issue = %{
         "repository" => repository,

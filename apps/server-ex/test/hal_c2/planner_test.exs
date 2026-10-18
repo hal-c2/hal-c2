@@ -205,13 +205,20 @@ defmodule HalC2.PlannerTest do
       ghe = "https://ghe.example.com/acme/api/pull/4"
       ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
 
-      for url <- ["https://ghe.example.com/acme/tools/pull/4", "https://ghe.example.com/acme/api"] do
+      for url <- [
+            "https://ghe.example.com/acme/tools/pull/4",
+            "https://ghe.example.com/acme/api",
+            "https://ghe.example.com/acme/api/pull/44",
+            "https://ghe.example.com/acme/api/pull/14",
+            "https://ghe.example.com/acme/api/issues/4"
+          ] do
         assert {:ok, %{"repository" => "acme/api", "number" => 4} = given} =
-                 Plan.ref(ref.(%{"url" => url}))
+                 Plan.ref(ref.(%{"url" => url}), "pullRequest")
 
         refute Map.has_key?(given, "url")
       end
 
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}), "pullRequest")
       assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}))
 
       item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
@@ -219,6 +226,51 @@ defmodule HalC2.PlannerTest do
 
       item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
       assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+
+      # A link made again without an address does not take the corrected one back.
+      item = Plan.link(item, %{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+    end
+
+    test "an address keeps only its scheme, host, port and path, and names the kind it links" do
+      ref = %{"repository" => "acme/api", "number" => 4}
+
+      url = fn url, kind ->
+        with({:ok, given} <- Plan.ref(Map.put(ref, "url", url), kind), do: given["url"])
+      end
+
+      assert url.(
+               "https://user:token@ghe.example.com/acme/api/pull/4?token=abc#files",
+               "pullRequest"
+             ) ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://github.com@evil.example/acme/api/pull/4", "pullRequest") ==
+               "https://evil.example/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com:8443/acme/api/pull/4/files", "pullRequest") ==
+               "https://ghe.example.com:8443/acme/api/pull/4/files"
+
+      assert url.("https://ghe.example.com:443/acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com/acme/api/issues/4", "issue") ==
+               "https://ghe.example.com/acme/api/issues/4"
+
+      assert url.("https://ghe.example.com/acme/api/pull/4", "issue") == nil
+    end
+
+    test "an issue linked again with the address of its host takes that address and keeps the rest" do
+      ghe = "https://ghe.example.com/acme/api/issues/7"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 7} |> Map.merge(fields) end
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"issue" => ref.(%{})}, @now)
+      item = put_in(item["issue"]["state"], "closed")
+      assert item["issue"]["url"] == "https://github.com/acme/api/issues/7"
+
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ghe})}, @now)
+      assert %{"url" => ^ghe, "state" => "closed"} = item["issue"]
+
+      assert %{"url" => ^ghe} = Plan.link(item, %{"issue" => ref.(%{})}, @now)["issue"]
     end
 
     test "a task linked to another issue leaves the old issue's board row and failure behind" do
