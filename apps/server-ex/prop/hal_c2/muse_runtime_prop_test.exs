@@ -37,7 +37,14 @@ defmodule HalC2.MuseRuntimePropTest do
     %{
       "match" => "delegate",
       "steps" => [
-        %{"subagent" => %{"objective" => "Look around", "progress" => "Looking"}},
+        # Muse names items within a turn: every turn's subagent has the same id.
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Looking",
+            "itemId" => "item-look"
+          }
+        },
         %{"text" => "Working on it."},
         %{"waitInterrupt" => true}
       ]

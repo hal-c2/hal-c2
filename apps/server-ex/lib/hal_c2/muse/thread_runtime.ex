@@ -833,10 +833,12 @@ defmodule HalC2.Muse.ThreadRuntime do
     state = flush(state)
     id = item["itemId"]
 
+    # Muse's item ids are the turn's, so the subagent's is scoped to the run as the
+    # other items' are (`native/2`).
     entry =
       entry ||
         %{
-          sub: NativeSubagent.start(state.turn.ids, id, subagent_task(item)),
+          sub: NativeSubagent.start(state.turn.ids, native(state, item), subagent_task(item)),
           progress: nil,
           done: false
         }
@@ -847,18 +849,25 @@ defmodule HalC2.Muse.ThreadRuntime do
           entry
 
         "running" ->
-          progress = subagent_progress(item)
+          progressed(entry, item)
 
-          if progress != nil and progress != entry.progress,
-            do: %{entry | sub: NativeSubagent.progress(entry.sub, progress), progress: progress},
-            else: entry
-
+        # The ended item may be the first to say what it did, when Muse sends fewer
+        # revisions or one first seen ended.
         status ->
+          entry = progressed(entry, item)
           sub = NativeSubagent.finish(entry.sub, status, subagent_result(item, status))
           %{entry | sub: sub, done: true}
       end
 
     %{state | subs: Map.put(state.subs, id, entry)}
+  end
+
+  defp progressed(entry, item) do
+    progress = subagent_progress(item)
+
+    if progress != nil and progress != entry.progress,
+      do: %{entry | sub: NativeSubagent.progress(entry.sub, progress), progress: progress},
+      else: entry
   end
 
   defp tool_item(state, item) do
@@ -891,14 +900,13 @@ defmodule HalC2.Muse.ThreadRuntime do
   # ("starting", "resultReady") is protocol, not progress; the item's status shows it runs.
   defp subagent_progress(item), do: non_empty(item["fallbackText"], nil)
 
-  # The answer: the result's text, else its summary; none for a failure names its reason.
+  # The answer: the result's text, else its summary. One that did not complete shows
+  # Muse's reason, else what it answered before it stopped. What it was doing (its
+  # `fallbackText`, which the ended item still carries) is its progress, never its answer.
   defp subagent_result(item, status) do
     result = item["result"] || %{}
-
-    answer =
-      Enum.find([result["text"], result["summary"], item["fallbackText"]], &non_empty(&1, nil))
-
-    if status == "completed", do: answer, else: answer || item["failureReason"]
+    answer = Enum.find([result["text"], result["summary"]], &non_empty(&1, nil))
+    if status == "completed", do: answer, else: non_empty(item["failureReason"], answer)
   end
 
   # Muse's subagents still running when the turn ends end with it, unanswered: as

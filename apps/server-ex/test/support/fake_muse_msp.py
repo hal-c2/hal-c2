@@ -211,21 +211,33 @@ def run_turn(sid, turn, text, params):
                 terminal = "cancelled"
                 break
             log({"tool": {"name": "shell", "approved": approved, "asked": True}})
-        elif "subagent" in step:
-            sub = step["subagent"]
-            it = item(turn, "subagent", "inProgress", 1, subagentId="sub-" + uuid.uuid4().hex[:8],
-                      objective=sub["objective"], role=sub.get("role", "worker"),
-                      controlStatus="starting", childSessionId="child-" + uuid.uuid4().hex[:8])
-            emit_item(sid, "item/started", it)
-            if sub.get("progress"):
-                it = dict(it, revision=2, controlStatus="running", fallbackText=sub["progress"])
-                emit_item(sid, "item/updated", it)
-            if "answer" in sub:
-                emit_item(sid, "item/completed", dict(
-                    it, revision=3, status=sub.get("status", "completed"),
-                    controlStatus="resultReady", failureReason=sub.get("failure"),
-                    result={"summary": sub.get("summary", ""), "text": sub["answer"],
-                            "artifactRefs": [], "evidenceRefs": []}))
+        elif "subagent" in step or "subagents" in step:
+            # Several run at once: each starts, then each progresses, then each ends. One
+            # with "itemId" keeps that id; one "seenEnded" is sent only as it ends, its
+            # progress on the ended item.
+            subs = step.get("subagents") or [step["subagent"]]
+            its = []
+            for sub in subs:
+                it = item(turn, "subagent", "inProgress", 1, itemId=sub.get("itemId"),
+                          subagentId="sub-" + uuid.uuid4().hex[:8],
+                          objective=sub["objective"], role=sub.get("role", "worker"),
+                          controlStatus="starting", childSessionId="child-" + uuid.uuid4().hex[:8])
+                if not sub.get("seenEnded"):
+                    emit_item(sid, "item/started", it)
+                its.append(it)
+            for i, sub in enumerate(subs):
+                if sub.get("progress"):
+                    its[i] = dict(its[i], revision=2, controlStatus="running",
+                                  fallbackText=sub["progress"])
+                    if not sub.get("seenEnded"):
+                        emit_item(sid, "item/updated", its[i])
+            for it, sub in zip(its, subs):
+                if "answer" in sub:
+                    emit_item(sid, "item/completed", dict(
+                        it, revision=3, status=sub.get("status", "completed"),
+                        controlStatus="resultReady", failureReason=sub.get("failure"),
+                        result={"summary": sub.get("summary", ""), "text": sub["answer"],
+                                "artifactRefs": [], "evidenceRefs": []}))
         elif "todos" in step:
             notify("session/todoListChanged", {"sessionId": sid, "items": step["todos"]})
         elif "contextAfter" in step and step.get("late"):

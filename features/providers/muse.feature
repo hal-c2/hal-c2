@@ -147,6 +147,18 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent that fails
     Then the subagent is shown as failed with Muse's reason
 
+  Scenario: Muse Code subagents running at once each show their own progress and answer
+    Given Muse Code delegates two reviews to subagents that run at once
+    Then each subagent is shown with its own progress and its own answer
+
+  Scenario: A Muse Code subagent first reported as done shows what it did
+    Given Muse Code delegates a review to a subagent it first reports as done
+    Then the subagent is shown with what it did and its answer
+
+  Scenario: Muse Code subagents in different turns are different subagents
+    Given Muse Code delegates a review to a subagent in each of two turns
+    Then each turn's subagent is its own, with its own thread
+
   Scenario: A Muse Code subagent still running when the turn ends stops with it
     Given Muse Code delegates a review to a subagent and the turn ends first
     Then the subagent is shown as stopped with the turn, without an answer

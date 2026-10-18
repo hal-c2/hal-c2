@@ -64,12 +64,62 @@ defmodule HalC2.Steps.Providers.Muse do
         %{
           "subagent" => %{
             "objective" => "Review the diff",
+            "progress" => "Reading the diff",
             "answer" => "",
             "status" => "failed",
             "failure" => "The reviewer ran out of budget."
           }
         },
         %{"text" => "Gave up."}
+      ]
+    },
+    %{
+      "match" => "delegate two reviews",
+      "steps" => [
+        %{
+          "subagents" => [
+            %{
+              "objective" => "Review app.ts",
+              "progress" => "Reading app.ts",
+              "answer" => "app.ts is fine."
+            },
+            %{
+              "objective" => "Review api.ts",
+              "progress" => "Reading api.ts",
+              "answer" => "api.ts has a bug."
+            }
+          ]
+        },
+        %{"text" => "Reviewed both."}
+      ]
+    },
+    %{
+      "match" => "delegate a quick review",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "progress" => "Read the diff",
+            "answer" => "No bugs.",
+            "seenEnded" => true
+          }
+        },
+        %{"text" => "Reviewed."}
+      ]
+    },
+    %{
+      # Muse names items within a turn, so every turn's subagent has this id.
+      "match" => "delegate the named review",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "progress" => "Reading the diff",
+            "answer" => "Found nothing.",
+            "itemId" => "item-review"
+          }
+        },
+        %{"text" => "Reviewed."}
       ]
     },
     %{
@@ -631,10 +681,84 @@ defmodule HalC2.Steps.Providers.Muse do
   end
 
   step "the subagent is shown as failed with Muse's reason", context do
-    assert [%{"status" => "failed", "result" => "The reviewer ran out of budget."}] =
-             context |> state() |> StreamState.list("subagent")
+    assert [
+             %{
+               "status" => "failed",
+               "progress" => "Reading the diff",
+               "result" => "The reviewer ran out of budget."
+             }
+           ] = context |> state() |> StreamState.list("subagent")
 
     assert [%{"status" => "failed"}] = items(context, "subagent")
+    context
+  end
+
+  step "Muse Code delegates two reviews to subagents that run at once", context do
+    context |> install() |> FakeAcp.thread() |> turn("delegate two reviews")
+  end
+
+  step "each subagent is shown with its own progress and its own answer", context do
+    subagents =
+      context |> state() |> StreamState.list("subagent") |> Enum.sort_by(& &1["title"])
+
+    assert [
+             %{
+               "title" => "Review api.ts",
+               "status" => "completed",
+               "progress" => "Reading api.ts",
+               "result" => "api.ts has a bug."
+             },
+             %{
+               "title" => "Review app.ts",
+               "status" => "completed",
+               "progress" => "Reading app.ts",
+               "result" => "app.ts is fine."
+             }
+           ] = subagents
+
+    assert length(items(context, "subagent")) == 2
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent it first reports as done", context do
+    context |> install() |> FakeAcp.thread() |> turn("delegate a quick review")
+  end
+
+  step "the subagent is shown with what it did and its answer", context do
+    assert [%{"status" => "completed", "progress" => "Read the diff", "result" => "No bugs."}] =
+             context |> state() |> StreamState.list("subagent")
+
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent in each of two turns", context do
+    context
+    |> install()
+    |> FakeAcp.thread()
+    |> turn("delegate the named review")
+    |> turn("delegate the named review")
+  end
+
+  step "each turn's subagent is its own, with its own thread", context do
+    state = state(context)
+    runs = state |> StreamState.list("run") |> Enum.map(& &1["id"]) |> Enum.sort()
+    subagents = StreamState.list(state, "subagent")
+
+    assert length(runs) == 2
+    assert subagents |> Enum.map(& &1["runId"]) |> Enum.sort() == runs
+    assert Enum.all?(subagents, &(&1["status"] == "completed"))
+
+    for child_id <- subagents |> Enum.map(& &1["childThreadId"]) |> Enum.uniq() do
+      child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+
+      assert [{"user", "Review the diff"}, {"assistant", "Found nothing."}] ==
+               child
+               |> StreamState.list("message")
+               |> Enum.sort_by(& &1["createdAt"])
+               |> Enum.map(&{&1["role"], &1["text"]})
+    end
+
+    assert subagents |> Enum.map(& &1["childThreadId"]) |> Enum.uniq() |> length() == 2
     context
   end
 
