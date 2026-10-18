@@ -201,6 +201,26 @@ defmodule HalC2.PlannerTest do
                item["pullRequests"]
     end
 
+    test "a link keeps the address of the pull request it names, and a second one corrects it" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      for url <- ["https://ghe.example.com/acme/tools/pull/4", "https://ghe.example.com/acme/api"] do
+        assert {:ok, %{"repository" => "acme/api", "number" => 4} = given} =
+                 Plan.ref(ref.(%{"url" => url}))
+
+        refute Map.has_key?(given, "url")
+      end
+
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}))
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"url" => "https://github.com/acme/api/pull/4"}] = item["pullRequests"]
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+    end
+
     test "a task linked to another issue leaves the old issue's board row and failure behind" do
       issue = fn repository, number ->
         %{"issue" => %{"repository" => repository, "number" => number}}

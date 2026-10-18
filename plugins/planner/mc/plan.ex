@@ -432,14 +432,16 @@ defmodule HalC2Plugins.Planner.Plan do
   agent names as {repository, number}, or `:error`. The rest it gives is dropped: the
   state is GitHub's, so a link starts open and the next look reads it, and a pull
   request linked once it merged moves its task as one seen to merge. A `url` stays when
-  it is a web address, as it names the host a repository the MC has no checkout of is
-  read through (`Sync.look/3`); whether that host is one of the MC's is that read's to say.
+  it is a web address of that very pull request or issue, as it names the host a
+  repository the MC has no checkout of is read through (`Sync.look/3`, by host alone,
+  the port left out as the remotes of a project leave it out); whether that host is one
+  of the MC's is that read's to say.
   """
   def ref(%{"repository" => repository, "number" => number} = value)
       when is_binary(repository) and is_integer(number) do
     ref = %{"repository" => repository, "number" => number}
 
-    case web_url(value["url"]) do
+    case web_url(value["url"], repository, number) do
       nil -> {:ok, ref}
       url -> {:ok, Map.put(ref, "url", url)}
     end
@@ -447,17 +449,19 @@ defmodule HalC2Plugins.Planner.Plan do
 
   def ref(_value), do: :error
 
-  defp web_url(url) when is_binary(url) do
+  defp web_url(url, repository, number) when is_binary(url) do
     case URI.parse(url) do
-      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and host not in [nil, ""] ->
-        url
+      %URI{scheme: scheme, host: host, path: path}
+      when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) ->
+        name = Regex.escape(String.downcase(repository))
+        if String.downcase(path) =~ ~r{\A/#{name}/(pull|issues)/#{number}(/|\z)}, do: url
 
       _ ->
         nil
     end
   end
 
-  defp web_url(_url), do: nil
+  defp web_url(_url, _repository, _number), do: nil
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
@@ -558,18 +562,30 @@ defmodule HalC2Plugins.Planner.Plan do
   def link(item, %{"pullRequest" => %{"repository" => repository, "number" => number} = ref}, now) do
     prs = item["pullRequests"] || []
 
-    if Enum.any?(prs, &same_ref?(&1, ref)) do
-      item
-    else
-      pr = %{
-        "repository" => repository,
-        "number" => number,
-        "url" => ref["url"] || "https://github.com/#{repository}/pull/#{number}",
-        "title" => ref["title"],
-        "state" => ref["state"] || "open"
-      }
+    # A link made again with the address of the host serving it corrects the address
+    # stored before links kept it, which is github.com's whatever the host.
+    case Enum.find_index(prs, &same_ref?(&1, ref)) do
+      nil ->
+        pr = %{
+          "repository" => repository,
+          "number" => number,
+          "url" => ref["url"] || "https://github.com/#{repository}/pull/#{number}",
+          "title" => ref["title"],
+          "state" => ref["state"] || "open"
+        }
 
-      %{item | "pullRequests" => prs ++ [pr], "updatedAt" => now}
+        %{item | "pullRequests" => prs ++ [pr], "updatedAt" => now}
+
+      at ->
+        url = ref["url"]
+
+        if url && Enum.at(prs, at)["url"] != url,
+          do: %{
+            item
+            | "pullRequests" => List.update_at(prs, at, &Map.put(&1, "url", url)),
+              "updatedAt" => now
+          },
+          else: item
     end
   end
 
