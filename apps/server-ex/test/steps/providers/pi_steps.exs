@@ -779,6 +779,36 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :steered, text)
   end
 
+  # The fake refuses a steer that says "refuse", as Pi rejects one before accepting it.
+  step "the user steers the thread with a message Pi refuses", context do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "text" => "refuse this one",
+        "attachments" => [],
+        "deliveryIntent" => "steer"
+      })
+
+    Map.put(context, :steer_reply, reply)
+  end
+
+  step "the sender hears Pi did not take the message", context do
+    assert {:error, message} = context.steer_reply
+    assert message =~ "Pi did not take the message into its running turn"
+    assert message =~ "Pi cannot take this message now"
+    context
+  end
+
+  step "the Pi turn runs on without it", context do
+    state = World.stream(context, context.thread)
+    assert [%{"status" => "running"}] = StreamState.list(state, "run")
+    refute Enum.any?(StreamState.list(state, "message"), &(&1["text"] == "refuse this one"))
+    context
+  end
+
   # One run, which Pi's answer to the steer ends.
   defp steered_turn(context) do
     state = FakeAcp.await_runs(context, 1)

@@ -3,12 +3,13 @@ defmodule HalC2.PiSteerPropTest do
   A state machine over one Pi thread (`HalC2.Pi.ThreadRuntime`) driven through the
   orchestration commands a client sends: send a message whose turn works until it is
   steered or stopped, either taking the steer into its running work or settling just
-  before the steer lands (so Pi answers it in a run of its own); steer the running turn;
-  interrupt it.
+  before the steer lands (so Pi answers it in a run of its own); steer the running turn,
+  with a message Pi takes or one it refuses; interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
-  checks that each turn ends once, with the status it should, and that every steer's
-  answer is recorded in the thread, whichever way Pi ran it. After each command the test
+  checks that each turn ends once, with the status it should, that every steer's
+  answer is recorded in the thread, whichever way Pi ran it, and that a steer Pi refused
+  is an error for its sender that leaves the turn running. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
   """
@@ -96,7 +97,8 @@ defmodule HalC2.PiSteerPropTest do
 
   def command(%{next: next}) do
     frequency([
-      {3, {:call, __MODULE__, :steer, ["m#{next}"]}},
+      {3, {:call, __MODULE__, :steer, ["m#{next}", :taken]}},
+      {1, {:call, __MODULE__, :steer, ["m#{next}", :refused]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -107,7 +109,10 @@ defmodule HalC2.PiSteerPropTest do
   def next_state(state, _result, {:call, _, :send, [msg, _how]}),
     do: %{state | next: state.next + 1, runs: state.runs ++ [{msg, "running"}], turn: msg}
 
-  def next_state(state, _result, {:call, _, :steer, [msg]}) do
+  def next_state(state, _result, {:call, _, :steer, [_msg, :refused]}),
+    do: %{state | next: state.next + 1}
+
+  def next_state(state, _result, {:call, _, :steer, [msg, :taken]}) do
     state = %{state | next: state.next + 1, replies: state.replies ++ [msg]}
     end_turn(state, "completed")
   end
@@ -121,7 +126,14 @@ defmodule HalC2.PiSteerPropTest do
 
   def postcondition(state, call, {reply, projection}) do
     model = next_state(state, nil, call)
-    reply == :ok and projection == %{runs: model.runs, replies: model.replies}
+
+    replied? =
+      case call do
+        {:call, _, :steer, [_, :refused]} -> match?({:error, _}, reply)
+        _ -> reply == :ok
+      end
+
+    replied? and projection == %{runs: model.runs, replies: model.replies}
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -145,9 +157,10 @@ defmodule HalC2.PiSteerPropTest do
     reply(Orchestration.dispatch(message(msg, "#{how} #{msg}", "queue_after_active", "auto")), [])
   end
 
-  def steer(msg) do
-    ending = active_runs()
-    result = Orchestration.dispatch(message(msg, "steer #{msg}", "start_immediately", "steer"))
+  # `kind`: whether Pi takes the steer (:taken), which ends the turn, or refuses it.
+  def steer(msg, kind) do
+    {text, ending} = if kind == :taken, do: {"steer", active_runs()}, else: {"refuse", []}
+    result = Orchestration.dispatch(message(msg, "#{text} #{msg}", "start_immediately", "steer"))
     reply(result, ending)
   end
 

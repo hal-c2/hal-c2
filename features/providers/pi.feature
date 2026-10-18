@@ -554,6 +554,12 @@ Feature: Pi
       | is still working                       | the message is queued into the running work    |
       | went idle just before the steer landed | the message starts new work in the same turn   |
 
+  Scenario: A message Pi refuses while it works is an error for its sender
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi refuses
+    Then the sender hears Pi did not take the message
+    And the Pi turn runs on without it
+
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running

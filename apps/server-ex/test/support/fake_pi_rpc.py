@@ -21,7 +21,7 @@
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true} (until an abort, or
 # a steer prompt, which reaches Pi only once this run has settled, and starts a run of
-# its own), {"exit": code}.
+# its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -190,6 +190,10 @@ def wait_for(pred):
             ui_answers[msg.get("id")] = msg
         elif kind != "prompt":
             command(msg)
+        elif steer(msg) and "refuse" in msg.get("message", ""):
+            # A steer saying "refuse" is rejected before Pi accepts it.
+            respond(msg, error="Pi cannot take this message now")
+            continue
         if pred(msg):
             return msg
 
