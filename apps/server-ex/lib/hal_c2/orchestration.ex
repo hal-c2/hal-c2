@@ -1060,6 +1060,13 @@ defmodule HalC2.Orchestration do
       |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
     reuse? = input["reuseExistingThread"] == true
+    command = message && first_message(thread_id, input, message)
+
+    # A new worktree's first message is recorded with the thread, as a run preparing
+    # it, so a retry of the launch that finds the thread finds its message too.
+    in_worktree =
+      if command && strategy["type"] == "worktree",
+        do: in_worktree(thread_id, thread, command)
 
     transacted =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
@@ -1068,7 +1075,8 @@ defmodule HalC2.Orchestration do
             {[], {:error, "Thread #{thread_id} does not exist."}}
 
           nil ->
-            {[{"thread", thread_id, Patch.diff(nil, thread)}], {:ok, :created}}
+            change = {"thread", thread_id, Patch.diff(nil, thread)}
+            with_first_run(state, thread_id, change, :created, in_worktree)
 
           # A draft the client already created takes the launch's workspace, but only while empty.
           existing when reuse? ->
@@ -1077,10 +1085,8 @@ defmodule HalC2.Orchestration do
                 workspace_fields(strategy)
                 |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
-              {Enum.reject(
-                 [upsert(state, "thread", thread_id, &Map.merge(&1, fields))],
-                 &is_nil/1
-               ), {:ok, :reused}}
+              change = upsert(state, "thread", thread_id, &Map.merge(&1, fields))
+              with_first_run(state, thread_id, change, :reused, in_worktree)
             else
               {[],
                {:error,
@@ -1091,15 +1097,33 @@ defmodule HalC2.Orchestration do
             change =
               upsert(state, "thread", thread_id, &Map.put(&1, "titleRegeneration", titling))
 
-            {[change], {:ok, :resumed}}
+            {[change], {:ok, :resumed, nil}}
 
           _ ->
-            {[], {:ok, :resumed}}
+            {[], {:ok, :resumed, nil}}
         end
       end)
 
-    with {:ok, created} <- transacted,
-         do: launch_message(thread_id, thread, strategy, input, message, titling, created)
+    with {:ok, created, first} <- transacted,
+         do: launch_message(thread_id, strategy, command, titling, created, first)
+  end
+
+  # The thread's `change`, and with it the first message's run when the launch makes a
+  # new worktree (`in_worktree`), decided as the thread will be once it is committed.
+  defp with_first_run(_state, _thread_id, change, created, nil),
+    do: {Enum.reject([change], &is_nil/1), {:ok, created, nil}}
+
+  defp with_first_run(_state, _thread_id, _change, _created, {:error, _} = refused),
+    do: {[], refused}
+
+  defp with_first_run(state, thread_id, change, created, {:ok, project, command}) do
+    {kind, id, patch} = change || {"thread", thread_id, %{}}
+
+    launched =
+      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
+
+    {changes, decided} = decide_message(launched, thread_id, command)
+    {Enum.reject([change], &is_nil/1) ++ changes, {:ok, created, {project, command, decided}}}
   end
 
   defp reusable?(state, thread, project_id) do
@@ -1108,36 +1132,45 @@ defmodule HalC2.Orchestration do
       StreamState.get(state, "run") == %{}
   end
 
-  defp launch_message(thread_id, thread, strategy, input, message, titling, created) do
+  # The first message is a command of its own (`<commandId>:initial-message`),
+  # answered once like any client command.
+  defp first_message(thread_id, input, message) do
+    Map.merge(message, %{
+      "type" => "message.dispatch",
+      "commandId" => "#{input["commandId"]}:initial-message",
+      "threadId" => thread_id,
+      "createdBy" => input["createdBy"] || "user",
+      "creationSource" => input["creationSource"] || "web",
+      "modelSelection" => input["modelSelection"]
+    })
+  end
+
+  defp launch_message(thread_id, strategy, command, titling, created, first) do
     result = %{"threadId" => thread_id, "resumed" => created == :resumed}
 
-    case message do
-      nil ->
-        {:ok, result}
+    if titling,
+      do: generate_title(thread_id, command["text"] || "", command["attachments"] || [])
 
-      message ->
-        if titling,
-          do: generate_title(thread_id, message["text"] || "", message["attachments"] || [])
+    launched =
+      case first do
+        _ when command == nil ->
+          {:ok, result}
 
-        command =
-          Map.merge(message, %{
-            "type" => "message.dispatch",
-            "commandId" => "#{input["commandId"]}:initial-message",
-            "threadId" => thread_id,
-            "createdBy" => input["createdBy"] || "user",
-            "creationSource" => input["creationSource"] || "web",
-            "modelSelection" => input["modelSelection"]
-          })
+        nil ->
+          dispatch_once(command)
 
-        # The first message is a command of its own (`<commandId>:initial-message`),
-        # answered once like any client command.
-        launched =
-          if strategy["type"] == "worktree" and created in [:created, :reused],
-            do: launch_in_worktree(thread_id, thread, strategy, command),
-            else: dispatch_once(command)
+        {project, command, {:ok, {:prepared, run_id}}} ->
+          :ok = HalC2.WorktreeSetup.start(thread_id, run_id, project, strategy, command["text"])
+          {:ok, %{"sequence" => sequence(thread_id)}}
 
-        with {:ok, _} <- launched, do: {:ok, result}
-    end
+        {_, _, {:ok, :sent}} ->
+          {:ok, %{"sequence" => sequence(thread_id)}}
+
+        {_, _, refused} ->
+          refused
+      end
+
+    with {:ok, _} <- launched, do: {:ok, result}
   end
 
   defp workspace_fields(%{"type" => "existing_worktree"} = strategy),
@@ -1148,7 +1181,9 @@ defmodule HalC2.Orchestration do
 
   defp workspace_fields(_strategy), do: %{"branch" => nil}
 
-  defp launch_in_worktree(thread_id, thread, strategy, command) do
+  # The project a new worktree is made from, and the first message as it waits for
+  # it: its attachments claimed and its run deferred.
+  defp in_worktree(thread_id, thread, command) do
     project =
       case HalC2.Shell.row(node(), thread["projectId"]) do
         {"project", row} -> row
@@ -1156,18 +1191,13 @@ defmodule HalC2.Orchestration do
       end
 
     with %{"workspaceRoot" => _} <- project || {:error, "The project is not on this MC."},
-         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []),
-         command =
-           command
-           |> claimed(attachments)
-           |> Map.put("dispatchMode", %{"type" => "defer_start"}),
-         {:ok, {:prepared, run_id}} <-
-           HalC2.Streams.transact(thread_id, :thread, &decide_message(&1, thread_id, command)) do
-      :ok = HalC2.WorktreeSetup.start(thread_id, run_id, project, strategy, command["text"])
-      {:ok, %{"sequence" => sequence(thread_id)}}
-    else
-      {:ok, :sent} -> {:ok, %{"sequence" => sequence(thread_id)}}
-      refused -> refused
+         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []) do
+      command =
+        command
+        |> claimed(attachments)
+        |> Map.put("dispatchMode", %{"type" => "defer_start"})
+
+      {:ok, project, command}
     end
   end
 

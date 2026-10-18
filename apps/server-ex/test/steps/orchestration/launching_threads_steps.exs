@@ -64,6 +64,11 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     context
   end
 
+  step "the retry reports the thread was resumed", context do
+    assert {:ok, %{"resumed" => true}} = context.retry
+    context
+  end
+
   step "the new thread records branch {string}", %{args: [branch]} = context do
     assert %{"branch" => ^branch, "worktreePath" => nil} = World.thread(context, "new")
     context
@@ -180,6 +185,48 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
        %{args: [project, text]} = context do
     launch_in_worktree(context, project, text)
   end
+
+  # The retry is made from the stream hook, at the first stream call the launch makes
+  # once its thread is committed.
+  step "a client launches a thread in {string} in a new worktree and retries it the moment the thread exists",
+       %{args: [project]} = context do
+    context = context |> World.worktree_setup() |> hold(project) |> World.providers()
+    strategy = %{"type" => "worktree", "baseRef" => "main"}
+
+    input =
+      input(context, project, %{
+        "workspaceStrategy" => strategy,
+        "initialMessage" => message("Hello")
+      })
+
+    Process.put(:retry_launch, input)
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :retry_launch, []})
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+    launch = HalC2.Orchestration.launch_thread(input)
+    Application.delete_env(:hal_c2, :streams_hook)
+    retry = Process.delete(:retried) || flunk("the launch was never retried")
+
+    context
+    |> Map.merge(%{launch: launch, retry: retry, launch_input: input})
+    |> put_in([:threads, "new"], input["threadId"])
+    |> Map.put(:thread, "new")
+  end
+
+  def retry_launch(:ensured, stream_id) do
+    with %{"threadId" => ^stream_id} = input <- Process.get(:retry_launch) do
+      # Unset while it looks, so the hook does not call itself.
+      Process.delete(:retry_launch)
+
+      if Map.has_key?(
+           HalC2.Streams.state(stream_id) |> HalC2.StreamState.get("thread"),
+           stream_id
+         ),
+         do: Process.put(:retried, HalC2.Orchestration.launch_thread(input)),
+         else: Process.put(:retry_launch, input)
+    end
+  end
+
+  def retry_launch(_stage, _stream_id), do: :ok
 
   step "a launched thread's first run is preparing its worktree", context do
     context = launch_in_worktree(context, nil, "Hello")

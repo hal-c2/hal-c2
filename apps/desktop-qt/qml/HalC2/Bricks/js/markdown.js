@@ -34,12 +34,17 @@ function escapeHtml(text) {
 // The href a link may carry, or null when it must render as plain text: web
 // and mail links, file URLs, and scheme-less paths or fragments (the thread
 // opens those in the file panel). A one-letter "scheme" is a Windows drive.
-function safeHref(url) {
+// With `tasks`, a link to a task box (`task:<n>`, which the Files viewer makes
+// of the boxes in a file it renders) is kept too; in a reply it never is, or
+// the model could write a link that ticks a box in the user's file.
+function safeHref(url, tasks) {
     var href = (url || "").trim();
     if (href.length === 0 || /[\u0000-\u001f]/.test(href))
         return null;
     var scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
     if (!scheme || scheme[1].length === 1)
+        return href;
+    if (tasks && /^task:\d+$/.test(href))
         return href;
     return SAFE_SCHEMES.indexOf(scheme[1].toLowerCase()) >= 0 ? href : null;
 }
@@ -314,7 +319,7 @@ function renderInline(src, ctx, inLink) {
             }
             processEmphasis(nodes, o + 1, true);
             var inner = nodesHtml(nodes.slice(o + 1), true);
-            var safe = safeHref(href);
+            var safe = safeHref(href, ctx.tasks);
             var html;
             if (opener.image) {
                 // Images never load: the alt text links to the source.
@@ -896,9 +901,9 @@ function fold(out, prose, entries, streaming) {
 
 // What parsing and rendering read: `refs` maps a link definition's label to
 // its address, `used` collects the labels a render looked up and `defined` the
-// ones a parse defined, when someone asks.
-function context(lineBreaks, refs) {
-    return { refs: refs, lineBreaks: lineBreaks, olDepth: 0, ulDepth: 0, used: null, defined: null };
+// ones a parse defined, when someone asks. `tasks` lets task links through.
+function context(lineBreaks, refs, tasks) {
+    return { refs: refs, lineBreaks: lineBreaks, tasks: tasks, olDepth: 0, ulDepth: 0, used: null, defined: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,8 +1017,8 @@ function takeTally() {
 }
 
 // The segments of a whole text, read in one go.
-function read(text, lineBreaks, streaming) {
-    var ctx = context(lineBreaks, new Map());
+function read(text, lineBreaks, streaming, tasks) {
+    var ctx = context(lineBreaks, new Map(), tasks);
     var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
     var blocks = parseBlocks(lines, ctx);
     tally.chars += text.length;
@@ -1033,15 +1038,15 @@ function read(text, lineBreaks, streaming) {
 var cache = new Map();
 var CACHE_LIMIT = 200;
 
-function finished(text, lineBreaks) {
-    var key = (lineBreaks ? "b" : "-") + text;
+function finished(text, lineBreaks, tasks) {
+    var key = (lineBreaks ? "b" : "-") + (tasks ? "t" : "-") + text;
     var hit = cache.get(key);
     if (hit !== undefined) {
         cache.delete(key);
         cache.set(key, hit);
         return hit;
     }
-    var result = read(text, lineBreaks, false);
+    var result = read(text, lineBreaks, false, tasks);
     cache.set(key, result);
     if (cache.size > CACHE_LIMIT)
         cache.delete(cache.keys().next().value);
@@ -1058,9 +1063,10 @@ function finished(text, lineBreaks) {
 // One thing reaches back over settled blocks: a link definition turns every
 // earlier `[label]` into a link. Each block remembers the labels it looked up,
 // and a definition that appears, changes or goes renders those blocks again.
-function following(lineBreaks) {
+function following(lineBreaks, tasks) {
     return {
         lineBreaks: lineBreaks,
+        tasks: tasks,
         length: -1, // of the text as last read
         cut: 0, // where the first unsettled block starts in the text
         refs: new Map(), // every link definition
@@ -1162,7 +1168,7 @@ function readTail(live, text) {
     before.forEach(function (url, label) {
         refs.delete(label);
     });
-    var ctx = context(live.lineBreaks, refs);
+    var ctx = context(live.lineBreaks, refs, live.tasks);
     var parsed = [];
     var i = 0;
     while (i < lines.length) {
@@ -1315,19 +1321,20 @@ function segments(text, options, state) {
     var opts = options || {};
     var lineBreaks = !!opts.lineBreaks;
     var streaming = !!opts.streaming;
+    var tasks = !!opts.tasks;
     if (!state)
-        return streaming ? read(text, lineBreaks, true) : finished(text, lineBreaks);
+        return streaming ? read(text, lineBreaks, true, tasks) : finished(text, lineBreaks, tasks);
     var before = state.text;
     var grown = before !== null && text.length >= before.length && text.startsWith(before);
     state.text = text;
-    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks))
+    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks && state.live.tasks === tasks))
         state.live = null;
     // A text is followed while it streams, and once it has grown.
     if (state.live === null && (streaming || (grown && before.length > 0 && text.length > before.length)))
-        state.live = following(lineBreaks);
+        state.live = following(lineBreaks, tasks);
     try {
         if (state.live === null) {
-            var result = finished(text, lineBreaks);
+            var result = finished(text, lineBreaks, tasks);
             state.stable = result === state.kept ? result.length : 0;
             state.kept = result;
             return result;
