@@ -205,11 +205,26 @@ defmodule HalC2.Editors do
         Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
 
       _ ->
-        setsid = List.wrap(System.find_executable("setsid"))
         script = ~s("$@" </dev/null >/dev/null 2>&1 &)
-        System.cmd("/bin/sh", ["-c", script, "sh" | setsid ++ [command | args]])
+        System.cmd("/bin/sh", ["-c", script, "sh" | new_session() ++ [command | args]])
     end
 
     {:ok, nil}
+  end
+
+  # The program that puts what it runs in a session of its own, so the desktop stopping
+  # the MC's process group does not take the editor with it. Linux has `setsid`; stock
+  # macOS does not, but ships perl. With neither, the program only loses the MC's pipes.
+  defp new_session do
+    cond do
+      setsid = System.find_executable("setsid") ->
+        [setsid]
+
+      perl = System.find_executable("perl") ->
+        [perl, "-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"]
+
+      true ->
+        []
+    end
   end
 end

@@ -104,6 +104,14 @@ Feature: The MC working with its host machine
     And the MC holds no process or port for it
 
   @mc
+  Scenario: A host without setsid still starts the program in a session of its own
+    Given a Linux host with a display and xdg-open installed
+    And the host has no setsid program
+    When a client opens a file in the file manager
+    Then the program runs in a session of its own with no input or output shared with the MC
+    And the MC holds no process or port for it
+
+  @mc
   Scenario: Opening the file manager on a host without one fails
     Given a Linux host with no display
     When a client opens a folder in the file manager

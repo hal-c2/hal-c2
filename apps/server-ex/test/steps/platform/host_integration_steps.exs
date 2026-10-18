@@ -46,8 +46,9 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  # Like `install/2`, but also reports where the program's standard streams lead and
-  # which session it is in: `name`, the arguments, then `fd0 fd1 fd2 session`.
+  # Like `install/2`, but also reports whether the program's standard streams lead to
+  # /dev/null, then its process id and process group: `name`, the arguments, then
+  # `in out err pid pgid`. Only POSIX tools, so it runs on macOS as well as Linux.
   defp install_probe(context, name) do
     context = install(context, name)
 
@@ -55,11 +56,26 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     #!/usr/bin/env bash
     exec 3<>/dev/tcp/127.0.0.1/$HAL_C2_TEST_LAUNCH_PORT
     printf '%s\\x1f' "#{name}" "$@" >&3
-    printf '%s %s %s %s\\n' "$(readlink /proc/$$/fd/0)" "$(readlink /proc/$$/fd/1)" \\
-      "$(readlink /proc/$$/fd/2)" "$(awk '{print $6}' /proc/$$/stat)" >&3
+    for fd in 0 1 2; do
+      if [ /dev/fd/$fd -ef /dev/null ]; then printf 'null ' >&3; else printf 'other ' >&3; fi
+    done
+    printf '%s %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' ')" >&3
     read -r -u 3 _
     """)
 
+    context
+  end
+
+  # Takes setsid off PATH, leaving what the fake programs and the perl fallback need.
+  defp without_setsid(context) do
+    context = bin(context)
+    tools = Mc.tmp_dir(context.mc, "tools")
+
+    for tool <- ~w(env bash ps tr perl), path = System.find_executable(tool) do
+      File.ln_s!(path, Path.join(tools, tool))
+    end
+
+    World.put_os_env("PATH", context.bin <> ":" <> tools)
     context
   end
 
@@ -300,17 +316,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert {:ok, nil} = context.reply
     {conn, argv} = launched(context)
     [_name, _file, report] = argv
-    [fd0, fd1, fd2, session] = String.split(report)
-    assert [fd0, fd1, fd2] == ["/dev/null", "/dev/null", "/dev/null"]
+    [fd0, fd1, fd2, pid, pgid] = String.split(report)
+    assert [fd0, fd1, fd2] == ["null", "null", "null"]
 
-    mc_session =
-      File.read!("/proc/#{:os.getpid()}/stat")
-      |> String.split(") ")
-      |> List.last()
-      |> String.split()
-      |> Enum.at(3)
-
-    refute session == mc_session
+    {mc_pgid, 0} = System.cmd("ps", ["-o", "pgid=", "-p", to_string(:os.getpid())])
+    refute pgid == String.trim(mc_pgid)
+    # A new session's leader is the only member of its process group.
+    assert pgid == pid
     Map.put(context, :editor_conn, conn)
   end
 
@@ -320,6 +332,10 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert :ok = :gen_tcp.send(context.editor_conn, "exit\n")
     :gen_tcp.close(context.editor_conn)
     context
+  end
+
+  step "the host has no setsid program", context do
+    without_setsid(context)
   end
 
   step "a Linux host with no display", context do
