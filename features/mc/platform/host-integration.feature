@@ -80,6 +80,24 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad with the file where the command line puts it
 
   @mc
+  Scenario: On Windows a path with backslashes reaches the editor as it is
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client opens the path "C:\Projects\2024\app.ts" in the default editor
+    Then Windows opens "C:\Projects\2024\app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows the registered command line may name its program with a variable and take the file as %L
+    Given the MC runs on Windows and Notepad is registered through the variable in '"%HAL_C2_TEST_EDITORS%/notepad" %L'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: A hung registry lookup does not hold up the server config on Windows
+    Given the MC runs on Windows and reg never answers
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
   Scenario: A Windows host without a text association does not offer a default editor
     Given the MC runs on Windows with no program for text files
     When a client reads the MC's server config

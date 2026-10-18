@@ -92,7 +92,7 @@ defmodule HalC2.Editors do
     if Enum.any?(args, &match?({:file, _}, &1)) do
       for arg <- args do
         case arg do
-          {:file, template} -> String.replace(template, file_placeholder(), file)
+          {:file, template} -> String.replace(template, file_placeholder(), fn _ -> file end)
           arg -> arg
         end
       end
@@ -101,7 +101,10 @@ defmodule HalC2.Editors do
     end
   end
 
-  # `%1`, `%L`, `%l` and `%*` in a registered command line stand for the file.
+  # `%1`, `%L` and `%l` in a registered command line stand for the file, and so does `%*`
+  # (all arguments), as the file is the only one given. The file is put in by a function
+  # because a replacement string would read the backslashes of a Windows path (`\\2`) as
+  # group references.
   defp file_placeholder, do: ~r/%[1lL*]/
 
   defp args(style, target) do
@@ -140,8 +143,18 @@ defmodule HalC2.Editors do
   # The program Windows opens `.txt` files with, from the registry through `reg query`: the
   # user's choice, else the class registered for the extension, and that class's
   # `shell\open\command`. Nil without one, and for a Store app, whose class names no command
-  # line (it activates through `DelegateExecute`).
+  # line (it activates through `DelegateExecute`). Like xdg-mime, it runs while a client
+  # waits for the server config, so the three queries share one 2 s deadline.
   defp windows_text_editor do
+    task = Task.async(&registered_text_editor/0)
+
+    case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, editor} -> editor
+      nil -> nil
+    end
+  end
+
+  defp registered_text_editor do
     explorer = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"
 
     with reg when reg != nil <- System.find_executable("reg"),
@@ -160,12 +173,11 @@ defmodule HalC2.Editors do
     end
   end
 
-  # The data of the value `reg query` prints for `args`, or nil. Like xdg-mime, it runs
-  # while a client waits for the server config, so it gets 2 s.
+  # The data of the value `reg query` prints for `args`, or nil. `reg` writes in the
+  # console's code page, so a path with characters outside ASCII can come back as invalid
+  # UTF-8 and the launch then fails; a PowerShell query or `chcp 65001` would fix that.
   defp reg_value(reg, args) do
-    task = Task.async(fn -> System.cmd(reg, ["query" | args], stderr_to_stdout: true) end)
-
-    with {:ok, {out, 0}} <- Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill),
+    with {out, 0} <- System.cmd(reg, ["query" | args], stderr_to_stdout: true),
          [_, data] <- Regex.run(~r/^\s+\S.*?\s+REG_[A-Z_]+\s+(\S.*?)\s*$/m, out) do
       data
     else

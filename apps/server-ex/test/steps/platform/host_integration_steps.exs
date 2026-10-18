@@ -126,6 +126,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^a client opens the path "(?<file>[^"]+)" in the default editor$/,
+       %{args: [file]} = context do
+    context |> Map.put(:target, file) |> open(%{"cwd" => file, "editor" => "default"})
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered through the variable in '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+  end
+
   step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in (?!the default editor)(?<editor>.+)$/,
        %{args: [file, line, column, editor]} = context do
     {command, id} = Map.fetch!(@editors, editor)
@@ -194,6 +204,8 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1)) do
     World.put_app_env(:os_type, {:win32, :nt})
     context = install(context, "notepad")
+    # What a registered line can name with %...%, as %SystemRoot% is on a real host.
+    World.put_os_env("HAL_C2_TEST_EDITORS", context.bin)
 
     command =
       "    (Default)    REG_EXPAND_SZ    " <>
@@ -222,6 +234,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
        context do
     windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows and reg never answers", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exec sleep 30")
   end
 
   step "the MC runs on Windows with no program for text files", context do
