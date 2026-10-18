@@ -947,6 +947,70 @@ defmodule HalC2.OrchestrationTest do
                Enum.filter(StreamState.list(state, "message"), &(&1["id"] == "m2"))
     end
 
+    # The message is in the turn before Codex is asked, so a runtime that stops as it
+    # is asked must take it back out, or a repeat would find it sent.
+    @tag :capture_log
+    test "a steer whose runtime stops as it is asked leaves the turn", %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      first =
+        Task.async(fn ->
+          send_message(thread_id, "m2", "hold this", %{
+            "dispatchMode" => %{"type" => "start_immediately"},
+            "deliveryIntent" => "steer"
+          })
+        end)
+
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(runtime, :kill)
+
+      assert {:error, reason} = Task.await(first)
+      assert reason =~ "its runtime stopped"
+      state = current(thread_id)
+      refute StreamState.get(state, "message")["m2"]
+      refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
+      # The fake, its connection gone, exits once it answers.
+      File.touch!(Path.join(gates, "steer"))
+    end
+
+    @tag :capture_log
+    test "a promote whose runtime stops as it is asked goes back first in the queue",
+         %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "second")
+      {:ok, _} = send_message(thread_id, "m3", "hold this")
+      [active, _, queued] = runs(await_statuses(thread_id, ["running", "queued", "queued"]))
+
+      promote =
+        Task.async(fn ->
+          Orchestration.dispatch(%{
+            "type" => "queued-message.promote-to-steer",
+            "threadId" => thread_id,
+            "queuedRunId" => queued["id"],
+            "targetRunId" => active["id"]
+          })
+        end)
+
+      :ok = await_turn_item(thread_id, "turn-item:user:m3")
+      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(runtime, :kill)
+
+      assert {:ok, _} = Task.await(promote)
+      state = current(thread_id)
+
+      assert %{"status" => "queued", "queuePosition" => 1} =
+               StreamState.get(state, "run")[queued["id"]]
+
+      assert StreamState.get(state, "message")["m3"]["runId"] == queued["id"]
+      refute StreamState.get(state, "turn-item")["turn-item:user:m3"]
+      File.touch!(Path.join(gates, "steer"))
+    end
+
     # #105: Codex took the steer and ended its turn before it said so. The message is
     # in the turn ahead of its answer, not after the turn's end.
     test "a steer taken as the turn ends is shown before its answer" do

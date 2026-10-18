@@ -687,7 +687,8 @@ defmodule HalC2.Orchestration do
 
     case promoted do
       :promoted ->
-        case runtime(target["providerInstanceId"]).steer(
+        case ask_steer(
+               target["providerInstanceId"] || "codex",
                thread_id,
                target["id"],
                steer_input(message)
@@ -1751,7 +1752,10 @@ defmodule HalC2.Orchestration do
   # transcript ahead of whatever the provider answers it with. The repeat answers for
   # what the first send has done so far: if the provider then refuses the first, the
   # repeat has already heard it was sent, and the sender learns otherwise from the
-  # first send's error and the message leaving the turn.
+  # first send's error and the message leaving the turn. An MC that stops between the
+  # two leaves the message in the turn `HalC2.Orchestration.Recovery` ends as
+  # interrupted, though the provider never read it. Its session ended with the MC, and
+  # that loss is accepted.
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
@@ -1789,7 +1793,7 @@ defmodule HalC2.Orchestration do
   defp steer(thread_id, run, message_id, command) do
     instance = run["providerInstanceId"] || "codex"
 
-    case runtime(instance).steer(thread_id, run["id"], steer_input(command)) do
+    case ask_steer(instance, thread_id, run["id"], steer_input(command)) do
       :ok ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
@@ -1812,6 +1816,29 @@ defmodule HalC2.Orchestration do
             refused
         end
     end
+  end
+
+  # The runtime's `steer/3`, with a runtime that stops, does not answer in time, raises,
+  # or answers something else counted as a refusal: the message is already in the turn
+  # (`reserve_steer/3`, `promote/5`), and only a refusal takes it back out. One that
+  # answers too late may still have taken it, and its answer lands without the message.
+  defp ask_steer(instance, thread_id, run_id, input) do
+    case runtime(instance).steer(thread_id, run_id, input) do
+      :ok -> :ok
+      {:error, _} = refused -> refused
+      other -> {:error, "its runtime answered #{inspect(other)}"}
+    end
+  catch
+    :exit, {:timeout, _} ->
+      {:error, "its runtime did not answer in time"}
+
+    :exit, _ ->
+      {:error, "its runtime stopped"}
+
+    :error, error ->
+      require Logger
+      Logger.error(Exception.format(:error, error, __STACKTRACE__))
+      {:error, "its runtime failed"}
   end
 
   defp unsteer(state, thread_id, run, resend) do
