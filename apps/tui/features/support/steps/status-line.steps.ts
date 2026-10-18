@@ -72,3 +72,7 @@ step(
     expect(select.options.map((option) => option.label)).toEqual([first, second]);
   },
 );
+
+step("{string} is on the clipboard", (ctx: World, text: string) => {
+  expect(ctx.clipboard).toEqual([text]);
+});

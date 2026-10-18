@@ -55,7 +55,11 @@ Rectangle {
         }
         Text {
             objectName: "statusText"
-            onMouseDown: Shell.dispatch("status.dismiss")
+            // Only the error itself dismisses; a message beside a pinned one is just a message.
+            onMouseDown: {
+                if (line.row.kind === "error")
+                    Shell.dispatch("status.dismiss")
+            }
             text: line.row.label
             color: line.row.kind === "success"
                 ? Theme.colors.success

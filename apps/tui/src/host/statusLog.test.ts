@@ -8,13 +8,21 @@ function setup() {
   const state = createPropertyMap();
   const cleared: string[] = [];
   const picks: PickRequest[] = [];
+  const copied: string[] = [];
+  const said: string[] = [];
+  const clipboard = { works: true };
   const log = createStatusLog({
     state,
     now: () => "2026-07-14T00:00:00.000Z",
     clearCurrent: (text) => cleared.push(text),
     pick: (request) => picks.push(request),
+    copy: (text) => {
+      if (clipboard.works) copied.push(text);
+      return clipboard.works;
+    },
+    say: (text) => said.push(text),
   });
-  return { state, log, cleared, picks };
+  return { state, log, cleared, picks, copied, said, clipboard };
 }
 
 const error = (text: string) => ({ kind: "error", text }) as const;
@@ -59,5 +67,20 @@ describe("status log", () => {
     expect(labels).toHaveLength(STATUS_HISTORY_LIMIT);
     expect(labels[0]).toBe(`error ${STATUS_HISTORY_LIMIT + 4}`);
     expect(state.get("statusError")).toBeNull();
+  });
+
+  it("copies the whole error when the user chooses it from the history", () => {
+    const { log, picks, copied, said, clipboard } = setup();
+    const long = `Push failed: ${"x".repeat(300)}`;
+    log.note(error(long));
+    log.note(error("short"));
+    log.dispatch("status.history");
+    picks[0]!.onChoose("1");
+    expect(copied).toEqual([long]);
+    expect(said).toEqual(["Error copied to clipboard."]);
+    clipboard.works = false;
+    picks[0]!.onChoose("0");
+    expect(copied).toEqual([long]);
+    expect(said.at(-1)).toBe("Clipboard unavailable here.");
   });
 });

@@ -24,7 +24,8 @@ export const STATUS_HISTORY_LIMIT = 50;
  * would be gone before it was read. This keeps the latest error pinned until
  * the user acknowledges it (`status.dismiss`: clicking it, the palette, or
  * opening the history) or a newer error replaces it, and keeps the last
- * `STATUS_HISTORY_LIMIT` errors for the palette's "Show status history".
+ * `STATUS_HISTORY_LIMIT` errors for the palette's "Show status history", where
+ * choosing one copies it whole (the line and the picker both cut a long one).
  * Messages that follow an error show beside it (statusState.ts).
  */
 export function createStatusLog(ctx: {
@@ -33,6 +34,10 @@ export function createStatusLog(ctx: {
   /** Takes the status line back to its resting message when the pinned error is still the current one. */
   readonly clearCurrent: (errorText: string) => void;
   readonly pick: (request: PickRequest) => void;
+  /** Put text on the system clipboard; false when the terminal cannot. */
+  readonly copy: (text: string) => boolean;
+  /** Sets the status line (never an error: that would pin). */
+  readonly say: (text: string, kind: "info" | "success") => void;
 }) {
   let pinned: string | null = null;
   const history: StatusErrorEntry[] = [];
@@ -96,7 +101,12 @@ export function createStatusLog(ctx: {
           description: new Date(entry.at).toLocaleTimeString(),
           value: String(index),
         })),
-        onChoose: () => {},
+        onChoose: (value) => {
+          const entry = history[Number(value)];
+          if (!entry) return;
+          if (ctx.copy(entry.text)) ctx.say("Error copied to clipboard.", "success");
+          else ctx.say("Clipboard unavailable here.", "info");
+        },
       });
       return true;
     },

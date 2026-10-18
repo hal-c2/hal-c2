@@ -53,6 +53,16 @@ Feature: Errors stay on the terminal client's status line
     Then the status line no longer shows "Pull failed"
 
   @tui
+  Scenario: Clicking a later message beside the error leaves the error on the line
+    Given the terminal is 160 columns wide
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    And pulling will succeed
+    And the user pulls the branch
+    When the user clicks "Pulled." on the status line
+    Then the status line shows "Pull failed: Error: offline" before "Pulled."
+
+  @tui
   Scenario: A message after a dismissed error shows on its own
     Given the terminal is 160 columns wide
     And pulling will fail with "offline"
@@ -88,3 +98,24 @@ Feature: Errors stay on the terminal client's status line
     When the user clicks "Pull failed: Error: offline" on the status line
     Then the status line shows "[clock]"
     And the status line no longer shows "Pull failed"
+
+  # The status line and the picker cut a long error to their width, so choosing an entry gives the whole text.
+  @tui
+  Scenario: Choosing an error in the status history copies it
+    Given the terminal is 160 columns wide
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    And the user runs the palette command "Show status history"
+    When the user chooses "Pull failed: Error: offline" in the picker
+    Then "Pull failed: Error: offline" is on the clipboard
+    And the status line shows "Error copied to clipboard."
+
+  @tui
+  Scenario: A terminal without a clipboard says so when an error is chosen from the history
+    Given the terminal is 160 columns wide
+    And the user's terminal does not support OSC 52
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    And the user runs the palette command "Show status history"
+    When the user chooses "Pull failed: Error: offline" in the picker
+    Then the status line shows "Clipboard unavailable here."

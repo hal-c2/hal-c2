@@ -38,7 +38,7 @@ from `threadView.ts` (below).
   dismisses it (`status.dismiss`: a click on it, or the palette) or a newer
   error replaces it; a message that follows shows beside it (`pinned`, then
   `label`), and a replacing "statusbar" plugin gives way (`errorPinned`).
-  `status.history` lists the last errors in a picker.
+  `status.history` lists the last errors in a picker; choosing one copies it whole.
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
   size, `rows` (items and separators) and highlighted index. Opening it never
   changes which thread is open.

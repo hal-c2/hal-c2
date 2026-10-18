@@ -327,6 +327,8 @@ export function createHost(options: HostOptions): Host {
       store.setStatus(current.shell ? shellSummary(current.shell) : "", "info");
     },
     pick: (request) => composer!.pick(request),
+    copy: (text) => options.copyToClipboard?.(text) === true,
+    say: (text, kind) => store.setStatus(text, kind),
   });
 
   // "reconnecting" is a connection that was up and is lost: the environment is offline.
