@@ -276,6 +276,16 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         Profile::Installed
     };
     let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
+    // The user's theme, plugins, preferences and shell sit in the config
+    // home's `shell` unless `--config-dir` names another. Made up front so
+    // their watchers are live from the start (main.cpp).
+    let config_dir = options
+        .launch
+        .config_dir
+        .take()
+        .unwrap_or_else(|| paths.config.join("shell"));
+    let _ = std::fs::create_dir_all(&config_dir);
+    options.launch.config_dir = Some(config_dir);
     if let Some(link) = &options.pair {
         let kept = pair(link, &paths.data)?;
         options.launch.mc_origin = Some(kept.origin);
