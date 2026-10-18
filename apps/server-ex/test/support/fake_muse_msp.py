@@ -213,7 +213,7 @@ def run_turn(sid, turn, text, params):
             log({"tool": {"name": "shell", "approved": approved, "asked": True}})
         elif "subagent" in step:
             sub = step["subagent"]
-            it = item(turn, "subagent", "inProgress", 1, subagentId="sub-1",
+            it = item(turn, "subagent", "inProgress", 1, subagentId="sub-" + uuid.uuid4().hex[:8],
                       objective=sub["objective"], role=sub.get("role", "worker"),
                       controlStatus="starting", childSessionId="child-" + uuid.uuid4().hex[:8])
             emit_item(sid, "item/started", it)

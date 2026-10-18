@@ -277,6 +277,10 @@ defmodule HalC2.MuseTest do
                  %{"kind" => "toolCall", "tool" => "grep", "args" => ~s({"pat)},
                  "running"
                )
+
+      # A subagent a v3 runtime showed as a tool call still renders as one.
+      assert {:tool, %{"title" => "Muse agent: boom", "output" => "boom"}} =
+               ThreadRuntime.tool(%{"kind" => "subagent", "failureReason" => "boom"}, "failed")
     end
   end
 end
