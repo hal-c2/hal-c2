@@ -1,6 +1,7 @@
 #include "ThemeController.h"
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -41,7 +42,8 @@ const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
 // A draft as a new theme of its own: no id yet, and "<label> copy".
 QVariantMap asCopy(QVariantMap draft) {
   draft.insert(QStringLiteral("id"), QString());
-  draft.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(draft.value(QStringLiteral("label")).toString()));
+  draft.insert(QStringLiteral("label"),
+               QCoreApplication::translate("ThemeController", "%1 copy").arg(draft.value(QStringLiteral("label")).toString()));
   return draft;
 }
 
@@ -378,9 +380,25 @@ void ThemeController::activate() {
 
 void ThemeController::setEditorOpen(bool open) {
   if (open == m_editorOpen) return;
-  // Opened by its toggle: on the theme drawn now. Closed: the draft goes.
-  if (open && m_editing.isEmpty()) m_editing = draft();
+  // Opened by its toggle: on the theme drawn now, or on the changes a press
+  // outside left behind. Closed: the draft goes.
+  if (open && m_editing.isEmpty()) {
+    m_editing = draft();
+    m_opened = m_editing;
+  }
   if (!open) m_editing.clear();
+  setEditorShown(open);
+}
+
+// The editor closed by a press outside it: unsaved changes stay, so the toggle
+// opens it on them again. With none there is nothing to keep, and the draft goes.
+void ThemeController::hideEditor() {
+  if (!m_editorOpen) return;
+  if (m_editing == m_opened) m_editing.clear();
+  setEditorShown(false);
+}
+
+void ThemeController::setEditorShown(bool open) {
   if (!open && (m_inspecting || !m_picked.isEmpty())) {
     m_inspecting = false;
     m_picked.clear();
@@ -419,6 +437,7 @@ void ThemeController::pick(const QString& color) {
 
 void ThemeController::edit(const QVariantMap& draft) {
   m_editing = draft;
+  m_opened = draft;
   emit editingChanged();
   setEditorOpen(true);
 }

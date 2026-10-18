@@ -81,6 +81,16 @@ Feature: Custom themes
       When the user presses in the message field
       Then the theme editor closes and the message field keeps what is typed there
 
+    # Escape, Cancel and Save let the changes go; a stray press outside must not.
+    @desktop
+    Scenario: A press outside the theme editor keeps what was changed
+      Given the message field has the keyboard
+      And the user opens the theme editor
+      And the user renames the theme in the editor
+      When the user presses in the message field
+      And the theme editor is toggled open again
+      Then the editor still holds the new name
+
     @desktop
     Scenario: The theme import dialog takes the keyboard
       Given the message field has the keyboard

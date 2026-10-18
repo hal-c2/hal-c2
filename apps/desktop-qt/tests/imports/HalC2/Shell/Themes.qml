@@ -52,6 +52,11 @@ QtObject {
     function setEditing(next) {
         editing = next;
     }
+    // The close a press outside is: the draft stays.
+    function hideEditor() {
+        editorOpen = false;
+        record("hideEditor", []);
+    }
     function derive(canvas, accent) {
         return ({});
     }

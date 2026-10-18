@@ -50,7 +50,7 @@ Popup {
             appearance: draft.appearance,
             colors: colors
         });
-        if (saved.length > 0) close();
+        if (saved.length > 0) Themes.editorOpen = false;
     }
 
     objectName: "themeEditor"
@@ -64,13 +64,15 @@ Popup {
     // editor's while it is open. Escape is handled by the content rather than
     // the close policy: a popup that closes on Escape turns the window's
     // shortcuts off while it is open, the editor's own toggle among them.
-    // A press outside closes it, except the one that picks a colour off the app.
+    // A press outside closes it, except the one that picks a colour off the app,
+    // and keeps the unsaved changes for the toggle to reopen. Escape, Cancel and
+    // Save are the ways that let the draft go: they close through Themes.editorOpen.
     modal: false
     focus: true
     closePolicy: Themes.inspecting ? Popup.NoAutoClose : Popup.CloseOnPressOutside
     padding: 16
     onOpened: name.forceActiveFocus()
-    onClosed: Themes.editorOpen = false
+    onClosed: if (Themes.editorOpen) Themes.hideEditor()
     Component.onCompleted: if (Themes.editorOpen) open()
 
     Connections {
@@ -134,7 +136,7 @@ Popup {
 
     contentItem: ColumnLayout {
         spacing: 10
-        Keys.onEscapePressed: editor.close()
+        Keys.onEscapePressed: Themes.editorOpen = false
 
         Label {
             text: editor.draft.id ? qsTr("Edit theme") : qsTr("New theme")
@@ -280,9 +282,10 @@ Popup {
             }
 
             ShellButton {
+                objectName: "cancel"
                 subtle: true
                 text: qsTr("Cancel")
-                onClicked: editor.close()
+                onClicked: Themes.editorOpen = false
             }
 
             ShellButton {

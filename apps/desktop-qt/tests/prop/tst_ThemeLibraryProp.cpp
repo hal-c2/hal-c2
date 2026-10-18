@@ -244,6 +244,95 @@ struct Imposter : Command {
   void show(std::ostream& os) const override { os << "Imposter"; }
 };
 
+// The editor's draft against its open/closed state. `editing` and `opened` name the draft by its
+// label; kBase is the draft the toggle opens on. Closing drops the draft, but a close by a press
+// outside (hideEditor) keeps it when it differs from what the editor opened on.
+const QString kBase = QStringLiteral("<base>");
+
+struct EditorModel {
+  bool open = false;
+  QString editing;  // empty: no draft
+  QString opened;
+};
+
+using EditorCommand = rc::state::Command<EditorModel, Sut>;
+
+void verifyEditor(const EditorModel& m, Sut& sut) {
+  RC_ASSERT(sut.themes()->editorOpen() == m.open);
+  const QVariantMap held = sut.themes()->editing();
+  if (m.editing.isEmpty()) {
+    RC_ASSERT(held.isEmpty());
+  } else if (m.editing == kBase) {
+    RC_ASSERT(!held.isEmpty());
+  } else {
+    RC_ASSERT(held == draft(m.editing, QStringLiteral("dark")));
+  }
+}
+
+struct ToggleEditor : EditorCommand {
+  void apply(EditorModel& m) const override {
+    if (m.open) {
+      m.open = false;
+      m.editing.clear();
+      return;
+    }
+    if (m.editing.isEmpty()) m.editing = m.opened = kBase;
+    m.open = true;
+  }
+  void run(const EditorModel& m0, Sut& sut) const override {
+    sut.themes()->setEditorOpen(!m0.open);
+    EditorModel expected = m0;
+    apply(expected);
+    verifyEditor(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << "ToggleEditor"; }
+};
+
+struct OpenOn : EditorCommand {
+  QString label;
+  explicit OpenOn(const EditorModel&) : label(kNames.at(*rc::gen::inRange<int>(0, int(kNames.size())))) {}
+  void apply(EditorModel& m) const override {
+    m.open = true;
+    m.editing = m.opened = label;
+  }
+  void run(const EditorModel& m0, Sut& sut) const override {
+    sut.themes()->edit(draft(label, QStringLiteral("dark")));
+    EditorModel expected = m0;
+    apply(expected);
+    verifyEditor(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << "OpenOn(" << label.toStdString() << ")"; }
+};
+
+struct Change : EditorCommand {
+  QString label;
+  explicit Change(const EditorModel&) : label(kNames.at(*rc::gen::inRange<int>(0, int(kNames.size())))) {}
+  void checkPreconditions(const EditorModel& m) const override { RC_PRE(m.open); }
+  void apply(EditorModel& m) const override { m.editing = label; }
+  void run(const EditorModel& m0, Sut& sut) const override {
+    sut.themes()->setEditing(draft(label, QStringLiteral("dark")));
+    EditorModel expected = m0;
+    apply(expected);
+    verifyEditor(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << "Change(" << label.toStdString() << ")"; }
+};
+
+struct HideEditor : EditorCommand {
+  void checkPreconditions(const EditorModel& m) const override { RC_PRE(m.open); }
+  void apply(EditorModel& m) const override {
+    m.open = false;
+    if (m.editing == m.opened) m.editing.clear();
+  }
+  void run(const EditorModel& m0, Sut& sut) const override {
+    sut.themes()->hideEditor();
+    EditorModel expected = m0;
+    apply(expected);
+    verifyEditor(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << "HideEditor"; }
+};
+
 }  // namespace
 
 class ThemeLibraryProp : public QObject {
@@ -256,6 +345,14 @@ private slots:
       Model model;
       model.builtIns = sut.builtInIds();
       rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Save, Save, Duplicate, Duplicate, DuplicateStandard, Remove, SetDark, Imposter, Edit, Import>());
+    }));
+  }
+
+  void editor() {
+    QVERIFY(rc::check("the editor keeps its changes across a press outside, and lets them go any other way", [] {
+      Sut sut;
+      EditorModel model;
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<ToggleEditor, ToggleEditor, OpenOn, Change, Change, HideEditor>());
     }));
   }
 };

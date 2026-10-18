@@ -129,10 +129,12 @@ public:
   bool removeCustomMany(const QStringList& ids);
 
   // The editor. edit() opens it on a draft; setEditing() keeps what the user
-  // changed since. Closing it drops the draft.
+  // changed since. Closing it drops the draft; hideEditor() is the close that
+  // keeps changes the user has made (a press outside), for the toggle to reopen.
   QVariantMap editing() const { return m_editing; }
   Q_INVOKABLE void edit(const QVariantMap& draft);
   Q_INVOKABLE void setEditing(const QVariantMap& draft);
+  Q_INVOKABLE void hideEditor();
   QVariantList families() const;
   bool inspecting() const { return m_inspecting; }
   // Starting to inspect forgets the last pick; stopping (Escape) picks nothing.
@@ -151,8 +153,9 @@ public:
   QStringList importConflicts() const;
   Q_INVOKABLE bool importText(const QString& json);
   Q_INVOKABLE void importFiles(const QStringList& paths);
-  // `choice` is update, copy or cancel. Safe with nothing pending: the import
-  // dialog calls it with "cancel" on every close, whichever way it closed.
+  // `choice` is update, copy or cancel. Safe with nothing pending. Settling
+  // clears the import, which is what keeps the import dialog from cancelling
+  // after a choice: it cancels on close only while a conflict still waits.
   Q_INVOKABLE void resolveImport(const QString& choice);
   Q_INVOKABLE void clearImport();
   // Writes the theme `id` as a theme file other clients import.
@@ -190,6 +193,7 @@ private:
   // Saves the choice; a failure is toasted as `failure`.
   bool save(const QJsonObject& device, const QString& failure = {});
   void resolve();
+  void setEditorShown(bool open);
 
   ShellBridge* m_bridge;
   SettingsController* m_settings;
@@ -199,6 +203,8 @@ private:
   QString m_cycleToast;
   bool m_editorOpen = false;
   QVariantMap m_editing;
+  // The draft the editor opened on, to tell whether anything changed since.
+  QVariantMap m_opened;
   bool m_inspecting = false;
   QVariantMap m_picked;
   QString m_importError;

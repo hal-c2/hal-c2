@@ -418,6 +418,23 @@ const Steps steps([] {
                 QStringLiteral("the message is \"%1\"").arg(brick.item(QStringLiteral("message"))->property("text").toString()));
        });
 
+  step(QStringLiteral("the user renames the theme in the editor"), [](World& world, const Captures&, const Table&) {
+    QVariantMap draft = themes(world)->editing();
+    draft.insert(QStringLiteral("label"), QStringLiteral("Half done"));
+    themes(world)->setEditing(draft);
+  });
+  step(QStringLiteral("the theme editor is toggled open again"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !opened(world, "editor") && !themes(world)->editorOpen(); }, QStringLiteral("the theme editor to close"));
+    auto* commands = world.native().controller<KeybindingController>()->commands();
+    expect(commands->run(QStringLiteral("themeEditor.toggle")) && themes(world)->editorOpen(), QStringLiteral("the theme editor did not open"));
+    world.waitFor([&] { return opened(world, "editor"); }, QStringLiteral("the theme editor to open"));
+    keyboard(world);
+  });
+  step(QStringLiteral("the editor still holds the new name"), [keyboard](World& world, const Captures&, const Table&) {
+    const QString name = keyboard(world).item(QStringLiteral("name"))->property("text").toString();
+    expect(name == QLatin1String("Half done"), QStringLiteral("the name is \"%1\"").arg(name));
+  });
+
   // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
   const auto inspected = [](World& world) -> Brick& {
     if (!world.brick) {

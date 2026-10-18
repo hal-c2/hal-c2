@@ -216,6 +216,25 @@ Item {
             mouseClick(composer);
             tryVerify(() => !editor.visible);
             verify(!Themes.editorOpen);
+            // Closed the way that keeps unsaved changes.
+            compare(Themes.calls.filter(call => call.name === "hideEditor").length, 1);
+        }
+
+        // Escape, Cancel and Save let the draft go; only a press outside keeps it.
+        function test_onlyAPressOutsideKeepsTheDraft() {
+            for (const close of [
+                editor => keyClick(Qt.Key_Escape),
+                editor => mouseClick(findChild(editor.contentItem, "cancel")),
+                editor => mouseClick(findChild(editor.contentItem, "save"))
+            ]) {
+                Themes.clear();
+                const editor = openEditor();
+                tryVerify(() => findChild(editor.contentItem, "name").activeFocus);
+                close(editor);
+                tryVerify(() => !editor.visible);
+                verify(!Themes.editorOpen);
+                compare(Themes.calls.filter(call => call.name === "hideEditor").length, 0);
+            }
         }
 
         // features/navigation/theme-editor.feature: after a colour is picked
