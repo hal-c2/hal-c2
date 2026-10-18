@@ -135,6 +135,8 @@ void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entrie
   // Built apart, so a caller handing back this folder's own children is safe.
   QList<Entry> unique;
   QSet<QString> listed;
+  unique.reserve(entries.size());
+  listed.reserve(entries.size());
   for (const Entry& child : entries) {
     if (listed.contains(child.path)) continue;
     listed.insert(child.path);

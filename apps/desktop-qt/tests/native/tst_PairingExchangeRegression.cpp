@@ -16,10 +16,10 @@ QString linkOf(qsizetype size) {
 }
 
 // A pairing link of exactly `size` UTF-16 units.
-QString linkOfExactly(qsizetype size) {
+QString linkOfExactly(qsizetype size, QChar padding = QLatin1Char('a')) {
   const QString head = QStringLiteral("https://mc.example.test/pair?p=");
   const QString tail = QStringLiteral("#token=abc");
-  return head + QString(size - head.size() - tail.size(), QLatin1Char('a')) + tail;
+  return head + QString(size - head.size() - tail.size(), padding) + tail;
 }
 
 }  // namespace
@@ -51,6 +51,17 @@ private slots:
     QVERIFY(wrapped(link).size() > 3 * 2048 + 64);
     const auto plain = pairing::readInvitation(link);
     QVERIFY(plain);
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
+  // Both caps meet: a link at the cap whose every character is three UTF-8
+  // bytes wraps to some 18,000 characters, which the wrapper's cap still reads.
+  void aLinkAtTheCapOfWideCharactersIsReadWrappedToo() {
+    const QString link = linkOfExactly(2048, QChar(0x754C));
+    QCOMPARE(link.size(), 2048);
+    QVERIFY(wrapped(link).size() > 8 * 2048);
     const auto carried = pairing::readInvitation(wrapped(link));
     QVERIFY(carried);
     QCOMPARE(carried->link, link);
@@ -90,8 +101,12 @@ private slots:
   }
 
   // The wrapper has a cap of its own, so that nothing is decoded however long.
+  // The padding is outside the carried link, which stays within its cap, so
+  // only the wrapper's cap can turn it away.
   void aWrapperBeyondAnyLinkIsTurnedAway() {
-    QVERIFY(!pairing::readInvitation(wrapped(linkOf(1500)) + QString(20000, QLatin1Char('a'))));
+    const QString link = linkOf(1500);
+    QVERIFY(pairing::readInvitation(wrapped(link)));
+    QVERIFY(!pairing::readInvitation(wrapped(link) + QStringLiteral("&pad=") + QString(20000, QLatin1Char('a'))));
   }
 };
 
