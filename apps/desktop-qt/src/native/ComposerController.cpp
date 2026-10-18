@@ -1063,8 +1063,11 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     if (progress->started > 0) {
       auto* navigation = shell->controller<NavigationController>();
       const QString first = progress->first;
+      // No translation is loaded, so "thread(s)" would show as written: each count spells itself out.
+      const int started = int(progress->started);
+      const QString message = started == 1 ? tr("Started %n thread in background", nullptr, 1) : tr("Started %n threads in background", nullptr, started);
       shell->controller<ToastController>()->show(
-          QStringLiteral("success"), progress->started == 1 ? tr("Started %n thread in background", nullptr, 1) : tr("Started %n threads in background", nullptr, int(progress->started)), {},
+          QStringLiteral("success"), message, {},
           ToastController::Action{QStringLiteral("Open"), [navigation, first] { navigation->open(NavigationController::Route::thread(first)); }});
       return;
     }
