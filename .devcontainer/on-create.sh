@@ -3,6 +3,14 @@
 # (dependency install) lives in update-content.sh.
 set -euo pipefail
 
+# The pnpm-store volume mounts at ~/.cache/pnpm, so docker creates ~/.cache root-owned.
+# Hand it to the dev user before anything below (vp, mise) makes its cache directory.
+for dir in "$HOME/.cache" "$HOME/.cache/pnpm"; do
+  if [ -d "$dir" ] && [ "$(stat -c %U "$dir")" != "$(id -un)" ]; then
+    sudo chown "$(id -un):$(id -gn)" "$dir"
+  fi
+done
+
 # The Vite+ CLI is the repo task runner (vp i, vp run <script>, vp test run).
 # Download to a file first: a curl failure inside $( ) would yield an empty
 # script and a false success. VP_NODE_MANAGER=no skips the installer's node
