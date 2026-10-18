@@ -837,26 +837,23 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Pi's answer to a steer, which its caller hears. One it took joins the running work,
   # or starts new work that settles after this answer; one it refused starts nothing, so
-  # a settle that waited on it ends the turn now.
+  # a settle that waited on it ends the turn now, before the caller hears the refusal:
+  # it finds the turn over and sends the message on its own (`HalC2.Orchestration`).
   defp steered(state, from, reply) do
-    state =
+    {answer, state} =
       case reply do
-        {:reply, {:ok, _}} ->
-          GenServer.reply(from, :ok)
-          %{state | settled: false}
-
-        {:reply, {:error, %{"message" => message}}} ->
-          GenServer.reply(from, {:error, message})
-          state
-
-        _closed ->
-          GenServer.reply(from, {:error, "Pi exited"})
-          state
+        {:reply, {:ok, _}} -> {:ok, %{state | settled: false}}
+        {:reply, {:error, %{"message" => message}}} -> {{:error, message}, state}
+        _closed -> {{:error, "Pi exited"}, state}
       end
 
-    if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
-      do: settle(state),
-      else: state
+    state =
+      if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
+        do: settle(state),
+        else: state
+
+    GenServer.reply(from, answer)
+    state
   end
 
   # The session's entries since the turn started name the turn (its user message)

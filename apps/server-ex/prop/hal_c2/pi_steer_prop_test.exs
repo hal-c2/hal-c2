@@ -4,7 +4,8 @@ defmodule HalC2.PiSteerPropTest do
   orchestration commands a client sends: send a message whose turn works until it is
   steered or stopped, either taking the steer into its running work or settling just
   before the steer lands (so Pi answers it in a run of its own); steer the running turn,
-  with a message Pi takes or one it refuses; interrupt it.
+  with a message Pi takes, one it refuses, or one it refuses only once the run settled
+  (which finds the turn over, so it is sent as a message of its own); interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -89,8 +90,9 @@ defmodule HalC2.PiSteerPropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made; turn: the running turn's msg;
-  # replies: the steers answered, in order.
-  def initial_state, do: %{runs: [], turn: nil, replies: [], next: 1}
+  # how: whether its work takes a steer in or settles as it lands; replies: the steers
+  # answered, in order.
+  def initial_state, do: %{runs: [], turn: nil, how: nil, replies: [], next: 1}
 
   def command(%{turn: nil, next: next}),
     do: {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends])]}
@@ -99,6 +101,7 @@ defmodule HalC2.PiSteerPropTest do
     frequency([
       {3, {:call, __MODULE__, :steer, ["m#{next}", :taken]}},
       {1, {:call, __MODULE__, :steer, ["m#{next}", :refused]}},
+      {1, {:call, __MODULE__, :steer, ["m#{next}", :declined]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -106,13 +109,27 @@ defmodule HalC2.PiSteerPropTest do
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
-  def next_state(state, _result, {:call, _, :send, [msg, _how]}),
-    do: %{state | next: state.next + 1, runs: state.runs ++ [{msg, "running"}], turn: msg}
+  def next_state(state, _result, {:call, _, :send, [msg, how]}) do
+    runs = state.runs ++ [{msg, "running"}]
+    %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
+  end
 
   def next_state(state, _result, {:call, _, :steer, [_msg, :refused]}),
     do: %{state | next: state.next + 1}
 
-  def next_state(state, _result, {:call, _, :steer, [msg, :taken]}) do
+  # Declined once the run settled: the turn is over, so the message runs on its own.
+  def next_state(%{how: :ends} = state, _result, {:call, _, :steer, [msg, :declined]}) do
+    state = end_turn(state, "completed")
+
+    %{
+      state
+      | next: state.next + 1,
+        runs: state.runs ++ [{msg, "completed"}],
+        replies: state.replies ++ [msg]
+    }
+  end
+
+  def next_state(state, _result, {:call, _, :steer, [msg, _taken_or_declined]}) do
     state = %{state | next: state.next + 1, replies: state.replies ++ [msg]}
     end_turn(state, "completed")
   end
@@ -121,7 +138,7 @@ defmodule HalC2.PiSteerPropTest do
 
   defp end_turn(%{turn: turn} = state, status) do
     runs = Enum.map(state.runs, fn {m, s} -> if m == turn, do: {m, status}, else: {m, s} end)
-    %{state | runs: runs, turn: nil}
+    %{state | runs: runs, turn: nil, how: nil}
   end
 
   def postcondition(state, call, {reply, projection}) do
@@ -157,10 +174,19 @@ defmodule HalC2.PiSteerPropTest do
     reply(Orchestration.dispatch(message(msg, "#{how} #{msg}", "queue_after_active", "auto")), [])
   end
 
-  # `kind`: whether Pi takes the steer (:taken), which ends the turn, or refuses it.
+  # `kind`: whether Pi takes the steer (:taken), which ends the turn, refuses it, or
+  # refuses it only once the run settled (:declined), which a turn taking it in takes.
   def steer(msg, kind) do
-    {text, ending} = if kind == :taken, do: {"steer", active_runs()}, else: {"refuse", []}
-    result = Orchestration.dispatch(message(msg, "#{text} #{msg}", "start_immediately", "steer"))
+    {text, ending} =
+      case kind do
+        :taken -> {"steer #{msg}", active_runs()}
+        :refused -> {"refuse #{msg}", []}
+        :declined -> {"steer #{msg}, declined once settled", active_runs()}
+      end
+
+    result = Orchestration.dispatch(message(msg, text, "start_immediately", "steer"))
+    # A declined steer sent on its own runs to its end too.
+    ending = if kind == :declined, do: ending ++ active_runs(), else: ending
     reply(result, ending)
   end
 

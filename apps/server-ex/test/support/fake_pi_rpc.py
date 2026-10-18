@@ -21,7 +21,8 @@
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true} (until an abort, or
 # a steer prompt, which reaches Pi only once this run has settled, and starts a run of
-# its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected.
+# its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected; one
+# saying "decline" is rejected only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -382,6 +383,9 @@ def command(msg):
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
         respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+    elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
+        # A steer saying "decline" that reaches Pi once its run settled is rejected.
+        respond(msg, error="Pi cannot start this message")
     elif kind == "prompt":
         respond(msg)
         run_turn(msg.get("message", ""))
