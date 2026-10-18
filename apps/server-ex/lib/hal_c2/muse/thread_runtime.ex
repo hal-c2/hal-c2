@@ -117,7 +117,8 @@ defmodule HalC2.Muse.ThreadRuntime do
        items: %{},
        # Muse's items as last seen (itemId -> item), for revisions and deltas.
        muse: %{},
-       # Muse's subagents of the running turn (itemId -> the subagent as last shown).
+       # Muse's subagents of the running turn (itemId -> the subagent as last shown, or
+       # :tool for one a v3 runtime showed as a tool call before a hot update).
        subs: %{},
        buffer: %{},
        flush_timer: nil,
@@ -308,8 +309,12 @@ defmodule HalC2.Muse.ThreadRuntime do
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
 
-  # v4 shows Muse's subagents as subagents; one running at the update was a tool call.
-  defp migrate(%{v: 3} = state), do: state |> Map.merge(%{v: 4, subs: %{}}) |> migrate()
+  # v4 shows Muse's subagents as subagents. One the running turn already showed as a
+  # tool call stays one, so it is not shown twice.
+  defp migrate(%{v: 3} = state) do
+    subs = for {id, %{"kind" => "subagent"}} <- state[:muse] || %{}, into: %{}, do: {id, :tool}
+    state |> Map.merge(%{v: 4, subs: subs}) |> migrate()
+  end
 
   # v3 knows whether Muse started the running turn; one running at the update has.
   defp migrate(%{v: 2} = state), do: state |> Map.merge(%{v: 3, started: true}) |> migrate()
@@ -816,11 +821,20 @@ defmodule HalC2.Muse.ThreadRuntime do
   # thread's prompt, what Muse says it is doing the progress, its result the answer.
   # The child's own transcript (`childSessionId`) is not streamed.
   defp item(state, %{"kind" => "subagent"} = item) do
+    case state.subs[item["itemId"]] do
+      :tool -> tool_item(state, item)
+      entry -> subagent_item(state, item, entry)
+    end
+  end
+
+  defp item(state, item), do: tool_item(state, item)
+
+  defp subagent_item(state, item, entry) do
     state = flush(state)
     id = item["itemId"]
 
     entry =
-      state.subs[id] ||
+      entry ||
         %{
           sub: NativeSubagent.start(state.turn.ids, id, subagent_task(item)),
           progress: nil,
@@ -847,7 +861,7 @@ defmodule HalC2.Muse.ThreadRuntime do
     %{state | subs: Map.put(state.subs, id, entry)}
   end
 
-  defp item(state, item) do
+  defp tool_item(state, item) do
     status = status(item)
 
     if item["kind"] == "toolCall" and item["tool"] in @hidden_tools and status != "failed" do
@@ -1014,6 +1028,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     title =
       case item["kind"] do
+        "subagent" -> item["objective"] || item["role"] || "Muse agent"
         "workflow" -> item["entryId"] || "Workflow"
         _ -> name
       end
