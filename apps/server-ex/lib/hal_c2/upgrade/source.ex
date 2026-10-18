@@ -202,11 +202,25 @@ defmodule HalC2.Upgrade.Source do
   # An unpacked bundle is the archive's only while the stamp beside it holds the archive's
   # SHA-256: whichever source replaced the archive, and wherever an unpack or a writer
   # stopped, a bundle of the same version built again is unpacked again.
+  # The source checked the archive just before, but a writer outside `HalC2.Upgrade` (or
+  # a cleanup) may have taken its checksum since.
   defp unpack(version, platform) do
+    case File.read(archive_path(version, platform) <> ".sha256") do
+      {:ok, sum} ->
+        unpack(version, platform, String.trim(sum))
+
+      {:error, reason} ->
+        {:error,
+         %{
+           "_tag" => "ServerSelfUpdateError",
+           "reason" => "The bundle's checksum went missing: #{inspect(reason)}"
+         }}
+    end
+  end
+
+  defp unpack(version, platform, sum) do
     dir = unpacked_dir(version, platform)
     stamp = dir <> ".sha256"
-    {:ok, sum} = File.read(archive_path(version, platform) <> ".sha256")
-    sum = String.trim(sum)
 
     if File.read(stamp) == {:ok, sum} and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
