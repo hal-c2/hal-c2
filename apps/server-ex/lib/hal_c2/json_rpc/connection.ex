@@ -37,8 +37,10 @@ defmodule HalC2.JsonRpc.Connection do
 
   @doc """
   Sends a call without waiting for its reply, adding it to `reqids` under `label`.
-  The reply reaches the caller as a message sent after every notification the
-  subprocess sent before it; take it out with `:gen_server.check_response/3`.
+  The reply reaches the caller as a message; take it out with
+  `:gen_server.check_response/3`. A caller that is also the connection's `:handler`
+  gets it after every notification the subprocess sent before it (both come from this
+  process); any other caller has no such order.
   """
   @spec request(GenServer.server(), String.t(), term, term, :gen_server.request_id_collection()) ::
           :gen_server.request_id_collection()
