@@ -5,6 +5,7 @@ set -euo pipefail
 
 # The pnpm-store volume mounts at ~/.cache/pnpm, so docker creates ~/.cache root-owned.
 # Hand it to the dev user before anything below (vp, mise) makes its cache directory.
+# Keep in step with update-content.sh, which also chowns node_modules (not mounted yet here).
 for dir in "$HOME/.cache" "$HOME/.cache/pnpm"; do
   if [ -d "$dir" ] && [ "$(stat -c %U "$dir")" != "$(id -un)" ]; then
     sudo chown "$(id -un):$(id -gn)" "$dir"
@@ -34,13 +35,17 @@ sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 
 # mise pins Erlang, Elixir, Node and Bun in mise.toml, which the MC needs
 # (`mise run mc`). Erlang compiles from source, so it needs its build deps.
+# The installer's version is pinned so a new mise release cannot break every
+# new container; bump it with mise.toml when a tool needs a newer mise.
 installer=$(mktemp)
 curl -fsSL https://mise.run -o "$installer"
-sh "$installer"
+MISE_VERSION=v2026.9.9 sh "$installer"
 rm -f "$installer"
+test -x "$HOME/.local/bin/mise"
 sudo ln -sf "$HOME/.local/bin/mise" /usr/local/bin/mise
 sudo apt-get update
-sudo apt-get install -y build-essential autoconf m4 libncurses-dev libssl-dev
+sudo apt-get install -y --no-install-recommends build-essential autoconf m4 libncurses-dev libssl-dev
+sudo rm -rf /var/lib/apt/lists/*
 mise trust
 mise install
 
@@ -50,6 +55,7 @@ sudo tee /usr/local/etc/vscode-dev-containers/first-run-notice.txt >/dev/null <<
 HAL-C2 devcontainer
 
   vp test run <files>   run the tests you touched (vp lint <files> to lint)
+  mise run mc           run the dev MC (port 3780, forwarded)
   cp .env.example .env  optional: enable HAL-C2 Connect cloud features
                         (public identifiers, not secrets)
 

@@ -127,12 +127,10 @@ the timeout expires. A wait timeout does not cancel the child; the result sets
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+run. `workState` is `working` until the task ends, then `result_available`, and
+`hasPendingChildRuns` reports whether the child thread still has queued or
+executing runs. The task's `summary` is its published result. The fields are
+assembled in [`delegation.ex`](../../apps/server-ex/lib/hal_c2/orchestration/delegation.ex).
 
 ### `task_cancel`
 
