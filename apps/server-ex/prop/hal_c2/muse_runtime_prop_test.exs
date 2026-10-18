@@ -2,7 +2,8 @@ defmodule HalC2.MuseRuntimePropTest do
   @moduledoc """
   A state machine over one supervised Muse Code thread (`HalC2.Muse.ThreadRuntime`)
   driven through the orchestration commands a client sends: send a message whose turn
-  replies, runs until stopped, starts a subagent and runs until stopped, asks to run a
+  replies, runs until stopped, starts a subagent (reported in progress, or in a state of
+  Muse's own the runtime does not know) and runs until stopped, asks to run a
   command (once, or for two requirements in turn) or asks a question; steer the running
   turn; approve or decline the command;
   answer the question; interrupt the
@@ -42,6 +43,21 @@ defmodule HalC2.MuseRuntimePropTest do
           "subagent" => %{
             "objective" => "Look around",
             "progress" => "Looking",
+            "itemId" => "item-look"
+          }
+        },
+        %{"text" => "Working on it."},
+        %{"waitInterrupt" => true}
+      ]
+    },
+    %{
+      "match" => "hold",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Waiting for a slot",
+            "progressStatus" => "queued",
             "itemId" => "item-look"
           }
         },
@@ -127,8 +143,8 @@ defmodule HalC2.MuseRuntimePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made;
-  # subs: [{msg, status}] the subagent each :delegate turn started, with its status;
-  # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :shell | :ask, :guarded for a
+  # subs: [{msg, status}] the subagent each :delegate or :hold turn started, with its status;
+  # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
   # workflow child's :guarded command;
   # mode: the thread's runtime mode; full access runs every command without asking;
@@ -151,7 +167,7 @@ defmodule HalC2.MuseRuntimePropTest do
     idle = [
       {6,
        {:call, __MODULE__, :send,
-        [msg, oneof([:say, :wait, :delegate, :shell, :guarded, :workflow, :ask])]}},
+        [msg, oneof([:say, :wait, :delegate, :hold, :shell, :guarded, :workflow, :ask])]}},
       {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access))]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
@@ -167,7 +183,7 @@ defmodule HalC2.MuseRuntimePropTest do
           nil ->
             []
 
-          kind when kind in [:wait, :delegate] ->
+          kind when kind in [:wait, :delegate, :hold] ->
             [{3, {:call, __MODULE__, :steer, [msg]}}]
 
           kind when kind in [:shell, :guarded, :workflow] ->
@@ -190,7 +206,7 @@ defmodule HalC2.MuseRuntimePropTest do
     do: turn == nil
 
   def precondition(%{turn: turn}, {:call, _, :steer, _}),
-    do: match?(%{kind: k} when k in [:wait, :delegate], turn)
+    do: match?(%{kind: k} when k in [:wait, :delegate, :hold], turn)
 
   def precondition(%{turn: turn}, {:call, _, :approve, [last?]}),
     do:
@@ -218,7 +234,7 @@ defmodule HalC2.MuseRuntimePropTest do
         reply = "Reply to #{text} after [#{Enum.join(state.history -- [text], " | ")}]"
         %{state | runs: state.runs ++ [{msg, "completed"}], replies: state.replies ++ [reply]}
 
-      :delegate ->
+      kind when kind in [:delegate, :hold] ->
         %{
           state
           | runs: state.runs ++ [{msg, "running"}],

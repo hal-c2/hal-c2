@@ -22,9 +22,10 @@
 # once the turn has completed; with "late": true, as the next turn/start arrives), {"childShell": command} (a workflow child asks, offering
 # no way to approve unless "approvable", for "requirements" approvals), {"todos": [{"text",
 # "status"}]} (session/todoListChanged), {"subagent": {"objective", "role", "progress", "answer",
-# "status", "failure"}} (a subagent item: started, updated with "progress" as its fallbackText, and
-# completed with "answer" as its result text and "status" (default completed); no "answer" leaves
-# it running), {"waitInterrupt": true} (until turn/interrupt, or a
+# "summary", "status", "failure", "progressStatus"}} (a subagent item: started, updated with
+# "progress" as its fallbackText (in status "progressStatus", default inProgress), and completed
+# with "answer" as its result text, "summary" as its result summary and "status" (default
+# completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
@@ -228,6 +229,7 @@ def run_turn(sid, turn, text, params):
             for i, sub in enumerate(subs):
                 if sub.get("progress"):
                     its[i] = dict(its[i], revision=2, controlStatus="running",
+                                  status=sub.get("progressStatus", "inProgress"),
                                   fallbackText=sub["progress"])
                     if not sub.get("seenEnded"):
                         emit_item(sid, "item/updated", its[i])

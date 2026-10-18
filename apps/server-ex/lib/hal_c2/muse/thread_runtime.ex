@@ -34,6 +34,10 @@ defmodule HalC2.Muse.ThreadRuntime do
   @hidden_tools ~w(write_todos request_user_input workflow)
   # Muse's own bookkeeping, not part of the conversation shown.
   @skipped_items ~w(userMessage reminderChild)
+  # A subagent ends only on a status Muse is known to end one with: its answer comes
+  # once, so a status not seen before is taken as still running, not as a failure that
+  # would drop the answer after it. One that never ends ends with the turn.
+  @subagent_ended ~w(completed failed cancelled)
   # Muse caps a question's free-text answer.
   @max_free_text 500
 
@@ -830,11 +834,15 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp item(state, item), do: tool_item(state, item)
 
   defp subagent_item(state, item, entry) do
-    state = flush(state)
+    ended? = item["status"] in @subagent_ended
+    # Its turn item goes after the text before it; a progress tick allocates none.
+    state = if entry == nil or ended?, do: flush(state), else: state
     id = item["itemId"]
 
     # Muse's item ids are the turn's, so the subagent's is scoped to the run as the
-    # other items' are (`native/2`).
+    # other items' are (`native/2`). Its task is the first revision's, as the item that
+    # starts a subagent names its objective (upstream's Muse adapter takes the child
+    # thread's title and prompt from it too).
     entry =
       entry ||
         %{
@@ -844,19 +852,20 @@ defmodule HalC2.Muse.ThreadRuntime do
         }
 
     entry =
-      case status(item) do
-        _ when entry.done ->
+      cond do
+        entry.done ->
           entry
-
-        "running" ->
-          progressed(entry, item)
 
         # The ended item may be the first to say what it did, when Muse sends fewer
         # revisions or one first seen ended.
-        status ->
+        ended? ->
+          status = status(item)
           entry = progressed(entry, item)
           sub = NativeSubagent.finish(entry.sub, status, subagent_result(item, status))
           %{entry | sub: sub, done: true}
+
+        true ->
+          progressed(entry, item)
       end
 
     %{state | subs: Map.put(state.subs, id, entry)}

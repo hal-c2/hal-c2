@@ -159,6 +159,23 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent in each of two turns
     Then each turn's subagent is its own, with its own thread
 
+  Scenario: A Muse Code subagent that answers only with a summary shows the summary
+    Given Muse Code delegates a review to a subagent that answers only with a summary
+    Then the subagent's answer is its summary
+
+  Scenario: A Muse Code subagent that Muse cancels shows as cancelled
+    Given Muse Code delegates a review to a subagent it cancels
+    Then the subagent is shown as cancelled, without an answer
+
+  Scenario: A Muse Code subagent that fails without a reason shows what it answered
+    Given Muse Code delegates a review to a subagent that fails without a reason after answering in part
+    Then the subagent is shown as failed with what it answered
+
+  # Muse may name states of its own; only one it ends a subagent with ends it.
+  Scenario: A Muse Code subagent in a state Muse has not named before is still running
+    Given Muse Code delegates a review to a subagent it reports in a state of its own before it answers
+    Then the subagent is shown running, then with its answer
+
   Scenario: A Muse Code subagent still running when the turn ends stops with it
     Given Muse Code delegates a review to a subagent and the turn ends first
     Then the subagent is shown as stopped with the turn, without an answer
