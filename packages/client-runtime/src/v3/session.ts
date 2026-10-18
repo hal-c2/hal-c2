@@ -390,6 +390,7 @@ export function makeV3Session(input: {
           return fold.rows(
             String(frame.mc),
             frame.rows as ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+            frame.reset === true,
           );
         return [];
       });
