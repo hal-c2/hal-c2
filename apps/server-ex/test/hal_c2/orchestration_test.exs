@@ -1011,6 +1011,44 @@ defmodule HalC2.OrchestrationTest do
       File.touch!(Path.join(gates, "steer"))
     end
 
+    # Archiving cancels the queue, and the promoted run, out of the queue while Codex
+    # was asked, was not in it: the refusal must not queue it again.
+    @tag :capture_log
+    test "a promote refused after its thread was archived leaves its run cancelled",
+         %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "hold this")
+      [active, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      promote =
+        Task.async(fn ->
+          Orchestration.dispatch(%{
+            "type" => "queued-message.promote-to-steer",
+            "threadId" => thread_id,
+            "queuedRunId" => queued["id"],
+            "targetRunId" => active["id"]
+          })
+        end)
+
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => thread_id})
+      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(runtime, :kill)
+
+      assert {:error, reason} = Task.await(promote)
+      assert reason =~ "the thread was archived"
+      state = current(thread_id)
+
+      assert %{"status" => "cancelled", "queuePosition" => nil} =
+               StreamState.get(state, "run")[queued["id"]]
+
+      assert StreamState.get(state, "message")["m2"]["runId"] == queued["id"]
+      refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
+      File.touch!(Path.join(gates, "steer"))
+    end
+
     # #105: Codex took the steer and ended its turn before it said so. The message is
     # in the turn ahead of its answer, not after the turn's end.
     test "a steer taken as the turn ends is shown before its answer" do

@@ -7,7 +7,7 @@ defmodule HalC2.OrchestrationPropTest do
   result is); send a message again with its message id, as a client retrying after a
   reconnect does, or send the same steer twice at once;
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
-  promoted one); resume a held queue; interrupt a turn;
+  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
@@ -59,6 +59,7 @@ defmodule HalC2.OrchestrationPropTest do
         log = Path.join(home, "codex-requests.log")
         Process.put(:codex_log, log)
         Process.put(:reject_steer, Path.join(home, "reject-steer"))
+        Process.put(:hold_steer, Path.join(home, "hold-steer"))
         Process.put(:refused_steers, [])
         Process.put(:steer_log, {0, []})
 
@@ -66,6 +67,7 @@ defmodule HalC2.OrchestrationPropTest do
           "env",
           "FAKE_CODEX_LOG=#{log}",
           "FAKE_CODEX_REJECT_STEER=#{Process.get(:reject_steer)}",
+          "FAKE_CODEX_HOLD_STEER=#{Process.get(:hold_steer)}",
           "python3",
           "-u",
           @fake_codex
@@ -195,6 +197,19 @@ defmodule HalC2.OrchestrationPropTest do
            )}
         ]
 
+    # Archiving while Codex is asked needs Codex to be asked: a running turn that can
+    # take the message.
+    steerable = for {t, thread} <- threads, m <- thread.queue, steers?(thread, m), do: {t, m}
+
+    on_queued =
+      if steerable == [],
+        do: on_queued,
+        else: [
+          {2,
+           let({t, m} <- oneof(steerable), do: {:call, __MODULE__, :promote, [t, m, :archived]})}
+          | on_queued
+        ]
+
     running =
       for {t, thread} <- threads, Enum.any?(thread.runs, &(&1.status == :running)), do: t
 
@@ -228,6 +243,11 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :restart, []}),
     do: Enum.any?(threads, fn {_, t} -> running(t) != nil end)
+
+  def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
+    do:
+      match?(%{status: :live}, threads[tid]) and msg in threads[tid].queue and
+        steers?(threads[tid], msg)
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
       when fun in [:cancel, :edit, :reorder, :promote, :resend],
@@ -433,6 +453,17 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # Codex is asked to take the message, the thread is archived meanwhile, and then
+  # Codex refuses: the message is not queued again, and the turn runs on.
+  def next_state(state, _result, {:call, _, :promote, [tid, msg, :archived]}) do
+    update(state, tid, fn thread ->
+      %{thread | queue: List.delete(thread.queue, msg)}
+      |> set_runs(&if(&1.msg == msg, do: %{&1 | status: :cancelled}, else: &1))
+      |> cancel_queue()
+      |> Map.put(:status, :archived)
+    end)
+  end
+
   def next_state(state, _result, {:call, _, :promote, [tid, msg, how]}) do
     case promote_refusal(state, tid, msg) do
       nil -> update(state, tid, &promoted(&1, msg, how))
@@ -540,6 +571,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
     do: refusal(state, tid, :queue) || :ok
 
+  defp expected_reply(_state, :promote, [_tid, _msg, :archived]),
+    do: {:error, :archived_meanwhile}
+
   defp expected_reply(state, :promote, [tid, msg, _how]),
     do: promote_refusal(state, tid, msg) || :ok
 
@@ -563,6 +597,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp reply_matches?({:error, :agents_own}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is the agent's own message/
 
+  defp reply_matches?({:error, :archived_meanwhile}, {:error, message}),
+    do: message =~ ~r/not queued again: the thread was archived\.$/
+
   defp reply_matches?(expected, reply), do: expected == reply
 
   defp update(state, tid, fun), do: update_in(state.threads[tid], fun)
@@ -570,6 +607,14 @@ defmodule HalC2.OrchestrationPropTest do
   defp set_runs(thread, fun), do: %{thread | runs: Enum.map(thread.runs, fun)}
 
   defp running(thread), do: Enum.find(thread.runs, &(&1.status == :running))
+
+  # A promote of this queued message asks the running turn's provider to take it.
+  defp steers?(thread, msg) do
+    run = running(thread)
+
+    run != nil and not thread.messages[msg].notice and
+      Enum.find(thread.runs, &(&1.msg == msg)).instance == run.instance
+  end
 
   defp end_running(thread, status),
     do: set_runs(thread, &if(&1.status == :running, do: %{&1 | status: status}, else: &1))
@@ -890,6 +935,43 @@ defmodule HalC2.OrchestrationPropTest do
         "beforeRunId" => before && run_of(tid, before)
       })
 
+  # Codex holds the promoted message's `turn/steer` until the thread is archived, then
+  # refuses it.
+  def promote(tid, msg, :archived) do
+    asked = steer_requests()
+    File.touch!(Process.get(:hold_steer))
+    File.touch!(Process.get(:reject_steer))
+
+    task =
+      Task.async(fn ->
+        Orchestration.dispatch(%{
+          "type" => "queued-message.promote-to-steer",
+          "threadId" => tid,
+          "queuedRunId" => run_of(tid, msg),
+          "targetRunId" => List.first(active_runs(tid))
+        })
+      end)
+
+    result =
+      case asked(tid, msg, task) do
+        {:done, result} ->
+          File.rm!(Process.get(:hold_steer))
+          result
+
+        asked ->
+          if asked == :asked,
+            do:
+              {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => tid})
+
+          File.rm!(Process.get(:hold_steer))
+          Task.await(task, @wait_ms)
+      end
+
+    File.rm!(Process.get(:reject_steer))
+    Process.put(:refused_steers, Process.get(:refused_steers) ++ (steer_requests() -- asked))
+    reply(result, [])
+  end
+
   # A refused promote has Codex refuse every `turn/steer` it is sent meanwhile; their
   # texts are taken back off the ones Codex took (`provider_steers/1`).
   def promote(tid, msg, how) do
@@ -912,6 +994,25 @@ defmodule HalC2.OrchestrationPropTest do
     end
 
     reply(result, if(match?({:ok, _}, result), do: ending, else: []))
+  end
+
+  # `:asked` once the promote put the message in the turn, and so asks Codex; its reply
+  # if it ended first.
+  defp asked(tid, msg, %Task{ref: ref} = task) do
+    if StreamState.get(current(tid), "turn-item")["turn-item:user:#{msg}"] do
+      :asked
+    else
+      receive do
+        {:hal_c2_stream, ^tid, _} ->
+          asked(tid, msg, task)
+
+        {^ref, result} ->
+          Process.demonitor(ref, [:flush])
+          {:done, result}
+      after
+        @wait_ms -> :timeout
+      end
+    end
   end
 
   def release(tid) do

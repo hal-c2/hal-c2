@@ -7,7 +7,7 @@
 # starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
 # is appended to that file as one JSON line, and every answer to our own requests as
 # {"method": "response", "params": {"id": ..., "result": ...}}; while the file FAKE_CODEX_REJECT_STEER
-# names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
+# names exists, turn/steer is refused, and while FAKE_CODEX_HOLD_STEER's exists it waits. "stream ..." turns pace themselves by gate files
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." waits for the gate file "steer" before it answers.
@@ -391,6 +391,9 @@ for line in sys.stdin:
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
     elif method == "turn/steer":
         ctx = waiting_ctx
+        # While the file FAKE_CODEX_HOLD_STEER names exists, a steer waits.
+        while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_STEER", "/nonexistent")):
+            time.sleep(0.01)
         if finishing:
             # The turn ended before the steer got there.
             finishing = False
