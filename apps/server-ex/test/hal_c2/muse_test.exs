@@ -115,7 +115,7 @@ defmodule HalC2.MuseTest do
     refute Map.has_key?(state, :last_turn)
   end
 
-  test "a subagent a v3 runtime showed as a tool call stays one after a hot update" do
+  test "a subagent that a v3 runtime showed as a tool call stays one after a hot update" do
     muse = %{
       "sa" => %{"itemId" => "sa", "kind" => "subagent"},
       "t" => %{"itemId" => "t", "kind" => "toolCall"}
