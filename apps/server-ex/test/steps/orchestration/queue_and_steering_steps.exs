@@ -261,7 +261,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
   step "Codex is asked to take {string} once", %{args: [text]} = context do
     steers = World.codex_requests(context, "turn/steer")
-    assert [_] = Enum.filter(steers, &(hd(&1["input"])["text"] == text))
+    assert [_] = Enum.filter(steers, &match?(%{"input" => [%{"text" => ^text} | _]}, &1))
     context
   end
 
