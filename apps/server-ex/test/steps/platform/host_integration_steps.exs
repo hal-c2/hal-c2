@@ -191,12 +191,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   # A Windows host whose `reg` answers for the .txt association: the user's choice
   # (`user_choice`, else the class registered for .txt) names `txtfile`, whose open
   # command is the `notepad` that reports to this test.
-  defp windows_host(context, answers) do
+  defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1)) do
     World.put_app_env(:os_type, {:win32, :nt})
     context = install(context, "notepad")
 
     command =
-      ~s|    (Default)    REG_EXPAND_SZ    "#{Path.join(context.bin, "notepad")}" %1|
+      "    (Default)    REG_EXPAND_SZ    " <>
+        String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad"))
 
     body =
       ~s|case "$2" in\n| <>
@@ -213,6 +214,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
   end
 
+  step ~r/^the MC runs on Windows and Notepad is registered with the command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+  end
+
   step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
        context do
     windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
@@ -227,6 +233,27 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert {:ok, nil} = context.reply
     {conn, argv} = launched(context)
     assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the file where the command line puts it$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+
+    assert argv == [
+             "notepad",
+             "--visit",
+             context.target,
+             "--funcall",
+             "whitespace-mode",
+             "--file=" <> context.target,
+             "--user-data-dir=C:\\Editor Data",
+             "--name=a\"b",
+             "C:\\Dir\\"
+           ]
+
     :gen_tcp.close(conn)
     context
   end

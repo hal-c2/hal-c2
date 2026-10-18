@@ -61,7 +61,7 @@ defmodule HalC2.Editors do
         {:error, %{"_tag" => "ExternalLauncherUnsupportedEditorError", "editor" => "default"}}
 
       {command, args} ->
-        launch(command, args ++ [Regex.replace(~r/:\d+(?::\d+)?$/, target, "")])
+        launch(command, with_file(args, Regex.replace(~r/:\d+(?::\d+)?$/, target, "")))
     end
   end
 
@@ -85,6 +85,24 @@ defmodule HalC2.Editors do
         end
     end
   end
+
+  # The default editor's arguments with `file` in them: where the registered command line
+  # puts it (`{:file, "--open=%1"}`, from Windows), else last.
+  defp with_file(args, file) do
+    if Enum.any?(args, &match?({:file, _}, &1)) do
+      for arg <- args do
+        case arg do
+          {:file, template} -> String.replace(template, file_placeholder(), file)
+          arg -> arg
+        end
+      end
+    else
+      args ++ [file]
+    end
+  end
+
+  # `%1`, `%L` (and `%*`) in a registered command line stand for the file.
+  defp file_placeholder, do: ~r/%[1lL*]/
 
   defp args(style, target) do
     case {style, Regex.run(~r/^(.*?):(\d+)(?::(\d+))?$/, target)} do
@@ -133,8 +151,10 @@ defmodule HalC2.Editors do
          line when line != nil <-
            reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]),
          [command | args] <- command_words(expand_variables(line)) do
-      # The file goes last, in place of the %1 (or %L) the registered line puts it at.
-      {command, Enum.reject(args, &String.match?(&1, ~r/%[1lL*]/))}
+      {command,
+       for arg <- args do
+         if String.match?(arg, file_placeholder()), do: {:file, arg}, else: arg
+       end}
     else
       _ -> nil
     end
@@ -160,15 +180,41 @@ defmodule HalC2.Editors do
     end)
   end
 
-  # A command line split at spaces, a quoted part (the program in `Program Files`) whole.
-  defp command_words(line) do
-    for match <- Regex.scan(~r/"([^"]*)"|(\S+)/, line) do
-      case match do
-        [_, quoted] -> quoted
-        [_, _, word] -> word
-      end
+  # A Windows command line split into arguments by the rules of `CommandLineToArgvW`: white
+  # space separates them outside quotes, a quote starts or ends quoted text inside a word
+  # (`--dir="C:\\My Data"` is one argument), and backslashes only count before a quote: 2n
+  # of them make n and the quote quotes, 2n+1 make n and a literal quote.
+  defp command_words(line), do: split_words(line, nil, false, [])
+
+  defp split_words("", nil, _quoted, words), do: Enum.reverse(words)
+  defp split_words("", word, _quoted, words), do: Enum.reverse([word | words])
+
+  defp split_words(<<c, rest::binary>>, word, false, words) when c in [?\s, ?\t],
+    do: split_words(rest, nil, false, if(word, do: [word | words], else: words))
+
+  defp split_words(<<?\\, _::binary>> = line, word, quoted, words) do
+    [slashes] = Regex.run(~r/^\\+/, line)
+    count = byte_size(slashes)
+    rest = binary_part(line, count, byte_size(line) - count)
+
+    case rest do
+      <<?", after_quote::binary>> ->
+        word = (word || "") <> String.duplicate("\\", div(count, 2))
+
+        if rem(count, 2) == 1,
+          do: split_words(after_quote, word <> ~s("), quoted, words),
+          else: split_words(after_quote, word, not quoted, words)
+
+      _ ->
+        split_words(rest, (word || "") <> slashes, quoted, words)
     end
   end
+
+  defp split_words(<<?", rest::binary>>, word, quoted, words),
+    do: split_words(rest, word || "", not quoted, words)
+
+  defp split_words(<<c, rest::binary>>, word, quoted, words),
+    do: split_words(rest, (word || "") <> <<c>>, quoted, words)
 
   # The desktop entry id xdg-mime names for text/plain, or "". It runs while a client
   # waits for the server config, so a hung xdg-mime (a broken D-Bus or desktop session)

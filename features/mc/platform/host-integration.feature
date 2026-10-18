@@ -74,6 +74,12 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad
 
   @mc
+  Scenario: On Windows the file goes where the registered command line puts it
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" --visit "%1" --funcall whitespace-mode --file=%1 --user-data-dir="C:\Editor Data" --name=a\"b "C:\Dir\\"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the file where the command line puts it
+
+  @mc
   Scenario: A Windows host without a text association does not offer a default editor
     Given the MC runs on Windows with no program for text files
     When a client reads the MC's server config
