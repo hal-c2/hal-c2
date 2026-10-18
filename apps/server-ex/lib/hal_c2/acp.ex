@@ -48,6 +48,7 @@ defmodule HalC2.Acp do
 
   # Instances of this driver run an agent from the ACP Registry (`HalC2.Acp.Catalog`).
   @registry "acpRegistry"
+  @staged {__MODULE__, :staged}
 
   @doc "Instance ids of the ACP agents: the built-in agents and configured instances."
   def instances do
@@ -486,39 +487,52 @@ defmodule HalC2.Acp do
   end
 
   # A read that `forget/1` overtook says nothing: its agent may have been stopped under
-  # it (`{:error, :closed}`), and the failure would otherwise stand as the instance's
-  # state beside the read that replaced it.
+  # it (`{:error, :closed}`), and what it read would otherwise stand as the instance's
+  # state beside the read that replaced it. So the read keeps what it learns aside
+  # (`stage/3`) and publishes it all at once, under the lock `forget/1` takes, and only
+  # while the generation it started in is still current.
   defp load(id) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    generation = generation(id)
+    generation = locked(id, fn -> generation(id) end)
+    Process.put(@staged, [])
 
     try do
       result = read_agent(id, dir)
-
-      if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
-        case result do
-          :ok ->
-            :persistent_term.erase({__MODULE__, id, :error})
-
-          {:error, :unauthenticated} ->
-            :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
-            :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
-
-          {:error, reason} ->
-            :persistent_term.put({__MODULE__, id, :error}, describe(reason))
-
-          _ ->
-            :ok
-        end
-      end
+      locked(id, fn -> publish(id, generation, result) end)
     catch
       _, _ -> :ok
     after
+      Process.delete(@staged)
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
   end
+
+  defp publish(id, generation, result) do
+    if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
+      for {key, value} <- Enum.reverse(Process.get(@staged, [])),
+          do: :persistent_term.put({__MODULE__, id, key}, value)
+
+      case result do
+        :ok ->
+          :persistent_term.erase({__MODULE__, id, :error})
+
+        {:error, :unauthenticated} ->
+          :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
+          :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
+
+        {:error, reason} ->
+          :persistent_term.put({__MODULE__, id, :error}, describe(reason))
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
+  # What a read learned, kept until `load/1` publishes it.
+  defp stage(_id, key, value), do: Process.put(@staged, [{key, value} | Process.get(@staged, [])])
 
   defp generation(id) do
     with nil <- :persistent_term.get({__MODULE__, id, :generation}, nil) do
@@ -527,6 +541,9 @@ defmodule HalC2.Acp do
       generation
     end
   end
+
+  # Serializes a read's publication with `forget/1` for one instance, on this MC.
+  defp locked(id, fun), do: :global.trans({{__MODULE__, id}, self()}, fun, [node()])
 
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
   # for a user (`HalC2.Acp.UrlAuth`), so the call may take as long as that allows.
@@ -576,20 +593,21 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
          {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")) do
-      :persistent_term.put({__MODULE__, id, :capabilities}, %{})
+      stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
         {:ok, %{models: models, commands: commands, skills: skills}} ->
-          :persistent_term.put({__MODULE__, id, :models}, [@pi_default | models])
-          :persistent_term.put({__MODULE__, id, :commands}, commands)
-          :persistent_term.put({__MODULE__, id, :skills}, skills)
-          :persistent_term.put({__MODULE__, id, :pi_signed_out}, models == [])
+          stage(id, :models, [@pi_default | models])
+          stage(id, :commands, commands)
+          stage(id, :skills, skills)
+          stage(id, :pi_signed_out, models == [])
 
         {:error, _} ->
-          :persistent_term.put({__MODULE__, id, :models}, [@pi_default])
+          stage(id, :models, [@pi_default])
 
-          :persistent_term.put(
-            {__MODULE__, id, :notice},
+          stage(
+            id,
+            :notice,
             "Pi is available, but HAL-C2 could not refresh its models and commands. The live session will retry startup."
           )
       end
@@ -603,8 +621,8 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, "muse", entry) do
     with :ok <- check_version(id, "muse", entry),
          {:ok, models} <- HalC2.Muse.discover(id, dir) do
-      :persistent_term.put({__MODULE__, id, :models}, models)
-      :persistent_term.put({__MODULE__, id, :muse_signed_out}, models == [])
+      stage(id, :models, models)
+      stage(id, :muse_signed_out, models == [])
       :ok
     end
   end
@@ -612,14 +630,15 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, driver, entry) do
     with :ok <- check_version(id, driver, entry) do
       with_agent(id, dir, fn conn, init ->
-        :persistent_term.put(
-          {__MODULE__, id, :version},
+        stage(
+          id,
+          :version,
           get_in(init, ["agentInfo", "version"]) || "unknown"
         )
 
-        :persistent_term.put({__MODULE__, id, :capabilities}, init["agentCapabilities"] || %{})
-        :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
-        :persistent_term.put({__MODULE__, id, :meta}, init["_meta"] || %{})
+        stage(id, :capabilities, init["agentCapabilities"] || %{})
+        stage(id, :auth_methods, length(init["authMethods"] || []))
+        stage(id, :meta, init["_meta"] || %{})
 
         # Antigravity's models come from its sign-in and sessions
         # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
@@ -628,8 +647,8 @@ defmodule HalC2.Acp do
                else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
              ) do
           {:ok, session} ->
-            :persistent_term.put({__MODULE__, id, :config}, session["configOptions"] || [])
-            :persistent_term.put({__MODULE__, id, :models}, models(session))
+            stage(id, :config, session["configOptions"] || [])
+            stage(id, :models, models(session))
 
           # ACP's "authentication required".
           {:error, %{"code" => -32000}} ->
@@ -667,7 +686,7 @@ defmodule HalC2.Acp do
             |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
           end
 
-        :persistent_term.put({__MODULE__, id, :models}, Enum.sort_by(models, & &1["name"]))
+        stage(id, :models, Enum.sort_by(models, & &1["name"]))
         :ok
 
       {:ok, status, _} when status in [401, 403] ->
@@ -695,7 +714,7 @@ defmodule HalC2.Acp do
 
     case Regex.run(~r/\d+\.\d+\.\d+/, output) do
       [version] ->
-        :persistent_term.put({__MODULE__, id, :version}, version)
+        stage(id, :version, version)
 
         if Version.compare(version, @pi_minimum) == :lt,
           do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
@@ -731,7 +750,7 @@ defmodule HalC2.Acp do
             nil -> "unknown"
           end
 
-        :persistent_term.put({__MODULE__, id, :version}, version)
+        stage(id, :version, version)
         :ok
 
       :missing ->
@@ -1159,6 +1178,10 @@ defmodule HalC2.Acp do
 
   @doc "Forgets what was read from an instance's agent, so it is probed again."
   def forget(id) do
+    locked(id, fn -> forget_now(id) end)
+  end
+
+  defp forget_now(id) do
     for key <- [
           :models,
           :version,

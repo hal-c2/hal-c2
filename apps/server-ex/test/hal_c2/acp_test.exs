@@ -229,4 +229,57 @@ defmodule HalC2.AcpTest do
     assert_receive {:hal_c2_providers_changed, _}, 10_000
     assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
   end
+
+  test "a read that was forgotten while it ran leaves nothing it read behind", %{tmp_dir: dir} do
+    # As above, but the agent answers: what it says after the instance is forgotten
+    # (its version, capabilities and models) must not stand as the new state.
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    grok = Path.join(dir, "grok")
+
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, sys
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    request = json.loads(sys.stdin.readline())
+    open("#{started}", "w").write("started\\n")
+    open("#{release}").read()
+    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+    model = {"id": "model", "currentValue": "stale", "options": [{"value": "stale", "name": "Stale"}]}
+    answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+    :ok = HalC2.Settings.watch(self())
+
+    HalC2.Acp.entry("grok")
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, "started\n"}}, 10_000
+    HalC2.Acp.forget("grok")
+    File.write!(release, "go\n")
+
+    assert_receive {:hal_c2_providers_changed, _}, 10_000
+
+    for key <- [:version, :capabilities, :models, :config, :error],
+        do: assert(:persistent_term.get({HalC2.Acp, "grok", key}, nil) == nil, inspect(key))
+  end
 end
