@@ -9,7 +9,17 @@ if [ ! -d "${drivers}" ]; then
   echo "error: ${drivers} is not a directory; the bundle has no sqldrivers directory" >&2
   exit 1
 fi
-if ! compgen -G "${drivers}/libqsqlite*" > /dev/null; then
+# Only the part after the directory is a pattern; the bundle path is matched literally, and a
+# directory or broken symlink named like a driver is not one.
+shopt -s nullglob
+found=""
+for driver in "${drivers}"/libqsqlite*; do
+  if [ -f "${driver}" ]; then
+    found=1
+    break
+  fi
+done
+if [ -z "${found}" ]; then
   echo "error: ${drivers} has no libqsqlite*; the bundle would have no SQLite driver" >&2
   exit 1
 fi

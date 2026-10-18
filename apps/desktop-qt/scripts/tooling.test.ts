@@ -51,6 +51,41 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
     ]);
   });
 
+  describe("check-sqlite-driver.sh", () => {
+    const check = (drivers: string) =>
+      NodeChildProcess.spawnSync(
+        "bash",
+        [NodeURL.fileURLToPath(new URL("./check-sqlite-driver.sh", import.meta.url)), drivers],
+        { encoding: "utf8" },
+      );
+
+    it("passes a bundle whose path has glob characters and holds the driver", () => {
+      const drivers = NodePath.join(temporaryDirectory(), "br[ack]et", "sqldrivers");
+      NodeFS.mkdirSync(drivers, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.dylib"), "driver");
+      expect(check(drivers).status).toBe(0);
+    });
+
+    it("names a missing sqldrivers directory", () => {
+      const result = check(NodePath.join(temporaryDirectory(), "sqldrivers"));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is not a directory");
+    });
+
+    it("rejects an empty directory and entries that are not a loadable file", () => {
+      const drivers = temporaryDirectory();
+      const empty = check(drivers);
+      expect(empty.status).toBe(1);
+      expect(empty.stderr).toContain("has no libqsqlite*");
+      NodeFS.mkdirSync(NodePath.join(drivers, "libqsqlite.so"));
+      NodeFS.symlinkSync(
+        NodePath.join(drivers, "gone"),
+        NodePath.join(drivers, "libqsqlite.dylib"),
+      );
+      expect(check(drivers).status).toBe(1);
+    });
+  });
+
   it.skipIf(platform !== "linux")(
     "rejects tampered cached packaging tools before installing or executing them",
     () => {
