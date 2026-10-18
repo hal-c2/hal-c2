@@ -14,8 +14,8 @@ defmodule HalC2.StreamsPropTest do
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
   Some turn items are subagents whose progress grows by long appends, past the limit
-  `HalC2.Web.Wire` cuts it at, so a client that folds the appends must hold the cut
-  text a snapshot shows.
+  `HalC2.Web.Wire` cuts it at, or is emptied and grown again in one patch, so a client
+  that folds the appends must hold the cut text a snapshot shows.
   """
 
   use ExUnit.Case, async: false
@@ -153,6 +153,7 @@ defmodule HalC2.StreamsPropTest do
       {:append, oneof(@items), oneof(["a", "bc", "é"])},
       {:subagent, oneof(@items), progress()},
       {:progress, oneof(@items), progress()},
+      {:reset, oneof(@items), progress(), oneof([:unset, :delete])},
       {:message, oneof(@messages)},
       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
       {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
@@ -227,6 +228,22 @@ defmodule HalC2.StreamsPropTest do
     case StreamState.get(st, "turn-item")[id] do
       %{"type" => "subagent", "progress" => text} when is_binary(text) ->
         {"turn-item", id, %{"a" => %{"progress" => suffix}}}
+
+      _ ->
+        nil
+    end
+  end
+
+  # A subagent's progress emptied and grown again in one patch, by an unset or by a
+  # delete that replaces the item.
+  defp change({:reset, id, suffix, form}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent"} when form == :unset ->
+        {"turn-item", id, %{"u" => ["progress"], "a" => %{"progress" => suffix}}}
+
+      %{"type" => "subagent"} = item ->
+        {"turn-item", id,
+         %{"d" => true, "s" => Map.delete(item, "progress"), "a" => %{"progress" => suffix}}}
 
       _ ->
         nil

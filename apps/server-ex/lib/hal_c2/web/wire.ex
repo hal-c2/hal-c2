@@ -103,8 +103,9 @@ defmodule HalC2.Web.Wire do
   # The client holds a subagent's text cut, as a snapshot has it. An append that keeps
   # the text under the limit goes through; one that takes it past is the cut text,
   # sent as a set; one to text already past it adds nothing, as the cut text is the
-  # same first bytes whatever follows. Sets are cut before this, so a set in the
-  # patch is what the appends are applied to.
+  # same first bytes whatever follows. The text appended to is the one the rest of
+  # the patch leaves, as `HalC2.Patch.apply/2` has it: a delete or an unset empties
+  # it, a set (cut before this) replaces it.
   defp cut_appends(%{"a" => appended} = patch, was) do
     Enum.reduce(appended, patch, fn
       {key, suffix}, patch when key in @cut_keys ->
@@ -114,7 +115,7 @@ defmodule HalC2.Web.Wire do
         cond do
           size + byte_size(suffix) <= @max_detail -> patch
           size > @max_detail -> unappend(patch, key)
-          true -> patch |> unappend(key) |> set(key, cut(held <> suffix))
+          true -> patch |> unappend(key) |> keep(key) |> set(key, cut(held <> suffix))
         end
 
       _other, patch ->
@@ -125,11 +126,26 @@ defmodule HalC2.Web.Wire do
   defp cut_appends(patch, _was), do: patch
 
   defp held(patch, key, was) do
-    case get_in(patch, ["s", key]) || (was && was[key]) do
-      text when is_binary(text) -> text
-      _ -> ""
+    held =
+      cond do
+        key in Map.get(patch, "u", []) -> nil
+        is_map_key(Map.get(patch, "s", %{}), key) -> patch["s"][key]
+        patch["d"] == true or was == nil -> nil
+        true -> was[key]
+      end
+
+    if is_binary(held), do: held, else: ""
+  end
+
+  # Unsets apply after sets, so an append turned into a set must not be unset too.
+  defp keep(%{"u" => unset} = patch, key) do
+    case List.delete(unset, key) do
+      [] -> Map.delete(patch, "u")
+      unset -> %{patch | "u" => unset}
     end
   end
+
+  defp keep(patch, _key), do: patch
 
   defp unappend(patch, key) do
     patch = Map.update!(patch, "a", &Map.delete(&1, key))

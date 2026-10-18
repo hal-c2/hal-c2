@@ -40,6 +40,41 @@ defmodule HalC2.Web.WireTest do
     assert Wire.patch("turn-item", patch, "subagent", item("a")) == patch
   end
 
+  # A patch that resets the text and then appends to it, applied raw and sent over
+  # the wire to a client holding the snapshot of `start`, leaves the client with the
+  # snapshot of the result.
+  defp sent_matches_snapshot(start, patch) do
+    server = Patch.apply(start, patch)
+    sent = Wire.patch("turn-item", patch, "subagent", start)
+    client = Wire.entity("turn-item", start)
+
+    assert if(sent, do: Patch.apply(client, sent), else: client) ==
+             Wire.entity("turn-item", server)
+  end
+
+  test "an append after an unset grows the emptied text, not the old one" do
+    long = item(String.duplicate("x", @limit + 1))
+    sent_matches_snapshot(long, %{"u" => ["progress"], "a" => %{"progress" => "new"}})
+  end
+
+  test "an append after a delete grows the replacement, not the old text" do
+    long = item(String.duplicate("x", @limit + 1))
+    sent_matches_snapshot(long, %{"d" => true, "s" => item("a"), "a" => %{"progress" => "new"}})
+
+    sent_matches_snapshot(long, %{
+      "d" => true,
+      "s" => %{"id" => "i", "type" => "subagent"},
+      "a" => %{"progress" => "new"}
+    })
+  end
+
+  test "an unset followed by an append past the limit is sent as the cut text" do
+    start = item("short")
+    over = String.duplicate("é", @limit)
+    sent_matches_snapshot(start, %{"u" => ["progress", "result"], "a" => %{"progress" => over}})
+    sent_matches_snapshot(start, %{"u" => ["progress"], "a" => %{"progress" => over}})
+  end
+
   test "appends in a replay are sent whole when the text is past the limit" do
     patch = %{"a" => %{"progress" => "x"}}
     assert Wire.appends_past_limit?("turn-item", patch, item(String.duplicate("x", @limit + 1)))
