@@ -161,14 +161,17 @@ Item {
                 workspace: null
             });
             const opaque = color => Qt.rgba(color.r, color.g, color.b, 1);
+            const alphaOf = color => Math.round(color.a * 100) / 100;
             Shell.state = withDriver("claudeAgent");
             let composer = createTemporaryObject(composerComponent, root);
             const toggle = findChild(composer, "optionToggle:fastMode");
             const bolt = findChild(toggle, "buttonIcon");
             compare(bolt.filled, true);
             tryVerify(() => Qt.colorEqual(opaque(bolt.color), Qt.color("#d97757")));
+            compare(alphaOf(bolt.color), 0.8);
             Shell.state = withDriver("codex");
             tryVerify(() => Qt.colorEqual(opaque(bolt.color), opaque(composer.foreground)));
+            compare(alphaOf(bolt.color), alphaOf(composer.foreground));
         }
 
         function test_submitKeepsDraftUntilPageClearsIt() {

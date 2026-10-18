@@ -31,6 +31,8 @@ Rectangle {
     readonly property color outline: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.05)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     // Claude's mark colour, as the provider icon draws it: its fill for a light or dark theme.
+    // The mark is a single path, so paths[0] is its fill; the fallback repeats
+    // that glyph's light fill for a build without the icon.
     readonly property color claudeOrange: {
         const part = ProviderIcons.glyph("claudeAgent")?.paths[0];
         return part ? (foreground.hslLightness > 0.5 ? part.dark : part.light) : "#d97757";
@@ -1132,8 +1134,8 @@ Rectangle {
                                     iconName: fast && checked ? "zap" : ""
                                     iconSize: 14
                                     // The bolt is filled, in Claude's orange on a Claude model.
-                                    iconFilled: fast
-                                    iconTint: fast && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
+                                    iconFilled: fast && checked
+                                    iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
                                     text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
                                     Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
                                     Accessible.checkable: true

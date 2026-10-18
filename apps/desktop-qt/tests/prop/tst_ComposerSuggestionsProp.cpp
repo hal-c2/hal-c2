@@ -7,6 +7,7 @@
 #include "Prop.h"
 
 #include "ComposerController.h"
+#include "ComposerModel.h"
 #include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
@@ -52,13 +53,17 @@ struct Model {
   // The query last searched, and whether its answer reached the composer.
   QString searched;
   bool answered = false;
+  // The searches asked so far, each one the MC receives.
+  int asked = 0;
 
-  // The word after an @ that starts the text or follows a space.
-  int at() const {
-    const int index = int(text.lastIndexOf(QLatin1Char('@')));
-    return index == 0 || (index > 0 && text.at(index - 1).isSpace()) ? index : -1;
+  // The @ word the composer itself reads from the text with the caret at its
+  // end, so the model does not restate the trigger rules.
+  std::optional<composer::Trigger> trigger() const {
+    const auto found = composer::trigger(text, int(text.size()));
+    return found && found->kind == QLatin1String("path") ? found : std::nullopt;
   }
-  QString query() const { return at() < 0 ? QString() : text.mid(at() + 1); }
+  bool path() const { return trigger().has_value(); }
+  QString query() const { return trigger() ? trigger()->query : QString(); }
 };
 
 struct Sut {
@@ -140,7 +145,7 @@ struct Sut {
 bool menuIs(const Model& m, const Sut& sut) {
   const QVariantMap shown = sut.shown();
   if (shown.value(QStringLiteral("text")).toString() != m.text) return false;
-  const bool path = m.at() >= 0;
+  const bool path = m.path();
   if (shown.value(QStringLiteral("triggerKind")).toString() != (path ? QStringLiteral("path") : QString())) return false;
   const QVariant empty = shown.value(QStringLiteral("suggestionsEmptyText"));
   const int count = int(shown.value(QStringLiteral("suggestions")).toList().size());
@@ -166,11 +171,16 @@ struct Type : Command {
     if (!query.isEmpty() && query != m.searched) {
       m.searched = query;
       m.answered = !m.holding;
+      ++m.asked;
     }
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.type(text);
-    verify(nextState(m0), sut);
+    const Model m1 = nextState(m0);
+    // Hold and AnswerHeld act on the searches the MC has received, so a search
+    // is received before the next command.
+    RC_ASSERT(prop::until([&] { return fakeFiles(sut.mc).searches >= m1.asked; }));
+    verify(m1, sut);
   }
   void show(std::ostream& os) const override { os << "Type(\"" << text.toStdString() << "\")"; }
 };

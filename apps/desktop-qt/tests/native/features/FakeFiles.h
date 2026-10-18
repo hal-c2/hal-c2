@@ -30,6 +30,8 @@ struct FakeFiles {
   // The file each signed address serves, by its token; the paths downloaded.
   QHash<QString, QString> signedFiles;
   QStringList downloaded;
+  // The name searches (projects.searchEntries) the MC has received.
+  int searches = 0;
   // A file larger than the MC reads whole, by its full size in bytes.
   QHash<QString, qint64> truncated;
   // The machine's folders, absolute, for filesystem.browse; "~" is `home`.
