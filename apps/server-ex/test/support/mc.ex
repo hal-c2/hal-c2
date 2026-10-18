@@ -3937,10 +3937,17 @@ defmodule HalC2.Test.Mc.Terminal do
   """
   def open!(context, overrides \\ %{}, name \\ "default") do
     context = ensure(context)
-    restored = restored_history(context, overrides)
+    input = input(context, overrides)
+
+    fresh? =
+      Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
 
     case open(context, overrides, name) do
       {{:ok, snapshot}, context} ->
+        # A terminal with no process yet answers the open with the scrollback it
+        # restored from disk (the shell has not printed anything by then); a running
+        # one's scrollback is the shell's own.
+        restored = if fresh?, do: snapshot["history"], else: ""
         if snapshot["status"] == "running", do: await_prompt(context.terminal, restored)
 
         {snapshot, context}
@@ -3962,7 +3969,7 @@ defmodule HalC2.Test.Mc.Terminal do
   a match for a line of output no longer finds it.
 
   `restored` is scrollback the shell did not print, which a reopened terminal starts
-  with (`restored_history/2`); its own trailing prompt is not the new shell's.
+  with (the snapshot of the open); its own trailing prompt is not the new shell's.
 
   Reads the terminal as a raw subscriber of its own, so no client's frames are
   consumed. Does nothing when the scenario runs a shell whose prompt is not known
@@ -3988,24 +3995,9 @@ defmodule HalC2.Test.Mc.Terminal do
     :ok
   end
 
-  @doc """
-  The scrollback a `terminal.open` of the scenario's terminal (with `overrides`) will
-  restore from disk: what a closed terminal saved, cut the way the terminal reads it
-  back (the last 8 MiB, then the last 5,000 lines) so it is a prefix of the snapshot's
-  history. Empty when the terminal is running, whose own scrollback is the shell's.
-  """
-  def restored_history(context, overrides \\ %{}) do
-    input = input(context, overrides)
-
-    with [] <- Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}),
-         {:ok, saved} <- File.read(history_file(context, input)) do
-      cap = %HalC2.Terminal.History{}.max_bytes
-      tail = binary_part(saved, max(byte_size(saved) - cap, 0), min(byte_size(saved), cap))
-      tail |> HalC2.Terminal.History.new() |> HalC2.Terminal.History.value()
-    else
-      _ -> ""
-    end
-  end
+  # The end of a terminal's output, the part that says what the shell last drew; a
+  # reopened running terminal starts with its whole scrollback (megabytes).
+  defp output_tail(output), do: String.slice(output, -200..-1//1)
 
   # `deadline` is absolute, so a shell that keeps printing without drawing a prompt
   # still ends in the flunk below rather than renewing the wait with every message.
@@ -4019,7 +4011,7 @@ defmodule HalC2.Test.Mc.Terminal do
           receive_prompt(output, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
-          flunk("the shell drew no prompt; its output so far is #{inspect(output)}")
+          flunk("the shell drew no prompt; its output ends #{inspect(output_tail(output))}")
       end
     end
   end
@@ -4080,11 +4072,15 @@ defmodule HalC2.Test.Mc.Terminal do
   """
   def await_output(context, name, pattern, timeout \\ 5_000) do
     id = Map.fetch!(context.terminal_subs, name)
-    collect(World.client(context, name), id, pattern, timeout, "", [], context, name)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    collect(World.client(context, name), id, pattern, deadline, "", [], context, name)
   end
 
-  defp collect(client, id, pattern, timeout, acc, events, context, name) do
-    {frame, client} = WsClient.recv(client, timeout)
+  # `deadline` is absolute: a terminal that keeps printing without matching ends the
+  # wait on time, rather than renewing it with every frame.
+  defp collect(client, id, pattern, deadline, acc, events, context, name) do
+    {frame, client} =
+      WsClient.recv(client, max(deadline - System.monotonic_time(:millisecond), 0))
 
     case frame do
       %{"t" => "terminal", "id" => ^id, "event" => %{"type" => "output", "data" => data} = e} ->
@@ -4092,13 +4088,13 @@ defmodule HalC2.Test.Mc.Terminal do
 
         if acc =~ pattern,
           do: {acc, Enum.reverse([e | events]), World.put_client(context, name, client)},
-          else: collect(client, id, pattern, timeout, acc, [e | events], context, name)
+          else: collect(client, id, pattern, deadline, acc, [e | events], context, name)
 
       %{"t" => "terminal", "id" => ^id, "event" => e} ->
-        collect(client, id, pattern, timeout, acc, [e | events], context, name)
+        collect(client, id, pattern, deadline, acc, [e | events], context, name)
 
       _ ->
-        collect(client, id, pattern, timeout, acc, events, context, name)
+        collect(client, id, pattern, deadline, acc, events, context, name)
     end
   rescue
     error in RuntimeError ->

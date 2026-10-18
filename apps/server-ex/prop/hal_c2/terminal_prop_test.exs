@@ -630,7 +630,7 @@ defmodule HalC2.TerminalPropTest do
         @wait ->
           flunk(
             "output of #{inspect(key)} did not arrive: #{inspect(tokens)}; " <>
-              "the terminal printed #{inspect(text)}"
+              "the terminal printed (the last 200 bytes) #{inspect(String.slice(text, -200..-1//1))}"
           )
       end
     end
