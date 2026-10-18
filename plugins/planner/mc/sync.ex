@@ -1070,7 +1070,7 @@ defmodule HalC2Plugins.Planner.Sync do
     # issue by now (`settled/3`): the issue the mark names goes out, the task staying.
     marked = synced["misplaced"] || %{}
 
-    misplaced =
+    to_correct =
       for {id, issue} = at <- marked,
           id not in new["after"] or not Plan.same_ref?(issue, ref(items, id)),
           do: at
@@ -1090,7 +1090,7 @@ defmodule HalC2Plugins.Planner.Sync do
     # now: a task relinked or unlinked since no longer holds it, so it leaves any
     # milestone, as the removal of an issue a task left does.
     corrections =
-      for {id, issue} <- misplaced,
+      for {id, issue} <- to_correct,
           do:
             {id, issue,
              if(Plan.same_ref?(issue, ref(items, id)),
@@ -1101,8 +1101,11 @@ defmodule HalC2Plugins.Planner.Sync do
                else: &unrelate(&1, "after", id, issue)
              )}
 
-    # An issue a move and a correction both take out of any milestone is asked once; the
-    # move's `took` clears its mark, which names the same issue.
+    # An issue a move and a correction both send to the same milestone is asked once, and
+    # the move's `took` is the one kept. That loses nothing: an issue is named by one task
+    # (`Plan.check_link`), so both are for the same task and issue, and the move's `took`
+    # clears the mark of the issue it names. A removal of the mark's own issue is kept out
+    # of `moves` by `unheld/4`.
     for {id, issue, milestone, took} <-
           Enum.uniq_by(moves ++ corrections, fn {_, issue, milestone, _} ->
             {key(issue), milestone}

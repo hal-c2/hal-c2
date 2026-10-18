@@ -2325,12 +2325,14 @@ defmodule HalC2.Steps.Planning.Planner do
     late_and_soon(context, number, late, soon, "")
   end
 
-  # As above, but `soon` is refused the second time it is asked.
+  # As above, but `soon` is refused the second time it is asked: the script counts the
+  # asks in a file and exits 1 on the second. The scenario answers one ask before the
+  # next is made (the move, the correction, the retry), so the count needs no locking.
   step "GitHub takes moving \#{int} to {string} late and to {string} at once, but refuses the second move to it",
        %{args: [number, late, soon]} = context do
     count = Path.join(context.mc.home, "gh-asked")
     n = "$(cat '#{count}' 2>/dev/null || echo 0)"
-    refuse = "n=#{n}; echo $((n + 1)) > '#{count}'; [ \"$n\" -ne 1 ] && "
+    refuse = "n=#{n}; echo $((n + 1)) > '#{count}'; [ \"$n\" -ne 1 ] || exit 1; "
     late_and_soon(context, number, late, soon, refuse)
   end
 
