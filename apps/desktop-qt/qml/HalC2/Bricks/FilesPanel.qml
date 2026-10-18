@@ -62,6 +62,7 @@ Rectangle {
         ColumnLayout {
             objectName: "fileViewer"
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.fillHeight: true
             visible: root.fileOpen
             spacing: 0
@@ -75,6 +76,9 @@ Rectangle {
 
                 FilePathTrail {
                     Layout.fillWidth: true
+                    // A long path gives way to the header's buttons (it clips)
+                    // instead of widening the file past the tab.
+                    Layout.minimumWidth: 0
                     clip: true
                     source: root.source
                 }
@@ -476,7 +480,7 @@ Rectangle {
             objectName: "filesExplorer"
             Layout.fillHeight: true
             Layout.fillWidth: !root.fileOpen
-            Layout.preferredWidth: root.fileOpen ? Math.max(256, Math.min(352, root.width * 0.46)) : -1
+            Layout.preferredWidth: root.fileOpen ? Math.min(352, root.width * 0.46) : -1
             visible: root.explorerShown
             spacing: 0
 

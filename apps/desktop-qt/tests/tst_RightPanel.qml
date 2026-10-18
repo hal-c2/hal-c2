@@ -497,6 +497,9 @@ Item {
             compare(explorer.height, files.height);
             verify(viewer.x < explorer.x, "the tree is the side column");
             verify(viewer.width > explorer.width, "viewer " + viewer.width + " tree " + explorer.width);
+            // Both columns stay inside a narrow tab: the tree is never wider than 46% of it.
+            verify(explorer.width <= files.width * 0.46 + 1, "tree " + explorer.width + " of " + files.width);
+            verify(viewer.x + viewer.width <= explorer.x && explorer.x + explorer.width <= files.width + 1, "viewer " + viewer.x + "+" + viewer.width + " tree " + explorer.x + "+" + explorer.width);
             verify(lines.height > 100, "lines " + lines.height);
 
             mouseClick(findChild(files, "fileExplorerToggle"));
