@@ -25,7 +25,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   `hal-c2` profile, or the one in `HAL_C2_MC_HOME` (the MC's own directory) when that is
   set. `--root ROOT` replaces both: it names the root the installed MC runs with as
   `HAL_C2_HOME` (the XDG directories under it hold the MC's files), never a `HAL_C2_MC_HOME`
-  directory, and must be absolute and not an old home (`~/.t3`, `~/.hal-c2`). The MCs clustered with
+  directory, and must be absolute and outside the old homes (`~/.t3`, `~/.hal-c2`). The MCs clustered with
   it update to the build too, whatever their platform, when it only changes code.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
