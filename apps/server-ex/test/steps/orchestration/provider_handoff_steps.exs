@@ -659,13 +659,15 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     |> Map.fetch!("text")
   end
 
-  # Fields of the provider thread every instance of Codex shared, under Codex's id.
+  # Fields of the provider thread every instance of Codex shared, under Codex's id, from
+  # before the MC brought it up to date (`perInstance`).
   defp shared(context, thread, fields) do
     id = World.thread_id(context, thread)
 
     {:ok, _} =
       HalC2.Streams.commit(id, :thread, [
-        {"provider-thread", "provider-thread:codex:#{id}", %{"s" => fields}}
+        {"provider-thread", Entities.provider_thread_id("codex", id),
+         %{"s" => fields, "u" => ["perInstance"]}}
       ])
 
     context

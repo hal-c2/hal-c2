@@ -2677,37 +2677,44 @@ defmodule HalC2.Orchestration do
   # provider session (made by its next run), and the runs other instances
   # ran there (their attempts and provider turns too) name their own instance's, so
   # each resumes, forks and rewinds in its own home. The default id is then the default
-  # instance's; its next run takes it over (`new_run/5`). A thread brought up to date
-  # has nothing left to change.
+  # instance's; its next run takes it over (`new_run/5`). The provider thread is then
+  # marked `perInstance`, so later runs skip the scan: from then on every run names its
+  # own instance's provider thread.
   defp relocated(state, driver, thread_id) do
     legacy_id = Entities.provider_thread_id(driver, thread_id)
     threads = StreamState.get(state, "provider-thread")
     legacy = threads[legacy_id]
-    owner = legacy && legacy["providerInstanceId"]
-    moved_id = owner && Entities.provider_thread_id(owner, thread_id)
 
-    record =
-      if owner not in [nil, driver] and threads[moved_id] == nil,
-        do: [
-          create(
-            "provider-thread",
-            moved_id,
-            Map.merge(legacy, %{
-              "id" => moved_id,
-              "providerSessionId" => Entities.provider_session_id(owner, thread_id)
-            })
-          )
-        ],
-        else: []
+    if legacy == nil or legacy["perInstance"] do
+      []
+    else
+      owner = legacy["providerInstanceId"]
+      moved_id = owner && Entities.provider_thread_id(owner, thread_id)
 
-    runs =
-      for {id, run} <- StreamState.get(state, "run"),
-          run["providerThreadId"] == legacy_id,
-          (run["providerInstanceId"] || driver) != driver,
-          into: %{},
-          do: {id, Entities.provider_thread_id(run["providerInstanceId"], thread_id)}
+      record =
+        if owner not in [nil, driver] and threads[moved_id] == nil,
+          do: [
+            create(
+              "provider-thread",
+              moved_id,
+              Map.merge(legacy, %{
+                "id" => moved_id,
+                "providerSessionId" => Entities.provider_session_id(owner, thread_id)
+              })
+            )
+          ],
+          else: []
 
-    record ++ if(runs == %{}, do: [], else: references(state, runs))
+      runs =
+        for {id, run} <- StreamState.get(state, "run"),
+            run["providerThreadId"] == legacy_id,
+            (run["providerInstanceId"] || driver) != driver,
+            into: %{},
+            do: {id, Entities.provider_thread_id(run["providerInstanceId"], thread_id)}
+
+      marked = upsert(state, "provider-thread", legacy_id, &Map.put(&1, "perInstance", true))
+      record ++ if(runs == %{}, do: [], else: references(state, runs)) ++ [marked]
+    end
   end
 
   defp references(state, runs) do
