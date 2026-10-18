@@ -36,6 +36,11 @@ export const RESTORE_SEQUENCES = ["\x1b[?25h", "\x1b[?1000l", "\x1b[?2004l"] as 
 export interface LaunchSetup {
   /** The terminal's environment; `undefined` removes a key the test process has. */
   env: Record<string, string | undefined>;
+  /**
+   * Note `alt-screen` in the order log (`orderPreload`). Only the scenarios that read the
+   * log ask for it, so the other launches do not depend on the renderer's internals.
+   */
+  recordOrder: boolean;
 }
 
 const { Terminal } = XtermHeadless;
@@ -64,6 +69,7 @@ export interface LaunchWorld extends World {
 export function launchSetup(ctx: LaunchWorld): LaunchSetup {
   return (ctx.launch ??= {
     env: { TERM: "xterm-256color", COLORTERM: undefined, TERM_PROGRAM: undefined },
+    recordOrder: false,
   });
 }
 
@@ -83,21 +89,25 @@ function orderPath(ctx: LaunchWorld): string {
 /**
  * What the client did to its surroundings, one line per event in the order they
  * happened: each `tmux` call, and `alt-screen` once the renderer has taken the
- * alternate screen (written by `orderPreload`, so `startDirect` needs it).
+ * alternate screen (written by `orderPreload`, which `startDirect` adds once `recordOrder` is set).
  * Appends from different processes are ordered by the file, not by clocks.
  */
 export function orderLog(ctx: LaunchWorld): string[] {
+  if (!launchSetup(ctx).recordOrder) {
+    throw new Error("the order log was not asked for: a Given must set recordOrder first");
+  }
   return readText(orderPath(ctx)).split("\n").filter(Boolean);
 }
 
 /**
  * A preload that notes `alt-screen` in the order log when the renderer's
  * `setupTerminal` (which enters the alternate screen) returns, before
- * `createCliRenderer` hands the renderer back. Every call is noted, so a client that
- * set the terminal up twice would show `alt-screen` twice. The renderer class is resolved from
- * the client's directory, so it is the module the client loads.
+ * `createCliRenderer` hands the renderer back. Every call is noted, even one the renderer
+ * ignores because the terminal is already set up, so read the log for "present", not "once".
+ * The renderer class is resolved from the client's directory, so it is the module the client
+ * loads.
  */
-export function orderPreload(ctx: LaunchWorld): string {
+function orderPreload(ctx: LaunchWorld): string {
   const path = NodePath.join(home(ctx), "order.ts");
   NodeFS.writeFileSync(
     path,
@@ -117,6 +127,20 @@ CliRenderer.prototype.setupTerminal = async function (...args: unknown[]) {
   return path;
 }
 
+/**
+ * What else a terminal leaves in its shell's environment for tools to identify it by. The
+ * renderer reads these too, so the terminal a scenario claims is the only one present.
+ */
+const TERMINAL_MARKERS = new Set([
+  "KONSOLE_VERSION",
+  "KITTY_WINDOW_ID",
+  "WEZTERM_PANE",
+  "GHOSTTY_RESOURCES_DIR",
+  "LC_TERMINAL",
+  "WT_SESSION",
+  "ITERM_SESSION_ID",
+]);
+
 /** The test process's env minus anything that would point at real state or a real tmux. */
 function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   const env: Record<string, string> = {};
@@ -124,7 +148,7 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
     if (value === undefined) continue;
     if (key.startsWith("HAL_C2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
     if (key === "HAL_C2_HOME" || key === "HAL_C2_MC_HOME" || key.startsWith("XDG_")) continue;
-    if (key === "COLORTERM" || key === "TERM_PROGRAM") continue;
+    if (key === "COLORTERM" || key === "TERM_PROGRAM" || TERMINAL_MARKERS.has(key)) continue;
     env[key] = value;
   }
   const dir = home(ctx);
@@ -185,6 +209,9 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     markDrawn = resolve;
   });
   const decoder = new TextDecoder();
+  // The renderer on a pipe has no columns or rows of its own and draws 80x24, inside this
+  // larger screen. Rows below its last stay blank, which is what makes `statusLine()` (the last
+  // non-blank row) the client's status row; anything the client wrote below it would move that.
   const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true });
   ctx.cleanups.push(() => terminal.dispose());
   const screenWaiters = new Set<() => void>();
@@ -423,8 +450,11 @@ export async function startDirect(
   args: ReadonlyArray<string>,
   options: { preload?: string } = {},
 ): Promise<void> {
-  const env = withTerminal(cleanEnv(ctx), launchSetup(ctx).env);
-  const preload = options.preload ? ["--preload", options.preload] : [];
+  const setup = launchSetup(ctx);
+  const env = withTerminal(cleanEnv(ctx), setup.env);
+  const preload = [options.preload, setup.recordOrder ? orderPreload(ctx) : undefined].flatMap(
+    (path) => (path ? ["--preload", path] : []),
+  );
   const spawned = spawn(ctx, [process.execPath, ...preload, CLIENT_ENTRY, ...args], env);
   const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "the client", spawned);
   if (drew) {

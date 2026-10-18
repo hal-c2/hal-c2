@@ -196,6 +196,7 @@ Feature: Launching and leaving the terminal client
     Given an MC is running on this machine that has not sent its first snapshot
     When the user starts the terminal client
     Then the terminal client opens in the alternate screen
+    And the MC is holding the client's request for its first snapshot
     And its status line says "Connecting…"
     When the MC sends its first snapshot
     Then its status line counts the projects and threads

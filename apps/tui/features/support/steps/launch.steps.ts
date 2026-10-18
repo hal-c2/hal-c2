@@ -18,7 +18,6 @@ import {
   launchSetup,
   leaveDirect,
   orderLog,
-  orderPreload,
   RESTORE_SEQUENCES,
   runClient,
   runningMc,
@@ -116,7 +115,7 @@ step("the recorded MC does not answer", (ctx: LaunchWorld) => {
 });
 
 step("the user starts the terminal client", async (ctx: LaunchWorld) => {
-  await startDirect(ctx, ["--base-dir", baseDir(ctx)], { preload: orderPreload(ctx) });
+  await startDirect(ctx, ["--base-dir", baseDir(ctx)]);
 });
 
 step("the terminal client connects to that MC", async (ctx: LaunchWorld) => {
@@ -321,21 +320,28 @@ step("the client does not claim truecolor support", async (ctx: LaunchWorld) => 
 // --- tmux ---
 
 step("the user is not inside tmux", (ctx: LaunchWorld) => {
-  Object.assign(launchSetup(ctx).env, { TMUX: undefined, TMUX_PANE: undefined });
+  const setup = launchSetup(ctx);
+  Object.assign(setup.env, { TMUX: undefined, TMUX_PANE: undefined });
+  setup.recordOrder = true;
 });
 
 const TMUX_PANE = "%7";
 
 step("the user is inside a tmux pane that is in copy mode", (ctx: LaunchWorld) => {
-  Object.assign(launchSetup(ctx).env, {
+  const setup = launchSetup(ctx);
+  Object.assign(setup.env, {
     TMUX: "/tmp/tmux-1000/default,4242,0",
     TMUX_PANE,
   });
+  setup.recordOrder = true;
 });
 
 step("the client does not run any tmux command", async (ctx: LaunchWorld) => {
   if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
-  expect(orderLog(ctx)).toEqual(["alt-screen"]);
+  const events = orderLog(ctx);
+  // The client did start (it took the alternate screen) and called no tmux.
+  expect(events).toContain("alt-screen");
+  expect(events.filter((event) => event.startsWith("tmux "))).toEqual([]);
 });
 
 step("the pane leaves copy mode before the terminal client draws", async (ctx: LaunchWorld) => {
@@ -363,6 +369,14 @@ function open(ctx: LaunchWorld) {
 
 step("the terminal client opens in the alternate screen", (ctx: LaunchWorld) => {
   expect(open(ctx).output.stdout).toContain(ENTER_ALT_SCREEN);
+});
+
+step("the MC is holding the client's request for its first snapshot", async (ctx: LaunchWorld) => {
+  // With the shell held, "Connecting…" is what the client shows while the snapshot is outstanding.
+  await mc(ctx).until(
+    () => mc(ctx).sockets.some((socket) => socket.shapes.some((shape) => shape.type === "shell")),
+    "the client's request for the shell snapshot",
+  );
 });
 
 step("its status line says {string}", async (ctx: LaunchWorld, text: string) => {
@@ -396,10 +410,13 @@ step("the client asks that MC for another socket ticket", async (ctx: LaunchWorl
   await mc(ctx).until(() => mc(ctx).ticketRequests.length >= 2, "a second ticket request", 40_000);
 });
 
-step("the first ticket request was given up on only after 10 seconds", (ctx: LaunchWorld) => {
+step("the first ticket request was given up on only after 10 seconds", async (ctx: LaunchWorld) => {
   const first = mc(ctx).ticketRequests[0]!;
-  // The client hangs up on it before it asks again, so its end is already known.
-  expect(first.endedAt).toBeDefined();
+  // The client hangs up before it asks again, but the abort reaches the MC on its own clock.
+  await mc(ctx).until(
+    () => first.endedAt !== undefined,
+    "the client to hang up on the first ticket request",
+  );
   const lived = first.endedAt! - first.startedAt;
   // The client's timer starts before the request reaches the MC, and a loaded runner can
   // stretch that gap and the abort's way back; the slack still catches "gave up at once".
