@@ -208,6 +208,39 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     Map.put(context, :printed, Mc.run_task(Mix.Tasks.HalC2.Plugins.Install, [id]))
   end
 
+  # A checkout of its own (a git repository, as the task lists files with git) holding the
+  # package the MC runs and a second file that does not compile.
+  step "a developer installs {string} from a checkout whose second MC file does not compile",
+       %{args: [id]} = context do
+    root = Mc.tmp_dir(context.mc, "checkout")
+    package = Path.join([root, "plugins", id])
+    File.mkdir_p!(Path.dirname(package))
+    File.cp_r!(Packages.dir(context, id), package)
+
+    File.write!(Path.join(package, "mc/zz_broken.ex"), """
+    defmodule HalC2PluginFixture.Package.Broken do
+      def broken, do: undefined_call()
+    end
+    """)
+
+    {_, 0} = System.cmd("git", ~w(init -q), cd: root)
+    Application.put_env(:hal_c2, :plugins_install_checkout, root)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :plugins_install_checkout) end)
+
+    Map.merge(context, %{
+      printed: Mc.run_task(Mix.Tasks.HalC2.Plugins.Install, [id]),
+      plugin: id
+    })
+  end
+
+  step "the install prints that {string} did not load because of {string}",
+       %{args: [id, reason]} = context do
+    assert [line] = context.printed
+    assert line =~ "#{id} 1.0.0: "
+    assert line =~ reason
+    context
+  end
+
   step "{string} is listed at the version in the checkout", %{args: [id]} = context do
     version =
       JSON.decode!(File.read!(Path.join([@checkout, "plugins", id, "plugin.json"])))["version"]

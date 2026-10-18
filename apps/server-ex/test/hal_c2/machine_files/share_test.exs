@@ -1,0 +1,359 @@
+defmodule HalC2.MachineFiles.ShareTest do
+  # Uses the MC-wide named Store and Shell processes.
+  use ExUnit.Case, async: false
+
+  alias HalC2.MachineFiles.Share
+  alias HalC2.{Shell, Store}
+
+  @moduletag :tmp_dir
+
+  defmodule QuietWire do
+    @moduledoc false
+    def connected, do: []
+    def cast(_peer, _message), do: :ok
+  end
+
+  setup %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :shell_transport, QuietWire)
+    on_exit(fn -> Application.delete_env(:hal_c2, :shell_transport) end)
+    start_supervised!({Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(Shell)
+
+    home = Path.join(dir, "home/me")
+    shop = Path.join(home, "shop")
+    worktree = Path.join(home, ".worktrees/shop-cart")
+    gone = Path.join(home, "gone")
+    File.mkdir_p!(Path.join(shop, "src"))
+    File.mkdir_p!(Path.join(worktree, "src"))
+    File.mkdir_p!(Path.join(home, ".ssh"))
+    File.mkdir_p!(gone)
+    File.write!(Path.join(shop, "src/cart.ts"), "export const cart = [];\n")
+    File.write!(Path.join(worktree, "src/cart.ts"), "export const cart = [1];\n")
+    File.write!(Path.join(home, ".ssh/id_ed25519"), "secret")
+    File.write!(Path.join(home, "notes.txt"), "private")
+    File.write!(Path.join(gone, "old.txt"), "deleted project")
+    File.ln_s!(Path.join(home, ".ssh/id_ed25519"), Path.join(shop, "key"))
+    File.ln_s!("src/cart.ts", Path.join(shop, "cart-link.ts"))
+
+    put("shop", {"project", %{"id" => "shop", "workspaceRoot" => shop, "deletedAt" => nil}})
+    put("gone", {"project", %{"id" => "gone", "workspaceRoot" => gone, "deletedAt" => "2026"}})
+    put("t1", {"thread", %{"id" => "t1", "projectId" => "shop", "worktreePath" => worktree}})
+    put("t2", {"thread", %{"id" => "t2", "projectId" => "shop", "worktreePath" => nil}})
+    :ok = Shell.sync()
+
+    %{dir: dir, home: home, shop: shop, worktree: worktree, gone: gone}
+  end
+
+  defp put(id, row), do: Shell.put_row(id, row)
+
+  test "shares the live projects' roots and the threads' worktrees", ctx do
+    assert Enum.sort(Share.roots()) == Enum.sort([ctx.shop, ctx.worktree])
+  end
+
+  test "reads a file under a project and under a worktree", ctx do
+    assert Share.read(Path.join(ctx.shop, "src/cart.ts"), 0, 100) ==
+             {:ok, "export const cart = [];\n"}
+
+    assert Share.read(Path.join(ctx.worktree, "src/cart.ts"), 7, 5) == {:ok, "const"}
+    assert Share.read(Path.join(ctx.worktree, "src/cart.ts"), 1_000, 5) == {:ok, ""}
+    assert {:ok, %{type: :regular, size: 24}} = Share.stat(Path.join(ctx.shop, "src/cart.ts"))
+  end
+
+  test "anything outside the roots is not found", ctx do
+    for path <- [
+          Path.join(ctx.home, ".ssh/id_ed25519"),
+          Path.join(ctx.home, "notes.txt"),
+          "/etc/passwd",
+          Path.join(ctx.shop, "../notes.txt"),
+          Path.join(ctx.shop, "./src/cart.ts"),
+          Path.join(ctx.gone, "old.txt"),
+          "relative/path"
+        ] do
+      assert Share.read(path, 0, 100) == {:error, :enoent}, path
+      assert Share.stat(path) == {:error, :enoent}, path
+    end
+
+    assert Share.walk(ctx.shop, ["..", "notes.txt"]) == {:error, :enoent}
+    assert Share.write(Path.join(ctx.home, "notes.txt"), 0, "x") == {:error, :enoent}
+    assert File.read!(Path.join(ctx.home, "notes.txt")) == "private"
+  end
+
+  test "a symlink that leaves the root is neither read nor listed", ctx do
+    assert Share.read(Path.join(ctx.shop, "key"), 0, 100) == {:error, :enoent}
+    # One that stays inside reads as what it points at.
+    assert Share.read(Path.join(ctx.shop, "cart-link.ts"), 0, 6) == {:ok, "export"}
+
+    assert {:ok, entries} = Share.list(ctx.shop)
+    assert [{"cart-link.ts", :regular, _}, {"src", :directory, _}] = entries
+  end
+
+  test "a link through a link that steps out with .. leaves the root", ctx do
+    private = Path.join(ctx.dir, "private")
+    File.mkdir_p!(Path.join(private, "sub"))
+    File.write!(Path.join(private, "secret"), "private")
+    File.mkdir_p!(Path.join(ctx.shop, "inside"))
+    File.write!(Path.join(ctx.shop, "inside/secret"), "shared")
+    File.ln_s!(Path.join(private, "sub"), Path.join(ctx.shop, "inside/escape"))
+    # The kernel takes `..` from where escape leads, so this is private/secret.
+    File.ln_s!("inside/escape/../secret", Path.join(ctx.shop, "leak"))
+    assert File.read!(Path.join(ctx.shop, "leak")) == "private"
+
+    leak = Path.join(ctx.shop, "leak")
+    assert Share.read(leak, 0, 100) == {:error, :enoent}
+    assert Share.write(leak, 0, "x") == {:error, :enoent}
+    assert Share.stat(leak) == {:error, :enoent}
+    assert File.read!(Path.join(private, "secret")) == "private"
+  end
+
+  test "only regular files are opened, so nothing waits on a fifo", ctx do
+    fifo = Path.join(ctx.shop, "pipe")
+    {_, 0} = System.cmd("mkfifo", [fifo])
+
+    assert Share.read(fifo, 0, 10) == {:error, :eacces}
+    assert Share.write(fifo, 0, "x") == {:error, :eacces}
+    assert Share.read(Path.join(ctx.shop, "src"), 0, 10) == {:error, :eisdir}
+  end
+
+  test "the directories above the roots show only the way to them", ctx do
+    assert {:ok, [{first, :directory, _}]} = Share.list("/")
+    assert first == ctx.dir |> Path.split() |> Enum.at(1)
+
+    assert {:ok, [{".worktrees", :directory, _}, {"shop", :directory, _}]} =
+             Share.list(ctx.home)
+
+    assert {:ok, %{type: :directory, mode: 0o040555}} = Share.stat(ctx.home)
+
+    # They are entered, never changed, and nothing beside the roots is there.
+    assert Share.create(Path.join(ctx.home, "new.txt"), 0o644) == {:error, :enoent}
+    assert Share.mkdir(Path.join(ctx.home, "new"), 0o755) == {:error, :enoent}
+    assert Share.read(ctx.home, 0, 10) == {:error, :eacces}
+    assert Share.remove(ctx.shop, :dir) == {:error, :eacces}
+    assert Share.rename(ctx.shop, Path.join(ctx.shop <> "-moved", "x")) == {:error, :eacces}
+  end
+
+  test "walks name by name as far as it gets", ctx do
+    assert {:ok, [a, b, c]} = Share.walk(ctx.home, ["shop", "src", "cart.ts"])
+    assert {a.type, b.type, c.type} == {:directory, :directory, :regular}
+    assert {:ok, [_shop]} = Share.walk(ctx.home, ["shop", "missing"])
+    assert Share.walk(ctx.home, ["notes.txt"]) == {:error, :enoent}
+    assert Share.walk(ctx.home, []) == {:ok, []}
+  end
+
+  test "writes, creates, renames and removes under a root", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    assert Share.write(cart, 0, "EXPORT") == {:ok, 6}
+    assert File.read!(cart) == "EXPORT const cart = [];\n"
+
+    assert {:ok, %{size: 3}} = Share.setattr(cart, %{size: 3, mtime: 1_700_000_000})
+    assert File.read!(cart) == "EXP"
+    assert File.stat!(cart, time: :posix).mtime == 1_700_000_000
+
+    new = Path.join(ctx.shop, "src/new.ts")
+    assert {:ok, %{type: :regular, size: 0}} = Share.create(new, 0o100640)
+    assert Share.create(new, 0o644) == {:error, :eexist}
+    assert Bitwise.band(File.stat!(new).mode, 0o777) == 0o640
+
+    assert {:ok, %{type: :directory}} = Share.mkdir(Path.join(ctx.shop, "lib"), 0o755)
+    assert Share.rename(new, Path.join(ctx.shop, "lib/new.ts")) == :ok
+    assert File.exists?(Path.join(ctx.shop, "lib/new.ts"))
+
+    assert Share.rename(Path.join(ctx.shop, "lib/new.ts"), Path.join(ctx.home, "x")) ==
+             {:error, :enoent}
+
+    assert Share.remove(Path.join(ctx.shop, "lib/new.ts"), :file) == :ok
+    assert Share.remove(Path.join(ctx.shop, "lib"), :dir) == :ok
+    refute File.exists?(Path.join(ctx.shop, "lib"))
+  end
+
+  test "a file saved over by renaming is stale to whoever opened the old one", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id}} = Share.stat(cart)
+    assert Share.read(cart, 0, 6, id) == {:ok, "export"}
+    assert Share.fsync(cart, id) == :ok
+
+    saved = Path.join(ctx.shop, "src/.cart.ts.swp")
+    File.write!(saved, "export const cart = [2];\n")
+    File.rename!(saved, cart)
+
+    assert Share.read(cart, 0, 6, id) == {:error, :estale}
+    assert Share.write(cart, 0, "x", id) == {:error, :estale}
+    assert Share.fsync(cart, id) == {:error, :estale}
+    assert {:ok, %{id: new}} = Share.stat(cart)
+    assert Share.read(cart, 0, 6, new) == {:ok, "export"}
+  end
+
+  # Removed, a file's inode number may be another's next; held open, it is not.
+  test "a file held open for another MC is stale once let go, even at its own inode", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    owner = spawn(fn -> receive(do: (:stop -> :ok)) end)
+    {:ok, %{id: id, pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    assert Share.read(cart, 0, 6, {id, pin}) == {:ok, "export"}
+    assert Share.write(cart, 0, "e", {id, pin}) == {:ok, 1}
+
+    File.rm!(cart)
+    File.write!(cart, "new")
+    assert {:ok, %{id: new}} = Share.stat(cart)
+    assert new != id
+    assert Share.write(cart, 0, "x", {id, pin}) == {:error, :estale}
+    assert File.read!(cart) == "new"
+
+    {:ok, %{id: ^new, pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    ref = Process.monitor(pin)
+    send(pin, :release)
+    assert_receive {:DOWN, ^ref, :process, ^pin, _}
+    # The same number, but no longer held: it may name another file by now.
+    assert Share.read(cart, 0, 3, {new, pin}) == {:error, :estale}
+    assert Share.setattr(cart, %{size: 0}, {new, pin}) == {:error, :estale}
+    assert File.read!(cart) == "new"
+  end
+
+  test "a file is held while its owner is there, and not unless it can be", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    owner = spawn(fn -> receive(do: (:stop -> :ok)) end)
+    {:ok, %{pin: pin}} = Share.open(cart, owner)
+    send(pin, :claim)
+    ref = Process.monitor(pin)
+    send(owner, :stop)
+    assert_receive {:DOWN, ^ref, :process, ^pin, _}
+
+    {:ok, %{pin: created}} = Share.create(Path.join(ctx.shop, "src/new.ts"), 0o644, nil, owner)
+    assert is_pid(created)
+
+    # Directories, files it may not read and calls with no owner are only looked at.
+    refute Map.has_key?(elem(Share.open(Path.join(ctx.shop, "src"), owner), 1), :pin)
+    refute Map.has_key?(elem(Share.open(cart, nil), 1), :pin)
+    File.chmod!(cart, 0o200)
+    assert {:ok, attr} = Share.open(cart, self())
+    refute Map.has_key?(attr, :pin)
+    assert Share.append(cart, "x", attr.id) == {:ok, 1}
+    assert Share.open(Path.join(ctx.home, "notes.txt"), self()) == {:error, :enoent}
+  end
+
+  # As `umask 222; echo hi > f`, or a copy of a read-only file, does.
+  test "a file created read-only is written through its fid, and is read-only once let go",
+       ctx do
+    mode = fn path -> Bitwise.band(File.stat!(path).mode, 0o777) end
+
+    let_go = fn pin ->
+      ref = Process.monitor(pin)
+      send(pin, :claim)
+      send(pin, :release)
+      assert_receive {:DOWN, ^ref, :process, ^pin, _}
+    end
+
+    copy = Path.join(ctx.shop, "src/copy.ts")
+    {:ok, %{id: id, pin: pin}} = Share.create(copy, 0o444, nil, self())
+    assert Share.write(copy, 0, "hi", {id, pin}) == {:ok, 2}
+    let_go.(pin)
+    assert mode.(copy) == 0o444
+    assert File.read!(copy) == "hi"
+
+    # A mode set before then, as `cp -p` sets one, is the one it keeps.
+    kept = Path.join(ctx.shop, "src/kept.ts")
+    {:ok, %{id: id, pin: pin}} = Share.create(kept, 0o444, nil, self())
+    assert {:ok, _} = Share.setattr(kept, %{mode: 0o640}, {id, pin})
+    let_go.(pin)
+    assert mode.(kept) == 0o640
+
+    # With no one to hold it, it has its mode at once.
+    bare = Path.join(ctx.shop, "src/bare.ts")
+    assert {:ok, %{mode: created}} = Share.create(bare, 0o444)
+    assert Bitwise.band(created, 0o777) == 0o444
+  end
+
+  test "a directory renamed away and made again is stale to whoever stood in it", ctx do
+    src = Path.join(ctx.shop, "src")
+    cart = Path.join(src, "cart.ts")
+    {:ok, %{id: id}} = Share.stat(src)
+    assert {:ok, [_]} = Share.walk(src, ["cart.ts"], id)
+    assert {:ok, [{"cart.ts", :regular, _}]} = Share.list(src, id)
+
+    File.rename!(src, Path.join(ctx.shop, "src-old"))
+    File.mkdir!(src)
+    File.write!(cart, "new")
+    File.write!(Path.join(src, "b.ts"), "b")
+
+    assert Share.walk(src, ["cart.ts"], id) == {:error, :estale}
+    assert Share.list(src, id) == {:error, :estale}
+    assert Share.create(Path.join(src, "c.ts"), 0o644, id) == {:error, :estale}
+    assert Share.mkdir(Path.join(src, "lib"), 0o755, id) == {:error, :estale}
+    assert Share.remove(cart, :file, id) == {:error, :estale}
+    assert Share.rename(cart, Path.join(ctx.shop, "cart.ts"), id, nil) == {:error, :estale}
+
+    assert Share.rename(Path.join(src, "b.ts"), Path.join(src, "c.ts"), nil, id) ==
+             {:error, :estale}
+
+    assert File.read!(cart) == "new"
+    assert {:ok, %{id: new}} = Share.stat(src)
+    assert Share.remove(cart, :file, new) == :ok
+  end
+
+  test "an append lands after what was written there since", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id, size: size}} = Share.stat(cart)
+    # Someone on this machine appends after the mounted side last saw the size.
+    File.write!(cart, "export const total = 0;\n", [:append])
+
+    assert Share.append(cart, "export const tax = 0;\n", id) == {:ok, 22}
+
+    assert File.read!(cart) ==
+             "export const cart = [];\nexport const total = 0;\nexport const tax = 0;\n"
+
+    assert size == 24
+  end
+
+  test "a truncate through an open file leaves a file saved over it alone", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    {:ok, %{id: id}} = Share.stat(cart)
+    saved = Path.join(ctx.shop, "src/.cart.ts.swp")
+    File.write!(saved, "export const cart = [2];\n")
+    File.rename!(saved, cart)
+
+    assert Share.setattr(cart, %{size: 0}, id) == {:error, :estale}
+    assert Share.append(cart, "x", id) == {:error, :estale}
+    assert File.read!(cart) == "export const cart = [2];\n"
+
+    # A truncate by name changes whatever the name is now.
+    assert {:ok, %{size: 0}} = Share.setattr(cart, %{size: 0})
+  end
+
+  test "times are set apart, and only regular files are truncated", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    assert {:ok, _} = Share.setattr(cart, %{atime: 1_600_000_000, mtime: 1_700_000_000})
+    assert %{atime: 1_600_000_000, mtime: 1_700_000_000} = File.stat!(cart, time: :posix)
+
+    assert {:ok, _} = Share.setattr(cart, %{atime: 1_650_000_000})
+    assert %{atime: 1_650_000_000, mtime: 1_700_000_000} = File.stat!(cart, time: :posix)
+
+    fifo = Path.join(ctx.shop, "pipe")
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    assert Share.setattr(fifo, %{size: 0}) == {:error, :eacces}
+  end
+
+  test "a deleted thread's worktree is no longer shared", ctx do
+    cart = Path.join(ctx.worktree, "src/cart.ts")
+    assert {:ok, _} = Share.stat(cart)
+
+    put(
+      "t1",
+      {"thread",
+       %{"id" => "t1", "projectId" => "shop", "worktreePath" => ctx.worktree, "deletedAt" => "x"}}
+    )
+
+    :ok = Shell.sync()
+
+    assert Share.stat(cart) == {:error, :enoent}
+  end
+
+  test "a project that is deleted is no longer shared", ctx do
+    cart = Path.join(ctx.shop, "src/cart.ts")
+    assert {:ok, _} = Share.stat(cart)
+
+    put("shop", {"project", %{"id" => "shop", "workspaceRoot" => ctx.shop, "deletedAt" => "x"}})
+    :ok = Shell.sync()
+
+    assert Share.stat(cart) == {:error, :enoent}
+  end
+end

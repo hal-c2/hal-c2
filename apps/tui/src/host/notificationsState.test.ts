@@ -37,7 +37,7 @@ describe("thread alerts", () => {
     expect(alerts[0]!.actions).toEqual([{ id: "open", label: "Open", primary: true }]);
   });
 
-  it("keep the newest alert per thread and at most three", () => {
+  it("keep the newest alert per thread and drop none for room", () => {
     const failed = thread("a", { latestTurn: { turnId: "turn-2", state: "error" } });
     let alerts = nextThreadAlerts([], threadTransitions([thread("a")], [done("a")]), null, nextId);
     alerts = nextThreadAlerts(alerts, threadTransitions([done("a")], [failed]), null, nextId);
@@ -53,6 +53,6 @@ describe("thread alerts", () => {
       null,
       nextId,
     );
-    expect(alerts.map((alert) => alert.threadId)).toEqual(["e", "d", "c"]);
+    expect(alerts.map((alert) => alert.threadId)).toEqual(["e", "d", "c", "b", "a"]);
   });
 });

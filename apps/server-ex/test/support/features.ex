@@ -38,6 +38,7 @@ defmodule HalC2.Test.Features do
       |> Enum.reject(&(&1.scenarios == [] and &1.rules == []))
       # Module names come from the file path: `Features.Threads.SettleTest`.
       |> Enum.map(&%{&1 | file: Path.relative_to(&1.file, Path.dirname(@root))})
+      |> Enum.map(&skip_without_fuse/1)
 
     Cucumber.RunCoordinator.ensure_started()
 
@@ -84,6 +85,25 @@ defmodule HalC2.Test.Features do
   end
 
   defp backlog?(tags), do: "backlog" in tags or "backlog-mc" in tags
+
+  # These mount another machine's folder with FUSE and the machine-files helper
+  # (`HalC2.MachineFiles.Helper`); a machine without them skips them, saying why.
+  @fuse ~w(features/files/files-on-another-machine.feature)
+
+  defp skip_without_fuse(feature) do
+    with true <- feature.file in @fuse,
+         {:error, reason} <- HalC2.MachineFiles.Helper.available() do
+      IO.puts(
+        :stderr,
+        "skipping #{feature.file}: it needs /dev/fuse, fusermount3 and the helper " <>
+          "(vp run build:machine-files): #{reason}"
+      )
+
+      %{feature | tags: ["skip" | feature.tags]}
+    else
+      _ -> feature
+    end
+  end
 
   # Example tables carry tags too; an outline runs when any of its tables is a
   # MC table. (No feature uses per-table surface tags today.)

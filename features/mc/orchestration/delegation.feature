@@ -71,6 +71,12 @@ Feature: Delegating tasks to subagents
       | the task asks for default mode while "parent" is in plan mode     | interaction_mode_escalation_denied |
 
   @mc
+  Scenario: A delegation without a task prompt is refused, not started empty
+    When the agent in "parent" delegates with its prompt under another name
+    Then the tool fails with code "invalid_task"
+    And "parent" has no subagent task
+
+  @mc
   Scenario: Waiting for a task returns its result when it finishes
     When the agent in "parent" delegates a task and waits
     And the subagent completes with "Migration written"
