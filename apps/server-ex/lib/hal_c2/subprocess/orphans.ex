@@ -36,16 +36,26 @@ defmodule HalC2.Subprocess.Orphans do
 
   @doc """
   Records the program `os_pid`, run by the Exile process `proc`, until `proc` ends.
-  A no-op when this service is not running (tests, Mix tasks).
+  The caller writes the record itself, so a program started while this service
+  restarts is still on disk for the next boot; only removing the record when the
+  program ends needs the service. `{:error, reason}` when the record could not be
+  written: the caller must stop the program rather than run it untracked. A no-op
+  when this service has not been started in this VM (tests, Mix tasks).
   """
-  @spec track(pid, pos_integer) :: :ok
+  @spec track(pid, pos_integer) :: :ok | {:error, term}
   def track(proc, os_pid) do
-    case started(os_pid) do
-      nil -> :ok
-      started -> GenServer.call(__MODULE__, {:track, proc, os_pid, started})
+    with %{dir: dir, owner: owner} <- :persistent_term.get(__MODULE__, nil),
+         started when started != nil <- started(os_pid) do
+      # The start time in the name keeps a reused pid's record apart from the one before.
+      path = Path.join(dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
+      record = %{"pid" => os_pid, "started" => started, "mc" => owner}
+
+      with :ok <- File.write(path, JSON.encode!(record)) do
+        GenServer.cast(__MODULE__, {:watch, proc, path})
+      end
+    else
+      _ -> :ok
     end
-  catch
-    :exit, _ -> :ok
   end
 
   @doc """
@@ -53,15 +63,32 @@ defmodule HalC2.Subprocess.Orphans do
   had the same pid, or nil when there is no such process.
   """
   def started(pid) do
+    case process(pid) do
+      {_state, started} -> started
+      nil -> nil
+    end
+  end
+
+  # Whether `owner` is that MC and still running. One that exited but that its parent
+  # has not reaped yet keeps its pid and start time, as a zombie.
+  defp running?(%{"pid" => pid, "started" => started}) do
+    case process(pid) do
+      {state, ^started} -> state not in ["Z", "X"]
+      _ -> false
+    end
+  end
+
+  # `{state, started}` of the process `pid`, or nil.
+  defp process(pid) do
     case File.read("/proc/#{pid}/stat") do
-      # Field 22, the start time in ticks since boot, counted after the command name,
-      # which may hold spaces and parentheses.
+      # Fields 3 and 22, the state and the start time in ticks since boot, counted
+      # after the command name, which may hold spaces and parentheses.
       {:ok, stat} ->
-        ticks = stat |> String.split(")") |> List.last() |> String.split() |> Enum.at(19)
-        "#{boot_id()}:#{ticks}"
+        [state | rest] = stat |> String.split(")") |> List.last() |> String.split()
+        {state, "#{boot_id()}:#{Enum.at(rest, 18)}"}
 
       {:error, _} ->
-        if File.dir?("/proc/self"), do: nil, else: ps_started(pid)
+        if File.dir?("/proc/self"), do: nil, else: ps_process(pid)
     end
   end
 
@@ -73,11 +100,17 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # macOS: wall-clock start time, to the second.
-  defp ps_started(pid) do
-    case System.cmd("ps", ["-o", "lstart=", "-p", "#{pid}"], stderr_to_stdout: true) do
-      {out, 0} -> if (out = String.trim(out)) != "", do: out
-      _ -> nil
+  # macOS: the state's first letter, and the wall-clock start time to the second.
+  defp ps_process(pid) do
+    case System.cmd("ps", ["-o", "state=,lstart=", "-p", "#{pid}"], stderr_to_stdout: true) do
+      {out, 0} ->
+        case String.split(String.trim(out), " ", parts: 2) do
+          [state, started] -> {String.first(state), String.trim(started)}
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   rescue
     _ -> nil
@@ -85,6 +118,9 @@ defmodule HalC2.Subprocess.Orphans do
 
   @impl true
   def init(opts) do
+    # So a supervisor's shutdown runs `terminate/2`.
+    Process.flag(:trap_exit, true)
+
     owner =
       Keyword.get_lazy(opts, :owner, fn ->
         pid = String.to_integer(System.pid())
@@ -94,17 +130,14 @@ defmodule HalC2.Subprocess.Orphans do
     dir = dir()
     HalC2.Paths.mkdir_private!(dir)
     reap(dir)
-    {:ok, %{owner: owner, dir: dir, programs: %{}}}
+    :persistent_term.put(__MODULE__, %{dir: dir, owner: owner})
+    {:ok, %{programs: %{}}}
   end
 
   @impl true
-  def handle_call({:track, proc, os_pid, started}, _from, state) do
-    # The start time in the name keeps a reused pid's record apart from the one before.
-    path = Path.join(state.dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
-    record = %{"pid" => os_pid, "started" => started, "mc" => state.owner}
-    _ = File.write(path, JSON.encode!(record))
+  def handle_cast({:watch, proc, path}, state) do
     ref = Process.monitor(proc)
-    {:reply, :ok, put_in(state.programs[ref], path)}
+    {:noreply, put_in(state.programs[ref], path)}
   end
 
   @impl true
@@ -112,6 +145,16 @@ defmodule HalC2.Subprocess.Orphans do
     {path, programs} = Map.pop(state.programs, ref)
     if path, do: File.rm(path)
     {:noreply, %{state | programs: programs}}
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
+  # Stopped on purpose, programs are untracked again. A crash keeps tracking on, so
+  # the programs started before the supervisor brings this back are still recorded.
+  @impl true
+  def terminate(reason, _state) do
+    if reason in [:normal, :shutdown] or match?({:shutdown, _}, reason),
+      do: :persistent_term.erase(__MODULE__)
   end
 
   defp reap(dir) do
@@ -129,7 +172,7 @@ defmodule HalC2.Subprocess.Orphans do
          {:ok, %{"pid" => pid, "started" => started, "mc" => %{"pid" => mc} = owner}}
          when is_integer(pid) and is_integer(mc) <- JSON.decode(text) do
       cond do
-        started(mc) == owner["started"] ->
+        running?(owner) ->
           :kept
 
         started(pid) == started ->

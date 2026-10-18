@@ -1,8 +1,8 @@
 defmodule HalC2.SubprocessOrphansPropTest do
   @moduledoc """
   `HalC2.Subprocess.Orphans` against a model of the programs an MC runs: started,
-  stopped, carried over a restart of the service inside a running MC, or left running
-  by an MC that died. The MC is a stand-in OS process, so dying is that process
+  stopped, started while the service is down for a restart, carried over a restart of
+  the service inside a running MC, or left running by an MC that died. The MC is a stand-in OS process, so dying is that process
   ending while its programs keep running. Each boot after a death must kill exactly
   the programs the dead MC left, each with its background command, and spare the
   rest; there is a record for each program running, and one that a service which
@@ -56,6 +56,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
       [
         {4, {:call, __MODULE__, :start, [state.next]}},
         {1, {:call, __MODULE__, :restart_service, []}},
+        {1, {:call, __MODULE__, :start_during_restart, [state.next]}},
         {1, {:call, __MODULE__, :die, []}}
       ] ++ stops
     )
@@ -89,6 +90,18 @@ defmodule HalC2.SubprocessOrphansPropTest do
   def next_state(state, _, {:call, _, :restart_service, []}),
     do: %{state | running: Map.new(state.running, fn {id, _} -> {id, false} end)}
 
+  # Recorded, but by no incarnation of the service that watches it end.
+  def next_state(state, _, {:call, _, :start_during_restart, [id]}) do
+    state = next_state(state, nil, {:call, __MODULE__, :restart_service, []})
+
+    %{
+      state
+      | next: id + 1,
+        running: Map.put(state.running, id, false),
+        records: state.records ++ [id]
+    }
+  end
+
   def next_state(state, _, {:call, _, :die, []}),
     do: %{state | up: false, running: %{}, orphans: Map.keys(state.running)}
 
@@ -103,6 +116,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   def postcondition(state, {:call, _, :restart_service, []}, {alive, records}),
     do: alive == Enum.sort(Map.keys(state.running)) and records == pids(state.records)
+
+  def postcondition(state, {:call, _, :start_during_restart, _} = call, records),
+    do: records == pids(next_state(state, nil, call).records)
 
   def postcondition(_state, {:call, _, :die, []}, result), do: result == :ok
 
@@ -147,6 +163,17 @@ defmodule HalC2.SubprocessOrphansPropTest do
     kill_service()
     start_service()
     {for({id, sub} <- subs(), alive?(sub), do: id) |> Enum.sort(), records()}
+  end
+
+  # A program starts after the service crashed and before its supervisor starts it
+  # again. Returns the records.
+  def start_during_restart(id) do
+    kill_service()
+    {:ok, sub} = Subprocess.start(@program)
+    Process.put({:sub, id}, sub)
+    Process.put({:pid, id}, Subprocess.os_pid(sub))
+    start_service()
+    records()
   end
 
   # The MC's VM dies: nothing runs its shutdown, and its programs keep running.
@@ -222,6 +249,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
     end
 
     if mc = Process.get(:mc), do: Exile.Process.kill(mc, :sigkill)
+    # A killed service leaves tracking on, for the scratch home this run is done with.
+    :persistent_term.erase(Orphans)
 
     for {key, _} <- Process.get(),
         match?({:sub, _}, key) or match?({:pid, _}, key) or key in [:mc, :owner, :orphans],

@@ -85,4 +85,58 @@ defmodule HalC2.Subprocess.OrphansTest do
     :sys.get_state(tracker)
     assert File.ls!(Orphans.dir()) == []
   end
+
+  test "a program whose record cannot be written is not run" do
+    boot(:mc)
+    File.chmod!(Orphans.dir(), 0o500)
+    on_exit(fn -> File.chmod(Orphans.dir(), 0o700) end)
+
+    assert {:error, {:untracked, :eacces}} = Subprocess.start(["sh", "-c", @echo])
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a program started while the service restarts is still recorded" do
+    {:ok, tracker} = GenServer.start(Orphans, [owner: dead_mc()], name: Orphans)
+    ref = Process.monitor(tracker)
+    # A crash, which the supervisor answers by starting it again.
+    Process.exit(tracker, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert [_record] = File.ls!(Orphans.dir())
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "an MC that exited but was not reaped yet is gone" do
+    # A zombie: the shell forks a child that exits, then becomes `sleep`, which never
+    # waits for it.
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", "true & echo $!; exec sleep 60"])
+    {:ok, line} = Exile.Process.read(holder)
+    zombie = line |> String.trim() |> String.to_integer()
+    await_zombie(zombie, 500)
+    boot(:died, owner: %{"pid" => zombie, "started" => Orphans.started(zombie)})
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+    :ok = Exile.Process.kill(holder, :sigkill)
+  end
+
+  # Nothing tells a process other than the parent that a child exited without reaping
+  # it, so this reads the child's state; the bound is only how long a failure waits.
+  defp await_zombie(pid, tries) when tries > 0 do
+    case File.read("/proc/#{pid}/stat") do
+      {:ok, stat} ->
+        if stat |> String.split(")") |> List.last() |> String.split() |> hd() == "Z",
+          do: :ok,
+          else: await_zombie(pid, tries - 1)
+    end
+  end
 end

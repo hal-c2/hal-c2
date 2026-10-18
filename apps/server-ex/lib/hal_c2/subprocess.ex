@@ -37,9 +37,8 @@ defmodule HalC2.Subprocess do
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
 
-    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)) do
-      {:ok, os_pid} = Proc.os_pid(proc)
-      :ok = HalC2.Subprocess.Orphans.track(proc.pid, os_pid)
+    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
+         :ok <- track(proc) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
@@ -54,6 +53,17 @@ defmodule HalC2.Subprocess do
       end
 
       {:ok, %__MODULE__{proc: proc, reader: reader}}
+    end
+  end
+
+  # A program the next boot could not find if this MC died is not run at all.
+  defp track(proc) do
+    {:ok, os_pid} = Proc.os_pid(proc)
+
+    with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid) do
+      Proc.kill(proc, :sigkill)
+      Proc.await_exit(proc)
+      {:error, {:untracked, reason}}
     end
   end
 
