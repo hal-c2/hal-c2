@@ -1645,6 +1645,48 @@ defmodule HalC2.OrchestrationTest do
                ]
     end
 
+    # A held queue that a newer run passed is numbered above it, and has no attempt yet.
+    test "a fresh runtime records a subagent under the run that ran, not a held queue's" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("hello", "claudeAgent")
+      [%{"id" => run_id}] = StreamState.list(await_run(thread_id, "completed"), "run")
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"run", "held",
+           %{
+             "s" => %{
+               "id" => "held",
+               "threadId" => thread_id,
+               "ordinal" => 2,
+               "status" => "queued",
+               "queuePosition" => 1,
+               "queueHeld" => true
+             }
+           }}
+        ])
+
+      # A runtime that started after that turn: no latest turn ids.
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      :sys.replace_state(pid, &%{&1 | last_ids: nil})
+
+      claude_says(thread_id, %{
+        "type" => "system",
+        "subtype" => "task_progress",
+        "task_id" => "task-unseen",
+        "tool_use_id" => "agent-unseen",
+        "description" => "Review the diff",
+        "summary" => "Reading lib"
+      })
+
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+      assert %{"runId" => ^run_id} =
+               StreamState.get(current(thread_id), "subagent")[
+                 "node:subagent:claudeAgent:agent-unseen"
+               ]
+    end
+
     test "ambient tasks between turns are not background work" do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("hello", "claudeAgent")

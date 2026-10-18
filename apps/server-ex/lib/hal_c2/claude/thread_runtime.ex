@@ -865,7 +865,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     Task.start(fn ->
       stream = HalC2.Streams.state(thread_id)
-      latest = stream |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
+      latest = HalC2.Projection.Shell.latest_run(StreamState.list(stream, "run")) || %{}
       message_id = Entities.new_id("message")
 
       with {:error, reason} <-
@@ -1667,13 +1668,15 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp work_ids(state), do: state.last_ids
 
   # Fills in the latest turn's ids from the thread when this runtime has not run one
-  # (it started, or was upgraded, after that turn).
+  # (it started, or was upgraded, after that turn): the latest run that began, not a
+  # queued one, which has no attempt yet (a held one is numbered above the run that ran).
   defp with_ids(%{turn: nil, last_ids: nil} = state) do
     stream = HalC2.Streams.state(state.thread_id)
 
     case stream
          |> StreamState.list("run")
-         |> Enum.max_by(& &1["ordinal"], fn -> nil end) do
+         |> Enum.reject(&(&1["status"] == "queued"))
+         |> HalC2.Projection.Shell.latest_run() do
       nil ->
         state
 

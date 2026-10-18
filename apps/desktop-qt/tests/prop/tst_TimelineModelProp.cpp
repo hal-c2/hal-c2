@@ -195,8 +195,10 @@ timeline::GroupSummary expectedSummary(const QList<Call>& all) {
 struct Run {
   QString id;
   int ordinal = 0;
-  // running, completed, failed, interrupted or rolled_back
+  // running, completed, failed, interrupted, rolled_back or queued
   QString status;
+  // A queued run held for the user, numbered above the run that passed it.
+  bool held = false;
   bool operator==(const Run&) const = default;
 };
 
@@ -276,7 +278,9 @@ QString field(const QString& type) {
 }
 
 QJsonObject json(const Run& run) {
-  return {{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
+  QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
+  if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
+  return entity;
 }
 
 QJsonObject json(const Item& item) {
@@ -413,6 +417,7 @@ QList<Row> project(const Model& model) {
   });
   QString latest;
   for (const Run& run : thread.runs) {
+    if (run.held) continue;
     if (latest.isEmpty() || run.ordinal > thread.runs.value(latest).ordinal) latest = run.id;
   }
 
@@ -749,6 +754,20 @@ struct StartRun : Change {
                    event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id)});
   }
   void show(std::ostream& os) const override { os << "StartRun(" << how.toStdString() << ")"; }
+};
+
+// A queued message held for the user (it waited behind a stop) that a newer run
+// passed: it waits, numbered above the runs that started, with nothing shown yet.
+struct Hold : Change {
+  explicit Hold(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
+  void apply(Model& model) const override {
+    Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("queued")};
+    run.held = true;
+    model.mc.runs.insert(run.id, run);
+    commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})});
+  }
+  void show(std::ostream& os) const override { os << "Hold"; }
 };
 
 QStringList running(const Model& model) {
@@ -1195,7 +1214,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
                                                          LoadEarlier, Toggle, Restart, AgentModel>());
     }));

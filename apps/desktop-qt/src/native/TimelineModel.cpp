@@ -870,9 +870,12 @@ QList<TimelineModel::Row> TimelineModel::project() const {
              !interruptRequested.contains(runId));
   };
 
+  // The thread's latest run, as the MC's (HalC2.Projection.Shell.latest_run/1): a
+  // queued run held for the user waits numbered above the run that passed it.
   QString latestRun;
   double latestOrdinal = -1;
   for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+    if (text(*it, QLatin1String("status")) == QLatin1String("queued") && it->value(QLatin1String("queueHeld")).toBool()) continue;
     const double ordinal = it->value(QLatin1String("ordinal")).toDouble();
     if (ordinal > latestOrdinal) {
       latestOrdinal = ordinal;

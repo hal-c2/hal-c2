@@ -60,7 +60,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert Recovery.settle("t1") == {0, nil}
   end
 
-  # A held run that a newer message passed is numbered above it until it starts.
+  # A held run that a newer message passed is numbered above the run that passed it.
   test "a turn that passed a held queue can still be continued after the restart" do
     at = "2026-09-23T10:00:00.000Z"
 

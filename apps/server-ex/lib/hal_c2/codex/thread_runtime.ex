@@ -1354,8 +1354,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       stream = HalC2.Streams.state(thread_id)
       thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
 
-      latest =
-        stream |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
+      latest = HalC2.Projection.Shell.latest_run(HalC2.StreamState.list(stream, "run")) || %{}
 
       message_id = Entities.new_id("message")
 

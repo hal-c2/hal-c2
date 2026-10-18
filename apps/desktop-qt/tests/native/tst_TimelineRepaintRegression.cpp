@@ -104,6 +104,27 @@ private slots:
     QCOMPARE(model.data(model.index(rowOf(model, QStringLiteral("reply"))), TimelineModel::TextRole).toString(), QStringLiteral("ab"));
   }
 
+  // A turn the user stopped read "Worked" once a held queued message it passed
+  // was numbered above it: the held run is not the thread's latest.
+  void aStoppedTurnAboveAHeldQueueSaysTheUserStoppedIt() {
+    TimelineModel model(QStringLiteral("thread"));
+    const QJsonObject held{{QStringLiteral("id"), QStringLiteral("run-2")},
+                           {QStringLiteral("ordinal"), 2},
+                           {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}};
+    snapshot(model,
+             {row(QStringLiteral("run"), run(QStringLiteral("interrupted"))), row(QStringLiteral("run"), held),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("reas-2"), QStringLiteral("reasoning"), 2, {{QStringLiteral("text"), QStringLiteral("t")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply"), QStringLiteral("assistant_message"), 3, {{QStringLiteral("text"), QStringLiteral("a")}}))},
+             5);
+    const int fold = rowOf(model, QStringLiteral("fold:run-1"));
+    QVERIFY(fold >= 0);
+    QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
+  }
+
   // Every subagent row redrew its model whenever a run or command changed;
   // only a change to the subagent's model does that.
   void aSubagentRowRedrawsItsModelOnlyWhenItChanges() {

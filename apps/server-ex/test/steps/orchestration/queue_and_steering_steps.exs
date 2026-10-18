@@ -593,12 +593,8 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   step "another run of {string} ends", %{args: [thread]} = context do
     context = World.dispatch_message(context, thread, "Something else")
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
-    # Its own run: the held one waits behind it with a higher ordinal.
-    %{"runId" => run_id} = message(%{context | thread: thread}, "Something else")
-
-    World.await_state(context, thread, fn state ->
-      match?(%{"status" => "completed"}, HalC2.StreamState.get(state, "run")[run_id])
-    end)
+    # Its own run, the latest: the held one waits behind it with a higher ordinal.
+    World.await_latest_run(context, thread, "completed")
 
     # Its end asks for the next queued message, as the runtime does.
     :ok = HalC2.Orchestration.start_next(World.thread_id(context, thread))

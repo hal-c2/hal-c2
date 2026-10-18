@@ -2903,17 +2903,20 @@ defmodule HalC2.Test.Mc.World do
   @doc "A thread's entities of `kind` (`\"run\"`, `\"message\"`, ...), in stream order."
   def entities(context, title, kind), do: HalC2.StreamState.list(state(context, title), kind)
 
-  @doc "The latest run of a thread (highest ordinal), or nil."
+  @doc """
+  The latest run of a thread as its sidebar row has it (`HalC2.Projection.Shell.latest_run/1`):
+  the highest ordinal, passing over a held queue's run, or nil.
+  """
   def latest_run(context, title),
-    do: context |> entities(title, "run") |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+    do: context |> entities(title, "run") |> HalC2.Projection.Shell.latest_run()
 
-  @doc "Waits until the thread's latest run has `status`; returns that run."
+  @doc "Waits until the thread's latest run (`latest_run/2`) has `status`; returns that run."
   def await_latest_run(context, title, status, timeout \\ 5_000) do
     await_state(
       context,
       title,
       fn state ->
-        case Enum.max_by(HalC2.StreamState.list(state, "run"), & &1["ordinal"], fn -> nil end) do
+        case HalC2.Projection.Shell.latest_run(HalC2.StreamState.list(state, "run")) do
           %{"status" => ^status} -> true
           _ -> false
         end

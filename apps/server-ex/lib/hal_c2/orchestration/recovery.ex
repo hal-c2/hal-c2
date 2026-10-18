@@ -220,7 +220,7 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   # The thread's latest run, passing over held queued runs: a run that passed a held
-  # queue is numbered below it until it starts (`Orchestration.start_ordinal/3`). A
+  # queue is numbered below the held run it passed (`Orchestration.start_ordinal/3`). A
   # queue that is not held was sent after the latest run that began, and is latest.
   defp latest_run(state),
     do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()

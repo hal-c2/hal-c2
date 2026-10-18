@@ -108,12 +108,15 @@ describe("thread execution presentation", () => {
   });
 
   it("passes over a held queued run that the latest run passed", () => {
-    // A held message that a newer one passed is renumbered above it until it starts.
+    // A held message that a newer one passed is numbered above the run that passed it.
     const passed = run("run-passed", 2, "completed");
     const held = { ...run("run-held", 3, "queued"), queueHeld: true };
     const queued = run("run-queued", 3, "queued");
+    const heldPassed = { ...v2Projection, runs: [held, passed], updatedAt: now };
 
-    expect(latestUnheldRun({ ...v2Projection, runs: [held, passed] })?.id).toBe(passed.id);
+    expect(latestUnheldRun(heldPassed)?.id).toBe(passed.id);
+    expect(deriveLatestThreadRun(heldPassed)?.runId).toBe(passed.id);
+    expect(deriveThreadActivityRun(heldPassed)?.runId).toBe(passed.id);
     // A queue that is not held was sent after the latest run, and is latest.
     expect(latestUnheldRun({ ...v2Projection, runs: [queued, passed] })?.id).toBe(queued.id);
   });

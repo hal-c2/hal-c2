@@ -48,7 +48,7 @@ function summarizeThreadRun(
 
 /**
  * The run with the highest ordinal, passing over queued runs held for the user: a run
- * that passed a held queue is numbered below it until it starts. As the MC's
+ * that passed a held queue is numbered below the held run it passed. As the MC's
  * `HalC2.Projection.Shell.latest_run/1`.
  */
 export function latestUnheldRun(
@@ -57,16 +57,17 @@ export function latestUnheldRun(
   return latestMatchingRun(projection, (run) => !(run.status === "queued" && run.queueHeld));
 }
 
+/** The thread's latest run, as `latestUnheldRun`. */
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
-  const run = latestMatchingRun(projection, () => true);
+  const run = latestUnheldRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
 /**
- * Returns the run that owns live provider work, falling back to the newest run
- * once the thread is idle. A newer queued run must not make an older executing
+ * Returns the run that owns live provider work, falling back to the latest run
+ * (`latestUnheldRun`) once the thread is idle. A newer queued run must not make an older executing
  * run look settled in clients that render per-run activity.
  */
 export function deriveThreadActivityRun(
@@ -74,7 +75,7 @@ export function deriveThreadActivityRun(
 ): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
-    latestMatchingRun(projection, () => true);
+    latestUnheldRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
