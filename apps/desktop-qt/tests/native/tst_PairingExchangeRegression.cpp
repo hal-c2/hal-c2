@@ -36,6 +36,19 @@ private slots:
     QCOMPARE(carried->address, plain->address);
   }
 
+  // The cap counts UTF-16 units of the link, and percent-encoding runs on its
+  // UTF-8 bytes: a link of 847 units is some 7,300 wrapped.
+  void aLinkOfWideCharactersIsReadWrappedToo() {
+    const QString link = QStringLiteral("https://mc.example.test/pair?padding=") + QString(800, QChar(0x754C)) + QStringLiteral("#token=abc");
+    QVERIFY(link.size() < 2048);
+    QVERIFY(wrapped(link).size() > 3 * 2048 + 64);
+    const auto plain = pairing::readInvitation(link);
+    QVERIFY(plain);
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
   // The cap on the link itself holds whether or not it is wrapped.
   void aLinkOverTheCapIsTurnedAwayWrappedOrNot() {
     const QString link = linkOf(2100);
@@ -45,7 +58,7 @@ private slots:
 
   // The wrapper has a cap of its own, so that nothing is decoded however long.
   void aWrapperBeyondAnyLinkIsTurnedAway() {
-    QVERIFY(!pairing::readInvitation(wrapped(linkOf(1500)) + QString(8000, QLatin1Char('a'))));
+    QVERIFY(!pairing::readInvitation(wrapped(linkOf(1500)) + QString(20000, QLatin1Char('a'))));
   }
 };
 
