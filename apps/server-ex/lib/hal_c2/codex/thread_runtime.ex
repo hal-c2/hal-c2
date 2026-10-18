@@ -63,7 +63,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] ->
-        with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
+        timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 30_000)
+
+        with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, timeout) do
           # Notifications that preceded the refusal sit in the runtime's mailbox ahead
           # of this call.
           GenServer.call(pid, :settle, 30_000)

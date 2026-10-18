@@ -1873,10 +1873,13 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # The runtime's `steer/3`, with a runtime that stops, does not answer in time, raises,
-  # or answers something else counted as a refusal: the message is already in the turn
-  # (`reserve_steer/3`, `promote/5`), and only a refusal takes it back out. One that
-  # answers too late may still have taken it, and its answer lands without the message.
+  # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
+  # `promote/5`), and only a refusal takes it back out: a runtime that stops, raises,
+  # throws, or answers something else counts as one. A runtime that does not answer in
+  # time still holds the request and hands it to the provider when it gets to it, so
+  # the message stays: taking it back out would show the answer without it, and a
+  # promoted message would also run again as its own turn. If that late ask is refused
+  # after all, the turn shows a message the provider never read.
   defp ask_steer(instance, thread_id, run_id, input) do
     case runtime(instance).steer(thread_id, run_id, input) do
       :ok -> :ok
@@ -1885,14 +1888,14 @@ defmodule HalC2.Orchestration do
     end
   catch
     :exit, {:timeout, _} ->
-      {:error, "its runtime did not answer in time"}
+      :ok
 
     :exit, _ ->
       {:error, "its runtime stopped"}
 
-    :error, error ->
+    kind, reason ->
       require Logger
-      Logger.error(Exception.format(:error, error, __STACKTRACE__))
+      Logger.error(Exception.format(kind, reason, __STACKTRACE__))
       {:error, "its runtime failed"}
   end
 

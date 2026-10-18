@@ -1049,6 +1049,41 @@ defmodule HalC2.OrchestrationTest do
       File.touch!(Path.join(gates, "steer"))
     end
 
+    # Codex still holds a steer it did not answer in time, and takes it later: the
+    # promoted message stays in the turn rather than also running as its own.
+    test "a promote whose runtime answers too late stays in the turn", %{tmp_dir: dir} do
+      log = Path.join(dir, "codex-requests.log")
+      gates = held_steers(dir, ["FAKE_CODEX_LOG=#{log}"])
+      Application.put_env(:hal_c2, :codex_steer_timeout_ms, 100)
+      on_exit(fn -> Application.delete_env(:hal_c2, :codex_steer_timeout_ms) end)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "hold this")
+      [active, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{
+                 "type" => "queued-message.promote-to-steer",
+                 "threadId" => thread_id,
+                 "queuedRunId" => queued["id"],
+                 "targetRunId" => active["id"]
+               })
+
+      File.touch!(Path.join(gates, "steer"))
+      state = await_statuses(thread_id, ["completed", "cancelled"])
+      assert StreamState.get(state, "message")["m2"]["runId"] == active["id"]
+      assert StreamState.get(state, "turn-item")["turn-item:user:m2"]
+
+      asked =
+        log
+        |> File.stream!()
+        |> Enum.map(&JSON.decode!/1)
+        |> Enum.filter(&(&1["method"] in ["turn/start", "turn/steer"]))
+        |> Enum.filter(&(inspect(&1["params"]) =~ "hold this"))
+
+      assert [%{"method" => "turn/steer"}] = asked
+    end
+
     # #105: Codex took the steer and ended its turn before it said so. The message is
     # in the turn ahead of its answer, not after the turn's end.
     test "a steer taken as the turn ends is shown before its answer" do
