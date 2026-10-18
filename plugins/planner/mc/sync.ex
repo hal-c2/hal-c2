@@ -841,18 +841,28 @@ defmodule HalC2Plugins.Planner.Sync do
   # A relation made again, as one GitHub was never asked to drop from an issue no project
   # has, is had once.
   defp relate(synced, "after", id, ref),
-    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref) |> placed(id)
+    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref) |> placed(id, ref)
 
   defp relate(synced, "parent", id, ref), do: synced |> Map.put("parent", id) |> remember(id, ref)
 
-  defp unrelate(synced, "after", id),
-    do: synced |> Map.update!("after", &(&1 -- [id])) |> placed(id)
+  # `ref` is the issue taken off, when the relation is a milestone's and it is known.
+  defp unrelate(synced, key, id, ref \\ nil)
 
-  defp unrelate(synced, "parent", _id), do: Map.put(synced, "parent", nil)
+  defp unrelate(synced, "after", id, ref),
+    do: synced |> Map.update!("after", &(&1 -- [id])) |> placed(id, ref)
 
-  # A task related to the milestone or off it is no longer misplaced in it.
-  defp placed(%{"misplaced" => at} = synced, id), do: %{synced | "misplaced" => Map.delete(at, id)}
-  defp placed(synced, _id), do: synced
+  defp unrelate(synced, "parent", _id, _ref), do: Map.put(synced, "parent", nil)
+
+  # The issue `ref` of the task `id` related to the milestone or off it is no longer
+  # misplaced in it, nor is the task's mark of another issue, which stays until its own
+  # correction took. `ref` nil is the issue the mark names.
+  defp placed(%{"misplaced" => at} = synced, id, ref) do
+    if is_map_key(at, id) and (ref == nil or Plan.same_ref?(at[id], ref)),
+      do: %{synced | "misplaced" => Map.delete(at, id)},
+      else: synced
+  end
+
+  defp placed(synced, _id, _ref), do: synced
 
   defp remember(synced, id, ref),
     do: Map.put(synced, "refs", Map.put(synced["refs"] || %{}, id, ref))
@@ -1057,15 +1067,21 @@ defmodule HalC2Plugins.Planner.Sync do
     # Issues a push of this milestone left in it after the plan moved their tasks on
     # (`reasserts/4`) go to the milestone holding them, or out of any, until one push
     # takes: that move is not asked by the holder, which asked once and may have been
-    # asked first.
-    misplaced = for {id, _} = at <- synced["misplaced"] || %{}, id not in new["after"], do: at
+    # asked first. One this milestone holds again is misplaced only when it names another
+    # issue by now (`settled/3`): the issue the mark names goes out, the task staying.
+    marked = synced["misplaced"] || %{}
+
+    misplaced =
+      for {id, issue} = at <- marked,
+          id not in new["after"] or not Plan.same_ref?(issue, ref(items, id)),
+          do: at
 
     moves =
       for(
-        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- Enum.map(misplaced, &elem(&1, 0)),
+        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- unheld(marked, new),
         not holds?.(id) or not kept?.(id),
         issue = had(synced, items, id),
-        do: {id, issue, nil, &unrelate(&1, "after", id)}
+        do: {id, issue, nil, &unrelate(&1, "after", id, issue)}
       ) ++
         for id <- Enum.uniq((new["after"] -- kept) ++ Enum.filter(new["after"], elsewhere?)),
             issue = ref(items, id),
@@ -1080,9 +1096,18 @@ defmodule HalC2Plugins.Planner.Sync do
             {id, issue,
              if(Plan.same_ref?(issue, ref(items, id)),
                do: List.first(holders(items, ref["repository"], id))
-             ), &unrelate(&1, "after", id)}
+             ),
+             if(id in new["after"],
+               do: &placed(&1, id, issue),
+               else: &unrelate(&1, "after", id, issue)
+             )}
 
-    for {id, issue, milestone, took} <- moves ++ corrections,
+    # An issue a move and a correction both take out of any milestone is asked once; the
+    # move's `took` clears its mark, which names the same issue.
+    for {id, issue, milestone, took} <-
+          Enum.uniq_by(moves ++ corrections, fn {_, issue, milestone, _} ->
+            {key(issue), milestone}
+          end),
         same?(issue["repository"], ref["repository"]),
         project = project_id(Map.put(items[id] || %{}, "issue", issue), projects),
         is_binary(project),
@@ -1095,6 +1120,9 @@ defmodule HalC2Plugins.Planner.Sync do
              "milestone" => milestone
            }, took}
   end
+
+  # The tasks `marked` as misplaced in the milestone `new` that it does not hold.
+  defp unheld(marked, new), do: for({id, _} <- marked, id not in new["after"], do: id)
 
   # The numbers of the milestones of `repository` whose tasks hold the task `id`, but for
   # the milestone `except`.
@@ -1134,7 +1162,7 @@ defmodule HalC2Plugins.Planner.Sync do
           {task["id"],
            {"update",
             Map.merge(issue, %{"projectId" => project, "milestone" => List.first(held)}),
-            &unrelate(&1, "after", task["id"])}}
+            &unrelate(&1, "after", task["id"], issue)}}
   end
 
   @doc """
@@ -1152,14 +1180,18 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   @doc """
-  `synced` without the tasks the milestone `item` holds again as misplaced: GitHub has
-  their issues in it, as the plan does, so there is nothing to correct and no push
-  would clear them.
+  `synced` without the tasks the milestone `item` holds again as misplaced, while they
+  name the issue marked: GitHub has it in the milestone, as the plan does, so there is
+  nothing to correct and no push would clear it. A task that names another issue now
+  keeps its mark, as that issue is the plan's to put in the milestone and the marked one
+  is still to go out of it.
   """
-  def settled(%{"misplaced" => at} = synced, %{"after" => held}),
-    do: %{synced | "misplaced" => Map.drop(at, held)}
+  def settled(%{"misplaced" => at} = synced, %{"after" => held}, items) do
+    kept = Map.reject(at, fn {id, issue} -> id in held and Plan.same_ref?(issue, ref(items, id)) end)
+    %{synced | "misplaced" => kept}
+  end
 
-  def settled(synced, _item), do: synced
+  def settled(synced, _item, _items), do: synced
 
   @doc """
   `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on

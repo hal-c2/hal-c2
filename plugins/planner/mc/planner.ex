@@ -1693,7 +1693,7 @@ defmodule HalC2Plugins.Planner do
   # `{nil, state}` when the plan does not push it, or GitHub has all of it, which clears
   # its marks.
   defp next_push(state, id, item, synced) do
-    synced = Sync.settled(synced, item)
+    synced = Sync.settled(synced, item, state.items)
     marked? = item["synced"] != nil or item["syncError"] != nil
 
     case Sync.pushes(state.settings, synced, item, state.items, state.projects) do

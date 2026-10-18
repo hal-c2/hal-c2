@@ -580,15 +580,52 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 7, "milestone" => 4} = input
     end
 
-    test "is dropped once the milestone holds the task again" do
+    test "is dropped once the milestone holds the task that still names the issue again" do
       synced = %{
         "after" => ["t"],
         "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
       }
 
-      assert %{"misplaced" => %{}} = Sync.settled(synced, %{"after" => ["t"]})
-      assert %{"misplaced" => %{"t" => _}} = Sync.settled(synced, %{"after" => []})
-      assert Sync.settled(nil, %{"after" => ["t"]}) == nil
+      items = %{"t" => task(%{"repository" => @repo, "number" => 7})}
+
+      assert %{"misplaced" => %{}} = Sync.settled(synced, %{"after" => ["t"]}, items)
+      assert %{"misplaced" => %{"t" => _}} = Sync.settled(synced, %{"after" => []}, items)
+      assert Sync.settled(nil, %{"after" => ["t"]}, items) == nil
+    end
+
+    test "stays when the milestone holds the task again under another issue, and takes the first out" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo, "number" => 8})}
+      assert synced == Sync.settled(synced, ms, items)
+
+      assert [{"update", into, took_into}, {"update", out, took_out}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      # The issue the task names now being in the milestone does not clear the mark of
+      # the other, if its correction is refused; the correction's landing does, and the
+      # task stays on the milestone.
+      assert %{"misplaced" => %{"t" => _}} = took_into.(synced)
+      landed = took_out.(took_into.(synced))
+      assert %{"misplaced" => %{}, "after" => ["t"]} = landed
     end
 
     test "takes the issue out of any milestone once the task names another" do
