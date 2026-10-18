@@ -3869,7 +3869,7 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Starts the MC's terminal services and makes `/bin/sh` the user's shell for
-  the scenario (quick, and it reads no rc files), with a prompt of `$ `.
+  the scenario (quick, and it reads no rc files), with a prompt ending in `$ ` (pinned through `PS1`, which only some `sh`s honour).
   """
   def ensure(%{terminals_ready: true} = context), do: context
 
@@ -3878,7 +3878,8 @@ defmodule HalC2.Test.Mc.Terminal do
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
     put_env("SHELL", "/bin/sh")
-    # The terminal passes the MC's environment on, so an exported PS1 would be the prompt.
+    # The terminal passes the MC's environment on, so an exported PS1 would be the prompt
+    # of a shell that honours it (dash does; bash run as sh ignores it).
     put_env("PS1", "$ ")
     Map.put(context, :terminals_ready, true)
   end
@@ -3930,7 +3931,9 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Like `open/3`, asserting success; returns `{snapshot, context}` once the shell has
-  drawn its first prompt (`await_prompt/1`).
+  drawn its first prompt (`await_prompt/2`). Reopening a terminal whose shell is busy
+  (a long command, a dev server) therefore waits until the command finishes and the
+  next prompt appears, or fails after the prompt wait's timeout.
   """
   def open!(context, overrides \\ %{}, name \\ "default") do
     context = ensure(context)
@@ -3938,8 +3941,7 @@ defmodule HalC2.Test.Mc.Terminal do
 
     case open(context, overrides, name) do
       {{:ok, snapshot}, context} ->
-        if snapshot["status"] == "running" and prompt_known?(),
-          do: await_prompt(context.terminal, restored)
+        if snapshot["status"] == "running", do: await_prompt(context.terminal, restored)
 
         {snapshot, context}
 
@@ -3948,8 +3950,9 @@ defmodule HalC2.Test.Mc.Terminal do
     end
   end
 
-  # What an idle shell has last printed: its prompt, which bash follows with the
-  # switch to bracketed paste.
+  # What an idle shell has last printed: its prompt (`$ ` or `# `), which bash wraps
+  # in the switch to bracketed paste (`\e[?2004h` before the prompt text, and so
+  # possibly after it too once the prompt is redrawn).
   @prompt ~r/[$#] (\e\[\?2004h)?\z/
 
   @doc """
@@ -3962,49 +3965,61 @@ defmodule HalC2.Test.Mc.Terminal do
   with (`restored_history/2`); its own trailing prompt is not the new shell's.
 
   Reads the terminal as a raw subscriber of its own, so no client's frames are
-  consumed.
+  consumed. Does nothing when the scenario runs a shell whose prompt is not known
+  (`prompt_known?/0`).
   """
   def await_prompt(input, restored \\ "") do
-    session = Map.take(input, ["threadId", "terminalId"])
+    if prompt_known?() do
+      session = Map.take(input, ["threadId", "terminalId"])
 
-    Task.async(fn ->
-      {:ok, snapshot} = HalC2.Terminal.attach(session, self())
+      Task.async(fn ->
+        {:ok, snapshot} = HalC2.Terminal.attach(session, self())
 
-      try do
-        receive_prompt(String.replace_prefix(snapshot["history"], restored, ""))
-      after
-        HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
-      end
-    end)
-    |> Task.await(10_000)
+        try do
+          deadline = System.monotonic_time(:millisecond) + 5_000
+          receive_prompt(String.replace_prefix(snapshot["history"], restored, ""), deadline)
+        after
+          HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
+        end
+      end)
+      |> Task.await(10_000)
+    end
+
+    :ok
   end
 
   @doc """
   The scrollback a `terminal.open` of the scenario's terminal (with `overrides`) will
-  restore from disk: what a closed terminal saved. Empty when the terminal is running,
-  whose own scrollback is the shell's.
+  restore from disk: what a closed terminal saved, cut the way the terminal reads it
+  back (the last 8 MiB, then the last 5,000 lines) so it is a prefix of the snapshot's
+  history. Empty when the terminal is running, whose own scrollback is the shell's.
   """
   def restored_history(context, overrides \\ %{}) do
     input = input(context, overrides)
 
     with [] <- Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}),
          {:ok, saved} <- File.read(history_file(context, input)) do
-      saved
+      cap = %HalC2.Terminal.History{}.max_bytes
+      tail = binary_part(saved, max(byte_size(saved) - cap, 0), min(byte_size(saved), cap))
+      tail |> HalC2.Terminal.History.new() |> HalC2.Terminal.History.value()
     else
       _ -> ""
     end
   end
 
-  defp receive_prompt(output) do
+  # `deadline` is absolute, so a shell that keeps printing without drawing a prompt
+  # still ends in the flunk below rather than renewing the wait with every message.
+  defp receive_prompt(output, deadline) do
     unless output =~ @prompt do
       receive do
         {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
-          receive_prompt(output <> data)
+          receive_prompt(output <> data, deadline)
 
         {:hal_c2_terminal, _key, _event} ->
-          receive_prompt(output)
+          receive_prompt(output, deadline)
       after
-        5_000 -> flunk("the shell drew no prompt; its output so far is #{inspect(output)}")
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          flunk("the shell drew no prompt; its output so far is #{inspect(output)}")
       end
     end
   end
@@ -4122,6 +4137,9 @@ defmodule HalC2.Test.Mc.Terminal do
   the next thing typed reaches a shell that is waiting for it. Typed any sooner,
   it is echoed first and the prompt then lands in front of its output. Waits for the
   match alone when the scenario runs a shell whose prompt is not known.
+
+  `pattern` is any string or regex that does not end in `$` or `\\z` (the prompt
+  has to follow it); it is wrapped, so a top-level alternation stays whole.
   """
   def await_output_idle(context, name, pattern, timeout \\ 5_000) do
     if prompt_known?() do
@@ -4129,7 +4147,9 @@ defmodule HalC2.Test.Mc.Terminal do
 
       idle =
         Regex.compile!(
-          Regex.source(pattern) <> "(?:[^\\r\\n]*\\r?\\n)?[^\\r\\n]*" <> Regex.source(@prompt),
+          "(?:" <>
+            Regex.source(pattern) <>
+            ")(?:[^\\r\\n]*\\r?\\n)?[^\\r\\n]*" <> Regex.source(@prompt),
           Regex.opts(pattern)
         )
 
