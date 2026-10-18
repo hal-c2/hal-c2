@@ -260,6 +260,7 @@ Feature: Queueing, steering and restarting
     When the user resumes the queue of "t1"
     Then the run for "A" starts with ordinal 3
     And the run for "Something else" has ordinal 2
+    And the thread's latest run is the run for "A"
 
   @mc @backlog
   Scenario: A queued delegated task result runs before the user's queued messages

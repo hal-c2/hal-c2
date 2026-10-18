@@ -338,6 +338,12 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
+  step "the thread's latest run is the run for {string}", %{args: [text]} = context do
+    id = run_for(context, text)["id"]
+    World.await_row(World.thread_id(context, context.thread), &(&1["latestRunId"] == id))
+    context
+  end
+
   step "its user message turn item is marked as a queued turn", context do
     assert %{"runId" => run_id} = user_item(context, context.sent, "queued_turn")
     assert run_id == run_for(context, context.sent)["id"]

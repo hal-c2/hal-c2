@@ -155,14 +155,18 @@ defmodule HalC2.Projection.Shell do
   end
 
   @doc """
-  The thread's latest run among `runs` (in the order they were made), passing over
-  queued messages held for the user (`queueHeld`): those wait behind the run that
-  stopped, so a usage limit's stop stays the thread's latest run until the queue resumes.
+  The thread's latest run among `runs` (in the order they were made): the one with the
+  highest ordinal, the order runs start in, which a held queued run that a newer message
+  passed takes only when it starts. Passes over queued messages held for the user
+  (`queueHeld`): those wait behind the run that stopped, so a usage limit's stop stays
+  the thread's latest run until the queue resumes.
   """
   @spec latest_run([map]) :: map | nil
   def latest_run(runs) do
     runs
     |> Enum.reverse()
+    # Stable: of runs stored without an ordinal, the newest is still first.
+    |> Enum.sort_by(&(get(&1, "ordinal") || 0), :desc)
     |> Enum.find(&(get(&1, "status") != "queued" or get(&1, "queueHeld") != true))
   end
 
