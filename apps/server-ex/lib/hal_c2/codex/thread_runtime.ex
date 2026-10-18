@@ -581,8 +581,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
-  defp connect(%{conn: nil} = state, turn) do
-    instance = if ids = turn[:ids], do: Entities.instance(ids)
+  defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
+    instance = Entities.instance(ids)
 
     cmd =
       HalC2.Settings.instance_command(
@@ -592,7 +592,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
     # home its settings name (`HalC2.Codex.Home`).
-    env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
+    env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- HalC2.Codex.Home.env(instance),
@@ -629,10 +629,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # running, stop, and the turn opens the thread it has there. One whose instance is
   # not known (started before a hot update) may run as another account, so it is
   # replaced too.
-  defp connect(state, turn) do
-    instance = if ids = turn[:ids], do: Entities.instance(ids)
-
-    if state.instance == instance do
+  defp connect(state, %{ids: ids} = turn) do
+    if state.instance == Entities.instance(ids) do
       {:ok, state}
     else
       state = end_background(state, "interrupted")
