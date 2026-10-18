@@ -147,16 +147,21 @@ defmodule HalC2.Store do
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
     do: write(store, {:put_shell, stream_id, seq, kind, row})
 
+  # The exits of a write the store never took: no store, or a stop.
+  defguardp restartable(reason)
+            when reason in [:noproc, :shutdown] or
+                   (is_tuple(reason) and tuple_size(reason) == 2 and elem(reason, 0) == :shutdown)
+
   # A write waits out a restart of a named store: a call that found no store, or that
-  # was still queued when the store was stopped (`init/1` traps exits), wrote nothing,
-  # so it is made again once the store is back. Nothing says when that is, so it looks
-  # every few milliseconds. A call the store took and then crashed on may have landed,
-  # and fails as it did. (A checkpoint the checkpointer answers may run twice, which
-  # does no harm.)
+  # was still queued when the store was stopped (`:shutdown` or `{:shutdown, _}`;
+  # `init/1` traps exits), wrote nothing, so it is made again once the store is back.
+  # Nothing says when that is, so it looks every few milliseconds. A call the store
+  # took and then crashed on may have landed, and fails as it did. (A checkpoint the
+  # checkpointer answers may run twice, which does no harm.)
   defp write(store, request, deadline \\ nil) do
     GenServer.call(store, request, @write_timeout)
   catch
-    :exit, {reason, _} = exit when reason in [:noproc, :shutdown] and is_atom(store) ->
+    :exit, {reason, _} = exit when is_atom(store) and restartable(reason) ->
       deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
 
       if System.monotonic_time(:millisecond) < deadline do
@@ -623,6 +628,12 @@ defmodule HalC2.Store do
   @impl true
   def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
+
+  # Anything else is ignored, as GenServer's default does.
+  def handle_info(message, state) do
+    Logger.warning("the store ignored an unexpected message: #{inspect(message)}")
+    {:noreply, state}
+  end
 
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)

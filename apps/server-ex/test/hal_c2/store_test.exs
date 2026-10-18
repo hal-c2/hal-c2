@@ -45,6 +45,37 @@ defmodule HalC2.StoreTest do
     assert [%{id: "t1"}] = Store.list_streams(path)
   end
 
+  test "a write queued at a store stopped with a {:shutdown, _} reason waits for it too",
+       %{path: path} do
+    store = Process.whereis(Store)
+    ref = Process.monitor(store)
+    :ok = :sys.suspend(store)
+    :erlang.trace(store, true, [:receive])
+    write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+    assert_receive {:trace, ^store, :receive, {:"$gen_call", _, {:append, _, _}}}
+
+    # The test's supervisor starts it again.
+    :ok = GenServer.stop(store, {:shutdown, :moved})
+    assert_receive {:DOWN, ^ref, :process, ^store, {:shutdown, :moved}}
+
+    assert {:ok, 1} = Task.await(write)
+    assert [%{id: "t1"}] = Store.list_streams(path)
+  end
+
+  test "a stray message leaves the store running", %{path: path} do
+    store = Process.whereis(Store)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(store, :unexpected)
+        assert {:ok, 1} = Store.append([{:thread, "t1", [change("t1")]}])
+      end)
+
+    assert log =~ "the store ignored an unexpected message: :unexpected"
+    assert Process.whereis(Store) == store
+    assert [%{id: "t1"}] = Store.list_streams(path)
+  end
+
   test "the time of an append is only given with its store" do
     assert {:ok, 1} = Store.append(Store, [{:thread, "t1", [change("t1")]}], 1_700_000_000_000)
 
