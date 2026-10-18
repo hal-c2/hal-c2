@@ -165,7 +165,9 @@ defmodule HalC2.AcpTest do
     assert %{"status" => "disabled", "installed" => true, "version" => nil} =
              HalC2.Acp.entry("antigravity")
 
-    # Launching it would have kept its models or its failure.
+    # Launching starts a loader, which sets its flag before anything else, and what it
+    # keeps (models or a failure) comes later: the flag is what shows no launch began.
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :loading}, false) == false
     assert :persistent_term.get({HalC2.Acp, "antigravity", :models}, nil) == nil
     assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
   end

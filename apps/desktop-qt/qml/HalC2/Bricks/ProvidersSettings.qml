@@ -602,7 +602,18 @@ Rectangle {
                         // draws as the page's own content does.
                         scale: Shell.state.layout?.zoom ?? 1
                         transformOrigin: Item.TopLeft
-                        y: advisoryButton.height + 4
+                        // Opens upward and leftward when the window has no room below or to
+                        // the right of the icon, set as it shows (the icon does not move while
+                        // it is open); the drawn size is the size times the zoom.
+                        property bool upward: false
+                        property real shift: 0
+                        x: shift
+                        y: upward ? -implicitHeight * scale - 4 : advisoryButton.height + 4
+                        onAboutToShow: {
+                            const below = advisoryButton.mapToItem(null, 0, advisoryButton.height);
+                            upward = below.y + implicitHeight * scale + 4 > advisoryButton.Window.height - 8;
+                            shift = -Math.max(0, below.x + width * scale - (advisoryButton.Window.width - 8));
+                        }
                         width: 320
                         padding: 12
                         // Focus is what lets Escape close it here instead of leaving

@@ -194,6 +194,45 @@ Item {
             compare(popover.transformOrigin, Item.TopLeft);
         }
 
+        // Where the popover opens, the drawn card is inside the window, however far
+        // down or to the right the icon is and however far the page is zoomed.
+        function test_the_advisory_popover_stays_inside_the_window() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            for (const [zoom, y, x] of [[1, 0, 0], [1.5, 0, 0], [1, 560, 0], [1.5, 560, 0], [1, 0, 600], [1.5, 560, 600]]) {
+                Shell.state = { layout: { zoom: zoom }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+                const page = createTemporaryObject(settingsComponent, root, { x: x, y: y });
+                const card = findChild(page, "provider_claudeAgent_work");
+                const button = findChild(card, "advisoryButton");
+                const at = button.mapToItem(null, button.width / 2, button.height / 2);
+                if (at.x < 0 || at.y < 0 || at.x > root.Window.width || at.y > root.Window.height) {
+                    page.destroy();
+                    continue;
+                }
+                mouseClick(button);
+                const popover = findChild(card, "advisory");
+                tryCompare(popover, "opened", true);
+                const topLeft = popover.contentItem.mapToItem(null, 0, 0);
+                const bottomRight = popover.contentItem.mapToItem(null, popover.contentItem.width, popover.contentItem.height);
+                const label = `zoom ${zoom} at ${x},${y}`;
+                verify(topLeft.x >= 0 && topLeft.y >= 0, label + ": the popover starts inside the window");
+                verify(bottomRight.x <= root.Window.width && bottomRight.y <= root.Window.height, label + ": the popover ends inside the window");
+                popover.close();
+                page.destroy();
+            }
+        }
+
+        // A version outside the supported range is told apart on the card itself.
+        function test_a_strong_advisory_is_a_warning_icon() {
+            const advisory = { title: "Unsupported version", detail: "Update to v0.51.0 or newer.", updateCommand: "npm i -g codex", targetVersion: null, strong: true };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            compare(button.iconName, "triangle-alert");
+            compare(button.tint, page.warning);
+            compare(button.Accessible.name, "Unsupported version");
+        }
+
         function test_a_provider_without_an_advisory_has_no_icon() {
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({})] }) };
             const page = createTemporaryObject(settingsComponent, root);

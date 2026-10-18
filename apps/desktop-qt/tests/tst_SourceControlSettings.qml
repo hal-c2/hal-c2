@@ -119,6 +119,23 @@ Item {
             compare(summary.Accessible.name, hint.replace(/`/g, ""));
         }
 
+        // The hints come from the server and name commands with placeholders, several
+        // to a sentence: only the generated spans may be markup.
+        function test_an_install_hint_escapes_everything_but_its_command_spans() {
+            const hint = "Sign in with `fj --host <server-url> auth add-token` or `fj login` & retry <b>now</b>, 5 > 3.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes(">fj --host &lt;server-url&gt; auth add-token</span>"), summary.text);
+            verify(summary.text.includes(">fj login</span>"), summary.text);
+            verify(summary.text.includes("&amp; retry &lt;b&gt;now&lt;/b&gt;, 5 &gt; 3."), summary.text);
+            // Without the two spans' own tags there is no markup left.
+            compare(summary.text.replace(/<span style="[^"]*">/g, "").replace(/<\/span>/g, "").search(/[<>]/), -1);
+            compare((summary.text.match(/<span /g) ?? []).length, 2);
+        }
+
         // A disabled button gets no hover, so Rescan stays enabled while it scans and ignores the click.
         function test_rescan_while_scanning_shows_its_tooltip_and_ignores_clicks() {
             Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
