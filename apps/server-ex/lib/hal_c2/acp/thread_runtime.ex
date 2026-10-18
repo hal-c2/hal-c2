@@ -148,10 +148,12 @@ defmodule HalC2.Acp.ThreadRuntime do
        # The models the session's `model` option lists.
        options: [],
        turn: nil,
+       # Whether the turn's prompt is out, or its answer waits for its steers'.
        prompt: nil,
-       # The turn's steers OpenCode has not answered (`Connection.request/5`), and the
-       # turn's own prompt's answer once it came before theirs.
-       steers: :gen_server.reqids_new(),
+       # The turn's prompts the agent has not answered (`Connection.request/5`): its own
+       # (`:prompt`) and its steers (`:steer`), whose answers arrive in the order the
+       # agent sent them; and the answer that ends the turn so far (`answer/3`).
+       prompts: :gen_server.reqids_new(),
        answer: nil,
        items: %{},
        buffer: %{},
@@ -242,7 +244,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
-  def handle_call(:interrupt, _from, %{prompt: ref} = state) when ref != nil do
+  def handle_call(:interrupt, _from, %{prompt: prompt} = state) when prompt != nil do
     Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
     state = cancel_requests(state)
     {:reply, :ok, %{state | interrupted: true}}
@@ -255,12 +257,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       else: {:reply, {:error, "no running turn"}, state}
   end
 
-  def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: ref} = state)
-      when ref != nil and not state.interrupted and state.turn.ids.run == run_id do
+  def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: p} = state)
+      when p != nil and not state.interrupted and state.turn.ids.run == run_id do
     prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, false)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
-    steers = Connection.request(state.conn, "session/prompt", params, :steer, state.steers)
-    {:reply, :ok, %{state | steers: steers}}
+    prompts = Connection.request(state.conn, "session/prompt", params, :steer, state.prompts)
+    {:reply, :ok, %{state | prompts: prompts}}
   end
 
   def handle_call({:steer, _run_id, _message}, _from, state),
@@ -436,14 +438,10 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
-  # The turn's prompt answered. A steer still out may be running a loop of its own
-  # (OpenCode's), whose answer ends the turn instead (`steered/2`).
-  def handle_info({ref, result}, %{prompt: ref} = state) do
+  # A turn's prompt sent before a code upgrade to state v10 answers through its task.
+  def handle_info({ref, result}, %{prompt: ref} = state) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
-
-    if state.interrupted or :gen_server.reqids_size(state.steers) == 0,
-      do: answered(state, result),
-      else: {:noreply, %{state | answer: result}}
+    answer(state, :prompt, result)
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
@@ -460,22 +458,29 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
 
   def handle_info(message, state) do
-    case :gen_server.check_response(message, state.steers, true) do
-      {reply, :steer, steers} -> steered(%{state | steers: steers}, reply)
-      _ -> {:noreply, state}
+    case :gen_server.check_response(message, state.prompts, true) do
+      {{:reply, result}, label, prompts} ->
+        answer(%{state | prompts: prompts}, label, result)
+
+      # The connection went away before answering.
+      {{:error, _}, label, prompts} ->
+        answer(%{state | prompts: prompts}, label, {:error, :closed})
+
+      _ ->
+        {:noreply, state}
     end
   end
 
-  # A steer's answer. The last of the turn's prompts to answer ends it, as the last
-  # one that ran, unless it was refused.
-  defp steered(state, reply) do
-    answer =
-      case reply do
-        {:reply, {:ok, _} = result} when state.answer != nil -> result
-        _ -> state.answer
-      end
+  # One of the turn's prompts answered. A steer OpenCode took into the running loop
+  # answers with it; one that landed as the loop ended runs a loop of its own, which
+  # answers after the turn's prompt. So the last answer is the last loop's, success or
+  # failure, and it is the turn's once every prompt has answered. A steer answering
+  # before the turn's prompt ran in the prompt's loop, whose answer is the turn's.
+  # Interrupted, the turn ends at the first answer once its prompt's is in.
+  defp answer(state, label, result) do
+    answer = if label == :prompt or state.answer != nil, do: result
 
-    if answer != nil and :gen_server.reqids_size(state.steers) == 0,
+    if answer != nil and (state.interrupted or :gen_server.reqids_size(state.prompts) == 0),
       do: answered(state, answer),
       else: {:noreply, %{state | answer: answer}}
   end
@@ -568,7 +573,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9) |> migrate()
 
   defp migrate(%{v: 9} = state),
-    do: Map.merge(state, %{v: 10, steers: :gen_server.reqids_new(), answer: nil})
+    do: Map.merge(state, %{v: 10, prompts: :gen_server.reqids_new(), answer: nil})
 
   # --- session -------------------------------------------------------------------
 
@@ -2028,7 +2033,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = state |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, steers: :gen_server.reqids_new(), answer: nil}
+    %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
   end
 
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
@@ -2068,25 +2073,14 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # Sends the turn's prompt; its reply is the turn's end.
+  # Sends the turn's prompt; its answer ends the turn (`answer/3`). It goes out before
+  # this returns, so a steer or a cancel sent next reaches the agent after it.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)}
-    conn = state.conn
-    session_id = state.session_id
     prompt = acp_prompt(turn, state.capabilities, state.announce)
-    state = %{state | announce: false}
-
-    task =
-      Task.async(fn ->
-        Connection.call(
-          conn,
-          "session/prompt",
-          %{"sessionId" => session_id, "prompt" => prompt},
-          :infinity
-        )
-      end)
-
-    %{state | prompt: task.ref}
+    params = %{"sessionId" => state.session_id, "prompt" => prompt}
+    prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
+    %{state | announce: false, prompt: true, prompts: prompts}
   end
 
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).

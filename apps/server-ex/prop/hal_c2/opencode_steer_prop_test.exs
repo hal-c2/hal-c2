@@ -2,13 +2,15 @@ defmodule HalC2.OpencodeSteerPropTest do
   @moduledoc """
   A state machine over one OpenCode thread (`HalC2.Acp.ThreadRuntime`) driven through
   the orchestration commands a client sends: send a message whose turn runs until it is
-  steered or stopped, either joining the steer into its running loop or ending that loop
-  as the steer lands (so OpenCode answers the steer in a loop of its own); steer the
-  running turn; interrupt it.
+  steered or stopped, either joining the steer into its running loop or ending that loop,
+  or failing it, as the steer lands (so OpenCode answers the steer in a loop of its own);
+  steer the running turn, with a message whose own loop answers or fails; interrupt it.
 
   Turns run on the fake `opencode acp` in `test/support/fake_acp.py`. The model checks
-  that each turn ends once, with the status it should, and that every steer's answer
-  is recorded in the thread, whichever way OpenCode ran it. After each command the test
+  that each turn ends once, with the status of the last loop it ran, and that every
+  steer's answer is recorded in the thread, whichever way OpenCode ran it. A steer's
+  answer follows the turn's prompt's at once, so a runtime that read them out of order
+  would end the turn with the wrong one. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn has
   started.
   """
@@ -82,16 +84,16 @@ defmodule HalC2.OpencodeSteerPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # runs: [{msg, status}] in the order they were made; turn: the running turn's msg;
-  # replies: the steers' answers, in order.
-  def initial_state, do: %{runs: [], turn: nil, replies: [], next: 1}
+  # runs: [{msg, status}] in the order they were made; turn: the running turn's msg,
+  # and how its loop takes a steer; replies: the steers' answers, in order.
+  def initial_state, do: %{runs: [], turn: nil, how: nil, replies: [], next: 1}
 
   def command(%{turn: nil, next: next}),
-    do: {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends])]}
+    do: {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends, :fails])]}
 
   def command(%{next: next}) do
     frequency([
-      {3, {:call, __MODULE__, :steer, ["m#{next}"]}},
+      {3, {:call, __MODULE__, :steer, ["m#{next}", oneof([:answers, :fails])]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -99,19 +101,30 @@ defmodule HalC2.OpencodeSteerPropTest do
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
-  def next_state(state, _result, {:call, _, :send, [msg, _how]}),
-    do: %{state | next: state.next + 1, runs: state.runs ++ [{msg, "running"}], turn: msg}
+  def next_state(state, _result, {:call, _, :send, [msg, how]}) do
+    runs = state.runs ++ [{msg, "running"}]
+    %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
+  end
 
-  def next_state(state, _result, {:call, _, :steer, [msg]}) do
-    state = %{state | next: state.next + 1, replies: state.replies ++ ["steered: steer #{msg}"]}
-    end_turn(state, "completed")
+  # A steer the turn's loop takes in answers with it; one in a loop of its own ends the
+  # turn as that loop does.
+  def next_state(state, _result, {:call, _, :steer, [msg, outcome]}) do
+    state = %{state | next: state.next + 1}
+
+    if state.how == :joins or outcome == :answers,
+      do:
+        end_turn(
+          %{state | replies: state.replies ++ ["steered: " <> steer_text(msg, outcome)]},
+          "completed"
+        ),
+      else: end_turn(state, "failed")
   end
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
 
   defp end_turn(%{turn: turn} = state, status) do
     runs = Enum.map(state.runs, fn {m, s} -> if m == turn, do: {m, status}, else: {m, s} end)
-    %{state | runs: runs, turn: nil}
+    %{state | runs: runs, turn: nil, how: nil}
   end
 
   def postcondition(state, call, {reply, projection}) do
@@ -135,17 +148,28 @@ defmodule HalC2.OpencodeSteerPropTest do
       })
   end
 
-  # `how`: whether the turn's loop takes a steer in (:joins) or ends as it lands (:ends).
+  # `how`: whether the turn's loop takes a steer in (:joins), or ends (:ends) or fails
+  # (:fails) as it lands.
   def send(msg, how) do
-    text = if how == :ends, do: "wait #{msg}, it ends as steered", else: "wait #{msg}"
+    text =
+      case how do
+        :joins -> "wait #{msg}"
+        :ends -> "wait #{msg}, it ends as steered"
+        :fails -> "wait #{msg}, it fails as steered"
+      end
+
     reply(Orchestration.dispatch(message(msg, text, "queue_after_active", "auto")), [])
   end
 
-  def steer(msg) do
+  # `outcome`: whether the steer's loop, if it runs one of its own, answers or fails.
+  def steer(msg, outcome) do
     ending = active_runs()
-    result = Orchestration.dispatch(message(msg, "steer #{msg}", "start_immediately", "steer"))
-    reply(result, ending)
+    text = steer_text(msg, outcome)
+    reply(Orchestration.dispatch(message(msg, text, "start_immediately", "steer")), ending)
   end
+
+  defp steer_text(msg, :answers), do: "steer #{msg}"
+  defp steer_text(msg, :fails), do: "steer #{msg}, its loop fails"
 
   def interrupt do
     ending = active_runs()
