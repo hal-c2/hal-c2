@@ -51,6 +51,13 @@ Feature: Pairing a client with an environment
     When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
     Then the printed link starts with that address
 
+  @mc
+  Scenario: A pairing command given an option it does not have says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailnet"
+    Then the command fails naming "--tailnet"
+    And no pairing link is listed
+
   @backlog @mc
   Scenario: A pairing link keeps its token out of the address a server sees
     When an operator asks the MC for a pairing link

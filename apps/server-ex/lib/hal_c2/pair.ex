@@ -8,7 +8,7 @@ defmodule HalC2.Pair do
       pair --tailscale [--tailscale-serve-port PORT]
       pair --release [BASE_URL | --tailscale]
 
-  `BASE_URL` defaults to the MC's own address (`HalC2.Web.base_url/1`), such as
+  `BASE_URL` defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
   `http://127.0.0.1:3790`, or the LAN or tailnet address it was bound to.
 
   With no HAL-C2 home configured it pairs with the MC that is running, whether that is
@@ -42,12 +42,13 @@ defmodule HalC2.Pair do
   def command(args) do
     {:ok, _} = Application.ensure_all_started([:exqlite, :inets])
 
-    {opts, rest} =
-      OptionParser.parse!(args,
+    {opts, rest, invalid} =
+      OptionParser.parse(args,
         strict: [release: :boolean, tailscale: :boolean, tailscale_serve_port: :integer]
       )
 
-    with {:ok, located} <- locate(opts[:release]) do
+    with :ok <- check_options(invalid),
+         {:ok, located} <- locate(opts[:release]) do
       running =
         case located do
           {home, record} ->
@@ -84,6 +85,13 @@ defmodule HalC2.Pair do
   """
   def command_name,
     do: if(HalC2.Upgrade.release_root(), do: "hal-c2-service pair", else: "mix hal_c2.pair")
+
+  defp check_options([]), do: :ok
+
+  defp check_options(invalid) do
+    options = Enum.map_join(invalid, ", ", fn {option, _} -> option end)
+    {:error, "Not an option of `#{command_name()}`, or given a bad value: #{options}"}
+  end
 
   # With no home configured, the MC to pair with is the one that is running, in the
   # installed profile or the development one: its store takes the token and its

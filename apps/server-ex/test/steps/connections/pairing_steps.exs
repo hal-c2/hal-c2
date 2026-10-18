@@ -32,6 +32,17 @@ defmodule HalC2.Steps.Connections.Pairing do
     context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
   end
 
+  step "an operator asks for a pairing link with the option {string}",
+       %{args: [option]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, [option]))
+  end
+
+  step "the command fails naming {string}", %{args: [option]} = context do
+    assert {:error, message} = context.refusal
+    assert message =~ option
+    context
+  end
+
   # The real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that evaluates what a
   # release would, with elixir over this build's code and the scenario's home.
   step "an operator runs {string} on the installed MC's command line",
