@@ -24,6 +24,8 @@ const CLIENT_ENTRY = NodePath.join(TUI_DIR, "src/index.ts");
  */
 const DRAW_TIMEOUT_MS = 30_000;
 const EXIT_TIMEOUT_MS = 15_000;
+/** How long a screen gets to show what a step waits for, once the client drew; it only guards a regression. */
+const SCREEN_TIMEOUT_MS = 15_000;
 
 export const ENTER_ALT_SCREEN = "\x1b[?1049h";
 export const LEAVE_ALT_SCREEN = "\x1b[?1049l";
@@ -80,8 +82,8 @@ function orderPath(ctx: LaunchWorld): string {
 
 /**
  * What the client did to its surroundings, one line per event in the order they
- * happened: each `tmux` call, and `draw` once the renderer holds the alternate
- * screen (written by `orderPreload`, so `startDirect` needs it for the draw).
+ * happened: each `tmux` call, and `alt-screen` once the renderer has taken the
+ * alternate screen (written by `orderPreload`, so `startDirect` needs it).
  * Appends from different processes are ordered by the file, not by clocks.
  */
 export function orderLog(ctx: LaunchWorld): string[] {
@@ -89,19 +91,23 @@ export function orderLog(ctx: LaunchWorld): string[] {
 }
 
 /**
- * A preload that notes `draw` in the order log. `process.once("SIGINT", …)` is the
- * client's first call after the renderer entered the alternate screen, as in `faultPreload`.
+ * A preload that notes `alt-screen` in the order log when the renderer's
+ * `setupTerminal` (which enters the alternate screen) returns, before
+ * `createCliRenderer` hands the renderer back. The renderer class is resolved from
+ * the client's directory, so it is the module the client loads.
  */
 export function orderPreload(ctx: LaunchWorld): string {
   const path = NodePath.join(home(ctx), "order.ts");
   NodeFS.writeFileSync(
     path,
     `import { appendFileSync } from "node:fs";
-const once = process.once.bind(process);
-process.once = ((event, listener) => {
-  if (event === "SIGINT") appendFileSync(process.env.HAL_C2_TEST_ORDER!, "draw\\n");
-  return once(event, listener);
-}) as typeof process.once;
+const { CliRenderer } = await import(Bun.resolveSync("@opentui/core", ${JSON.stringify(TUI_DIR)}));
+const setupTerminal = CliRenderer.prototype.setupTerminal;
+CliRenderer.prototype.setupTerminal = async function (...args: unknown[]) {
+  const result = await setupTerminal.apply(this, args);
+  appendFileSync(process.env.HAL_C2_TEST_ORDER!, "alt-screen\\n");
+  return result;
+};
 `,
   );
   return path;
@@ -193,12 +199,25 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
   const screen = {
     text: screenText,
     until: (text: string) =>
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
+        const settle = () => {
+          clearTimeout(timer);
+          screenWaiters.delete(waiter);
+        };
         const waiter = () => {
           if (!screenText().includes(text)) return;
-          screenWaiters.delete(waiter);
+          settle();
           resolve();
         };
+        // A screen that never shows the text fails the step, so the scenario's cleanup runs.
+        const timer = setTimeout(() => {
+          settle();
+          reject(
+            new Error(
+              `the screen never showed ${JSON.stringify(text)}; it shows:\n${screenText()}\nstderr:\n${output.stderr}`,
+            ),
+          );
+        }, SCREEN_TIMEOUT_MS);
         screenWaiters.add(waiter);
         waiter();
       }),

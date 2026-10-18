@@ -331,7 +331,7 @@ step("the user is inside a tmux pane that is in copy mode", (ctx: LaunchWorld) =
 
 step("the client does not run any tmux command", async (ctx: LaunchWorld) => {
   if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
-  expect(orderLog(ctx)).toEqual(["draw"]);
+  expect(orderLog(ctx)).toEqual(["alt-screen"]);
 });
 
 step("the pane leaves copy mode before the terminal client draws", async (ctx: LaunchWorld) => {
@@ -340,7 +340,7 @@ step("the pane leaves copy mode before the terminal client draws", async (ctx: L
   const events = orderLog(ctx);
   const leftCopyMode = events.indexOf(`tmux copy-mode -q -t ${TMUX_PANE}`);
   expect(leftCopyMode).toBeGreaterThanOrEqual(0);
-  expect(leftCopyMode).toBeLessThan(events.indexOf("draw"));
+  expect(leftCopyMode).toBeLessThan(events.indexOf("alt-screen"));
 });
 
 // --- the first screen ---
@@ -389,12 +389,17 @@ step(
 
 step("the client asks that MC for another socket ticket", async (ctx: LaunchWorld) => {
   // The 10 s timeout and the 2 s reconnect delay are the behaviour, so the wait is theirs.
-  await mc(ctx).until(() => mc(ctx).ticketTimes.length >= 2, "a second ticket request", 40_000);
+  await mc(ctx).until(() => mc(ctx).ticketRequests.length >= 2, "a second ticket request", 40_000);
 });
 
 step("the first ticket request was given up on only after 10 seconds", (ctx: LaunchWorld) => {
-  const [first, second] = mc(ctx).ticketTimes;
-  expect(second! - first!).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS);
+  const first = mc(ctx).ticketRequests[0]!;
+  // The client hangs up on it before it asks again, so its end is already known.
+  expect(first.endedAt).toBeDefined();
+  const lived = first.endedAt! - first.startedAt;
+  // The client's timer starts just before the request reaches the MC.
+  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 500);
+  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
 });
 
 // --- SSH ---

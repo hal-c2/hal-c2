@@ -74,8 +74,11 @@ export interface FakeMc {
   readonly sessions: FakeSession[];
   /** Bearers each ticket request carried, in order. */
   readonly ticketBearers: string[];
-  /** When each ticket request arrived (`Date.now()`), in order. */
-  readonly ticketTimes: number[];
+  /**
+   * Each ticket request, in order: when it arrived (`Date.now()`) and, once the
+   * client hung up on it, when (`endedAt`).
+   */
+  readonly ticketRequests: Array<{ readonly startedAt: number; endedAt?: number }>;
   readonly sockets: FakeSocket[];
   /** Pairing tokens the MC still accepts (each works once). */
   readonly pairingTokens: Set<string>;
@@ -120,7 +123,7 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
   const accessToken = options.accessToken ?? "fake-mc-access-token";
   const sessions: FakeSession[] = [];
   const ticketBearers: string[] = [];
-  const ticketTimes: number[] = [];
+  const ticketRequests: Array<{ startedAt: number; endedAt?: number }> = [];
   const sockets: FakeSocket[] = [];
   const pairingTokens = new Set(options.pairingToken ? [options.pairingToken] : []);
   const tickets = new Set<string>();
@@ -184,8 +187,14 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
       case "/api/auth/websocket-ticket": {
         const token = bearer(request);
         ticketBearers.push(token ?? "");
-        ticketTimes.push(Date.now());
+        const asked: { startedAt: number; endedAt?: number } = { startedAt: Date.now() };
+        ticketRequests.push(asked);
         if (options.silentTickets) {
+          // The client giving up on the request is the connection closing.
+          request.signal.addEventListener("abort", () => {
+            asked.endedAt = Date.now();
+            changed();
+          });
           changed();
           return new Promise<Response>(() => {});
         }
@@ -261,7 +270,7 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
     accessToken,
     sessions,
     ticketBearers,
-    ticketTimes,
+    ticketRequests,
     sockets,
     pairingTokens,
     get tokenExchanges() {
