@@ -40,7 +40,7 @@ sh "$installer"
 rm -f "$installer"
 sudo ln -sf "$HOME/.local/bin/mise" /usr/local/bin/mise
 sudo apt-get update
-sudo apt-get install -y build-essential autoconf m4 libncurses-dev libssl-dev libssh-dev
+sudo apt-get install -y build-essential autoconf m4 libncurses-dev libssl-dev
 mise trust
 mise install
 
