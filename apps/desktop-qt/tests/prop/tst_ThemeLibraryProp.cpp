@@ -2,8 +2,8 @@
 // duplicateStandard, removeCustom) against a model of which themes are saved.
 // The user saves new themes under names that collide with each other and with
 // the built-ins, duplicates any theme offered and the standard look, removes
-// saved themes, flips the system between light and dark, and (once) an old
-// install has a saved theme that took the standard look's id. After every step
+// saved themes, edit them in place, paste theme files in, flip the system between
+// light and dark, and (once) an old install has a saved theme that took the standard look's id. After every step
 // the saved ids are the ones the model says, each is stored once, a theme saved
 // or duplicated as new never takes the standard look's id or an id already
 // stored, and a copy of the standard look draws the standard colors whatever is
@@ -11,6 +11,7 @@
 
 #include "Prop.h"
 
+#include <QJsonDocument>
 #include <QTemporaryDir>
 
 #include "NativeShell.h"
@@ -30,6 +31,7 @@ struct Model {
   QStringList builtIns;   // the ids the built-in themes offer
   int saved = 0;          // how many themes are stored on this device
   bool imposter = false;  // an old install's saved theme was put in, once
+  int imports = 0;        // theme files pasted in, which name the next one
 };
 
 // The app's theme controller on a home of its own, with the system light.
@@ -168,6 +170,57 @@ struct SetDark : Command {
   void show(std::ostream& os) const override { os << "SetDark(" << dark << ")"; }
 };
 
+// A saved theme edited in place: its draft carries its id, so nothing new is stored
+// and the ids stay the same, an imposter's among them.
+struct Edit : Command {
+  int pick;
+  explicit Edit(const Model&) : pick(*rc::gen::inRange<int>(0, 1000)) {}
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.saved > 0); }
+  void apply(Model&) const override {}
+  void run(const Model& m0, Sut& sut) const override {
+    const QStringList before = sut.storedIds();
+    const QString target = before.at(pick % before.size());
+    QVariantMap edited = draft(QStringLiteral("Edited"), QStringLiteral("dark"));
+    edited.insert(QStringLiteral("id"), target);
+    RC_ASSERT(sut.themes()->saveCustom(edited) == target);
+    RC_ASSERT(sut.storedIds() == before);
+    verify(m0, sut);
+  }
+  void show(std::ostream& os) const override { os << "Edit(" << pick << ")"; }
+};
+
+// A theme file pasted in under a name of its own, sometimes asking for the standard
+// look's id: it is added, or refused for that id.
+struct Import : Command {
+  int n;
+  bool claimsStandard;
+  explicit Import(const Model& m) : n(m.imports), claimsStandard(*rc::gen::arbitrary<bool>()) {}
+  void apply(Model& m) const override {
+    m.imports++;
+    if (!claimsStandard) m.saved++;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    const QStringList before = sut.storedIds();
+    QJsonObject file{{QStringLiteral("version"), 1},
+                     {QStringLiteral("name"), QStringLiteral("Imported %1").arg(n)},
+                     {QStringLiteral("appearance"), QStringLiteral("dark")},
+                     {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#101010")}}}};
+    if (claimsStandard) file.insert(QStringLiteral("id"), kStandard);
+    RC_ASSERT(sut.themes()->importText(QString::fromUtf8(QJsonDocument(file).toJson())) == !claimsStandard);
+    sut.themes()->clearImport();
+    if (!claimsStandard) {
+      QStringList fresh = sut.storedIds();
+      for (const QString& id : before) fresh.removeOne(id);
+      RC_ASSERT(fresh.size() == 1);
+      checkNew(m0, before, fresh.first());
+    }
+    Model expected = m0;
+    apply(expected);
+    verify(expected, sut);
+  }
+  void show(std::ostream& os) const override { os << "Import(" << n << (claimsStandard ? ", hal-c2" : "") << ")"; }
+};
+
 // An install from before the standard look's id was kept from new themes.
 struct Imposter : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.imposter); }
@@ -202,7 +255,7 @@ private slots:
       Sut sut;
       Model model;
       model.builtIns = sut.builtInIds();
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Save, Save, Duplicate, Duplicate, DuplicateStandard, Remove, SetDark, Imposter>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Save, Save, Duplicate, Duplicate, DuplicateStandard, Remove, SetDark, Imposter, Edit, Import>());
     }));
   }
 };

@@ -34,8 +34,8 @@ Popup {
         json.forceActiveFocus();
     }
     // Escape, a press outside and Cancel all leave the same way: whatever
-    // waited on a choice is dropped.
-    onClosed: Themes.resolveImport("cancel")
+    // waited on a choice is dropped. A choice already made left nothing waiting.
+    onClosed: if (conflicted) Themes.resolveImport("cancel")
 
     background: Rectangle {
         radius: Theme.radius

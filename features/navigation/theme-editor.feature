@@ -198,7 +198,7 @@ Feature: Custom themes
     @desktop
     Scenario: Duplicating the standard theme
       When the user duplicates the standard theme
-      Then an editable copy of the standard theme as drawn now is added
+      Then an editable copy of the standard theme as drawn now is added and becomes the theme in use
 
     @desktop
     Scenario: A saved theme with the standard theme's id does not stand in for it

@@ -449,7 +449,7 @@ const Steps steps([] {
   step(QStringLiteral("the user duplicates the standard theme"), [](World& world, const Captures&, const Table&) {
     expect(!themes(world)->duplicateStandard().isEmpty(), settings(world)->deviceError());
   });
-  step(QStringLiteral("an editable copy of the standard theme as drawn now is added"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("an editable copy of the standard theme as drawn now is added and becomes the theme in use"), [](World& world, const Captures&, const Table&) {
     const auto copy = offered(world, QStringLiteral("HAL-C2 copy"));
     expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
            QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
@@ -457,6 +457,9 @@ const Steps steps([] {
     const QVariantMap duplicate = themes(world)->draft(copy->value(QStringLiteral("id")).toString());
     expect(duplicate.value(QStringLiteral("colors")) == standard.value(QStringLiteral("colors")),
            QStringLiteral("the copy draws %1, the standard theme %2").arg(show(duplicate), show(standard)));
+    // As any saved theme is: the copy is pinned to one appearance, so the app stops following the system's.
+    expect(themes(world)->resolvedId() == copy->value(QStringLiteral("id")).toString(),
+           QStringLiteral("the theme in use is %1").arg(themes(world)->resolvedId()));
   });
   // A theme saved before the standard look's id was kept from new ones.
   step(QStringLiteral("a saved theme has the standard theme's id"), [](World& world, const Captures&, const Table&) {

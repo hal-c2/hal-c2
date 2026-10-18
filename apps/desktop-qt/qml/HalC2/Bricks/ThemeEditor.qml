@@ -159,6 +159,7 @@ Popup {
             }
 
             ShellComboBox {
+                objectName: "appearance"
                 outline: true
                 model: [qsTr("Light"), qsTr("Dark")]
                 currentIndex: editor.draft.appearance === "dark" ? 1 : 0

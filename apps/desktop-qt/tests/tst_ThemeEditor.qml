@@ -175,6 +175,36 @@ Item {
             compare(Themes.importConflicts, []);
         }
 
+        // A choice made in the dialog is the only call: closing after it does not cancel.
+        function test_aChoiceIsNotFollowedByACancel() {
+            for (const [button, choice] of [["keepBoth", "copy"], ["updateExisting", "update"]]) {
+                Themes.clear();
+                const dialog = openImport();
+                Themes.importConflicts = ["Nord"];
+                const target = findChild(dialog.contentItem, button);
+                tryVerify(() => target.visible);
+                waitForRendering(dialog.contentItem);
+                mouseClick(target);
+                tryVerify(() => !dialog.visible);
+                compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), [choice]);
+            }
+        }
+
+        // The appearance dropdown is a popup of its own that can reach past the editor;
+        // choosing from it is not a press outside the editor.
+        function test_choosingFromTheAppearanceDropdownKeepsTheEditorOpen() {
+            const editor = openEditor();
+            const combo = findChild(editor.contentItem, "appearance");
+            verify(combo, "the editor has an appearance choice");
+            mouseClick(combo);
+            tryVerify(() => combo.popup.opened);
+            const row = combo.popup.contentItem.itemAtIndex(1);
+            verify(row, "the dropdown lists Dark");
+            mouseClick(row);
+            tryVerify(() => !combo.popup.opened);
+            verify(editor.opened && Themes.editorOpen, "the editor stays open");
+        }
+
         // features/navigation/theme-editor.feature: the editor closes on a
         // press outside it, but not on the press that picks a colour.
         function test_aPressOutsideClosesTheEditorExceptWhileItPicks() {
