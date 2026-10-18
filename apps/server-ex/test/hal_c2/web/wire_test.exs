@@ -90,6 +90,34 @@ defmodule HalC2.Web.WireTest do
     sent_matches_snapshot(start, %{"u" => ["progress"], "a" => %{"progress" => over}})
   end
 
+  test "a set and an append to one text are cut as the text they make" do
+    long = item(String.duplicate("x", @limit + 1))
+
+    for start <- [item("short"), long] do
+      sent_matches_snapshot(start, %{
+        "s" => %{"progress" => String.duplicate("x", @limit - 8)},
+        "a" => %{"progress" => String.duplicate("y", 20)}
+      })
+
+      sent_matches_snapshot(start, %{
+        "s" => %{"progress" => String.duplicate("é", @limit)},
+        "a" => %{"progress" => "y"}
+      })
+    end
+  end
+
+  test "a patch's cut basis grows an item's basis as the patch grows the item" do
+    for start <- [item("short"), item(String.duplicate("é", @limit))],
+        patch <- [
+          %{"a" => %{"progress" => String.duplicate("y", 3 * @limit)}},
+          %{"s" => %{"result" => String.duplicate("r", 2 * @limit)}, "a" => %{"result" => "r"}},
+          %{"u" => ["progress"], "a" => %{"progress" => String.duplicate("é", @limit)}}
+        ] do
+      assert Wire.cut_basis(Patch.apply(Wire.cut_basis(start), Wire.cut_basis_patch(patch))) ==
+               Wire.cut_basis(Patch.apply(start, patch))
+    end
+  end
+
   test "a patch appending to two texts cuts each from what it holds" do
     start = Map.put(item("short"), "result", String.duplicate("r", @limit - 1))
     over = String.duplicate("é", @limit)

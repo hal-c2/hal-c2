@@ -174,8 +174,8 @@ defmodule HalC2.Streams.View do
   # how much of its text the client holds. Only that kind of item needs the commit's
   # earlier events folded into `before`, and an event's patch is applied only when a
   # later event of the commit is to the same item. What is folded is the item's
-  # `Wire.cut_basis/1`, so each view's fold stays within the wire's limit however long
-  # the text grows.
+  # `Wire.cut_basis/1` and the patch's (`Wire.cut_basis_patch/1`), so each view's fold
+  # stays within the wire's limit however long the text or an append is.
   defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch) do
     at =
       case running do
@@ -183,7 +183,7 @@ defmodule HalC2.Streams.View do
         _ -> Wire.cut_basis(was)
       end
 
-    {at, Map.put(running, id, {at, patch})}
+    {at, Map.put(running, id, {at, Wire.cut_basis_patch(patch)})}
   end
 
   defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}

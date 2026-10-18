@@ -78,6 +78,31 @@ defmodule HalC2.Web.Wire do
     end)
   end
 
+  @doc """
+  `patch` with its subagent texts kept to what `cut_basis/1` keeps, so that applied to
+  an item's basis it gives the patched item's basis, without growing a long text.
+  """
+  def cut_basis_patch(patch) do
+    Enum.reduce(~w(s a), patch, fn op, patch ->
+      case patch do
+        %{^op => %{} = fields} -> %{patch | op => cut_basis_fields(fields)}
+        _ -> patch
+      end
+    end)
+  end
+
+  defp cut_basis_fields(fields) do
+    Enum.reduce(@cut_keys, fields, fn key, fields ->
+      case fields do
+        %{^key => text} when is_binary(text) and byte_size(text) > @max_detail ->
+          %{fields | key => binary_part(text, 0, @max_detail + 1)}
+
+        _ ->
+          fields
+      end
+    end)
+  end
+
   # --- turn items ----------------------------------------------------------------
 
   defp turn_item(%{"type" => "command_execution"} = item) do
@@ -134,9 +159,16 @@ defmodule HalC2.Web.Wire do
         size = byte_size(held)
 
         cond do
-          size + byte_size(suffix) <= @max_detail -> patch
-          size > @max_detail -> unappend(patch, key)
-          true -> patch |> unappend(key) |> keep(key) |> set(key, cut(held <> suffix))
+          size + byte_size(suffix) <= @max_detail ->
+            patch
+
+          size > @max_detail ->
+            unappend(patch, key)
+
+          # Only the bytes that take the text one past the limit decide its cut.
+          true ->
+            suffix = binary_part(suffix, 0, @max_detail - size + 1)
+            patch |> unappend(key) |> keep(key) |> set(key, cut(held <> suffix))
         end
 
       _other, patch ->
