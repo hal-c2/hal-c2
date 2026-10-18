@@ -2821,36 +2821,6 @@ export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
 });
 export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
 
-/**
- * Progressive cold open: full control-plane projection arrays with only a
- * recent window of timeline rows. `historyCursor` is opaque; clients must not
- * parse it. Resume live events with `afterSequence = snapshotSequence`.
- */
-export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
-  snapshotSequence: NonNegativeInt,
-  projection: OrchestrationV2ThreadProjection,
-  historyCursor: Schema.NullOr(TrimmedNonEmptyString),
-  hasMoreHistory: Schema.Boolean,
-  /**
-   * Max local turn ordinal over the authoritative full projection turnItems.
-   * Clients use this as a partial-timeline watermark when the bounded window
-   * has no local rows (inherited-only).
-   */
-  latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
-  /** True when complete turns or required live control state exceed the usual byte budget. */
-  payloadBudgetExceeded: Schema.optional(Schema.Boolean),
-});
-export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
-
-/** Older timeline page for progressive history. Rows are chronological. */
-export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
-  snapshotSequence: NonNegativeInt,
-  items: Schema.Array(OrchestrationV2ProjectedTurnItem),
-  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
-  hasMoreHistory: Schema.Boolean,
-});
-export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
-
 export const OrchestrationV2ThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),

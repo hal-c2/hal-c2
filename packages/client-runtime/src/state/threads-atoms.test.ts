@@ -459,7 +459,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
           updatedAt: THREAD.thread.createdAt,
         };
         yield* Deferred.succeed(request.response, undefined);
-        expect(yield* Fiber.join(loading)).toEqual({ _tag: "loaded" });
+        expect(yield* Fiber.join(loading)).toEqual({ _tag: "requested" });
         // Asked, not answered: the thread stays loading until the longer snapshot arrives.
         expect(h.registry.get(h.stateAtom).history.loading).toBe(true);
 

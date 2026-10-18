@@ -67,6 +67,9 @@ export class ThreadShapeFold {
   private updatedAt = 0;
   // The first run the MC sent (null: the thread's start); undefined without a window.
   private floor: number | null | undefined;
+  // The newest offset the fold has seen (snapshot, page or event). Snapshots carry it,
+  // so a page that finishes after later events does not move the sequence backwards.
+  private offset = 0;
   private pageRows: Array<ShapeRow> = [];
   private readonly threadId: ThreadId;
 
@@ -92,7 +95,12 @@ export class ThreadShapeFold {
     }
     for (const [kind, id, entity] of input.rows) this.byKind(kind).set(id, entity);
     if (!input.done) return [];
-    return this.snapshotItem(input.offset);
+    // The MC repeats the floor on every part; the last one is the one that counts, as
+    // for the socket's resume and the desktop, with part 0's as the fallback.
+    if (input.floor !== undefined) this.floor = input.floor;
+    // A new snapshot replaces everything held, so its offset replaces the one seen.
+    this.offset = input.offset;
+    return this.snapshotItem(this.offset);
   }
 
   /**
@@ -119,7 +127,8 @@ export class ThreadShapeFold {
       this.entities.set(kind, new Map([...ofKind, ...this.byKind(kind)]));
     }
     this.floor = input.floor;
-    return this.snapshotItem(input.offset);
+    this.offset = Math.max(this.offset, input.offset);
+    return this.snapshotItem(this.offset);
   }
 
   private snapshotItem(offset: number): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
@@ -145,6 +154,7 @@ export class ThreadShapeFold {
   events(events: ReadonlyArray<ShapeEvent>): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const items: Array<OrchestrationV2ThreadStreamItem> = [];
     for (const [seq, kind, id, patch, at] of events) {
+      this.offset = Math.max(this.offset, seq);
       // An entity kind a newer MC publishes and this client has no place for: skipped, so
       // the events after it are still applied.
       if (!KNOWN_KINDS.has(kind)) continue;

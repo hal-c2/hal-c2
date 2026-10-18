@@ -251,6 +251,47 @@ describe("ThreadShapeFold window", () => {
     ]);
   });
 
+  it("stamps a page snapshot with the newest offset seen, never an older one", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    shape.snapshot({
+      rows: [["thread", v2ThreadId, thread], older(5)],
+      part: 0,
+      done: true,
+      offset: 40,
+      at: 1,
+      floor: 3,
+    });
+    shape.events([[42, "hologram", "hologram-1", { s: { id: "hologram-1" } }, 2]]);
+    // The page was cut at offset 41, before event 42 reached the fold.
+    const [grown] = shape.page({ rows: [older(1)], done: true, offset: 41, floor: null });
+    expect(grown).toMatchObject({ kind: "snapshot", snapshotSequence: 42 });
+  });
+
+  it("takes the window's floor from the last part, falling back to the first", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    shape.snapshot({
+      rows: [["thread", v2ThreadId, thread]],
+      part: 0,
+      done: false,
+      offset: 9,
+      at: 1,
+      floor: 3,
+    });
+    const [last] = shape.snapshot({ rows: [], part: 1, done: true, offset: 9, at: 1, floor: 2 });
+    expect(last).toMatchObject({ historyCursor: "2" });
+
+    shape.snapshot({
+      rows: [["thread", v2ThreadId, thread]],
+      part: 0,
+      done: false,
+      offset: 9,
+      at: 1,
+      floor: 3,
+    });
+    const [fallback] = shape.snapshot({ rows: [], part: 1, done: true, offset: 9, at: 1 });
+    expect(fallback).toMatchObject({ historyCursor: "3" });
+  });
+
   it("leaves the history meta off a thread that has no window", () => {
     const shape = new ThreadShapeFold(v2ThreadId);
     const [item] = shape.snapshot({

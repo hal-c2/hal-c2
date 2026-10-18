@@ -815,7 +815,7 @@ describe("EnvironmentThreads", () => {
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
       });
-      expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+      expect(yield* harness.loadEarlier()).toEqual({ _tag: "requested" });
       expect(yield* Ref.get(harness.earlierRequests)).toEqual([THREAD_ID]);
       // The request is answered by the snapshot that grows the thread, not by its return.
       const expanded = yield* awaitThreadState(
@@ -867,6 +867,46 @@ describe("EnvironmentThreads", () => {
         error: expect.any(String),
       });
     }),
+  );
+
+  it.effect(
+    "stops waiting on an earlier-turns request the MC never answered once the stream drops",
+    () =>
+      Effect.gen(function* () {
+        // The harness answers the request with nothing: a `more` the MC dropped.
+        const harness = yield* makeHarness({});
+        yield* Queue.offer(harness.inputs, {
+          kind: "snapshot",
+          snapshotSequence: 14,
+          projection: BASE_PROJECTION,
+          historyCursor: "socket-history-cursor",
+          hasMoreHistory: true,
+          payloadBudgetExceeded: false,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (value) => value.history.historyCursor === "socket-history-cursor",
+        );
+
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "requested" });
+        expect((yield* SubscriptionRef.get(harness.threadState)).history.loading).toBe(true);
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "busy" });
+
+        yield* SubscriptionRef.set(harness.supervisorState, {
+          desired: true,
+          network: "offline",
+          phase: "offline",
+          stage: null,
+          attempt: 0,
+          generation: 1,
+          lastFailure: null,
+          retryAt: null,
+        });
+        // The page may still land after the socket resubscribes, as a longer snapshot.
+        const state = yield* awaitThreadState(harness.observed, (value) => !value.history.loading);
+        expect(state.history).toMatchObject({ hasMoreHistory: true, expanded: true });
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "requested" });
+      }),
   );
 
   it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>

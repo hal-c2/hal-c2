@@ -324,11 +324,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           error: Option.none(),
         },
   );
+  // A `more` the MC dropped (a stopped stream, a socket that left `live`) is never
+  // answered, and would hold `loading` and so the `busy` guard for good. A stream that
+  // leaves `live` ends the wait, as the desktop does: the socket asks an unfinished page
+  // again once it resubscribes, so the worst case is one extra page. `expanded` stays,
+  // since that page may still land and answer as a longer snapshot.
+  const endLoadingEarlier = (history: ThreadHistoryMeta): ThreadHistoryMeta =>
+    history.loading ? { ...history, loading: false, expanded: true } : history;
   const setDisconnected = Effect.gen(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+      history: endLoadingEarlier(current.history),
     }));
   });
   const setStreamError = (message: string) =>
@@ -339,6 +347,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           status:
             current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
           error: Option.some(message),
+          history: endLoadingEarlier(current.history),
         })),
       ),
     );
@@ -642,7 +651,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     });
     const result = yield* request.pipe(Effect.result);
     if (Result.isSuccess(result))
-      return { _tag: "loaded" } satisfies ThreadHistoryLoadEarlierResult;
+      return { _tag: "requested" } satisfies ThreadHistoryLoadEarlierResult;
 
     const message = formatHistoryError(result.failure);
     const stillCurrent = yield* SubscriptionRef.modify(
