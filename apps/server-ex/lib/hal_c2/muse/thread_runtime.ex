@@ -887,8 +887,9 @@ defmodule HalC2.Muse.ThreadRuntime do
     %{"prompt" => item["objective"], "title" => title}
   end
 
-  # What the running subagent is doing: Muse's one-line summary, else its control state.
-  defp subagent_progress(item), do: non_empty(item["fallbackText"], item["controlStatus"])
+  # What the running subagent is doing: Muse's one-line summary. Its control state
+  # ("starting", "resultReady") is protocol, not progress; the item's status shows it runs.
+  defp subagent_progress(item), do: non_empty(item["fallbackText"], nil)
 
   # The answer: the result's text, else its summary; none for a failure names its reason.
   defp subagent_result(item, status) do
