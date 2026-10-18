@@ -689,27 +689,25 @@ defmodule HalC2.Orchestration do
 
     case promoted do
       {:promoted, message} ->
-        case ask_steer(
-               target["providerInstanceId"] || "codex",
-               thread_id,
-               target["id"],
-               steer_input(message)
-             ) do
+        instance = target["providerInstanceId"] || "codex"
+
+        case ask_steer(instance, thread_id, target["id"], steer_input(message)) do
           :ok ->
             HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
             {:ok, %{"sequence" => sequence(thread_id)}}
 
           {:error, reason} ->
             unpromote(thread_id, queued, message)
-            result = restart_promoted(thread_id, command)
-            # A turn that ended while it was out of the queue did not start it.
-            start_next(thread_id)
 
-            with {:error, why} <- result do
-              provider = HalC2.ThreadMove.provider_name(target["providerInstanceId"] || "codex")
+            case restart_promoted(thread_id, command) do
+              {:ok, _} = restarted ->
+                # A turn that ended while it was out of the queue did not start it.
+                start_next(thread_id)
+                restarted
 
-              {:error,
-               "#{provider} did not take the message into its running turn (#{reason}), so it waits first in the queue. #{why}"}
+              {:error, why} ->
+                {:error,
+                 "#{HalC2.ThreadMove.provider_name(instance)} did not take the message into its running turn (#{reason}), so it waits first in the queue. #{why}"}
             end
         end
 
@@ -1671,11 +1669,21 @@ defmodule HalC2.Orchestration do
 
   defp restart_promoted(thread_id, command) do
     queued_id = command["queuedRunId"]
+    target_id = command["targetRunId"]
 
     with {:ok, result} <- queue_change(thread_id, &first_in_queue(&1, queued_id)) do
-      _ = interrupt_any(thread_id, command["targetRunId"])
+      # A runtime stops whichever turn is current, so a target that has ended is left
+      # alone: the turn running now may be the promoted message's own.
+      if target_id == nil or active_run?(thread_id, target_id),
+        do: _ = interrupt_any(thread_id, target_id)
+
       {:ok, result}
     end
+  end
+
+  defp active_run?(thread_id, run_id) do
+    run = StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id] || %{}
+    run["status"] in @active_statuses
   end
 
   # Queue positions with `run_id` first and the other queued runs after it, in order.
