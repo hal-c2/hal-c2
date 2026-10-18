@@ -597,9 +597,18 @@ Rectangle {
 
                         objectName: "advisory"
 
+                        // Placed through the zoomed body, as the combo's popup is: the
+                        // overlay is outside it, so scaled about this corner the card
+                        // draws as the page's own content does.
+                        scale: Shell.state.layout?.zoom ?? 1
+                        transformOrigin: Item.TopLeft
                         y: advisoryButton.height + 4
                         width: 320
                         padding: 12
+                        // Focus is what lets Escape close it here instead of leaving
+                        // Settings. Pressing the icon again closes it through onClicked.
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
                         background: Rectangle {
                             color: Theme.palette.color("surfaceOverlay", "#18181b")

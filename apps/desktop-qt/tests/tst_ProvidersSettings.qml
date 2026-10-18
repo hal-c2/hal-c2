@@ -154,6 +154,46 @@ Item {
             compare(Shell.dispatchedActions[0].action, "providerSettings.update");
         }
 
+        // Escape closes the popover the keyboard opened, and nothing else (it must
+        // not reach the page, whose host leaves Settings on it). The icon toggles it.
+        function test_the_advisory_popover_closes_on_escape_and_toggles_from_its_icon() {
+            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+                               targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            verify(popover.activeFocus, "the popover takes the keyboard");
+            let leftThePage = false;
+            page.Keys.escapePressed.connect(() => leftThePage = true);
+            keyClick(Qt.Key_Escape);
+            tryCompare(popover, "opened", false);
+            verify(!leftThePage, "Escape stopped at the popover");
+
+            mouseClick(button);
+            tryCompare(popover, "opened", true);
+            mouseClick(button);
+            tryCompare(popover, "opened", false);
+            wait(50);
+            verify(!popover.opened, "pressing the icon again closes it rather than reopening it");
+        }
+
+        function test_the_advisory_popover_keeps_the_settings_zoom() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { layout: { zoom: 1.5 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            compare(popover.scale, 1.5);
+            compare(popover.transformOrigin, Item.TopLeft);
+        }
+
         function test_a_provider_without_an_advisory_has_no_icon() {
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({})] }) };
             const page = createTemporaryObject(settingsComponent, root);
