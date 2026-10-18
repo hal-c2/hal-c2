@@ -546,16 +546,7 @@ defmodule HalC2.Orchestration do
 
       message && target && target["status"] in @active_statuses &&
         steerable?(target, queued["providerInstanceId"]) &&
-          session_call(
-            fn ->
-              runtime(target["providerInstanceId"]).steer(
-                thread_id,
-                target["id"],
-                steer_input(message)
-              )
-            end,
-            :gone
-          ) == :ok ->
+          steered?(thread_id, target, message) ->
         promoted(thread_id, queued, target, message)
 
       true ->
@@ -1469,13 +1460,25 @@ defmodule HalC2.Orchestration do
     end) || interrupt_undriven(thread_id, run_id)
   end
 
-  # A runtime call to a thread's session. A session that stopped after the runtime looked
-  # it up, however it stopped (released as idle, crashed), answers `gone`, as one the
-  # lookup did not find would; one that is only slow still exits the caller.
-  defp session_call(call, gone) do
+  @doc """
+  Runs `call`, a runtime's call into a thread's session. A session that stopped after
+  the runtime looked it up, however it stopped (released as idle, crashed), answers
+  `gone`, as one the lookup did not find would; one that is only slow still exits the
+  caller. Only the exit of a `GenServer.call` reads as a stopped session, which covers
+  every built-in runtime; a runtime that exits any other way still exits the caller.
+  """
+  def session_call(call, gone) do
     call.()
   catch
-    :exit, {why, _} when why != :timeout -> gone
+    :exit, {why, {GenServer, :call, _}} when why != :timeout -> gone
+  end
+
+  # Whether the running `run` took `message` into its turn. Only the call into the
+  # session is `session_call/2`'s: resolving the runtime and the input is not.
+  defp steered?(thread_id, run, message) do
+    runtime = runtime(run["providerInstanceId"])
+    input = steer_input(message)
+    session_call(fn -> runtime.steer(thread_id, run["id"], input) end, :gone) == :ok
   end
 
   # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
@@ -1713,7 +1716,9 @@ defmodule HalC2.Orchestration do
   defp steer(thread_id, run, command) do
     instance = run["providerInstanceId"] || "codex"
 
-    steer = fn -> runtime(instance).steer(thread_id, run["id"], steer_input(command)) end
+    runtime = runtime(instance)
+    input = steer_input(command)
+    steer = fn -> runtime.steer(thread_id, run["id"], input) end
 
     case session_call(steer, {:error, "its session stopped"}) do
       :ok ->

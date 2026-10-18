@@ -102,7 +102,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def rollback(thread_id, _plan) do
     reply =
       case Registry.lookup(@registry, thread_id) do
-        [{pid, _}] -> GenServer.call(pid, :rollback)
+        # One that stops as it is asked is as gone as one not found.
+        [{pid, _}] -> Orchestration.session_call(fn -> GenServer.call(pid, :rollback) end, :ok)
         [] -> :ok
       end
 

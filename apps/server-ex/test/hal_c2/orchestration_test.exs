@@ -107,6 +107,46 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  # The thread's session stops as it is asked to steer the running turn: the command
+  # answers as with no session, and the message does not join the turn.
+  test "a steer whose session stops as it is asked is refused while the turn runs" do
+    thread_id = launch("wait for it")
+    _ = await_run(thread_id, "running")
+    stand_in(HalC2.Codex.Registry, thread_id, :steer)
+
+    assert {:error, message} =
+             send_message(thread_id, "m2", "look here instead", %{
+               "dispatchMode" => %{"type" => "start_immediately"},
+               "deliveryIntent" => "auto"
+             })
+
+    assert message =~ "did not take the message into its running turn (its session stopped)"
+    assert ["running"] = Enum.map(runs(current(thread_id)), & &1["status"])
+  end
+
+  test "a promoted message whose session stops as it is asked to steer goes first instead" do
+    thread_id = launch("wait for it")
+    _ = await_run(thread_id, "running")
+    {:ok, _} = send_message(thread_id, "m2", "second")
+    {:ok, _} = send_message(thread_id, "m3", "third")
+    [active, _, third] = runs(await_statuses(thread_id, ["running", "queued", "queued"]))
+    stand_in(HalC2.Codex.Registry, thread_id, :steer)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{
+               "type" => "queued-message.promote-to-steer",
+               "threadId" => thread_id,
+               "queuedRunId" => third["id"],
+               "targetRunId" => active["id"]
+             })
+
+    state = current(thread_id)
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m3"))
+
+    assert %{"status" => "queued", "queuePosition" => 1} =
+             StreamState.get(state, "run")[third["id"]]
+  end
+
   test "a message runs a Codex turn and streams it into the thread" do
     thread_id = launch("list the files")
     state = await_run(thread_id, "completed")
@@ -2116,6 +2156,33 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(current(thread_id), "provider-thread")
     end
 
+    # The session stops as it is asked to drop the turns: a Codex rewind fails and
+    # changes nothing; a Claude one needs no session, as when none was running.
+    test "a rewind whose Codex session stops as it is asked fails", %{work: work} do
+      thread_id = launch_in(work, "write a.txt", "codex")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+      await_statuses(thread_id, ["completed", "completed"])
+      stand_in(HalC2.Codex.Registry, thread_id, :rollback)
+
+      assert {:error, "Failed to roll back codex provider thread " <> reason} =
+               rollback(thread_id, 1, %{"restoreFiles" => false})
+
+      assert reason =~ "its session stopped"
+      assert ["completed", "completed"] = Enum.map(runs(current(thread_id)), & &1["status"])
+    end
+
+    test "a rewind whose Claude session stops as it is asked goes ahead", %{work: work} do
+      thread_id = launch_in(work, "hello", "claudeAgent")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "hello again")
+      await_statuses(thread_id, ["completed", "completed"])
+      stand_in(HalC2.Claude.Registry, thread_id, :rollback)
+
+      assert {:ok, _} = rollback(thread_id, 1, %{"restoreFiles" => false})
+      assert ["completed", "rolled_back"] = Enum.map(runs(current(thread_id)), & &1["status"])
+    end
+
     test "files are only restored in a worktree of the thread's own" do
       thread_id = launch("write a.txt")
       await_statuses(thread_id, ["completed"])
@@ -2455,6 +2522,39 @@ defmodule HalC2.OrchestrationTest do
   defp current(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
   defp runs(state), do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+  # Stands in for the thread's session in `registry`: it exits as a released session
+  # would when it is asked `tag` (a request, or the tag of one). The real session, if
+  # any, leaves the registry and keeps running, so a turn it holds still runs.
+  defp stand_in(registry, thread_id, tag) do
+    case Registry.lookup(registry, thread_id) do
+      [{real, _}] ->
+        :sys.replace_state(real, fn state ->
+          :ok = Registry.unregister(registry, thread_id)
+          state
+        end)
+
+      [] ->
+        :ok
+    end
+
+    test = self()
+
+    # Not linked: its exit would take the test with it.
+    session =
+      spawn(fn ->
+        {:ok, _} = Registry.register(registry, thread_id, nil)
+        send(test, :registered)
+
+        receive do
+          {:"$gen_call", _from, request} when request == tag when elem(request, 0) == tag ->
+            exit({:shutdown, :released})
+        end
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(session, :kill) end)
+  end
 
   defp send_message(thread_id, message_id, text, extra \\ %{}) do
     Orchestration.dispatch(

@@ -102,8 +102,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   def rollback(thread_id, %{head: head}) do
     reply =
       case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-        [{pid, _}] -> GenServer.call(pid, :rollback, 30_000)
-        [] -> :ok
+        # One that stops as it is asked is as gone as one not found.
+        [{pid, _}] ->
+          HalC2.Orchestration.session_call(fn -> GenServer.call(pid, :rollback, 30_000) end, :ok)
+
+        [] ->
+          :ok
       end
 
     with :ok <- reply do
