@@ -176,6 +176,12 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
+  step "the developer is not told to leave --release out", context do
+    assert {:error, message} = context.pair_output
+    refute message =~ "leave --release out"
+    context
+  end
+
   # Starts the MC as a release does with the home the scenario chose.
   step "the server of that home is running", context do
     context = Storage.start(context)

@@ -195,13 +195,14 @@ defmodule HalC2.Test.Storage do
 
   defp pair_from(context, profile, args) do
     guard!(context, profile)
+    previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, profile)
 
     lines =
       try do
         Mc.run_task(Mix.Tasks.HalC2.Pair, args)
       after
-        Application.put_env(:hal_c2, :home, context[:running_profile])
+        Application.put_env(:hal_c2, :home, previous)
       end
 
     Map.put(context, :pair_output, lines)

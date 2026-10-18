@@ -276,6 +276,20 @@ Feature: Where HAL-C2 keeps its files
       And no store is made at the chosen home
 
     @mc
+    Scenario: The installed server's own pair command pairs with the server of a HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When an operator runs the installed server's own pair command
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: A checkout is not told to leave --release out when the server of a chosen home is not running
+      Given HAL_C2_MC_HOME is "/srv/mc"
+      When a developer asks a checkout for the installed server's pairing link
+      Then the developer is told the installed server is not running
+      And the developer is not told to leave --release out
+
+    @mc
     Scenario: Asking for the installed server's pairing link keeps a chosen home
       Given HAL_C2_MC_HOME is "/srv/mc"
       And the server of that home is running

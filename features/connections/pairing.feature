@@ -66,6 +66,21 @@ Feature: Pairing a client with an environment
     And no pairing link is listed
 
   @mc
+  Scenario Outline: A pairing command given an address a link cannot be built on says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "<address>"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And no pairing link is listed
+
+    Examples:
+      | address                  |
+      | box.tailnet.ts.net       |
+      | localhost:3780           |
+      | ftp://box.example        |
+      | https://box.example/?a=1 |
+      | https://box.example/#top |
+
+  @mc
   Scenario: A pairing command given a bad value says which one
     Given an administrator's client
     When an operator asks for a pairing link with the option "--tailscale-serve-port=foo"

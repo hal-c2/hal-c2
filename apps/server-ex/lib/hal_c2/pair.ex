@@ -8,7 +8,7 @@ defmodule HalC2.Pair do
       pair --tailscale [--tailscale-serve-port PORT]
       pair --release [BASE_URL | --tailscale]
 
-  `BASE_URL` defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
+  `BASE_URL` is an http or https address with no query or fragment, and defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
   `http://127.0.0.1:3790` for the installed MC (`:3780` for one run from a checkout), or
   the LAN or tailnet address it was bound to.
 
@@ -91,6 +91,19 @@ defmodule HalC2.Pair do
   def command_name,
     do: if(HalC2.Upgrade.release_root(), do: "hal-c2-service pair", else: "mix hal_c2.pair")
 
+  # The link is the address with `/?token=` after it, so an address with its own query or
+  # fragment, or without a scheme and host, would mint a token into a link nothing opens.
+  defp base_url?(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, query: nil, fragment: nil}
+      when scheme in ["http", "https"] and host not in [nil, ""] ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
   defp check_options([], [_, _ | _], _opts),
     do: {:error, "`#{command_name()}` takes at most one BASE_URL"}
 
@@ -101,6 +114,10 @@ defmodule HalC2.Pair do
       rest != [] and opts[:tailscale] ->
         {:error,
          "`#{command_name()} --tailscale` pairs through the tailnet name; it takes no BASE_URL"}
+
+      match?([_], rest) and not base_url?(hd(rest)) ->
+        {:error,
+         "BASE_URL must be an http or https address with no query or fragment, such as http://127.0.0.1:3780, not #{hd(rest)}"}
 
       port && !opts[:tailscale] ->
         {:error, "`--tailscale-serve-port` only applies with `--tailscale`"}
@@ -132,33 +149,34 @@ defmodule HalC2.Pair do
   # mint into a store nothing serves.
   defp locate(release) do
     home = Application.get_env(:hal_c2, :home)
-    chosen = home not in [nil, :dev]
+    chosen = if home not in [nil, :dev], do: home
 
-    cond do
-      chosen and (release == true or HalC2.Upgrade.release_root()) ->
-        installed(home)
-
-      release == true or (HalC2.Upgrade.release_root() && home == nil) ->
-        installed(nil)
-
-      true ->
-        {:ok, HalC2.RuntimeRecord.locate(home)}
+    if release == true or HalC2.Upgrade.release_root() do
+      installed(chosen)
+    else
+      {:ok, HalC2.RuntimeRecord.locate(home)}
     end
   end
 
   defp installed(home) do
     case HalC2.RuntimeRecord.running(home) do
-      nil -> {:error, not_running()}
+      nil -> {:error, not_running(home)}
       record -> {:ok, {home, record}}
     end
   end
 
-  defp not_running do
+  # "Leave --release out" only helps when no home was chosen: a chosen home is one MC's
+  # own, and a checkout's other MC is not it.
+  defp not_running(nil) do
     if HalC2.Upgrade.release_root(),
       do: "The installed MC is not running. Start it, then run `#{command_name()}` again.",
       else:
         "The installed MC is not running. Start it, or leave --release out to pair with the MC this checkout runs."
   end
+
+  defp not_running(_home),
+    do:
+      "The installed MC is not running at the home HAL_C2_HOME or HAL_C2_MC_HOME names. Start it, then run `#{command_name()}` again."
 
   defp base(true, port, serve_port, _rest, _running),
     do: HalC2.TailscaleServe.publish(port, serve_port)
