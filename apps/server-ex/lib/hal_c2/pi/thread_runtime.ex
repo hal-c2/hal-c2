@@ -25,7 +25,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 2
+  @state_version 3
   @registry HalC2.Pi.Registry
 
   # How long a call to Pi waits on its answer; the session's stats, read as a turn
@@ -142,7 +142,11 @@ defmodule HalC2.Pi.ThreadRuntime do
        # callers, and whether Pi settled while one was out and nothing it took has
        # started since.
        steers: :gen_server.reqids_new(),
-       settled: false
+       settled: false,
+       # Callers of steers Pi refused while that settle waits on other steers, or left
+       # unanswered as it exited, with their answers: they hear once the turn ends, or
+       # runs on (`steered/3`).
+       refused: []
      }}
   end
 
@@ -329,7 +333,9 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp migrate(%{v: @state_version} = state), do: state
 
   defp migrate(%{v: 1} = state),
-    do: Map.merge(state, %{v: 2, steers: :gen_server.reqids_new(), settled: false})
+    do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 2} = state), do: Map.merge(state, %{v: 3, refused: []})
 
   # --- session -------------------------------------------------------------------
 
@@ -846,26 +852,51 @@ defmodule HalC2.Pi.ThreadRuntime do
   # --- end of turn -----------------------------------------------------------------
 
   # Pi's answer to a steer, which its caller hears. One it took joins the running work,
-  # or starts new work that settles after this answer; one it refused starts nothing, so
-  # a settle that waited on it ends the turn now, before the caller hears the refusal:
-  # it finds the turn over and sends the message on its own (`HalC2.Orchestration`).
+  # or starts new work that settles after this answer, so the refusals held for that
+  # settle are heard now, while the turn runs. One it refused starts nothing, so a settle
+  # that waited on it alone ends the turn now, before the caller hears the refusal: it
+  # finds the turn over and sends the message on its own (`HalC2.Orchestration`). A
+  # refusal while the settle waits on other steers is held until they are answered, and
+  # a steer Pi exited without answering until its exit ends the turn (`:EXIT`).
   defp steered(state, from, reply) do
-    {answer, state} =
+    {answer, gone?} =
       case reply do
-        {:reply, {:ok, _}} -> {:ok, %{state | settled: false}}
-        {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, state}
-        {:reply, {:error, reason}} -> {{:error, format(reason)}, state}
+        {:reply, {:ok, _}} -> {:ok, false}
+        {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, true}
+        {:reply, {:error, reason}} -> {{:error, format(reason)}, false}
         # The connection itself is gone.
-        {:error, _down} -> {{:error, "Pi exited"}, state}
+        {:error, _down} -> {{:error, "Pi exited"}, true}
       end
 
-    state =
-      if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
-        do: settle(state),
-        else: state
+    held? =
+      state.turn != nil and
+        (gone? or (state.settled and :gen_server.reqids_size(state.steers) > 0))
 
-    GenServer.reply(from, answer)
-    state
+    cond do
+      answer == :ok ->
+        GenServer.reply(from, :ok)
+        refusals(%{state | settled: false})
+
+      held? ->
+        %{state | refused: [{from, answer} | state.refused]}
+
+      true ->
+        state = settle_held(state)
+        GenServer.reply(from, answer)
+        state
+    end
+  end
+
+  defp settle_held(state) do
+    if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
+      do: settle(state),
+      else: state
+  end
+
+  # The held refusals' callers hear them, once the turn ended or runs on.
+  defp refusals(state) do
+    for {from, answer} <- Enum.reverse(state.refused), do: GenServer.reply(from, answer)
+    %{state | refused: []}
   end
 
   # The session's entries since the turn started name the turn (its user message)
@@ -937,6 +968,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp end_turn(state, status, failure) do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
+    state = refusals(state)
     %{state | turn: nil, items: %{}, steers: unanswered(state.steers), settled: false}
   end
 

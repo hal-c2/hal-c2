@@ -560,6 +560,16 @@ Feature: Pi
     Then the sender hears Pi did not take the message
     And the Pi turn runs on without it
 
+  Scenario: Two messages Pi declines once its run settled are each sent on their own
+    Given a Pi turn that went idle just before two steers landed
+    When the user steers the thread with two messages at once that Pi declines
+    Then each message is sent on its own after the turn
+
+  Scenario: A message Pi exits on is sent on its own once the turn failed
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi exits on
+    Then the message is sent on its own after the turn
+
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running

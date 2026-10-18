@@ -3,14 +3,17 @@ defmodule HalC2.PiSteerPropTest do
   A state machine over one Pi thread (`HalC2.Pi.ThreadRuntime`) driven through the
   orchestration commands a client sends: send a message whose turn works until it is
   steered or stopped, either taking the steer into its running work or settling just
-  before the steer lands (so Pi answers it in a run of its own); steer the running turn,
-  with a message Pi takes, one it refuses, or one it refuses only once the run settled
-  (which finds the turn over, so it is sent as a message of its own); interrupt it.
+  before the steer lands (so Pi answers it in a run of its own), or just before two
+  steers sent at once land; steer the running turn, with a message Pi takes, one it
+  refuses, one it refuses only once the run settled (which finds the turn over, so it
+  is sent as a message of its own), or one Pi exits on before answering (which fails
+  the turn, so it is sent on its own too); steer it twice at once; interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
   answer is recorded in the thread, whichever way Pi ran it, and that a steer Pi refused
-  is an error for its sender that leaves the turn running. After each command the test
+  is an error for its sender that leaves the turn running. Messages resent on their own
+  at once may run in either order, so runs and replies compare as sets. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
   """
@@ -29,8 +32,10 @@ defmodule HalC2.PiSteerPropTest do
 
   @turns [
     %{"match" => "joins", "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]},
-    %{"match" => "ends", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => true}]}
+    %{"match" => "ends", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 1}]},
+    %{"match" => "pair", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 2}]}
   ]
+  @finished ~w(completed failed interrupted cancelled)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
 
@@ -90,28 +95,94 @@ defmodule HalC2.PiSteerPropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made; turn: the running turn's msg;
-  # how: whether its work takes a steer in or settles as it lands; replies: the steers
-  # answered, in order.
+  # how: whether its work takes a steer in, settles as one lands, or as two land;
+  # replies: the steers answered, in order.
   def initial_state, do: %{runs: [], turn: nil, how: nil, replies: [], next: 1}
 
   def command(%{turn: nil, next: next}),
-    do: {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends])]}
+    do: {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair])]}
 
-  def command(%{next: next}) do
+  # A turn that settles as two steers land waits for both: it is steered twice at once,
+  # or with a message Pi refuses before it waits on.
+  def command(%{how: :pair, next: next}) do
     frequency([
-      {3, {:call, __MODULE__, :steer, ["m#{next}", :taken]}},
-      {1, {:call, __MODULE__, :steer, ["m#{next}", :refused]}},
-      {1, {:call, __MODULE__, :steer, ["m#{next}", :declined]}},
+      {3,
+       {:call, __MODULE__, :steer_pair,
+        [
+          id(next),
+          id(next + 1),
+          oneof([
+            {:taken, :taken},
+            {:taken, :declined},
+            {:declined, :declined},
+            {:declined, :joins}
+          ])
+        ]}},
+      {1, {:call, __MODULE__, :steer, [id(next), :refused]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
 
+  def command(%{next: next}) do
+    frequency([
+      {3, {:call, __MODULE__, :steer, [id(next), :taken]}},
+      {1, {:call, __MODULE__, :steer, [id(next), :refused]}},
+      {1, {:call, __MODULE__, :steer, [id(next), :declined]}},
+      {1, {:call, __MODULE__, :steer, [id(next), :vanishes]}},
+      {1, {:call, __MODULE__, :interrupt, []}}
+    ])
+  end
+
+  # Padded, so the fake takes two steers sent at once in the order they were made.
+  defp id(n), do: "m" <> String.pad_leading(Integer.to_string(n), 3, "0")
+
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
+  def precondition(%{how: how}, {:call, _, :steer_pair, _}), do: how == :pair
+
+  def precondition(%{how: :pair}, {:call, _, :steer, [_, kind]}), do: kind == :refused
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
   def next_state(state, _result, {:call, _, :send, [msg, how]}) do
     runs = state.runs ++ [{msg, "running"}]
     %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
+  end
+
+  # Pi takes the first, then the second, each after the run settled.
+  def next_state(state, _result, {:call, _, :steer_pair, [a, b, kinds]}) do
+    state = %{state | next: state.next + 2}
+
+    case kinds do
+      {:taken, :taken} ->
+        end_turn(%{state | replies: state.replies ++ [a, b]}, "completed")
+
+      # The second, declined once nothing else is out, ends the turn and runs on its own.
+      {:taken, :declined} ->
+        state = end_turn(%{state | replies: state.replies ++ [a]}, "completed")
+        %{state | runs: state.runs ++ [{b, "completed"}], replies: state.replies ++ [b]}
+
+      # Both find the turn over, and run on their own.
+      {:declined, :declined} ->
+        state = end_turn(state, "completed")
+        own = [{a, "completed"}, {b, "completed"}]
+        %{state | runs: state.runs ++ own, replies: state.replies ++ [a, b]}
+
+      # The second starts work that runs on, so the first, declined, is an error for its
+      # sender; the turn's work takes the next steer in.
+      {:declined, :joins} ->
+        %{state | how: :joins}
+    end
+  end
+
+  # Pi exits with the steer unanswered: the turn fails, and the message runs on its own.
+  def next_state(state, _result, {:call, _, :steer, [msg, :vanishes]}) do
+    state = end_turn(state, "failed")
+
+    %{
+      state
+      | next: state.next + 1,
+        runs: state.runs ++ [{msg, "completed"}],
+        replies: state.replies ++ [msg]
+    }
   end
 
   def next_state(state, _result, {:call, _, :steer, [_msg, :refused]}),
@@ -147,10 +218,14 @@ defmodule HalC2.PiSteerPropTest do
     replied? =
       case call do
         {:call, _, :steer, [_, :refused]} -> match?({:error, _}, reply)
+        {:call, _, :steer_pair, [_, _, {:declined, :joins}]} -> match?([{:error, _}, :ok], reply)
+        {:call, _, :steer_pair, _} -> reply == [:ok, :ok]
         _ -> reply == :ok
       end
 
-    replied? and projection == %{runs: model.runs, replies: model.replies}
+    replied? and
+      Enum.sort(projection.runs) == Enum.sort(model.runs) and
+      Enum.sort(projection.replies) == Enum.sort(model.replies)
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -174,20 +249,42 @@ defmodule HalC2.PiSteerPropTest do
     reply(Orchestration.dispatch(message(msg, "#{how} #{msg}", "queue_after_active", "auto")), [])
   end
 
-  # `kind`: whether Pi takes the steer (:taken), which ends the turn, refuses it, or
-  # refuses it only once the run settled (:declined), which a turn taking it in takes.
+  # `kind`: whether Pi takes the steer (:taken), which ends the turn, refuses it, refuses
+  # it only once the run settled (:declined), which a turn taking it in takes, or exits
+  # before answering it (:vanishes).
   def steer(msg, kind) do
-    {text, ending} =
-      case kind do
-        :taken -> {"steer #{msg}", active_runs()}
-        :refused -> {"refuse #{msg}", []}
-        :declined -> {"steer #{msg}, declined once settled", active_runs()}
-      end
-
+    {text, ending} = steer_text(msg, kind)
     result = Orchestration.dispatch(message(msg, text, "start_immediately", "steer"))
-    # A declined steer sent on its own runs to its end too.
-    ending = if kind == :declined, do: ending ++ active_runs(), else: ending
+    # A steer sent on its own runs to its end too.
+    ending = if kind in [:declined, :vanishes], do: ending ++ active_runs(), else: ending
     reply(result, ending)
+  end
+
+  defp steer_text(msg, :taken), do: {"steer #{msg}", active_runs()}
+  defp steer_text(msg, :refused), do: {"refuse #{msg}", []}
+  defp steer_text(msg, :declined), do: {"steer #{msg}, declined once settled", active_runs()}
+  defp steer_text(msg, :vanishes), do: {"steer #{msg}, vanish on it", active_runs()}
+  # A steer whose own run matches the "joins" turn, which works on.
+  defp steer_text(msg, :joins), do: {"steer #{msg}, joins the work", []}
+
+  # Two steers sent at once, `kinds` as for `steer/2`.
+  def steer_pair(a, b, {kind_a, kind_b}) do
+    {text_a, ending} = steer_text(a, kind_a)
+    {text_b, _} = steer_text(b, kind_b)
+
+    replies =
+      [{a, text_a}, {b, text_b}]
+      |> Enum.map(fn {msg, text} ->
+        Task.async(fn ->
+          answer(Orchestration.dispatch(message(msg, text, "start_immediately", "steer")))
+        end)
+      end)
+      |> Task.await_many(@wait_ms)
+
+    # Unless the turn works on, every run it left, the ones sent on their own included,
+    # runs to its end.
+    ending = if kind_b == :joins, do: [], else: ending ++ unfinished_runs()
+    {replies, settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
   end
 
   def interrupt do
@@ -233,16 +330,15 @@ defmodule HalC2.PiSteerPropTest do
 
   defp active_runs, do: for(run <- runs(current()), run["status"] in @active, do: run["id"])
 
-  defp reply(result, ending) do
-    reply =
-      case result do
-        {:ok, %{}} -> :ok
-        {:error, message} -> {:error, message}
-        other -> {:unexpected, other}
-      end
+  defp unfinished_runs,
+    do: for(run <- runs(current()), run["status"] not in @finished, do: run["id"])
 
-    {reply, settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
-  end
+  defp reply(result, ending),
+    do: {answer(result), settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
+
+  defp answer({:ok, %{}}), do: :ok
+  defp answer({:error, message}), do: {:error, message}
+  defp answer(other), do: {:unexpected, other}
 
   # Waits until the runs in `ending` ended, nothing is starting, and a running turn
   # began saying "Working on it.", after which the fake waits.
@@ -260,7 +356,7 @@ defmodule HalC2.PiSteerPropTest do
 
     quiet? =
       not Enum.any?(runs(state), &(&1["status"] in ~w(preparing starting))) and
-        Enum.all?(ending, &(by_id[&1] == nil or by_id[&1]["status"] not in @active)) and
+        Enum.all?(ending, &(by_id[&1] == nil or by_id[&1]["status"] in @finished)) and
         Enum.all?(runs(state), &(&1["status"] not in @active or working?.(&1)))
 
     if quiet? do

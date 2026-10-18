@@ -19,10 +19,11 @@
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
-# abort, or a steer prompt, which it answers), {"settleOnSteer": true} (until an abort, or
-# a steer prompt, which reaches Pi only once this run has settled, and starts a run of
-# its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected; one
-# saying "decline" is rejected only once it reaches Pi after the run settled.
+# abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
+# or n steer prompts, which reach Pi only once this run has settled, in the order of their
+# text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
+# one saying "vanish" makes Pi exit before answering it; one saying "decline" is rejected
+# only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -195,6 +196,9 @@ def wait_for(pred):
             # A steer saying "refuse" is rejected before Pi accepts it.
             respond(msg, error="Pi cannot take this message now")
             continue
+        elif steer(msg) and "vanish" in msg.get("message", ""):
+            # Pi exits with a steer it has not answered.
+            os._exit(1)
         if pred(msg):
             return msg
 
@@ -314,11 +318,15 @@ def run_turn(text):
                     send({"type": "message_update", "message": assistant(said[0]),
                           "assistantMessageEvent": {"type": "text_delta", "delta": said[0]}})
         elif "settleOnSteer" in step:
-            if not aborted[0]:
+            steers = []
+            while not aborted[0] and len(steers) < int(step["settleOnSteer"]):
                 msg = wait_for(lambda m: m.get("type") == "abort" or steer(m))
                 if steer(msg):
-                    backlog.append(msg)
-                    break
+                    steers.append(msg)
+            # Steers sent at once reach the fake in either order; Pi takes them by text.
+            backlog.extend(sorted(steers, key=lambda m: m.get("message", "")))
+            if steers:
+                break
         elif "exit" in step:
             os._exit(step["exit"])
     if aborted[0]:

@@ -741,14 +741,19 @@ defmodule HalC2.Steps.Providers.Pi do
   # --- steering ---
 
   # Pi's turn says something, then waits: for a steer to join its work ("is still
-  # working"), or until a steer reaches it only after it settled, as one sent just as
-  # its run ended does ("went idle ...").
-  step ~r/^a Pi turn that (?<state>is still working|went idle just before the steer landed)$/,
+  # working"), or until one or two steers reach it only after it settled, as ones sent
+  # just as its run ended do ("went idle ...").
+  step ~r/^a Pi turn that (?<state>is still working|went idle just before (?:the steer|two steers) landed)$/,
        %{args: [state]} = context do
-    wait = if state == "is still working", do: "waitAbort", else: "settleOnSteer"
+    wait =
+      case state do
+        "is still working" -> %{"waitAbort" => true}
+        "went idle just before the steer landed" -> %{"settleOnSteer" => 1}
+        _two -> %{"settleOnSteer" => 2}
+      end
 
     turns = [
-      %{"match" => "a steered task", "steps" => [%{"text" => "Working on it."}, %{wait => true}]}
+      %{"match" => "a steered task", "steps" => [%{"text" => "Working on it."}, wait]}
     ]
 
     context =
@@ -765,18 +770,52 @@ defmodule HalC2.Steps.Providers.Pi do
   end
 
   step "the user steers the thread with {string}", %{args: [text]} = context do
-    {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "message.dispatch",
-        "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => World.thread_id(context, context.thread),
-        "messageId" => "msg-#{System.unique_integer([:positive])}",
-        "text" => text,
-        "attachments" => [],
-        "deliveryIntent" => "steer"
-      })
-
+    {:ok, _} = steer(context, text)
     Map.put(context, :steered, text)
+  end
+
+  defp steer(context, text) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "message.dispatch",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, context.thread),
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => text,
+      "attachments" => [],
+      "deliveryIntent" => "steer"
+    })
+  end
+
+  # The fake declines a steer that says "decline" once it reaches Pi after the run
+  # settled; the turn settles only once both have reached it, so both are out at once.
+  step "the user steers the thread with two messages at once that Pi declines", context do
+    texts = ["decline the first", "decline the second"]
+
+    for reply <- texts |> Enum.map(&Task.async(fn -> steer(context, &1) end)) |> Task.await_many(),
+        do: assert({:ok, _} = reply)
+
+    Map.put(context, :steered, texts)
+  end
+
+  # Each message runs as a message of its own once the steered turn ended: completed
+  # when Pi declined it, failed when Pi exited.
+  step ~r/^(?:each|the) message is sent on its own after the turn$/, context do
+    state = FakeAcp.await_runs(context, 1 + length(List.wrap(context.steered)))
+    [turn | own] = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert turn["status"] == Map.get(context, :ended, "completed")
+    messages = Map.new(StreamState.list(state, "message"), &{&1["id"], &1})
+
+    assert Enum.sort(for run <- own, do: messages[run["userMessageId"]]["text"]) ==
+             Enum.sort(List.wrap(context.steered))
+
+    assert Enum.all?(own, &(&1["status"] == "completed"))
+    context
+  end
+
+  # The fake exits on a steer that says "vanish", before answering it.
+  step "the user steers the thread with a message Pi exits on", context do
+    {:ok, _} = steer(context, "vanish now")
+    Map.merge(context, %{steered: "vanish now", ended: "failed"})
   end
 
   # The fake refuses a steer that says "refuse", as Pi rejects one before accepting it.
