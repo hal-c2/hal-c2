@@ -325,7 +325,14 @@ void verify(const Model& m, Sut& sut) {
     RC_ASSERT(Sut::toasts(sut.second->bridge(), kFailure) == m.secondFailures);
     RC_ASSERT(Sut::toasts(sut.second->bridge(), kNotConnected) == m.secondWarnings);
   }
-  // Until the streams catch up the windows show what they last knew.
+  // Until the streams catch up the windows show what they last knew, but whether a
+  // resume is outstanding is the app's own: a failed call clears it at once, and a
+  // resume asked while stale never sets it.
+  const auto resuming = [&](const QVariantMap& turn, const QString& thread) {
+    RC_ASSERT(turn.value(QStringLiteral("queueResuming")).toBool() == m.pending.contains(thread));
+  };
+  resuming(sut.turn(), m.open);
+  if (m.secondOpen) resuming(sut.secondTurn(), m.secondAt);
   if (m.stale) return;
   sut.settle(m.open);
   // A request one window asked shows in the other when it shows the same thread.

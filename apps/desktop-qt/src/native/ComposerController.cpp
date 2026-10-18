@@ -2101,6 +2101,14 @@ bool ComposerController::resumeQueue() {
                             QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
                             [shell = QPointer<NativeShell>(shell), key, windowId](const QJsonValue&, const std::optional<QString>& error) {
                               if (!shell) return;
+                              // Cleared by the answer alone, not by the held flag clearing on the
+                              // stream: the answer may come first, and until the event follows, the
+                              // button is enabled for a queue still shown as held. A click then
+                              // asks again, which is harmless: `queue.resume` only clears the
+                              // flag and starts the next run if none is active, so a second one
+                              // is a no-op. Holding `resuming` until the flag clears would
+                              // instead leave "Resuming…" stuck whenever the queue is held again
+                              // at once (the next run hitting the same usage limit).
                               shell->common<Kept>().resuming.remove(key);
                               if (error) {
                                 NativeWindow* window = shell->window(windowId);
@@ -2409,7 +2417,10 @@ QVariantMap ComposerController::turnState() const {
   const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
   state.insert(QStringLiteral("queue"), queued.queue);
   state.insert(QStringLiteral("waiting"), queued.waiting);
-  // Held with nothing listed shows no card, so it offers no resume either.
+  // Held with nothing listed shows no card, so it offers no resume either. A queued run
+  // comes with its message in the one transaction that queues it (the MC's `queue_run`),
+  // so a run without its message on a live stream is the moment before the two events
+  // are read, not a state that lasts; an empty card in that moment would only flash.
   state.insert(QStringLiteral("queueHeld"), queued.held && (!queued.queue.isEmpty() || !queued.waiting.isEmpty()));
   return state;
 }
