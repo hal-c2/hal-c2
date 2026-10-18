@@ -52,7 +52,8 @@ const PNG_PREVIEW = {
 // The native decode takes a varying time, and the staged image appears only once it
 // returns. A test that pastes an image injects this decoder: `started` resolves when the
 // paste reached the decode (everything before it, like reading the file, is done), and the
-// image stays unstaged until the test calls `release`.
+// image stays unstaged until the test calls `release`. It gates one image: a second call
+// passes the already-released gate at once, so a multi-image test needs one decoder per image.
 function gatedImageDecoder() {
   const started = deferred<void>();
   const gate = deferred<void>();
@@ -1193,6 +1194,8 @@ describe("ChatView acknowledged submissions", () => {
       );
       await setup.renderOnce();
     });
+    // The busy status shows first, so a paste that never reaches the decode fails with a frame.
+    await setup.waitForFrame((frame) => frame.includes("Adding error screenshot.png"));
     // The decode starts once the workspace read resolved; the image is staged after it.
     await decoder.started;
     expect(reads).toEqual([
@@ -1203,7 +1206,10 @@ describe("ChatView acknowledged submissions", () => {
       decoder.release();
     });
     // The busy status also names the file, so wait for the staged chip itself.
-    await setup.waitForFrame((frame) => frame.includes("× error scree"));
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("× error scree") && !frame.includes("/workspace/project-one/docs/error"),
+    );
     await React.act(async () => {
       await setup.mockInput.typeText("explain this image");
       await setup.renderOnce();
@@ -1248,6 +1254,8 @@ describe("ChatView acknowledged submissions", () => {
         await setup.mockInput.pasteBracketedText(`Please inspect ${escapedImagePath}`);
         await setup.renderOnce();
       });
+      // The busy status shows first, so a paste that never reaches the decode fails with a frame.
+      await setup.waitForFrame((frame) => frame.includes("Adding outside workspace.png"));
       // The decode starts once the file is read from disk; the image is staged after it.
       await decoder.started;
       await React.act(async () => {
