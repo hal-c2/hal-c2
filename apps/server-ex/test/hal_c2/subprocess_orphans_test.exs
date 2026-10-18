@@ -109,6 +109,55 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  test "a record that cannot be read is kept, and a later boot kills its program" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+    File.chmod!(path, 0o000)
+
+    boot(:blind)
+
+    alive!(sub)
+    assert File.ls!(Orphans.dir()) == [record]
+    :ok = stop_supervised(:blind)
+    File.chmod!(path, 0o600)
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "records that cannot be listed are left for a later boot" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    File.chmod!(Orphans.dir(), 0o300)
+    on_exit(fn -> File.chmod(Orphans.dir(), 0o700) end)
+
+    boot(:blind)
+
+    alive!(sub)
+    :ok = stop_supervised(:blind)
+    File.chmod!(Orphans.dir(), 0o700)
+
+    boot(:next)
+
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a file where the records go does not stop the boot" do
+    File.mkdir_p!(Path.dirname(Orphans.dir()))
+    File.write!(Orphans.dir(), "")
+
+    boot(:next)
+
+    assert {:error, {:untracked, :enotdir}} = Subprocess.start(["sh", "-c", @echo])
+  end
+
   test "a program that leads no group is killed alone" do
     # The background `sleep` is in the shell's group, which a group kill would end; the
     # shell says how it ended, then carries on.

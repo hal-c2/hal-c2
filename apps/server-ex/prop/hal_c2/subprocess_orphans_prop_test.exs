@@ -7,7 +7,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
   the programs the dead MC left, each with its background command, and spare the
   rest; there is a record for each program running, and one that a service which
   restarted no longer tracks stays until the next boot. A restart leaves a record
-  being written alone.
+  being written alone. A boot that cannot list or read the records kills nothing and
+  still comes up, and the next reap (a restart of the service, or a later boot) kills
+  what it left.
   """
 
   use ExUnit.Case, async: false
@@ -41,11 +43,17 @@ defmodule HalC2.SubprocessOrphansPropTest do
   end
 
   # `running`: id => whether this incarnation of the service tracks it; one that
-  # restarted forgets what it tracked. `records`: the ids that have a record.
-  # `orphans`: the ids a dead MC left running.
-  def initial_state, do: %{up: false, next: 0, running: %{}, records: [], orphans: []}
+  # restarted forgets what it tracked. `records`: the ids that have a record naming
+  # this MC, `left` the ones naming a dead MC. `orphans`: the ids a dead MC left running.
+  def initial_state,
+    do: %{up: false, next: 0, running: %{}, records: [], left: [], orphans: []}
 
-  def command(%{up: false}), do: {:call, __MODULE__, :boot, []}
+  def command(%{up: false}),
+    do:
+      frequency([
+        {3, {:call, __MODULE__, :boot, []}},
+        {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}}
+      ])
 
   def command(state) do
     stops =
@@ -64,11 +72,12 @@ defmodule HalC2.SubprocessOrphansPropTest do
   end
 
   def precondition(state, {:call, _, :boot, []}), do: not state.up
+  def precondition(state, {:call, _, :blind_boot, _}), do: not state.up
   def precondition(state, {:call, _, :stop, [id]}), do: state.up and is_map_key(state.running, id)
   def precondition(state, {:call, _, _, _}), do: state.up
 
-  def next_state(state, _, {:call, _, :boot, []}),
-    do: %{state | up: true, records: [], orphans: []}
+  def next_state(state, _, {:call, _, :boot, []}), do: reaped(%{state | up: true})
+  def next_state(state, _, {:call, _, :blind_boot, _}), do: %{state | up: true}
 
   def next_state(state, _, {:call, _, :start, [id]}),
     do: %{
@@ -89,7 +98,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
   end
 
   def next_state(state, _, {:call, _, :restart_service, []}),
-    do: %{state | running: Map.new(state.running, fn {id, _} -> {id, false} end)}
+    do: reaped(%{state | running: Map.new(state.running, fn {id, _} -> {id, false} end)})
 
   # Recorded, but by no incarnation of the service that watches it end.
   def next_state(state, _, {:call, _, :start_during_restart, [id]}) do
@@ -104,22 +113,39 @@ defmodule HalC2.SubprocessOrphansPropTest do
   end
 
   def next_state(state, _, {:call, _, :die, []}),
-    do: %{state | up: false, running: %{}, orphans: Map.keys(state.running)}
+    do: %{
+      state
+      | up: false,
+        running: %{},
+        records: [],
+        left: state.left ++ state.records,
+        orphans: state.orphans ++ Map.keys(state.running)
+    }
+
+  # A reap kills what dead MCs left running and drops every record naming one.
+  defp reaped(state), do: %{state | left: [], orphans: []}
 
   def postcondition(state, {:call, _, :boot, []}, {killed, records}),
     do: Enum.sort(killed) == Enum.sort(state.orphans) and records == []
 
+  def postcondition(state, {:call, _, :blind_boot, _}, {alive, records}),
+    do: alive == Enum.sort(state.orphans) and records == pids(state.left)
+
   def postcondition(state, {:call, _, :start, _} = call, records),
-    do: records == pids(next_state(state, nil, call).records)
+    do: records == records_of(next_state(state, nil, call))
 
   def postcondition(state, {:call, _, :stop, _} = call, {status, records}),
-    do: status == {:ok, 0} and records == pids(next_state(state, nil, call).records)
+    do: status == {:ok, 0} and records == records_of(next_state(state, nil, call))
 
-  def postcondition(state, {:call, _, :restart_service, []}, {alive, records}),
-    do: alive == Enum.sort(Map.keys(state.running)) and records == pids(state.records)
+  def postcondition(state, {:call, _, :restart_service, []}, {killed, alive, records}),
+    do:
+      Enum.sort(killed) == Enum.sort(state.orphans) and
+        alive == Enum.sort(Map.keys(state.running)) and records == pids(state.records)
 
-  def postcondition(state, {:call, _, :start_during_restart, _} = call, records),
-    do: records == pids(next_state(state, nil, call).records)
+  def postcondition(state, {:call, _, :start_during_restart, _} = call, {killed, records}),
+    do:
+      Enum.sort(killed) == Enum.sort(state.orphans) and
+        records == records_of(next_state(state, nil, call))
 
   def postcondition(_state, {:call, _, :die, []}, result), do: result == :ok
 
@@ -128,17 +154,29 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # A new MC: a stand-in OS process for it, then the service, which reaps as it starts.
   # Returns the orphans whose program and background command ended, and the records.
   def boot do
-    {:ok, mc} = Exile.Process.start_link(["sh", "-c", "read l"])
-    {:ok, os_pid} = Exile.Process.os_pid(mc)
-    Process.put(:mc, mc)
-    Process.put(:owner, %{"pid" => os_pid, "started" => Orphans.started(os_pid)})
+    new_mc()
     start_service()
+    {killed(), records()}
+  end
 
-    killed =
-      for id <- Process.get(:orphans, []), ended?(Process.delete({:sub, id})), do: id
+  # A new MC whose reap cannot list the records, or read any of them, until it is up.
+  # Returns the orphans that still answer, and the records.
+  def blind_boot(how) do
+    new_mc()
+    dir = Orphans.dir()
+    File.mkdir_p!(dir)
+    names = File.ls!(dir)
 
-    Process.put(:orphans, [])
-    {killed, records()}
+    case how do
+      :unlistable -> File.chmod!(dir, 0o300)
+      :unreadable -> for name <- names, do: File.chmod!(Path.join(dir, name), 0o000)
+    end
+
+    start_service()
+    File.chmod!(dir, 0o700)
+    for name <- names, do: File.chmod!(Path.join(dir, name), 0o600)
+    alive = for id <- Process.get(:orphans, []), alive?(Process.get({:sub, id})), do: id
+    {Enum.sort(alive), records()}
   end
 
   def start(id) do
@@ -167,7 +205,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
     File.write!(in_flight, ~s({"pid": ))
     start_service()
     :ok = File.rm(in_flight)
-    {for({id, sub} <- subs(), alive?(sub), do: id) |> Enum.sort(), records()}
+    killed = killed()
+    {killed, for({id, sub} <- subs(), alive?(sub), do: id) |> Enum.sort(), records()}
   end
 
   # A program starts after the service crashed and before its supervisor starts it
@@ -178,7 +217,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
     Process.put({:sub, id}, sub)
     Process.put({:pid, id}, Subprocess.os_pid(sub))
     start_service()
-    records()
+    {killed(), records()}
   end
 
   # The MC's VM dies: nothing runs its shutdown, and its programs keep running.
@@ -194,6 +233,22 @@ defmodule HalC2.SubprocessOrphansPropTest do
   end
 
   # --- helpers -----------------------------------------------------------------------
+
+  defp records_of(state), do: pids(state.records ++ state.left)
+
+  defp new_mc do
+    {:ok, mc} = Exile.Process.start_link(["sh", "-c", "read l"])
+    {:ok, os_pid} = Exile.Process.os_pid(mc)
+    Process.put(:mc, mc)
+    Process.put(:owner, %{"pid" => os_pid, "started" => Orphans.started(os_pid)})
+  end
+
+  # The orphans the reap that just ran ended, each with its background command.
+  defp killed do
+    killed = for id <- Process.get(:orphans, []), ended?(Process.delete({:sub, id})), do: id
+    Process.put(:orphans, [])
+    killed
+  end
 
   defp start_service,
     do: {:ok, _} = GenServer.start(Orphans, [owner: Process.get(:owner)], name: Orphans)

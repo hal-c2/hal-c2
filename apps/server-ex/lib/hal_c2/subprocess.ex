@@ -23,6 +23,8 @@ defmodule HalC2.Subprocess do
 
   alias Exile.Process, as: Proc
 
+  require Logger
+
   @enforce_keys [:proc, :reader]
   defstruct [:proc, :reader]
 
@@ -56,13 +58,21 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  # A program the next boot could not find if this MC died is not run at all.
+  # A program the next boot could not find if this MC died does not outlive its failed
+  # record. The wait is bounded: one in uninterruptible sleep takes SIGKILL only once it
+  # wakes, and the caller is a session's start.
   defp track(proc) do
     {:ok, os_pid} = Proc.os_pid(proc)
 
     with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid) do
-      Proc.kill(proc, :sigkill)
-      Proc.await_exit(proc)
+      with :ok <- Proc.kill(proc, :sigkill),
+           {:ok, _status} <- Proc.await_exit(proc, 2_000) do
+        :ok
+      else
+        failed ->
+          Logger.warning("program #{os_pid} runs untracked, its kill gave #{inspect(failed)}")
+      end
+
       {:error, {:untracked, reason}}
     end
   end

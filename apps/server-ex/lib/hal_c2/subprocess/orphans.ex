@@ -22,7 +22,10 @@ defmodule HalC2.Subprocess.Orphans do
   group of its own (`setsid`, `setpgid`: a shell on a pty, a `node` child spawned
   `detached`) is not in it and keeps running, a dev server holding its port with it.
   The agent that would resume is dead either way. Reaching those would take a cgroup,
-  or the ancestry recorded at spawn (hal-c2/hal-c2#387).
+  or the ancestry recorded at spawn (hal-c2/hal-c2#387). Nor does it reach the
+  background commands of a program that had already exited by the boot (a CLI that
+  stopped on its closed stdin): with no leader left to check, its group's id cannot
+  be told from a later group's, so the record is dropped and they are not signalled.
 
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
@@ -228,8 +231,18 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   defp reap(dir, restart?) do
+    names =
+      case File.ls(dir) do
+        {:ok, names} ->
+          names
+
+        {:error, reason} ->
+          Logger.warning("could not list #{dir}, left for the next boot: #{reason}")
+          []
+      end
+
     killed =
-      for name <- File.ls!(dir),
+      for name <- names,
           not (restart? and String.ends_with?(name, ".tmp")),
           path = Path.join(dir, name),
           reap_one(path) == :killed,
@@ -265,40 +278,55 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # A record that is not one this module writes is dropped. Nothing here may stop the
-  # MC from booting: a record that cannot be dealt with (no `kill` to run) is kept for a
-  # later boot.
+  # Nothing here may stop the MC from booting: a record that cannot be dealt with now
+  # (unreadable, no `kill` to run) is kept for a later boot.
   defp reap_one(path) do
-    with {:ok, text} <- File.read(path),
+    case File.read(path) do
+      {:ok, text} ->
+        reap_record(path, JSON.decode(text))
+
+      {:error, :enoent} ->
+        :gone
+
+      {:error, reason} ->
+        Logger.warning("could not read #{path}, kept for the next boot: #{reason}")
+        :kept
+    end
+  rescue
+    e ->
+      Logger.warning("could not reap #{path}, kept for the next boot: #{Exception.message(e)}")
+      :kept
+  end
+
+  # A record that is not one this module writes is dropped.
+  defp reap_record(
+         path,
          {:ok,
           %{
             "pid" => pid,
             "started" => started,
             "mc" => %{"pid" => mc, "started" => mc_started} = owner
           }}
-         when is_integer(pid) and pid > 1 and is_binary(started) and is_integer(mc) and mc > 0 and
-                is_binary(mc_started) <- JSON.decode(text) do
-      if running?(owner) do
-        :kept
-      else
-        # Read again right before the signal, with the group the program leads now.
-        case process(pid) do
-          {_state, ^started, group} ->
-            kill(path, pid, started, group == pid)
-
-          _ ->
-            File.rm(path)
-            :gone
-        end
-      end
-    else
-      _ ->
-        File.rm(path)
-        :gone
-    end
-  rescue
-    e ->
-      Logger.warning("could not reap #{path}, kept for the next boot: #{Exception.message(e)}")
+       )
+       when is_integer(pid) and pid > 1 and is_binary(started) and is_integer(mc) and mc > 0 and
+              is_binary(mc_started) do
+    if running?(owner) do
       :kept
+    else
+      # Read again right before the signal, with the group the program leads now.
+      case process(pid) do
+        {_state, ^started, group} ->
+          kill(path, pid, started, group == pid)
+
+        _ ->
+          File.rm(path)
+          :gone
+      end
+    end
+  end
+
+  defp reap_record(path, _malformed) do
+    File.rm(path)
+    :gone
   end
 end
