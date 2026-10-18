@@ -12,6 +12,7 @@ import {
   AgentSessionScanError,
   ExternalLauncherError,
   ExternalLauncherUnknownEditorError,
+  FilesLocalPathError,
   FilesystemBrowseError,
   GitCommandError,
   GitManagerError,
@@ -389,6 +390,7 @@ export function makeV3Session(input: {
           return fold.rows(
             String(frame.mc),
             frame.rows as ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+            frame.reset === true,
           );
         return [];
       });
@@ -589,6 +591,16 @@ export function makeV3Session(input: {
           partialPath: request.partialPath as never,
           failure: "read_directory_failed",
           cause,
+        }),
+    );
+
+    // Answered by this session's MC, whichever member the path is on.
+    const localPath = forward(
+      WS_METHODS.filesLocalPath,
+      (request: { readonly path: string }, message) =>
+        new FilesLocalPathError({
+          path: request.path,
+          message: (message.trim() || "The mc could not place the file.") as never,
         }),
     );
 
@@ -1134,6 +1146,7 @@ export function makeV3Session(input: {
     const served: Record<string, (request: never) => unknown> = {
       [WS_METHODS.projectsMutate]: mutateProject,
       [WS_METHODS.filesystemBrowse]: browse,
+      [WS_METHODS.filesLocalPath]: localPath,
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: dispatchCommand,
       [ORCHESTRATION_V2_WS_METHODS.launchThread]: launchThread,
       [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: getTurnDiff,

@@ -29,7 +29,7 @@ defmodule HalC2.Web.Router do
 
   get "/.well-known/hal-c2/environment" do
     body =
-      HalC2.Environment.descriptor()
+      HalC2.Environment.public_descriptor()
       |> Map.put("mc", Atom.to_string(node()))
       |> Map.put("cluster", cluster())
       |> JSON.encode_to_iodata!()

@@ -23,5 +23,5 @@
       "opentui-qml/testing": ["./types/opentui-qml-testing.d.ts"]
     }
   },
-  "include": ["src", "features"]
+  "include": ["src", "features", "build.ts"]
 }

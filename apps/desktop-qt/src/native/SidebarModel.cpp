@@ -838,6 +838,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   view.state = QVariantMap{
       {QStringLiteral("localEnvironmentId"), nullable(input.localEnvironmentId)},
       {QStringLiteral("localProjects"), localProjects},
+      {QStringLiteral("localFolders"), input.localFolders},
       {QStringLiteral("projects"), projects},
       {QStringLiteral("scopeProjectKey"), nullable(scopeProjectKey)},
       {QStringLiteral("pinned"), pinned},

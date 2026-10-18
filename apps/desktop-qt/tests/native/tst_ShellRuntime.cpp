@@ -193,6 +193,12 @@ private slots:
     bridge.setMcOrigin(QUrl("http://127.0.0.1:6182"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
     bridge.setLocalFolderImportEnabled(true);
+    // Whether the MC runs here is thisMachine::hosts' answer, not the origin's.
+    QVERIFY(bridge.localDirectoryPath(url).isEmpty());
+    bool here = false;
+    bridge.setMcHere([&here] { return here; });
+    QVERIFY(bridge.localDirectoryPath(url).isEmpty());
+    here = true;
     QCOMPARE(bridge.localDirectoryPath(url), QFileInfo(directory.path()).canonicalFilePath());
     QVERIFY(bridge.localDirectoryPath(QUrl("https://example.com/folder")).isEmpty());
     QVERIFY(bridge.localDirectoryPath(QUrl("file://server/share")).isEmpty());
@@ -202,7 +208,11 @@ private slots:
     file.close();
     QVERIFY(bridge.localDirectoryPath(QUrl::fromLocalFile(file.fileName())).isEmpty());
     // An MC on another machine: its folders are not this machine's.
-    bridge.setMcOrigin(QUrl("https://remote.example"));
+    here = false;
+    QVERIFY(bridge.localDirectoryPath(url).isEmpty());
+    // Nor are they while the shell is connected to no MC.
+    here = true;
+    bridge.setMcOrigin(QUrl());
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
   }
 

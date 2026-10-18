@@ -14,6 +14,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThisMachine.h"
 #include "ToastController.h"
 
 namespace {
@@ -142,8 +143,7 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
 // A remote MC is not retried while this device has no network, and is tried
 // at once when it returns. The MC on this machine needs none.
 void ConnectionHealthController::networkChanged() {
-  const QString host = m_client->origin().host();
-  const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
+  const bool local = thisMachine::loopbackHost(m_client->origin().host());
   const bool online = local || !m_network.disconnected() || m_network.interfaceUp();
   m_client->setOnline(online);
   if (online) m_client->wake();

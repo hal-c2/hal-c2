@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "Brick.h"
+#include "FakeFiles.h"
 #include "Harness.h"
 #include "Stream.h"
 #include "World.h"
@@ -419,6 +420,13 @@ const Steps steps([] {
   // A link in a reply, followed with the mouse or from its menu.
   step(QStringLiteral("the agent's reply links to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     answer(world, QStringLiteral("See [%1](%1) for the details.").arg(c[0]));
+    world.mc.part<Seen>().link = c[0];
+  });
+  // A file of the project's workspace, linked by its path.
+  step(QStringLiteral("the agent's reply links to the file %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& fake = fakeFiles(world.mc);
+    if (!fake.files.contains(c[0])) fake.files.insert(c[0], QString());
+    answer(world, QStringLiteral("See [%1](%1).").arg(c[0]));
     world.mc.part<Seen>().link = c[0];
   });
   const auto linkPoint = [](World& world) {

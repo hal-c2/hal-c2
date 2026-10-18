@@ -140,7 +140,6 @@ Row {
                 text: chip.source ? chip.source.accessibility : ""
                 color: Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 wrapMode: Text.Wrap
             }
         }

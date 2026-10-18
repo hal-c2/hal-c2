@@ -275,8 +275,17 @@ const Steps steps([] {
     world.bridge().setLocalFolderImportEnabled(false);
   });
   step(QStringLiteral("the shell's MC runs on another machine"), [](World& world, const Captures&, const Table&) {
-    world.bridge().setMcOrigin(QUrl(QStringLiteral("https://mc-b.example.ts.net")));
+    world.servedFrom(kOtherMachine);
   });
+  // Sidebar.qml and HomePage.qml open the folder picker on the sidebar's localFolders.
+  for (const bool here : {true, false}) {
+    step(here ? QStringLiteral("adding a project picks a folder on this machine")
+              : QStringLiteral("adding a project does not pick a folder on this machine"),
+         [here](World& world, const Captures&, const Table&) {
+           const QVariant local = world.state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("localFolders"));
+           expect(local.toBool() == here, QStringLiteral("the thread list's localFolders is %1").arg(local.toString()));
+         });
+  }
   step(QStringLiteral("the user asks to add a project without a folder"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
   });

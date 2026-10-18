@@ -190,6 +190,9 @@ struct Input {
   // The environment of the MC the shell runs against; its folders are the
   // ones the folder explorer lists.
   Nullable localEnvironmentId;
+  // Whether that MC runs on this machine (thisMachine::hosts), so a folder
+  // picked here is one of its folders.
+  bool localFolders = false;
   // Environments that are listed but unreachable; their rows stay, marked
   // offline, with the actions that need the environment off.
   QSet<QString> offlineEnvironments;

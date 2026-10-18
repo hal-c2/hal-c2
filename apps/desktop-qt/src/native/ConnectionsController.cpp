@@ -2,7 +2,6 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
-#include <QHostAddress>
 #include <QUrl>
 
 #include "NativeShell.h"
@@ -12,6 +11,7 @@
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThisMachine.h"
 
 namespace {
 
@@ -44,9 +44,7 @@ QString pairingUrl(const QString& address, const QString& code) {
 }
 
 bool loopback(const QUrl& address) {
-  const QString host = address.host();
-  // All of 127.0.0.0/8 and ::1 are this machine, not only 127.0.0.1.
-  return host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0 || QHostAddress(host).isLoopback();
+  return thisMachine::loopbackHost(address.host());
 }
 
 }  // namespace
