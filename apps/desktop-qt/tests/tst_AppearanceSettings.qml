@@ -80,7 +80,8 @@ Item {
         function test_theStandardThemeCanBeDuplicated() {
             const page = createTemporaryObject(pageComponent, root);
             mouseClick(findChild(page, "duplicate:hal-c2"));
-            compare(Themes.calls.filter(call => call.name === "duplicate").map(call => call.args[0]), ["hal-c2"]);
+            compare(Themes.calls.filter(call => call.name === "duplicateStandard").length, 1);
+            compare(Themes.calls.filter(call => call.name === "duplicate").length, 0, "a saved theme is not what it copies");
         }
 
         // features/navigation/appearance.feature: each theme shows its colors.

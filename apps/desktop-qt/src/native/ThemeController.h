@@ -113,6 +113,10 @@ public:
   Q_INVOKABLE QString saveCustom(const QVariantMap& theme);
   // Saves an editable copy ("<label> copy") of any theme offered; its id.
   Q_INVOKABLE QString duplicate(const QString& id);
+  // The same for the standard look, which is no theme offered: apart from
+  // duplicate() so that a saved theme whose id is the standard look's (made
+  // before it was kept from them) is not copied for it.
+  Q_INVOKABLE QString duplicateStandard();
   // Removes a saved theme; a choice that named it goes back to the standard look.
   Q_INVOKABLE bool removeCustom(const QString& id);
   // Asks first ("Remove “<label>”?"), then removes it.

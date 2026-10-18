@@ -81,6 +81,10 @@ QtObject {
         record("duplicate", [id]);
         return id + "-copy";
     }
+    function duplicateStandard() {
+        record("duplicateStandard", []);
+        return "hal-c2-copy";
+    }
     function removeCustom(id) {
         return record("removeCustom", [id]);
     }

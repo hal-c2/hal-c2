@@ -38,6 +38,13 @@ const QString kCustomThemes = QStringLiteral("customThemes");
 const QString kSaveFailed = QStringLiteral("Couldn't save theme selection");
 const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
 
+// A draft as a new theme of its own: no id yet, and "<label> copy".
+QVariantMap asCopy(QVariantMap draft) {
+  draft.insert(QStringLiteral("id"), QString());
+  draft.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(draft.value(QStringLiteral("label")).toString()));
+  return draft;
+}
+
 // A theme's id from its name.
 QString idFromName(const QString& name) {
   static const QRegularExpression other(QStringLiteral("[^a-z0-9]+"));
@@ -510,7 +517,7 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
     // A new theme: an id from its name no other theme or the standard look has.
     const QString base = idFromName(label);
     id = base;
-    for (int n = 2; builtIns().reserved.contains(id) || find(id); ++n) id = QStringLiteral("%1-%2").arg(base).arg(n);
+    for (int n = 2; builtIns().reserved.contains(id) || id == kStandardId || find(id); ++n) id = QStringLiteral("%1-%2").arg(base).arg(n);
   }
   const QJsonObject colors = canonicalColors(QJsonObject::fromVariantMap(theme.value(QStringLiteral("colors")).toMap()));
   const QJsonObject entry{{QStringLiteral("id"), id},
@@ -528,13 +535,14 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
 }
 
 QString ThemeController::duplicate(const QString& id) {
-  // The standard look is no definition, but draft() reads it back as one.
-  const auto definition = find(id);
-  if (!definition && id != kStandardId) return {};
-  QVariantMap copy = draft(id);
-  copy.insert(QStringLiteral("id"), QString());
-  copy.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(copy.value(QStringLiteral("label")).toString()));
-  return saveCustom(copy);
+  if (!find(id)) return {};
+  return saveCustom(asCopy(draft(id)));
+}
+
+QString ThemeController::duplicateStandard() {
+  return saveCustom(asCopy({{QStringLiteral("label"), QStringLiteral("HAL-C2")},
+                            {QStringLiteral("appearance"), m_appearance},
+                            {QStringLiteral("colors"), builtIns().standard.value(m_appearance).toObject().toVariantMap()}}));
 }
 
 void ThemeController::requestRemoveMany(const QStringList& ids) {

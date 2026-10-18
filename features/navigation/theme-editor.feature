@@ -200,6 +200,12 @@ Feature: Custom themes
       When the user duplicates the standard theme
       Then an editable copy of the standard theme is added
 
+    @desktop
+    Scenario: A saved theme with the standard theme's id does not stand in for it
+      Given a saved theme has the standard theme's id
+      When the user duplicates the standard theme
+      Then the copy of the standard theme draws the standard colors, not the saved theme's
+
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (seedName `${label} copy`)
     @backlog @desktop
     Scenario: A duplicated theme is named after the original

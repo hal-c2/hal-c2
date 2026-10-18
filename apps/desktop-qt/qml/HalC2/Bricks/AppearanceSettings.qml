@@ -279,7 +279,7 @@ SettingsPage {
             Accessible.name: qsTr("Duplicate %1").arg(qsTr("HAL-C2"))
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Duplicate")
-            onClicked: Themes.duplicate("hal-c2")
+            onClicked: Themes.duplicateStandard()
         }
     }
 
