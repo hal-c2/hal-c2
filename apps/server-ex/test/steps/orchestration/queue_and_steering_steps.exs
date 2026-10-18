@@ -235,21 +235,33 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
-  # Both carry the message's id, as a client retrying while the first is on its way.
+  # Both carry the message's id, as a client retrying while the first is on its way. The
+  # repeat is sent while Codex still holds the first: the message is in the turn, and
+  # Codex has not answered.
   step "the user's client sends the steer {string} to {string} twice at once",
        %{args: [text, thread]} = context do
+    message_id = "msg-#{System.unique_integer([:positive])}"
+
     command = %{
       "type" => "message.dispatch",
       "threadId" => World.thread_id(context, thread),
-      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "messageId" => message_id,
       "text" => text,
       "attachments" => [],
       "deliveryIntent" => "steer"
     }
 
-    replies =
-      for(_ <- 1..2, do: Task.async(fn -> HalC2.Orchestration.dispatch(command) end))
-      |> Task.await_many()
+    hold = Path.join(context.mc.home, "hold-steer")
+    File.touch!(hold)
+    first = Task.async(fn -> HalC2.Orchestration.dispatch(command) end)
+
+    World.await_state(context, thread, fn state ->
+      StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] != nil
+    end)
+
+    second = HalC2.Orchestration.dispatch(command)
+    File.rm!(hold)
+    replies = [Task.await(first), second]
 
     context |> Map.put(:thread, thread) |> Map.put(:replies, replies) |> Map.put(:sent, text)
   end
