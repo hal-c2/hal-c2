@@ -2827,8 +2827,16 @@ defmodule HalC2.Orchestration do
           ),
         else: create("provider-session", session_id, fresh_session)
 
+    # Its earlier runs' native turns are in the native thread it no longer has
+    # (`HalC2.Orchestration.Fork`).
     taken_over =
-      if foreign, do: %{"providerInstanceId" => instance, "nativeThreadRef" => nil}, else: %{}
+      if foreign,
+        do: %{
+          "providerInstanceId" => instance,
+          "nativeThreadRef" => nil,
+          "nativeSinceRunOrdinal" => ordinal
+        },
+        else: %{}
 
     provider_changes =
       if provider_thread || foreign do

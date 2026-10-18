@@ -69,6 +69,16 @@ Feature: Changing model and provider mid-thread
     Then the fork's first turn forks the Codex thread "codex-work-thread-1" after "codex-work-turn-2"
     And the provider thread of "t1" on "codex-work" names that instance's session
 
+  # The provider's own instance starts a new conversation when it takes the shared id
+  # back, so its runs from before then are no longer in a conversation it has.
+  @mc
+  Scenario: A fork of the provider's own run from before instances had their own sessions gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" back to "codex" and sends a message
+    And the user forks "t1" after its first run and sends on "codex"
+    Then the fork's first turn starts a new Codex thread with the conversation
+
   @mc
   Scenario: A session carried to a thread from before instances had their own sessions continues on its instance
     Given a second Codex instance "codex-work" with its own home

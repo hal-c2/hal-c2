@@ -409,9 +409,9 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
-  step "the user forks {string} after its second run and sends on {string}",
-       %{args: [thread, instance]} = context do
-    context = World.fork(context, thread, 2, "fork")
+  step "the user forks {string} after its {word} run and sends on {string}",
+       %{args: [thread, nth, instance]} = context do
+    context = World.fork(context, thread, %{"first" => 1, "second" => 2}[nth], "fork")
     assert {:ok, _} = context.reply
     context = switch(context, "fork", instance, @models["codex"])
     run(context, "fork", "where are we")
@@ -424,6 +424,12 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
 
     assert World.latest_run(context, "fork")["status"] == "completed"
     context
+  end
+
+  step "the fork's first turn starts a new Codex thread with the conversation", context do
+    World.await_latest_run(context, "fork", "completed")
+    assert World.codex_requests(context, "thread/fork") == []
+    assert_history_before(Map.put(context, :thread, "fork"), "where are we")
   end
 
   step "the provider thread of {string} on {string} names that instance's session",
