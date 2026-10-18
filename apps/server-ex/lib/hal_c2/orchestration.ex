@@ -652,7 +652,8 @@ defmodule HalC2.Orchestration do
   # The promoted message joins the running turn before the provider is asked to take
   # it, as a steer does (`reserve_steer/3`): a second promote finds its run no longer
   # queued, and the message sits ahead of the answer. A refusal puts it back in the
-  # queue, first, and interrupts the turn, which starts it next.
+  # queue, first, and interrupts the turn, which starts it next. A thread that is
+  # moving keeps its turn, and the message waits first in its queue.
   defp promote(thread_id, queued, target, message, command) do
     promoted =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
@@ -695,12 +696,18 @@ defmodule HalC2.Orchestration do
             HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
             {:ok, %{"sequence" => sequence(thread_id)}}
 
-          {:error, _} ->
+          {:error, reason} ->
             unpromote(thread_id, queued, message)
             result = restart_promoted(thread_id, command)
             # A turn that ended while it was out of the queue did not start it.
             start_next(thread_id)
-            result
+
+            with {:error, why} <- result do
+              provider = HalC2.ThreadMove.provider_name(target["providerInstanceId"] || "codex")
+
+              {:error,
+               "#{provider} did not take the message into its running turn (#{reason}), so it waits first in the queue. #{why}"}
+            end
         end
 
       "queued" ->
@@ -711,22 +718,21 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # The refused message's run, queued again, first, in the one transaction: the queue
+  # may have changed since the promote took it out.
   defp unpromote(thread_id, queued, message) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = [
-        upsert(
-          state,
-          "run",
-          queued["id"],
-          &Map.merge(&1, %{
-            "status" => "queued",
-            "queuePosition" => queued["queuePosition"],
-            "completedAt" => nil
-          })
-        ),
-        upsert(state, "message", message["id"], &Map.put(&1, "runId", queued["id"])),
-        {"turn-item", "turn-item:user:#{message["id"]}", Patch.delete()}
-      ]
+      changes =
+        [
+          upsert(
+            state,
+            "run",
+            queued["id"],
+            &Map.merge(&1, %{"status" => "queued", "completedAt" => nil})
+          ),
+          upsert(state, "message", message["id"], &Map.put(&1, "runId", queued["id"])),
+          {"turn-item", "turn-item:user:#{message["id"]}", Patch.delete()}
+        ] ++ first_in_queue(state, queued["id"])
 
       {Enum.reject(changes, &is_nil/1), :ok}
     end)
@@ -1663,18 +1669,18 @@ defmodule HalC2.Orchestration do
   defp restart_promoted(thread_id, command) do
     queued_id = command["queuedRunId"]
 
-    with {:ok, result} <-
-           queue_change(thread_id, fn state ->
-             order = [
-               queued_id | queued_runs(state) |> Enum.map(& &1["id"]) |> List.delete(queued_id)
-             ]
-
-             for {id, position} <- Enum.with_index(order, 1),
-                 do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
-           end) do
+    with {:ok, result} <- queue_change(thread_id, &first_in_queue(&1, queued_id)) do
       _ = interrupt_any(thread_id, command["targetRunId"])
       {:ok, result}
     end
+  end
+
+  # Queue positions with `run_id` first and the other queued runs after it, in order.
+  defp first_in_queue(state, run_id) do
+    order = [run_id | queued_runs(state) |> Enum.map(& &1["id"]) |> List.delete(run_id)]
+
+    for {id, position} <- Enum.with_index(order, 1),
+        do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
   end
 
   defp edit_claims(thread_id, %{"attachments" => attachments} = command)

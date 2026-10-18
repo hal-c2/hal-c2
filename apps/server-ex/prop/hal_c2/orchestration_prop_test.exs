@@ -6,7 +6,8 @@ defmodule HalC2.OrchestrationPropTest do
   MC send the agent a message of its own (a `notification`, as a delegated task's
   result is); send a message again with its message id, as a client retrying after a
   reconnect does, or send the same steer twice at once;
-  cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
+  cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
+  promoted one); resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
@@ -57,10 +58,13 @@ defmodule HalC2.OrchestrationPropTest do
         Process.put(:work, work)
         log = Path.join(home, "codex-requests.log")
         Process.put(:codex_log, log)
+        Process.put(:reject_steer, Path.join(home, "reject-steer"))
+        Process.put(:refused_steers, [])
 
         Application.put_env(:hal_c2, :codex_command, [
           "env",
           "FAKE_CODEX_LOG=#{log}",
+          "FAKE_CODEX_REJECT_STEER=#{Process.get(:reject_steer)}",
           "python3",
           "-u",
           @fake_codex
@@ -169,7 +173,25 @@ defmodule HalC2.OrchestrationPropTest do
              [{t, m} <- oneof(sent), {_, before} <- oneof([{nil, nil} | sent])],
              do: {:call, __MODULE__, :reorder, [t, m, before]}
            )},
-          {3, let({t, m} <- oneof(sent), do: {:call, __MODULE__, :promote, [t, m]})}
+          {3,
+           let(
+             [{t, m} <- oneof(sent), how <- oneof([:taken, :taken, :refused])],
+             do: {:call, __MODULE__, :promote, [t, m, how]}
+           )}
+        ]
+
+    # A promote is worth aiming at a message that is still queued.
+    queued = for {t, thread} <- threads, m <- thread.queue, do: {t, m}
+
+    on_queued =
+      if queued == [],
+        do: [],
+        else: [
+          {3,
+           let(
+             [{t, m} <- oneof(queued), how <- oneof([:taken, :refused])],
+             do: {:call, __MODULE__, :promote, [t, m, how]}
+           )}
         ]
 
     running =
@@ -191,7 +213,7 @@ defmodule HalC2.OrchestrationPropTest do
       if(limited == [], do: [], else: [{4, {:call, __MODULE__, :recover, [oneof(limited)]}}]) ++
         if armed == [], do: [], else: [{4, {:call, __MODULE__, :sweep, []}}]
 
-    frequency(always ++ on_messages ++ on_running ++ on_limits)
+    frequency(always ++ on_messages ++ on_queued ++ on_running ++ on_limits)
   end
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
@@ -410,9 +432,9 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  def next_state(state, _result, {:call, _, :promote, [tid, msg]}) do
+  def next_state(state, _result, {:call, _, :promote, [tid, msg, how]}) do
     case promote_refusal(state, tid, msg) do
-      nil -> update(state, tid, &promoted(&1, msg))
+      nil -> update(state, tid, &promoted(&1, msg, how))
       _ -> state
     end
   end
@@ -517,7 +539,8 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
     do: refusal(state, tid, :queue) || :ok
 
-  defp expected_reply(state, :promote, [tid, msg]), do: promote_refusal(state, tid, msg) || :ok
+  defp expected_reply(state, :promote, [tid, msg, _how]),
+    do: promote_refusal(state, tid, msg) || :ok
 
   defp expected_reply(state, :recover, [tid]),
     do:
@@ -663,15 +686,16 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # A queued message steers the running turn, or goes first in the queue when no turn
-  # runs. One for another instance interrupts the running turn and goes first.
-  defp promoted(thread, msg) do
+  # runs. One for another instance, or one the provider refuses to take, interrupts the
+  # running turn and goes first.
+  defp promoted(thread, msg, how) do
     instance = Enum.find(thread.runs, &(&1.msg == msg)).instance
 
     case running(thread) do
       nil ->
         %{thread | queue: [msg | List.delete(thread.queue, msg)]}
 
-      %{instance: other} when other != instance ->
+      %{instance: other} when other != instance or how == :refused ->
         %{thread | queue: [msg | List.delete(thread.queue, msg)]}
         |> end_running(:interrupted)
         |> start_next()
@@ -865,8 +889,13 @@ defmodule HalC2.OrchestrationPropTest do
         "beforeRunId" => before && run_of(tid, before)
       })
 
-  def promote(tid, msg) do
+  # A refused promote has Codex refuse every `turn/steer` it is sent meanwhile; their
+  # texts are taken back off the ones Codex took (`provider_steers/1`).
+  def promote(tid, msg, how) do
     ending = active_runs(tid)
+    reject = Process.get(:reject_steer)
+    asked = steer_requests()
+    if how == :refused, do: File.touch!(reject)
 
     result =
       Orchestration.dispatch(%{
@@ -875,6 +904,11 @@ defmodule HalC2.OrchestrationPropTest do
         "queuedRunId" => run_of(tid, msg),
         "targetRunId" => List.first(ending)
       })
+
+    if how == :refused do
+      File.rm!(reject)
+      Process.put(:refused_steers, Process.get(:refused_steers) ++ (steer_requests() -- asked))
+    end
 
     reply(result, if(match?({:ok, _}, result), do: ending, else: []))
   end
@@ -1105,24 +1139,27 @@ defmodule HalC2.OrchestrationPropTest do
     end)
   end
 
-  # The texts of the `turn/steer` requests Codex was sent for these messages, once for
+  # The texts of the `turn/steer` requests Codex took for these messages, once for
   # every request. Every generated text names its message (`wait m3`, `wait m3 edit
   # 1`), so a text is one message's, and a message steered twice is in the list twice.
   defp provider_steers(texts) do
-    log = Process.get(:codex_log)
     texts = MapSet.new(texts)
 
-    steers =
-      if File.exists?(log) do
-        for line <- File.stream!(log),
-            %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
-            text = hd(params["input"])["text"],
-            MapSet.member?(texts, text),
-            do: text
-      else
-        []
-      end
+    (steer_requests() -- Process.get(:refused_steers))
+    |> Enum.filter(&MapSet.member?(texts, &1))
+    |> Enum.sort()
+  end
 
-    Enum.sort(steers)
+  # The texts of every `turn/steer` Codex was sent, in order.
+  defp steer_requests do
+    log = Process.get(:codex_log)
+
+    if File.exists?(log) do
+      for line <- File.stream!(log),
+          %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
+          do: hd(params["input"])["text"]
+    else
+      []
+    end
   end
 end
