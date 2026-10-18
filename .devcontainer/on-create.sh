@@ -35,8 +35,10 @@ sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 
 # mise pins Erlang, Elixir, Node and Bun in mise.toml, which the MC needs
 # (`mise run mc`). Erlang compiles from source, so it needs its build deps.
-# The installer's version is pinned so a new mise release cannot break every
-# new container; bump it with mise.toml when a tool needs a newer mise.
+# The mise version is pinned so a new mise release cannot break every new
+# container (the installer script itself is whatever mise.run serves, the same
+# trust as the vp installer above); bump it with mise.toml when a tool needs a
+# newer mise. Its shims reach PATH through remoteEnv in devcontainer.json.
 installer=$(mktemp)
 curl -fsSL https://mise.run -o "$installer"
 MISE_VERSION=v2026.9.9 sh "$installer"

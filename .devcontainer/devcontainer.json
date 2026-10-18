@@ -23,6 +23,11 @@
     // the worktree default. An explicit --home-dir still wins.
     "HAL_C2_HOME": "${containerWorkspaceFolder}/.hal-c2"
   },
+  "remoteEnv": {
+    // mise's shims put mise.toml's tools (mix, elixir, erl, bun) on PATH for
+    // terminals, extensions and tasks, not only inside `mise run`/`mise exec`.
+    "PATH": "${containerEnv:PATH}:/home/vscode/.local/share/mise/shims"
+  },
   "mounts": [
     // vp keeps the pnpm content-addressable store and metadata cache under
     // ~/.cache/pnpm (verified: the v11 store dir lives there); mounting a
