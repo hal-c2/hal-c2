@@ -499,7 +499,9 @@ defmodule HalC2.Acp do
 
     try do
       result = read_agent(id, dir)
-      locked(id, fn -> publish(id, generation, result) end)
+      # Worked out before the lock, which only `:persistent_term` work may run under.
+      error = error_message(id, result)
+      locked(id, fn -> publish(id, generation, result, error) end)
     catch
       _, _ -> :ok
     after
@@ -509,7 +511,11 @@ defmodule HalC2.Acp do
     end
   end
 
-  defp publish(id, generation, result) do
+  defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
+  defp error_message(_id, {:error, reason}), do: describe(reason)
+  defp error_message(_id, _result), do: nil
+
+  defp publish(id, generation, result, error) do
     if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
       for {key, value} <- Enum.reverse(Process.get(@staged, [])),
           do: :persistent_term.put({__MODULE__, id, key}, value)
@@ -519,11 +525,11 @@ defmodule HalC2.Acp do
           :persistent_term.erase({__MODULE__, id, :error})
 
         {:error, :unauthenticated} ->
-          :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
+          :persistent_term.put({__MODULE__, id, :error}, error)
           :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
 
-        {:error, reason} ->
-          :persistent_term.put({__MODULE__, id, :error}, describe(reason))
+        {:error, _reason} ->
+          :persistent_term.put({__MODULE__, id, :error}, error)
 
         _ ->
           :ok
@@ -543,7 +549,8 @@ defmodule HalC2.Acp do
   end
 
   # Serializes a read's publication with `forget/1` for one instance, on this MC.
-  # Held by HalC2.Settings via forget/1: nothing under it may call Settings.
+  # Held by HalC2.Settings via forget/1: nothing under it may call Settings or wait on
+  # IO, only read and write `:persistent_term`.
   defp locked(id, fun), do: :global.trans({{__MODULE__, id}, self()}, fun, [node()])
 
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits

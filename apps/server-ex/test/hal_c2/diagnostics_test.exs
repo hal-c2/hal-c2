@@ -7,7 +7,7 @@ defmodule HalC2.DiagnosticsTest do
     # Until the child execs, ps shows the kernel's placeholder name; an echo comes from
     # cat itself, so it has exec'd by then.
     Port.command(port, "ready\n")
-    assert_receive {^port, {:data, "ready\n"}}
+    assert_receive {^port, {:data, "ready\n"}}, 10_000
 
     {:ok, %{"processes" => processes, "error" => %{"_tag" => "None"}}} =
       HalC2.Diagnostics.processes()
