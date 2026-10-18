@@ -69,6 +69,26 @@ class SidebarRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // A time of day reads with plain spaces whatever the locale separates it with:
+  // the narrow no-break space (U+202F) of newer CLDR data, and the no-break space
+  // (U+00A0) Spanish puts inside "p. m.".
+  void aTimeOfDayHasPlainSpaces() {
+    const QDateTime evening(QDate(2026, 9, 23), QTime(18, 5), QTimeZone::UTC);
+    const QLocale spanish(QLocale::Spanish, QLocale::Argentina);
+    // The cases mean something only while the locale writes the space this test is about.
+    for (const QString& format : {QStringLiteral("locale"), QStringLiteral("12-hour")}) {
+      const QString raw = format == QLatin1String("12-hour") ? spanish.toString(evening.time(), QStringLiteral("h:mm AP"))
+                                                              : spanish.toString(evening.time(), QLocale::ShortFormat);
+      QVERIFY2(raw.contains(QChar(0x00A0)), qPrintable(format + QStringLiteral(": the locale no longer writes a no-break space: ") + raw));
+      const QString time = sidebar::timeOfDay(evening, format, spanish);
+      QVERIFY2(!time.contains(QChar(0x00A0)) && !time.contains(QChar(0x202F)), qPrintable(format + QStringLiteral(": ") + time));
+      QVERIFY2(time.contains(QLatin1Char(' ')), qPrintable(format + QStringLiteral(": ") + time));
+    }
+    // en-US puts U+202F before PM on newer CLDR data, and a plain space before it on older.
+    const QString english = sidebar::timeOfDay(evening, QStringLiteral("locale"), QLocale(QLocale::English, QLocale::UnitedStates));
+    QCOMPARE(english, QStringLiteral("6:05 PM"));
+  }
+
   // Two threads snoozed until the same time read in the same order whichever
   // MC's rows came first, as ties do in the other sections.
   void snoozedTiesReadTheSameEveryTime() {

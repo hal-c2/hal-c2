@@ -203,13 +203,8 @@ const Steps steps([] {
          for (const sidebar::SnoozePreset& preset : world.native().sidebar()->snoozePresets()) {
            if (preset.id == QLatin1String("evening")) evening = preset.whenLabel;
          }
-         // The sidebar writes the narrow no-break space of newer CLDR data (U+202F), and a no-break space (U+00A0), as a plain one.
-         QString system = QLocale(QLocale::English, QLocale::UnitedStates).toString(QTime(18, 0), QLocale::ShortFormat);
-         system.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
-         const QString wanted = c[0].startsWith(QLatin1String("the way"))
-                                    ? system
-                                    : c[0].startsWith(QLatin1String("with AM")) ? QStringLiteral("6:00 PM")
-                                                                                 : QStringLiteral("18:00");
+         // en-US reads "6:00 PM" however the CLDR data spaces it; tst_SidebarRegression pins the characters.
+         const QString wanted = c[0].startsWith(QLatin1String("on a 24")) ? QStringLiteral("18:00") : QStringLiteral("6:00 PM");
          expect(evening == wanted, QStringLiteral("this evening reads \"%1\", not \"%2\"").arg(evening, wanted));
        });
 
