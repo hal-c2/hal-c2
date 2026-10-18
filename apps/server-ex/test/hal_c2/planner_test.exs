@@ -633,6 +633,46 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 7, "milestone" => nil} = input
     end
 
+    test "keeps one mark per task, the newer; the older issue still goes out by the task's remembered one" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+      op = fn n -> {"t", {"update", issue.(n), nil}} end
+
+      # Two late pushes left #7, then #8, in the milestone "ms" after the task moved on;
+      # the refusals left the task on its `synced`, which remembers #7.
+      synced =
+        %{
+          "title" => "Launch",
+          "due" => nil,
+          "after" => ["t"],
+          "refs" => %{"t" => issue.(7)}
+        }
+        |> Sync.misplaced([op.(7)])
+        |> Sync.misplaced([op.(8)])
+
+      assert synced["misplaced"] == %{"t" => issue.(8)}
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      assert [{"update", out, _}, {"update", into, _}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 4} = into
+    end
+
     test "takes the issue out of any milestone once the task names none" do
       input = corrected(Map.delete(task(nil), "issue"))
       assert %{"number" => 7, "milestone" => nil} = input

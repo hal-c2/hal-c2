@@ -845,19 +845,18 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp relate(synced, "parent", id, ref), do: synced |> Map.put("parent", id) |> remember(id, ref)
 
-  # `ref` is the issue taken off, when the relation is a milestone's and it is known.
-  defp unrelate(synced, key, id, ref \\ nil)
-
+  # `ref` is the issue taken off. A milestone's mark is cleared only for the issue it
+  # names, so there is no way to take a task off without saying which issue that was.
   defp unrelate(synced, "after", id, ref),
     do: synced |> Map.update!("after", &(&1 -- [id])) |> placed(id, ref)
 
-  defp unrelate(synced, "parent", _id, _ref), do: Map.put(synced, "parent", nil)
+  defp unrelate(synced, "parent", _id), do: Map.put(synced, "parent", nil)
 
   # The issue `ref` of the task `id` related to the milestone or off it is no longer
   # misplaced in it, nor is the task's mark of another issue, which stays until its own
-  # correction took. `ref` nil is the issue the mark names.
+  # correction took. A `ref` that is not an issue keeps the mark.
   defp placed(%{"misplaced" => at} = synced, id, ref) do
-    if is_map_key(at, id) and (ref == nil or Plan.same_ref?(at[id], ref)),
+    if is_map_key(at, id) and Plan.same_ref?(at[id], ref),
       do: %{synced | "misplaced" => Map.delete(at, id)},
       else: synced
   end
@@ -938,7 +937,7 @@ defmodule HalC2Plugins.Planner.Sync do
       for id <- synced["after"] -- kept,
           pushed,
           r = had(synced, items, id),
-          do: {"removeBlockedBy", Map.put(on_was, "blockedBy", r), &unrelate(&1, "after", id)}
+          do: {"removeBlockedBy", Map.put(on_was, "blockedBy", r), &unrelate(&1, "after", id, r)}
 
     block =
       for id <- new["after"] -- kept,
@@ -1078,7 +1077,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
     moves =
       for(
-        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- unheld(marked, new),
+        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- unheld(marked, new, synced, items),
         not holds?.(id) or not kept?.(id),
         issue = had(synced, items, id),
         do: {id, issue, nil, &unrelate(&1, "after", id, issue)}
@@ -1121,8 +1120,19 @@ defmodule HalC2Plugins.Planner.Sync do
            }, took}
   end
 
-  # The tasks `marked` as misplaced in the milestone `new` that it does not hold.
-  defp unheld(marked, new), do: for({id, _} <- marked, id not in new["after"], do: id)
+  # The tasks `marked` as misplaced in the milestone `new` that it does not hold, whose
+  # issue the mark names is also the one `synced` has them for: the correction takes that
+  # issue out, so the removal would ask it twice. A mark that names another issue (a
+  # newer one replaced the mark of the issue the task was relinked from) leaves the
+  # removal of the older to the task's.
+  defp unheld(marked, new, synced, items),
+    do:
+      for(
+        {id, issue} <- marked,
+        id not in new["after"],
+        Plan.same_ref?(issue, had(synced, items, id)),
+        do: id
+      )
 
   # The numbers of the milestones of `repository` whose tasks hold the task `id`, but for
   # the milestone `except`.
@@ -1169,6 +1179,11 @@ defmodule HalC2Plugins.Planner.Sync do
   `synced`, what GitHub has of a milestone, with the tasks of `reasserts` (`reasserts/4`)
   on it as misplaced, each with the issue GitHub still has in the milestone until its op
   took.
+
+  A task has one mark: a task names one issue at a time, so a newer mark for a task
+  replaces its older one. The issue the older named is not lost: the task left it, and
+  while the milestone's `synced` has the task (a refusal leaves it there) `pushes/5` takes
+  that issue out as it does for any task relinked since, from the `refs` it remembers.
   """
   def misplaced(synced, reasserts) do
     at =
