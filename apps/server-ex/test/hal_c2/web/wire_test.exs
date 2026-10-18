@@ -35,6 +35,21 @@ defmodule HalC2.Web.WireTest do
     assert Wire.patch("turn-item", %{"a" => %{"progress" => "more"}}, "subagent", start) == nil
   end
 
+  # Text exactly at the limit is not cut, so the client holds all of it: the first
+  # append past it is sent as the cut text, and only later ones send nothing.
+  test "an append to text exactly at the limit is sent as the cut text, once" do
+    at = String.duplicate("x", @limit)
+    assert folded(item(at), ["y", "z"]) == Wire.entity("turn-item", item(at <> "yz"))
+
+    assert %{"s" => %{"progress" => _}} =
+             Wire.patch("turn-item", %{"a" => %{"progress" => "y"}}, "subagent", item(at))
+
+    assert Wire.patch("turn-item", %{"a" => %{"progress" => "z"}}, "subagent", item(at <> "y")) ==
+             nil
+
+    refute Wire.appends_past_limit?("turn-item", %{"a" => %{"progress" => "y"}}, item(at))
+  end
+
   test "an append that stays under the limit goes through as it is" do
     patch = %{"a" => %{"progress" => "bc"}}
     assert Wire.patch("turn-item", patch, "subagent", item("a")) == patch
