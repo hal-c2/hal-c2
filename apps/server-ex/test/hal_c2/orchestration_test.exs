@@ -915,28 +915,23 @@ defmodule HalC2.OrchestrationTest do
     # #98: the steer is recorded before Codex is asked, so the repeat finds it sent.
     test "the same steer sent twice at once reaches the provider once", %{tmp_dir: dir} do
       log = Path.join(dir, "codex-requests.log")
-
-      Application.put_env(:hal_c2, :codex_command, [
-        "env",
-        "FAKE_CODEX_LOG=#{log}",
-        "python3",
-        "-u",
-        @fake_codex
-      ])
-
+      gates = held_steers(dir, ["FAKE_CODEX_LOG=#{log}"])
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
 
       steer = fn ->
-        send_message(thread_id, "m2", "look here instead", %{
+        send_message(thread_id, "m2", "hold this", %{
           "dispatchMode" => %{"type" => "start_immediately"},
           "deliveryIntent" => "steer"
         })
       end
 
-      [first, second] = [Task.async(steer), Task.async(steer)]
+      # The repeat is decided while Codex holds the first.
+      first = Task.async(steer)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      assert {:ok, _} = steer.()
+      File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(first)
-      assert {:ok, _} = Task.await(second)
 
       state = await_statuses(thread_id, ["completed"])
 
@@ -2481,6 +2476,33 @@ defmodule HalC2.OrchestrationTest do
           else: await_item(thread_id, type)
     after
       5_000 -> flunk("no #{type} item")
+    end
+  end
+
+  # Codex holds a steer whose text starts with "hold " until the gate file "steer" in
+  # the returned directory exists.
+  defp held_steers(dir, env \\ []) do
+    gates = Path.join(dir, "gates")
+    File.mkdir_p!(gates)
+
+    Application.put_env(
+      :hal_c2,
+      :codex_command,
+      ["env", "FAKE_CODEX_GATE=#{gates}" | env] ++ ["python3", "-u", @fake_codex]
+    )
+
+    gates
+  end
+
+  defp await_turn_item(thread_id, id) do
+    if StreamState.get(current(thread_id), "turn-item")[id] do
+      :ok
+    else
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> await_turn_item(thread_id, id)
+      after
+        5_000 -> flunk("no turn item #{id}")
+      end
     end
   end
 
