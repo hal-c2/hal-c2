@@ -100,6 +100,19 @@ private slots:
     QVERIFY(!pairing::readInvitation(wrapped(link)));
   }
 
+  // The wrapper's cap is exact too: 9 * 2048 + 64 characters are read, one more is
+  // turned away. The padding is a query item beside the carried link, so the link
+  // is within its cap either way and only the wrapper's cap can tell them apart.
+  void theWrapperCapIsExact() {
+    constexpr qsizetype kLongestWrapped = 9 * 2048 + 64;
+    const QString head = wrapped(linkOf(1500)) + QStringLiteral("&pad=");
+    QVERIFY(head.size() < kLongestWrapped);
+    const QString atCap = head + QString(kLongestWrapped - head.size(), QLatin1Char('a'));
+    QCOMPARE(atCap.size(), kLongestWrapped);
+    QVERIFY(pairing::readInvitation(atCap));
+    QVERIFY(!pairing::readInvitation(atCap + QLatin1Char('a')));
+  }
+
   // The wrapper has a cap of its own, so that nothing is decoded however long.
   // The padding is outside the carried link, which stays within its cap, so
   // only the wrapper's cap can turn it away.
