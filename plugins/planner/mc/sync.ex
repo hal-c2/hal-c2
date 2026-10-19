@@ -1076,7 +1076,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
     to_correct =
       for {id, issue} = at <- marked,
-          id not in new["after"] or not Plan.same_ref?(issue, ref(items, id)),
+          not restored?(id, issue, new["after"], items),
           do: at
 
     moves =
@@ -1126,10 +1126,17 @@ defmodule HalC2Plugins.Planner.Sync do
   # `asks` with those for one issue and milestone made one, in the order they came, its
   # `took` running theirs.
   defp asked(asks) do
-    same = fn {_, issue, milestone, _} -> {key(issue), milestone} end
+    {order, grouped} =
+      Enum.reduce(asks, {[], %{}}, fn {_, issue, milestone, _} = ask, {order, grouped} ->
+        at = {key(issue), milestone}
 
-    for {id, issue, milestone, _} = first <- Enum.uniq_by(asks, same) do
-      tooks = for ask <- asks, same.(ask) == same.(first), do: elem(ask, 3)
+        {if(is_map_key(grouped, at), do: order, else: [at | order]),
+         Map.update(grouped, at, [ask], &[ask | &1])}
+      end)
+
+    for at <- Enum.reverse(order) do
+      [{id, issue, milestone, _} | _] = group = Enum.reverse(grouped[at])
+      tooks = for {_, _, _, took} <- group, do: took
       {id, issue, milestone, fn synced -> Enum.reduce(tooks, synced, & &1.(&2)) end}
     end
   end
@@ -1202,13 +1209,19 @@ defmodule HalC2Plugins.Planner.Sync do
   is still to go out of it.
   """
   def settled(%{"misplaced" => at} = synced, %{"after" => held}, items) do
-    kept =
-      Map.reject(at, fn {id, issue} -> id in held and Plan.same_ref?(issue, ref(items, id)) end)
-
-    %{synced | "misplaced" => kept}
+    %{
+      synced
+      | "misplaced" => Map.reject(at, fn {id, issue} -> restored?(id, issue, held, items) end)
+    }
   end
 
   def settled(synced, _item, _items), do: synced
+
+  # The milestone holding the tasks `held` has the task `id` again under the issue its
+  # mark names: the mark is moot. `settled/3` drops such marks, `held_pushes/4` corrects
+  # the rest.
+  defp restored?(id, issue, held, items),
+    do: id in held and Plan.same_ref?(issue, ref(items, id))
 
   @doc """
   `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on
