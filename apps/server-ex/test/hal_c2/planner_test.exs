@@ -673,6 +673,39 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 8, "milestone" => 4} = into
     end
 
+    test "asks the issue its task left once, though both its removal and its correction send it out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" has the task "t" for #7 and a mark for #7; "t" names #8 by now and "ms" holds it.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"t" => issue.(7)}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(issue.(8))}
+
+      assert [{"update", out, took_out}, {"update", into, took_into}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      assert %{"after" => ["t"], "refs" => %{"t" => %{"number" => 8}}, "misplaced" => %{}} =
+               synced |> took_out.() |> took_into.()
+    end
+
     test "takes the issue out of any milestone once the task names none" do
       input = corrected(Map.delete(task(nil), "issue"))
       assert %{"number" => 7, "milestone" => nil} = input

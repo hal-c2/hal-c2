@@ -1703,6 +1703,14 @@ defmodule HalC2Plugins.Planner do
       [] when marked? ->
         {nil, put_in(state.items[id], Map.merge(item, %{"synced" => nil, "syncError" => nil}))}
 
+      # Not pushed, but the marks `settled/3` dropped stay dropped.
+      nil ->
+        {nil,
+         put_in(
+           state.items[id],
+           if(item["synced"], do: Map.put(item, "synced", synced), else: item)
+         )}
+
       _ ->
         {nil, put_in(state.items[id], item)}
     end

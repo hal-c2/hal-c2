@@ -841,7 +841,11 @@ defmodule HalC2Plugins.Planner.Sync do
   # A relation made again, as one GitHub was never asked to drop from an issue no project
   # has, is had once.
   defp relate(synced, "after", id, ref),
-    do: synced |> Map.update!("after", &Enum.uniq(&1 ++ [id])) |> remember(id, ref) |> placed(id, ref)
+    do:
+      synced
+      |> Map.update!("after", &Enum.uniq(&1 ++ [id]))
+      |> remember(id, ref)
+      |> placed(id, ref)
 
   defp relate(synced, "parent", id, ref), do: synced |> Map.put("parent", id) |> remember(id, ref)
 
@@ -1077,7 +1081,7 @@ defmodule HalC2Plugins.Planner.Sync do
 
     moves =
       for(
-        id <- Enum.uniq((synced["after"] -- kept) ++ left) -- unheld(marked, new, synced, items),
+        id <- Enum.uniq((synced["after"] -- kept) ++ left),
         not holds?.(id) or not kept?.(id),
         issue = had(synced, items, id),
         do: {id, issue, nil, &unrelate(&1, "after", id, issue)}
@@ -1101,15 +1105,11 @@ defmodule HalC2Plugins.Planner.Sync do
                else: &unrelate(&1, "after", id, issue)
              )}
 
-    # An issue a move and a correction both send to the same milestone is asked once, and
-    # the move's `took` is the one kept. That loses nothing: an issue is named by one task
-    # (`Plan.check_link`), so both are for the same task and issue, and the move's `took`
-    # clears the mark of the issue it names. A removal of the mark's own issue is kept out
-    # of `moves` by `unheld/4`.
-    for {id, issue, milestone, took} <-
-          Enum.uniq_by(moves ++ corrections, fn {_, issue, milestone, _} ->
-            {key(issue), milestone}
-          end),
+    # An issue a move and a correction both send to the same milestone is asked once,
+    # and the ask's `took` runs every one of theirs: whichever task named the issue (a
+    # relink hands an issue over, and `refs` keeps it with the old task), each clears
+    # its own mark.
+    for {id, issue, milestone, took} <- asked(moves ++ corrections),
         same?(issue["repository"], ref["repository"]),
         project = project_id(Map.put(items[id] || %{}, "issue", issue), projects),
         is_binary(project),
@@ -1123,19 +1123,16 @@ defmodule HalC2Plugins.Planner.Sync do
            }, took}
   end
 
-  # The tasks `marked` as misplaced in the milestone `new` that it does not hold, whose
-  # issue the mark names is also the one `synced` has them for: the correction takes that
-  # issue out, so the removal would ask it twice. A mark that names another issue (a
-  # newer one replaced the mark of the issue the task was relinked from) leaves the
-  # removal of the older to the task's.
-  defp unheld(marked, new, synced, items),
-    do:
-      for(
-        {id, issue} <- marked,
-        id not in new["after"],
-        Plan.same_ref?(issue, had(synced, items, id)),
-        do: id
-      )
+  # `asks` with those for one issue and milestone made one, in the order they came, its
+  # `took` running theirs.
+  defp asked(asks) do
+    same = fn {_, issue, milestone, _} -> {key(issue), milestone} end
+
+    for {id, issue, milestone, _} = first <- Enum.uniq_by(asks, same) do
+      tooks = for ask <- asks, same.(ask) == same.(first), do: elem(ask, 3)
+      {id, issue, milestone, fn synced -> Enum.reduce(tooks, synced, & &1.(&2)) end}
+    end
+  end
 
   # The numbers of the milestones of `repository` whose tasks hold the task `id`, but for
   # the milestone `except`.
@@ -1205,7 +1202,9 @@ defmodule HalC2Plugins.Planner.Sync do
   is still to go out of it.
   """
   def settled(%{"misplaced" => at} = synced, %{"after" => held}, items) do
-    kept = Map.reject(at, fn {id, issue} -> id in held and Plan.same_ref?(issue, ref(items, id)) end)
+    kept =
+      Map.reject(at, fn {id, issue} -> id in held and Plan.same_ref?(issue, ref(items, id)) end)
+
     %{synced | "misplaced" => kept}
   end
 
