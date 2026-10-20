@@ -1223,7 +1223,10 @@ defmodule HalC2Plugins.Planner do
   # since a full look; one its read failed for is read alone again at the next look.
   # GitHub does not count every change to an issue as an update to it (a milestone
   # renamed, a pull request now closing it), so a closed task's last
-  # copy would otherwise stand until the MC restarts or the issue changes.
+  # copy would otherwise stand until the MC restarts or the issue changes. The day
+  # is a wall-clock day (`full_at` and now are wall times, as a look's `started`
+  # and `since` already are), so a clock stepped backwards holds the copies that
+  # much longer; that bound is accepted, not corrected for.
   defp reusable(%{details: details, full_at: full_at}) do
     if full_at != nil and DateTime.diff(DateTime.utc_now(), full_at) < full_read_seconds(),
       do: details

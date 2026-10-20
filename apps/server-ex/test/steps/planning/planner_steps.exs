@@ -1745,7 +1745,9 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # Time passes for the planner's copies of the closed issues: the last full read is
-  # moved back most of a day, so one more such step puts it past the day.
+  # moved back most of a day, so one more such step puts it past the day. This and
+  # the prop's `age/0` reach into the planner's `full_at` field on purpose (there
+  # is no other way to age by nearly a day); rename them in lockstep with it.
   step "nearly a day passes since the planner last read every closed issue alone", context do
     :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
       %{state | full_at: state.full_at && DateTime.add(state.full_at, -80_000, :second)}

@@ -290,13 +290,14 @@ defmodule HalC2.PlannerPropTest do
   # `@repository` → the pull requests GitHub names as closing it, in its order. An item's
   # `pulls`: its pull requests, `[{number, from_issue (linked as one its issue names),
   # state (:open or :merged, as the plugin last read it)}]` in the order linked. `age`:
-  # the seconds since a look read every closed issue alone (the one the plugin makes as it
-  # starts counts), nil in the model between a restart and that look; `had`: the closed
+  # the seconds since a look read every closed issue alone, nil while no look has
+  # (a look with none to read alone is not full, the one the plugin makes as it
+  # starts included); `had`: the closed
   # issues linked tasks had at the look before, whose copies the next look reuses until
   # the age passes `@full_read`.
   def initial_state,
     do: %{
-      age: 0,
+      age: nil,
       had: MapSet.new(),
       board: @board,
       boards: %{},
@@ -1083,8 +1084,8 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :look, []}), do: {looked(m), :ok}
 
-  # Time passes since the last look that read every closed issue alone.
-  defp step(m, {:call, _, :age, []}), do: {%{m | age: m.age + @shift}, :ok}
+  # Time passes since the last look that read every closed issue alone, if any did.
+  defp step(m, {:call, _, :age, []}), do: {%{m | age: m.age && m.age + @shift}, :ok}
 
   # The look reads the plan before the nest and GitHub as it was before it too, and the
   # task the nest changed keeps the change.
@@ -1511,7 +1512,9 @@ defmodule HalC2.PlannerPropTest do
   # as the plugin keeps such a task whole when it applies a look; the push's answer sets
   # the board item only when the push added one (`settle/3`).
   defp looked(m, kept \\ []) do
-    m = %{m | age: if(reuses?(m), do: m.age, else: 0), had: closed_linked(m)}
+    # A look with no closed issue to read alone is not the full read either.
+    full? = not reuses?(m) and closed_linked(m) != MapSet.new()
+    m = %{m | age: if(full?, do: 0, else: m.age), had: closed_linked(m)}
     listed = Map.get(m.boards, m.board, %{})
     whole? = &(Map.has_key?(m.flights, &1) or &1 in kept)
 
@@ -2248,7 +2251,8 @@ defmodule HalC2.PlannerPropTest do
   def look, do: observe(elem(call("sync", %{}), 0))
 
   # A day passes, as far as the plugin's copies of the closed issues are concerned: the
-  # look that read them all alone is moved back by `@shift`.
+  # look that read them all alone is moved back by `@shift`. Reaches into the
+  # planner's `full_at` field on purpose, as the planning steps' "nearly a day" does.
   def age do
     pid = Process.whereis(@server)
 
