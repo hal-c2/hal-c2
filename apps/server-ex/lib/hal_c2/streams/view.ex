@@ -194,13 +194,20 @@ defmodule HalC2.Streams.View do
   defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}
 
   defp subagent_at(running, id, was, patch) do
-    at =
-      case running do
-        %{^id => {base, last}} -> Wire.cut_basis(HalC2.Patch.apply(base, last))
-        _ -> Wire.cut_basis(was)
-      end
+    # A patch that touches no cut text (and does not replace the item) cannot
+    # change its basis, and the wire does not read `was` to trim it, so it
+    # neither needs the fold nor leaves anything for a later event to fold.
+    if Wire.changes_cut_text?(patch) do
+      at =
+        case running do
+          %{^id => {base, last}} -> Wire.cut_basis(HalC2.Patch.apply(base, last))
+          _ -> Wire.cut_basis(was)
+        end
 
-    {at, Map.put(running, id, {at, Wire.cut_basis_patch(patch)})}
+      {at, Map.put(running, id, {at, Wire.cut_basis_patch(patch)})}
+    else
+      {was, running}
+    end
   end
 
   # A run that moves in or out of the window takes its items with it, without an

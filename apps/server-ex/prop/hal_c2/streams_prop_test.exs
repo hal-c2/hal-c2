@@ -13,7 +13,7 @@ defmodule HalC2.StreamsPropTest do
   unsubscribe (also by a tag no subscription has), page a window back, crash
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
-  Some turn items are subagents whose progress and result grow by long appends, past
+  Some turn items are subagents whose prompt, progress and result grow by long appends, past
   the limit `HalC2.Web.Wire` cuts them at, or are emptied and grown again in one
   patch, so a client that folds the appends must hold the cut text a snapshot shows,
   for each of the wire's cut keys and for an item growing both in one commit.
@@ -163,9 +163,11 @@ defmodule HalC2.StreamsPropTest do
     ])
   end
 
-  # The wire's cut keys a subagent's text grows under here. `prompt` is set once in
-  # the adapters, so the two that stream are the ones that can cross by appends.
-  defp cut_key, do: oneof(~w(progress result))
+  # The wire's cut keys a subagent's text grows under here: all three, `prompt`
+  # included. The adapters set it once, but `HalC2.Patch.diff/2` turns any string
+  # field that grows by a prefix into an append, so an adapter that ever re-emits
+  # a longer prompt crosses by appends the same way.
+  defp cut_key, do: oneof(~w(prompt progress result))
 
   # A subagent text, set or grown by: mostly short, sometimes sized to land the
   # text just under, on and over the limit (32 KiB), in the middle of a character too.
@@ -224,10 +226,17 @@ defmodule HalC2.StreamsPropTest do
     end
   end
 
-  # A subagent with both of its cut texts there to grow, the intent's holding `text`.
+  # A subagent with each of its cut texts there to grow, the intent's holding `text`.
   defp change({:subagent, id, key, text}, st) do
     item =
-      %{"id" => id, "type" => "subagent", "text" => "", "progress" => "", "result" => ""}
+      %{
+        "id" => id,
+        "type" => "subagent",
+        "text" => "",
+        "prompt" => "",
+        "progress" => "",
+        "result" => ""
+      }
       |> Map.put(key, text)
 
     with %{} = item <- with_run(item, st), do: {"turn-item", id, %{"d" => true, "s" => item}}

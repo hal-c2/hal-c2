@@ -53,16 +53,31 @@ defmodule HalC2.Web.Wire do
 
   def patch(_kind, patch, _type, _was), do: patch
 
-  @doc """
-  Whether `patch` appends to a subagent text that `entity`, the item as it is now,
-  holds past the limit. A client that has not followed the item's appends one by one
-  (a replay) cannot be handed them cut; it is sent the item whole instead.
-  """
-  def appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity)
-      when is_map(appended),
-      do: Enum.any?(@cut_keys, &(is_map_key(appended, &1) and size(entity[&1]) > @max_detail))
+  # Whether `patch` appends to a subagent text that `entity`, the item as it is now,
+  # holds past the limit. A client that has not followed the item's appends one by one
+  # (a replay) cannot be handed them cut; it is sent the item whole instead. Only
+  # `replay_patch/3` decides that, so the check stays in here with it.
+  defp appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity)
+       when is_map(appended),
+       do:
+         Enum.any?(@cut_keys, &(is_map_key(appended, &1) and text_size(entity[&1]) > @max_detail))
 
-  def appends_past_limit?(_kind, _patch, _entity), do: false
+  defp appends_past_limit?(_kind, _patch, _entity), do: false
+
+  @doc """
+  Whether `patch` can change a subagent item's `cut_basis/1`: it sets, appends to
+  or unsets one of the cut texts, or deletes (replaces) the item. A patch that
+  cannot leaves the basis as it was, and its trimming does not read `was`, so a
+  caller folding a commit's bases can skip the fold for it.
+  """
+  def changes_cut_text?(patch) do
+    patch["d"] == true or
+      Enum.any?(@cut_keys, fn key ->
+        key in List.wrap(patch["u"]) or
+          (is_map(patch["s"]) and is_map_key(patch["s"], key)) or
+          (is_map(patch["a"]) and is_map_key(patch["a"], key))
+      end)
+  end
 
   @doc """
   What a replay sends for one merged event (`HalC2.Streams.View.replayed/3`): the
@@ -230,8 +245,8 @@ defmodule HalC2.Web.Wire do
     if patch["a"] == %{}, do: Map.delete(patch, "a"), else: patch
   end
 
-  defp size(text) when is_binary(text), do: byte_size(text)
-  defp size(_text), do: 0
+  defp text_size(text) when is_binary(text), do: byte_size(text)
+  defp text_size(_text), do: 0
 
   # A command that failed says so without its output.
   defp failed(item, exit_code, flagged) do

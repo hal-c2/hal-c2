@@ -55,7 +55,9 @@ defmodule HalC2.Web.WireTest do
     assert Wire.patch("turn-item", %{"a" => %{"progress" => "z"}}, "subagent", item(at <> "y")) ==
              nil
 
-    refute Wire.appends_past_limit?("turn-item", %{"a" => %{"progress" => "y"}}, item(at))
+    # At the limit is not past it: a replay still sends the append as a patch.
+    assert Wire.replay_patch("turn-item", %{"a" => %{"progress" => "y"}}, item(at)) ==
+             {:patch, %{"a" => %{"progress" => "y"}}}
   end
 
   test "an append that stays under the limit goes through as it is" do
@@ -147,12 +149,6 @@ defmodule HalC2.Web.WireTest do
 
     reset = %{"s" => %{"progress" => "a"}, "a" => %{"progress" => "b"}}
     assert Wire.patch("turn-item", reset, "subagent", basis) == reset
-  end
-
-  test "appends in a replay are sent whole when the text is past the limit" do
-    patch = %{"a" => %{"progress" => "x"}}
-    assert Wire.appends_past_limit?("turn-item", patch, item(String.duplicate("x", @limit + 1)))
-    refute Wire.appends_past_limit?("turn-item", patch, item("x"))
   end
 
   # The replay decision pairing the past-limit check with the empty base lives in

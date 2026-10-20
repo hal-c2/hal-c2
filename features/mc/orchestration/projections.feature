@@ -295,7 +295,7 @@ Feature: What the engine projects for clients
   @mc
   Scenario: Subagent text that grows is cut to the same text a snapshot shows
     Given a subagent in "t1" has progress that grows by appends past 32,768 bytes
-    When a client follows "t1"
+    When a client follows "t1" while the progress grows past the limit
     Then the progress it holds is the cut text a fresh read of "t1" shows
     And the appends past the limit are not sent
 

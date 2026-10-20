@@ -835,7 +835,8 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   # The client is following when the progress grows: two appends in one commit take it
   # past the limit, and a third is to text already past it.
-  step ~r/^a client follows "(?<thread>[^"]+)"$/, %{args: [thread]} = context do
+  step ~r/^a client follows "(?<thread>[^"]+)" while the progress grows past the limit$/,
+       %{args: [thread]} = context do
     id = World.thread_id(context, thread)
     {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
     append = {"turn-item", "sub-item", %{"a" => %{"progress" => String.duplicate("x", 20_000)}}}
