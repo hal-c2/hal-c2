@@ -315,9 +315,12 @@ defmodule HalC2.Web.SocketTest do
     {%{"t" => "live", "id" => 1, "offset" => ^seq}, [%{"t" => "snapshot", "floor" => 3}], client} =
       WsClient.recv_until(client, &(&1["t"] == "live"))
 
+    # The stale ask differs from the fresh one below (1 item against 3), so a
+    # stale page — item-3 and item-4 under a non-nil floor — cannot pass as
+    # the fresh page this test awaits if the bad interleaving happens.
     client =
       WsClient.send_json_many(client, [
-        %{"t" => "more", "id" => 1, "items" => 3},
+        %{"t" => "more", "id" => 1, "items" => 1},
         %{"t" => "unsub", "id" => 1},
         %{"t" => "sub", "id" => 2, "shape" => shape, "window" => window}
       ])
@@ -359,6 +362,37 @@ defmodule HalC2.Web.SocketTest do
     assert %{"t" => "live", "id" => 2} = live |> IO.iodata_to_binary() |> JSON.decode!()
     assert {:push, [{:text, frame}], _state} = HalC2.Web.Socket.handle_info(page, state)
     assert %{"t" => "page", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+  end
+
+  # The other half of the drop above: no `more` is forwarded while the
+  # subscription is replaying, so its floor never moves for a page that
+  # would be dropped. The stream server here is the test itself, so a
+  # forwarded ask lands in this mailbox as its cast.
+  test "a more while replaying is not forwarded, and one after live is" do
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    tag = {node(), make_ref()}
+
+    state = %{
+      state
+      | subs: %{2 => {:stream, node(), "th-x"}},
+        by_stream: %{"th-x" => {2, tag}},
+        monitors: %{make_ref() => {2, self()}},
+        buffers: %{2 => %{events: [], bytes: 0, replay: true}}
+    }
+
+    ask = {JSON.encode!(%{"t" => "more", "id" => 2, "items" => 3}), [opcode: :text]}
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_in(ask, state)
+    refute_received {:"$gen_cast", {:more, _, _, _}}
+
+    assert {:push, _live, state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_stream, {"th-x", tag}, {:live, 1, "h"}},
+               state
+             )
+
+    me = self()
+    assert {:ok, _} = HalC2.Web.Socket.handle_in(ask, state)
+    assert_received {:"$gen_cast", {:more, ^me, 3, ^tag}}
   end
 
   defp collect_events(client, last, acc) do

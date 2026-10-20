@@ -1332,21 +1332,42 @@ defmodule HalC2.Web.Socket do
 
   defp error_frame(id, reason), do: %{"t" => "error", "id" => id, "reason" => to_string(reason)}
 
+  # How this socket reaches a stream subscription's server: straight to the
+  # monitored server, carrying the subscription's tag, or — for one followed
+  # before stream servers were monitored — the legacy `:erpc.cast` route the
+  # caller names. A page and an unsubscribe for the same subscription must
+  # take this same route (see `more/3`), so the lookup lives in one place.
+  defp stream_route(state, id, stream_id) do
+    case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
+      {ref, {_, server}} ->
+        {_id, tag} = state.by_stream[stream_id]
+        {:server, ref, server, tag}
+
+      nil ->
+        :legacy
+    end
+  end
+
   # Straight to the monitored stream server by its tag, as a stream unsubscribe
   # goes: ordered with this socket's unsubscribe for the subscription, and taken
   # for no subscription that follows it if it still arrives after one (a follow
   # goes by another process). An `:erpc.cast` ran in a process of its own and
   # could reach the stream after both.
+  #
+  # None is sent while the subscription is still replaying: a client can ask
+  # before `live` (a resync-driven resubscribe does not reset its live
+  # status), and the page it would move this subscription's floor for is the
+  # one `stream_message/3` drops — the floor must not move for a page the
+  # client never sees. The client asks again once live.
   defp more(state, id, items) do
-    with %{^id => {:stream, mc, stream_id}} <- state.subs do
-      case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
-        {_ref, {_, server}} ->
-          {_id, tag} = state.by_stream[stream_id]
+    with %{^id => {:stream, mc, stream_id}} <- state.subs,
+         false <- get_in(state.buffers, [id, :replay]) == true do
+      case stream_route(state, id, stream_id) do
+        {:server, _ref, server, tag} ->
           message = if tag, do: {:more, self(), items, tag}, else: {:more, self(), items}
           GenServer.cast(server, message)
 
-        # Followed before stream servers were monitored.
-        nil ->
+        :legacy ->
           :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
       end
     end
@@ -1498,10 +1519,9 @@ defmodule HalC2.Web.Socket do
 
       {{:stream, mc, stream_id}, _subs} ->
         # By its tag, so it ends no subscription that follows, whenever it arrives.
-        case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
-          {ref, {_, server}} ->
+        case stream_route(state, id, stream_id) do
+          {:server, ref, server, tag} ->
             Process.demonitor(ref, [:flush])
-            {_id, tag} = state.by_stream[stream_id]
 
             message =
               if tag, do: {:unsubscribe, self(), tag}, else: {:unsubscribe, self()}
@@ -1509,8 +1529,7 @@ defmodule HalC2.Web.Socket do
             GenServer.cast(server, message)
             forget_stream(%{state | monitors: Map.delete(state.monitors, ref)}, id)
 
-          # Followed before stream servers were monitored.
-          nil ->
+          :legacy ->
             :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
             forget_stream(state, id)
         end
@@ -1604,9 +1623,12 @@ defmodule HalC2.Web.Socket do
   end
 
   # A page is the stream as of `seq`, so the events before it go out first. One
-  # that arrives while this subscription is still replaying answers no `more` of
-  # its (a client asks only once live, and its page then follows `live`): it is
-  # the subscription before this one's, and goes nowhere.
+  # that arrives while this subscription is still replaying answers no `more`
+  # of its — `more/3` sends none until `live`, so this subscription's floor
+  # has not moved for it and dropping it loses nothing: it is the
+  # subscription before this one's, and goes nowhere. (For a `more` sent by
+  # pre-upgrade code on the legacy route, same-sender ordering from the
+  # stream server or its relay is what keeps its page behind `live`.)
   defp stream_message(state, id, {:page, seq, rows, floor, part_state}) do
     if get_in(state.buffers, [id, :replay]) do
       {:ok, state}
