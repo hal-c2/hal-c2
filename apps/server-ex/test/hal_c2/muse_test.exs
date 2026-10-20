@@ -4,6 +4,7 @@ defmodule HalC2.MuseTest do
 
   alias HalC2.Muse
   alias HalC2.Muse.ThreadRuntime
+  alias HalC2.StreamState
 
   test "command ids are UUIDv7s that sort by time" do
     ids = for _ <- 1..3, do: Muse.command_id()
@@ -127,6 +128,97 @@ defmodule HalC2.MuseTest do
     assert map_size(subs) == 1
   end
 
+  # The migrated `:tool` routing itself: a later revision of that subagent is shown
+  # as the tool call the v3 runtime started, and no subagent is created for it.
+  @tag :tmp_dir
+  test "a subagent migrated to a tool call finishes as one, not also as a subagent",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    started = subagent_item(%{"status" => "inProgress", "revision" => 1})
+
+    {:ok, state} =
+      ThreadRuntime.code_change(3, runtime_state(%{v: 3, muse: %{"sa" => started}}), nil)
+
+    {:noreply, _state} = item_completed(state, %{"revision" => 2})
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+    assert StreamState.list(stream, "subagent") == []
+
+    assert [%{"type" => "dynamic_tool", "status" => "completed"}] =
+             StreamState.list(stream, "turn-item")
+  end
+
+  # A field in a shape Muse has not sent before degrades the one subagent (its role
+  # for a title, no answer to read), not the turn carrying it.
+  @tag :tmp_dir
+  test "a subagent whose objective and result are not text and a map still ends",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+
+    {:noreply, _state} =
+      item_completed(runtime_state(), %{"objective" => 123, "result" => "just text"})
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "title" => "reviewer", "prompt" => ""} = subagent] =
+             StreamState.list(stream, "subagent")
+
+    assert subagent["result"] in [nil, ""]
+  end
+
+  defp start_streams(dir) do
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+  end
+
+  # A runtime mid-turn on thread-1, as `init/1` and a started turn leave it but for
+  # the connection and the Muse host behind it.
+  defp runtime_state(fields \\ %{}) do
+    {:ok, state} = ThreadRuntime.init("thread-1")
+
+    ids = %{
+      driver: "muse",
+      instance: "muse",
+      thread: "thread-1",
+      run: "run-1",
+      attempt: nil,
+      root_node: "node:root",
+      provider_thread: "provider-thread:muse:thread-1",
+      provider_turn: "provider-turn:muse:run-1",
+      message: "m1"
+    }
+
+    Map.merge(
+      %{state | conn: self(), session: "session-1", native: "turn-1", turn: %{ids: ids}},
+      fields
+    )
+  end
+
+  defp subagent_item(fields) do
+    Map.merge(
+      %{
+        "itemId" => "sa",
+        "kind" => "subagent",
+        "status" => "completed",
+        "turnId" => "turn-1",
+        "revision" => 1,
+        "objective" => "Review the diff",
+        "role" => "reviewer",
+        "result" => %{"text" => "Done."}
+      },
+      fields
+    )
+  end
+
+  defp item_completed(state, fields) do
+    params = %{"sessionId" => "session-1", "item" => subagent_item(fields)}
+
+    ThreadRuntime.handle_info(
+      {:json_rpc, self(), {:notification, "item/completed", params}},
+      state
+    )
+  end
+
   describe "approvals" do
     @choices [
       %{
@@ -225,6 +317,7 @@ defmodule HalC2.MuseTest do
       assert ThreadRuntime.status(%{"status" => "inProgress"}) == "running"
       assert ThreadRuntime.status(%{"status" => "completed"}) == "completed"
       assert ThreadRuntime.status(%{"status" => "cancelled"}) == "cancelled"
+      assert ThreadRuntime.status(%{"status" => "canceled"}) == "cancelled"
       assert ThreadRuntime.status(%{"status" => "declined"}) == "failed"
 
       assert ThreadRuntime.status(%{

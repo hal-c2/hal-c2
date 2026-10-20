@@ -171,6 +171,14 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent that fails without a reason after answering in part
     Then the subagent is shown as failed with what it answered
 
+  Scenario: A Muse Code subagent that fails with a reason after answering in part shows both
+    Given Muse Code delegates a review to a subagent that fails with a reason after answering in part
+    Then the subagent is shown as failed with Muse's reason and what it answered
+
+  Scenario: A Muse Code subagent Muse ends in the other spelling of cancelled shows as cancelled
+    Given Muse Code delegates a review to a subagent it cancels in the other spelling after answering in part
+    Then the subagent is shown as cancelled with what it answered
+
   # Muse may name states of its own; only one it ends a subagent with ends it.
   Scenario: A Muse Code subagent in a state Muse has not named before is still running
     Given Muse Code delegates a review to a subagent it reports in a state of its own before it answers

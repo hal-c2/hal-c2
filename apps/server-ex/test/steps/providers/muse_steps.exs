@@ -163,6 +163,34 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     },
     %{
+      "match" => "delegate a review that stops partway with a reason",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "answer" => "Found one bug so far.",
+            "status" => "failed",
+            "failure" => "The reviewer ran out of budget."
+          }
+        },
+        %{"text" => "Gave up."}
+      ]
+    },
+    %{
+      "match" => "delegate a review Muse stops in the other spelling",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "progress" => "Reading the diff",
+            "answer" => "Found one bug so far.",
+            "status" => "canceled"
+          }
+        },
+        %{"text" => "Stopped it."}
+      ]
+    },
+    %{
       "match" => "delegate a queued review",
       "steps" => [
         %{
@@ -849,6 +877,41 @@ defmodule HalC2.Steps.Providers.Muse do
     assert [%{"status" => "failed", "result" => "Found one bug so far."}] =
              context |> state() |> StreamState.list("subagent")
 
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent that fails with a reason after answering in part",
+       context do
+    context
+    |> install()
+    |> FakeAcp.thread()
+    |> turn("delegate a review that stops partway with a reason")
+  end
+
+  step "the subagent is shown as failed with Muse's reason and what it answered", context do
+    assert [
+             %{
+               "status" => "failed",
+               "result" => "The reviewer ran out of budget.\nFound one bug so far."
+             }
+           ] = context |> state() |> StreamState.list("subagent")
+
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent it cancels in the other spelling after answering in part",
+       context do
+    context
+    |> install()
+    |> FakeAcp.thread()
+    |> turn("delegate a review Muse stops in the other spelling")
+  end
+
+  step "the subagent is shown as cancelled with what it answered", context do
+    assert [%{"status" => "cancelled", "result" => "Found one bug so far."}] =
+             context |> state() |> StreamState.list("subagent")
+
+    assert [%{"status" => "cancelled"}] = items(context, "subagent")
     context
   end
 

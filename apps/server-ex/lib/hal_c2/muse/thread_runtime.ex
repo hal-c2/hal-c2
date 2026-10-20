@@ -37,7 +37,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   # A subagent ends only on a status Muse is known to end one with: its answer comes
   # once, so a status not seen before is taken as still running, not as a failure that
   # would drop the answer after it. One that never ends ends with the turn.
-  @subagent_ended ~w(completed failed cancelled)
+  @subagent_ended ~w(completed failed cancelled canceled)
   # Muse caps a question's free-text answer.
   @max_free_text 500
 
@@ -895,14 +895,18 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
+  # The item's fields are Muse's shape of the day: a value of some other shape than
+  # the text it has been so far degrades this subagent, not the turn.
   defp subagent_task(item) do
+    objective = if is_binary(item["objective"]), do: item["objective"]
+
     title =
-      case String.trim(item["objective"] || "") do
-        "" -> non_empty(item["role"], "Muse agent")
+      case objective && String.trim(objective) do
+        text when text in [nil, ""] -> non_empty(item["role"], "Muse agent")
         text -> text |> String.split("\n") |> hd() |> String.slice(0, 80)
       end
 
-    %{"prompt" => item["objective"], "title" => title}
+    %{"prompt" => objective, "title" => title}
   end
 
   # What the running subagent is doing: Muse's one-line summary. Its control state
@@ -910,12 +914,24 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp subagent_progress(item), do: non_empty(item["fallbackText"], nil)
 
   # The answer: the result's text, else its summary. One that did not complete shows
-  # Muse's reason, else what it answered before it stopped. What it was doing (its
-  # `fallbackText`, which the ended item still carries) is its progress, never its answer.
+  # Muse's reason and what it answered before it stopped, as the tool-call rendering
+  # did (`tool/2` joins the two). What it was doing (its `fallbackText`, which the ended
+  # item still carries) is its progress, never its answer. A result that is not the map
+  # Muse has sent so far carries no answer to read out of it.
   defp subagent_result(item, status) do
-    result = item["result"] || %{}
+    result = if is_map(item["result"]), do: item["result"], else: %{}
     answer = Enum.find([result["text"], result["summary"]], &non_empty(&1, nil))
-    if status == "completed", do: answer, else: non_empty(item["failureReason"], answer)
+
+    if status == "completed" do
+      answer
+    else
+      [non_empty(item["failureReason"], nil), answer]
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> nil
+        parts -> Enum.join(parts, "\n")
+      end
+    end
   end
 
   # Muse's subagents still running when the turn ends end with it, unanswered: as
@@ -1035,6 +1051,8 @@ defmodule HalC2.Muse.ThreadRuntime do
   # Unrecognized terminal states never show as successful work.
   def status(%{"status" => "inProgress"}), do: "running"
   def status(%{"status" => "cancelled"}), do: "cancelled"
+  # The spelling Muse's todos already come in both ways (`session/todoListChanged`).
+  def status(%{"status" => "canceled"}), do: "cancelled"
 
   def status(%{"status" => "completed", "kind" => "compaction", "outcome" => outcome})
       when outcome not in [nil, "compacted"],
