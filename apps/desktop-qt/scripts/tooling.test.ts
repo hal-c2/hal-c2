@@ -76,17 +76,25 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       expect(result.stderr).toContain("is not a directory");
     });
 
-    it("rejects an empty directory and entries that are not a non-empty regular file", () => {
-      const drivers = temporaryDirectory();
-      const empty = check(drivers);
+    it("rejects an empty directory", () => {
+      const empty = check(temporaryDirectory());
       expect(empty.status).toBe(1);
       expect(empty.stderr).toContain("has no libqsqlite.so as a non-empty regular file");
+    });
+
+    it("rejects a directory named like the driver", () => {
+      const drivers = temporaryDirectory();
       NodeFS.mkdirSync(NodePath.join(drivers, "libqsqlite.so"));
+      expect(check(drivers).status).toBe(1);
+      expect(check(drivers).stderr).toContain("has no libqsqlite.so as a non-empty regular file");
+    });
+
+    it("rejects a dangling symlink named like the driver", () => {
+      const drivers = temporaryDirectory();
       NodeFS.symlinkSync(
         NodePath.join(drivers, "gone"),
         NodePath.join(drivers, "libqsqlite.dylib"),
       );
-      expect(check(drivers).status).toBe(1);
       const dangling = check(drivers, "libqsqlite.dylib");
       expect(dangling.status).toBe(1);
       expect(dangling.stderr).toContain("is a symlink");
@@ -150,6 +158,42 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const result = check(NodePath.join(bundle, "plugins", "sqldrivers"));
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("is a symlink");
+      const trailing = check(NodePath.join(bundle, "plugins", "sqldrivers") + "/");
+      expect(trailing.status).toBe(1);
+      expect(trailing.stderr).toContain("is a symlink");
+    });
+
+    it("rejects a sqldrivers directory under a symlinked bundle component above plugins", () => {
+      const root = temporaryDirectory();
+      const outside = NodePath.join(root, "outside");
+      NodeFS.mkdirSync(NodePath.join(outside, "plugins", "sqldrivers"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(outside, "plugins", "sqldrivers", "libqsqlite.so"),
+        "driver",
+      );
+      const bundle = NodePath.join(root, "bundle");
+      NodeFS.mkdirSync(bundle);
+      NodeFS.symlinkSync(outside, NodePath.join(bundle, "usr"));
+      const result = check(NodePath.join(bundle, "usr", "plugins", "sqldrivers"));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is a symlink");
+    });
+
+    it("rejects extra arguments", () => {
+      const drivers = temporaryDirectory();
+      NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.so"), "driver");
+      const result = NodeChildProcess.spawnSync(
+        "bash",
+        [
+          NodeURL.fileURLToPath(new URL("./check-sqlite-driver.sh", import.meta.url)),
+          drivers,
+          "libqsqlite.so",
+          "extra",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("usage:");
     });
 
     it("rejects a driver name that is not a plain file name", () => {
