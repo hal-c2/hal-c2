@@ -28,17 +28,30 @@ defmodule HalC2.Git do
     end
   end
 
-  # Killing the task takes the program with it: Exile stops a process its owner left.
-  # A task that exits abnormally takes a caller that does not trap exits with it.
+  # Killing the task takes the program with it: Exile stops a process its owner
+  # left, and the task stays linked so killing the caller takes both. Exits are
+  # trapped around the yield, so a task that exits abnormally reports
+  # `{:exit, reason}` here instead of taking the caller with it.
   defp within(nil, fun), do: {:ok, fun.()}
 
   defp within(ms, fun) do
+    trap = Process.flag(:trap_exit, true)
     task = Task.async(fun)
 
-    case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> {:ok, result}
-      {:exit, reason} -> {:exit, reason}
-      nil -> :timeout
+    try do
+      case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
+        {:ok, result} -> {:ok, result}
+        {:exit, reason} -> {:exit, reason}
+        nil -> :timeout
+      end
+    after
+      receive do
+        {:EXIT, pid, _reason} when pid == task.pid -> :ok
+      after
+        0 -> :ok
+      end
+
+      Process.flag(:trap_exit, trap)
     end
   end
 
@@ -67,20 +80,24 @@ defmodule HalC2.Git do
         {:stdout, data}, {out, err, size, status} ->
           {out, err, size + IO.iodata_length(data), status}
 
+        {:stderr, data}, {out, err, size, status} when size < max ->
+          {out, [err, data], size + IO.iodata_length(data), status}
+
         {:stderr, data}, {out, err, size, status} ->
-          {out, [err, data], size, status}
+          {out, err, size + IO.iodata_length(data), status}
 
         {:exit, status}, {out, err, size, _} ->
           {out, err, size, status}
       end)
 
     out = IO.iodata_to_binary(out)
+    err = IO.iodata_to_binary(err)
 
     {:ok,
      %{
        status: exit_code(status),
        out: binary_part(out, 0, min(byte_size(out), max)),
-       err: IO.iodata_to_binary(err),
+       err: binary_part(err, 0, min(byte_size(err), max)),
        truncated: size > max
      }}
   rescue
@@ -213,6 +230,10 @@ defmodule HalC2.Git do
 
   Git includes a file the MC owns and writes again on each call (at boot and after
   a hot update), so a later sign-in or sign-out reaches git already running too.
+
+  The probe asks plain `ssh`, not git's configured SSH command (`GIT_SSH`,
+  `GIT_SSH_COMMAND`, `core.sshCommand`). A key that only reaches git through such
+  a setting is therefore classified as refused and git goes over HTTPS.
   """
   def use_gh_for_github do
     file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
@@ -225,9 +246,11 @@ defmodule HalC2.Git do
     stop_asking()
 
     case github_route() do
-      {:ask, ssh, %{https: https, ssh: on_ssh} = configs} ->
-        # SSH the last call chose stands until SSH answers otherwise.
-        if File.read(file) != {:ok, on_ssh}, do: write_config(file, https)
+      {:ask, ssh, %{https: https} = configs} ->
+        # SSH the last call chose stands until SSH answers otherwise. Recognised by
+        # its marker, not byte for byte: the file embeds the gh path of its day.
+        unless match?({:ok, "# GitHub answers SSH" <> _}, File.read(file)),
+          do: write_config(file, https)
 
         # Bounded, so a caller that died before `:ask` leaves nothing waiting.
         {:ok, pid} =
@@ -352,7 +375,7 @@ defmodule HalC2.Git do
   end
 
   # Runs as `@asking`. An ssh past its time is not left behind: `within/2` kills the
-  # task that owns it, and Exile then the program. An agent without keys is refused too.
+  # process that owns it, and Exile then the program. An agent without keys is refused too.
   defp ask_ssh(file, ssh, %{https: https, ssh: on_ssh}) do
     ms = Application.get_env(:hal_c2, :github_ssh_timeout, 8_000)
 

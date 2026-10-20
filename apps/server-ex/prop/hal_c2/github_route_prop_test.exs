@@ -135,7 +135,8 @@ defmodule HalC2.GitHubRoutePropTest do
           else: [
             {3,
              {:call, __MODULE__, :set_ssh,
-              [oneof([:answers, :refused, :unreachable, :hangs, :stalls])]}}
+              [oneof([:answers, :refused, :unreachable, :hangs, :stalls])]}},
+            {2, {:call, __MODULE__, :stale_helper, []}}
           ]
         )
     )
@@ -143,6 +144,7 @@ defmodule HalC2.GitHubRoutePropTest do
 
   # ssh reads its answer when it starts, so it changes only while no call asks.
   def precondition(state, {:call, _, :set_ssh, _}), do: state.asking == nil
+  def precondition(state, {:call, _, :stale_helper, _}), do: state.asking == nil
   # A stalled SSH ends only with a later call or the case.
   def precondition(state, {:call, _, :settle, [asking]}),
     do: state.asking == asking and state.asks != :stalls
@@ -180,6 +182,8 @@ defmodule HalC2.GitHubRoutePropTest do
   def next_state(state, _result, {:call, _, :settle, _}),
     do: %{state | routes: state.settles, asking: nil, settles: []}
 
+  def next_state(state, _result, {:call, _, :stale_helper, []}), do: state
+
   # A call returns at once, with the route git keeps meanwhile already in place.
   def postcondition(state, {:call, _, :set_up, []}, result) do
     after_call = next_state(state, result, {:call, __MODULE__, :set_up, []})
@@ -189,7 +193,13 @@ defmodule HalC2.GitHubRoutePropTest do
         do: match?({:asking, pid} when is_pid(pid), result),
         else: result == :ok
 
-    shape and route() in after_call.routes
+    # The asking process runs concurrently: a fast ssh may have settled already.
+    routes =
+      if after_call.asking,
+        do: after_call.routes ++ after_call.settles,
+        else: after_call.routes
+
+    shape and route() in routes
   end
 
   def postcondition(state, {:call, _, :settle, _}, route), do: route in state.settles
@@ -213,6 +223,18 @@ defmodule HalC2.GitHubRoutePropTest do
   end
 
   def set_up, do: HalC2.Git.use_gh_for_github()
+
+  # The include a previous boot wrote, naming a gh that has since moved: the SSH
+  # choice in it must still be recognised.
+  def stale_helper do
+    file = Path.join(HalC2.Paths.state_dir(), "github.gitconfig")
+
+    with {:ok, text} <- File.read(file) do
+      File.write!(file, String.replace(text, Path.join(Process.get(:bin), "gh"), "/stale/gh"))
+    end
+
+    :ok
+  end
 
   # Waits for the asking to end, its receipt, and returns the route it left.
   def settle({:asking, pid}) do
