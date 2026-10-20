@@ -266,6 +266,8 @@ struct CustomSnooze {
 };
 Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
+// Locale AM/PM separators with plain spaces (see timeOfDay below).
+QString plainSpaces(QString text);
 // "12-hour", "24-hour" or "locale", the timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

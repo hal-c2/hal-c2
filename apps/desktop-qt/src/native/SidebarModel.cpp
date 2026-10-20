@@ -978,12 +978,16 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
 // from it are short labels where a break at that space costs nothing, so they
 // give up the no-break property; this is why it is done here and not in the
 // timeline's stamp alone.
+QString plainSpaces(QString text) {
+  return text.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
+}
+
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
   QString time;
   if (timestampFormat == QLatin1String("12-hour")) time = locale.toString(local.time(), QStringLiteral("h:mm AP"));
   else if (timestampFormat == QLatin1String("24-hour")) time = locale.toString(local.time(), QStringLiteral("HH:mm"));
   else time = locale.toString(local.time(), QLocale::ShortFormat);
-  return time.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
+  return plainSpaces(time);
 }
 
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

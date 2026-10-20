@@ -6,7 +6,6 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QLocale>
 #include <QQuickItem>
 #include <QTest>
 

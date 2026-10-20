@@ -76,6 +76,7 @@ private slots:
     const QDateTime evening(QDate(2026, 9, 23), QTime(18, 5), QTimeZone::UTC);
     const QLocale spanish(QLocale::Spanish, QLocale::Argentina);
     // The cases mean something only while the locale writes the space this test is about.
+    // Fail, don't skip, if that premise changes, so the U+00A0 coverage can't quietly rot.
     for (const QString& format : {QStringLiteral("locale"), QStringLiteral("12-hour")}) {
       const QString raw = format == QLatin1String("12-hour") ? spanish.toString(evening.time(), QStringLiteral("h:mm AP"))
                                                               : spanish.toString(evening.time(), QLocale::ShortFormat);
@@ -83,7 +84,8 @@ private slots:
                qPrintable(format + QStringLiteral(": the locale no longer writes a no-break space: ") + raw));
       const QString time = sidebar::timeOfDay(evening, format, spanish);
       QVERIFY2(!time.contains(QChar(0x00A0)) && !time.contains(QChar(0x202F)), qPrintable(format + QStringLiteral(": ") + time));
-      QVERIFY2(time.contains(QLatin1Char(' ')), qPrintable(format + QStringLiteral(": ") + time));
+      // Exact, so deleting the separator ("6:05p. m.") fails too, not only leaving it.
+      QCOMPARE(time, format == QLatin1String("12-hour") ? QStringLiteral("6:05 P. M.") : QStringLiteral("6:05 p. m."));
     }
     // en-US puts U+202F before PM on newer CLDR data, and a plain space before it on older.
     const QString english = sidebar::timeOfDay(evening, QStringLiteral("locale"), QLocale(QLocale::English, QLocale::UnitedStates));
