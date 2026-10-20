@@ -34,7 +34,10 @@ test -x "$VP_BIN_DIR/vp"
 sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 
 # mise pins Erlang, Elixir, Node and Bun in mise.toml, which the MC needs
-# (`mise run mc`). Erlang compiles from source, so it needs its build deps.
+# (`mise run mc`). The pinned mise installs Erlang precompiled on this image
+# today; the apt build deps below are only insurance for its kerl fallback,
+# for a future OTP 29 resolution with no precompiled build published yet
+# (mise.toml floats on "29" and there is no mise.lock).
 # The mise version is pinned so a new mise release cannot break every new
 # container (the installer script itself is whatever mise.run serves, the same
 # trust as the vp installer above); bump it with mise.toml when a tool needs a

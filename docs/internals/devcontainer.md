@@ -2,7 +2,7 @@
 
 > For maintainers. Using HAL-C2? See [docs/user](../user/).
 
-`.devcontainer/` gives you a ready-to-code Linux environment for the repo: Ubuntu 24.04, Node 24, pnpm, Rust stable, the global `vp` CLI, the GitHub CLI, and mise with the toolchain pinned in `mise.toml` (Erlang, Elixir, Bun), so the MC runs too. Open the repo in VS Code and "Reopen in Container", or create a GitHub Codespace. Dependency install (`vp i`, and `mise run install:mc` for the MC's Elixir deps) runs automatically before you attach.
+`.devcontainer/` gives you a ready-to-code Linux environment for the repo: Ubuntu 24.04, Node 24, pnpm, Rust stable, the global `vp` CLI, the GitHub CLI, and mise with the toolchain pinned in `mise.toml` (Erlang, Elixir, Node, Bun), so the MC runs too. Bare `node` is the devcontainer feature's Node 24; `mise run` uses mise.toml's pinned node. Open the repo in VS Code and "Reopen in Container", or create a GitHub Codespace. Dependency install (`vp i`, and `mise run install:mc` for the MC's Elixir deps) runs automatically before you attach.
 
 ## What works in the container
 
@@ -23,7 +23,7 @@ Two named volumes keep rebuilds fast and installs off the slow macOS/Windows bin
 
 ## Prebuilds
 
-Container creation from scratch does a full `vp i`, the mise toolchain (Erlang compiles from source) and the MC's Elixir deps, which is worth prebuilding. Codespaces prebuilds are configured in repo settings, not files, and pick this config up as-is: the heavy steps live in `onCreateCommand` and `updateContentCommand`, which prebuilds bake in. Restrict prebuilds to one region and one retained version; storage bills per region per version. Note that prebuild snapshots exclude the caching volumes, so a prebuild-first workflow may prefer dropping the mounts. Outside Codespaces, the Dev Container CLI can push a prebuilt image:
+Container creation from scratch does a full `vp i`, the mise toolchain (precompiled downloads today; the apt build deps in `on-create.sh` only cover mise's kerl fallback for a future OTP 29 with no precompiled build yet) and the MC's Elixir deps, which is worth prebuilding. Codespaces prebuilds are configured in repo settings, not files, and pick this config up as-is: the heavy steps live in `onCreateCommand` and `updateContentCommand`, which prebuilds bake in. Restrict prebuilds to one region and one retained version; storage bills per region per version. Note that prebuild snapshots exclude the caching volumes, so a prebuild-first workflow may prefer dropping the mounts. Outside Codespaces, the Dev Container CLI can push a prebuilt image:
 
 ```bash
 devcontainer build --workspace-folder . --push true --image-name <registry>/hal-c2-devcontainer:latest

@@ -24,8 +24,12 @@
     "HAL_C2_HOME": "${containerWorkspaceFolder}/.hal-c2"
   },
   "remoteEnv": {
-    // mise's shims put mise.toml's tools (mix, elixir, erl, bun) on PATH for
-    // terminals, extensions and tasks, not only inside `mise run`/`mise exec`.
+    // mise's shims, appended, put the mise.toml tools nothing earlier on PATH
+    // provides (mix, elixir, erl, bun) on PATH for terminals, extensions and
+    // tasks, not only inside `mise run`/`mise exec`. Bare `node` intentionally
+    // stays the devcontainer feature's Node 24 (`mise run` gets mise.toml's
+    // pinned node); prepending would also make shims error outside a config
+    // directory ("No version is set for shim").
     "PATH": "${containerEnv:PATH}:/home/vscode/.local/share/mise/shims"
   },
   "mounts": [
