@@ -42,6 +42,7 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import {
   type ComposerImageAttachment,
+  type ImageDecoder,
   findPromptImagePathLines,
   imageExtensionForMimeType,
   imageMimeTypeForPath,
@@ -102,7 +103,6 @@ import { ComposerDock, type ComposerDockContext } from "./ComposerDock.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
-import type { ImageDecoder } from "../host/composerState.ts";
 import { ImageLightbox, type ExpandedImagePreview } from "./ImageLightbox.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";

@@ -68,6 +68,20 @@ function gatedImageDecoder() {
   };
 }
 
+// `started` alone is unbounded: if the read ever fails before the decode, the test
+// would hang on the global timeout with no frame. Waiting through a frame predicate
+// keeps the same signal but fails with the last frame when it never arrives.
+async function awaitDecodeStarted(
+  setup: Awaited<ReturnType<typeof testRender>>,
+  decoder: ReturnType<typeof gatedImageDecoder>,
+) {
+  let started = false;
+  void decoder.started.then(() => {
+    started = true;
+  });
+  await setup.waitForFrame(() => started);
+}
+
 function containsId(root: Renderable, id: string): boolean {
   const queue = [root];
   while (queue.length > 0) {
@@ -1138,12 +1152,12 @@ describe("ChatView acknowledged submissions", () => {
       await setup.renderOnce();
     });
     await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
-    await decoder.started;
+    await awaitDecodeStarted(setup, decoder);
     await React.act(async () => {
       decoder.release();
     });
     await setup.waitForFrame(
-      (frame) => frame.includes("explain this screenshot") && frame.includes("clipboard-i"),
+      (frame) => frame.includes("explain this screenshot") && frame.includes("× clipboard-i"),
     );
     await React.act(async () => {
       setup.mockInput.pressEnter();
@@ -1197,7 +1211,7 @@ describe("ChatView acknowledged submissions", () => {
     // The busy status shows first, so a paste that is never recognised fails with a frame.
     await setup.waitForFrame((frame) => frame.includes("Adding error screenshot.png"));
     // The decode starts once the workspace read resolved; the image is staged after it.
-    await decoder.started;
+    await awaitDecodeStarted(setup, decoder);
     expect(reads).toEqual([
       { cwd: "/workspace/project-one", relativePath: "docs/error screenshot.png" },
     ]);
@@ -1257,7 +1271,7 @@ describe("ChatView acknowledged submissions", () => {
       // The busy status shows first, so a paste that is never recognised fails with a frame.
       await setup.waitForFrame((frame) => frame.includes("Adding outside workspace.png"));
       // The decode starts once the file is read from disk; the image is staged after it.
-      await decoder.started;
+      await awaitDecodeStarted(setup, decoder);
       await React.act(async () => {
         decoder.release();
       });
