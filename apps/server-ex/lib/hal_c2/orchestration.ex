@@ -2575,7 +2575,7 @@ defmodule HalC2.Orchestration do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"]})
+    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
   end
 
   defp renumber(state) do
@@ -3096,7 +3096,7 @@ defmodule HalC2.Orchestration do
     renumbered =
       for {queued, next} <-
             waiting
-            |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"]})
+            |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
             |> Enum.with_index(ordinal + 1),
           change = upsert(state, "run", queued["id"], &Map.put(&1, "ordinal", next)),
           do: change

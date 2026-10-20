@@ -133,6 +133,26 @@ defmodule HalC2.Projection.ShellTest do
     assert preparing["activityRunStartedAt"] == "2026-09-01T10:02:00.000Z"
   end
 
+  # A held run a newer run passed is renumbered above it; cancelling it while held
+  # (instead of resuming) must not make it the thread's latest run either.
+  test "the latest run passes over a held run that never started" do
+    stop = run("run-1", 1, "failed")
+    passed = run("run-2", 2, "completed")
+
+    for status <- ["queued", "cancelled"] do
+      held = run("run-3", 3, status, %{"queueHeld" => true})
+      assert Shell.latest_run([stop, held, passed])["id"] == "run-2"
+    end
+
+    # A run cancelled after it started (its hold was cleared) is the latest.
+    assert Shell.latest_run([passed, run("run-3", 3, "cancelled")])["id"] == "run-3"
+
+    # Runs stored without an ordinal: the newest made.
+    older = Map.delete(run("run-1", 1, "completed"), "ordinal")
+    newer = Map.delete(run("run-2", 2, "completed"), "ordinal")
+    assert Shell.latest_run([older, newer])["id"] == "run-2"
+  end
+
   test "the pending runtime request is the most recently created pending one" do
     request = fn id, status, created_at ->
       {"runtime-request",

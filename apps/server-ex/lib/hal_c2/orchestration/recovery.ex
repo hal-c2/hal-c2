@@ -216,7 +216,11 @@ defmodule HalC2.Orchestration.Recovery do
   # held the queue, and a run that passed a held queue was sent after it).
   defp latest?(thread_id, run) do
     state = HalC2.Streams.state(thread_id)
-    Enum.all?(StreamState.list(state, "run"), &(held?(&1) or &1["ordinal"] <= run["ordinal"]))
+
+    Enum.all?(
+      StreamState.list(state, "run"),
+      &(held?(&1) or (&1["ordinal"] || 0) <= (run["ordinal"] || 0))
+    )
   end
 
   # The thread's latest run, passing over held queued runs: a run that passed a held
@@ -225,7 +229,9 @@ defmodule HalC2.Orchestration.Recovery do
   defp latest_run(state),
     do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
 
-  defp held?(run), do: run["status"] == "queued" and run["queueHeld"] == true
+  # Held for the user and never started, as `HalC2.Projection.Shell.latest_run/1`
+  # passes over: still queued, or cancelled while held.
+  defp held?(run), do: run["status"] in ["queued", "cancelled"] and run["queueHeld"] == true
 
   defp continuable(state) do
     with %{"status" => "running"} = run <- latest_run(state),

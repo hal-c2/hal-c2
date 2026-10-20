@@ -155,16 +155,20 @@ defmodule HalC2.Projection.Shell do
   end
 
   @doc """
-  The run with the highest ordinal, passing over queued runs held for the user
-  (`queueHeld`): they wait behind the run that stopped, so a usage limit's stop stays
-  the thread's latest run until the queue resumes. Runs stored without an ordinal fall
-  back to the order they were made (the order of `runs`).
+  The run with the highest ordinal, passing over runs held for the user that never
+  started (`queueHeld`, still queued or cancelled while held): they wait behind the
+  run that stopped, so a usage limit's stop stays the thread's latest run until the
+  queue resumes. A run cancelled after it started counts: resuming clears the hold
+  before a run starts. Runs stored without an ordinal fall back to the order they
+  were made (the order of `runs`).
   """
   @spec latest_run([map]) :: map | nil
   def latest_run(runs) do
     runs
     |> Enum.reverse()
-    |> Enum.reject(&(get(&1, "status") == "queued" and get(&1, "queueHeld") == true))
+    |> Enum.reject(
+      &(get(&1, "status") in ["queued", "cancelled"] and get(&1, "queueHeld") == true)
+    )
     # The first of equals: of runs stored without an ordinal, the newest.
     |> Enum.max_by(&(get(&1, "ordinal") || 0), fn -> nil end)
   end

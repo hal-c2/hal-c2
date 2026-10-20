@@ -590,9 +590,13 @@ defmodule HalC2.OrchestrationPropTest do
     %{thread | runs: left ++ [run] ++ waiting}
   end
 
-  # The thread's latest run, passing over queued messages held for the user.
+  # The thread's latest run, passing over runs held for the user that never started
+  # (still queued, or cancelled while held).
   defp latest(thread),
-    do: thread.runs |> Enum.reverse() |> Enum.find(&(&1.status != :queued or not &1.held))
+    do:
+      thread.runs
+      |> Enum.reverse()
+      |> Enum.find(&(not &1.held or &1.status not in [:queued, :cancelled]))
 
   # The thread's latest run when it is a limit stop, else nil.
   defp limited(nil), do: nil
