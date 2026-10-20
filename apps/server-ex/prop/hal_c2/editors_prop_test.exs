@@ -86,4 +86,22 @@ defmodule HalC2.EditorsPropTest do
       Editors.command_words(line) |> Enum.all?(&is_binary/1)
     end
   end
+
+  # Microsoft's five documented CRT parsing examples, which the round-trip oracle
+  # above never emits (it only quotes whole arguments): `"a b c" d e` is `a b c`,
+  # `d`, `e`; `"ab\"c" "\\" d` is `ab"c`, `\`, `d`; `a\\\b d"e f"g h` is `a\\\b`,
+  # `de fg`, `h` (the middle word mixes bare and quoted segments); `a\\\"b c d` is
+  # `a\"b`, `c`, `d`; `a\\\\"b c" d e` is `a\\` joined with `b c` (the quote after an
+  # even run of backslashes only toggles quoting), then `d`, `e`.
+  test "the documented CRT parsing examples split as documented" do
+    assert Editors.command_words(~s("a b c" d e)) == ["a b c", "d", "e"]
+
+    assert Editors.command_words("\"ab\\\"c\" \"\\\\\" d") == ["ab\"c", "\\", "d"]
+
+    assert Editors.command_words("a\\\\\\b d\"e f\"g h") == ["a\\\\\\b", "de fg", "h"]
+
+    assert Editors.command_words("a\\\\\\\"b c d") == ["a\\\"b", "c", "d"]
+
+    assert Editors.command_words("a\\\\\\\\\"b c\" d e") == ["a\\\\b c", "d", "e"]
+  end
 end
