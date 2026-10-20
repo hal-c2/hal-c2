@@ -277,6 +277,11 @@ defmodule HalC2.PlannerTest do
 
       assert url.("https://ghe.example.com:0/acme/api/pull/4", "pullRequest") == nil
       assert url.("https://ghe.example.com:99999/acme/api/pull/4", "pullRequest") == nil
+
+      # A host that canonicalizes to nothing, or holds whitespace, names no host.
+      assert url.("https://./acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://../acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://exa mple.com/acme/api/pull/4", "pullRequest") == nil
     end
 
     test "a correcting link to another host forgets what the old host's look stored" do
@@ -307,8 +312,17 @@ defmodule HalC2.PlannerTest do
       item = put_in(item["issue"]["state"], "closed")
       assert item["issue"]["url"] == "https://github.com/acme/api/issues/7"
 
+      # A correction to another host forgets what the old host's look stored, as a
+      # pull request does: that closed state described a different issue.
       item = Plan.link(item, %{"issue" => ref.(%{"url" => ghe})}, @now)
-      assert %{"url" => ^ghe, "state" => "closed"} = item["issue"]
+      assert %{"url" => ^ghe, "state" => "open", "title" => nil} = item["issue"]
+
+      # A same-host correction keeps the rest.
+      item = put_in(item["issue"]["state"], "closed")
+      ported = "https://ghe.example.com:8443/acme/api/issues/7"
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ported})}, @now)
+      assert %{"url" => ^ported, "state" => "closed"} = item["issue"]
+      ghe = ported
 
       assert %{"url" => ^ghe} = Plan.link(item, %{"issue" => ref.(%{})}, @now)["issue"]
     end

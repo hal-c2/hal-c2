@@ -57,8 +57,8 @@ defmodule HalC2Plugins.Planner do
   - changes: each with an op and a reason. update gives itemId and fields; add gives \
   fields and a ref that later changes may name in parent and after; remove gives \
   itemId; link gives itemId and fields {"pullRequest": {repository, number, url}} or \
-  {"issue": {repository, number, url}}, the url being its web address when it is not \
-  github.com's. fields are title, notes, kind (task or milestone), \
+  {"issue": {repository, number, url}}, the url being its web address, whenever you \
+  know it. fields are title, notes, kind (task or milestone), \
   status (todo, doing, blocked, done, dropped), start and due (YYYY-MM-DD), progress \
   (0 to 100), parent, after (the ids it waits for), labels and owner
   - feedback: notes on one task ({itemId, text}) or on the whole plan ({text})\
@@ -339,7 +339,7 @@ defmodule HalC2Plugins.Planner do
     fields = %{
       "type" => "object",
       "description" =>
-        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number, url (its web address, when its host is not github.com)}}"
+        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number, url (its web address, whenever you know it)}}"
     }
 
     %{
@@ -391,7 +391,7 @@ defmodule HalC2Plugins.Planner do
         "number" => %{"type" => "integer"},
         "url" => %{
           "type" => "string",
-          "description" => "Its web address; names its host when that is not github.com."
+          "description" => "Its web address, whenever you know it."
         }
       }
     }

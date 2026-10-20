@@ -433,12 +433,15 @@ defmodule HalC2Plugins.Planner.Plan do
   state is GitHub's, so a link starts open and the next look reads it, and a pull
   request linked once it merged moves its task as one seen to merge. A `url` stays when
   it is a web address of that very pull request (`kind` "pullRequest") or issue
-  ("issue"; any `kind` else takes either), as it names the host a repository the MC has
-  no checkout of is read through (`Sync.look/3`, by host alone, the port left out as
-  the remotes of a project leave it out); whether that host is one of the MC's is that
-  read's to say. What stays is rebuilt from the scheme, host and any port that is not the
-  scheme's own, with the path made over from the repository, kind and number (a deep
-  link like `/files`, dot segments and odd characters do not stay), so credentials, a
+  ("issue"; any `kind` else takes either), as it names the host a lone pull request
+  (one of a repository the MC has no checkout of) is read through (`Sync.lone_pr/2`,
+  by host alone, the port left out as the remotes of a project leave it out); whether
+  that host is one of the MC's is that read's to say. Listed pull requests and all
+  issue reads still route by repository name alone, so the same `owner/repo` on two
+  hosts is conflated there — the remaining gap. What stays is rebuilt from the
+  scheme, host and any port that is not the scheme's own, with the path made over
+  from the repository, kind and number (a deep link like `/files`, dot segments and
+  odd characters do not stay), so credentials, a
   query and a fragment do not either, and the same pull request is always the same
   address. A host that is an IPv6 literal keeps its brackets.
   """
@@ -466,12 +469,16 @@ defmodule HalC2Plugins.Planner.Plan do
 
         case Regex.run(~r{\A/#{name}/(#{segment})/#{number}(/|\z)}, String.downcase(path)) do
           [_, found | _] ->
-            URI.to_string(%URI{
-              scheme: scheme,
-              host: host |> String.downcase() |> String.trim_trailing("."),
-              port: port,
-              path: "/#{repository}/#{found}/#{number}"
-            })
+            host = host |> String.downcase() |> String.trim_trailing(".")
+
+            if host != "" and not String.match?(host, ~r/\s/) do
+              URI.to_string(%URI{
+                scheme: scheme,
+                host: host,
+                port: port,
+                path: "/#{repository}/#{found}/#{number}"
+              })
+            end
 
           nil ->
             nil
@@ -634,16 +641,24 @@ defmodule HalC2Plugins.Planner.Plan do
   defp host_of(_url), do: nil
 
   # The issue a task has already keeps what its looks last saw of it, so a closed one
-  # linked again does not read as newly closed.
+  # linked again does not read as newly closed — unless the correcting address moves
+  # it to another host, where that state described a different issue.
   def link(item, %{"issue" => %{"repository" => repository, "number" => number} = ref}, now) do
     if same_ref?(item["issue"], ref) do
-      # Linked again with the address of the host serving it, as a pull request is, only
-      # its address changes: what GitHub last had of the issue stays.
       url = ref["url"]
 
-      if url && item["issue"]["url"] != url,
-        do: %{item | "issue" => Map.put(item["issue"], "url", url), "updatedAt" => now},
-        else: item
+      if url && item["issue"]["url"] != url do
+        # As with a pull request: another host names a different issue, so what the
+        # old host's look stored of it does not carry over.
+        corrected =
+          if host_of(url) != host_of(item["issue"]["url"]),
+            do: %{"url" => url, "state" => "open", "stateReason" => nil, "title" => nil},
+            else: %{"url" => url}
+
+        %{item | "issue" => Map.merge(item["issue"], corrected), "updatedAt" => now}
+      else
+        item
+      end
     else
       issue = %{
         "repository" => repository,
