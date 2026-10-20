@@ -815,14 +815,33 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The same steer sent twice at once, as a client retrying while the first is still on
-  # its way. Both are answered alike.
+  # its way: Codex holds the first (`hold-steer`, as a refused-archived promote does)
+  # until the repeat has been decided, so the overlap does not depend on the
+  # scheduler. Both are answered alike.
   def steer_twice(tid, msg, instance) do
     steers = active_runs(tid, instance)
     command = message(tid, msg, :auto, instance)
-    tasks = for _ <- 1..2, do: Task.async(fn -> Orchestration.dispatch(command) end)
+    File.touch!(Process.get(:hold_steer))
+    first = Task.async(fn -> Orchestration.dispatch(command) end)
+
+    results =
+      case asked(tid, msg, first) do
+        :asked ->
+          repeat = Orchestration.dispatch(command)
+          File.rm!(Process.get(:hold_steer))
+          [Task.await(first, @wait_ms), repeat]
+
+        {:done, one} ->
+          File.rm!(Process.get(:hold_steer))
+          [one, Orchestration.dispatch(command)]
+
+        :timeout ->
+          File.rm!(Process.get(:hold_steer))
+          [Task.await(first, @wait_ms), Orchestration.dispatch(command)]
+      end
 
     result =
-      case tasks |> Task.await_many(@wait_ms) |> Enum.uniq_by(&outcome/1) do
+      case Enum.uniq_by(results, &outcome/1) do
         [one] -> one
         both -> {:unexpected, both}
       end
