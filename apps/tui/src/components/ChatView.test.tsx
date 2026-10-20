@@ -68,9 +68,9 @@ function gatedImageDecoder() {
   };
 }
 
-// `started` alone is unbounded: if the read ever fails before the decode, the test
-// would hang on the global timeout with no frame. Waiting through a frame predicate
-// keeps the same signal but fails with the last frame when it never arrives.
+// Wait on the decode-started event itself, not on how many frames tick while
+// the preceding read does real IO. On timeout, fail with the last frame so a
+// paste that never reaches the decode is diagnosable.
 async function awaitDecodeStarted(
   setup: Awaited<ReturnType<typeof testRender>>,
   decoder: ReturnType<typeof gatedImageDecoder>,
@@ -79,9 +79,11 @@ async function awaitDecodeStarted(
   void decoder.started.then(() => {
     started = true;
   });
-  // A generous pass budget: the outside-workspace read is real IO, and the bound
-  // should be about the decode starting, not about how many frames tick during it.
-  await setup.waitForFrame(() => started, { maxPasses: 200 });
+  try {
+    await setup.waitFor(() => started);
+  } catch {
+    throw new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`);
+  }
 }
 
 function containsId(root: Renderable, id: string): boolean {
