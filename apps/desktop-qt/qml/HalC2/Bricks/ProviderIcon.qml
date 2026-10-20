@@ -65,7 +65,7 @@ Item {
             readonly property var part: icon.glyph ? icon.glyph.paths[0] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? ProviderIcons.fill(icon.driverKind, icon.dark, 0) : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {
@@ -79,7 +79,7 @@ Item {
             readonly property var part: icon.glyph && icon.glyph.paths.length > 1 ? icon.glyph.paths[1] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? ProviderIcons.fill(icon.driverKind, icon.dark, 1) : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {

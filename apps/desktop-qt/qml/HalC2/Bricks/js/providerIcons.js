@@ -51,6 +51,14 @@ function glyph(driverKind) {
     return glyphs[driverKind] ?? null;
 }
 
+// The fill a glyph's path (the first unless named) is drawn in, for a light
+// or a dark theme; null when the driver has no such path or fill.
+function fill(driverKind, dark, path) {
+    const part = glyphs[driverKind]?.paths[path ?? 0];
+    if (!part) return null;
+    return dark ? part.dark : part.light;
+}
+
 function bitmap(driverKind) {
     return bitmaps[driverKind] ?? "";
 }

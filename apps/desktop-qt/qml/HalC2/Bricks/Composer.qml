@@ -31,12 +31,9 @@ Rectangle {
     readonly property color outline: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.05)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     // Claude's mark colour, as the provider icon draws it: its fill for a light or dark theme.
-    // The mark is a single path, so paths[0] is its fill; the fallback repeats
-    // that glyph's fill for a build without the icon or a fill it lacks.
-    readonly property color claudeOrange: {
-        const part = ProviderIcons.glyph("claudeAgent")?.paths[0];
-        return (foreground.hslLightness > 0.5 ? part?.dark : part?.light) ?? "#d97757";
-    }
+    // The fallback repeats that glyph's fill for a build without the icon
+    // or a fill it lacks.
+    readonly property color claudeOrange: ProviderIcons.fill("claudeAgent", foreground.hslLightness > 0.5) ?? "#d97757"
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
