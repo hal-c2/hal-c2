@@ -573,11 +573,8 @@ defmodule HalC2.ProviderUsageLimits do
   end
 
   # Codex or Claude for their built-in instance and the ones settings add; nil for an ACP agent.
-  defp driver(instance) do
-    Enum.find(@instances, fn driver ->
-      instance == driver or instance in HalC2.Settings.instances_of(driver)
-    end)
-  end
+  defp driver(instance),
+    do: Enum.find(@instances, &HalC2.Settings.known_instance?(&1, instance))
 
   # Codex and Claude with the instances settings add for them, and the enabled ACP
   # agents whose vendors publish quota.

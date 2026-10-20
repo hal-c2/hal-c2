@@ -1040,9 +1040,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp usage_instance(state) do
     instance = Map.get(state, :instance) || "codex"
 
-    if instance == "codex" or instance in HalC2.Settings.instances_of("codex"),
-      do: instance,
-      else: "codex"
+    if HalC2.Settings.known_instance?("codex", instance), do: instance, else: "codex"
   end
 
   # Codex retries a failed request itself and reports each attempt: one work-log item

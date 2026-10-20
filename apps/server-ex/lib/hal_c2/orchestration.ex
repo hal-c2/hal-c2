@@ -1454,7 +1454,7 @@ defmodule HalC2.Orchestration do
   defp builtin_driver(instance) do
     cond do
       HalC2.Acp.agent?(instance) -> instance
-      instance in HalC2.Settings.instances_of("claudeAgent") -> "claudeAgent"
+      HalC2.Settings.known_instance?("claudeAgent", instance) -> "claudeAgent"
       true -> "codex"
     end
   end
@@ -1476,7 +1476,7 @@ defmodule HalC2.Orchestration do
       HalC2.Acp.driver(instance) == "pi" -> HalC2.Pi.ThreadRuntime
       HalC2.Acp.driver(instance) == "muse" -> HalC2.Muse.ThreadRuntime
       HalC2.Acp.agent?(instance) -> HalC2.Acp.ThreadRuntime
-      instance in HalC2.Settings.instances_of("claudeAgent") -> HalC2.Claude.ThreadRuntime
+      HalC2.Settings.known_instance?("claudeAgent", instance) -> HalC2.Claude.ThreadRuntime
       true -> HalC2.Codex.ThreadRuntime
     end
   end

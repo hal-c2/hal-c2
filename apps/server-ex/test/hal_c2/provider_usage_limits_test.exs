@@ -150,6 +150,80 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert round(work["five_hour"]["usedPercent"]) == 90
   end
 
+  # The overage bucket's name is the one each instance's own probe saw (seeded
+  # here as two probes would leave it), so one account's overage event never
+  # lands on the other's model-scoped window.
+  test "each instance's overage event takes its own probe's bucket name" do
+    start()
+
+    :sys.replace_state(Limits, fn state ->
+      %{state | claude_names: %{"claudeAgent" => "Fable 1", "claude-work" => "Opus 2"}}
+    end)
+
+    for {instance, used} <- [{"claudeAgent", 0.2}, {"claude-work", 0.7}] do
+      Limits.claude_event(instance, %{
+        "rateLimitType" => "seven_day_overage_included",
+        "utilization" => used,
+        "resetsAt" => 1_790_000_000
+      })
+    end
+
+    :sys.get_state(Limits)
+
+    personal = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
+    work = Map.new(Limits.get("claude-work")["windows"], &{&1["id"], &1})
+
+    assert personal["seven_day_fable_1"]["usedPercent"] == 20.0
+    assert work["seven_day_opus_2"]["usedPercent"] == 70.0
+    refute Map.has_key?(personal, "seven_day_opus_2")
+    refute Map.has_key?(work, "seven_day_fable_1")
+  end
+
+  # A turn carried from elsewhere can name an instance settings here do not
+  # know: both runtimes publish its quota onto the built-in driver instead of
+  # a phantom entry no probe will ever refresh. Driven through each runtime's
+  # own message entry, against settings with no added instances.
+  test "an update from an instance settings do not know lands on the built-in driver" do
+    start()
+
+    assert {:noreply, _} =
+             HalC2.Codex.ThreadRuntime.handle_info(
+               {:json_rpc, nil,
+                {:notification, "account/rateLimits/updated",
+                 %{
+                   "rateLimits" => %{
+                     "limitId" => "codex",
+                     "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
+                   }
+                 }}},
+               %{instance: "codex-gone"}
+             )
+
+    assert {:noreply, _} =
+             HalC2.Claude.ThreadRuntime.handle_info(
+               {:claude, nil,
+                {:message,
+                 %{
+                   "type" => "rate_limit_event",
+                   "rate_limit_info" => %{
+                     "rateLimitType" => "five_hour",
+                     "utilization" => 0.66,
+                     "resetsAt" => 1_790_000_000
+                   }
+                 }}},
+               %{turn: nil, wake: nil, last_ids: %{instance: "claude-gone"}}
+             )
+
+    :sys.get_state(Limits)
+
+    assert [%{"id" => "primary", "usedPercent" => 88} | _] = Limits.get("codex")["windows"]
+    assert Limits.get("codex-gone") == nil
+
+    claude = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
+    assert claude["five_hour"]["usedPercent"] == 66.0
+    assert Limits.get("claude-gone") == nil
+  end
+
   test "a provider's auth names the account its probe saw, so clients can merge it" do
     start()
     # The account arrives as a cast after the probe; a call after it has been handled.

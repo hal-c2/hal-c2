@@ -1164,7 +1164,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
     instance = if is_map(ids), do: Entities.instance(ids), else: "claudeAgent"
 
-    if instance == "claudeAgent" or instance in HalC2.Settings.instances_of("claudeAgent"),
+    if HalC2.Settings.known_instance?("claudeAgent", instance),
       do: instance,
       else: "claudeAgent"
   end
