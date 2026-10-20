@@ -1124,8 +1124,11 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   # `asks` with those for one issue and milestone made one, in the order they came, its
-  # `took` running theirs.
+  # `took` running theirs. An ask for an issue no longer whole (a legacy or hand-mangled
+  # ref in the saved plan) is dropped, as the filter below it always dropped it.
   defp asked(asks) do
+    asks = Enum.filter(asks, fn {_, issue, _, _} -> whole?(issue) end)
+
     {order, grouped} =
       Enum.reduce(asks, {[], %{}}, fn {_, issue, milestone, _} = ask, {order, grouped} ->
         at = {key(issue), milestone}
@@ -1358,6 +1361,11 @@ defmodule HalC2Plugins.Planner.Sync do
     do: String.downcase(a) == String.downcase(b)
 
   defp same?(_, _), do: false
+
+  defp whole?(%{"repository" => repo, "number" => number}),
+    do: is_binary(repo) and not is_nil(number)
+
+  defp whole?(_), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
 

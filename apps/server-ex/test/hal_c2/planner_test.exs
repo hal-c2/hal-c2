@@ -706,6 +706,57 @@ defmodule HalC2.PlannerTest do
                synced |> took_out.() |> took_into.()
     end
 
+    test "asks an issue two tasks send out of any milestone once, and runs both tasks' tooks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" held "old" for #7 (remembered in `refs`) and has a mark for "new" over #7;
+      # both name #8 by now, so #7 leaves any milestone by both of them.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["old"],
+        "refs" => %{"old" => issue.(7)},
+        "misplaced" => %{"new" => issue.(7)}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{
+        "ms" => ms,
+        "old" => %{"id" => "old", "projectId" => "p", "after" => [], "issue" => issue.(8)},
+        "new" => %{"id" => "new", "projectId" => "p", "after" => [], "issue" => issue.(8)}
+      }
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      assert %{"after" => [], "misplaced" => %{}} = took.(synced)
+    end
+
+    test "drops an ask for an issue whose saved ref is not whole, instead of raising" do
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      synced = %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo})}
+
+      assert [] = Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+    end
+
     test "takes the issue out of any milestone once the task names none" do
       input = corrected(Map.delete(task(nil), "issue"))
       assert %{"number" => 7, "milestone" => nil} = input
