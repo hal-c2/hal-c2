@@ -146,10 +146,21 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   # A boot of the machine, so ticks since boot from an earlier one never match.
+  # Immutable for the life of the VM, so it is read once.
   defp boot_id do
-    case File.read("/proc/sys/kernel/random/boot_id") do
-      {:ok, id} -> String.trim(id)
-      {:error, _} -> ""
+    case :persistent_term.get({__MODULE__, :boot_id}, nil) do
+      nil ->
+        id =
+          case File.read("/proc/sys/kernel/random/boot_id") do
+            {:ok, id} -> String.trim(id)
+            {:error, _} -> ""
+          end
+
+        :persistent_term.put({__MODULE__, :boot_id}, id)
+        id
+
+      id ->
+        id
     end
   end
 
@@ -193,16 +204,37 @@ defmodule HalC2.Subprocess.Orphans do
     # being recorded right now, so its record's `.tmp` is not this reap's to drop.
     restart? = :persistent_term.get(__MODULE__, nil) != nil
     dir = dir()
-    HalC2.Paths.mkdir_private!(dir)
-    reap(dir, restart?)
 
-    # Without its own start time no later boot could tell this MC from one that reused
-    # its pid, so its records could get a live MC's programs killed: track nothing.
-    if owner["started"],
-      do: :persistent_term.put(__MODULE__, %{dir: dir, owner: owner}),
-      else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+    # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
+    # that cannot be made (a parent that is a file, a read-only or full filesystem)
+    # leaves tracking off instead of raising out of `init/1`, where a restart would
+    # burn through the supervisor's restart intensity and take the application down.
+    case mkdir(dir) do
+      :ok ->
+        reap(dir, restart?)
+
+        # Without its own start time no later boot could tell this MC from one that reused
+        # its pid, so its records could get a live MC's programs killed: track nothing.
+        if owner["started"],
+          do: :persistent_term.put(__MODULE__, %{dir: dir, owner: owner}),
+          else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+
+      :error ->
+        # A stale entry from before a restart would point at the same unusable dir.
+        :persistent_term.erase(__MODULE__)
+    end
 
     {:ok, %{programs: %{}}}
+  end
+
+  defp mkdir(dir) do
+    HalC2.Paths.mkdir_private!(dir)
+    :ok
+  rescue
+    e ->
+      Logger.warning("not tracking programs: cannot create #{dir}: #{Exception.message(e)}")
+
+      :error
   end
 
   @impl true
@@ -257,7 +289,9 @@ defmodule HalC2.Subprocess.Orphans do
   defp kill(path, pid, started, leader?) do
     targets = if leader?, do: ["-#{pid}", "#{pid}"], else: ["#{pid}"]
 
-    case System.cmd("kill", ["-s", "KILL", "--" | targets], stderr_to_stdout: true) do
+    # `-KILL`, not `-s KILL`: the one-dash form is the one both GNU and BSD `kill`
+    # take as separate argv entries, with `--` before a negative (group) pid.
+    case System.cmd("kill", ["-KILL", "--" | targets], stderr_to_stdout: true) do
       {_, 0} ->
         File.rm(path)
         :killed
@@ -310,18 +344,27 @@ defmodule HalC2.Subprocess.Orphans do
        )
        when is_integer(pid) and pid > 1 and is_binary(started) and is_integer(mc) and mc > 0 and
               is_binary(mc_started) do
-    if running?(owner) do
-      :kept
-    else
-      # Read again right before the signal, with the group the program leads now.
-      case process(pid) do
-        {_state, ^started, group} ->
-          kill(path, pid, started, group == pid)
+    cond do
+      # Never signal ourselves, and never a "program" that is its own MC: a corrupt
+      # or crafted record (anything running as this user can write here) naming this
+      # boot's pid with a matching start would otherwise have it kill its own group.
+      pid == String.to_integer(System.pid()) or pid == mc ->
+        File.rm(path)
+        :gone
 
-        _ ->
-          File.rm(path)
-          :gone
-      end
+      running?(owner) ->
+        :kept
+
+      true ->
+        # Read again right before the signal, with the group the program leads now.
+        case process(pid) do
+          {_state, ^started, group} ->
+            kill(path, pid, started, group == pid)
+
+          _ ->
+            File.rm(path)
+            :gone
+        end
     end
   end
 

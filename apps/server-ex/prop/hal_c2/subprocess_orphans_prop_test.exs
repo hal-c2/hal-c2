@@ -22,10 +22,17 @@ defmodule HalC2.SubprocessOrphansPropTest do
   @moduletag timeout: :infinity
   @moduletag capture_log: true
 
+  # `blind_boot` leans on chmod, which does not restrict root.
+  @chmod_skip (case System.cmd("id", ["-u"]) do
+                 {"0\n", 0} -> "chmod does not restrict root"
+                 _ -> false
+               end)
+
   # An echo with a command in the background that holds stdout too, so end of file
   # says both are gone. A closed stdin ends both.
   @program ["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done; kill $!)]
 
+  @tag skip: @chmod_skip
   property "a boot kills what a dead MC left running and nothing else",
     numtests: HalC2.Prop.numtests(40),
     max_size: 20 do

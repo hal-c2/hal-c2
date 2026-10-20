@@ -60,21 +60,58 @@ defmodule HalC2.Subprocess do
 
   # A program the next boot could not find if this MC died does not outlive its failed
   # record. The wait is bounded: one in uninterruptible sleep takes SIGKILL only once it
-  # wakes, and the caller is a session's start.
+  # wakes, and the caller is a session's start. A program already gone (its Exile
+  # process ended, or the port has no pid) has nothing to record, as in
+  # `Orphans.track/2`.
   defp track(proc) do
-    {:ok, os_pid} = Proc.os_pid(proc)
+    case os_pid_of(proc) do
+      {:ok, os_pid} -> track(proc, os_pid)
+      :gone -> :ok
+    end
+  end
 
+  defp os_pid_of(proc) do
+    case Proc.os_pid(proc) do
+      {:ok, os_pid} -> {:ok, os_pid}
+      {:error, _} -> :gone
+    end
+  catch
+    :exit, _ -> :gone
+  end
+
+  defp track(proc, os_pid) do
     with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid) do
-      with :ok <- Proc.kill(proc, :sigkill),
-           {:ok, _status} <- Proc.await_exit(proc, 2_000) do
-        :ok
-      else
-        failed ->
-          Logger.warning("program #{os_pid} runs untracked, its kill gave #{inspect(failed)}")
-      end
-
+      stop_untracked(proc, os_pid)
       {:error, {:untracked, reason}}
     end
+  end
+
+  # The error return hands no handle back, and some callers live on after it, so the
+  # program must not: if the kill does not take, the Exile process itself is ended
+  # (unlinked first, so its death does not take the caller), closing its port.
+  defp stop_untracked(proc, os_pid) do
+    with :ok <- Proc.kill(proc, :sigkill),
+         {:ok, _status} <- Proc.await_exit(proc, 2_000) do
+      :ok
+    else
+      failed ->
+        Logger.warning(
+          "program #{os_pid} would run untracked, its kill gave #{inspect(failed)}; " <>
+            "stopping its port process instead"
+        )
+
+        ref = Process.monitor(proc.pid)
+        Process.unlink(proc.pid)
+        Process.exit(proc.pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> :ok
+        after
+          2_000 -> Logger.warning("program #{os_pid} runs untracked: its port process stayed")
+        end
+    end
+  catch
+    :exit, _ -> :ok
   end
 
   @spec write_line(t, iodata) :: :ok | {:error, term}

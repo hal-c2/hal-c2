@@ -8,6 +8,12 @@ defmodule HalC2.Subprocess.OrphansTest do
 
   @moduletag :tmp_dir
 
+  # chmod does not restrict root, so the tests that lean on it say nothing there.
+  @chmod_skip (case System.cmd("id", ["-u"]) do
+                 {"0\n", 0} -> "chmod does not restrict root"
+                 _ -> false
+               end)
+
   # A stand-in provider: echoes its input. An MC that dies here only stops tracking
   # it, so its stdin stays open, as a provider CLI with work in flight carries on.
   @echo ~s(while read l; do echo "$l"; done)
@@ -66,7 +72,14 @@ defmodule HalC2.Subprocess.OrphansTest do
     File.mkdir_p!(Orphans.dir())
     mc = dead_mc()
 
+    self_pid = String.to_integer(System.pid())
+
     records = [
+      %{"pid" => 0, "started" => Orphans.started(pid), "mc" => mc},
+      %{"pid" => -1, "started" => Orphans.started(pid), "mc" => mc},
+      # This boot itself, and a program that is its own MC: never signalled.
+      %{"pid" => self_pid, "started" => Orphans.started(self_pid), "mc" => mc},
+      %{"pid" => mc["pid"], "started" => Orphans.started(self_pid), "mc" => mc},
       %{"pid" => pid, "started" => Orphans.started(pid), "mc" => %{"pid" => mc["pid"]}},
       %{"pid" => pid, "started" => nil, "mc" => mc},
       %{"pid" => "#{pid}", "started" => Orphans.started(pid), "mc" => mc},
@@ -109,6 +122,7 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  @tag skip: @chmod_skip
   test "a record that cannot be read is kept, and a later boot kills its program" do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
@@ -130,6 +144,7 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  @tag skip: @chmod_skip
   test "records that cannot be listed are left for a later boot" do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
@@ -156,6 +171,28 @@ defmodule HalC2.Subprocess.OrphansTest do
     boot(:next)
 
     assert {:error, {:untracked, :enotdir}} = Subprocess.start(["sh", "-c", @echo])
+  end
+
+  test "a records dir that cannot be made does not stop the boot; tracking stays off" do
+    # A file where a parent of the records dir goes makes creating it fail outright
+    # (`:enotdir` from the mkdir itself), not just list/write fails inside it.
+    parent = Path.dirname(Orphans.dir())
+    File.rm_rf!(parent)
+    File.write!(parent, "")
+
+    boot(:next)
+
+    # Tracking is off, so a program still starts (untracked, as without the service).
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "a program that exits at once starts cleanly and reports its status" do
+    boot(:mc)
+
+    assert {:ok, sub} = Subprocess.start(["sh", "-c", "exit 3"])
+    assert {:ok, 3} = Subprocess.stop(sub)
   end
 
   test "a program that leads no group is killed alone" do
@@ -246,6 +283,7 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  @tag skip: @chmod_skip
   test "a program whose record cannot be written is not run" do
     boot(:mc)
     File.chmod!(Orphans.dir(), 0o500)
