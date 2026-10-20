@@ -42,6 +42,8 @@ const TERMINALS: Record<string, { TERM: string; TERM_PROGRAM?: string; KONSOLE_V
     contour: { TERM: "contour", TERM_PROGRAM: "contour" },
     // "VS Code" in the ledger's old outline; the step's {word} needs one word.
     vscode: { TERM: "xterm-256color", TERM_PROGRAM: "vscode" },
+    // The matcher's `-direct` branch, e.g. a TERM that names direct colour itself.
+    "xterm-direct": { TERM: "xterm-direct" },
   };
 
 function client(ctx: LaunchWorld): ProcessRun {
@@ -348,6 +350,7 @@ step("the pane leaves copy mode before the terminal client draws", async (ctx: L
   if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
   // The client asks tmux other things too (its environment, for inline images).
   const events = orderLog(ctx);
+  expect(events).toContain("alt-screen");
   const leftCopyMode = events.indexOf(`tmux copy-mode -q -t ${TMUX_PANE}`);
   expect(leftCopyMode).toBeGreaterThanOrEqual(0);
   expect(leftCopyMode).toBeLessThan(events.indexOf("alt-screen"));
@@ -419,9 +422,11 @@ step("the first ticket request was given up on only after 10 seconds", async (ct
   );
   const lived = first.endedAt! - first.startedAt;
   // The client's timer starts before the request reaches the MC, and a loaded runner can
-  // stretch that gap and the abort's way back; the slack still catches "gave up at once".
+  // stretch that gap and the abort's way back; the lower bound is the load-bearing one
+  // ("not at once"), while the upper slack only needs to catch a wholesale change of
+  // default (30s/60s), so it is wide — a miss here on a loaded runner means rerun first.
   expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_500);
-  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
+  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 15_000);
 });
 
 // --- SSH ---

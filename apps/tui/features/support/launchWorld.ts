@@ -89,7 +89,7 @@ function orderPath(ctx: LaunchWorld): string {
 /**
  * What the client did to its surroundings, one line per event in the order they
  * happened: each `tmux` call, and `alt-screen` once the renderer has taken the
- * alternate screen (written by `orderPreload`, which `startDirect` adds once `recordOrder` is set).
+ * alternate screen (written by `orderPreload`, which every launch adds once `recordOrder` is set).
  * Appends from different processes are ordered by the file, not by clocks.
  */
 export function orderLog(ctx: LaunchWorld): string[] {
@@ -130,16 +130,19 @@ CliRenderer.prototype.setupTerminal = async function (...args: unknown[]) {
 /**
  * What else a terminal leaves in its shell's environment for tools to identify it by. The
  * renderer reads these too, so the terminal a scenario claims is the only one present.
+ * Families are stripped by prefix, so a marker the renderer learns to read cannot leak
+ * the tester's real terminal in just because its exact name is new.
  */
-const TERMINAL_MARKERS = new Set([
-  "KONSOLE_VERSION",
-  "KITTY_WINDOW_ID",
-  "WEZTERM_PANE",
-  "GHOSTTY_RESOURCES_DIR",
-  "LC_TERMINAL",
-  "WT_SESSION",
-  "ITERM_SESSION_ID",
-]);
+const TERMINAL_MARKER_PREFIXES = [
+  "KITTY_",
+  "WEZTERM_",
+  "GHOSTTY_",
+  "ALACRITTY_",
+  "KONSOLE_",
+  "ITERM_",
+  "WT_",
+];
+const TERMINAL_MARKERS = new Set(["LC_TERMINAL"]);
 
 /** The test process's env minus anything that would point at real state or a real tmux. */
 function cleanEnv(ctx: LaunchWorld): Record<string, string> {
@@ -148,7 +151,11 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
     if (value === undefined) continue;
     if (key.startsWith("HAL_C2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
     if (key === "HAL_C2_HOME" || key === "HAL_C2_MC_HOME" || key.startsWith("XDG_")) continue;
+    // The screen model below assumes the pipe renderer draws 80x24 inside a 100x30
+    // screen; an inherited size would break that assumption on shells that export one.
+    if (key === "COLUMNS" || key === "LINES") continue;
     if (key === "COLORTERM" || key === "TERM_PROGRAM" || TERMINAL_MARKERS.has(key)) continue;
+    if (TERMINAL_MARKER_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
     env[key] = value;
   }
   const dir = home(ctx);
@@ -193,6 +200,13 @@ interface Spawned {
 }
 
 function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Spawned {
+  // The renderer on a pipe has no columns or rows of its own and draws 80x24, inside this
+  // larger screen. Rows below its last stay blank, which is what makes `statusLine()` (the last
+  // non-blank row) the client's status row; anything the client wrote below it would move that.
+  const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true });
+  // Cleanups run reversed, so registering dispose before the kill below kills the
+  // client first and only then disposes the terminal it may still be writing to.
+  ctx.cleanups.push(() => terminal.dispose());
   const proc = Bun.spawn(cmd, {
     cwd: TUI_DIR,
     env,
@@ -209,11 +223,6 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     markDrawn = resolve;
   });
   const decoder = new TextDecoder();
-  // The renderer on a pipe has no columns or rows of its own and draws 80x24, inside this
-  // larger screen. Rows below its last stay blank, which is what makes `statusLine()` (the last
-  // non-blank row) the client's status row; anything the client wrote below it would move that.
-  const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true });
-  ctx.cleanups.push(() => terminal.dispose());
   const screenWaiters = new Set<() => void>();
   const screenText = () => {
     const buffer = terminal.buffer.active;
@@ -343,13 +352,20 @@ export function runningMc(ctx: LaunchWorld, options: FakeMcOptions = {}): FakeMc
  * Start the client against the MC on this machine and wait until it draws, then
  * leave it with `leaveWith` or wait for it to exit; `preload` runs a file first.
  */
+/** The `--preload` args every client launch shares, including the order log's. */
+function preloadArgs(ctx: LaunchWorld, preload?: string): string[] {
+  return [preload, launchSetup(ctx).recordOrder ? orderPreload(ctx) : undefined].flatMap((path) =>
+    path ? ["--preload", path] : [],
+  );
+}
+
 export async function runClient(
   ctx: LaunchWorld,
   options: { preload?: string; leaveWith?: "ctrl+c" | "SIGINT" | "SIGTERM" },
 ): Promise<ProcessRun> {
   runningMc(ctx);
   const env = withTerminal(cleanEnv(ctx), launchSetup(ctx).env);
-  const preload = options.preload ? ["--preload", options.preload] : [];
+  const preload = preloadArgs(ctx, options.preload);
   const spawned = spawn(
     ctx,
     [process.execPath, ...preload, CLIENT_ENTRY, "--base-dir", home(ctx)],
@@ -452,9 +468,7 @@ export async function startDirect(
 ): Promise<void> {
   const setup = launchSetup(ctx);
   const env = withTerminal(cleanEnv(ctx), setup.env);
-  const preload = [options.preload, setup.recordOrder ? orderPreload(ctx) : undefined].flatMap(
-    (path) => (path ? ["--preload", path] : []),
-  );
+  const preload = preloadArgs(ctx, options.preload);
   const spawned = spawn(ctx, [process.execPath, ...preload, CLIENT_ENTRY, ...args], env);
   const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "the client", spawned);
   if (drew) {

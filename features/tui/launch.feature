@@ -7,6 +7,7 @@
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the MC)
 #   apps/tui/src/mcDiscovery.ts (runtime record, access token, pairing link, saved credentials)
 #   apps/tui/src/socketTicket.ts (socket tickets over HTTP without a launcher)
+#   packages/client-runtime/src/authorization/remote.ts (the 10s authorization request timeout)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex, lib/hal_c2/auth.ex (access token as bearer)
 #   mise-tasks/tui/_default (mise run tui)
 #   Shared domain: connections/ owns pairing and remote access; this file holds the terminal twist.
@@ -160,6 +161,7 @@ Feature: Launching and leaving the terminal client
       | contour   |
       | iTerm     |
       | vscode    |
+      | xterm-direct |
 
   @tui
   Scenario: A colour setting the shell already made is left alone

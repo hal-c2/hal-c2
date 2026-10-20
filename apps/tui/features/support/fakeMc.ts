@@ -227,6 +227,9 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
   const server = Bun.serve<SocketData>({
     hostname: "127.0.0.1",
     port: 0,
+    // Never time a request out server-side: in the silent-ticket scenario the only
+    // 10s in the race must be the client's, or the scenario passes without it.
+    idleTimeout: 0,
     fetch: (request, bun) => handle(request, bun).finally(changed),
     websocket: {
       open: (ws) => {
