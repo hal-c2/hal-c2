@@ -5,7 +5,7 @@ set -euo pipefail
 
 # The pnpm-store volume mounts at ~/.cache/pnpm, so docker creates ~/.cache root-owned.
 # Hand it to the dev user before anything below (vp, mise) makes its cache directory.
-# Keep in step with update-content.sh, which also chowns node_modules (not mounted yet here).
+# Keep in step with update-content.sh, which also chowns node_modules before vp i; nothing here writes to it.
 for dir in "$HOME/.cache" "$HOME/.cache/pnpm"; do
   if [ -d "$dir" ] && [ "$(stat -c %U "$dir")" != "$(id -un)" ]; then
     sudo chown "$(id -un):$(id -gn)" "$dir"

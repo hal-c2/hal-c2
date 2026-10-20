@@ -13,4 +13,7 @@ for dir in "$HOME/.cache" "$HOME/.cache/pnpm" node_modules; do
 done
 
 CI=true vp i
-mise run install:mc
+# install:mc also compiles the MC. A broken MC compile must not fail container
+# creation for TypeScript-only work, so warn loudly instead of failing here;
+# `mise run mc` will surface the same error when the MC is actually run.
+mise run install:mc || echo "warning: MC deps/compile failed; the container is usable, run 'mise run install:mc' to retry" >&2

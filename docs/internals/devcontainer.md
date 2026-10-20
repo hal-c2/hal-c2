@@ -2,7 +2,7 @@
 
 > For maintainers. Using HAL-C2? See [docs/user](../user/).
 
-`.devcontainer/` gives you a ready-to-code Linux environment for the repo: Ubuntu 24.04, Node 24, pnpm, Rust stable, the global `vp` CLI, the GitHub CLI, and mise with the toolchain pinned in `mise.toml` (Erlang, Elixir, Node, Bun), so the MC runs too. Bare `node` is the devcontainer feature's Node 24; `mise run` uses mise.toml's pinned node. Open the repo in VS Code and "Reopen in Container", or create a GitHub Codespace. Dependency install (`vp i`, and `mise run install:mc` for the MC's Elixir deps) runs automatically before you attach.
+`.devcontainer/` gives you a ready-to-code Linux environment for the repo: Ubuntu 24.04, Node 24, pnpm, Rust stable, the global `vp` CLI, the GitHub CLI, and mise with the toolchain named in `mise.toml` (Erlang, Elixir, Node, Bun), so the MC runs too. Bare `node` is the devcontainer feature's Node 24; `mise run` uses mise.toml's pinned node. Open the repo in VS Code and "Reopen in Container", or create a GitHub Codespace. Dependency install (`vp i`, and `mise run install:mc` for the MC's Elixir deps) runs automatically before you attach.
 
 ## What works in the container
 
