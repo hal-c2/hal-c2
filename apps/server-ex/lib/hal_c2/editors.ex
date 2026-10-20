@@ -187,7 +187,7 @@ defmodule HalC2.Editors do
   # Two more divergences from Explorer: the `UserChoice`
   # `Hash` is not validated (Windows ignores a choice whose hash does not match) and
   # `UserChoiceLatest` is not read, so the MC can name an editor Explorer would not use.
-  # Like xdg-mime, it runs while a client waits for the server config, so the three queries
+  # Like xdg-mime, it runs while a client waits for the server config, so the queries
   # share one 2 s deadline (`lookup/2`). On timeout the task is killed, which closes its
   # port but may leave a hung `reg.exe` to exit on its own: the deadline protects the
   # client, not the process table.
@@ -426,22 +426,34 @@ defmodule HalC2.Editors do
   # closed as soon as the program starts, so nothing waits on it and nothing it writes
   # is buffered. A default editor can be a GUI program that stays open until the user
   # closes it; `System.cmd` in a task pinned a task and a port for that whole lifetime.
-  # A program that cannot be found or started counts as launched, as it did in the task;
-  # a start that raises is logged and counts as launched too, so a click that starts
-  # nothing still answers `:ok` (the caller has no channel for the failure).
-  # Two more accepted divergences from Explorer, unverified on a real Windows host
-  # (tracked in #397): `:spawn_executable` is CreateProcess-backed and cannot run
-  # `.cmd`/`.bat` shims (those need `%ComSpec% /c`), so a default resolving to one
-  # starts nothing; and `:hide` with `:nouse_stdio` suits a GUI program, while a
-  # registered console editor gets no console and no standard streams.
+  # A program that cannot be found or started still counts as launched, as it did in
+  # the task, but both cases log a warning, since the caller has no channel for the
+  # failure. The close is isolated from that rescue: a program that exits before the
+  # close runs still counts as started, never as failed.
+  # Accepted divergences from Explorer, unverified on a real Windows host (tracked in
+  # #397): `:spawn_executable` is CreateProcess-backed and cannot run `.cmd`/`.bat`
+  # shims (those need `%ComSpec% /c`), so a default resolving to one starts nothing;
+  # `:hide` with `:nouse_stdio` suits a GUI program, while a registered console editor
+  # gets no console and no standard streams; and `:spawn_executable` builds the
+  # CreateProcess command line from `args`, so a spaced target path or an embedded
+  # quote round-trips only as far as OTP's Windows quoting is correct.
   defp launch_detached(command, args) do
     with path when path != nil <- System.find_executable(command) do
       port = Port.open({:spawn_executable, path}, [:binary, :nouse_stdio, :hide, args: args])
-      Port.close(port)
+
+      try do
+        Port.close(port)
+      rescue
+        ArgumentError -> :ok
+      end
+    else
+      _ ->
+        Logger.warning("program failed to start: #{inspect(command)}: not found")
+        nil
     end
   rescue
     error ->
-      Logger.warning("default editor failed to start: #{inspect(command)}: #{inspect(error)}")
+      Logger.warning("program failed to start: #{inspect(command)}: #{inspect(error)}")
       nil
   end
 
