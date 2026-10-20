@@ -90,13 +90,59 @@ defmodule HalC2.Subprocess.OrphansTest do
     ]
 
     for {record, n} <- Enum.with_index(records),
-        do: File.write!(Path.join(Orphans.dir(), "#{n}.json"), JSON.encode!(record))
+        do: File.write!(Path.join(Orphans.dir(), "#{n}-1.json"), JSON.encode!(record))
 
     boot(:next)
 
     alive!(sub)
     assert File.ls!(Orphans.dir()) == []
     assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "a boot leaves files in the records dir that are not records alone" do
+    File.mkdir_p!(Orphans.dir())
+    foreign = Path.join(Orphans.dir(), "notes.txt")
+    File.write!(foreign, "not a record")
+    File.write!(Path.join(Orphans.dir(), "1-1.json"), ~s({"pid": 1))
+
+    boot(:next)
+
+    assert File.read!(foreign) == "not a record"
+    assert File.ls!(Orphans.dir()) == ["notes.txt"]
+  end
+
+  test "a failed kill of a zombie program keeps its record for the next boot", %{tmp_dir: dir} do
+    # A zombie (as in the unreaped-MC test below): exited, so "not running" before
+    # any signal — a failed kill must not be read as success from that alone.
+    child = ~S{sh -c 'while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done'}
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & echo $!; exec sleep 60"])
+    {:ok, line} = Exile.Process.read(holder)
+    zombie = line |> String.trim() |> String.to_integer()
+    await_zombie(zombie, 500)
+
+    File.mkdir_p!(Orphans.dir())
+    record = "#{zombie}-1.json"
+
+    File.write!(
+      Path.join(Orphans.dir(), record),
+      JSON.encode!(%{"pid" => zombie, "started" => Orphans.started(zombie), "mc" => dead_mc()})
+    )
+
+    bin = Path.join(dir, "bin")
+    File.mkdir_p!(bin)
+    File.write!(Path.join(bin, "kill"), "#!/bin/sh\nexit 1\n")
+    File.chmod!(Path.join(bin, "kill"), 0o755)
+    path = System.get_env("PATH")
+    System.put_env("PATH", bin)
+
+    try do
+      boot(:next)
+    after
+      System.put_env("PATH", path)
+    end
+
+    assert File.ls!(Orphans.dir()) == [record]
+    :ok = Exile.Process.kill(holder, :sigkill)
   end
 
   test "a boot with no kill to run keeps the record, and a later one kills the program" do

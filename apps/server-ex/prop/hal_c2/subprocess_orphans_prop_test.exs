@@ -4,7 +4,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   stopped, started while the service is down for a restart, carried over a restart of
   the service inside a running MC, or left running by an MC that died. The MC is a stand-in OS process, so dying is that process
   ending while its programs keep running. Each boot after a death must kill exactly
-  the programs the dead MC left, each with its background command, and spare the
+  the programs the dead MC left, each with its background command, leave a file in
+  the records dir that is not a record alone, and spare the
   rest; there is a record for each program running, and one that a service which
   restarted no longer tracks stays until the next boot. A restart leaves a record
   being written alone. A boot that cannot list or read the records kills nothing and
@@ -132,8 +133,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # A reap kills what dead MCs left running and drops every record naming one.
   defp reaped(state), do: %{state | left: [], orphans: []}
 
-  def postcondition(state, {:call, _, :boot, []}, {killed, records}),
-    do: Enum.sort(killed) == Enum.sort(state.orphans) and records == []
+  def postcondition(state, {:call, _, :boot, []}, {killed, records, foreign_left}),
+    do: Enum.sort(killed) == Enum.sort(state.orphans) and records == [] and foreign_left
 
   def postcondition(state, {:call, _, :blind_boot, _}, {alive, records}),
     do: alive == Enum.sort(state.orphans) and records == pids(state.left)
@@ -159,11 +160,15 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # --- commands ----------------------------------------------------------------------
 
   # A new MC: a stand-in OS process for it, then the service, which reaps as it starts.
-  # Returns the orphans whose program and background command ended, and the records.
+  # Returns the orphans whose program and background command ended, the records,
+  # and whether a file in the records dir that is not a record was left alone.
   def boot do
     new_mc()
+    File.mkdir_p!(Orphans.dir())
+    foreign = Path.join(Orphans.dir(), "notes.txt")
+    File.write!(foreign, "not a record")
     start_service()
-    {killed(), records()}
+    {killed(), records(), File.exists?(foreign)}
   end
 
   # A new MC whose reap cannot list the records, or read any of them, until it is up.
@@ -307,6 +312,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
     dir = Orphans.dir()
 
     File.ls!(dir)
+    |> Enum.filter(&Regex.match?(~r/^\d+-\d+\.json(\.tmp)?$/, &1))
     |> Enum.map(&(Path.join(dir, &1) |> File.read!() |> JSON.decode!() |> Map.fetch!("pid")))
     |> Enum.sort()
   end

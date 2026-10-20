@@ -26,6 +26,10 @@ defmodule HalC2.Subprocess.Orphans do
   background commands of a program that had already exited by the boot (a CLI that
   stopped on its closed stdin): with no leader left to check, its group's id cannot
   be told from a later group's, so the record is dropped and they are not signalled.
+  Nor is the last identity read atomic with the signal: a pid reused in the moment
+  between that read and the external `kill` running would be signalled instead;
+  closing that needs a pidfd (`pidfd_open` + `pidfd_send_signal`), which no helper
+  here provides.
 
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
@@ -134,7 +138,10 @@ defmodule HalC2.Subprocess.Orphans do
       {:ok, stat} ->
         case stat |> String.split(")") |> List.last() |> String.split() do
           [state, _parent, group | rest] when length(rest) >= 17 ->
-            {state, "#{boot_id()}:#{Enum.at(rest, 16)}", String.to_integer(group)}
+            case Integer.parse(group) do
+              {group, ""} -> {state, "#{boot_id()}:#{Enum.at(rest, 16)}", group}
+              _ -> nil
+            end
 
           _ ->
             nil
@@ -146,18 +153,21 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   # A boot of the machine, so ticks since boot from an earlier one never match.
-  # Immutable for the life of the VM, so it is read once.
+  # Immutable for the life of the VM, so a successful read is cached. A failed one
+  # is not: caching "" would stamp every record this VM writes with no boot id, and
+  # no later boot (reading the file fine) would ever match one of them.
   defp boot_id do
     case :persistent_term.get({__MODULE__, :boot_id}, nil) do
       nil ->
-        id =
-          case File.read("/proc/sys/kernel/random/boot_id") do
-            {:ok, id} -> String.trim(id)
-            {:error, _} -> ""
-          end
+        case File.read("/proc/sys/kernel/random/boot_id") do
+          {:ok, id} ->
+            id = String.trim(id)
+            :persistent_term.put({__MODULE__, :boot_id}, id)
+            id
 
-        :persistent_term.put({__MODULE__, :boot_id}, id)
-        id
+          {:error, _} ->
+            ""
+        end
 
       id ->
         id
@@ -273,8 +283,11 @@ defmodule HalC2.Subprocess.Orphans do
           []
       end
 
+    # Only names this module writes are records; anything else in the dir (a file a
+    # user or another tool put there) is not this boot's to remove.
     killed =
       for name <- names,
+          name =~ ~r/^\d+-\d+\.json(\.tmp)?$/,
           not (restart? and String.ends_with?(name, ".tmp")),
           path = Path.join(dir, name),
           reap_one(path) == :killed,
@@ -298,8 +311,11 @@ defmodule HalC2.Subprocess.Orphans do
 
       # One target failed (the group, when the program led none; a member it may not
       # signal), and the program may yet show as running for a moment after SIGKILL.
+      # Only a pid no longer holding that process proves it gone: a zombie leader is
+      # "not running" before any signal, while its group may have survived this one,
+      # so its record is kept for the next boot rather than counted killed.
       {out, status} ->
-        if running?(%{"pid" => pid, "started" => started}) do
+        if match?({_state, ^started, _group}, process(pid)) do
           Logger.warning(
             "could not kill #{pid}, which an earlier MC left running: #{status} #{out}"
           )
@@ -357,6 +373,7 @@ defmodule HalC2.Subprocess.Orphans do
 
       true ->
         # Read again right before the signal, with the group the program leads now.
+        # Not atomic with the external `kill` (see the moduledoc's pidfd limit).
         case process(pid) do
           {_state, ^started, group} ->
             kill(path, pid, started, group == pid)
