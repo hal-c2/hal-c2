@@ -54,8 +54,17 @@ defmodule HalC2.Muse.ThreadRuntime do
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 35_000)
+      pid -> steer_call(pid, run_id, message)
     end
+  end
+
+  # A timeout here means Muse (or the runtime ahead of it) still holds the
+  # request and hands it over when it gets to it, so it is answered `:ok` where
+  # that is known.
+  defp steer_call(pid, run_id, message) do
+    GenServer.call(pid, {:steer, run_id, message}, 35_000)
+  catch
+    :exit, {:timeout, _} -> :ok
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}

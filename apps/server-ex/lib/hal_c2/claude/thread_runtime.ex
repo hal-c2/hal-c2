@@ -76,9 +76,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, message})
+      [{pid, _}] -> steer_call(pid, run_id, message)
       [] -> {:error, "no running turn"}
     end
+  end
+
+  # The handler only notifies the session, so the explicit budget waits on mailbox
+  # backlog alone. A timeout here means the runtime still holds the request and
+  # hands it over when it gets to it, so it is answered `:ok` where that is known.
+  defp steer_call(pid, run_id, message) do
+    GenServer.call(pid, {:steer, run_id, message}, 30_000)
+  catch
+    :exit, {:timeout, _} -> :ok
   end
 
   @doc """
