@@ -116,11 +116,48 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const outside = NodePath.join(temporaryDirectory(), "libqsqlite.real");
       NodeFS.writeFileSync(outside, "driver");
       NodeFS.symlinkSync(outside, NodePath.join(drivers, "libqsqlite.so"));
-      expect(check(drivers).status).toBe(1);
+      const linked = check(drivers);
+      expect(linked.status).toBe(1);
+      expect(linked.stderr).toContain("is a symlink");
       const inside = temporaryDirectory();
       NodeFS.writeFileSync(NodePath.join(inside, "libqsqlite.real"), "driver");
       NodeFS.symlinkSync("libqsqlite.real", NodePath.join(inside, "libqsqlite.so"));
       expect(check(inside).status).toBe(1);
+    });
+
+    it("rejects a symlinked sqldrivers directory", () => {
+      const root = temporaryDirectory();
+      const real = NodePath.join(root, "real");
+      NodeFS.mkdirSync(real);
+      NodeFS.writeFileSync(NodePath.join(real, "libqsqlite.so"), "driver");
+      const drivers = NodePath.join(root, "sqldrivers");
+      NodeFS.symlinkSync(real, drivers);
+      const result = check(drivers);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is a symlink");
+    });
+
+    it("rejects a driver name that is not a plain file name", () => {
+      const root = temporaryDirectory();
+      const drivers = NodePath.join(root, "sqldrivers");
+      const real = NodePath.join(root, "real");
+      NodeFS.mkdirSync(drivers);
+      NodeFS.mkdirSync(real);
+      NodeFS.writeFileSync(NodePath.join(real, "libqsqlite.so"), "driver");
+      const result = check(drivers, "../real/libqsqlite.so");
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is not a driver file name");
+    });
+
+    it("runs directly, as the packagers invoke it", () => {
+      const drivers = temporaryDirectory();
+      NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.so"), "driver");
+      const script = NodeURL.fileURLToPath(new URL("./check-sqlite-driver.sh", import.meta.url));
+      const result = NodeChildProcess.spawnSync(script, [drivers, "libqsqlite.so"], {
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
     });
   });
 
