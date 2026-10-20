@@ -665,22 +665,35 @@ defmodule HalC2.Orchestration do
           at = Entities.now()
 
           changes =
-            [
-              upsert(
-                state,
-                "run",
-                queued["id"],
-                &Map.merge(&1, %{
-                  "status" => "cancelled",
-                  "queuePosition" => nil,
-                  "completedAt" => at
-                })
-              ),
-              upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
-            ] ++
-              steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
+            Enum.reject(
+              [
+                upsert(
+                  state,
+                  "run",
+                  queued["id"],
+                  &Map.merge(&1, %{
+                    "status" => "cancelled",
+                    "queuePosition" => nil,
+                    "completedAt" => at
+                  })
+                ),
+                upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
+              ] ++
+                steer_changes(
+                  state,
+                  target,
+                  message["id"],
+                  message,
+                  "promoted_queued_to_steer",
+                  at
+                ),
+              &is_nil/1
+            )
 
-          {Enum.reject(changes, &is_nil/1), {:promoted, message}}
+          # The queue closes up in the same step: the ask that follows can take as
+          # long as its timeout, and the runs behind keep their places meanwhile.
+          positions = with_changes(state, changes) |> renumber()
+          {changes ++ Enum.reject(positions, &is_nil/1), {:promoted, message}}
         else
           {[], runs[queued["id"]]["status"]}
         end
@@ -692,7 +705,6 @@ defmodule HalC2.Orchestration do
 
         case ask_steer(instance, thread_id, target["id"], steer_input(message)) do
           :ok ->
-            HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
             {:ok, %{"sequence" => sequence(thread_id)}}
 
           {:error, reason} ->

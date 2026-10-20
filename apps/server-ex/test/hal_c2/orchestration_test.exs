@@ -1084,6 +1084,42 @@ defmodule HalC2.OrchestrationTest do
       assert [%{"method" => "turn/steer"}] = asked
     end
 
+    # The queue closes up when the promoted message joins the turn, not when the
+    # provider answers: Codex may hold the steer for as long as its timeout.
+    test "a promote renumbers the queue while Codex still holds the steer", %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "hold this")
+      {:ok, _} = send_message(thread_id, "m3", "third")
+      {:ok, _} = send_message(thread_id, "m4", "fourth")
+
+      [active, first, second, third] =
+        runs(await_statuses(thread_id, ["running", "queued", "queued", "queued"]))
+
+      promote =
+        Task.async(fn ->
+          Orchestration.dispatch(%{
+            "type" => "queued-message.promote-to-steer",
+            "threadId" => thread_id,
+            "queuedRunId" => first["id"],
+            "targetRunId" => active["id"]
+          })
+        end)
+
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      state = current(thread_id)
+
+      assert %{"status" => "queued", "queuePosition" => 1} =
+               StreamState.get(state, "run")[second["id"]]
+
+      assert %{"status" => "queued", "queuePosition" => 2} =
+               StreamState.get(state, "run")[third["id"]]
+
+      File.touch!(Path.join(gates, "steer"))
+      assert {:ok, _} = Task.await(promote)
+    end
+
     # #105: Codex took the steer and ended its turn before it said so. The message is
     # in the turn ahead of its answer, not after the turn's end.
     test "a steer taken as the turn ends is shown before its answer" do
