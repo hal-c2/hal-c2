@@ -140,7 +140,7 @@ defmodule HalC2Plugins.Planner.Sync do
           project = project_of(github, repo)
           {known, alone} = updated(project, repo, refs, before)
 
-          # A full look reads each closed issue alone, a few at a time.
+          # The issues to read alone are read a few at a time.
           read =
             alone
             |> Task.async_stream(
@@ -151,7 +151,7 @@ defmodule HalC2Plugins.Planner.Sync do
               max_concurrency: 4,
               timeout: :infinity
             )
-            |> Enum.map(fn {:ok, read} -> read end)
+            |> Enum.map(fn {:ok, answer} -> answer end)
 
           for {number, answer} <- read, reduce: {known ++ details, problems} do
             {details, problems} ->
