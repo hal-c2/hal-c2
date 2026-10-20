@@ -175,6 +175,13 @@ Feature: Codex
     Then both instances see the same Codex sessions and settings
     And each keeps its own login and model list
 
+  Scenario: Two Codex accounts keep their own usage limits
+    Given a shared Codex home and a second Codex instance with its own shadow home
+    And the user signs in to the second instance
+    When both Codex instances' usage has been checked
+    And a turn on the second Codex instance reports its usage
+    Then each Codex account keeps its own usage limits
+
   # Blocked: needs "Several Codex accounts share one Codex home" first.
   @backlog @blocked
   Scenario: The user can switch a Codex thread to another account

@@ -88,14 +88,14 @@ defmodule HalC2.ProviderUsageLimitsTest do
 
     # The overage-included bucket takes the model name the probe saw; a window sent
     # without its reset keeps the known one.
-    Limits.claude_event(%{
+    Limits.claude_event("claudeAgent", %{
       "rateLimitType" => "seven_day_overage_included",
       "utilization" => 0.2,
       "resetsAt" => 1_790_000_000
     })
 
-    Limits.claude_event(%{"rateLimitType" => "five_hour", "utilization" => 0.5})
-    Limits.claude_event(%{"rateLimitType" => "overage", "utilization" => 0.9})
+    Limits.claude_event("claudeAgent", %{"rateLimitType" => "five_hour", "utilization" => 0.5})
+    Limits.claude_event("claudeAgent", %{"rateLimitType" => "overage", "utilization" => 0.9})
     :sys.get_state(Limits)
 
     windows = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
@@ -121,6 +121,33 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert [%{"id" => "primary", "usedPercent" => 43} = primary, _] = after_update["windows"]
     assert primary["resetsAt"] == hd(before["windows"])["resetsAt"]
     assert after_update["resetCredits"] == before["resetCredits"]
+  end
+
+  test "turns on two instances of one driver keep their own windows" do
+    start()
+
+    Limits.update(
+      "codex",
+      Codex.windows(%{"limitId" => "codex", "primary" => %{"usedPercent" => 42}})
+    )
+
+    Limits.update(
+      "codex-work",
+      Codex.windows(%{"limitId" => "codex", "primary" => %{"usedPercent" => 77}})
+    )
+
+    Limits.claude_event("claudeAgent", %{"rateLimitType" => "five_hour", "utilization" => 0.3})
+
+    Limits.claude_event("claude-work", %{"rateLimitType" => "five_hour", "utilization" => 0.9})
+    :sys.get_state(Limits)
+
+    assert [%{"id" => "primary", "usedPercent" => 42}, _] = Limits.get("codex")["windows"]
+    assert [%{"id" => "primary", "usedPercent" => 77}] = Limits.get("codex-work")["windows"]
+
+    claude = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
+    work = Map.new(Limits.get("claude-work")["windows"], &{&1["id"], &1})
+    assert round(claude["five_hour"]["usedPercent"]) == 30
+    assert round(work["five_hour"]["usedPercent"]) == 90
   end
 
   test "a provider's auth names the account its probe saw, so clients can merge it" do

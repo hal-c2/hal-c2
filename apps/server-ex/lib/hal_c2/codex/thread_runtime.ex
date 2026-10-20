@@ -131,6 +131,8 @@ defmodule HalC2.Codex.ThreadRuntime do
        conn: nil,
        native_thread_id: nil,
        turn: nil,
+       # The instance the latest turn runs as: a turn's quota belongs to it.
+       instance: nil,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -150,7 +152,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     # A thread saved under an older model name runs on the model it names today.
     turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
-    state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
+    instance = if ids = turn[:ids], do: Entities.instance(ids)
+    state = %{state | turn: turn, instance: instance, items: %{}, failure: nil, running: %{}}
     # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
     # `%{sub: NativeSubagent handle, done: bool}`.
     state = Map.put(state, :subagents, %{})
@@ -430,6 +433,7 @@ defmodule HalC2.Codex.ThreadRuntime do
        state
        |> Map.put_new(:running, %{})
        |> Map.put_new(:background, %{})
+       |> Map.put_new(:instance, nil)
        |> Map.put(:v, @state_version)}
 
   # The message, with where its files are, and its images inline.
@@ -773,10 +777,14 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # --- notifications ----------------------------------------------------------
 
-  # Quota comes alongside token usage, mostly unchanged; it merges onto the provider entry.
+  # Quota comes alongside token usage, mostly unchanged; it merges onto the turn's own
+  # instance entry, so one account never overwrites another's quota.
   # The merged snapshot is kept to name the used-up window when a turn stops on it.
   defp notification("account/rateLimits/updated", %{"rateLimits" => snapshot}, state) do
-    HalC2.ProviderUsageLimits.update("codex", HalC2.ProviderUsageLimits.Codex.windows(snapshot))
+    HalC2.ProviderUsageLimits.update(
+      usage_instance(state),
+      HalC2.ProviderUsageLimits.Codex.windows(snapshot)
+    )
 
     if snapshot["limitId"] in [nil, "codex"],
       do: Map.put(state, :rate_limits, Map.merge(Map.get(state, :rate_limits) || %{}, snapshot)),
@@ -1025,6 +1033,17 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # The instance a turn's quota update belongs to: the latest turn's own, or the
+  # driver when it names nothing this MC knows (a thread carried from another
+  # machine, say).
+  defp usage_instance(state) do
+    instance = Map.get(state, :instance) || "codex"
+
+    if instance == "codex" or instance in HalC2.Settings.instances_of("codex"),
+      do: instance,
+      else: "codex"
+  end
 
   # Codex retries a failed request itself and reports each attempt: one work-log item
   # per turn (`terminal-failure:<provider turn>`), updated by every attempt and closed

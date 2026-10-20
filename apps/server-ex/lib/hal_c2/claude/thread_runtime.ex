@@ -922,7 +922,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp take_wake(state, _session), do: {state, []}
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
-    HalC2.ProviderUsageLimits.claude_event(info)
+    HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
     rate_limit(info, state)
   end
 
@@ -1157,6 +1157,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: HalC2.Projection.JS.iso(trunc(seconds * 1000))
 
   defp reset_at(_), do: nil
+
+  # The instance a turn's quota update belongs to: the running turn's, else the
+  # latest turn's (work Claude starts between turns joins it), else the driver.
+  defp usage_instance(state) do
+    ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
+    instance = if is_map(ids), do: Entities.instance(ids), else: "claudeAgent"
+
+    if instance == "claudeAgent" or instance in HalC2.Settings.instances_of("claudeAgent"),
+      do: instance,
+      else: "claudeAgent"
+  end
 
   # A turn stopped by a usage limit fails with a structured `usage_limit` failure.
   defp failure(result, turn) do

@@ -11,7 +11,8 @@ defmodule HalC2.ProviderUsageLimits do
   `providerHealthRefreshInterval` while a client in front shows provider status. A
   disabled or missing provider is not probed and shows no limits. Turns
   fill in between: the thread runtimes pass on the rate-limit updates their
-  providers stream (`update/2`, `claude_event/1`), which merge by window id.
+  providers stream (`update/2`, `claude_event/2`), which merge by window id into the
+  turn's own instance entry, so one account never overwrites another's quota.
 
   A probe that fails keeps the last good windows; `unsupported` (an API key account)
   replaces them. `HalC2.Environment.providers/0` reads the published limits from ETS, so
@@ -113,8 +114,9 @@ defmodule HalC2.ProviderUsageLimits do
   def update(_instance, []), do: :ok
   def update(instance, windows), do: GenServer.cast(__MODULE__, {:update, instance, windows})
 
-  @doc "Merges a Claude `rate_limit_event`'s `rate_limit_info`."
-  def claude_event(info), do: GenServer.cast(__MODULE__, {:claude_event, info})
+  @doc "Merges a Claude `rate_limit_event`'s `rate_limit_info` into `instance`."
+  def claude_event(instance, info),
+    do: GenServer.cast(__MODULE__, {:claude_event, instance, info})
 
   @doc "`provider.consumeResetCredit`."
   def consume_reset_credit(%{"sourceId" => _} = input),
@@ -364,7 +366,7 @@ defmodule HalC2.ProviderUsageLimits do
 
     {:ok,
      %{
-       claude_names: nil,
+       claude_names: %{},
        redeem_key: nil,
        providers: provider_settings(HalC2.Settings.settings())
      }, {:continue, :boot}}
@@ -375,7 +377,15 @@ defmodule HalC2.ProviderUsageLimits do
   @impl true
   def code_change(_old_vsn, state, _extra) do
     unless Map.has_key?(state, :providers), do: send(self(), :watch_settings)
-    {:ok, Map.put_new(state, :providers, nil)}
+
+    {:ok,
+     state
+     |> Map.put_new(:providers, nil)
+     |> Map.update(:claude_names, %{}, fn
+       names when is_map(names) -> names
+       nil -> %{}
+       name -> %{"claudeAgent" => name}
+     end)}
   end
 
   @impl true
@@ -434,14 +444,19 @@ defmodule HalC2.ProviderUsageLimits do
     {:noreply, state}
   end
 
-  def handle_cast({:claude_event, info}, state) do
-    case Claude.event_window(info, state.claude_names) do
+  def handle_cast({:claude_event, instance, info}, state) do
+    case Claude.event_window(info, claude_names(state)[instance]) do
       nil -> :ok
-      window -> handle_cast({:update, "claudeAgent", [window]}, state)
+      window -> handle_cast({:update, instance, [window]}, state)
     end
 
     {:noreply, state}
   end
+
+  # The model-scoped weekly name each probed Claude instance saw, for its turn's
+  # updates to reuse (`claude_names` predates per-instance probes as one name).
+  defp claude_names(state),
+    do: if(is_map(state[:claude_names]), do: state[:claude_names], else: %{})
 
   @impl true
   def handle_info(:tick, state) do
@@ -516,10 +531,17 @@ defmodule HalC2.ProviderUsageLimits do
       {probed, state} =
         case result do
           # A failed read keeps the bucket name the last good one saw.
-          {:ok, {%{"unavailable" => %{"reason" => "probeFailed"}} = limits, _}} -> {limits, state}
-          {:ok, {%{} = limits, names}} -> {limits, %{state | claude_names: names}}
-          {:ok, %{} = limits} -> {limits, state}
-          _ -> {unavailable(checked_at, "probeFailed"), state}
+          {:ok, {%{"unavailable" => %{"reason" => "probeFailed"}} = limits, _}} ->
+            {limits, state}
+
+          {:ok, {%{} = limits, names}} ->
+            {limits, %{state | claude_names: Map.put(claude_names(state), instance, names)}}
+
+          {:ok, %{} = limits} ->
+            {limits, state}
+
+          _ ->
+            {unavailable(checked_at, "probeFailed"), state}
         end
 
       publish(instance, after_probe(get(instance), probed))
