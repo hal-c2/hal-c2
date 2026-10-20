@@ -236,7 +236,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     case opened do
       {:error, {:too_old, message}} ->
         finish(state, "failed", message)
-        {:reply, :ok, %{state | turn: nil}}
+        {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
       {:ok, state, turn} ->
         state = %{state | turn: turn}
@@ -255,7 +255,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       {:error, reason} ->
         Logger.warning("claude turn failed to start: #{inspect(reason)}")
         finish(state, "failed", start_failure("Claude", reason))
-        {:reply, :ok, %{state | turn: nil}}
+        {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
     end
   end
 
@@ -472,12 +472,16 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
 
-  # A session started before launches recorded their MCP server has the thread's own,
-  # and one from before they recorded their instance runs on the latest turn's.
+  # A session started before launches recorded their MCP server has the thread's own.
+  # One from before they recorded their instance cannot be told from the latest
+  # turn's ids: a start that failed on another instance left those naming it while
+  # this CLI still runs on the earlier one (restoring them now cannot repair a
+  # state the old runtime already kept). Like Codex's `:unknown`, it is stamped
+  # what no turn launches with, so the next turn starts its own CLI once.
   defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id}) do
     launch
     |> Map.put_new_lazy(:mcp, fn -> HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)) end)
-    |> Map.put_new(:instance, Entities.instance(ids))
+    |> Map.put_new(:instance, :unknown)
   end
 
   defp upgrade_launch(launch, _state), do: launch

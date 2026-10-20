@@ -1792,7 +1792,8 @@ defmodule HalC2.OrchestrationTest do
 
     # Another instance of Claude runs with its own variables and home, so its turn needs
     # its own CLI even when it launches Claude as the first does. A runtime updated in
-    # place from before launches recorded their instance knows the one its CLI runs.
+    # place from before launches recorded their instance cannot tell the one its CLI
+    # runs, so its next turn starts a new CLI rather than guess.
     test "a turn on another instance of Claude starts its own CLI" do
       start_supervised!(HalC2.Settings)
       {_, version} = HalC2.Settings.get()
@@ -1816,11 +1817,45 @@ defmodule HalC2.OrchestrationTest do
 
       {:ok, _} = send_message(thread_id, "msg-user-2", "again")
       _ = await_statuses(thread_id, ["completed", "completed"])
-      assert %{session: ^session} = :sys.get_state(pid)
+      assert %{session: renewed, launch: %{instance: "claudeAgent"}} = :sys.get_state(pid)
+      refute renewed == session
 
       elsewhere = %{"modelSelection" => %{"instanceId" => "claude-work", "model" => "gpt-5.4"}}
       {:ok, _} = send_message(thread_id, "msg-user-3", "elsewhere", elsewhere)
       _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+      assert %{session: other, launch: %{instance: "claude-work"}} = :sys.get_state(pid)
+      refute other == renewed
+    end
+
+    # A start that failed on another instance left the old runtime's latest ids
+    # naming that instance while its CLI was still the first instance's. Updated
+    # in place in that state, it must not stamp the old CLI with the new instance:
+    # the next turn there would reuse the wrong account's CLI.
+    test "an upgrade after a failed start on another instance does not reuse the old CLI" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      work = %{"claude-work" => %{"driver" => "claudeAgent", "enabled" => true}}
+      {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      %{session: session} = :sys.get_state(pid)
+
+      :ok = :sys.suspend(pid)
+
+      :sys.replace_state(pid, fn state ->
+        state
+        |> update_in([:launch], &Map.delete(&1, :instance))
+        |> update_in([:last_ids], &Map.put(&1, :instance, "claude-work"))
+      end)
+
+      :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 9, nil)
+      :ok = :sys.resume(pid)
+
+      elsewhere = %{"modelSelection" => %{"instanceId" => "claude-work", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "msg-user-2", "elsewhere", elsewhere)
+      _ = await_statuses(thread_id, ["completed", "completed"])
       assert %{session: other, launch: %{instance: "claude-work"}} = :sys.get_state(pid)
       refute other == session
     end
