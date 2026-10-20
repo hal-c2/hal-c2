@@ -289,7 +289,12 @@ struct Answer : Command {
     sut.fetched.removeOne(path);
     if (ok) {
       QList<FileTreeModel::Entry> listing = before.listing(path);
-      if (twice && !listing.isEmpty()) listing.append(listing.first());
+      if (twice && !listing.isEmpty()) {
+        FileTreeModel::Entry dup = listing.first();
+        dup.directory = !dup.directory;
+        dup.ignored = !dup.ignored;
+        listing.append(dup);
+      }
       sut.tree.setListing(path, listing);
     } else {
       sut.tree.setFailed(path, QStringLiteral("no such folder"));
