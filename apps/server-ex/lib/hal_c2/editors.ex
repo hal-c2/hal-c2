@@ -217,31 +217,70 @@ defmodule HalC2.Editors do
 
     # The `UserChoice` ProgId is taken as it stands (see `windows_text_editor/0`).
     with reg when reg != nil <- System.find_executable("reg"),
-         class when class != nil <-
-           reg_value(reg, [explorer <> "\\.txt\\UserChoice", "/v", "ProgId"]) ||
-             reg_value(reg, ["HKCR\\.txt", "/ve"]),
-         line when line != nil <-
-           reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]),
-         [program | args] <- command_words(expand_variables(line)),
-         command when command != nil <- System.find_executable(program) do
-      {command,
-       for arg <- args do
-         if String.match?(arg, file_placeholder()), do: {:file, arg}, else: arg
-       end}
+         editor when editor != nil <- windows_editor(reg, explorer) do
+      editor
     else
       _ -> nil
     end
   end
 
-  # The data of the value `reg query` prints for `args`, or nil. `reg` writes in the
-  # console's code page, so a path with characters outside ASCII can come back as invalid
-  # UTF-8, which counts as no value (no editor offered); a PowerShell query or `chcp 65001`
-  # would read it.
+  # The editor that opens `.txt` files: the `shell\open\command` of the class the
+  # user's choice names, else the class registered for the extension. A choice naming
+  # a class with no usable command (a Store app's `DelegateExecute` class, an
+  # uninstalled editor) falls through to the extension's class, as Explorer discards
+  # an invalid choice. Nil without either.
+  defp windows_editor(reg, explorer) do
+    with nil <-
+           editor_of_class(
+             reg,
+             reg_class(reg, [explorer <> "\\.txt\\UserChoice", "/v", "ProgId"])
+           ) do
+      editor_of_class(reg, reg_class(reg, ["HKCR\\.txt", "/ve"]))
+    end
+  end
+
+  # The class a registry value names, or nil.
+  defp reg_class(reg, args) do
+    case reg_value(reg, args) do
+      {_, class} -> class
+      nil -> nil
+    end
+  end
+
+  # The editor a registry class opens text files in, or nil. Only `REG_EXPAND_SZ`
+  # command data holds `%VAR%` for the shell to expand; a `REG_SZ` command line keeps
+  # its percent signs literally, as the shell leaves them.
+  defp editor_of_class(_reg, nil), do: nil
+
+  defp editor_of_class(reg, class) do
+    case reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]) do
+      nil ->
+        nil
+
+      {type, line} ->
+        line = if type == "REG_EXPAND_SZ", do: expand_variables(line), else: line
+
+        with [program | args] <- command_words(line),
+             command when command != nil <- System.find_executable(program) do
+          {command,
+           for arg <- args do
+             if String.match?(arg, file_placeholder()), do: {:file, arg}, else: arg
+           end}
+        else
+          _ -> nil
+        end
+    end
+  end
+
+  # The `{type, data}` of the value `reg query` prints for `args`, or nil. `reg` writes
+  # in the console's code page, so a path with characters outside ASCII can come back
+  # as invalid UTF-8, which counts as no value (no editor offered); a PowerShell query
+  # or `chcp 65001` would read it.
   defp reg_value(reg, args) do
     with {out, 0} <- System.cmd(reg, ["query" | args], stderr_to_stdout: true),
-         [_, data] <- Regex.run(~r/^\s+\S.*?\s+REG_[A-Z_]+\s+(\S.*?)\s*$/m, out),
+         [_, type, data] <- Regex.run(~r/^\s+\S.*?\s+(REG_[A-Z_]+)\s+(\S.*?)\s*$/m, out),
          true <- String.valid?(data) do
-      data
+      {type, data}
     else
       _ -> nil
     end

@@ -244,14 +244,14 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   # A Windows host whose `reg` answers for the .txt association: the user's choice
   # (`user_choice`, else the class registered for .txt) names `txtfile`, whose open
   # command is the `notepad` that reports to this test.
-  defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1)) do
+  defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1), type \\ "REG_EXPAND_SZ") do
     World.put_app_env(:os_type, {:win32, :nt})
     context = install(context, "notepad")
     # What a registered line can name with %...%, as %SystemRoot% is on a real host.
     World.put_os_env("HAL_C2_TEST_EDITORS", context.bin)
 
     command =
-      "    (Default)    REG_EXPAND_SZ    " <>
+      "    (Default)    #{type}    " <>
         String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad"))
 
     body =
@@ -277,6 +277,22 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
        context do
     windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
+  end
+
+  # The user's choice names a class with no usable command (a Store app's
+  # `DelegateExecute` class answers nothing here), but the class registered for
+  # .txt opens text files in Notepad.
+  step "the MC runs on Windows and the chosen program names no command line but the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    brokenfile"},
+      {"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}
+    ])
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered with the (?<type>REG_SZ|REG_EXPAND_SZ) command line '(?<line>[^']+)'$/,
+       %{args: [type, line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line, type)
   end
 
   # A Store app registers no command line, so `reg query /ve` prints a placeholder as data.

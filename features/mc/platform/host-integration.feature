@@ -80,6 +80,12 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad
 
   @mc
+  Scenario: On Windows a chosen program without a command line falls back to the class registered for .txt
+    Given the MC runs on Windows and the chosen program names no command line but the class registered for .txt opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
   Scenario: On Windows the file goes where the registered command line puts it
     Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" --visit "%1" --funcall whitespace-mode --file=%1 --user-data-dir="C:\Editor Data" --name=a\"b "C:\Dir\\"'
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
@@ -120,6 +126,18 @@ Feature: The MC working with its host machine
     Given the MC runs on Windows and Notepad is registered through the variable in '"%HAL_C2_TEST_EDITORS%/notepad" %L'
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
     Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows a REG_SZ command line keeps its variables unexpanded
+    Given the MC runs on Windows and Notepad is registered with the REG_SZ command line '"%HAL_C2_TEST_EDITORS%/notepad" %1'
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
+  Scenario: On Windows an unquoted program path with spaces offers no default editor
+    Given the MC runs on Windows and Notepad is registered with the command line 'C:\Program Files\Editor\editor.exe %1'
+    When a client reads the MC's server config
+    Then the default editor is not offered
 
   @mc
   Scenario: A hung registry lookup does not hold up the server config on Windows
