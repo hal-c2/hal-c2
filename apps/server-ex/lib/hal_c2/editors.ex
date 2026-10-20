@@ -6,6 +6,8 @@ defmodule HalC2.Editors do
   whatever the user set as their default text editor is offered too, as `default`.
   """
 
+  require Logger
+
   # {id, commands, base args, how a `path:line:column` target is passed}
   @editors [
     {"cursor", ["cursor"], ["--classic"], :goto},
@@ -424,14 +426,23 @@ defmodule HalC2.Editors do
   # closed as soon as the program starts, so nothing waits on it and nothing it writes
   # is buffered. A default editor can be a GUI program that stays open until the user
   # closes it; `System.cmd` in a task pinned a task and a port for that whole lifetime.
-  # A program that cannot be found or started counts as launched, as it did in the task.
+  # A program that cannot be found or started counts as launched, as it did in the task;
+  # a start that raises is logged and counts as launched too, so a click that starts
+  # nothing still answers `:ok` (the caller has no channel for the failure).
+  # Two more accepted divergences from Explorer, unverified on a real Windows host
+  # (tracked in #397): `:spawn_executable` is CreateProcess-backed and cannot run
+  # `.cmd`/`.bat` shims (those need `%ComSpec% /c`), so a default resolving to one
+  # starts nothing; and `:hide` with `:nouse_stdio` suits a GUI program, while a
+  # registered console editor gets no console and no standard streams.
   defp launch_detached(command, args) do
     with path when path != nil <- System.find_executable(command) do
       port = Port.open({:spawn_executable, path}, [:binary, :nouse_stdio, :hide, args: args])
       Port.close(port)
     end
   rescue
-    _ -> nil
+    error ->
+      Logger.warning("default editor failed to start: #{inspect(command)}: #{inspect(error)}")
+      nil
   end
 
   # The program that puts what it runs in a session of its own, so the desktop stopping
