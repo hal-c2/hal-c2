@@ -307,30 +307,47 @@ defmodule HalC2.UpgradeTest do
     {:beam_file, HalC2.Upgrade, _, _, _, functions} =
       :beam_disasm.file(:code.which(HalC2.Upgrade))
 
-    calls = fn kinds ->
+    calls = fn kinds, target ->
       for {:function, name, arity, _, code} <- functions,
-          Enum.any?(code, &hot_step?(&1, kinds)),
+          Enum.any?(code, &hot_step?(&1, kinds, target)),
           do: {name, arity}
     end
 
-    # The one path to the step, by name; none of them locally.
-    assert Enum.sort(calls.([:call_ext, :call_ext_only, :call_ext_last])) ==
-             [run_after_hot_update: 2]
+    external = [:call_ext, :call_ext_only, :call_ext_last]
+    local = [:call, :call_only, :call_last]
 
-    assert calls.([:call, :call_only, :call_last]) == []
+    # The one path to the step, by name; none of them locally.
+    assert Enum.sort(calls.(external, :after_hot_update)) == [run_after_hot_update: 2]
+    assert calls.(local, :after_hot_update) == []
+
+    # The other half of the contract: both call sites reach that path locally.
+    # By name would compile and pass everything here, then raise after a rollback
+    # swap, when the newly loaded older beam exports neither function — exactly
+    # the crash run_after_hot_update/2 exists to prevent.
+    assert Enum.sort(calls.(local, :run_after_hot_update)) == [
+             load: 4,
+             reload_code_path: 0
+           ]
+
+    assert calls.(external, :run_after_hot_update) == []
     # `function_exported?/3` does not load the module, and no other test may have yet.
     Code.ensure_loaded!(HalC2.Upgrade)
     assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
   end
 
-  test "a hot update to a version without the public hot step asks for a restart" do
-    # The loaded copy predates the public step (a rollback): running the step must
-    # not raise after the code swap, it asks for a restart instead.
+  test "running the hot step against a version without the public step asks for a restart" do
+    # This models the guard in isolation, not the whole rollback dispatch: the
+    # stripped beam still exports run_after_hot_update/2, which a real pre-public
+    # beam would not. In a real rollback nothing calls it by name on the loaded
+    # copy — the pre-swap code calls its own copy locally, whose by-name call
+    # then lands here. The disassembly test above pins that dispatch half
+    # (local calls only, from both call sites).
     {HalC2.Upgrade, original, file} = :code.get_object_code(HalC2.Upgrade)
 
     try do
       load_beam(file, without_export(original, :after_hot_update, 2))
       refute function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+      assert function_exported?(HalC2.Upgrade, :run_after_hot_update, 2)
       assert HalC2.Upgrade.run_after_hot_update([], []) == [HalC2.Upgrade]
     after
       load_beam(file, original)
@@ -347,6 +364,7 @@ defmodule HalC2.UpgradeTest do
              Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
 
     assert reason =~ "No installed MC has run from"
+    assert reason =~ "--root"
 
     dirs = HalC2.Paths.mc_dirs(home, %{}, dir)
     File.mkdir_p!(dirs.state)
@@ -385,17 +403,17 @@ defmodule HalC2.UpgradeTest do
     :ok
   end
 
-  # A call instruction of one of `kinds` to `after_hot_update/2`, by name or locally.
-  defp hot_step?(instruction, kinds) when is_tuple(instruction) do
+  # A call instruction of one of `kinds` to `target/2`, by name or locally.
+  defp hot_step?(instruction, kinds, target) when is_tuple(instruction) do
     steps = [
-      {:extfunc, HalC2.Upgrade, :after_hot_update, 2},
-      {HalC2.Upgrade, :after_hot_update, 2}
+      {:extfunc, HalC2.Upgrade, target, 2},
+      {HalC2.Upgrade, target, 2}
     ]
 
     elem(instruction, 0) in kinds and Enum.any?(Tuple.to_list(instruction), &(&1 in steps))
   end
 
-  defp hot_step?(_instruction, _kinds), do: false
+  defp hot_step?(_instruction, _kinds, _target), do: false
 
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, and one

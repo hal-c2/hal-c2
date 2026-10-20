@@ -2,9 +2,10 @@ defmodule HalC2.UpgradeSourcePropTest do
   @moduledoc """
   The bundle cache of `HalC2.Upgrade.Source`: however a version's archive is replaced,
   by `put/3`, by a download from a peer or the release URL (an archive and its checksum
-  written, nothing else), by a put that stopped before its checksum, or beside an unpack
-  that stopped midway, fetching the version unpacks the archive last written whole, and
-  nothing when there is none. No peer or release URL answers here.
+  written, nothing else), by a put that stopped before its checksum, beside an unpack
+  that stopped midway, with its checksum taken away again, or with a wrong stamp left
+  beside the unpacked bundle, fetching the version unpacks the archive last written
+  whole, and nothing when there is none. No peer or release URL answers here.
   """
 
   use ExUnit.Case, async: false
@@ -58,6 +59,8 @@ defmodule HalC2.UpgradeSourcePropTest do
       {3, {:call, __MODULE__, :downloaded, [marker()]}},
       {1, {:call, __MODULE__, :stopped_put, [marker()]}},
       {1, {:call, __MODULE__, :stopped_unpack, [marker()]}},
+      {1, {:call, __MODULE__, :rm_checksum, []}},
+      {1, {:call, __MODULE__, :corrupt_stamp, [marker()]}},
       {4, {:call, __MODULE__, :fetch, []}}
     ])
   end
@@ -69,6 +72,8 @@ defmodule HalC2.UpgradeSourcePropTest do
 
   def next_state(state, _result, {:call, _, :stopped_put, [marker]}),
     do: %{state | archive: marker}
+
+  def next_state(state, _result, {:call, _, :rm_checksum, []}), do: %{state | sum: nil}
 
   # The release URL is tried for an archive that is not whole, and its failure removes it.
   def next_state(state, _result, {:call, _, :fetch, []}),
@@ -117,6 +122,23 @@ defmodule HalC2.UpgradeSourcePropTest do
     manifest = Path.join([dir, "releases", @version, "upgrade.json"])
     File.mkdir_p!(Path.dirname(manifest))
     File.write!(manifest, JSON.encode!(%{"version" => @version, "marker" => "stale-" <> marker}))
+  end
+
+  # The checksum taken away while a whole archive remains (a cleanup, a writer
+  # outside the upgrade server): fetching is an error, and a following whole
+  # write recovers.
+  def rm_checksum, do: File.rm(cached_archive() <> ".sha256")
+
+  # A stamp beside the unpacked bundle naming a sum no archive here has, its
+  # manifest left as it was: a plausible-looking stamp must not be trusted.
+  # Not another marker's sum — that could become the right sum beside a stale
+  # manifest after a later put of that marker, a state no writer here produces
+  # (only an unpack writes the stamp, after extracting that very archive).
+  def corrupt_stamp(marker) do
+    stamp = Path.join(Source.cache_dir(@version), "bundle-#{@platform}.sha256")
+    File.mkdir_p!(Path.dirname(stamp))
+    sum = :crypto.hash(:sha256, "corrupt-" <> marker) |> Base.encode16(case: :lower)
+    File.write!(stamp, sum)
   end
 
   def fetch, do: Source.fetch(@version, @platform)
