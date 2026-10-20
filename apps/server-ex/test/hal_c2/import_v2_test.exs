@@ -71,6 +71,54 @@ defmodule HalC2.Import.V2Test do
     assert count == elem(tail, 0) + 1
   end
 
+  # As above, but the source has nothing after the skipped changes, so nothing is
+  # left to store: the write during the replay must still be refused.
+  @tag :tmp_dir
+  test "a resumed import with nothing left to store whose stream is written during the replay is refused",
+       %{tmp_dir: dir} do
+    source = Path.join(dir, "node.sqlite")
+    write_node_log(source, Enum.take(node_events(), 3))
+
+    store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
+    assert {:ok, _} = HalC2.Import.V2.run(source, store)
+    tail = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+
+    foreign = HalC2.Patch.diff(nil, %{"id" => "item-foreign", "text" => "written here"})
+
+    write_here = fn _read, _total ->
+      unless Process.get(:foreign_written) do
+        Process.put(:foreign_written, true)
+
+        {:ok, _} =
+          HalC2.Store.append(store, [
+            {:thread, "thread-1", [{"turn-item", "item-foreign", foreign, 1}]}
+          ])
+      end
+    end
+
+    assert_raise RuntimeError, ~r/cannot be continued/, fn ->
+      HalC2.Import.V2.run(source, store, resume: %{"thread-1" => tail}, progress: write_here)
+    end
+  end
+
+  @tag :tmp_dir
+  test "a resume naming a stream the source no longer has at all is refused", %{tmp_dir: dir} do
+    source = Path.join(dir, "node.sqlite")
+    write_node_log(source, Enum.take(node_events(), 3))
+    store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
+
+    # Nothing stored for it here, so naming it with nothing to skip is no resume.
+    assert {:ok, _} =
+             HalC2.Import.V2.run(source, store, resume: %{"thread-gone" => {0, nil}})
+
+    assert_raise RuntimeError, ~r/thread-gone holds more here/, fn ->
+      HalC2.Import.V2.run(source, store,
+        only: ["thread-gone"],
+        resume: %{"thread-gone" => {2, {"thread", "thread-gone", %{}, 0}}}
+      )
+    end
+  end
+
   defp node_events do
     thread = %{"id" => "thread-1", "title" => "New thread", "projectId" => "project-1"}
     item = %{"id" => "item-1", "type" => "reasoning", "status" => "running", "text" => ""}

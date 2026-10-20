@@ -3033,6 +3033,36 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # The import lock is on the family's root, so asking by a subagent thread's id
+  # finds its parent's import under way rather than running over the same family.
+  step "the user imports the thread {string}'s subagent ran in from that install",
+       %{args: [_title]} = context do
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [context.t3.sub]}
+
+    answer =
+      HalC2.Cluster.Command.stream(
+        "/api/previous-installs/import",
+        input,
+        30_000,
+        &send(test, {:import_progress, &1})
+      )
+
+    Map.put(context, :t3_answer, answer)
+  end
+
+  step "the user is told that thread is being imported already", context do
+    sub = context.t3.sub
+
+    assert {:ok,
+            %{
+              "imported" => [],
+              "failed" => [%{"id" => ^sub, "message" => "It is being imported already."}]
+            }} = context.t3_answer
+
+    context
+  end
+
   step "once the first import is done, {string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
        %{args: [title]} = context do
     task = context.t3_first_import

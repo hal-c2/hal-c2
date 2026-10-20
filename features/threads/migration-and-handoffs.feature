@@ -167,6 +167,14 @@ Feature: Carrying threads and context across servers and agents
     Then the user is told "Alpha" is being imported already
     And once the first import is done, "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
 
+  @mc
+  Scenario: A thread being imported is not imported again by its subagent thread's id
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And an import of "Alpha" from that install is under way
+    When the user imports the thread "Alpha"'s subagent ran in from that install
+    Then the user is told that thread is being imported already
+    And once the first import is done, "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
+
   @backlog @mc
   Scenario: A thread that changed here after its import stopped can be imported afresh
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"

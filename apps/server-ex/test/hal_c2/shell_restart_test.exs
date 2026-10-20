@@ -45,6 +45,49 @@ defmodule HalC2.ShellRestartTest do
     assert {"thread", %{"title" => "stored"}} = Shell.row(node(), "th-1")
   end
 
+  # An import marks a thread before its stream exists, and the shell reads the
+  # marks after the rows and again after listing streams for backfill, so a
+  # shell-only restart under a running import never shows the thread partway:
+  # neither its stored row nor a backfilled one.
+  test "a stream an import has not finished stays hidden when the shell alone starts again" do
+    for {id, stored?} <- [{"th-2", true}, {"th-3", false}] do
+      {:ok, _} = Store.append([{:thread, id, [{"thread", id, %{"s" => thread(id)}}]}])
+      if stored?, do: :ok = Store.put_shell(id, 1, row(id, "importing"))
+      :ok = Store.put_meta("import.thread." <> id, "files:project-1")
+    end
+
+    # A stream with no stored row and no mark: its backfilled row arriving is the
+    # receipt that the backfill has run past the marked streams before it.
+    {:ok, _} = Store.append([{:thread, "th-4", [{"thread", "th-4", %{"s" => thread("th-4")}}]}])
+    :ok = Shell.subscribe(self())
+
+    stop_shell()
+    start_shell()
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{"th-4", _}]}}, 5_000
+    assert Shell.row(node(), "th-2") == nil
+    assert Shell.row(node(), "th-3") == nil
+    assert {"thread", %{"title" => "stored"}} = Shell.row(node(), "th-1")
+  end
+
+  # A thread entity whole enough for a sidebar row to be computed from its log.
+  defp thread(id) do
+    %{
+      "id" => id,
+      "projectId" => "project-1",
+      "title" => "Thread #{id}",
+      "createdBy" => "user",
+      "creationSource" => "web",
+      "providerInstanceId" => "codex",
+      "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5"},
+      "runtimeMode" => "full-access",
+      "interactionMode" => "default",
+      "lineage" => %{"rootThreadId" => id},
+      "createdAt" => "2026-09-01T10:00:00.000Z",
+      "updatedAt" => "2026-09-01T10:00:00.000Z"
+    }
+  end
+
   test "subscribers stay subscribed when the shell starts again" do
     :ok = Shell.subscribe(self())
     %{mcs: [%{epoch: before}]} = Shell.subscribe(spawn_client(), %{})
