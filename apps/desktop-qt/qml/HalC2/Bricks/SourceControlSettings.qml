@@ -34,7 +34,7 @@ SettingsPage {
     function withCode(text) {
         const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"]/g, ""));
-        return escape(text ?? "").replace(/`([^`\n]+)`/g, "<span style=\"font-family:'" + face + "'\">$1</span>");
+        return escape(text ?? "").replace(/`([^`\n]+)`/g, (match, code) => "<span style=\"font-family:'" + face + "'\">" + code + "</span>");
     }
 
     objectName: "sourceControlSettings"
@@ -340,24 +340,36 @@ SettingsPage {
                 }
             }
 
-            ShellButton {
-                // Not disabled while it scans: a disabled button gets no hover, so
-                // its "Scanning…" tooltip would never show. The click is ignored instead.
+            // The button itself is disabled while it scans (focus, dimming and
+            // assistive state included); the hover tooltip lives on this wrapper,
+            // since a disabled button gets no hover of its own.
+            Item {
                 readonly property bool scanning: page.discovery?.scanning ?? false
 
-                objectName: "scan"
-                // Out of the tab order while scanning, as a disabled button would be.
-                activeFocusOnTab: !scanning
+                objectName: "scanArea"
                 visible: (page.discovery?.status ?? "none") !== "none"
-                subtle: true
-                // Dimmed through its tint (an `opacity` would composite the button
-                // into its own surface for as long as the scan runs).
-                tint: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), scanning ? 0.64 : 1)
-                iconName: "refresh-cw"
-                Accessible.name: scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
-                ToolTip.visible: hovered
-                ToolTip.text: scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
-                onClicked: if (!scanning) page.send("scan")
+                implicitWidth: scan.implicitWidth
+                implicitHeight: scan.implicitHeight
+
+                ShellButton {
+                    id: scan
+
+                    objectName: "scan"
+                    enabled: !parent.scanning
+                    subtle: true
+                    iconName: "refresh-cw"
+                    Accessible.name: parent.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
+                    onClicked: page.send("scan")
+                }
+
+                MouseArea {
+                    objectName: "scanHover"
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                    ToolTip.visible: containsMouse
+                    ToolTip.text: parent.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
+                }
             }
         }
 

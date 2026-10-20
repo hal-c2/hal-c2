@@ -169,7 +169,7 @@ Item {
             const button = findChild(card, "advisoryButton");
             verify(button.visible);
             verify(button.iconOnly);
-            compare(button.Accessible.name, "Update available");
+            compare(button.Accessible.name, "Claude Work: Update available");
             const popover = findChild(card, "advisory");
             verify(!popover.visible, "the details stay closed until asked for");
             mouseClick(button);
@@ -271,6 +271,24 @@ Item {
             keyClick(Qt.Key_Escape);
             tryCompare(popover, "opened", false);
             tryVerify(() => button.activeFocus, 1000);
+        }
+
+        // Focus leaving the popover (Tab cycles inside it, so this is focus
+        // moving to another control) closes it, instead of leaving it open
+        // over the page where Escape no longer reaches it.
+        function test_the_advisory_popover_closes_when_focus_leaves_it() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            verify(popover.activeFocus, "the popover holds focus while open");
+            findChild(card, "configure").forceActiveFocus();
+            tryCompare(popover, "opened", false);
         }
 
         function test_the_advisory_popover_keeps_the_settings_zoom() {
@@ -379,7 +397,7 @@ Item {
             const button = findChild(card, "advisoryButton");
             compare(button.iconName, "triangle-alert");
             compare(button.tint, page.warning);
-            compare(button.Accessible.name, "Unsupported version");
+            compare(button.Accessible.name, "Claude Work: Unsupported version");
         }
 
         function test_a_provider_without_an_advisory_has_no_icon() {

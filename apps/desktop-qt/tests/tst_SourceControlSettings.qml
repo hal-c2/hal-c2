@@ -163,23 +163,23 @@ Item {
             compare((summary.text.match(/<span /g) ?? []).length, 2);
         }
 
-        // A disabled button gets no hover, so Rescan stays enabled while it scans and ignores the click.
+        // While it scans the button is disabled (dimmed, out of the tab order and
+        // announced as such); the wrapper around it carries the hover tooltip.
         function test_rescan_while_scanning_shows_its_tooltip_and_ignores_clicks() {
             Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
                 discovery: { status: "ready", scanning: true, title: "", detail: "", suffix: "", versionControl: [root.github({})],
                              providers: [] } }) };
             const page = createTemporaryObject(hostedComponent, root).page;
             const scan = findChild(page, "scan");
-            verify(scan.enabled);
-            verify(!scan.activeFocusOnTab, "out of the tab order while it scans, as a disabled button would be");
+            const area = findChild(page, "scanArea");
+            verify(!scan.enabled, "disabled while it scans");
             compare(scan.Accessible.name, "Scanning server environment");
-            mouseMove(scan, scan.width / 2, scan.height / 2);
-            tryCompare(scan, "hovered", true);
-            tryCompare(scan.ToolTip, "visible", true);
-            compare(scan.ToolTip.text, "Scanning…");
-            verify(scan.tint.a < 1, "dimmed through its tint");
-            compare(scan.opacity, 1, "not through a whole-button opacity");
-            mouseClick(scan);
+            verify(scan.opacity < 1, "dimmed while disabled");
+            mouseMove(area, area.width / 2, area.height / 2);
+            const hover = findChild(page, "scanHover");
+            tryCompare(hover.ToolTip, "visible", true);
+            compare(hover.ToolTip.text, "Scanning…");
+            mouseClick(area);
             compare(Shell.dispatchedActions.length, 0);
         }
 

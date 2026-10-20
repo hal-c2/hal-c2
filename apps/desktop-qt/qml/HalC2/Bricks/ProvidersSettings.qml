@@ -591,7 +591,7 @@ Rectangle {
                     subtle: true
                     iconName: card.advisory && card.advisory.strong ? "triangle-alert" : "circle-arrow-up"
                     tint: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                    Accessible.name: card.advisory ? card.advisory.title : ""
+                    Accessible.name: card.advisory ? qsTr("%1: %2").arg(card.provider.name).arg(card.advisory.title) : ""
                     onClicked: advisoryPopover.opened ? advisoryPopover.close() : advisoryPopover.open()
 
                     Popup {
@@ -643,6 +643,9 @@ Rectangle {
                         // Settings. Pressing the icon again closes it through onClicked.
                         focus: true
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                        // Tabbing past its last control leaves it behind: without this it
+                        // stayed open over the page, beyond Escape's reach.
+                        onActiveFocusChanged: if (opened && !activeFocus && !advisoryButton.activeFocus) close()
                         onWindowWidthChanged: close()
                         onWindowHeightChanged: close()
                         onScaleChanged: close()
