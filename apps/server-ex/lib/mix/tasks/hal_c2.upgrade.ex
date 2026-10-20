@@ -61,6 +61,11 @@ defmodule Mix.Tasks.HalC2.Upgrade do
             {:error, reason} -> Mix.raise(reason)
           end
 
+        case installed_record(home) do
+          {:ok, _base, _token} -> :ok
+          {:error, reason} -> Mix.raise(reason)
+        end
+
         # The commit's version, as `mise run release:mc` builds it: an MC refuses the
         # version it already runs, and clusters only with MCs on its own.
         {version, 0} = System.cmd(Path.expand("scripts/local-version"), [])
@@ -186,14 +191,28 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     end
   end
 
-  # The installed MC on this machine, through `POST /api/dev/reload` with a bundle.
-  defp local_release(path, home) do
-    {:ok, _} = Application.ensure_all_started(:inets)
-    dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
+  @doc false
+  # The installed MC's address and access token at `home`, as its runtime record and
+  # token file name them: `{:ok, base, token}` or `{:error, reason}` when no MC has
+  # run there. `--release` checks this before building, so a root that names no
+  # installed MC fails at once.
+  def installed_record(home, env \\ System.get_env(), user_home \\ HalC2.Paths.user_home()) do
+    dirs = HalC2.Paths.mc_dirs(home, env, user_home)
 
     with {:ok, record} <- File.read(Path.join(dirs.state, "server-runtime.json")),
          {:ok, %{"origin" => base}} <- JSON.decode(record),
          {:ok, token} <- File.read(Path.join(dirs.data, "access-token")) do
+      {:ok, base, String.trim(token)}
+    else
+      _ -> {:error, "No installed MC has run from #{dirs.data}"}
+    end
+  end
+
+  # The installed MC on this machine, through `POST /api/dev/reload` with a bundle.
+  defp local_release(path, home) do
+    {:ok, _} = Application.ensure_all_started(:inets)
+
+    with {:ok, base, token} <- installed_record(home) do
       body = JSON.encode!(%{"bundle" => path, "version" => manifest(path)["version"]})
 
       request =
@@ -223,7 +242,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           Mix.raise("No MC answers at #{base}; is the installed MC running?")
       end
     else
-      _ -> Mix.raise("No installed MC has run from #{dirs.data}")
+      {:error, reason} -> Mix.raise(reason)
     end
   end
 

@@ -197,7 +197,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      pending = __MODULE__.after_hot_update(hot, services)
+      pending = run_after_hot_update(hot, services)
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
     end
   end
@@ -213,6 +213,17 @@ defmodule HalC2.Upgrade do
   # just loaded, so its name, arity and the shape of `services` and of what it returns stay
   # as they are while any MC that calls it this way may still update. The first update to
   # the version that started calling it by name still ran the old copy, from the old caller.
+  # The other direction exists too: a hot update to a bundle built before this step went
+  # public (a rollback or pin) has no public step to call, so callers go through
+  # `run_after_hot_update/2`, which asks for a restart there instead of crashing after
+  # the code swap.
+  @doc false
+  def run_after_hot_update(beams, services) do
+    if function_exported?(__MODULE__, :after_hot_update, 2),
+      do: __MODULE__.after_hot_update(beams, services),
+      else: [__MODULE__]
+  end
+
   @doc false
   def after_hot_update(beams, services) do
     pending =
@@ -531,7 +542,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, _report} <- HalC2.Hot.reload(beams) do
-      case __MODULE__.after_hot_update(beams, services) do
+      case run_after_hot_update(beams, services) do
         [] -> :ok
         pending -> {:error, {:restart_for, pending}}
       end

@@ -28,13 +28,16 @@ defmodule HalC2.UpgradeSourcePropTest do
         Application.put_env(:hal_c2, :upgrade_url, "http://127.0.0.1:1/{version}/{platform}")
         Process.put(:archives, Map.new(@markers, &{&1, tarball(dir, &1)}))
 
-        {history, state, result} = run_commands(__MODULE__, cmds)
+        {history, state, result} =
+          try do
+            run_commands(__MODULE__, cmds)
+          after
+            if url,
+              do: Application.put_env(:hal_c2, :upgrade_url, url),
+              else: Application.delete_env(:hal_c2, :upgrade_url)
 
-        if url,
-          do: Application.put_env(:hal_c2, :upgrade_url, url),
-          else: Application.delete_env(:hal_c2, :upgrade_url)
-
-        File.rm_rf!(dir)
+            File.rm_rf(dir)
+          end
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))

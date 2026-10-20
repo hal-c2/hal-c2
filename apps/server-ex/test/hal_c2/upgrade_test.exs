@@ -313,14 +313,76 @@ defmodule HalC2.UpgradeTest do
           do: {name, arity}
     end
 
-    # Each path that hot loads code, by name; none of them locally.
+    # The one path to the step, by name; none of them locally.
     assert Enum.sort(calls.([:call_ext, :call_ext_only, :call_ext_last])) ==
-             [load: 4, reload_code_path: 0]
+             [run_after_hot_update: 2]
 
     assert calls.([:call, :call_only, :call_last]) == []
     # `function_exported?/3` does not load the module, and no other test may have yet.
     Code.ensure_loaded!(HalC2.Upgrade)
     assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+  end
+
+  test "a hot update to a version without the public hot step asks for a restart" do
+    # The loaded copy predates the public step (a rollback): running the step must
+    # not raise after the code swap, it asks for a restart instead.
+    {HalC2.Upgrade, original, file} = :code.get_object_code(HalC2.Upgrade)
+
+    try do
+      load_beam(file, without_export(original, :after_hot_update, 2))
+      refute function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+      assert HalC2.Upgrade.run_after_hot_update([], []) == [HalC2.Upgrade]
+    after
+      load_beam(file, original)
+    end
+
+    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+  end
+
+  test "the installed MC's record is found under a named root, and named when absent",
+       %{tmp_dir: dir} do
+    home = {:root, dir}
+
+    assert {:error, reason} =
+             Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+
+    assert reason =~ "No installed MC has run from"
+
+    dirs = HalC2.Paths.mc_dirs(home, %{}, dir)
+    File.mkdir_p!(dirs.state)
+    File.mkdir_p!(dirs.data)
+    File.write!(Path.join(dirs.state, "server-runtime.json"), ~s({"origin":"http://127.0.0.1:9"}))
+    File.write!(Path.join(dirs.data, "access-token"), "tok\n")
+
+    assert {:ok, "http://127.0.0.1:9", "tok"} =
+             Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+  end
+
+  # A copy of a beam with one function no longer exported, as a version built
+  # before it went public would load.
+  defp without_export(bin, name, arity) do
+    {:ok, {mod, [debug_info: {:debug_info_v1, backend, data}]}} =
+      :beam_lib.chunks(bin, [:debug_info])
+
+    {:ok, forms} = backend.debug_info(:erlang_v1, mod, data, [])
+
+    forms =
+      Enum.map(forms, fn
+        {:attribute, line, :export, exports} ->
+          {:attribute, line, :export, List.delete(exports, {name, arity})}
+
+        form ->
+          form
+      end)
+
+    {:ok, ^mod, beam} = :compile.forms(forms, [:binary, :debug_info])
+    beam
+  end
+
+  defp load_beam(file, beam) do
+    :code.purge(HalC2.Upgrade)
+    {:module, HalC2.Upgrade} = :code.load_binary(HalC2.Upgrade, file, beam)
+    :ok
   end
 
   # A call instruction of one of `kinds` to `after_hot_update/2`, by name or locally.

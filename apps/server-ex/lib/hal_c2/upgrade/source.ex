@@ -234,8 +234,20 @@ defmodule HalC2.Upgrade.Source do
              {:cwd, String.to_charlist(dir)}
            ]) do
         :ok ->
-          File.write!(stamp, sum)
-          {:ok, dir}
+          # A writer outside the upgrade server may have replaced the archive since
+          # its checksum was read; only stamp what was actually checked.
+          if sha256(archive_path(version, platform)) == sum do
+            File.write!(stamp, sum)
+            {:ok, dir}
+          else
+            File.rm_rf!(dir)
+
+            {:error,
+             %{
+               "_tag" => "ServerSelfUpdateError",
+               "reason" => "The bundle changed while it was unpacked; update again."
+             }}
+          end
 
         {:error, reason} ->
           {:error,
