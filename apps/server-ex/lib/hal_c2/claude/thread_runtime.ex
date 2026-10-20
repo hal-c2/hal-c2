@@ -83,9 +83,11 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # The handler only notifies the session, so the explicit budget waits on mailbox
   # backlog alone. A timeout here means the runtime still holds the request and
-  # hands it over when it gets to it, so it is answered `:ok` where that is known.
+  # hands it over when it gets to it, if that turn is still its current one, so
+  # it is answered `:ok` where that is known.
   defp steer_call(pid, run_id, message) do
-    GenServer.call(pid, {:steer, run_id, message}, 30_000)
+    timeout = Application.get_env(:hal_c2, :claude_steer_timeout_ms, 30_000)
+    GenServer.call(pid, {:steer, run_id, message}, timeout)
   catch
     :exit, {:timeout, _} -> :ok
   end

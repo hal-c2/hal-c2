@@ -59,8 +59,8 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   # A timeout here means Muse (or the runtime ahead of it) still holds the
-  # request and hands it over when it gets to it, so it is answered `:ok` where
-  # that is known.
+  # request and hands it over when it gets to it, if that turn is still its
+  # current one, so it is answered `:ok` where that is known.
   defp steer_call(pid, run_id, message) do
     GenServer.call(pid, {:steer, run_id, message}, 35_000)
   catch
