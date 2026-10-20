@@ -55,6 +55,24 @@ Rectangle {
             fileExplorerToggleButton.forceActiveFocus();
     }
 
+    // True while keyboard focus sits inside the file viewer.
+    function viewerHoldsFocus(): bool {
+        let item = Window.activeFocusItem;
+        while (item) {
+            if (item === fileViewer)
+                return true;
+            item = item.parent;
+        }
+        return false;
+    }
+
+    // The reverse case: closing the file hides the viewer holding the
+    // toggle or close button, so give focus to the tree that remains.
+    onFileOpenChanged: {
+        if (!fileOpen && viewerHoldsFocus())
+            search.forceActiveFocus();
+    }
+
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
@@ -169,7 +187,7 @@ Rectangle {
                     // While the tab is too narrow for the tree the toggle
                     // cannot bring it back; it stays the focus home for the
                     // hidden column, and its tooltip says what will.
-                    toolTip: root.fileOpen && root.explorerOpen && !root.explorerShown ? qsTr("Widen the panel to show the file explorer") : ""
+                    toolTip: root.fileOpen && root.explorerOpen && !root.explorerShown ? qsTr("Widen the panel to show the file explorer") : root.explorerShown ? qsTr("Hide file explorer") : qsTr("Show file explorer")
                     Accessible.description: toolTip
                     Accessible.checkable: true
                     Accessible.checked: checked
@@ -178,8 +196,21 @@ Rectangle {
                     iconTint: root.muted
                     implicitWidth: 26
                     implicitHeight: 26
-                    Accessible.name: root.explorerShown ? qsTr("Hide file explorer") : qsTr("Show file explorer")
-                    onClicked: root.explorerOpen = checked
+                    // Stable name: the checked state carries Hide/Show, so
+                    // activation does not rename the focused button. The
+                    // verb stays on the explicit tooltip above.
+                    Accessible.name: qsTr("File explorer")
+                    onClicked: {
+                        // Auto-hidden: checked was flipped by the click but
+                        // explorerShown cannot follow; snap it back by
+                        // restoring the binding instead of writing the
+                        // preference (a second click would clear it).
+                        if (root.explorerOpen && !root.explorerShown) {
+                            checked = Qt.binding(() => root.explorerShown);
+                            return;
+                        }
+                        root.explorerOpen = checked;
+                    }
                 }
                 ShellButton {
                     objectName: "fileClose"

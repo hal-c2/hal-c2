@@ -592,6 +592,13 @@ Item {
             verify(toggle && !toggle.checked, "the toggle presents the hidden tree, not the preference");
             verify(toggle && toggle.toolTip.length > 0, "the toggle says why the tree cannot come back yet");
             verify(toggle && toggle.Accessible.description === toggle.toolTip, "the widen hint reaches keyboard and screen-reader users, not only hover");
+            compare(toggle.Accessible.name, "File explorer", "the name is stable; checked carries the state");
+            // Clicking while auto-hidden must not desync checked or clear
+            // the preference: checked snaps back and the tree still returns.
+            mouseClick(toggle);
+            verify(!toggle.checked && files.explorerOpen, "first auto-hidden click keeps the preference and unpresses");
+            mouseClick(toggle);
+            verify(!toggle.checked && files.explorerOpen, "second auto-hidden click still keeps the preference");
             files.width = 600;
             tryVerify(() => explorer.visible && explorer.width >= files.explorerMinimum, 5000, "a wider tab brings the tree back");
             verify(toggle.checked, "the toggle presents the tree again once it is back");
@@ -651,6 +658,22 @@ Item {
             source.openPath = path;
             tryVerify(() => viewer.visible && !explorer.visible, 5000, "the file opens without the tree");
             tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
+        }
+
+        // Closing the file hides the viewer holding the toggle: focus goes
+        // to the tree that is now the whole tab, not to nowhere.
+        function test_closingTheFileMovesFocusFromTheViewerToTheTree() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const search = findChild(files, "filesSearch");
+            const toggle = findChild(files, "fileExplorerToggle");
+            tryVerify(() => viewer.visible);
+            toggle.forceActiveFocus();
+            tryVerify(() => toggle.activeFocus, 5000, "the toggle has focus before the file closes");
+            source.openPath = "";
+            tryVerify(() => !viewer.visible, 5000, "the file closes");
+            tryVerify(() => search.activeFocus, 5000, "focus lands on the tree's search field");
         }
 
         // Past the width where 46% would be more than the tree needs, the cap is 352px.
