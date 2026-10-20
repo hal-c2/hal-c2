@@ -170,6 +170,7 @@ Rectangle {
                     // cannot bring it back; it stays the focus home for the
                     // hidden column, and its tooltip says what will.
                     toolTip: root.fileOpen && root.explorerOpen && !root.explorerShown ? qsTr("Widen the panel to show the file explorer") : ""
+                    Accessible.description: toolTip
                     Accessible.checkable: true
                     Accessible.checked: checked
                     iconName: "folder-tree"

@@ -552,10 +552,13 @@ Item {
             tryVerify(() => files.fileMinimumWidth > 0);
             files.width = Math.ceil(files.fileMinimumWidth) + 1 + files.explorerMinimum + 48;
             tryVerify(() => explorer.visible && viewer.x + viewer.width <= explorer.x + 0.5, 5000, "the file settles beside the tree");
+            verify(files.explorerShare < files.width * 0.46 - 1, "the header, not the cap, limits the tree: share " + files.explorerShare + " of " + files.width);
             const names = ["fileRender", "fileEdit", "fileOpenInEditor", "fileWrap", "fileExplorerToggle", "fileClose"];
             for (const name of names) {
                 const button = findChild(files, name);
-                verify(button.visible, name);
+                verify(button && button.visible, name);
+                if (!button)
+                    continue;
                 const end = button.mapToItem(files, button.width, 0).x;
                 verify(end <= explorer.x + 0.5, name + " ends at " + end + " but the tree starts at " + explorer.x);
             }
@@ -582,10 +585,13 @@ Item {
             files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
             verify(files.explorerShare < files.explorerMinimum, "share " + files.explorerShare);
-            verify(findChild(files, "filesSearch").visible === false, "the search field is not reachable");
+            const searchField = findChild(files, "filesSearch");
+            verify(searchField && searchField.visible === false, "the search field is not reachable");
             const toggle = findChild(files, "fileExplorerToggle");
-            verify(files.explorerOpen, "the preference to show the tree is kept");
-            verify(!toggle.checked, "the toggle presents the hidden tree, not the preference");
+            verify(toggle && files.explorerOpen, "the preference to show the tree is kept");
+            verify(toggle && !toggle.checked, "the toggle presents the hidden tree, not the preference");
+            verify(toggle && toggle.toolTip.length > 0, "the toggle says why the tree cannot come back yet");
+            verify(toggle && toggle.Accessible.description === toggle.toolTip, "the widen hint reaches keyboard and screen-reader users, not only hover");
             files.width = 600;
             tryVerify(() => explorer.visible && explorer.width >= files.explorerMinimum, 5000, "a wider tab brings the tree back");
             verify(toggle.checked, "the toggle presents the tree again once it is back");
@@ -606,6 +612,44 @@ Item {
             tryVerify(() => files.fileMinimumWidth > 0);
             files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
+            tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
+        }
+
+        // Hiding the tree from its toggle (here through the preference the
+        // toggle sets) under the focused search field rescues focus too.
+        function test_hidingTheTreeMovesFocusFromTheTreeToTheToggle() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const explorer = findChild(files, "filesExplorer");
+            const search = findChild(files, "filesSearch");
+            const toggle = findChild(files, "fileExplorerToggle");
+            tryVerify(() => findChild(files, "fileViewer").visible && explorer.visible);
+            search.forceActiveFocus();
+            tryVerify(() => search.activeFocus, 5000, "the search field has focus before the tree hides");
+            files.explorerOpen = false;
+            tryVerify(() => !explorer.visible, 5000, "the tree hides");
+            tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
+        }
+
+        // Opening a file while the hide preference is already set: the tree
+        // was the whole tab, focused, and gives way as the file opens.
+        function test_openingAFileWithTheTreeHiddenMovesFocusToTheToggle() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            const search = findChild(files, "filesSearch");
+            const toggle = findChild(files, "fileExplorerToggle");
+            tryVerify(() => viewer.visible && explorer.visible);
+            files.explorerOpen = false;
+            tryVerify(() => !explorer.visible, 5000, "the tree hides for this file");
+            const path = source.openPath;
+            source.openPath = "";
+            tryVerify(() => !viewer.visible && explorer.visible, 5000, "with no file the tree is the whole tab again");
+            search.forceActiveFocus();
+            tryVerify(() => search.activeFocus, 5000, "the search field has focus before the file opens");
+            source.openPath = path;
+            tryVerify(() => viewer.visible && !explorer.visible, 5000, "the file opens without the tree");
             tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
         }
 
