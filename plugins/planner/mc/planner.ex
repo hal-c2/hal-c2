@@ -570,7 +570,7 @@ defmodule HalC2Plugins.Planner do
 
   defp effects(effects, settings, projects) do
     for {id, token, ops, synced} <- Map.get(effects, :pushes, []),
-        do: push(id, token, ops, synced, settings, projects)
+        do: push(id, token, ops, synced, projects)
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
     :ok
@@ -581,7 +581,8 @@ defmodule HalC2Plugins.Planner do
   # is left. A push that raised is one GitHub did not take, so the task is not left
   # waiting on it. The server hears with the MC's projects as the change read them, so a
   # chained push does not depend on a look having read them since the server started.
-  defp push(id, token, ops, synced, settings, projects) do
+  # The chained push is decided by the server under its current settings.
+  defp push(id, token, ops, synced, projects) do
     {error, extra} =
       try do
         Sync.run(ops, synced)
@@ -591,10 +592,29 @@ defmodule HalC2Plugins.Planner do
            %{"synced" => synced}}
       end
 
-    case decide({:pushed, id, token, error, extra}, projects) do
-      {:push, ops, synced} -> push(id, token, ops, synced, settings, projects)
+    case report(id, token, error, extra, projects) do
+      {:push, ops, synced} -> push(id, token, ops, synced, projects)
       :ok -> :ok
     end
+  end
+
+  # The plugin may be down, or die mid-call, when GitHub answers: it restores this
+  # flight on load (`load/1`), so report again when it is back rather than leaving
+  # the task waiting on a dead report. The token the server keeps for the flight
+  # makes a report that did land before the plugin died a no-op when it is sent
+  # again. Bounded: a server that does not come back leaves the flight to the
+  # runner's own end, which the restored monitor hears as before.
+  defp report(id, token, error, extra, projects),
+    do: report(id, token, error, extra, projects, 300)
+
+  defp report(_id, _token, _error, _extra, _projects, 0), do: :ok
+
+  defp report(id, token, error, extra, projects, attempts) do
+    decide({:pushed, id, token, error, extra}, projects)
+  catch
+    :exit, _ ->
+      Process.sleep(100)
+      report(id, token, error, extra, projects, attempts - 1)
   end
 
   # Posts to the plan's channel, if it has one; the server hears how it went.
@@ -1717,7 +1737,14 @@ defmodule HalC2Plugins.Planner do
               board = state.settings["board"] || ""
               # The token names the push to its runner, and the monitor is this server's
               # watch on it: they part when a restart takes the flight on (`load/1`).
-              flight = %{token: token, monitor: token, runner: runner, changed: false, board: board}
+              flight = %{
+                token: token,
+                monitor: token,
+                runner: runner,
+                changed: false,
+                board: board
+              }
+
               state = put_in(state.pushing[id], flight)
               {[{id, token, ops, synced} | pushes], state}
           end
@@ -1924,6 +1951,8 @@ defmodule HalC2Plugins.Planner do
     {pushing, items} =
       Enum.reduce(data["pushing"] || %{}, {%{}, items}, fn
         {id, saved}, {pushing, items} when is_map_key(items, id) ->
+          saved = if is_map(saved), do: saved, else: %{}
+
           case runner(saved["runner"]) do
             {runner, token} ->
               flight = %{

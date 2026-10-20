@@ -1858,7 +1858,7 @@ defmodule HalC2.PlannerPropTest do
                 15_000 -> problem("the killed launcher never went down")
               end
           after
-            15_000 -> problem("the worktree setup was never asked to hold the launch")
+            4_000 -> problem("the worktree setup was never asked to hold the launch")
           end
         end
 

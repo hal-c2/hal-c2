@@ -1152,7 +1152,7 @@ defmodule HalC2.Steps.Planning.Planner do
     context = start_work(context, title)
     # The launcher's call to the held setup times out 5s after it is made, so the kill
     # follows the call at once and its wait stays under that.
-    assert_receive {:setup_held, launcher}, 10_000
+    assert_receive {:setup_held, launcher}, 4_000
     ref = Process.monitor(launcher)
     Process.exit(launcher, :kill)
     assert_receive {:DOWN, ^ref, :process, _, :killed}, 3_000
@@ -2223,16 +2223,22 @@ defmodule HalC2.Steps.Planning.Planner do
        %{args: [number, title, id]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, title)
+    context = restart_as_new_mc_run(context, id)
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
 
-    # Erased while the plugin is stopped, so no save of the old server can mint the new
-    # run's id and stamp the saved push with it.
+  step "the user renames \#{int}'s task to {string}, then {string} is stopped while GitHub answers and started again",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
     {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
-    :persistent_term.erase({HalC2Plugins.Planner, :run})
+    answer_late(context)
 
     {_, context} =
       World.call!(context, "plugins.enable", %{"id" => id, "acceptPermissions" => []})
 
-    answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     context
   end
@@ -2243,8 +2249,7 @@ defmodule HalC2.Steps.Planning.Planner do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, title)
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
-    %{pushing: %{} = pushing} = :sys.get_state(HalC2Plugins.Planner)
-    assert [%{runner: runner}] = Map.values(pushing)
+    runner = restored_runner()
     ref = Process.monitor(runner)
     Process.exit(runner, :kill)
     assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
@@ -3316,6 +3321,28 @@ defmodule HalC2.Steps.Planning.Planner do
     :ok = :file.close(gate)
     assert {{:ok, _}, _} = Task.await(looking, 30_000)
     context
+  end
+
+  # The white-box seams the restart scenarios cannot reach from outside: simulating
+  # a new MC run erases the planner's run-id persistent term, and naming a restored
+  # push's runner reads the server's pushing state. Both live here so a change to
+  # that representation has one place to update.
+  defp restart_as_new_mc_run(context, id) do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    # Erased while the plugin is stopped, so no save of the old server can mint the new
+    # run's id and stamp the saved push with it.
+    :persistent_term.erase({HalC2Plugins.Planner, :run})
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => id, "acceptPermissions" => []})
+
+    context
+  end
+
+  defp restored_runner do
+    %{pushing: %{} = pushing} = :sys.get_state(HalC2Plugins.Planner)
+    assert [%{runner: runner}] = Map.values(pushing)
+    runner
   end
 
   # Lets go of whatever waits on the fifo `gate`, if anything does: a read-write open

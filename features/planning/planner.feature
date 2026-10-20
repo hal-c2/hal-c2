@@ -1362,6 +1362,15 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then "planner" is restarted by a new MC run before GitHub answers
       Then #7's task is marked as not synced
 
+    # GitHub's answer arrives while the plugin is down; the push is reported again
+    # when it starts, so its task is not left waiting on a dead report.
+    @mc
+    Scenario: A change GitHub answers while the plugin is stopped is told to it when it starts again
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is stopped while GitHub answers and started again
+      Then #7's task is named "Rate limiting" and marked as synced
+
     @mc
     Scenario: A push whose runner stops after a restart of the plugin is marked as stopped
       Given "planner" syncs "acme/api" both ways
