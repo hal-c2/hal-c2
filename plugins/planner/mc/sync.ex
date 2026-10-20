@@ -909,8 +909,6 @@ defmodule HalC2Plugins.Planner.Sync do
         ],
         else: []
 
-    update = update ++ owner_pushes(base, synced, new)
-
     # GitHub has the relations of `synced` on the issue they were made on, `was`: a task
     # linked to another issue since drops them from that one and makes them anew on its
     # own, and one to a task linked to another issue since goes from the issue it had to
@@ -922,6 +920,10 @@ defmodule HalC2Plugins.Planner.Sync do
     moved? = not Plan.same_ref?(was, me)
     on_was = was && Map.put(was, "projectId", project_id(Map.put(new, "issue", was), projects))
     pushed = is_binary(on_was["projectId"]) && was
+
+    # The old owner comes off the issue they were synced to (`was`), the new one goes
+    # on the task's own: a relink and an owner change can land in one chained push.
+    update = update ++ owner_pushes(base, if(pushed, do: on_was), synced, new)
     kept? = &(not moved? and Plan.same_ref?(had(synced, items, &1), ref(items, &1)))
     kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
     onto = &Map.put(&1, "issue", me)
@@ -971,15 +973,17 @@ defmodule HalC2Plugins.Planner.Sync do
   # The task holds one of the issue's assignees, so a new owner replaces only the old
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
-  defp owner_pushes(base, synced, new) do
+  defp owner_pushes(base, on_was, synced, new) do
     old = synced["owner"]
     login = new["owner"]
     # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
     changed? = old != login and not login?(old, login)
 
     off =
-      if changed? and old,
-        do: [{"removeAssignees", Map.put(base, "assignees", [old]), &Map.put(&1, "owner", nil)}],
+      if changed? and not is_nil(old) and not is_nil(on_was),
+        do: [
+          {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
+        ],
         else: []
 
     on =

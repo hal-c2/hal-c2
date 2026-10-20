@@ -149,6 +149,18 @@ defmodule HalC2.IssuesTest do
              rest_inputs(dir, "PATCH")
 
     refute Map.has_key?(patch, "title")
+
+    # Assignees set outright are checked as logins too, before GitHub is asked.
+    assert {:error, "assignees must be a list of logins."} =
+             Issues.handle("create", Map.merge(@input, %{"title" => "x", "assignees" => ["a/b"]}))
+
+    assert {:error, "assignees must be a list of logins."} =
+             Issues.handle(
+               "update",
+               Map.merge(@input, %{"number" => 9, "assignees" => "dana"})
+             )
+
+    assert length(calls(dir)) == 4
   end
 
   test "assignees are added and removed by login, the others kept", %{dir: dir} do
@@ -206,9 +218,19 @@ defmodule HalC2.IssuesTest do
 
     assert [_, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
 
+    # No raw-count cap sits in front of the de-dup: any number of copies of one
+    # login is that one assignee.
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", List.duplicate("dana", 101))
+             )
+
+    assert [_, _, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+
     # The endpoint takes several logins in one request.
     assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
-    assert [_, _, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
+    assert [_, _, _, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
 
     # Managed users' underscores, a bot's suffix and the longest login are logins.
     longest = String.duplicate("a", 39)
@@ -219,7 +241,7 @@ defmodule HalC2.IssuesTest do
                Map.put(input, "assignees", ["dana_acme", "copilot[bot]", longest])
              )
 
-    assert [_, _, _, _, %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}] =
+    assert [_, _, _, _, _, %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}] =
              rest_inputs(dir, "POST")
   end
 

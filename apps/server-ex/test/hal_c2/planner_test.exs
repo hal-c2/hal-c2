@@ -1,4 +1,4 @@
-for file <- ~w(plan slack),
+for file <- ~w(plan slack sync),
     do: Code.require_file("../../../../plugins/planner/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.PlannerTest do
@@ -11,7 +11,7 @@ defmodule HalC2.PlannerTest do
   """
   use ExUnit.Case, async: true
 
-  alias HalC2Plugins.Planner.{Plan, Slack}
+  alias HalC2Plugins.Planner.{Plan, Slack, Sync}
 
   @now "2026-10-15T09:00:00Z"
   @today "2026-10-15"
@@ -93,6 +93,14 @@ defmodule HalC2.PlannerTest do
 
       assert {:ok, %{"a" => %{"owner" => "dana"}}, _} =
                Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
+
+      # The rest of the host's login shape refuses it here too, not at every push.
+      for bad <- ["a/b", "-dana", "..", "dana!", String.duplicate("a", 40)] do
+        assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
+      end
+
+      assert {:ok, %{"a" => %{"owner" => "copilot[bot]"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => "copilot[bot]"}, @now)
 
       items = plan([{"a", %{}}])
 
@@ -727,6 +735,48 @@ defmodule HalC2.PlannerTest do
 
       assert Slack.actions("", actions, "/planner") =~
                ~r"^Name the action to run\..*\n/planner run status — Write status update\n"
+    end
+  end
+
+  describe "pushes" do
+    test "a relink and an owner change in one push take the old owner off the old issue" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = fn n -> %{"repository" => "acme/api", "number" => n} end
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "dana",
+        "issue" => issue.(8),
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue.(7)
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"removeAssignees", %{"number" => 7, "assignees" => ["alice"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
     end
   end
 end

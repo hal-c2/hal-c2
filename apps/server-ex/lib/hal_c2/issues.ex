@@ -416,12 +416,13 @@ defmodule HalC2.Issues do
   @doc false
   def create(input) do
     with {:ok, ctx} <- repository(input),
-         {:ok, title} <- text(input["title"], "title") do
+         {:ok, title} <- text(input["title"], "title"),
+         {:ok, assignees} <- checked_assignees(input) do
       body =
         %{"title" => title}
         |> put_present("body", input["body"])
         |> put_present("labels", input["labels"])
-        |> put_present("assignees", input["assignees"])
+        |> put_present("assignees", assignees)
         |> put_present("milestone", input["milestone"])
 
       with {:ok, %{"number" => number} = made} <- post(ctx, "issues", "POST", body),
@@ -432,10 +433,12 @@ defmodule HalC2.Issues do
   @doc false
   def update(input) do
     with {:ok, ctx} <- repository(input),
-         {:ok, number} <- number(input["number"]) do
+         {:ok, number} <- number(input["number"]),
+         {:ok, assignees} <- checked_assignees(input) do
       body =
         input
-        |> Map.take(~w(title body state labels assignees milestone))
+        |> Map.take(~w(title body state labels milestone))
+        |> put_present("assignees", assignees)
         |> put_present("state_reason", input["stateReason"])
 
       with {:ok, made} <- post(ctx, "issues/#{number}", "PATCH", body),
@@ -464,10 +467,21 @@ defmodule HalC2.Issues do
     end
   end
 
+  # `create`/`update` set the whole assignee list, so an empty one clears it and an
+  # absent or nil one leaves it alone; the add/remove endpoints refuse both.
+  defp checked_assignees(input) do
+    case Map.fetch(input, "assignees") do
+      :error -> {:ok, nil}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, []} -> {:ok, []}
+      {:ok, value} -> logins(value)
+    end
+  end
+
   # GitHub allows ten assignees on an issue; a login is trimmed, then is letters, digits,
   # hyphens and underscores (managed users have them) from 1 to 39 long, or a bot's `[bot]`.
   # GitHub reads logins whatever their case, so the case-variants of one are one.
-  defp logins([_ | _] = logins) when length(logins) <= 100 do
+  defp logins([_ | _] = logins) do
     trimmed = for login <- logins, is_binary(login), do: String.trim(login)
     unique = Enum.uniq_by(trimmed, &String.downcase/1)
 
