@@ -61,6 +61,15 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then the provider process and its background command have been killed
 
+  # The boot checks the group against its leader, so a provider that already
+  # exited (say, on its closed stdin) leaves its group's commands unsignalled:
+  # the other kill-reach limit HalC2.Subprocess.Orphans states.
+  @backlog @mc
+  Scenario: A command left in the group of a provider that already exited is killed at the next boot
+    Given a provider process had exited leaving a command in its group when the MC died
+    When the MC restarts
+    Then the provider process and its background command have been killed
+
   @mc
   Scenario: A native subagent thread left running by a restart is settled
     Given a native provider subagent thread of "t1" was running when the MC stopped
