@@ -34,6 +34,45 @@ defmodule HalC2.DevicesTest do
     :ok
   end
 
+  test "the Android platform reason is returned, not raised, when no home is set", %{
+    tmp_dir: dir
+  } do
+    # A HOME-less process (e.g. a system service): no explicit SDK, no home
+    # candidates, no adb on PATH. HalC2.Paths.user_home/0 would raise here.
+    saved =
+      for name <- ["ANDROID_HOME", "ANDROID_SDK_ROOT", "HOME", "PATH"],
+          do: {name, System.get_env(name)}
+
+    on_exit(fn ->
+      for {name, value} <- saved do
+        if value, do: System.put_env(name, value), else: System.delete_env(name)
+      end
+    end)
+
+    System.delete_env("ANDROID_HOME")
+    System.delete_env("ANDROID_SDK_ROOT")
+    System.put_env("PATH", dir)
+
+    # No HOME at all: the reason is answered (a string, or nil if this host's
+    # own SDK is found through the OS home), never raised.
+    System.delete_env("HOME")
+
+    assert HalC2.Devices.platform_reason("android") in [nil] or
+             is_binary(HalC2.Devices.platform_reason("android"))
+
+    # An empty HOME is no home either: it must not make the candidates
+    # cwd-relative and find an SDK under the working directory.
+    trap = Path.join([dir, "Android", "Sdk"])
+    tool(Path.join([trap, "platform-tools", "adb"]), "fake_adb.sh")
+    tool(Path.join([trap, "emulator", "emulator"]), "fake_emulator.sh")
+    tool(Path.join([trap, "cmdline-tools", "latest", "bin", "avdmanager"]), "fake_emulator.sh")
+    System.put_env("HOME", "")
+
+    File.cd!(dir, fn ->
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+    end)
+  end
+
   test "devices list once enabled, and a thread opens and closes one" do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = HalC2.Devices.list(%{})
 
