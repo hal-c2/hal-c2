@@ -45,8 +45,10 @@ defmodule HalC2.Subprocess.Orphans do
   off. If the records dir cannot be made, or this MC's own start time cannot be
   read, the MC still boots, but `track/2` returns an error for the whole boot, so
   `HalC2.Subprocess.start` refuses to run a program no later boot could find —
-  the same answer a failed record write gets. A single program whose start time
-  cannot be read (as against one already gone) is refused the same way.
+  the same answer a failed record write gets, given before the program is
+  started at all when the failure is already known. A single program whose start
+  time cannot be read (as against one already gone) is refused the same way, and
+  so is a start in a running MC before this service has started.
   """
 
   use GenServer
@@ -60,6 +62,31 @@ defmodule HalC2.Subprocess.Orphans do
   def dir, do: Path.join(HalC2.Paths.state_dir(), "subprocesses")
 
   @doc """
+  Whether a program started now would be tracked, known before it exists: `:ok`,
+  `{:error, reason}` with the reason `track/2` would refuse it (tracking could
+  not be set up this boot, or, in a running MC, this service has not started
+  yet), or `:off` where nothing is tracked by design (no MC services in this
+  VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
+  spawning, so a known-unavailable boot starts no CLI just to kill it;
+  `track/2` stays the authoritative check for what races past this one.
+  """
+  @spec available?() :: :ok | :off | {:error, term}
+  def available? do
+    case :persistent_term.get(__MODULE__, nil) do
+      %{} -> :ok
+      {:unavailable, reason} -> {:error, reason}
+      nil -> if tracking_expected?(), do: {:error, :not_started}, else: :off
+    end
+  end
+
+  # An MC running its services off Windows is expected to track: no mark from
+  # this service yet is the exception there, the ordinary state elsewhere.
+  defp tracking_expected?,
+    do:
+      Application.get_env(:hal_c2, :start_mc, false) and
+        HalC2.Paths.platform() != :windows
+
+  @doc """
   Records the program `os_pid`, run by the Exile process `proc`, until `proc` ends.
   `track/2` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
@@ -68,8 +95,10 @@ defmodule HalC2.Subprocess.Orphans do
   (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
   start time could not be read (`:no_start_time`): the caller must stop the program
   rather than run it untracked. A program already gone has nothing to record. A
-  no-op when this service has not been started in this VM (tests, Mix tasks); an MC
-  that runs its services logs that once, as a program it starts then is not recorded.
+  no-op when this service has not been started in this VM and none is expected
+  (tests, Mix tasks, Windows); in a running MC that window — before this
+  service's `init/1`, or after a hot upgrade before it is started — refuses
+  with `:not_started` instead, and logs it once.
   """
   @spec track(pid, pos_integer) :: :ok | {:error, term}
   def track(proc, os_pid) do
@@ -119,7 +148,7 @@ defmodule HalC2.Subprocess.Orphans do
       Logger.warning("programs are not tracked: #{inspect(__MODULE__)} is not running")
     end
 
-    :ok
+    if tracking_expected?(), do: {:error, :not_started}, else: :ok
   end
 
   @doc """
@@ -187,12 +216,20 @@ defmodule HalC2.Subprocess.Orphans do
   @doc false
   # Fields 3, 5 and 22, the state, the group and the start time in ticks since
   # boot, counted after the command name, which may hold spaces and
-  # parentheses. A process exiting as it is read can leave less: `:unknown`.
-  def parse_stat(stat) do
+  # parentheses. A process exiting as it is read can leave less: `:unknown`, as
+  # is a stat whose boot could not be read: ticks without their boot are no
+  # identity, and a record stamped without one never matches a later boot
+  # that reads it, so its orphans would be silently spared.
+  def parse_stat(stat), do: parse_stat(stat, boot_id())
+
+  @doc false
+  def parse_stat(_stat, ""), do: :unknown
+
+  def parse_stat(stat, boot) do
     case stat |> String.split(")") |> List.last() |> String.split() do
       [state, _parent, group | rest] when length(rest) >= 17 ->
         case Integer.parse(group) do
-          {group, ""} -> {:ok, {state, "#{boot_id()}:#{Enum.at(rest, 16)}", group}}
+          {group, ""} -> {:ok, {state, "#{boot}:#{Enum.at(rest, 16)}", group}}
           _ -> :unknown
         end
 
@@ -225,8 +262,10 @@ defmodule HalC2.Subprocess.Orphans do
 
   # macOS. `lstart` is written in the locale's words, so the locale is pinned: an MC
   # read under another one would look like a different process, and be taken for gone.
-  # `ps` exits non-zero for a pid with no process; output that does not parse,
-  # or a `ps` that cannot run at all, says nothing either way: `:unknown`.
+  # For a pid with no process `ps` exits non-zero saying nothing (the headers are
+  # suppressed), and only that silence is read as `:gone`; a non-zero exit that
+  # says something, output that does not parse, and a `ps` that cannot run at
+  # all are failures, not proof of absence: `:unknown`.
   defp ps_process_result(pid) do
     case System.cmd("ps", ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"],
            stderr_to_stdout: true,
@@ -238,8 +277,8 @@ defmodule HalC2.Subprocess.Orphans do
           process -> {:ok, process}
         end
 
-      _ ->
-        :gone
+      {out, _} ->
+        if String.trim(out) == "", do: :gone, else: :unknown
     end
   rescue
     _ -> :unknown

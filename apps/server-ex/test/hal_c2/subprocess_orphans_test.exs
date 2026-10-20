@@ -219,7 +219,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:error, {:untracked, :enotdir}} = Subprocess.start(["sh", "-c", @echo])
   end
 
-  test "a records dir that cannot be made does not stop the boot, but no program runs untracked" do
+  test "a records dir that cannot be made does not stop the boot, but no program runs untracked",
+       %{tmp_dir: dir} do
     # A file where a parent of the records dir goes makes creating it fail outright
     # (`:enotdir` from the mkdir itself), not just list/write fails inside it.
     parent = Path.dirname(Orphans.dir())
@@ -229,8 +230,38 @@ defmodule HalC2.Subprocess.OrphansTest do
     boot(:next)
 
     # The MC still boots, but a program start fails closed, as a failed record
-    # write does, instead of reopening the untracked hole for the whole boot.
-    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    # write does, instead of reopening the untracked hole for the whole boot —
+    # before the program is started at all, not by killing it after.
+    ran = Path.join(Path.dirname(dir), "orphans-ran-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm(ran) end)
+
+    assert {:error, {:untracked, :no_records_dir}} =
+             Subprocess.start(["sh", "-c", "echo ran > '#{ran}'; " <> @echo])
+
+    refute File.exists?(ran)
+
+    # The refusal comes before any spawn is tried: even a program that is not
+    # there is answered with the tracking failure, not the spawn's own.
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["/no/such/program"])
+  end
+
+  test "in a running MC a program is not run untracked before the service has started" do
+    # No service in this test: as in the window before the service's init, or
+    # after a hot upgrade before it is started.
+    :persistent_term.erase(Orphans)
+    previous = Application.get_env(:hal_c2, :start_mc)
+    on_exit(fn -> Application.put_env(:hal_c2, :start_mc, previous) end)
+
+    Application.put_env(:hal_c2, :start_mc, true)
+    assert {:error, :not_started} = Orphans.available?()
+
+    assert {:error, {:untracked, :not_started}} = Subprocess.start(["sh", "-c", @echo])
+
+    Application.put_env(:hal_c2, :start_mc, false)
+    assert :off = Orphans.available?()
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert {:ok, 0} = Subprocess.stop(sub)
   end
 
   test "a program that exits at once starts cleanly and reports its status" do
@@ -369,6 +400,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert String.ends_with?(started, ":999")
     assert Orphans.parse_stat("123 (sh) S 1") == :unknown
     assert Orphans.parse_stat("123 (sh) S 1 x " <> rest) == :unknown
+    # Without the boot it started in, the ticks are no identity at all.
+    assert Orphans.parse_stat("123 (sh) S 1 123 " <> rest, "") == :unknown
   end
 
   test "tracking a program already gone is fine, and gone? tells it from a running one" do

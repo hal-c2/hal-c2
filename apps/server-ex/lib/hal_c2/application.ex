@@ -32,6 +32,11 @@ defmodule HalC2.Application do
     [
       # Distribution starts here, before anything reads `node()`.
       HalC2.Cluster,
+      # Before anything starts or resumes a provider: kills the programs an MC
+      # that died left running, so no thread gets a second agent, and records
+      # every program started from here on. It needs only its files, which
+      # `prepare_files/0` already made.
+      HalC2.Subprocess.Orphans,
       {HalC2.Store, path: HalC2.Store.home_path()},
       HalC2.Auth,
       HalC2.Settings,
@@ -39,9 +44,6 @@ defmodule HalC2.Application do
       HalC2.Shell,
       # The other members' files, as folders on this machine.
       HalC2.MachineFiles,
-      # Before anything resumes a provider session: kills the programs an MC that
-      # died left running, so no thread gets a second agent.
-      HalC2.Subprocess.Orphans,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,

@@ -39,7 +39,8 @@ defmodule HalC2.Subprocess do
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
 
-    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
+    with :ok <- trackable(),
+         {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
          :ok <- track(proc) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
@@ -55,6 +56,16 @@ defmodule HalC2.Subprocess do
       end
 
       {:ok, %__MODULE__{proc: proc, reader: reader}}
+    end
+  end
+
+  # A failure to track that is already known refuses before anything is
+  # started, so no provider CLI is run up just to be killed. `track/1` after
+  # the start stays the check that decides, for what races past this one.
+  defp trackable do
+    case HalC2.Subprocess.Orphans.available?() do
+      {:error, reason} -> {:error, {:untracked, reason}}
+      _ -> :ok
     end
   end
 
@@ -121,7 +132,10 @@ defmodule HalC2.Subprocess do
                 )
               end
           after
-            2_000 -> Logger.warning("program #{os_pid} runs untracked: its port process stayed")
+            2_000 ->
+              # No stray DOWN for a caller that never made this monitor.
+              Process.demonitor(ref, [:flush])
+              Logger.warning("program #{os_pid} runs untracked: its port process stayed")
           end
         end
     end
