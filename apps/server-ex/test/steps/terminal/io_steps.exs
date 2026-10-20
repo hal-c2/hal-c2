@@ -106,6 +106,7 @@ defmodule HalC2.Steps.Terminal.Io do
 
   step "a client restarts it", context do
     {snapshot, context} = World.call!(context, "terminal.restart", context.terminal, "ctl")
+    Terminal.await_prompt(context.terminal)
     Map.merge(context, %{old_pid: context.snapshot["pid"], snapshot: snapshot})
   end
 

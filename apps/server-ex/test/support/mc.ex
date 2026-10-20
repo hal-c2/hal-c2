@@ -3961,8 +3961,17 @@ defmodule HalC2.Test.Mc.Terminal do
 
   # What an idle shell has last printed: its prompt (`$ ` or `# `), which bash wraps
   # in the switch to bracketed paste (`\e[?2004h` before the prompt text, and so
-  # possibly after it too once the prompt is redrawn).
+  # possibly after it too once the prompt is redrawn). This is a heuristic: busy
+  # output that merely ends in `$ ` or `# ` also reads as a prompt, so steps must
+  # not print a trailing `$ `/`# ` while the shell is busy. Anchoring to a line
+  # start would instead miss a prompt printed after unterminated output.
   @prompt ~r/[$#] (\e\[\?2004h)?\z/
+
+  # One deadline budget for `await_prompt/2`: the attach GenServer call can take
+  # 15s, the prompt wait itself 5s, and the caller must outlive both.
+  @prompt_attach_timeout 15_000
+  @prompt_wait_timeout 5_000
+  @prompt_caller_timeout @prompt_attach_timeout + @prompt_wait_timeout + 5_000
 
   @doc """
   Waits until the terminal's shell is idle at its prompt, for steps that type into
@@ -3976,6 +3985,10 @@ defmodule HalC2.Test.Mc.Terminal do
   Reads the terminal as a raw subscriber of its own, so no client's frames are
   consumed. Does nothing when the scenario runs a shell whose prompt is not known
   (`prompt_known?/0`).
+
+  Callers: `open!/3`, the attach-restart step, and the `terminal.restart` step.
+  Attach-with-cwd creating a terminal does not wait here; a step that types
+  right after such an attach should call this first.
   """
   def await_prompt(input, restored \\ "") do
     if prompt_known?() do
@@ -3983,21 +3996,29 @@ defmodule HalC2.Test.Mc.Terminal do
       parent = self()
       ref = make_ref()
 
-      # Unlinked: asserting in the caller keeps a failure an assertion failure,
-      # not a linked EXIT crash from a task.
-      spawn(fn -> send(parent, {ref, prompt_result(session, input, restored)}) end)
+      # Monitored (not linked): asserting in the caller keeps a failure an
+      # assertion failure, and a reader crash is reported at once instead of
+      # surfacing only as the caller's timeout.
+      {pid, mon} =
+        spawn_monitor(fn -> send(parent, {ref, prompt_result(session, input, restored)}) end)
 
       receive do
         {^ref, :prompt} ->
+          Process.demonitor(mon, [:flush])
           :ok
 
         {^ref, {:no_prompt, tail}} ->
+          Process.demonitor(mon, [:flush])
           flunk("the shell drew no prompt; its output ends #{inspect(tail)}")
 
         {^ref, {:error, reason}} ->
+          Process.demonitor(mon, [:flush])
           flunk("could not attach to the terminal to wait for its prompt: #{inspect(reason)}")
+
+        {:DOWN, ^mon, :process, ^pid, reason} ->
+          flunk("the prompt reader died: #{inspect(reason)}")
       after
-        10_000 -> flunk("the shell drew no prompt")
+        @prompt_caller_timeout -> flunk("the shell drew no prompt")
       end
     end
 
@@ -4008,8 +4029,9 @@ defmodule HalC2.Test.Mc.Terminal do
     case HalC2.Terminal.attach(session, self()) do
       {:ok, snapshot} ->
         try do
-          deadline = System.monotonic_time(:millisecond) + 5_000
-          receive_prompt(String.replace_prefix(snapshot["history"], restored, ""), deadline)
+          deadline = System.monotonic_time(:millisecond) + @prompt_wait_timeout
+          history = snapshot["history"] || ""
+          receive_prompt(String.replace_prefix(history, restored || "", ""), deadline)
         after
           HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
         end
@@ -4020,6 +4042,10 @@ defmodule HalC2.Test.Mc.Terminal do
       other ->
         {:error, other}
     end
+  rescue
+    error -> {:error, {error.__struct__, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   # The end of a terminal's output, the part that says what the shell last drew; a
@@ -4117,14 +4143,29 @@ defmodule HalC2.Test.Mc.Terminal do
   returns `{output so far, events seen, context}`.
   """
   def await_output(context, name, pattern, timeout \\ 5_000) do
+    await_output(context, name, pattern, timeout, pattern)
+  end
+
+  defp await_output(context, name, pattern, timeout, display_pattern) do
     id = Map.fetch!(context.terminal_subs, name)
     deadline = System.monotonic_time(:millisecond) + timeout
-    collect(World.client(context, name), id, pattern, deadline, "", [], context, name)
+
+    collect(
+      World.client(context, name),
+      id,
+      pattern,
+      deadline,
+      "",
+      [],
+      context,
+      name,
+      display_pattern
+    )
   end
 
   # `deadline` is absolute: a terminal that keeps printing without matching ends the
   # wait on time, rather than renewing it with every frame.
-  defp collect(client, id, pattern, deadline, acc, events, context, name) do
+  defp collect(client, id, pattern, deadline, acc, events, context, name, display_pattern) do
     {frame, client} =
       WsClient.recv(client, max(deadline - System.monotonic_time(:millisecond), 0))
 
@@ -4134,17 +4175,30 @@ defmodule HalC2.Test.Mc.Terminal do
 
         if acc =~ pattern,
           do: {acc, Enum.reverse([e | events]), World.put_client(context, name, client)},
-          else: collect(client, id, pattern, deadline, acc, [e | events], context, name)
+          else:
+            collect(
+              client,
+              id,
+              pattern,
+              deadline,
+              acc,
+              [e | events],
+              context,
+              name,
+              display_pattern
+            )
 
       %{"t" => "terminal", "id" => ^id, "event" => e} ->
-        collect(client, id, pattern, deadline, acc, [e | events], context, name)
+        collect(client, id, pattern, deadline, acc, [e | events], context, name, display_pattern)
 
       _ ->
-        collect(client, id, pattern, deadline, acc, events, context, name)
+        collect(client, id, pattern, deadline, acc, events, context, name, display_pattern)
     end
   rescue
     error in RuntimeError ->
-      flunk("#{Exception.message(error)}; no #{inspect(pattern)} in #{inspect(acc)}")
+      flunk(
+        "#{Exception.message(error)}; no #{inspect(display_pattern)}; output ends #{inspect(output_tail(acc))}"
+      )
   end
 
   @doc "Sends keystrokes to the scenario's terminal from the named client, not waiting for the reply."
@@ -4195,7 +4249,7 @@ defmodule HalC2.Test.Mc.Terminal do
           Regex.opts(pattern)
         )
 
-      await_output(context, name, idle, timeout)
+      await_output(context, name, idle, timeout, pattern)
     else
       await_output(context, name, pattern, timeout)
     end
