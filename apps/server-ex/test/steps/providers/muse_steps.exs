@@ -205,6 +205,21 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     },
     %{
+      "match" => "delegate a review Muse ends in its own words",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Review the diff",
+            "progress" => "Reading the diff",
+            "answer" => "Found one bug so far.",
+            "status" => "timedOut",
+            "failure" => "The reviewer ran out of time."
+          }
+        },
+        %{"text" => "Gave up."}
+      ]
+    },
+    %{
       "match" => "delegate and move on",
       "steps" => [
         %{"subagent" => %{"objective" => "Review the diff", "progress" => "Reading the diff"}},
@@ -929,6 +944,28 @@ defmodule HalC2.Steps.Providers.Muse do
              }
            ] = context |> state() |> StreamState.list("subagent")
 
+    context
+  end
+
+  step "Muse Code delegates a review to a subagent it ends with a status HAL-C2 has not seen",
+       context do
+    context
+    |> install()
+    |> FakeAcp.thread()
+    |> turn("delegate a review Muse ends in its own words")
+  end
+
+  step "the subagent is shown as stopped with the turn, with the answer it had already sent",
+       context do
+    assert [
+             %{
+               "status" => "interrupted",
+               "progress" => "Reading the diff",
+               "result" => "The reviewer ran out of time.\nFound one bug so far."
+             }
+           ] = context |> state() |> StreamState.list("subagent")
+
+    assert [%{"status" => "interrupted"}] = items(context, "subagent")
     context
   end
 

@@ -184,6 +184,10 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent it reports in a state of its own before it answers
     Then the subagent is shown running, then with its answer
 
+  Scenario: A Muse Code subagent ended in a status HAL-C2 has not seen keeps its answer
+    Given Muse Code delegates a review to a subagent it ends with a status HAL-C2 has not seen
+    Then the subagent is shown as stopped with the turn, with the answer it had already sent
+
   Scenario: A Muse Code subagent still running when the turn ends stops with it
     Given Muse Code delegates a review to a subagent and the turn ends first
     Then the subagent is shown as stopped with the turn, without an answer

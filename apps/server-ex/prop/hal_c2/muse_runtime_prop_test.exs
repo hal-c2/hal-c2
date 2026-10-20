@@ -2,8 +2,9 @@ defmodule HalC2.MuseRuntimePropTest do
   @moduledoc """
   A state machine over one supervised Muse Code thread (`HalC2.Muse.ThreadRuntime`)
   driven through the orchestration commands a client sends: send a message whose turn
-  replies, runs until stopped, starts a subagent (reported in progress, or in a state of
-  Muse's own the runtime does not know) and runs until stopped, asks to run a
+  replies, runs until stopped, starts a subagent (reported in progress, in a state of
+  Muse's own the runtime does not know, or finishing before the turn does) and runs
+  until stopped, asks to run a
   command (once, or for two requirements in turn) or asks a question; steer the running
   turn; approve or decline the command;
   answer the question; interrupt the
@@ -43,6 +44,21 @@ defmodule HalC2.MuseRuntimePropTest do
           "subagent" => %{
             "objective" => "Look around",
             "progress" => "Looking",
+            "itemId" => "item-look"
+          }
+        },
+        %{"text" => "Working on it."},
+        %{"waitInterrupt" => true}
+      ]
+    },
+    %{
+      "match" => "finish",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Looking",
+            "answer" => "All clear.",
             "itemId" => "item-look"
           }
         },
@@ -143,8 +159,9 @@ defmodule HalC2.MuseRuntimePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made;
-  # subs: [{msg, status}] the subagent each :delegate or :hold turn started, with its status;
-  # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :shell | :ask, :guarded for a
+  # subs: [{msg, status}] the subagent each :delegate, :hold or :finish turn started,
+  # with its status (a :finish turn's already completed while the turn runs on);
+  # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :finish | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
   # workflow child's :guarded command;
   # mode: the thread's runtime mode; full access runs every command without asking;
@@ -167,7 +184,7 @@ defmodule HalC2.MuseRuntimePropTest do
     idle = [
       {6,
        {:call, __MODULE__, :send,
-        [msg, oneof([:say, :wait, :delegate, :hold, :shell, :guarded, :workflow, :ask])]}},
+        [msg, oneof([:say, :wait, :delegate, :hold, :finish, :shell, :guarded, :workflow, :ask])]}},
       {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access))]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
@@ -183,7 +200,7 @@ defmodule HalC2.MuseRuntimePropTest do
           nil ->
             []
 
-          kind when kind in [:wait, :delegate, :hold] ->
+          kind when kind in [:wait, :delegate, :hold, :finish] ->
             [{3, {:call, __MODULE__, :steer, [msg]}}]
 
           kind when kind in [:shell, :guarded, :workflow] ->
@@ -206,7 +223,7 @@ defmodule HalC2.MuseRuntimePropTest do
     do: turn == nil
 
   def precondition(%{turn: turn}, {:call, _, :steer, _}),
-    do: match?(%{kind: k} when k in [:wait, :delegate, :hold], turn)
+    do: match?(%{kind: k} when k in [:wait, :delegate, :hold, :finish], turn)
 
   def precondition(%{turn: turn}, {:call, _, :approve, [last?]}),
     do:
@@ -242,6 +259,16 @@ defmodule HalC2.MuseRuntimePropTest do
             turn: %{msg: msg, kind: kind}
         }
 
+      # Its subagent answered before the turn settled where the fake waits, so it is
+      # already completed while the turn runs on.
+      :finish ->
+        %{
+          state
+          | runs: state.runs ++ [{msg, "running"}],
+            subs: state.subs ++ [{msg, "completed"}],
+            turn: %{msg: msg, kind: kind}
+        }
+
       _ ->
         %{state | runs: state.runs ++ [{msg, "running"}], turn: %{msg: msg, kind: kind}}
     end
@@ -266,15 +293,22 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
 
-  # A subagent the turn ends before it answers is interrupted, even by a turn that completed.
+  # A subagent the turn ends before it answers is interrupted, even by a turn that
+  # completed; one that already answered keeps its completed status whatever ends
+  # the turn (a steer after it, an interrupt, a crash, the host going).
   defp end_turn(%{turn: %{msg: msg}} = state, status) do
     ended = fn status -> fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end end
     sub_status = if status == "completed", do: "interrupted", else: status
 
+    sub_ended = fn
+      {m, "running"} when m == msg -> {m, sub_status}
+      entry -> entry
+    end
+
     %{
       state
       | runs: Enum.map(state.runs, ended.(status)),
-        subs: Enum.map(state.subs, ended.(sub_status)),
+        subs: Enum.map(state.subs, sub_ended),
         turn: nil
     }
   end

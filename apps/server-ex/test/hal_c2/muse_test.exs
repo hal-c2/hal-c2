@@ -147,6 +147,32 @@ defmodule HalC2.MuseTest do
              StreamState.list(stream, "turn-item")
   end
 
+  # The two together: a subagent migrated to `:tool` by the hot update, whose
+  # completing revision is misshapen, finishes as that tool call (its role for
+  # a title), not as a crashed turn.
+  @tag :tmp_dir
+  test "a migrated subagent completed with misshapen fields finishes as a tool call",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    started = subagent_item(%{"status" => "inProgress", "revision" => 1})
+
+    {:ok, state} =
+      ThreadRuntime.code_change(3, runtime_state(%{v: 3, muse: %{"sa" => started}}), nil)
+
+    {:noreply, _state} =
+      item_completed(state, %{
+        "revision" => 2,
+        "objective" => 123,
+        "result" => "just text"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+    assert StreamState.list(stream, "subagent") == []
+
+    assert [%{"type" => "dynamic_tool", "status" => "completed", "title" => "reviewer"}] =
+             StreamState.list(stream, "turn-item")
+  end
+
   # A field in a shape Muse has not sent before degrades the one subagent (its role
   # for a title, no answer to read), not the turn carrying it.
   @tag :tmp_dir

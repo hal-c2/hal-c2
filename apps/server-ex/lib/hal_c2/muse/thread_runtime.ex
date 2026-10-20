@@ -937,19 +937,30 @@ defmodule HalC2.Muse.ThreadRuntime do
   # Muse's subagents still running when the turn ends end with it, unanswered: as
   # interrupted when the turn completed, so none reads as finished work. Their answer,
   # should Muse send one later, belongs to no turn. (ACP keeps a running subagent as
-  # background work instead: its agents report them past the turn.)
+  # background work instead: its agents report them past the turn.) The exception is
+  # a subagent last seen in a status Muse is not known to run or end one with: that
+  # status may have been a new way of ending it, and no later revision is coming, so
+  # an answer already on that item is kept (progress still never is one).
   defp end_subagents(state, status) do
     status = if status == "completed", do: "interrupted", else: status
 
-    state.subs
-    |> Map.values()
-    |> Enum.each(fn
-      %{done: false, sub: sub} -> NativeSubagent.finish(sub, status, nil)
-      _ -> :ok
+    Enum.each(state.subs, fn
+      {id, %{done: false, sub: sub}} ->
+        NativeSubagent.finish(sub, status, unrecognized_answer(state.muse[id], status))
+
+      _ ->
+        :ok
     end)
 
     state
   end
+
+  defp unrecognized_answer(%{"status" => raw} = item, status) when is_binary(raw) do
+    if raw != "inProgress" and raw not in @subagent_ended,
+      do: subagent_result(item, status)
+  end
+
+  defp unrecognized_answer(_item, _status), do: nil
 
   # Text streams through deltas; the completed item's text is authoritative.
   defp text_item(state, item, kind) do
@@ -1062,25 +1073,42 @@ defmodule HalC2.Muse.ThreadRuntime do
   def status(_item), do: "failed"
 
   @doc false
-  # A Muse tool, subagent or workflow as a turn item: `{kind, fields}`.
+  # A Muse tool, subagent or workflow as a turn item: `{kind, fields}`. The fields
+  # read out of the item are Muse's shape of the day, as on the subagent path
+  # (`subagent_result/2`): a value of some other shape than the text it has been
+  # so far degrades this item, not the turn.
   def tool(item, status) do
     args = decode_args(item["args"])
-    name = item["tool"] || item["kind"]
+    name = non_empty(item["tool"], nil) || non_empty(item["kind"], nil)
+    result = if is_map(item["result"]), do: item["result"], else: %{}
+    first_binary = fn values -> Enum.find(values, &is_binary/1) end
 
     title =
       case item["kind"] do
-        "subagent" -> item["objective"] || item["role"] || "Muse agent"
-        "workflow" -> item["entryId"] || "Workflow"
-        _ -> name
+        "subagent" ->
+          non_empty(item["objective"], nil) || non_empty(item["role"], "Muse agent")
+
+        "workflow" ->
+          non_empty(item["entryId"], "Workflow")
+
+        _ ->
+          name
       end
 
     detail =
-      if status == "failed", do: item["failureReason"] || "Muse reported #{item["status"]}."
+      if status == "failed",
+        do:
+          non_empty(item["failureReason"], nil) ||
+            "Muse reported #{non_empty(item["status"], status)}."
+
+    summary =
+      if is_list(item["summary"]),
+        do: item["summary"] |> Enum.filter(&is_binary/1) |> Enum.join("\n")
 
     text =
-      item["visibleOutput"] || get_in(item, ["result", "summary"]) || item["text"] ||
-        (is_list(item["summary"]) && Enum.join(item["summary"], "\n")) || item["finalSummary"] ||
-        item["fallbackText"] || item["objective"] || ""
+      first_binary.([item["visibleOutput"], result["summary"], item["text"]]) ||
+        summary ||
+        first_binary.([item["finalSummary"], item["fallbackText"], item["objective"]]) || ""
 
     output = [detail, text] |> Enum.filter(&(&1 not in [nil, ""])) |> Enum.join("\n")
     title = if detail, do: "#{title}: #{detail}", else: title
