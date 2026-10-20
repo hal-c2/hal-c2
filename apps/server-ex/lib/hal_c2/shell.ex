@@ -158,8 +158,13 @@ defmodule HalC2.Shell do
     path = HalC2.Store.path()
     # A thread an import has not finished is not shown, nor settled by recovery, which
     # works from these rows: a write to it here would keep a retry from continuing it.
+    # The marks are read after the rows: an import marks a thread before its stream
+    # (and its stored row) exists, so a row read here whose import is unfinished has
+    # its mark by now, while the shell alone restarting under a running import could
+    # otherwise snapshot the marks before it and show the thread partway.
+    rows = HalC2.Store.list_shell(path)
     unfinished = HalC2.Import.PreviousInstall.unfinished(path)
-    stored = for {id, _, _} = row <- HalC2.Store.list_shell(path), id not in unfinished, do: row
+    stored = for {id, _, _} = row <- rows, id not in unfinished, do: row
     forget_former_names()
 
     # This run's version 0 is the rows in the store; rows kept from the last run that
@@ -494,8 +499,16 @@ defmodule HalC2.Shell do
   # Streams without a stored row (a store from before rows were kept) get one in the
   # background; boot does not wait for it.
   defp backfill(path, have) do
+    streams = HalC2.Store.list_streams(path)
+    # As in `init/1`: the marks after the list, so a stream an import that began
+    # while this shell was starting has just made is left to that import.
+    unfinished = HalC2.Import.PreviousInstall.unfinished(path)
+
     missing =
-      for %{id: id} <- HalC2.Store.list_streams(path), not MapSet.member?(have, id), do: id
+      for %{id: id} <- streams,
+          not MapSet.member?(have, id),
+          id not in unfinished,
+          do: id
 
     if missing != [] do
       Task.start(fn ->
