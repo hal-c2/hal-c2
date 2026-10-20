@@ -24,10 +24,12 @@ defmodule HalC2.Import.PreviousInstall do
 
   # The store's mark on a thread being imported: "events:" and the project it goes to
   # from before its stream is made until all its events are in (`Import.V2` writes them
-  # in batches), then "files" until its files are brought, when the mark goes.
+  # in batches), then "files:" and that project until its files are brought, when the
+  # mark goes. The project stays in both stages: whichever stage an import stopped
+  # at, its stored events were already rewritten into that project.
   @mark_prefix "import.thread."
   @events "events:"
-  @files "files"
+  @files "files:"
   @project_gone {:error,
                  "It was partly imported into a project that is no longer here, so it cannot be continued."}
 
@@ -116,9 +118,12 @@ defmodule HalC2.Import.PreviousInstall do
   # rather than answering "already here": its events after those already in, then its
   # files. The marks are state, not a lock: two imports of one thread at once are kept
   # apart by a lock on it, which goes with the process holding it.
+  # The lock is on the family's root, not the thread asked for: an import writes the
+  # whole family, and the picker accepts a subagent's thread by id too, so imports of
+  # a parent and of its child would otherwise both run over the child's stream.
   defp import_thread(path, index, files, id, report) do
     case :global.trans(
-           {{__MODULE__, id}, self()},
+           {{__MODULE__, root_of(index, id)}, self()},
            fn -> import_free(path, index, files, id, report) end,
            [node()],
            0
@@ -134,13 +139,18 @@ defmodule HalC2.Import.PreviousInstall do
          here = Store.streams_present(Store.path(), family),
          marks = marks(),
          [_ | _] = missing <- todo(family, done(here, marks)),
+         :ok <- known_marks(missing, marks),
          # Absent here, or here with only some of their events. `here` and `marks` are
          # read before the marks below are put, so only streams an earlier import left
          # resume, and only into the project they were going to.
          reading = Enum.filter(missing, &(not MapSet.member?(here, &1) or events?(marks[&1]))),
          resumed = Enum.filter(reading, &MapSet.member?(here, &1)),
-         {:ok, project, target} <- target(index.projects[thread.project], resumed == []),
-         :ok <- same_project(resumed, marks, target["id"]) do
+         # Here, marked, at either stage: their stored events were rewritten into the
+         # marked project, so the retry must land there and must not make another.
+         staged =
+           Enum.filter(missing, &(MapSet.member?(here, &1) and Map.has_key?(marks, &1))),
+         {:ok, project, target} <- target(index.projects[thread.project], staged == []),
+         :ok <- same_project(staged, marks, target["id"]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
 
@@ -158,7 +168,7 @@ defmodule HalC2.Import.PreviousInstall do
             progress: events
           )
 
-        Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files)))
+        Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files <> target["id"])))
       end
 
       threads.(0)
@@ -180,8 +190,33 @@ defmodule HalC2.Import.PreviousInstall do
 
   # The events already stored were rewritten into the project they were imported into;
   # the rest must land there too, or the thread would hold two projects' ids.
-  defp same_project(resumed, marks, project_id) do
-    if Enum.all?(resumed, &(marks[&1] == @events <> project_id)), do: :ok, else: @project_gone
+  defp same_project(staged, marks, project_id) do
+    if Enum.all?(staged, &(marks[&1] in [@events <> project_id, @files <> project_id])),
+      do: :ok,
+      else: @project_gone
+  end
+
+  # A mark this MC does not know (a newer MC's extra stage, say) is not the files
+  # stage, whatever else it could be taken for: finishing such a thread from its
+  # partial state and clearing the mark would make truncated history permanent.
+  # As `done/2`, it fails closed and the mark stays.
+  defp known_marks(missing, marks) do
+    if Enum.all?(missing, &(stage(marks[&1]) != :unknown)) do
+      :ok
+    else
+      {:error,
+       "It was partly imported in a way this MC does not know, so it cannot be continued."}
+    end
+  end
+
+  defp stage(nil), do: nil
+
+  defp stage(mark) do
+    cond do
+      events?(mark) -> :events
+      String.starts_with?(mark, @files) -> :files
+      true -> :unknown
+    end
   end
 
   defp events?(mark), do: is_binary(mark) and String.starts_with?(mark, @events)
@@ -245,6 +280,20 @@ defmodule HalC2.Import.PreviousInstall do
           {:error, _} ->
             {:error, "Its project folder #{root} is no longer on this machine."}
         end
+    end
+  end
+
+  # The oldest ancestor of a thread in the index (itself, for a thread no subagent
+  # ran from, or one not in the index).
+  defp root_of(index, id), do: root_of(index, id, MapSet.new())
+
+  defp root_of(index, id, seen) do
+    case index.threads[id] do
+      %{parent: parent} when is_binary(parent) ->
+        if MapSet.member?(seen, id), do: id, else: root_of(index, parent, MapSet.put(seen, id))
+
+      _ ->
+        id
     end
   end
 

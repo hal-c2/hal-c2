@@ -36,6 +36,41 @@ defmodule HalC2.Import.V2Test do
     end
   end
 
+  @tag :tmp_dir
+  test "a resumed import whose stream is written during the replay is refused", %{tmp_dir: dir} do
+    source = Path.join(dir, "node.sqlite")
+    first = Enum.take(node_events(), 3)
+    write_node_log(source, first)
+
+    store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
+    assert {:ok, _} = HalC2.Import.V2.run(source, store)
+    tail = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+
+    # More of the thread's history since, and a write here while the resume replays
+    # (the progress report runs before anything after the skipped changes is stored).
+    append_node_log(source, Enum.drop(node_events(), 3))
+    foreign = HalC2.Patch.diff(nil, %{"id" => "item-foreign", "text" => "written here"})
+
+    write_here = fn _read, _total ->
+      unless Process.get(:foreign_written) do
+        Process.put(:foreign_written, true)
+
+        {:ok, _} =
+          HalC2.Store.append(store, [
+            {:thread, "thread-1", [{"turn-item", "item-foreign", foreign, 1}]}
+          ])
+      end
+    end
+
+    assert_raise RuntimeError, ~r/cannot be continued/, fn ->
+      HalC2.Import.V2.run(source, store, resume: %{"thread-1" => tail}, progress: write_here)
+    end
+
+    # Nothing of the source's landed over the write here.
+    {count, _} = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+    assert count == elem(tail, 0) + 1
+  end
+
   defp node_events do
     thread = %{"id" => "thread-1", "title" => "New thread", "projectId" => "project-1"}
     item = %{"id" => "item-1", "type" => "reasoning", "status" => "running", "text" => ""}
@@ -79,6 +114,17 @@ defmodule HalC2.Import.V2Test do
         event_type TEXT, payload_json TEXT, occurred_at TEXT, application_event_version INTEGER)
       """)
 
+    insert_events(db, events)
+    Sqlite3.close(db)
+  end
+
+  defp append_node_log(path, events) do
+    {:ok, db} = Sqlite3.open(path)
+    insert_events(db, events)
+    Sqlite3.close(db)
+  end
+
+  defp insert_events(db, events) do
     {:ok, stmt} =
       Sqlite3.prepare(
         db,
@@ -99,6 +145,6 @@ defmodule HalC2.Import.V2Test do
       :done = Sqlite3.step(db, stmt)
     end
 
-    Sqlite3.close(db)
+    :ok
   end
 end

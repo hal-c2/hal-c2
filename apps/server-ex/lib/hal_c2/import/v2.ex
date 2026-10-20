@@ -26,7 +26,10 @@ defmodule HalC2.Import.V2 do
   `%{id => {count, last}}`: their changes there and the last of them (`{kind, entity,
   patch, at}`). The import is deterministic, so those streams continue after their first
   `count` changes; one whose last change is not the import's own raises instead, since
-  something else wrote to it and its history can no longer be continued, and so does
+  something else wrote to it and its history can no longer be continued. The tail is
+  read again just before the first changes after the skipped ones are stored, so a
+  write during the replay itself (which re-reads the whole history first) raises too
+  instead of being appended over. And so does
   one holding more changes than the source now gives. Determinism needs the same
   `:rewrite` as the stopped import: the caller resumes a stream only into the project
   it was going to (`HalC2.Import.PreviousInstall`).
@@ -174,6 +177,9 @@ defmodule HalC2.Import.V2 do
       pending_count: 0,
       skip: skip,
       last: last,
+      # The stored tail this resume was snapshotted from, checked once more before
+      # the first post-skip flush (`flush/4`); nil once checked, or when not resuming.
+      check_tail: if(skip > 0, do: {skip, last}),
       source_events: 0,
       events: 0,
       source_bytes: 0,
@@ -319,9 +325,11 @@ defmodule HalC2.Import.V2 do
     do: %{acc | pending: [change | acc.pending], pending_count: acc.pending_count + 1}
 
   # A change a stopped import already stored; the last of them must be the stored one.
-  # The replay is deterministic, so a write here after the stop moves that last change,
-  # and checking it alone is enough. The patch goes through JSON to compare in the form
-  # the store keeps it (string keys, lists for tuples).
+  # The replay is deterministic, so a write here after the stop moves that last change.
+  # That checks the snapshot the resume was given; a write during the replay is caught
+  # by the tail re-read before the first post-skip flush (`verify_tail/3`). The patch
+  # goes through JSON to compare in the form the store keeps it (string keys, lists
+  # for tuples).
   defp push(%{skip: 1} = acc, {kind, entity, patch, at}) do
     if {kind, entity, JSON.decode!(JSON.encode!(patch)), at} != acc.last,
       do: raise(diverged(acc.stream_id))
@@ -334,9 +342,22 @@ defmodule HalC2.Import.V2 do
   defp diverged(stream_id),
     do: "#{stream_id} changed here after its import stopped, so it cannot be continued"
 
+  # Just before the first changes after the skipped ones are stored, the stream must
+  # still end where the resume snapshotted it: a write during the replay would
+  # otherwise have this import's diffs, computed without it, appended over it.
+  defp verify_tail(%{check_tail: nil} = acc, _store, _stream_id), do: acc
+
+  defp verify_tail(acc, store, stream_id) do
+    if HalC2.Store.stream_tail(HalC2.Store.path(store), stream_id) != acc.check_tail,
+      do: raise(diverged(stream_id))
+
+    %{acc | check_tail: nil}
+  end
+
   defp flush(%{pending: []} = acc, _store, _kind, _id), do: acc
 
   defp flush(acc, store, stream_kind, stream_id) do
+    acc = verify_tail(acc, store, stream_id)
     changes = Enum.reverse(acc.pending)
     {:ok, _seq} = HalC2.Store.append(store, [{stream_kind, stream_id, changes}])
 

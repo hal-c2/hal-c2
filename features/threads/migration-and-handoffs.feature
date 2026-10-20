@@ -148,6 +148,18 @@ Feature: Carrying threads and context across servers and agents
     And that install does not offer "Alpha" as imported
 
   @mc
+  Scenario: A thread whose files were partway brought into a project deleted since is not continued
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the attachment of "Alpha" cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    And the attachment of "Alpha" can be read again
+    And the project "Alpha" was imported into is deleted here
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" cannot be continued, as its project is gone
+    And that install does not offer "Alpha" as imported
+
+  @mc
   Scenario: A thread being imported is not imported a second time at once
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
     And an import of "Alpha" from that install is under way
