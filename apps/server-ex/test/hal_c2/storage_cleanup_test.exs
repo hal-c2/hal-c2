@@ -48,7 +48,7 @@ defmodule HalC2.StorageCleanupTest do
   defp settings(storage) do
     {_, version} = HalC2.Settings.get()
     {:ok, _} = HalC2.Settings.put(%{"storageCleanup" => storage}, version)
-    _ = :sys.get_state(HalC2.StorageCleanup)
+    _ = :sys.get_state(HalC2.StorageCleanup, :infinity)
   end
 
   # A thread on its own new worktree, branched from main.

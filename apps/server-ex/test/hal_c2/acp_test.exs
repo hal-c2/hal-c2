@@ -180,6 +180,45 @@ defmodule HalC2.AcpTest do
     assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
   end
 
+  test "a successful generic probe clears a previous error without a forget", %{tmp_dir: dir} do
+    grok = Path.join(dir, "grok")
+
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, sys
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    answer(json.loads(sys.stdin.readline()), {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+    model = {"id": "model", "currentValue": "fresh", "options": [{"value": "fresh", "name": "Fresh"}]}
+    answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+    :persistent_term.put({HalC2.Acp, "grok", :error}, "stale failure")
+
+    HalC2.Acp.load()
+
+    assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+    assert :persistent_term.get({HalC2.Acp, "grok", :models}, nil) != nil
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """

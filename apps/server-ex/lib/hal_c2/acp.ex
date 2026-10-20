@@ -489,8 +489,10 @@ defmodule HalC2.Acp do
   # A read that `forget/1` overtook says nothing: its agent may have been stopped under
   # it (`{:error, :closed}`), and what it read would otherwise stand as the instance's
   # state beside the read that replaced it. So the read keeps what it learns aside
-  # (`stage/3`) and publishes it all at once, under the lock `forget/1` takes, and only
-  # while the generation it started in is still current.
+  # (`stage/3`) and publishes it under the lock `forget/1` takes, and only while the
+  # generation it started in is still current. Lock-free `:persistent_term` readers
+  # can still see a brief torn state during those puts; the lock serializes the
+  # publish against `forget/1`, it does not make it atomic for readers.
   defp load(id) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
@@ -537,8 +539,13 @@ defmodule HalC2.Acp do
     end
   end
 
-  # What a read learned, kept until `load/1` publishes it.
-  defp stage(_id, key, value), do: Process.put(@staged, [{key, value} | Process.get(@staged, [])])
+  # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
+  # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
+  # counts as a success in `publish/4`.
+  defp stage(_id, key, value) do
+    Process.put(@staged, [{key, value} | Process.get(@staged, [])])
+    :ok
+  end
 
   defp generation(id) do
     with nil <- :persistent_term.get({__MODULE__, id, :generation}, nil) do
