@@ -38,6 +38,7 @@ Item {
 
         function cleanup() {
             Shell.reset();
+            Theme.colors = {};
         }
 
         function model(slug, name, overrides) {
@@ -190,7 +191,6 @@ Item {
             picker.forceActiveFocus(Qt.TabFocusReason);
             compare(picker.background.border.width, 1);
             compare(picker.background.border.color, "#ff8800");
-            Theme.colors = {};
         }
 
         function test_searching_the_models_matches_provider_and_model_names_data() {

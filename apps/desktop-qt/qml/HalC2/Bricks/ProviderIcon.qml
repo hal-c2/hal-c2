@@ -21,7 +21,7 @@ Item {
 
     readonly property var glyph: ProviderIcons.glyph(driverKind)
     readonly property string bitmap: iconUrl ? iconUrl : ProviderIcons.bitmap(driverKind)
-    readonly property bool dark: Theme.palette.color("text", "#e4e4e7").hslLightness > 0.5
+    readonly property bool dark: ProviderIcons.darkFor(Theme.palette.color("text", "#e4e4e7"))
     readonly property var viewBox: glyph ? glyph.viewBox : [0, 0, 1, 1]
     readonly property real glyphScale: size / Math.max(viewBox[2], viewBox[3])
 
