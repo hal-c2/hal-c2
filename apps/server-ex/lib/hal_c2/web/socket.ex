@@ -31,7 +31,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 6
+  @state_version 7
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -153,13 +153,30 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # Every subscription of this socket to the terminal is told, under its own id,
+  # what follows the snapshot it was sent: an event the snapshot already holds
+  # (at or below its sequence, as the output the terminal flushed while this
+  # socket waited on the attach) goes to that subscription nowhere. An error's
+  # message is in no snapshot, so an error is always told.
   def handle_info({:hal_c2_terminal, key, event}, state) do
-    case state.by_terminal do
-      %{^key => id} ->
-        {:push, Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), state}
+    subs = Map.get(state.by_terminal, key, %{})
+    seq = terminal_seq(event)
+    held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
 
-      _ ->
-        {:ok, state}
+    {frames, subs} =
+      Enum.map_reduce(subs, subs, fn
+        {_id, floor}, acc
+        when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
+          {nil, acc}
+
+        {id, floor}, acc ->
+          acc = if is_integer(seq), do: Map.put(acc, id, max(floor || seq, seq)), else: acc
+          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), acc}
+      end)
+
+    case Enum.reject(frames, &is_nil/1) do
+      [] -> {:ok, state}
+      frames -> {:push, frames, %{state | by_terminal: Map.put(state.by_terminal, key, subs)}}
     end
   end
 
@@ -532,7 +549,9 @@ defmodule HalC2.Web.Socket do
   @impl true
   def terminate(_reason, state) do
     state = migrate(state)
-    for {id, _} <- state.subs, do: unsubscribe(state, id)
+    # Each unsubscribe sees the last one's state, so the last of several sharing
+    # one watch (a terminal, an MC's config) is the one that ends it.
+    Enum.reduce(Map.keys(state.subs), state, &unsubscribe(&2, &1))
     :ok
   end
 
@@ -750,7 +769,10 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # A terminal lives on the MC that owns its thread; its events come straight here.
+  # A terminal lives on the MC that owns its thread; its events come straight
+  # here. Several subscriptions of this socket may follow one terminal (a page
+  # in each window, or one made before the last is gone), each with the
+  # sequence of the snapshot it was sent.
   defp subscribe(state, id, {:terminal, mc, input}, _offset) do
     key = {input["threadId"], input["terminalId"]}
 
@@ -762,7 +784,13 @@ defmodule HalC2.Web.Socket do
          %{
            state
            | subs: Map.put(state.subs, id, {:terminal, mc, key}),
-             by_terminal: Map.put(state.by_terminal, key, id)
+             by_terminal:
+               Map.update(
+                 state.by_terminal,
+                 key,
+                 %{id => snapshot["sequence"]},
+                 &Map.put(&1, id, snapshot["sequence"])
+               )
          }}
 
       {:ok, {:error, %{} = error}} ->
@@ -1227,7 +1255,24 @@ defmodule HalC2.Web.Socket do
   # carry none.
   defp migrate(%{v: 5} = state) do
     by_stream = Map.new(state.by_stream, fn {stream_id, id} -> {stream_id, {id, nil}} end)
-    %{state | by_stream: by_stream, v: 6}
+    %{state | by_stream: by_stream, v: 6} |> migrate()
+  end
+
+  # Version 7: a terminal's subscriptions are held by id, each with the sequence
+  # of the snapshot it was sent. One followed before has none recorded, so it is
+  # told everything, as it was.
+  defp migrate(%{v: 6} = state) do
+    by_terminal =
+      Map.new(state.by_terminal, fn
+        {{thread, terminal} = key, id}
+        when is_binary(thread) and is_binary(terminal) and is_integer(id) ->
+          {key, %{id => nil}}
+
+        entry ->
+          entry
+      end)
+
+    %{state | by_terminal: by_terminal, v: 7}
   end
 
   defp migrate(state), do: state
@@ -1328,6 +1373,12 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # Where a terminal event stands in its terminal's sequence, its snapshot's for
+  # a snapshot event, or `nil` when it carries none.
+  defp terminal_seq(%{"sequence" => seq}) when is_integer(seq), do: seq
+  defp terminal_seq(%{"snapshot" => %{"sequence" => seq}}) when is_integer(seq), do: seq
+  defp terminal_seq(_event), do: nil
+
   # A contract error's fields go in `detail`, as rpc.error carries them.
   defp error_frame(id, %{} = error),
     do: id |> error_frame(error["message"]) |> Map.put("detail", Map.delete(error, "message"))
@@ -1337,8 +1388,18 @@ defmodule HalC2.Web.Socket do
   defp unsubscribe(state, id) do
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
-        :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
+        case Map.delete(Map.get(state.by_terminal, key, %{}), id) do
+          %{} = left when left != %{} ->
+            %{state | subs: subs, by_terminal: Map.put(state.by_terminal, key, left)}
+
+          _ ->
+            # The last of this socket's subscriptions to the terminal: let it go
+            # by the attach's own path, a call this socket waits on, so it has
+            # reached the terminal's MC before any attach that follows is made
+            # and cannot land after it, as a cast in a process of its own could.
+            remote(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+            %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
+        end
 
       {{:vcs, mc, cwd}, subs} ->
         :erpc.cast(mc, HalC2.Vcs.Watch, :unsubscribe, [cwd, self()])

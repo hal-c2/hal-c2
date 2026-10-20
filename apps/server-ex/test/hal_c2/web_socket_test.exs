@@ -362,6 +362,169 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
+  defp start_terminals do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
+
+    start_supervised!(
+      {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one}
+    )
+
+    start_supervised!(HalC2.Terminal.Hub)
+  end
+
+  defp terminal_shape(input),
+    do: %{"type" => "terminal", "mc" => Atom.to_string(node()), "input" => input}
+
+  defp terminal_snapshot(client, id) do
+    {frame, _skipped, client} =
+      WsClient.recv_until(
+        client,
+        &(&1["t"] == "terminal" and &1["id"] == id and &1["event"]["type"] == "snapshot")
+      )
+
+    {frame["event"]["snapshot"], client}
+  end
+
+  # The terminal output frames sent before the pong answering a ping sent now, as
+  # `{id, text}`: the terminal has flushed by then (`await_terminal/1` first), and
+  # the socket reads what it was sent before the ping's frame.
+  defp terminal_output(client) do
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"))
+
+    output =
+      for %{"t" => "terminal", "id" => id, "event" => %{"type" => "output", "data" => data}} <-
+            frames,
+          do: {id, data}
+
+    {output, client}
+  end
+
+  defp await_terminal(input) do
+    [{pid, _}] =
+      Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]})
+
+    # Answered once the terminal has taken everything sent it so far, its pending
+    # output included: ask it to flush, then read its state back.
+    send(pid, :output)
+    :sys.get_state(pid)
+    pid
+  end
+
+  defp print_terminal(input, text) do
+    pid = await_terminal(input)
+    send(pid, {:stdout, :sys.get_state(pid).os_pid, text})
+    await_terminal(input)
+  end
+
+  # Two pages of one client watching one terminal: both are told its output, and
+  # either going leaves the other attached.
+  test "two subscriptions to one terminal on a socket both follow it", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-twice", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 2)
+
+    print_terminal(input, "for-both\r\n")
+    assert {output, client} = terminal_output(client)
+    assert Enum.sort(output) == [{1, "for-both\r\n"}, {2, "for-both\r\n"}]
+
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    print_terminal(input, "for-second\r\n")
+    assert {output, _client} = terminal_output(client)
+    assert output == [{2, "for-second\r\n"}]
+  end
+
+  defp await_mailbox(pid, count) do
+    if Process.info(pid, :message_queue_len) |> elem(1) >= count do
+      :ok
+    else
+      receive do
+      after
+        5 -> await_mailbox(pid, count)
+      end
+    end
+  end
+
+  # Output the terminal's timer flushed while the socket waited on the new
+  # subscription's attach is in that subscription's snapshot: it is not then sent
+  # again under the new id, and what follows still arrives.
+  test "output flushed while resubscribing to a terminal is not repeated", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-repeat", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {_snapshot, client} = terminal_snapshot(client, 1)
+    pid = await_terminal(input)
+    os_pid = :sys.get_state(pid).os_pid
+
+    # The output, its flush, the detach and the new attach queue at the terminal
+    # in that order, as the timer firing just before the attach lands them.
+    :ok = :sys.suspend(HalC2.Terminal.Hub)
+    :ok = :sys.suspend(pid)
+    send(pid, {:stdout, os_pid, "just-once\r\n"})
+    send(pid, :output)
+
+    client =
+      WsClient.send_json_many(client, [
+        %{"t" => "unsub", "id" => 1},
+        %{"t" => "sub", "id" => 2, "shape" => terminal_shape(input)}
+      ])
+
+    :ok = await_mailbox(pid, 4)
+    :ok = :sys.resume(pid)
+    :ok = :sys.resume(HalC2.Terminal.Hub)
+
+    {snapshot, client} = terminal_snapshot(client, 2)
+    assert snapshot["history"] =~ "just-once\r\n"
+
+    print_terminal(input, "after\r\n")
+    assert {output, _client} = terminal_output(client)
+    assert output == [{2, "after\r\n"}]
+  end
+
+  # A subscription is told only the terminal events after the snapshot it was
+  # sent: one at or below its sequence is already in that snapshot.
+  test "a terminal event at or below the snapshot's sequence is not sent" do
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    key = {"th-x", "term-1"}
+
+    state = %{
+      state
+      | subs: %{2 => {:terminal, node(), key}},
+        by_terminal: %{key => %{2 => 5}}
+    }
+
+    old = {:hal_c2_terminal, key, %{"type" => "output", "data" => "x", "sequence" => 5}}
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info(old, state)
+
+    # An error's message is in no snapshot, so one at the snapshot's sequence
+    # (a shell that failed to start while attaching) is still told.
+    error = {:hal_c2_terminal, key, %{"type" => "error", "message" => "m", "sequence" => 5}}
+    assert {:push, [{:text, frame}], _} = HalC2.Web.Socket.handle_info(error, state)
+    assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+
+    new = {:hal_c2_terminal, key, %{"type" => "output", "data" => "y", "sequence" => 6}}
+    assert {:push, [{:text, frame}], state} = HalC2.Web.Socket.handle_info(new, state)
+    assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info(new, state)
+  end
+
   test "a request that raises is logged and still answered", %{port: port} do
     [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     client = connect(port)
