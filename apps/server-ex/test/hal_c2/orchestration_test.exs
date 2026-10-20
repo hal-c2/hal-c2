@@ -309,6 +309,55 @@ defmodule HalC2.OrchestrationTest do
              StreamState.get(state, "provider-thread")[other]
   end
 
+  # The shape the old MC itself wrote: it set the shared record's instance only when
+  # it created it, so the instance named there is the one the thread was made on, not
+  # the one that ran last. The creator keeps the native thread; the later instance
+  # starts a new one.
+  test "a shared provider thread keeps its native thread with the instance it was made for" do
+    thread_id = launch("one")
+    _ = await_statuses(thread_id, ["completed"])
+
+    for {n, done} <- [{2, 2}, {3, 3}] do
+      {:ok, _} = send_message(thread_id, "msg-user-#{n}", "more")
+      _ = await_statuses(thread_id, List.duplicate("completed", done))
+    end
+
+    [one, two, three] = runs(current(thread_id))
+    shared = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+    legacy = StreamState.get(current(thread_id), "provider-thread")[shared]
+    on = &%{"s" => %{"providerInstanceId" => &1}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", one["id"], on.("codex-other")},
+        {"run", two["id"], on.("codex-other")},
+        {"run", three["id"], on.("codex-work")},
+        {"provider-thread", shared,
+         %{"s" => %{"providerInstanceId" => "codex-other"}, "u" => ["perInstance"]}}
+      ])
+
+    {:ok, _} = send_message(thread_id, "msg-user-4", "back home")
+    state = await_statuses(thread_id, List.duplicate("completed", 4))
+    other = HalC2.Orchestration.Entities.provider_thread_id("codex-other", thread_id)
+    work = HalC2.Orchestration.Entities.provider_thread_id("codex-work", thread_id)
+
+    assert %{
+             "providerInstanceId" => "codex-other",
+             "nativeThreadRef" => native,
+             "perInstance" => true
+           } = StreamState.get(state, "provider-thread")[other]
+
+    assert native == legacy["nativeThreadRef"]
+
+    assert %{
+             "firstRunOrdinal" => 3,
+             "lastRunOrdinal" => 3,
+             "nativeSinceRunOrdinal" => 4,
+             "nativeThreadRef" => nil,
+             "perInstance" => true
+           } = StreamState.get(state, "provider-thread")[work]
+  end
+
   defp await_provider_turn(thread_id) do
     if StreamState.list(current(thread_id), "provider-turn") == [] do
       receive do

@@ -2705,10 +2705,15 @@ defmodule HalC2.Orchestration do
           threads[Entities.provider_thread_id(instance, thread_id)]
         end)
 
-      # Each takes its own provider session, made by its next run. The instance that ran
-      # last there takes the native thread along. The shared provider thread only ever
-      # held the last one's, so another starts a new native thread, which the runs it had
-      # there are not in (`nativeSinceRunOrdinal`).
+      # Each takes its own provider session, made by its next run. The instance the
+      # shared record was made for (`owner`, its `providerInstanceId`) takes the native
+      # thread along: the old MC set that field only when it created the record, and a
+      # later run on another instance either reused that instance's still-open session
+      # or failed to resume, so for a thread this MC made the native thread stayed the
+      # creator's. Do not derive the owner from the latest run instead; that would move
+      # the native thread to an instance that never held it. Another instance starts a
+      # new native thread, which the runs it had there are not in
+      # (`nativeSinceRunOrdinal`).
       homes =
         for {instance, runs} <- homeless do
           id = Entities.provider_thread_id(instance, thread_id)
