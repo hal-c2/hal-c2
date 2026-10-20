@@ -937,8 +937,31 @@ defmodule HalC2.Orchestration do
   # The stopped session's agent loses its HAL-C2 tools; the next session gets new ones.
   # A deleted thread only stops its runtimes: its agent's credential still reaches
   # the tools, which answer that the calling thread is gone.
+  #
+  # A released runtime leaves its registry before it stops, so a message in that
+  # window starts a replacement whose first turn may already hold the thread's
+  # credential (`HalC2.Mcp.server/2` reuses it by thread and instance). When a
+  # runtime is again registered for the thread, the credential is the live
+  # session's now and stays; revoking it would leave that session's tools
+  # unauthenticated until it restarts.
   defp stop_session(thread_id) do
-    with :ok <- release_runtimes(thread_id), do: HalC2.Mcp.revoke(thread_id)
+    with :ok <- release_runtimes(thread_id) do
+      if session_running?(thread_id), do: :ok, else: HalC2.Mcp.revoke(thread_id)
+    end
+  end
+
+  # Whether any built-in runtime is registered for the thread right now.
+  defp session_running?(thread_id) do
+    Enum.any?(
+      [
+        HalC2.Codex.Registry,
+        HalC2.Claude.Registry,
+        HalC2.Acp.Registry,
+        HalC2.Pi.Registry,
+        HalC2.Muse.Registry
+      ],
+      &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
+    )
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -1473,11 +1496,29 @@ defmodule HalC2.Orchestration do
   `gone` (a steered message, an answer) can therefore deliver twice, or report an
   answer that landed as missing; for the built-in runtimes the provider connection
   dies with the runtime, so a taken-but-unacknowledged call is lost with it.
+
+  `start_turn/2` is deliberately not a caller: its retry re-dispatches the turn, so
+  it retries only where the work provably never started (`{:shutdown, :released}`
+  and `:noproc`); a runtime killed or crashing as a turn starts fails the run
+  rather than risking the turn starting twice.
   """
   def session_call(call, gone) do
     call.()
   catch
-    :exit, {why, {GenServer, :call, _}} when why != :timeout -> gone
+    :exit, {why, {GenServer, :call, _}} when why != :timeout ->
+      log_unexpected_stop(why)
+      gone
+  end
+
+  # An exit outside the ways a session stops is some other server's failure read as
+  # "gone" (a call a runtime adapter makes in the caller's process); say so, so the
+  # misclassification stays diagnosable instead of dropping the reason.
+  defp log_unexpected_stop(why) when why in [:noproc, :normal, :shutdown, :killed], do: :ok
+  defp log_unexpected_stop({:shutdown, _}), do: :ok
+
+  defp log_unexpected_stop(why) do
+    require Logger
+    Logger.warning("a session call read as stopped exited with #{inspect(why)}")
   end
 
   # Whether the running `run` took `message` into its turn. Only the call into the

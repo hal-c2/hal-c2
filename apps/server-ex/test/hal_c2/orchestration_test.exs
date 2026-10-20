@@ -107,6 +107,31 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  # Any GenServer.call exit reads as a stopped session, so one that is not a way a
+  # session stops (another server a runtime adapter called first) is logged with
+  # its reason instead of being silently reclassified.
+  test "a session call that exits unexpectedly is gone, and the log says why" do
+    call = fn why -> fn -> exit({why, {GenServer, :call, [:stand_in, :work, 0]}}) end end
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(self(), {:gone, Orchestration.session_call(call.(:boom), :gone)})
+      end)
+
+    assert_received {:gone, :gone}
+    assert log =~ "a session call read as stopped exited with :boom"
+
+    for why <- [:noproc, :normal, :shutdown, :killed, {:shutdown, :released}] do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(self(), {:gone, Orchestration.session_call(call.(why), :gone)})
+        end)
+
+      assert_received {:gone, :gone}
+      refute log =~ "read as stopped"
+    end
+  end
+
   # The thread's session stops as it is asked to steer the running turn: the command
   # answers as with no session, and the message does not join the turn.
   test "a steer whose session stops as it is asked is refused while the turn runs" do

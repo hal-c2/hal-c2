@@ -208,6 +208,68 @@ defmodule HalC2.TurnLifecycleTest do
     assert_receive {:DOWN, ^ref, :process, _, {:shutdown, :released}}, 5_000
   end
 
+  # A released runtime leaves its registry before it stops, so a replacement can
+  # register (and be handed the thread's MCP credential) while the release is
+  # finishing. The credential is the live session's then: the release must not
+  # revoke it from under the replacement. The stand-in below registers its
+  # replacement in the Codex registry, which the release has already passed, as
+  # it answers its own release from the Claude registry.
+  test "a release does not revoke the credential a replacement runtime has taken",
+       %{thread_id: thread_id} do
+    start_supervised!(HalC2.Mcp)
+    credential = HalC2.Mcp.server(thread_id, "codex")
+    test = self()
+
+    released =
+      spawn(fn ->
+        {:ok, _} = Registry.register(HalC2.Claude.Registry, thread_id, nil)
+        send(test, :registered)
+
+        receive do
+          {:"$gen_call", from, :release} ->
+            starter = self()
+
+            replacement =
+              spawn(fn ->
+                {:ok, _} = Registry.register(HalC2.Codex.Registry, thread_id, nil)
+                send(starter, :replacement_registered)
+
+                receive do
+                  :stop ->
+                    Registry.unregister(HalC2.Codex.Registry, thread_id)
+                    send(test, :replacement_unregistered)
+                end
+              end)
+
+            send(test, {:replacement, replacement})
+
+            receive do
+              :replacement_registered -> :ok
+            after
+              5_000 -> exit(:replacement_never_registered)
+            end
+
+            Registry.unregister(HalC2.Claude.Registry, thread_id)
+            GenServer.reply(from, :ok)
+        end
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(released, :kill) end)
+
+    assert :ok = Orchestration.release_session(thread_id)
+    assert_receive {:replacement, replacement}
+    on_exit(fn -> Process.exit(replacement, :kill) end)
+    assert [{^replacement, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    assert HalC2.Mcp.server(thread_id, "codex") == credential
+
+    # With no runtime registered, a release revokes as before.
+    send(replacement, :stop)
+    assert_receive :replacement_unregistered
+    assert :ok = Orchestration.release_session(thread_id)
+    assert HalC2.Mcp.server(thread_id, "codex").authorization != credential.authorization
+  end
+
   # The other order: the runtime took a turn after the thread looked idle. Stopping it
   # left the run running with nothing driving it, for IdleSessions to fail.
   test "a runtime asked to release itself keeps the turn it drives", %{thread_id: thread_id} do
