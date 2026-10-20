@@ -79,7 +79,9 @@ async function awaitDecodeStarted(
   void decoder.started.then(() => {
     started = true;
   });
-  await setup.waitForFrame(() => started);
+  // A generous pass budget: the outside-workspace read is real IO, and the bound
+  // should be about the decode starting, not about how many frames tick during it.
+  await setup.waitForFrame(() => started, { maxPasses: 200 });
 }
 
 function containsId(root: Renderable, id: string): boolean {
