@@ -102,6 +102,9 @@ defmodule HalC2.Store do
   # The shutdown is the write timeout, not the 5s default: a stop waits for the call
   # in hand (`init/1` traps exits), and callers may wait `@write_timeout` for it, so a
   # shorter cap would have the supervisor kill the store mid-transaction instead.
+  # The budget covers more than one call: the calls already queued ahead of the
+  # supervisor's exit signal are answered first, so a deep backlog can still spend
+  # it and be killed mid-queue; those callers exit `:killed` and are not retried.
   def child_spec(opts),
     do: %{
       id: Keyword.get(opts, :name, __MODULE__),
@@ -370,9 +373,10 @@ defmodule HalC2.Store do
 
   @impl true
   def init(path) do
-    # A stop (a supervisor restarting the store) then ends it between calls: the one in
-    # hand is answered, and the ones queued behind it exit `:shutdown` having written
-    # nothing, which `write/3` makes again.
+    # A stop (a supervisor restarting the store) then ends it between calls. The
+    # supervisor's exit signal queues as a message: the call in hand and any calls
+    # already queued ahead of it are answered first, and the ones queued behind it
+    # exit `:shutdown` having written nothing, which `write/3` makes again.
     Process.flag(:trap_exit, true)
     # First, so a reader that finds this store by name finds its path too.
     :persistent_term.put(path_key(self()), path)
@@ -655,7 +659,9 @@ defmodule HalC2.Store do
 
   # A store updated in place (`HalC2.Hot`) does not run `init/1` again, and one from
   # before it trapped exits does not trap them yet: callers already retry a
-  # `:shutdown` on the assumption that a taken call always finishes first.
+  # `:shutdown` on the assumption that a taken call always finishes first. Only the
+  # trap arrives this way: the supervisor keeps the child spec it started the store
+  # with, so `child_spec/1`'s longer shutdown applies only from the next restart.
   @impl true
   def code_change(_old, state, _extra) do
     Process.flag(:trap_exit, true)
