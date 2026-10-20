@@ -1466,6 +1466,13 @@ defmodule HalC2.Orchestration do
   `gone`, as one the lookup did not find would; one that is only slow still exits the
   caller. Only the exit of a `GenServer.call` reads as a stopped session, which covers
   every built-in runtime; a runtime that exits any other way still exits the caller.
+
+  "Stopped" is not an explicit refusal: a session that took the call's work (a steer
+  into its turn, an answer sent to the provider) and then died before replying reads
+  the same as one that died before taking it. Callers that retry or re-dispatch on
+  `gone` (a steered message, an answer) can therefore deliver twice, or report an
+  answer that landed as missing; for the built-in runtimes the provider connection
+  dies with the runtime, so a taken-but-unacknowledged call is lost with it.
   """
   def session_call(call, gone) do
     call.()
@@ -1713,6 +1720,9 @@ defmodule HalC2.Orchestration do
   # newer run). A steer that lost the race with the turn's
   # end is handled the same way. A provider that refuses while its turn still runs is an error for the sender:
   # the message was not delivered, so it is neither shown in the turn nor queued.
+  # "Its session stopped" carries no such no-delivery guarantee (see `session_call/2`):
+  # it reaches the re-dispatch below only once the run is no longer active, where the
+  # message going out as a new turn is the right outcome either way.
   defp steer(thread_id, run, command) do
     instance = run["providerInstanceId"] || "codex"
 

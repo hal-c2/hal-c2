@@ -103,11 +103,10 @@ defmodule HalC2.Codex.ThreadRuntime do
       # A session that stopped after the lookup, however it stopped, is as gone as one
       # the lookup did not find. One that is only slow still exits the caller.
       [{pid, _}] ->
-        try do
-          GenServer.call(pid, {:upload_feedback, reason}, 60_000)
-        catch
-          :exit, {why, _} when why != :timeout -> gone
-        end
+        Orchestration.session_call(
+          fn -> GenServer.call(pid, {:upload_feedback, reason}, 60_000) end,
+          gone
+        )
 
       [] ->
         gone
@@ -188,7 +187,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # only when it gets to its exit, so a lookup right after the release would find a pid
   # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
   # new runtime meanwhile, so for a moment two run for the thread, and nothing in
-  # `terminate/2` may count on having the thread to itself.
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
   def handle_call(:release, _from, %{turn: nil} = state) do
     Registry.unregister(HalC2.Codex.Registry, state.thread_id)
     {:stop, {:shutdown, :released}, :ok, state}
