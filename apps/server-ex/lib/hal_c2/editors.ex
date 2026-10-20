@@ -371,7 +371,7 @@ defmodule HalC2.Editors do
   defp launch(command, args) do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
       {:win32, _} ->
-        Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+        launch_detached(command, args)
 
       _ ->
         script = ~s("$@" </dev/null >/dev/null 2>&1 &)
@@ -379,6 +379,20 @@ defmodule HalC2.Editors do
     end
 
     {:ok, nil}
+  end
+
+  # On Windows the editor is spawned detached: no standard streams, and the port is
+  # closed as soon as the program starts, so nothing waits on it and nothing it writes
+  # is buffered. A default editor can be a GUI program that stays open until the user
+  # closes it; `System.cmd` in a task pinned a task and a port for that whole lifetime.
+  # A program that cannot be found or started counts as launched, as it did in the task.
+  defp launch_detached(command, args) do
+    with path when path != nil <- System.find_executable(command) do
+      port = Port.open({:spawn_executable, path}, [:binary, :nouse_stdio, :hide, args: args])
+      Port.close(port)
+    end
+  rescue
+    _ -> nil
   end
 
   # The program that puts what it runs in a session of its own, so the desktop stopping

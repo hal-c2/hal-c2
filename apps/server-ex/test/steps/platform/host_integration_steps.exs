@@ -320,6 +320,25 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  # The fake editor is still running (it waits for the hangup): a launch that
+  # waits on it, or buffers what it writes, would still hold its port here.
+  step ~r/^Windows opens "[^"]+" in Notepad and the MC holds no port for it$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+
+    names =
+      for port <- Port.list(),
+          {:name, name} <- [Port.info(port, :name)],
+          do: List.to_string(name)
+
+    refute Enum.any?(names, &String.ends_with?(&1, "/notepad")),
+           "the MC still holds a port for the running editor: #{inspect(names)}"
+
+    :gen_tcp.close(conn)
+    context
+  end
+
   step ~r/^Windows opens "[^"]+" in Notepad with the file where the command line puts it$/,
        context do
     assert {:ok, nil} = context.reply

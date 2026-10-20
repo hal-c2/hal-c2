@@ -68,6 +68,12 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad
 
   @mc
+  Scenario: On Windows the MC holds nothing open for the editor it started
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad and the MC holds no port for it
+
+  @mc
   Scenario: On Windows a text association without a chosen program still names the editor
     Given the MC runs on Windows and the class registered for .txt opens text files in Notepad
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
