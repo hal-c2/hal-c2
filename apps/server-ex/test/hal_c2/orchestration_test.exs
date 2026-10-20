@@ -235,6 +235,29 @@ defmodule HalC2.OrchestrationTest do
     _ = await_run(thread_id, "interrupted")
   end
 
+  # A turn on another instance stops the CLI the runtime had; what it had sent by
+  # then is still in the runtime's mailbox.
+  test "what a Claude CLI the runtime no longer runs sent belongs to no turn" do
+    thread_id = launch("wait for me", "claudeAgent")
+    _ = await_run(thread_id, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+    %{turn: %{ids: %{run: run_id}}} = :sys.get_state(pid)
+    stopped = spawn(fn -> :ok end)
+
+    send(
+      pid,
+      {:claude, stopped,
+       {:message, %{"type" => "result", "subtype" => "success", "is_error" => false}}}
+    )
+
+    assert %{turn: %{ids: %{run: ^run_id}}} = :sys.get_state(pid)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_run(thread_id, "interrupted")
+  end
+
   # Only a thread from before instances had their own provider threads has anything to
   # bring up to date; one this MC started is never rewritten for it.
   test "a thread's next run leaves the provider thread this MC made for it as it was" do
