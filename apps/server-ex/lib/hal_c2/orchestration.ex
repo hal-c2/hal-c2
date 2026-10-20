@@ -739,8 +739,10 @@ defmodule HalC2.Orchestration do
   # The refused message back on its own run, queued again and first, in one transaction:
   # the thread may have changed while the provider was asked. An archived or deleted
   # thread cancelled its queue meanwhile, and the run stays cancelled. A thread that is
-  # moving or moved got there after the turn ended (moves wait for a turn to end), and
-  # keeps the message first in its queue without starting it.
+  # moving got there after the turn ended (moves wait for a turn to end), and keeps the
+  # message first in its queue without starting it. A thread that has moved keeps only
+  # a forwarding record here, so nothing queued here runs: the run stays cancelled too,
+  # and the sender is told to send it again on the destination.
   defp unpromote(state, thread_id, run_id, message_id, target_id) do
     thread = StreamState.get(state, "thread")[thread_id]
     message = StreamState.get(state, "message")[message_id]
@@ -759,6 +761,11 @@ defmodule HalC2.Orchestration do
 
         thread["archivedAt"] != nil ->
           {Enum.reject(released, &is_nil/1), {:dropped, "the thread was archived."}}
+
+        is_map(thread["movedTo"]) ->
+          {Enum.reject(released, &is_nil/1),
+           {:dropped,
+            "the thread has moved to #{thread["movedTo"]["label"]}; send it again there."}}
 
         true ->
           requeued =
@@ -783,9 +790,6 @@ defmodule HalC2.Orchestration do
 
   defp queue_waits(%{"moving" => %{"label" => to}} = thread),
     do: {:waits, "#{thread["title"]} is moving to #{to}. Try again once it has arrived."}
-
-  defp queue_waits(%{"movedTo" => %{} = moved} = thread),
-    do: {:waits, "#{thread["title"]} has moved to #{moved["label"]}."}
 
   defp queue_waits(_thread), do: :queued
 

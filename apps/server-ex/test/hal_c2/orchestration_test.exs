@@ -1049,6 +1049,53 @@ defmodule HalC2.OrchestrationTest do
       File.touch!(Path.join(gates, "steer"))
     end
 
+    # A thread that has moved keeps only a forwarding record here: a message queued
+    # here again would wait where nothing runs it, so the sender is told to resend.
+    @tag :capture_log
+    test "a promote refused after its thread moved leaves its run cancelled", %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "hold this")
+      [active, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      promote =
+        Task.async(fn ->
+          Orchestration.dispatch(%{
+            "type" => "queued-message.promote-to-steer",
+            "threadId" => thread_id,
+            "queuedRunId" => queued["id"],
+            "targetRunId" => active["id"]
+          })
+        end)
+
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      moved = %{
+        "mc" => "desktop@127.0.0.1",
+        "label" => "desktop",
+        "at" => HalC2.Orchestration.Entities.now()
+      }
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"thread", thread_id, %{"s" => %{"movedTo" => moved}}}
+        ])
+
+      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(runtime, :kill)
+
+      assert {:error, reason} = Task.await(promote)
+      assert reason =~ "the thread has moved to desktop; send it again there"
+      state = current(thread_id)
+
+      assert %{"status" => "cancelled", "queuePosition" => nil} =
+               StreamState.get(state, "run")[queued["id"]]
+
+      assert StreamState.get(state, "message")["m2"]["runId"] == queued["id"]
+      refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
+      File.touch!(Path.join(gates, "steer"))
+    end
+
     # Codex still holds a steer it did not answer in time, and takes it later: the
     # promoted message stays in the turn rather than also running as its own.
     test "a promote whose runtime answers too late stays in the turn", %{tmp_dir: dir} do
