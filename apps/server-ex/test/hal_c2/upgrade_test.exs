@@ -237,13 +237,17 @@ defmodule HalC2.UpgradeTest do
   end
 
   test "a socket opened before an upgrade keeps its subscriptions" do
-    # Its state as the previous version kept it: one id per watched config, and one
-    # per followed stream.
+    # Its state as the previous version kept it: one id per watched config, one
+    # per followed stream, and one id per followed terminal.
     old = %{
       session: nil,
-      subs: %{1 => {:config, node()}, 2 => {:stream, node(), "th-old"}},
+      subs: %{
+        1 => {:config, node()},
+        2 => {:stream, node(), "th-old"},
+        3 => {:terminal, node(), {"th-old", "term-1"}}
+      },
       by_stream: %{"th-old" => 2},
-      by_terminal: %{{:settings, node()} => 1},
+      by_terminal: %{{:settings, node()} => 1, {"th-old", "term-1"} => 3},
       buffers: %{},
       item_types: %{},
       flush_scheduled: false
@@ -253,14 +257,72 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 6
+    assert state.v == 7
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == [1]
+    # A terminal followed before has no snapshot sequence recorded, so it is
+    # held per subscription with a nil floor and is told everything, as it was.
+    assert state.by_terminal[{"th-old", "term-1"}] == %{3 => nil}
+    assert state.subs[3] == {:terminal, node(), {"th-old", "term-1"}}
     assert state.monitors == %{}
     assert state.shell == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
+
+    # The migrated terminal subscription still receives its terminal's events
+    # under its own id.
+    assert {:push, [{:text, frame}], _state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_terminal, {"th-old", "term-1"},
+                %{"type" => "output", "data" => "hi", "sequence" => 1}},
+               state
+             )
+
+    assert %{"t" => "terminal", "id" => 3} = JSON.decode!(IO.iodata_to_binary(frame))
+  end
+
+  test "a v6 socket's terminal subscription migrates to per-subscription state" do
+    # The exact v6 shape: a terminal is held as a single subscription id, while
+    # a watched config is already a list of ids.
+    state = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{
+        1 => {:config, node()},
+        2 => {:terminal, node(), {"th-6", "term-1"}}
+      },
+      by_stream: %{},
+      by_terminal: %{{"th-6", "term-1"} => 2, {:settings, node()} => [1]},
+      monitors: %{},
+      shell: %{},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    assert {:push, [{:text, frame}], migrated} =
+             HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
+
+    assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
+    assert migrated.v == 7
+    assert migrated.subs == state.subs
+    # Only the terminal entry changes shape; the config entry is preserved.
+    assert migrated.by_terminal == %{
+             {"th-6", "term-1"} => %{2 => nil},
+             {:settings, node()} => [1]
+           }
+
+    # With a nil floor the migrated subscription is told everything that
+    # follows, under its own id.
+    assert {:push, [{:text, frame}], _} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_terminal, {"th-6", "term-1"},
+                %{"type" => "output", "data" => "hi", "sequence" => 9}},
+               migrated
+             )
+
+    assert %{"t" => "terminal", "id" => 2} = JSON.decode!(IO.iodata_to_binary(frame))
   end
 
   test "a message without a tag is only for a stream followed before an upgrade" do
@@ -279,8 +341,10 @@ defmodule HalC2.UpgradeTest do
       flush_scheduled: false
     }
 
-    # One still on its way from the subscription the upgrade carried over.
-    assert {:ok, ^state} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    # One still on its way from the subscription the upgrade carried over. The
+    # v6 state is first migrated to v7, so the returned state is that migration.
+    migrated = %{state | v: 7}
+    assert {:ok, ^migrated} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
 
     assert {:push, [{:text, frame}], _} =
              HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)
