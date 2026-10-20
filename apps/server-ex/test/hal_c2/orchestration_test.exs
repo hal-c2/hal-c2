@@ -774,6 +774,94 @@ defmodule HalC2.OrchestrationTest do
     assert {:ok, %{"tasks" => []}} = HalC2.ScheduledTasks.list()
   end
 
+  defp scheduled_task(thread_id, prompt) do
+    {:ok, %{"task" => task}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Nightly",
+        "prompt" => prompt,
+        "enabled" => false,
+        "schedule" => %{"type" => "fixed_time", "timeOfDay" => "03:00"},
+        "projectId" => "project-1",
+        "threadId" => thread_id,
+        "workspaceStrategy" => %{"type" => "root"},
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+
+    task
+  end
+
+  # A timed-out run must clean up only its own prompt. The stream is held
+  # while a user turn runs, so the run times out before its dispatch commits;
+  # when the stream opens, the late dispatch queues the prompt behind that
+  # turn, and the cleanup cancels it there instead of interrupting the turn.
+  test "a timed-out scheduled run held behind a turn cancels only its own prompt" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 1_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms) end)
+
+    thread_id = launch("wait for me")
+    _ = await_run(thread_id, "running")
+    task = scheduled_task(thread_id, "scheduled hello")
+
+    server = HalC2.Streams.ensure(thread_id)
+    :ok = :sys.suspend(server)
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, 10_000)
+
+    :ok = :sys.resume(server)
+    state = await_statuses(thread_id, ["running", "cancelled"])
+
+    assert [%{"status" => "running"}] = StreamState.list(state, "run-attempt")
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    state = await_statuses(thread_id, ["interrupted", "cancelled"])
+
+    assert [%{"status" => "interrupted"}] = StreamState.list(state, "run-attempt")
+  end
+
+  # The same held dispatch on a thread with no turn running: the late prompt
+  # lands as a run nothing ever began, and the cleanup ends that run itself.
+  test "a timed-out scheduled run whose prompt lands late on an idle thread ends its own run" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 1_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms) end)
+
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    task = scheduled_task(thread_id, "wait for me")
+
+    server = HalC2.Streams.ensure(thread_id)
+    :ok = :sys.suspend(server)
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, 10_000)
+
+    :ok = :sys.resume(server)
+    state = await_statuses(thread_id, ["completed", "interrupted"])
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["completed", "interrupted"]
+  end
+
   test "an agent's MCP credential reads its own project's threads, and nothing else" do
     start_supervised!(HalC2.Mcp)
     thread_id = launch("hello")

@@ -47,7 +47,7 @@ defmodule HalC2.ScheduledTasksProofTest do
         "where the tasks are saved; the model keeps them across a crash without a file"
     },
     environment: %{
-      "fire" => "fire/2 returns: the prompt is sent",
+      "fire" => "fire/3 returns: the prompt is sent",
       "fire-dies" => "the run's process exits, perhaps once the prompt was sent",
       "advance" => "the clock moves on",
       "crash" => "the scheduler stops: its runs table and timer go, and its runs with it",

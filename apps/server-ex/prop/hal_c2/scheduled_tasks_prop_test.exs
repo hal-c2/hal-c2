@@ -62,9 +62,12 @@ defmodule HalC2.ScheduledTasksPropTest do
     end)
 
     # The hour a run gets, shortened so a run that hangs is timed out within a
-    # command. A run that returns sends its result at once, so only a run that
-    # never gets scheduled for a second could be timed out in its place.
-    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 1_000)
+    # command. Five seconds is the scheduling delay the runs test budgets for
+    # a loaded runner (@wait there): an instant-return run delayed past a
+    # shorter cap would be recorded as timed out where the model expects it
+    # to have succeeded, which reads as a property failure nowhere
+    # reproducible.
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 5_000)
 
     test = self()
 
