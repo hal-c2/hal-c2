@@ -86,6 +86,18 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad with the other parameters filled in
 
   @mc
+  Scenario: On Windows the file is appended when the registered command line names no file placeholder
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" %S'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the file appended after the other parameters
+
+  @mc
+  Scenario: On Windows a quoted bare placeholder is dropped like the shell's unquoted one
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" "%2"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the quoted empty parameter dropped
+
+  @mc
   Scenario: On Windows a doubled quote inside quoted text is one quote
     Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" "say ""hi"" there"'
     When a client opens "src/app.ts" at line 12 column 4 in the default editor

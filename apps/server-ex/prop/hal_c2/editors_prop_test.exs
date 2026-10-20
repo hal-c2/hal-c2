@@ -1,9 +1,9 @@
 defmodule HalC2.EditorsPropTest do
   @moduledoc """
-  The splitter of a Windows command line (`HalC2.Editors.command_words/1`, the rules of
-  `CommandLineToArgvW`): quoting any argument list with the inverse rules and splitting it
-  gives the list back, and no input makes it raise. The module holds no state, so these are
-  plain `forall`s.
+  The splitter of a Windows command line (`HalC2.Editors.command_words/1`, the MSVC CRT
+  rules — `CommandLineToArgvW` toggles quoting on a doubled quote instead): quoting any
+  argument list with the inverse rules and splitting it gives the list back, and no input
+  makes it raise. The module holds no state, so these are plain `forall`s.
   """
 
   use ExUnit.Case, async: true

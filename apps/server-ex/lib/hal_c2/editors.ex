@@ -92,11 +92,16 @@ defmodule HalC2.Editors do
   end
 
   # The default editor's arguments with `file` in them: where the registered command line
-  # puts it (`{:file, "--open=%1"}`, from Windows), else last. An argument that is left
-  # empty (a bare `%2`, which the shell fills with the extra parameter there is none of)
-  # is dropped, as the shell's command line parsing drops it.
+  # puts it (`{:file, "--open=%1"}`, from Windows), else last. Only the placeholders that
+  # stand for the file (`%1`, `%L`, `%l`, `%*`) decide that: an argument holding only
+  # other parameters (`%S`, `%2`) is no place for the file, so it still goes last. An
+  # argument that is left empty (a bare `%2`, which the shell fills with the extra
+  # parameter there is none of) is dropped, as the shell's command line parsing drops it.
+  # A quoted bare placeholder (`"%2"`) drops too, where the shell would pass one empty
+  # argument instead: quoting is already lost by the split, so this is a deliberate
+  # small divergence from the shell.
   defp with_file(args, file) do
-    if Enum.any?(args, &match?({:file, _}, &1)) do
+    substituted =
       Enum.flat_map(args, fn
         {:file, template} ->
           case String.replace(template, file_placeholder(), &placeholder_value(&1, file)) do
@@ -107,10 +112,13 @@ defmodule HalC2.Editors do
         arg ->
           [arg]
       end)
-    else
-      args ++ [file]
-    end
+
+    if Enum.any?(args, &file_argument?/1), do: substituted, else: substituted ++ [file]
   end
+
+  # Whether the argument names the file, which is what decides against appending it last.
+  defp file_argument?({:file, template}), do: String.match?(template, ~r/%[1lL*]/)
+  defp file_argument?(_), do: false
 
   # The shell parameters of a registered command line. `%1`, `%L` and `%l` stand for the
   # file, and so does `%*` (all arguments), as the file is the only one given. The others
@@ -168,10 +176,13 @@ defmodule HalC2.Editors do
   # activates through `DelegateExecute`), and `reg` then prints the localized text
   # "(value not set)" as the data, so the program must resolve to an executable: that also
   # drops an association to an uninstalled editor, and a command line whose program is an
-  # unquoted path with spaces (`C:\Program Files\Editor\e.exe %1` splits after `Program`).
-  # That is left as no editor on purpose: if prefix matching is ever added it must try the
-  # longest join of leading words first, never CreateProcess's shortest-first order, which
-  # runs a planted `C:\Program.exe`. Two more divergences from Explorer: the `UserChoice`
+  # unquoted path with spaces (`C:\Program Files\Editor\e.exe %1` splits to program
+  # `C:\Program`, which counts as no editor unless that first word itself resolves — on
+  # Windows the lookup also tries executable extensions, so a planted `C:\Program.exe`
+  # would still win; fuller handling is tracked in #409). Prefix matching stays out on
+  # purpose: if it is ever added it must try the longest join of leading words first,
+  # never CreateProcess's shortest-first order, which runs a planted `C:\Program.exe`.
+  # Two more divergences from Explorer: the `UserChoice`
   # `Hash` is not validated (Windows ignores a choice whose hash does not match) and
   # `UserChoiceLatest` is not read, so the MC can name an editor Explorer would not use.
   # Like xdg-mime, it runs while a client waits for the server config, so the three queries
@@ -243,12 +254,14 @@ defmodule HalC2.Editors do
     end)
   end
 
-  # A Windows command line split into arguments by the rules of `CommandLineToArgvW`: white
-  # space separates arguments outside quotes, and a quote starts or ends quoted text inside
-  # an argument (`--dir="C:\My Data"` is one argument). Backslashes only count before a
-  # quote: 2n of them give n backslashes and the quote opens or closes quoted text, 2n+1
-  # give n backslashes and a literal quote. Inside quoted text a doubled quote is one
-  # literal quote and the text stays quoted (`"a""b"` is `a"b`).
+  # A Windows command line split into arguments by the MSVC CRT rules (not
+  # `CommandLineToArgvW`, which toggles quoting on a doubled quote instead): white space
+  # separates arguments outside quotes, and a quote starts or ends quoted text inside an
+  # argument (`--dir="C:\My Data"` is one argument). The CRT reading is the useful one
+  # here because the editor's own runtime re-parses the final command line. Backslashes
+  # only count before a quote: 2n of them give n backslashes and the quote opens or
+  # closes quoted text, 2n+1 give n backslashes and a literal quote. Inside quoted text
+  # a doubled quote is one literal quote and the text stays quoted (`"a""b"` is `a"b`).
   @doc false
   def command_words(line), do: split_words(line, nil, false, [])
 

@@ -350,6 +350,26 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^Windows opens "[^"]+" in Notepad with the file appended after the other parameters$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S names no file, so the file goes last even though the line holds a placeholder.
+    assert argv == ["notepad", "1", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the quoted empty parameter dropped$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # A quoted "%2" drops like the bare one, where the shell would pass one empty argument.
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
   step ~r/^Windows opens "[^"]+" in Notepad with the doubled quotes read as quotes$/, context do
     assert {:ok, nil} = context.reply
     {conn, argv} = launched(context)
