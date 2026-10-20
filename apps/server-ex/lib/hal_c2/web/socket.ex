@@ -85,9 +85,7 @@ defmodule HalC2.Web.Socket do
           else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
 
       {:ok, {:more, id, items}} ->
-        with %{^id => {:stream, mc, stream_id}} <- state.subs,
-             do: :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
-
+        more(state, id, items)
         {:ok, state}
 
       {:ok, {:unsub, id}} ->
@@ -1334,6 +1332,26 @@ defmodule HalC2.Web.Socket do
 
   defp error_frame(id, reason), do: %{"t" => "error", "id" => id, "reason" => to_string(reason)}
 
+  # Straight to the monitored stream server by its tag, as a stream unsubscribe
+  # goes: ordered with this socket's unsubscribe for the subscription, and taken
+  # for no subscription that follows it if it still arrives after one (a follow
+  # goes by another process). An `:erpc.cast` ran in a process of its own and
+  # could reach the stream after both.
+  defp more(state, id, items) do
+    with %{^id => {:stream, mc, stream_id}} <- state.subs do
+      case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
+        {_ref, {_, server}} ->
+          {_id, tag} = state.by_stream[stream_id]
+          message = if tag, do: {:more, self(), items, tag}, else: {:more, self(), items}
+          GenServer.cast(server, message)
+
+        # Followed before stream servers were monitored.
+        nil ->
+          :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
+      end
+    end
+  end
+
   defp unsubscribe(state, id) do
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
@@ -1552,10 +1570,18 @@ defmodule HalC2.Web.Socket do
       }
       |> put_floor(meta)
 
+    # Still replaying until `live`, through every snapshot part: a page is only
+    # ever an answer to a `more` sent once live (below).
     buffers =
       if part_state == :done,
-        do: Map.delete(state.buffers, id),
-        else: Map.put(state.buffers, id, %{events: [], bytes: 0, snapshot_part: part + 1})
+        do: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true}),
+        else:
+          Map.put(state.buffers, id, %{
+            events: [],
+            bytes: 0,
+            snapshot_part: part + 1,
+            replay: true
+          })
 
     {:push, Protocol.encode(frame), %{state | buffers: buffers}}
   end
@@ -1577,20 +1603,27 @@ defmodule HalC2.Web.Socket do
     {:push, frames ++ [Protocol.encode(live)], state}
   end
 
-  # A page is the stream as of `seq`, so the events before it go out first.
+  # A page is the stream as of `seq`, so the events before it go out first. One
+  # that arrives while this subscription is still replaying answers no `more` of
+  # its (a client asks only once live, and its page then follows `live`): it is
+  # the subscription before this one's, and goes nowhere.
   defp stream_message(state, id, {:page, seq, rows, floor, part_state}) do
-    {frames, state} = flush(state)
+    if get_in(state.buffers, [id, :replay]) do
+      {:ok, state}
+    else
+      {frames, state} = flush(state)
 
-    page = %{
-      "t" => "page",
-      "id" => id,
-      "offset" => seq,
-      "floor" => floor,
-      "done" => part_state == :done,
-      "rows" => for({kind, eid, entity} <- rows, do: [kind, eid, entity])
-    }
+      page = %{
+        "t" => "page",
+        "id" => id,
+        "offset" => seq,
+        "floor" => floor,
+        "done" => part_state == :done,
+        "rows" => for({kind, eid, entity} <- rows, do: [kind, eid, entity])
+      }
 
-    {:push, frames ++ [Protocol.encode(page)], state}
+      {:push, frames ++ [Protocol.encode(page)], state}
+    end
   end
 
   defp stream_message(state, id, {:events, events, seq}) do

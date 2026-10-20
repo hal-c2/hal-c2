@@ -10,7 +10,8 @@ defmodule HalC2.StreamsPropTest do
   `HalC2.Prop.StreamsCollector` processes named `p1`..`p3` that fold what they are
   sent as a client does, and resume from what they hold. Commands commit and
   transact, subscribe plainly, as clients (kinds and windows) and as watchers, resume,
-  unsubscribe (also by a tag no subscription has), page a window back, crash
+  unsubscribe (also by a tag no subscription has), page a window back (also by a
+  tag no subscription has, which pages nothing), crash
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
   """
@@ -120,7 +121,8 @@ defmodule HalC2.StreamsPropTest do
            let key <- oneof(subs) do
              {:call, __MODULE__, :resume, [key, asked(state.subs[key])]}
            end},
-          {2, {:call, __MODULE__, :more, [oneof(subs), oneof([1, 2])]}}
+          {2, {:call, __MODULE__, :more, [oneof(subs), oneof([1, 2])]}},
+          {2, {:call, __MODULE__, :more_stale, [oneof(subs), oneof([1, 2])]}}
         ]
 
     frequency(base ++ with_subs)
@@ -227,6 +229,9 @@ defmodule HalC2.StreamsPropTest do
     do: not Enum.any?(state.subs, fn {{_, s}, sub} -> s == id and sub.active end)
 
   def precondition(state, {:call, _, :more, [key, _]}),
+    do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
+
+  def precondition(state, {:call, _, :more_stale, [key, _]}),
     do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
 
   def precondition(state, {:call, _, :resume, [key, asked]}),
@@ -596,6 +601,11 @@ defmodule HalC2.StreamsPropTest do
   end
 
   def more({name, id}, items), do: Streams.more(id, collector(name), items)
+
+  # A `more` of a subscription replaced since, by a tag no subscription has now:
+  # it pages nothing and moves no floor (`check` sees both).
+  def more_stale({name, id}, items),
+    do: Streams.more(id, collector(name), items, {node(), make_ref()})
 
   def check({name, id}), do: Collector.get(collector(name), id)
 

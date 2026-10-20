@@ -142,11 +142,17 @@ defmodule HalC2.Streams.Server do
   Returns once the page is sent, as `subscribe/4` does with what a client starts
   from: a subscriber on this MC has it by then, so one that subscribes again next
   takes it as the old subscription's, never as the start of the new one.
+
+  Given a `tag`, only the subscription `pid` followed with that tag is paged: a
+  `more` on its way while `pid` left that subscription and followed again must
+  not page the new one, whenever it arrives.
   """
-  @spec more(String.t(), pid, pos_integer) :: :ok
-  def more(stream_id, pid, items) do
+  @spec more(String.t(), pid, pos_integer, term) :: :ok
+  def more(stream_id, pid, items, tag \\ nil) do
+    message = if tag == nil, do: {:more, pid, items}, else: {:more, pid, items, tag}
+
     case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{server, _}] -> GenServer.call(server, {:more, pid, items}, :infinity)
+      [{server, _}] -> GenServer.call(server, message, :infinity)
       [] -> :ok
     end
   catch
@@ -295,6 +301,11 @@ defmodule HalC2.Streams.Server do
     {:reply, :ok, state, timeout(state)}
   end
 
+  def handle_call({:more, pid, items, tag}, _from, state) do
+    {:noreply, state, _} = handle_cast({:more, pid, items, tag}, state)
+    {:reply, :ok, state, timeout(state)}
+  end
+
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
 
   def handle_call(:flush_shell, _from, state) do
@@ -316,6 +327,14 @@ defmodule HalC2.Streams.Server do
   def handle_cast({:unsubscribe, pid, tag}, state) do
     case state.subscribers do
       %{^pid => %{name: {_id, ^tag}}} -> handle_cast({:unsubscribe, pid}, state)
+      _ -> {:noreply, state, timeout(state)}
+    end
+  end
+
+  # By its tag, so it pages no subscription that follows, whenever it arrives.
+  def handle_cast({:more, pid, items, tag}, state) do
+    case state.subscribers do
+      %{^pid => %{name: {_id, ^tag}}} -> handle_cast({:more, pid, items}, state)
       _ -> {:noreply, state, timeout(state)}
     end
   end
