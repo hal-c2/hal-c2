@@ -79,7 +79,8 @@ private slots:
     for (const QString& format : {QStringLiteral("locale"), QStringLiteral("12-hour")}) {
       const QString raw = format == QLatin1String("12-hour") ? spanish.toString(evening.time(), QStringLiteral("h:mm AP"))
                                                               : spanish.toString(evening.time(), QLocale::ShortFormat);
-      QVERIFY2(raw.contains(QChar(0x00A0)), qPrintable(format + QStringLiteral(": the locale no longer writes a no-break space: ") + raw));
+      QVERIFY2(raw.contains(QChar(0x00A0)) || raw.contains(QChar(0x202F)),
+               qPrintable(format + QStringLiteral(": the locale no longer writes a no-break space: ") + raw));
       const QString time = sidebar::timeOfDay(evening, format, spanish);
       QVERIFY2(!time.contains(QChar(0x00A0)) && !time.contains(QChar(0x202F)), qPrintable(format + QStringLiteral(": ") + time));
       QVERIFY2(time.contains(QLatin1Char(' ')), qPrintable(format + QStringLiteral(": ") + time));

@@ -75,7 +75,10 @@ Item {
     readonly property int roomyHeight: 700
     // How far from the end a scrolled-up thread is put, past the host's room: a
     // wheel notch travels a fraction of it, so the tests that scroll one notch
-    // down cannot reach the end.
+    // down cannot reach the end. How far a notch travels is a platform and
+    // user setting, so this stays a heuristic on the down side: on an
+    // aggressively configured machine one notch could still reach the end.
+    // The up side no longer relies on it: scrollUp verifies the distance.
     readonly property int scrollMargin: 300
 
     // A host that gives the timeline more room while the user reads, as the
