@@ -175,6 +175,36 @@ Item {
             compare(Themes.importConflicts, []);
         }
 
+        // A close with only an import error showing drops that error too.
+        function test_escapeClearsAnImportError() {
+            const dialog = openImport();
+            Themes.importError = "That is not a theme.";
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !dialog.visible);
+            compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), ["cancel"]);
+            compare(Themes.importError, "");
+        }
+
+        // A colour typed but not yet committed (editingFinished fires on
+        // focus loss) survives the outside press that keeps the draft.
+        function test_anUncommittedColourSurvivesAPressOutside() {
+            const editor = openEditor();
+            const field = findChild(editor.contentItem, "color:canvas");
+            verify(field, "the canvas colour field");
+            field.forceActiveFocus();
+            tryVerify(() => field.activeFocus);
+            field.selectAll();
+            for (const ch of "#112233")
+                keySequence(ch);
+            mouseClick(composer);
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+            compare(Themes.calls.filter(call => call.name === "hideEditor").length, 1);
+            Themes.editorOpen = true;
+            tryVerify(() => editor.opened);
+            compare(findChild(editor.contentItem, "color:canvas").text, "#112233");
+        }
+
         // A choice made in the dialog is the only call: closing after it does not cancel.
         function test_aChoiceIsNotFollowedByACancel() {
             for (const [button, choice] of [["keepBoth", "copy"], ["updateExisting", "update"]]) {

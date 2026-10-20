@@ -75,7 +75,12 @@ QtObject {
         importConflicts = [];
     }
     function resolveImport(choice) {
+        // Like the controller: safe with nothing pending, and then it
+        // settles nothing, so a close after a choice records no second call.
+        const pending = importConflicts.length > 0 || importError.length > 0;
         clearImport();
+        if (!pending)
+            return true;
         return record("resolveImport", [choice]);
     }
     function saveCustom(theme) {

@@ -274,6 +274,7 @@ struct ToggleEditor : EditorCommand {
     if (m.open) {
       m.open = false;
       m.editing.clear();
+      m.opened.clear();
       return;
     }
     if (m.editing.isEmpty()) m.editing = m.opened = kBase;

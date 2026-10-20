@@ -390,7 +390,11 @@ void ThemeController::setEditorOpen(bool open) {
     m_editing = draft();
     m_opened = m_editing;
   }
-  if (!open) m_editing.clear();
+  if (!open) {
+    m_editing.clear();
+    // The explicit close drops the opened draft too; hideEditor() keeps it.
+    m_opened.clear();
+  }
   setEditorShown(open);
 }
 
