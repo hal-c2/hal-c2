@@ -62,8 +62,9 @@ defmodule HalC2.Pair do
       port = (running && running["port"]) || Application.get_env(:hal_c2, :port, 3780)
       serve_port = opts[:tailscale_serve_port] || HalC2.TailscaleServe.default_port()
 
-      with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running) do
-        dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
+      dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
+
+      with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running, dirs) do
         # Minting ahead of a first start: the store's directory may not be there yet.
         if running == nil, do: HalC2.Paths.ensure!(dirs)
         token = HalC2.Auth.create_pairing_token(Path.join(dirs.data, "hal-c2.sqlite"))
@@ -93,23 +94,36 @@ defmodule HalC2.Pair do
   # fragment, without a scheme and host, with a space or a port no socket has, would mint
   # a token into a link nothing opens. Credentials would be printed in the link, and
   # `http://trusted@other-host` reads as the wrong destination.
+  # `URI.new/1`, not `URI.parse/1`: parse lends `http://host:abc` the scheme's
+  # default port and keeps illegal host characters and raw escapes, so each of
+  # those would pass the checks below and mint a token into an unopenable link.
+  # URI.new still lets an empty port (`http://host:`) through as the default,
+  # so the raw authority is checked for a colon nothing follows.
   defp base_url?(url) do
-    case URI.parse(url) do
-      %URI{scheme: scheme, host: host, port: port, userinfo: nil, query: nil, fragment: nil}
+    case URI.new(url) do
+      {:ok,
+       %URI{scheme: scheme, host: host, port: port, userinfo: nil, query: nil, fragment: nil}}
       when scheme in ["http", "https"] and host not in [nil, ""] and port in 1..65_535 ->
-        not String.match?(url, ~r/\s/u)
+        not String.match?(url, ~r/\s/u) and
+          not String.match?(url, ~r{://[^/?#]*:(?:$|[/?#])})
 
       _ ->
         false
     end
   end
 
-  # A refused address is echoed with any credentials in it replaced: the message
-  # lands in logs and script output.
+  # A refused address is echoed rebuilt from its parsed form, without its
+  # credentials, query or fragment (a pasted pairing link carries a live token
+  # in those): the message lands in logs and script output. An address with no
+  # parseable authority — scheme-less credentials, say — is not echoed at all,
+  # as the raw text is exactly what must not be printed.
   defp redacted(url) do
-    case URI.parse(url) do
-      %URI{userinfo: nil} -> url
-      %URI{} = uri -> URI.to_string(%{uri | userinfo: "redacted"})
+    case URI.new(url) do
+      {:ok, %URI{host: host} = uri} when is_binary(host) and host != "" ->
+        URI.to_string(%{uri | userinfo: uri.userinfo && "redacted", query: nil, fragment: nil})
+
+      _ ->
+        "(withheld)"
     end
   end
 
@@ -197,9 +211,47 @@ defmodule HalC2.Pair do
     do:
       "The installed MC is not running at the home HAL_C2_HOME or HAL_C2_MC_HOME names. Start it, then run `#{command_name()}` again."
 
-  defp base(true, port, serve_port, _rest, _running),
-    do: HalC2.TailscaleServe.publish(port, serve_port)
+  defp base(true, port, serve_port, _rest, running, dirs),
+    do: HalC2.TailscaleServe.publish(port, serve_port, located_id(dirs, running))
 
-  defp base(_, _port, _serve_port, rest, running),
+  defp base(_, _port, _serve_port, rest, running, _dirs),
     do: {:ok, List.first(rest) || (running && running["origin"]) || HalC2.Web.base_url()}
+
+  # The located MC's environment id, for the Tailscale Serve check: read from its
+  # home, or asked of the MC itself at its recorded origin. Never
+  # `HalC2.Environment.id/0`: that is the *caller's* home's identity (and makes
+  # and caches it), which is another MC when pairing across profiles — the check
+  # would then bless a mapping that fronts the caller's MC and refuse the located
+  # one's own. Nil only when no MC was located: the MC being paired is then this
+  # command's own home, whose identity is the caller's to name. A located MC
+  # whose id can be neither read nor asked for matches nothing (""), so an
+  # existing mapping to it under another address is refused, not blessed against
+  # the wrong identity.
+  defp located_id(dirs, running) do
+    file_id =
+      case File.read(Path.join(dirs.data, "environment-id")) do
+        {:ok, id} -> String.trim(id)
+        _ -> ""
+      end
+
+    cond do
+      file_id != "" -> file_id
+      running == nil -> nil
+      true -> origin_id(running["origin"]) || ""
+    end
+  end
+
+  defp origin_id(origin) when is_binary(origin) do
+    request = {String.to_charlist(origin <> "/.well-known/hal-c2/environment"), []}
+
+    with {:ok, {{_, 200, _}, _, body}} <-
+           :httpc.request(:get, request, [timeout: 2_000], body_format: :binary),
+         {:ok, %{"environmentId" => id}} when is_binary(id) and id != "" <- JSON.decode(body) do
+      id
+    else
+      _ -> nil
+    end
+  end
+
+  defp origin_id(_origin), do: nil
 end

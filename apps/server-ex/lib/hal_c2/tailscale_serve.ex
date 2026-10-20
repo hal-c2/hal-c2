@@ -15,11 +15,19 @@ defmodule HalC2.TailscaleServe do
 
   def default_port, do: @default_port
 
-  @doc "Maps HTTPS `serve_port` on the tailnet to `local_port`; `{:ok, base_url}` or `{:error, message}`."
-  @spec publish(pos_integer, pos_integer) :: {:ok, String.t()} | {:error, String.t()}
-  def publish(local_port, serve_port \\ @default_port) do
+  @doc """
+  Maps HTTPS `serve_port` on the tailnet to `local_port`; `{:ok, base_url}` or
+  `{:error, message}`. `expected_id` is the environment id of the MC being
+  published, which an existing mapping to another address must answer with to
+  be reused; nil means this process's own MC (`HalC2.Environment.id/0`). A
+  caller publishing *another* MC (a cross-profile `pair`) must pass that MC's
+  id: this process's identity is its own home's, not the published one's.
+  """
+  @spec publish(pos_integer, pos_integer, String.t() | nil) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def publish(local_port, serve_port \\ @default_port, expected_id \\ nil) do
     with {:ok, name} <- magic_dns_name(),
-         :ok <- claim(name, serve_port, "http://127.0.0.1:#{local_port}") do
+         :ok <- claim(name, serve_port, "http://127.0.0.1:#{local_port}", expected_id) do
       {:ok, base_url(name, serve_port)}
     else
       {:taken, message} -> {:error, message}
@@ -37,7 +45,7 @@ defmodule HalC2.TailscaleServe do
     target = "http://127.0.0.1:#{local_port}"
 
     with {:ok, name} <- magic_dns_name(),
-         {:taken, _} <- claim(name, @default_port, target) do
+         {:taken, _} <- claim(name, @default_port, target, nil) do
       publish(local_port, local_port)
     else
       :ok -> publish(local_port)
@@ -62,23 +70,24 @@ defmodule HalC2.TailscaleServe do
     end
   end
 
-  defp claim(name, port, target) do
+  defp claim(name, port, target, expected_id) do
     case mapping(name, port) do
       nil -> serve(port, target)
       ^target -> :ok
-      other -> check_existing(other, port)
+      other -> check_existing(other, port, expected_id)
     end
   end
 
-  # Another target on the port: fine only if it is this environment.
-  defp check_existing(target, port) do
+  # Another target on the port: fine only if it is the environment being published.
+  defp check_existing(target, port, expected_id) do
     request = {String.to_charlist(target <> "/.well-known/hal-c2/environment"), []}
+    expected = expected_id || HalC2.Environment.id()
 
     case :httpc.request(:get, request, [timeout: 2_000], body_format: :binary) do
       {:ok, {{_, 200, _}, _, body}} ->
         case JSON.decode(body) do
           {:ok, %{"environmentId" => id}} ->
-            if id == HalC2.Environment.id(),
+            if id == expected,
               do: :ok,
               else:
                 {:taken,
