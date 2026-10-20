@@ -198,6 +198,20 @@ void queueMessage(World& world, const QString& text) {
        {QStringLiteral("userMessageId"), QStringLiteral("message-") + text}});
 }
 
+void queueWake(World& world) {
+  FakeStreams& fake = world.mc.part<FakeStreams>();
+  const QString run = QStringLiteral("run-queued-wake");
+  const int position = ++fake.ordinal;
+  set(world, QStringLiteral("message"), QStringLiteral("message-wake"),
+      {{QStringLiteral("id"), QStringLiteral("message-wake")}, {QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("providerWake"), true}});
+  set(world, QStringLiteral("run"), run,
+      {{QStringLiteral("id"), run},
+       {QStringLiteral("ordinal"), position},
+       {QStringLiteral("status"), QStringLiteral("queued")},
+       {QStringLiteral("queuePosition"), position},
+       {QStringLiteral("userMessageId"), QStringLiteral("message-wake")}});
+}
+
 QVariantList toasts(World& world) {
   return world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
 }
@@ -569,8 +583,9 @@ const Steps steps([] {
   step(QStringLiteral("%1 was queued when the MC restarted").arg(q), [](World& world, const Captures& c, const Table&) {
     queueMessage(world, c[0]);
   });
+  step(QStringLiteral("a provider wake was queued when the MC restarted"), [](World& world, const Captures&, const Table&) { queueWake(world); });
   step(QStringLiteral("the MC comes back"), [](World& world, const Captures&, const Table&) {
-    for (const QVariant& entry : listed(world, QStringLiteral("queue"))) {
+    for (const QVariant& entry : listed(world, QStringLiteral("queue")) + listed(world, QStringLiteral("waiting"))) {
       set(world, QStringLiteral("run"), entry.toMap().value(QStringLiteral("runId")).toString(), {{QStringLiteral("queueHeld"), true}});
     }
     world.waitFor([&] { return turn(world).value(QStringLiteral("queueHeld")).toBool(); },

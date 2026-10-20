@@ -370,6 +370,14 @@ Feature: Follow-ups while the agent is working
     Then the user sees the toast "Not connected: queue not resumed" once
     And the MC is not asked to resume the queue
 
+  @desktop
+  Scenario: A held queue that only waits on the provider can be resumed
+    Given a provider wake was queued when the MC restarted
+    When the MC comes back
+    Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
+    When the user resumes the queue
+    Then the MC is asked to resume the queue
+
   @backlog @tui
   Scenario: A held queue is resumed from the terminal
     Given "later" was queued when the MC restarted

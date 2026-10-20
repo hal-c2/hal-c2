@@ -65,6 +65,12 @@ struct Model {
 
   bool held(const QString& thread) const { return queued.value(thread).contains(true) || unlisted.value(thread).contains(true); }
   // What the composer shows: the queue is held, and a run is listed to resume.
+  // Two simplifications bound this model: it builds only user-message runs, so
+  // `waiting` (notification/provider-wake runs) is always empty here even though
+  // production shows held for queue-or-waiting (pinned end to end by the
+  // waiting-only scenario in features/composer/queue-and-steer.feature), and
+  // Enqueue holds every run of a queue or none, so the partly-held mix that
+  // composer::queued() treats as held is pinned only by its regression tests.
   bool shown(const QString& thread) const { return held(thread) && !queued.value(thread).isEmpty(); }
   bool any(const QString& thread) const { return !queued.value(thread).isEmpty() || !unlisted.value(thread).isEmpty(); }
   void release(const QString& thread) {
