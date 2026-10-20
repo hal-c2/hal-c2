@@ -710,5 +710,32 @@ defmodule HalC2.PlannerTest do
       input = corrected(Map.delete(task(nil), "issue"))
       assert %{"number" => 7, "milestone" => nil} = input
     end
+
+    test "takes the issue out of any milestone once the task is gone from the plan" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      milestone = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => milestone}
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, milestone, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      assert took.(synced)["misplaced"] == %{}
+    end
   end
 end

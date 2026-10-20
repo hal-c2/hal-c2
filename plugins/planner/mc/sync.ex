@@ -1192,9 +1192,9 @@ defmodule HalC2Plugins.Planner.Sync do
   while the milestone's `synced` has the task (a refusal leaves it there) `pushes/5` takes
   that issue out as it does for any task relinked since, from the `refs` it remembers.
   """
-  def misplaced(synced, reasserts) do
+  def misplaced(synced, again) do
     at =
-      for {id, {"update", input, _}} <- reasserts,
+      for {id, {"update", input, _}} <- again,
           into: %{},
           do: {id, Map.take(input, ~w(repository number))}
 
