@@ -58,13 +58,11 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
-  # A timeout here means Muse (or the runtime ahead of it) still holds the
-  # request and hands it over when it gets to it, if that turn is still its
-  # current one, so it is answered `:ok` where that is known.
+  # `HalC2.RuntimeSteer` owns which timeout means held; the budget stays the
+  # public calls' 35s, so a command never outlives its caller.
   defp steer_call(pid, run_id, message) do
-    GenServer.call(pid, {:steer, run_id, message}, 35_000)
-  catch
-    :exit, {:timeout, _} -> :ok
+    timeout = Application.get_env(:hal_c2, :muse_steer_timeout_ms, 35_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}

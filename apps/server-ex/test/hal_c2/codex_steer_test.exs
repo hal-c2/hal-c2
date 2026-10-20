@@ -31,6 +31,14 @@ defmodule HalC2.CodexSteerTest do
     assert :ok = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
   end
 
+  # A timeout from the provider call nested inside the runtime kills the
+  # runtime with that inner call's exit; it must not be answered `:ok`.
+  test "a steer whose runtime dies on its nested provider call is not held" do
+    stand_in("thread-1", :inner_timeout)
+
+    assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
+  end
+
   # A process standing in for the runtime in its registry: it answers the steer
   # with `steer_reply` (`:hold` never answers it) and never answers `:settle`, as
   # a runtime busy with the notifications ahead of that call would not.
@@ -52,7 +60,12 @@ defmodule HalC2.CodexSteerTest do
   defp loop(steer_reply) do
     receive do
       {:"$gen_call", from, {:steer, _run_id, _message}} ->
-        if steer_reply != :hold, do: GenServer.reply(from, steer_reply)
+        case steer_reply do
+          :hold -> :ok
+          :inner_timeout -> exit({:timeout, {GenServer, :call, [:provider_conn, :call, 30_000]}})
+          reply -> GenServer.reply(from, reply)
+        end
+
         loop(steer_reply)
 
       {:"$gen_call", _from, :settle} ->

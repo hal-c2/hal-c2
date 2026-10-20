@@ -26,11 +26,21 @@ defmodule HalC2.ClaudeSteerTest do
              ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
   end
 
+  # Kill the stand-in while the steer call is in flight: killing it first
+  # races the Registry dropping its entry, which answers "no running turn"
+  # instead of exiting.
   test "a steer whose runtime stops is not taken as held" do
     pid = stand_in("thread-1", :hold)
+
+    task =
+      Task.async(fn ->
+        catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
+      end)
+
+    assert_receive :steer_received
     Process.exit(pid, :kill)
 
-    assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
+    assert Task.await(task)
   end
 
   # A process standing in for the runtime in its registry: it answers the steer
@@ -43,7 +53,7 @@ defmodule HalC2.ClaudeSteerTest do
       spawn(fn ->
         {:ok, _} = Registry.register(HalC2.Claude.Registry, thread_id, nil)
         send(parent, :registered)
-        loop(steer_reply)
+        loop(parent, steer_reply)
       end)
 
     assert_receive :registered
@@ -51,11 +61,12 @@ defmodule HalC2.ClaudeSteerTest do
     pid
   end
 
-  defp loop(steer_reply) do
+  defp loop(parent, steer_reply) do
     receive do
       {:"$gen_call", from, {:steer, _run_id, _message}} ->
+        send(parent, :steer_received)
         if steer_reply != :hold, do: GenServer.reply(from, steer_reply)
-        loop(steer_reply)
+        loop(parent, steer_reply)
     end
   end
 end

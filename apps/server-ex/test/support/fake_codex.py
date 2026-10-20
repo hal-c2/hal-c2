@@ -392,7 +392,12 @@ for line in sys.stdin:
     elif method == "turn/steer":
         ctx = waiting_ctx
         # While the file FAKE_CODEX_HOLD_STEER names exists, a steer waits.
+        # Bounded, so a gate a failed test never removes fails the suite
+        # instead of hanging it.
+        hold_deadline = time.time() + 120
         while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_STEER", "/nonexistent")):
+            if time.time() > hold_deadline:
+                sys.exit("fake Codex: steer held past 120s (stuck hold-steer gate)")
             time.sleep(0.01)
         if finishing:
             # The turn ended before the steer got there.

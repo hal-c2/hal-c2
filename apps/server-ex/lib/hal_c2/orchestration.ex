@@ -1907,6 +1907,9 @@ defmodule HalC2.Orchestration do
       other -> {:error, "its runtime answered #{inspect(other, limit: 3, printable_limit: 80)}"}
     end
   catch
+    :exit, {:timeout, _} ->
+      {:error, "its runtime did not answer in time"}
+
     :exit, _ ->
       {:error, "its runtime stopped"}
 

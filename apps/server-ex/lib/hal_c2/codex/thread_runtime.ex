@@ -67,22 +67,19 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  # Only this call's timeout means Codex (or the runtime ahead of it) still holds
-  # the request and hands it over when it gets to it, so it is answered `:ok` here
-  # where that is known. A refusal is always the refusal: settling the runtime so
-  # the caller sees whether the turn still runs is best-effort, and a settle that
-  # itself times out or finds the runtime gone must not turn it into a delivery.
+  # `HalC2.RuntimeSteer` owns which timeout means held. A refusal is always the
+  # refusal: settling the runtime so the caller sees whether the turn still runs
+  # is best-effort, and a settle that itself times out or finds the runtime gone
+  # must not turn it into a delivery.
   defp steer_call(pid, run_id, message) do
     timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 30_000)
 
-    with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, timeout) do
+    with {:error, _} = error <- HalC2.RuntimeSteer.call(pid, run_id, message, timeout) do
       # Notifications that preceded the refusal sit in the runtime's mailbox ahead
       # of this call.
       settle(pid)
       error
     end
-  catch
-    :exit, {:timeout, _} -> :ok
   end
 
   defp settle(pid) do
