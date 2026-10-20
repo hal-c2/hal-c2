@@ -142,6 +142,10 @@ Feature: Launching and leaving the terminal client
 
   # The client sets COLORTERM itself before its renderer reads the environment
   # (apps/tui/src/terminalStartup.ts); these start it against a fake MC.
+  # The live scenarios below deliberately reuse the @dropped scenario names
+  # above: same behaviour, now checked by the client's own start against a
+  # fake MC instead of the gone launcher. Name searches will hit both; the
+  # @dropped ones are the launcher-era record, these are the live checks.
   @tui
   Scenario Outline: A terminal known to draw truecolor gets full colour even when it does not advertise it
     Given an MC is running on this machine

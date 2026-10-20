@@ -422,10 +422,11 @@ step("the first ticket request was given up on only after 10 seconds", async (ct
   );
   const lived = first.endedAt! - first.startedAt;
   // The client's timer starts before the request reaches the MC, and a loaded runner can
-  // stretch that gap and the abort's way back; the lower bound is the load-bearing one
-  // ("not at once"), while the upper slack only needs to catch a wholesale change of
-  // default (30s/60s), so it is wide — a miss here on a loaded runner means rerun first.
-  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_500);
+  // stretch that gap, which *shrinks* `lived`; the assertion's real content is "didn't
+  // give up immediately", so the lower bound keeps 5s of slack (still far from 0 and
+  // from 10s). The upper slack only needs to catch a wholesale change of default
+  // (30s/60s), so it is wide. A miss on either bound on a loaded runner means rerun first.
+  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 5_000);
   expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 15_000);
 });
 

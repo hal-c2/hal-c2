@@ -78,6 +78,18 @@ function home(ctx: LaunchWorld): string {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-tui-launch-"));
     ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
     ctx.launchHome = dir;
+    // A `tmux` that only writes down its call, ahead of any real one, so the
+    // client can never reach the tester's tmux (see `orderLog`). Created once
+    // with the home, so `cleanEnv` stays a pure env computation.
+    const bin = NodePath.join(dir, "bin");
+    NodeFS.mkdirSync(bin, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "tmux"),
+      '#!/bin/sh\necho "tmux $*" >> "$HAL_C2_TEST_ORDER"\n',
+      {
+        mode: 0o755,
+      },
+    );
   }
   return ctx.launchHome;
 }
@@ -162,14 +174,7 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   env.HOME = dir;
   env.HAL_C2_TUI_LOG = NodePath.join(dir, "client.log");
   env.HAL_C2_TUI_SHELL_DIR = NodePath.join(dir, "shell");
-  // A `tmux` that only writes down its call, ahead of any real one, so the
-  // client can never reach the tester's tmux (see `orderLog`).
   const bin = NodePath.join(dir, "bin");
-  NodeFS.mkdirSync(bin, { recursive: true });
-  const tmux = NodePath.join(bin, "tmux");
-  NodeFS.writeFileSync(tmux, '#!/bin/sh\necho "tmux $*" >> "$HAL_C2_TEST_ORDER"\n', {
-    mode: 0o755,
-  });
   env.PATH = `${bin}${NodePath.delimiter}${env.PATH ?? ""}`;
   env.HAL_C2_TEST_ORDER = orderPath(ctx);
   return env;
@@ -214,8 +219,11 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     stdout: "pipe",
     stderr: "pipe",
   });
-  ctx.cleanups.push(() => {
-    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+  ctx.cleanups.push(async () => {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
   });
   const output = { stdout: "", stderr: "" };
   let markDrawn: (drew: boolean) => void = () => {};
@@ -246,6 +254,15 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
       if (output.stdout.includes(ENTER_ALT_SCREEN)) markDrawn(true);
     }
   })();
+  const readErr = (async () => {
+    output.stderr += await new Response(proc.stderr).text();
+  })();
+  const exited = (async () => {
+    const code = await proc.exited;
+    await Promise.all([readOut, readErr]);
+    markDrawn(false);
+    return code;
+  })();
   const screen = {
     text: screenText,
     statusLine,
@@ -269,19 +286,20 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
             ),
           );
         }, SCREEN_TIMEOUT_MS);
+        // If the client dies first, fail at once with its complete stderr
+        // (`exited` only resolves once both streams are drained).
+        void exited.then((code) => {
+          settle();
+          reject(
+            new Error(
+              `the client exited (${code}) before the screen showed ${JSON.stringify(text)}; the screen shows:\n${screenText()}\nstderr:\n${output.stderr}`,
+            ),
+          );
+        });
         screenWaiters.add(waiter);
         waiter();
       }),
   };
-  const readErr = (async () => {
-    output.stderr += await new Response(proc.stderr).text();
-  })();
-  const exited = (async () => {
-    const code = await proc.exited;
-    await Promise.all([readOut, readErr]);
-    markDrawn(false);
-    return code;
-  })();
   return { proc, output, drawn, exited, screen };
 }
 
@@ -348,10 +366,6 @@ export function runningMc(ctx: LaunchWorld, options: FakeMcOptions = {}): FakeMc
   return running;
 }
 
-/**
- * Start the client against the MC on this machine and wait until it draws, then
- * leave it with `leaveWith` or wait for it to exit; `preload` runs a file first.
- */
 /** The `--preload` args every client launch shares, including the order log's. */
 function preloadArgs(ctx: LaunchWorld, preload?: string): string[] {
   return [preload, launchSetup(ctx).recordOrder ? orderPreload(ctx) : undefined].flatMap((path) =>
@@ -359,6 +373,10 @@ function preloadArgs(ctx: LaunchWorld, preload?: string): string[] {
   );
 }
 
+/**
+ * Start the client against the MC on this machine and wait until it draws, then
+ * leave it with `leaveWith` or wait for it to exit; `preload` runs a file first.
+ */
 export async function runClient(
   ctx: LaunchWorld,
   options: { preload?: string; leaveWith?: "ctrl+c" | "SIGINT" | "SIGTERM" },
