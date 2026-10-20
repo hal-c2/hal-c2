@@ -1904,7 +1904,7 @@ defmodule HalC2.Orchestration do
     case runtime(instance).steer(thread_id, run_id, input) do
       :ok -> :ok
       {:error, _} = refused -> refused
-      other -> {:error, "its runtime answered #{inspect(other)}"}
+      other -> {:error, "its runtime answered #{inspect(other, limit: 3, printable_limit: 80)}"}
     end
   catch
     :exit, _ ->
