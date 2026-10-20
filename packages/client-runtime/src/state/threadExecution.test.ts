@@ -117,8 +117,15 @@ describe("thread execution presentation", () => {
     expect(latestUnheldRun(heldPassed)?.id).toBe(passed.id);
     expect(deriveLatestThreadRun(heldPassed)?.runId).toBe(passed.id);
     expect(deriveThreadActivityRun(heldPassed)?.runId).toBe(passed.id);
+    // Cancelled while held, it never started and is still passed over.
+    const cancelledHeld = { ...run("run-cancelled-held", 3, "cancelled"), queueHeld: true };
+    expect(latestUnheldRun({ ...v2Projection, runs: [cancelledHeld, passed] })?.id).toBe(passed.id);
     // A queue that is not held was sent after the latest run, and is latest.
     expect(latestUnheldRun({ ...v2Projection, runs: [queued, passed] })?.id).toBe(queued.id);
+    // Equal ordinals (legacy runs stored without one): the newest made wins.
+    const older = run("run-older", 0, "completed");
+    const newer = run("run-newer", 0, "completed");
+    expect(latestUnheldRun({ ...v2Projection, runs: [older, newer] })?.id).toBe(newer.id);
   });
 
   it("does not expose a queued-only run as interruptible", () => {

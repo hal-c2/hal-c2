@@ -19,9 +19,11 @@ function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,
   predicate: (run: OrchestrationV2ThreadProjection["runs"][number]) => boolean,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
+  // `>=`: of equal ordinals (legacy runs stored without one) the newest made wins,
+  // as the MC's pick does; `runs` are in the order they were made.
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | null>(
     (latest, candidate) =>
-      predicate(candidate) && (latest === null || candidate.ordinal > latest.ordinal)
+      predicate(candidate) && (latest === null || candidate.ordinal >= latest.ordinal)
         ? candidate
         : latest,
     null,
@@ -47,14 +49,18 @@ function summarizeThreadRun(
 }
 
 /**
- * The run with the highest ordinal, passing over queued runs held for the user: a run
- * that passed a held queue is numbered below the held run it passed. As the MC's
+ * The run with the highest ordinal, passing over runs held for the user that never
+ * started (still queued, or cancelled while held): a run that passed a held queue is
+ * numbered below the held run it passed. As the MC's
  * `HalC2.Projection.Shell.latest_run/1`.
  */
 export function latestUnheldRun(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
-  return latestMatchingRun(projection, (run) => !(run.status === "queued" && run.queueHeld));
+  return latestMatchingRun(
+    projection,
+    (run) => !((run.status === "queued" || run.status === "cancelled") && run.queueHeld),
+  );
 }
 
 /** The thread's latest run, as `latestUnheldRun`. */
