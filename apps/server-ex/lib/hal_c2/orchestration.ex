@@ -2718,7 +2718,11 @@ defmodule HalC2.Orchestration do
             create(
               "provider-thread",
               id,
-              Map.merge(legacy, %{"id" => id, "providerSessionId" => session_id})
+              Map.merge(legacy, %{
+                "id" => id,
+                "providerSessionId" => session_id,
+                "perInstance" => true
+              })
             )
           else
             ran = for %{"activeAttemptId" => attempt} = run <- runs, attempt, do: run["ordinal"]
