@@ -99,8 +99,15 @@ defmodule HalC2.Store do
           at: integer
         }
 
+  # The shutdown is the write timeout, not the 5s default: a stop waits for the call
+  # in hand (`init/1` traps exits), and callers may wait `@write_timeout` for it, so a
+  # shorter cap would have the supervisor kill the store mid-transaction instead.
   def child_spec(opts),
-    do: %{id: Keyword.get(opts, :name, __MODULE__), start: {__MODULE__, :start_link, [opts]}}
+    do: %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      shutdown: @write_timeout
+    }
 
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts) do
@@ -624,19 +631,36 @@ defmodule HalC2.Store do
   end
 
   # A linked process (the checkpointer) takes the store down as it did before the store
-  # trapped exits.
+  # trapped exits. Only its EXITs are link signals: an EXIT-shaped message from
+  # anything else was sent, not signalled, and is ignored like any other message.
   @impl true
-  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
-  def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
+  def handle_info({:EXIT, pid, reason} = message, state) do
+    cond do
+      pid != state.checkpointer -> unexpected(message, state)
+      reason == :normal -> {:noreply, state}
+      true -> {:stop, reason, state}
+    end
+  end
 
   # Anything else is ignored, as GenServer's default does.
-  def handle_info(message, state) do
+  def handle_info(message, state), do: unexpected(message, state)
+
+  defp unexpected(message, state) do
     Logger.warning("the store ignored an unexpected message: #{inspect(message)}")
     {:noreply, state}
   end
 
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
+
+  # A store updated in place (`HalC2.Hot`) does not run `init/1` again, and one from
+  # before it trapped exits does not trap them yet: callers already retry a
+  # `:shutdown` on the assumption that a taken call always finishes first.
+  @impl true
+  def code_change(_old, state, _extra) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
 
   defp stream_key(state, kind, id) do
     case state.keys do

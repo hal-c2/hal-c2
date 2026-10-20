@@ -85,6 +85,13 @@ defmodule HalC2.StoreTest do
     :erlang.trace(store, true, [:call, :receive])
     :erlang.trace_pattern({Sqlite3, :execute, 2}, [{[:_, "BEGIN IMMEDIATE"], [], []}], [])
 
+    # Even when an assertion below fails: the trace pattern is global, and the second
+    # connection would hold the file of a test that is already over.
+    on_exit(fn ->
+      :erlang.trace_pattern({Sqlite3, :execute, 2}, false, [])
+      Sqlite3.close(db)
+    end)
+
     write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
     assert_receive {:trace, ^store, :call, {Sqlite3, :execute, [_, "BEGIN IMMEDIATE"]}}
 
@@ -100,6 +107,45 @@ defmodule HalC2.StoreTest do
 
     assert [%{id: "t1"}] = Store.list_streams(path)
     assert [_] = Store.reduce_stream(path, "t1", 0, [], &[&1 | &2], [])
+  end
+
+  test "a store updated in place from before it trapped exits traps them after the update" do
+    store = Process.whereis(Store)
+
+    # What the version before was: a store that did not trap exits.
+    :sys.replace_state(store, fn state ->
+      Process.flag(:trap_exit, false)
+      state
+    end)
+
+    assert {:trap_exit, false} = Process.info(store, :trap_exit)
+
+    # What `HalC2.Hot` does for a process whose module changed.
+    :ok = :sys.suspend(store)
+    :ok = :sys.change_code(store, Store, nil, :hot)
+    :ok = :sys.resume(store)
+
+    assert {:trap_exit, true} = Process.info(store, :trap_exit)
+    assert {:ok, 1} = Store.append([{:thread, "t1", [change("t1")]}])
+  end
+
+  test "the store's shutdown gives a call in hand the whole write timeout" do
+    assert Store.child_spec(path: "hal-c2.sqlite").shutdown == 60_000
+  end
+
+  test "an EXIT-shaped message that was sent, not signalled, leaves the store running",
+       %{path: path} do
+    store = Process.whereis(Store)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(store, {:EXIT, self(), :boom})
+        assert {:ok, 1} = Store.append([{:thread, "t1", [change("t1")]}])
+      end)
+
+    assert log =~ "the store ignored an unexpected message: {:EXIT,"
+    assert Process.whereis(Store) == store
+    assert [%{id: "t1"}] = Store.list_streams(path)
   end
 
   test "a stray message leaves the store running", %{path: path} do
