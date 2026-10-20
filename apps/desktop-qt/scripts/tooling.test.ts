@@ -87,7 +87,9 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
         NodePath.join(drivers, "libqsqlite.dylib"),
       );
       expect(check(drivers).status).toBe(1);
-      expect(check(drivers, "libqsqlite.dylib").status).toBe(1);
+      const dangling = check(drivers, "libqsqlite.dylib");
+      expect(dangling.status).toBe(1);
+      expect(dangling.stderr).toContain("is a symlink");
     });
 
     it("wants the driver of the bundle's own platform", () => {
@@ -133,6 +135,19 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const drivers = NodePath.join(root, "sqldrivers");
       NodeFS.symlinkSync(real, drivers);
       const result = check(drivers);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is a symlink");
+    });
+
+    it("rejects a sqldrivers directory under a symlinked plugins directory", () => {
+      const root = temporaryDirectory();
+      const outside = NodePath.join(root, "outside");
+      NodeFS.mkdirSync(NodePath.join(outside, "sqldrivers"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(outside, "sqldrivers", "libqsqlite.so"), "driver");
+      const bundle = NodePath.join(root, "bundle");
+      NodeFS.mkdirSync(bundle);
+      NodeFS.symlinkSync(outside, NodePath.join(bundle, "plugins"));
+      const result = check(NodePath.join(bundle, "plugins", "sqldrivers"));
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("is a symlink");
     });

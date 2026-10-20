@@ -7,7 +7,8 @@ set -euo pipefail
 drivers="${1:?sqldrivers directory}"
 name="${2:?driver file name (libqsqlite.so on Linux, libqsqlite.dylib on macOS)}"
 case "${name}" in
-  */*)
+  libqsqlite.so | libqsqlite.dylib) ;;
+  *)
     echo "error: ${name} is not a driver file name" >&2
     exit 1
     ;;
@@ -16,6 +17,17 @@ if [ -L "${drivers}" ]; then
   echo "error: ${drivers} is a symlink; the bundle must carry the sqldrivers directory itself" >&2
   exit 1
 fi
+# The directory holding sqldrivers (plugins/PlugIns in the bundle) is checked the
+# same way; ancestors above it are not, since a build root may legitimately sit
+# under a symlink (macOS /tmp, a linked worktree).
+case "${drivers}" in
+  */*)
+    if [ -L "${drivers%/*}" ]; then
+      echo "error: ${drivers%/*} is a symlink; the bundle must carry the sqldrivers directory itself" >&2
+      exit 1
+    fi
+    ;;
+esac
 if [ ! -d "${drivers}" ]; then
   echo "error: ${drivers} is not a directory; the bundle has no sqldrivers directory" >&2
   exit 1
