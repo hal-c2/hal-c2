@@ -476,7 +476,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   # answers after the turn's prompt. So the last answer is the last loop's, success or
   # failure, and it is the turn's once every prompt has answered. A steer answering
   # before the turn's prompt ran in the prompt's loop, whose answer is the turn's.
-  # Interrupted, the turn ends at the first answer once its prompt's is in.
+  # Interrupted, the turn ends at the first answer once its prompt's is in. Steer
+  # prompts still out then are dropped with the turn's request collection
+  # (`end_turn/3`): `HalC2.JsonRpc.Connection` has no per-request cancel, so each
+  # one's pending entry there (and the `send_request` monitor on it) is deliberately
+  # abandoned to the connection's lifetime — it goes when the agent eventually
+  # answers or its subprocess exits, and that late answer then matches no request
+  # here and is ignored. One entry per abandoned steer, for as long as the session's
+  # connection lives, is the whole cost. A late `session/update` from such a steer's
+  # own loop is likewise session-scoped: dropped while no turn runs, taken into a
+  # later turn on the same session if one started, as updates always are.
   # Taking the last answer as the loop's relies on every prompt OpenCode took into one
   # loop answering with that loop's one result. OpenCode 1.19 does: a prompt to a
   # running session awaits the running loop's own result (`Runner.ensureRunning`), and

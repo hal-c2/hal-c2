@@ -33,9 +33,15 @@ defmodule HalC2.Pi.ThreadRuntime do
   @call_ms 60_000
   @stats_ms 2_000
   # Pi does not bound its answer to a steer, so the runtime gives it this long and
-  # then takes it as taken (`steer_timeout/2`). The steer's caller waits on that and,
-  # if it ends the turn, on the turn's settling too (`settle/1`: one call, then the stats).
+  # then takes it as taken (`steer_timeout/2`): a little over the 30s Codex gives a
+  # steer, so one Pi is merely slow to answer is not cut off sooner than another
+  # provider's would be. The steer's caller waits on that and, if it ends the turn,
+  # on the turn's settling too (`settle/1`: one call, then the stats), plus a margin
+  # for the local work recording that end (flush, commits, closing items, `finish/3`)
+  # and timer granularity: without it, a refusal answered at the last moment could
+  # lose to the caller's own timeout and be reported as taken.
   @steer_answer_ms 33_000
+  @steer_record_ms 10_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -66,7 +72,11 @@ defmodule HalC2.Pi.ThreadRuntime do
         {:error, "no active Pi turn in this thread"}
 
       pid ->
-        GenServer.call(pid, {:steer, run_id, message}, steer_answer_ms() + @call_ms + @stats_ms)
+        GenServer.call(
+          pid,
+          {:steer, run_id, message},
+          steer_answer_ms() + @call_ms + @stats_ms + @steer_record_ms
+        )
     end
   catch
     # Only a runtime stuck past its own answer budget gets here: the steer is taken, as
@@ -320,7 +330,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state = if state.turn, do: end_turn(state, "failed", "Pi exited unexpectedly"), else: state
-    {:noreply, %{state | conn: nil, compact: nil, steers: unanswered(state.steers)}}
+    {:noreply, %{state | conn: nil, compact: nil, steers: unanswered(state.steers, "failed")}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -919,7 +929,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   # A steer Pi has not answered in its budget is taken as taken, as a Codex steer whose
   # answer is late is (`HalC2.Orchestration`): Pi still holds it and may act on it, so
   # its message is the turn's. A settle that waited on it alone ends the turn now, and
-  # Pi's late answer is dropped.
+  # Pi's late answer is dropped. Unlike an answered steer (`steered/3`), a timed-out
+  # one does not clear `settled` or release the held refusals while other steers are
+  # still out: an answer proves Pi took the steer into work that settles again, a
+  # timeout proves nothing, so the owed settle stays. The held refusals then hear
+  # once the last steer out resolves (each bounded by its own answer timer, an
+  # answer, or Pi's exit), which is the first moment it is known whether the turn
+  # ended — releasing them sooner would tell a declined steer's sender it was
+  # refused while the run still shows active, and it would not be sent on its own.
   defp steer_timeout(state, from) do
     {late, others} =
       state.steers
@@ -1022,15 +1039,21 @@ defmodule HalC2.Pi.ThreadRuntime do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
     state = refusals(state)
-    %{state | turn: nil, items: %{}, steers: unanswered(state.steers), settled: false}
+    %{state | turn: nil, items: %{}, steers: unanswered(state.steers, status), settled: false}
   end
 
-  # Steers whose turn ended before Pi answered them: their callers hear the turn is gone,
-  # and send the message on its own.
-  defp unanswered(steers) do
+  # Steers whose turn ended before Pi answered them: their callers hear the turn is
+  # gone, and send the message on its own. A turn the user stopped is the exception:
+  # the message was handed to Pi for that turn, so it stays in the stopped turn,
+  # unanswered — sending it on its own would start new work the moment the user
+  # asked for none. (Before the steer was a tracked request it had already been
+  # answered `:ok` when an interrupt landed, and stayed the same way.)
+  defp unanswered(steers, status) do
+    answer = if status == "interrupted", do: :ok, else: {:error, "the turn ended"}
+
     for {_request, {from, timer}} <- :gen_server.reqids_to_list(steers) do
       Process.cancel_timer(timer)
-      GenServer.reply(from, {:error, "the turn ended"})
+      GenServer.reply(from, answer)
     end
 
     :gen_server.reqids_new()

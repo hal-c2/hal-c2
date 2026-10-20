@@ -9,7 +9,8 @@ defmodule HalC2.PiSteerPropTest do
   is sent as a message of its own), one Pi exits on before answering (which fails
   the turn, so it is sent on its own too), or one Pi never answers once the run settled
   (which the runtime takes as taken once its answer budget, shortened here, runs out);
-  steer it twice at once; interrupt it.
+  steer it twice at once, including a declined steer held behind one Pi never answers
+  (in either order); interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -120,7 +121,9 @@ defmodule HalC2.PiSteerPropTest do
             {:taken, :taken},
             {:taken, :declined},
             {:declined, :declined},
-            {:declined, :joins}
+            {:declined, :joins},
+            {:declined, :ignored},
+            {:ignored, :declined}
           ])
         ]}},
       {1, {:call, __MODULE__, :steer, [id(next), :refused]}},
@@ -178,6 +181,17 @@ defmodule HalC2.PiSteerPropTest do
       # sender; the turn's work takes the next steer in.
       {:declined, :joins} ->
         %{state | how: :joins}
+
+      # The unanswered one is taken as taken once its budget runs out, which is the
+      # last steer out either way: the turn ends with it and no reply, and the
+      # declined one, held until then, finds the turn over and runs on its own.
+      {:declined, :ignored} ->
+        state = end_turn(state, "completed")
+        %{state | runs: state.runs ++ [{a, "completed"}], replies: state.replies ++ [a]}
+
+      {:ignored, :declined} ->
+        state = end_turn(state, "completed")
+        %{state | runs: state.runs ++ [{b, "completed"}], replies: state.replies ++ [b]}
     end
   end
 

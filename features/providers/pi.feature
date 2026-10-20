@@ -575,6 +575,11 @@ Feature: Pi
     When the user steers the thread with a message Pi exits on
     Then the message is sent on its own after the turn
 
+  Scenario: A message Pi has not answered when the user stops the turn is not sent again
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi holds and stops the turn
+    Then the stopped turn ends with the message in it and no new turn starts
+
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running

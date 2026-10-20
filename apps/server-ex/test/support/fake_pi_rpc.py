@@ -22,7 +22,8 @@
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
 # text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
-# one saying "vanish" makes Pi exit before answering it; one saying "decline" is rejected,
+# one saying "vanish" makes Pi exit before answering it; one saying "hold" is taken in
+# but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
 # and one saying "ignore" never answered, only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
@@ -199,6 +200,9 @@ def wait_for(pred):
         elif steer(msg) and "vanish" in msg.get("message", ""):
             # Pi exits with a steer it has not answered.
             os._exit(1)
+        elif steer(msg) and "hold" in msg.get("message", ""):
+            # Pi took the steer in but its next model call has not come: no answer yet.
+            continue
         if pred(msg):
             return msg
 

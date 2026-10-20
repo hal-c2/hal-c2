@@ -839,6 +839,61 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.merge(context, %{steered: "vanish now", ended: "failed"})
   end
 
+  # The fake takes a steer that says "hold" in without answering it while the turn
+  # waits, so it is still out when the abort reaches it and Pi settles the turn.
+  step "the user steers the thread with a message Pi holds and stops the turn", context do
+    steered = Task.async(fn -> steer(context, "hold this thought") end)
+    await_steer_sent(context, "hold this thought")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    assert {:ok, _} = Task.await(steered)
+    Map.put(context, :steered, "hold this thought")
+  end
+
+  step "the stopped turn ends with the message in it and no new turn starts", context do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "interrupted", "id" => run}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "user" and &1["text"] == context.steered and &1["runId"] == run)
+           )
+
+    context
+  end
+
+  # The fake received the steer prompt with `text`, so the runtime has it out. The
+  # fake writes its log from another OS process; there is no message to wait on.
+  defp await_steer_sent(context, text, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+
+    sent? =
+      Enum.any?(
+        FakeAcp.received_type(context, "prompt"),
+        &(&1["streamingBehavior"] == "steer" and &1["message"] == text)
+      )
+
+    cond do
+      sent? ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("Pi was never sent the steer #{inspect(text)}")
+
+      true ->
+        receive do
+        after
+          20 -> await_steer_sent(context, text, deadline)
+        end
+    end
+  end
+
   # The fake refuses a steer that says "refuse", as Pi rejects one before accepting it.
   step "the user steers the thread with a message Pi refuses", context do
     reply =
