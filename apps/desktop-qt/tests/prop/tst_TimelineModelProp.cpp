@@ -195,7 +195,7 @@ timeline::GroupSummary expectedSummary(const QList<Call>& all) {
 struct Run {
   QString id;
   int ordinal = 0;
-  // running, completed, failed, interrupted, rolled_back or queued
+  // running, completed, failed, interrupted, rolled_back, queued or cancelled
   QString status;
   // A queued run held for the user, numbered above the run that passed it.
   bool held = false;
@@ -417,7 +417,8 @@ QList<Row> project(const Model& model) {
   });
   QString latest;
   for (const Run& run : thread.runs) {
-    if (run.held) continue;
+    // Held for the user and never started: still queued, or cancelled while held.
+    if (run.held && (run.status == QLatin1String("queued") || run.status == QLatin1String("cancelled"))) continue;
     // Runs are in the order they were made, so `>=` gives equal ordinals to the
     // newest, as the MC's latest pick does.
     if (latest.isEmpty() || run.ordinal >= thread.runs.value(latest).ordinal) latest = run.id;
@@ -770,6 +771,29 @@ struct Hold : Change {
     commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})});
   }
   void show(std::ostream& os) const override { os << "Hold"; }
+};
+
+// The user cancels a held message instead of resuming the queue: the run keeps
+// its hold and its number, and never started.
+struct CancelHeld : Change {
+  QString run;
+  explicit CancelHeld(const Model& model) {
+    QStringList runs;
+    for (const Run& held : model.mc.runs) {
+      if (held.held && held.status == QLatin1String("queued")) runs.append(held.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const Run found = model.mc.runs.value(run);
+    RC_PRE(found.held && found.status == QLatin1String("queued"));
+  }
+  void apply(Model& model) const override {
+    model.mc.runs[run].status = QStringLiteral("cancelled");
+    commit(model, {event(model, QStringLiteral("run"), run, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("cancelled")}}}})});
+  }
+  void show(std::ostream& os) const override { os << "CancelHeld(" << run.toStdString() << ")"; }
 };
 
 QStringList running(const Model& model) {
@@ -1216,7 +1240,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, CancelHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
                                                          LoadEarlier, Toggle, Restart, AgentModel>());
     }));

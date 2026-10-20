@@ -871,27 +871,47 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   };
 
   // The thread's latest run, as the MC's (HalC2.Projection.Shell.latest_run/1): a
-  // queued run held for the user waits numbered above the run that passed it. Equal
-  // ordinals (legacy runs stored without one read 0) go to the newest made, as the
-  // MC's does: a run is as new as its first item in timeline order, the id settling
-  // runs with no item here, so the pick never depends on hash order.
-  QHash<QString, int> firstItem;
-  for (int i = 0; i < m_order.size(); ++i) {
-    const QString runId = text(items.value(m_order.at(i)), QLatin1String("runId"));
-    if (!runId.isEmpty() && !firstItem.contains(runId)) firstItem.insert(runId, i);
-  }
+  // run held for the user that never started (still queued, or cancelled while
+  // held) waits numbered above the run that passed it. Equal ordinals (legacy runs
+  // stored without one read 0) go to the newest made, as the MC's does, for runs
+  // with an item here: a run is as new as its first item in timeline order. Runs
+  // with no item here (none created yet, or outside the window) are settled by id
+  // instead, where the MC would take the newest made; the pick never depends on
+  // hash order either way. The item index is built only when the highest ordinal
+  // actually ties, so the common case is one pass over the runs.
+  const auto heldNeverStarted = [](const QJsonObject& run) {
+    const QString status = text(run, QLatin1String("status"));
+    return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) &&
+           run.value(QLatin1String("queueHeld")).toBool();
+  };
   QString latestRun;
   double latestOrdinal = -1;
-  int latestFirst = -1;
+  bool latestTied = false;
   for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
-    if (text(*it, QLatin1String("status")) == QLatin1String("queued") && it->value(QLatin1String("queueHeld")).toBool()) continue;
+    if (heldNeverStarted(*it)) continue;
     const double ordinal = it->value(QLatin1String("ordinal")).toDouble();
-    const int first = firstItem.value(it.key(), -1);
-    if (ordinal > latestOrdinal ||
-        (ordinal == latestOrdinal && (first > latestFirst || (first == latestFirst && it.key() > latestRun)))) {
+    if (ordinal > latestOrdinal) {
       latestOrdinal = ordinal;
-      latestFirst = first;
       latestRun = it.key();
+      latestTied = false;
+    } else if (ordinal == latestOrdinal) {
+      latestTied = true;
+    }
+  }
+  if (latestTied) {
+    QHash<QString, int> firstItem;
+    for (int i = 0; i < m_order.size(); ++i) {
+      const QString runId = text(items.value(m_order.at(i)), QLatin1String("runId"));
+      if (!runId.isEmpty() && !firstItem.contains(runId)) firstItem.insert(runId, i);
+    }
+    int latestFirst = -1;
+    for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+      if (heldNeverStarted(*it) || it->value(QLatin1String("ordinal")).toDouble() != latestOrdinal) continue;
+      const int first = firstItem.value(it.key(), -1);
+      if (first > latestFirst || (first == latestFirst && it.key() > latestRun)) {
+        latestFirst = first;
+        latestRun = it.key();
+      }
     }
   }
 
