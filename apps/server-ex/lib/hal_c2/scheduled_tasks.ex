@@ -10,6 +10,11 @@ defmodule HalC2.ScheduledTasks do
   automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`), where a task only runs when asked
   (`scheduledTasks.runNow`). Watchers (client sockets) get
   `{:hal_c2_scheduled_tasks, mc, tasks}` whenever a task changes.
+
+  A run gets an hour to send its prompt. One that has not finished by then is
+  stopped, the turn it was starting in its task's thread is interrupted, and the
+  run is recorded as failed ("The run timed out."), so a prompt that never comes
+  back cannot keep its task `running` for good.
   """
 
   use GenServer
@@ -19,6 +24,7 @@ defmodule HalC2.ScheduledTasks do
   @min_interval 60_000
   @missed_grace 10 * 60_000
   @max_sleep 60_000
+  @run_timeout_ms 60 * 60_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -173,6 +179,19 @@ defmodule HalC2.ScheduledTasks do
     {:noreply, changed(state)}
   end
 
+  # A run outlived its hour: stop it, interrupt the turn it was starting, and
+  # record it like any other failed run (which also answers a waiting "run now").
+  # A timeout for a run the table no longer holds falls through to the ignore
+  # below, as a timer can fire as its run finishes.
+  def handle_info({:run_timeout, pid}, %{runs: runs} = state) when is_map_key(runs, pid) do
+    run = runs[pid]
+    Process.demonitor(run.ref, [:flush])
+    Process.exit(pid, :kill)
+    interrupt_turn(run)
+    {state, _task} = complete(state, pid, {:error, "The run timed out."})
+    {:noreply, changed(state)}
+  end
+
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
 
@@ -184,8 +203,17 @@ defmodule HalC2.ScheduledTasks do
   @impl true
   def code_change(_old, state, _extra) do
     Process.flag(:trap_exit, true)
-    for pid <- Map.keys(state.runs), do: Process.link(pid)
-    {:ok, state}
+
+    # Runs from before runs were linked are linked now, and ones from before the
+    # run cap get a timer of their own, so none is left running for good.
+    runs =
+      Map.new(state.runs, fn {pid, run} ->
+        Process.link(pid)
+        run = if run[:timer], do: run, else: Map.put(run, :timer, arm_timeout(pid))
+        {pid, run}
+      end)
+
+    {:ok, %{state | runs: runs}}
   end
 
   # --- runs --------------------------------------------------------------------
@@ -204,13 +232,52 @@ defmodule HalC2.ScheduledTasks do
         [:link, :monitor]
       )
 
+    run = %{
+      ref: ref,
+      id: task["id"],
+      started: at,
+      from: from,
+      trigger: trigger,
+      thread_id: task["threadId"],
+      timer: arm_timeout(pid)
+    }
+
     state
     |> put(running)
-    |> Map.update!(
-      :runs,
-      &Map.put(&1, pid, %{ref: ref, id: task["id"], started: at, from: from, trigger: trigger})
-    )
+    |> Map.update!(:runs, &Map.put(&1, pid, run))
     |> changed()
+  end
+
+  defp arm_timeout(pid), do: Process.send_after(self(), {:run_timeout, pid}, run_timeout_ms())
+
+  # How long a run gets to send its prompt; `:scheduled_tasks_run_timeout_ms`
+  # lets tests shorten the hour.
+  defp run_timeout_ms do
+    case Application.get_env(:hal_c2, :scheduled_tasks_run_timeout_ms) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _ -> @run_timeout_ms
+    end
+  end
+
+  # The turn a timed-out run was starting, in the thread its task names. A task
+  # that starts a new thread per run has no thread to name until its launch
+  # comes back, so stopping the run above is all there is. The interrupt runs
+  # in a process of its own: the wedged thread that stalled the run must not
+  # wedge the scheduler too.
+  defp interrupt_turn(run) do
+    case run[:thread_id] do
+      thread_id when is_binary(thread_id) ->
+        spawn(fn ->
+          try do
+            _ = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+          catch
+            :exit, _ -> :ok
+          end
+        end)
+
+      _ ->
+        :ok
+    end
   end
 
   # A deleted task's runs end with it, so a task created later under the same id does
@@ -218,7 +285,8 @@ defmodule HalC2.ScheduledTasks do
   defp stop_runs(state, id) do
     {gone, runs} = Enum.split_with(state.runs, fn {_, run} -> run.id == id end)
 
-    for {pid, %{ref: ref, from: from}} <- gone do
+    for {pid, %{ref: ref, from: from} = run} <- gone do
+      if run[:timer], do: Process.cancel_timer(run.timer)
       Process.demonitor(ref, [:flush])
       Process.exit(pid, :kill)
       if from, do: GenServer.reply(from, error("Schedule task not found.", id))
@@ -229,6 +297,7 @@ defmodule HalC2.ScheduledTasks do
 
   defp complete(state, pid, result) do
     {%{id: id, started: started, from: from} = run, runs} = Map.pop(state.runs, pid)
+    if run[:timer], do: Process.cancel_timer(run.timer)
     state = %{state | runs: runs}
 
     case state.tasks[id] do

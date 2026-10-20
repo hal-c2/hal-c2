@@ -13,8 +13,10 @@ defmodule HalC2.ScheduledTasksPropTest do
   the schedule; paused and deleted tasks never fire; an MC without automatic actions
   (`HAL_C2_MC_NO_AUTO_ACTIONS`) only aims a due task afresh, and still runs one asked
   for by hand; a task that fails or whose run
-  crashes is recorded and the scheduler lives on; everything survives a restart, and a
-  restart that slept through due times fires them once.
+  crashes is recorded and the scheduler lives on; a run that never returns is
+  timed out (the cap is shortened here) and recorded as failed, answering a
+  caller waiting on it and leaving the task free to run again; everything
+  survives a restart, and a restart that slept through due times fires them once.
 
   The clock stays inside June 2026 so the wall clock has no daylight-saving change, in
   whatever zone the machine is in.
@@ -59,15 +61,31 @@ defmodule HalC2.ScheduledTasksPropTest do
       DateTime.from_unix!(:persistent_term.get(@clock), :millisecond)
     end)
 
+    # The hour a run gets, shortened so a run that hangs is timed out within a
+    # command. A run that returns sends its result at once, so only a run that
+    # never gets scheduled for a second could be timed out in its place.
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 1_000)
+
     test = self()
 
     Application.put_env(:hal_c2, :scheduled_tasks_fire, fn task, key ->
       send(test, {:fired, task["id"], key})
 
       case task["prompt"] do
-        "ok" -> {:ok, %{}}
-        "fail" -> {:error, "no"}
-        "crash" -> exit(:crashed)
+        "ok" ->
+          {:ok, %{}}
+
+        "fail" ->
+          {:error, "no"}
+
+        "crash" ->
+          exit(:crashed)
+
+        # Never returns: only the run cap ends it.
+        "hang" ->
+          receive do
+            :never -> {:ok, %{}}
+          end
       end
     end)
 
@@ -80,6 +98,7 @@ defmodule HalC2.ScheduledTasksPropTest do
     :persistent_term.erase(@clock)
     Application.delete_env(:hal_c2, :scheduled_tasks_clock)
     Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+    Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
     Application.delete_env(:hal_c2, :auto_actions)
   end
 
@@ -125,7 +144,7 @@ defmodule HalC2.ScheduledTasksPropTest do
   defp boolean_enabled, do: frequency([{4, true}, {1, false}])
   defp existing, do: frequency([{4, false}, {1, true}])
 
-  defp prompt, do: frequency([{8, "ok"}, {2, "fail"}, {1, "crash"}])
+  defp prompt, do: frequency([{8, "ok"}, {2, "fail"}, {1, "crash"}, {1, "hang"}])
 
   # Valid schedules, and now and then one the service must refuse. A time of day may
   # be written "9:05" or "09:05"; no weekdays and all seven both mean every day.

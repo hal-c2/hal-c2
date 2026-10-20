@@ -93,6 +93,17 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   # A run that cannot finish: its thread's stream is held, so sending the prompt waits.
   step "a task is running", context do
+    start_running(context)
+  end
+
+  # The same held run, with the hour a run gets shortened so the scenario can
+  # see it pass. The cap must be set before the run starts.
+  step "a task is running and its prompt is never sent", context do
+    World.put_app_env(:scheduled_tasks_run_timeout_ms, 1_000)
+    start_running(context)
+  end
+
+  defp start_running(context) do
     context = World.create_thread(context, "Triage", "api")
     thread = World.thread_id(context, "Triage")
     context = save_task(context, %{"threadId" => thread, "schedule" => every(60)})
@@ -103,6 +114,20 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     assert %{runs: runs, tasks: tasks} = :sys.get_state(HalC2.ScheduledTasks)
     assert map_size(runs) == 1
     assert tasks[context.task["id"]]["lastRunStatus"] == "running"
+    context
+  end
+
+  # The cap ends the run; `settle/0` waits on the service's own notifications
+  # until no run is in flight, which is the receipt that it did.
+  step "the run's hour passes without it finishing", context do
+    settle()
+    context
+  end
+
+  step "the task's last run failed with {string}", %{args: [message]} = context do
+    assert %{"lastRunStatus" => "failed", "lastRunError" => ^message, "runCount" => 1} =
+             task(context)
+
     context
   end
 
