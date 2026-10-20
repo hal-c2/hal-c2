@@ -131,6 +131,8 @@ public:
   // The editor. edit() opens it on a draft; setEditing() keeps what the user
   // changed since. Closing it drops the draft; hideEditor() is the close that
   // keeps changes the user has made (a press outside), for the toggle to reopen.
+  // An explicit edit() (another theme's Edit, or New theme) wins over a draft
+  // hideEditor() kept: it replaces that draft, unsaved changes included.
   QVariantMap editing() const { return m_editing; }
   Q_INVOKABLE void edit(const QVariantMap& draft);
   Q_INVOKABLE void setEditing(const QVariantMap& draft);

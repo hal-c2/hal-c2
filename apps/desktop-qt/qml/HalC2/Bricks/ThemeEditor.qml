@@ -88,7 +88,7 @@ Popup {
 
         // The pick, or Escape, hands the keyboard back from the app to the editor.
         function onInspectingChanged() {
-            if (!Themes.inspecting && editor.opened) pickButton.forceActiveFocus();
+            if (!Themes.inspecting && Themes.editorOpen && editor.opened) pickButton.forceActiveFocus();
         }
     }
 

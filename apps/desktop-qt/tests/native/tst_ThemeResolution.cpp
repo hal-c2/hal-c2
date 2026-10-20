@@ -169,6 +169,16 @@ private slots:
     QCOMPARE(themes()->available(), before);
   }
 
+  // A published theme may not take the standard look's id either: it would
+  // offer a second "hal-c2" row beside the standard look.
+  void aPublishedThemeCannotTakeTheStandardLooksId() {
+    const QVariantList before = themes()->available();
+    settings()->setThemes({theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#020202"))});
+    QCOMPARE(themes()->available(), before);
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("hal-c2"));
+    settings()->setThemes({});
+  }
+
   void savedThemesWinOverPublishedOnes() {
     settings()->setThemes({theme(QStringLiteral("dusk"), QStringLiteral("light"), QStringLiteral("#020202"))});
     save({{QStringLiteral("theme"), QStringLiteral("dusk")}});

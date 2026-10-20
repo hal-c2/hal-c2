@@ -221,6 +221,10 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
   const auto fromFile = [&](const QJsonObject& theme, const QString& source) -> std::optional<Definition> {
     const QString id = theme.value(QLatin1String("id")).toString();
     if (id.isEmpty() || data.reserved.contains(id)) return std::nullopt;
+    // A published theme may not take the standard look's id: it would offer a
+    // second "hal-c2" row beside it. A saved theme that already holds the id
+    // stays visible, as an old install's themes must.
+    if (source == QLatin1String("environment") && id == kStandardId) return std::nullopt;
     const QString appearance = appearanceOf(theme.value(QLatin1String("appearance")));
     QJsonObject base = data.defaults.value(appearance).toObject();
     // The seeded short form: a canvas and an accent, painted over the defaults.
@@ -399,14 +403,17 @@ void ThemeController::hideEditor() {
 }
 
 void ThemeController::setEditorShown(bool open) {
+  // A closing editor says it is closed before inspecting stops, so the
+  // focus-restore on inspectChanged can tell a pick in an open editor from
+  // a close while inspecting and leave a closing editor's focus alone.
+  m_editorOpen = open;
+  emit editingChanged();
+  emit editorOpenChanged();
   if (!open && (m_inspecting || !m_picked.isEmpty())) {
     m_inspecting = false;
     m_picked.clear();
     emit inspectChanged();
   }
-  m_editorOpen = open;
-  emit editingChanged();
-  emit editorOpenChanged();
 }
 
 void ThemeController::setInspecting(bool inspecting) {
