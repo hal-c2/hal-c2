@@ -10,7 +10,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   restarted no longer tracks stays until the next boot. A restart leaves a record
   being written alone. A boot that cannot list or read the records kills nothing and
   still comes up, and the next reap (a restart of the service, or a later boot) kills
-  what it left.
+  what it left. A boot that cannot make the records dir still comes up, but runs
+  no program until the service restarts (or the MC dies) with the dir restored.
   """
 
   use ExUnit.Case, async: false
@@ -52,16 +53,33 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   # `running`: id => whether this incarnation of the service tracks it; one that
   # restarted forgets what it tracked. `records`: the ids that have a record naming
-  # this MC, `left` the ones naming a dead MC. `orphans`: the ids a dead MC left running.
+  # this MC, `left` the ones naming a dead MC. `orphans`: the ids a dead MC left
+  # running. `unavailable`: tracking could not be set up this boot, so starts are
+  # refused. `dir_made`: the records dir has been made once; a dirless boot is
+  # only possible before that (an existing dir needs no making).
   def initial_state,
-    do: %{up: false, next: 0, running: %{}, records: [], left: [], orphans: []}
+    do: %{
+      up: false,
+      next: 0,
+      running: %{},
+      records: [],
+      left: [],
+      orphans: [],
+      unavailable: false,
+      dir_made: false
+    }
 
-  def command(%{up: false}),
-    do:
-      frequency([
+  def command(%{up: false} = state) do
+    dirless =
+      if state.dir_made, do: [], else: [{1, {:call, __MODULE__, :dirless_boot, []}}]
+
+    frequency(
+      [
         {3, {:call, __MODULE__, :boot, []}},
         {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}}
-      ])
+      ] ++ dirless
+    )
+  end
 
   def command(state) do
     stops =
@@ -69,23 +87,43 @@ defmodule HalC2.SubprocessOrphansPropTest do
         do: [],
         else: [{3, {:call, __MODULE__, :stop, [oneof(Map.keys(state.running))]}}]
 
+    # While unavailable no start succeeds, so there is nothing to start during a
+    # restart either; the restart itself (dir restored) is the way out.
+    during =
+      if state.unavailable,
+        do: [],
+        else: [{1, {:call, __MODULE__, :start_during_restart, [state.next]}}]
+
     frequency(
       [
         {4, {:call, __MODULE__, :start, [state.next]}},
         {1, {:call, __MODULE__, :restart_service, []}},
-        {1, {:call, __MODULE__, :start_during_restart, [state.next]}},
         {1, {:call, __MODULE__, :die, []}}
-      ] ++ stops
+      ] ++ during ++ stops
     )
   end
 
   def precondition(state, {:call, _, :boot, []}), do: not state.up
   def precondition(state, {:call, _, :blind_boot, _}), do: not state.up
+  def precondition(state, {:call, _, :dirless_boot, []}), do: not state.up and not state.dir_made
+
+  def precondition(state, {:call, _, :start_during_restart, _}),
+    do: state.up and not state.unavailable
+
   def precondition(state, {:call, _, :stop, [id]}), do: state.up and is_map_key(state.running, id)
   def precondition(state, {:call, _, _, _}), do: state.up
 
-  def next_state(state, _, {:call, _, :boot, []}), do: reaped(%{state | up: true})
-  def next_state(state, _, {:call, _, :blind_boot, _}), do: %{state | up: true}
+  def next_state(state, _, {:call, _, :boot, []}),
+    do: reaped(%{state | up: true, unavailable: false, dir_made: true})
+
+  def next_state(state, _, {:call, _, :blind_boot, _}),
+    do: %{state | up: true, unavailable: false, dir_made: true}
+
+  def next_state(state, _, {:call, _, :dirless_boot, []}),
+    do: %{state | up: true, unavailable: true}
+
+  # A start while unavailable is refused and records nothing.
+  def next_state(%{unavailable: true} = state, _, {:call, _, :start, _}), do: state
 
   def next_state(state, _, {:call, _, :start, [id]}),
     do: %{
@@ -105,8 +143,15 @@ defmodule HalC2.SubprocessOrphansPropTest do
     }
   end
 
+  # The dir is back by the restart, so tracking is available again.
   def next_state(state, _, {:call, _, :restart_service, []}),
-    do: reaped(%{state | running: Map.new(state.running, fn {id, _} -> {id, false} end)})
+    do:
+      reaped(%{
+        state
+        | unavailable: false,
+          dir_made: true,
+          running: Map.new(state.running, fn {id, _} -> {id, false} end)
+      })
 
   # Recorded, but by no incarnation of the service that watches it end.
   def next_state(state, _, {:call, _, :start_during_restart, [id]}) do
@@ -124,6 +169,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
     do: %{
       state
       | up: false,
+        unavailable: false,
         running: %{},
         records: [],
         left: state.left ++ state.records,
@@ -139,8 +185,12 @@ defmodule HalC2.SubprocessOrphansPropTest do
   def postcondition(state, {:call, _, :blind_boot, _}, {alive, records}),
     do: alive == Enum.sort(state.orphans) and records == pids(state.left)
 
-  def postcondition(state, {:call, _, :start, _} = call, records),
-    do: records == records_of(next_state(state, nil, call))
+  def postcondition(_state, {:call, _, :dirless_boot, []}, result), do: result == :ok
+
+  def postcondition(state, {:call, _, :start, _} = call, {outcome, records}),
+    do:
+      outcome == if(state.unavailable, do: :error, else: :started) and
+        records == records_of(next_state(state, nil, call))
 
   def postcondition(state, {:call, _, :stop, _} = call, {status, records}),
     do: status == {:ok, 0} and records == records_of(next_state(state, nil, call))
@@ -191,11 +241,30 @@ defmodule HalC2.SubprocessOrphansPropTest do
     {Enum.sort(alive), records()}
   end
 
+  # A new MC whose records dir cannot be made (a file where its parent goes).
+  # The filesystem is restored once it is up; tracking stays unavailable until
+  # the service restarts or the MC dies.
+  def dirless_boot do
+    new_mc()
+    parent = Path.dirname(Orphans.dir())
+    File.rm_rf!(parent)
+    File.write!(parent, "")
+    start_service()
+    File.rm!(parent)
+    File.mkdir_p!(parent)
+    :ok
+  end
+
   def start(id) do
-    {:ok, sub} = Subprocess.start(@program)
-    Process.put({:sub, id}, sub)
-    Process.put({:pid, id}, Subprocess.os_pid(sub))
-    records()
+    case Subprocess.start(@program) do
+      {:ok, sub} ->
+        Process.put({:sub, id}, sub)
+        Process.put({:pid, id}, Subprocess.os_pid(sub))
+        {:started, records()}
+
+      {:error, _reason} ->
+        {:error, records()}
+    end
   end
 
   def stop(id) do
@@ -213,6 +282,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # the records, once that write is done; it fails when the restart dropped the write.
   def restart_service do
     kill_service()
+    # After a dirless boot the records dir was never made; the restart is what
+    # tracking coming back looks like, with the dir restored.
+    File.mkdir_p!(Orphans.dir())
     in_flight = Path.join(Orphans.dir(), "#{System.pid()}-0.json.tmp")
     File.write!(in_flight, ~s({"pid": ))
     start_service()
@@ -311,10 +383,17 @@ defmodule HalC2.SubprocessOrphansPropTest do
   defp records do
     dir = Orphans.dir()
 
-    File.ls!(dir)
-    |> Enum.filter(&Regex.match?(~r/^\d+-\d+\.json(\.tmp)?$/, &1))
-    |> Enum.map(&(Path.join(dir, &1) |> File.read!() |> JSON.decode!() |> Map.fetch!("pid")))
-    |> Enum.sort()
+    # No records dir yet (a dirless boot) is no records.
+    case File.ls(dir) do
+      {:ok, names} ->
+        names
+        |> Enum.filter(&Regex.match?(~r/^\d+-\d+\.json(\.tmp)?$/, &1))
+        |> Enum.map(&(Path.join(dir, &1) |> File.read!() |> JSON.decode!() |> Map.fetch!("pid")))
+        |> Enum.sort()
+
+      {:error, _} ->
+        []
+    end
   end
 
   defp cleanup do

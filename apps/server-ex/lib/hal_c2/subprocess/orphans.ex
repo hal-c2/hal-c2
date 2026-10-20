@@ -38,7 +38,15 @@ defmodule HalC2.Subprocess.Orphans do
 
   macOS reads processes with `ps` and kills with BSD `kill`; no test runs there but
   the one of how `ps` output is read. Windows has neither `/proc` nor `ps`, so an MC
-  there cannot read its own start time and tracks no programs.
+  there cannot read its own start time and tracks no programs: that platform runs
+  its programs untracked by design.
+
+  Off Windows, tracking that cannot be set up fails closed rather than quietly
+  off. If the records dir cannot be made, or this MC's own start time cannot be
+  read, the MC still boots, but `track/2` returns an error for the whole boot, so
+  `HalC2.Subprocess.start` refuses to run a program no later boot could find —
+  the same answer a failed record write gets. A single program whose start time
+  cannot be read (as against one already gone) is refused the same way.
   """
 
   use GenServer
@@ -56,32 +64,40 @@ defmodule HalC2.Subprocess.Orphans do
   `track/2` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
   removing the record when the program ends needs the service. `{:error, reason}` when
-  the record could not be written: the caller must stop the program rather than run it
-  untracked. A program already gone has no start time and nothing to record. A no-op
-  when this service has not been started in this VM (tests, Mix tasks); an MC that
-  runs its services logs that once, as a program it starts then is not recorded.
+  the record could not be written, when tracking could not be set up this boot
+  (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
+  start time could not be read (`:no_start_time`): the caller must stop the program
+  rather than run it untracked. A program already gone has nothing to record. A
+  no-op when this service has not been started in this VM (tests, Mix tasks); an MC
+  that runs its services logs that once, as a program it starts then is not recorded.
   """
   @spec track(pid, pos_integer) :: :ok | {:error, term}
   def track(proc, os_pid) do
     case :persistent_term.get(__MODULE__, nil) do
       %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid)
+      {:unavailable, reason} -> {:error, reason}
       nil -> untracked()
     end
   end
 
   defp record(dir, owner, proc, os_pid) do
-    case started(os_pid) do
-      nil ->
+    case process_result(os_pid) do
+      # Already gone: nothing to record. Unreadable is not gone: refuse, as a
+      # failed write is refused, rather than run the program unrecorded.
+      :gone ->
         :ok
 
-      started ->
+      :unknown ->
+        {:error, :no_start_time}
+
+      {:ok, {_state, started, _group}} ->
         # The start time in the name keeps a reused pid's record apart from the one
         # before.
         path = Path.join(dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
         record = %{"pid" => os_pid, "started" => started, "mc" => owner}
 
         # Written whole under another name, then renamed, so a VM that dies mid-write
-        # leaves no partial record. `reap/1` reads a `.tmp` like any record, and drops
+        # leaves no partial record. `reap/2` reads a `.tmp` like any record, and drops
         # one that does not parse.
         tmp = path <> ".tmp"
 
@@ -119,6 +135,18 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
+  @doc """
+  Whether the process `pid` runs no more code: no such process, or one that
+  exited and waits to be reaped. An identity that cannot be read counts as
+  gone, as in `started/1`.
+  """
+  def gone?(pid) do
+    case process(pid) do
+      {state, _started, _group} -> state in ["Z", "X"]
+      nil -> true
+    end
+  end
+
   # Whether the process a record names (a program, or the MC that ran it) is still that
   # process and alive. One that exited but that its parent has not reaped yet keeps its
   # pid and start time, as a zombie.
@@ -129,26 +157,47 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # `{state, started, process group}` of the process `pid`, or nil.
+  # `{state, started, process group}` of the process `pid`, or nil. The reap
+  # paths only need "not provably that process", so gone and unreadable both
+  # read as nil there; `record/4` tells them apart through `process_result/1`.
   defp process(pid) do
-    case File.read("/proc/#{pid}/stat") do
-      # Fields 3, 5 and 22, the state, the group and the start time in ticks since boot,
-      # counted after the command name, which may hold spaces and parentheses. A process
-      # exiting as it is read can leave less.
-      {:ok, stat} ->
-        case stat |> String.split(")") |> List.last() |> String.split() do
-          [state, _parent, group | rest] when length(rest) >= 17 ->
-            case Integer.parse(group) do
-              {group, ""} -> {state, "#{boot_id()}:#{Enum.at(rest, 16)}", group}
-              _ -> nil
-            end
+    case process_result(pid) do
+      {:ok, process} -> process
+      _ -> nil
+    end
+  end
 
-          _ ->
-            nil
+  # `{:ok, {state, started, process group}}`, `:gone` when there is no such
+  # process, or `:unknown` when its identity cannot be read (a stat that does
+  # not parse, a read error other than a missing pid, `ps` that cannot run).
+  defp process_result(pid) do
+    case File.read("/proc/#{pid}/stat") do
+      {:ok, stat} ->
+        parse_stat(stat)
+
+      {:error, reason} ->
+        cond do
+          not File.dir?("/proc/self") -> ps_process_result(pid)
+          reason == :enoent -> :gone
+          true -> :unknown
+        end
+    end
+  end
+
+  @doc false
+  # Fields 3, 5 and 22, the state, the group and the start time in ticks since
+  # boot, counted after the command name, which may hold spaces and
+  # parentheses. A process exiting as it is read can leave less: `:unknown`.
+  def parse_stat(stat) do
+    case stat |> String.split(")") |> List.last() |> String.split() do
+      [state, _parent, group | rest] when length(rest) >= 17 ->
+        case Integer.parse(group) do
+          {group, ""} -> {:ok, {state, "#{boot_id()}:#{Enum.at(rest, 16)}", group}}
+          _ -> :unknown
         end
 
-      {:error, _} ->
-        if File.dir?("/proc/self"), do: nil, else: ps_process(pid)
+      _ ->
+        :unknown
     end
   end
 
@@ -176,16 +225,24 @@ defmodule HalC2.Subprocess.Orphans do
 
   # macOS. `lstart` is written in the locale's words, so the locale is pinned: an MC
   # read under another one would look like a different process, and be taken for gone.
-  defp ps_process(pid) do
+  # `ps` exits non-zero for a pid with no process; output that does not parse,
+  # or a `ps` that cannot run at all, says nothing either way: `:unknown`.
+  defp ps_process_result(pid) do
     case System.cmd("ps", ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"],
            stderr_to_stdout: true,
            env: [{"LC_ALL", "C"}]
          ) do
-      {out, 0} -> parse_ps(out)
-      _ -> nil
+      {out, 0} ->
+        case parse_ps(out) do
+          nil -> :unknown
+          process -> {:ok, process}
+        end
+
+      _ ->
+        :gone
     end
   rescue
-    _ -> nil
+    _ -> :unknown
   end
 
   @doc false
@@ -217,21 +274,33 @@ defmodule HalC2.Subprocess.Orphans do
 
     # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
     # that cannot be made (a parent that is a file, a read-only or full filesystem)
-    # leaves tracking off instead of raising out of `init/1`, where a restart would
-    # burn through the supervisor's restart intensity and take the application down.
+    # must not raise out of `init/1`, where a restart would burn through the
+    # supervisor's restart intensity and take the application down. The boot goes
+    # on, but tracking is marked unavailable, so program starts fail closed (see
+    # the moduledoc) instead of running untracked for the whole boot.
     case mkdir(dir) do
       :ok ->
         reap(dir, restart?)
 
         # Without its own start time no later boot could tell this MC from one that reused
         # its pid, so its records could get a live MC's programs killed: track nothing.
-        if owner["started"],
-          do: :persistent_term.put(__MODULE__, %{dir: dir, owner: owner}),
-          else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+        # On Windows no start time can ever be read, so programs there run
+        # untracked by design; anywhere else the same unavailable mark applies.
+        cond do
+          owner["started"] ->
+            :persistent_term.put(__MODULE__, %{dir: dir, owner: owner})
+
+          HalC2.Paths.platform() == :windows ->
+            Logger.warning("not tracking programs: this MC's start time cannot be read")
+            :persistent_term.erase(__MODULE__)
+
+          true ->
+            Logger.warning("not tracking programs: this MC's start time cannot be read")
+            :persistent_term.put(__MODULE__, {:unavailable, :no_start_time})
+        end
 
       :error ->
-        # A stale entry from before a restart would point at the same unusable dir.
-        :persistent_term.erase(__MODULE__)
+        :persistent_term.put(__MODULE__, {:unavailable, :no_records_dir})
     end
 
     {:ok, %{programs: %{}}}

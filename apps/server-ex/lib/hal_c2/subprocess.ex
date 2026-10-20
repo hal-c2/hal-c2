@@ -88,30 +88,62 @@ defmodule HalC2.Subprocess do
 
   # The error return hands no handle back, and some callers live on after it, so the
   # program must not: if the kill does not take, the Exile process itself is ended
-  # (unlinked first, so its death does not take the caller), closing its port.
+  # (unlinked first, so its death does not take the caller), closing its port. That
+  # only closes the program's stdin, which it may not exit on, so the program itself
+  # is then checked: one still running is said to run untracked, as in the timeout
+  # below. A kill that failed only because the program had already exited needs
+  # neither the warning nor the port kill.
   defp stop_untracked(proc, os_pid) do
     with :ok <- Proc.kill(proc, :sigkill),
          {:ok, _status} <- Proc.await_exit(proc, 2_000) do
       :ok
     else
       failed ->
-        Logger.warning(
-          "program #{os_pid} would run untracked, its kill gave #{inspect(failed)}; " <>
-            "stopping its port process instead"
-        )
+        if HalC2.Subprocess.Orphans.gone?(os_pid) do
+          :ok
+        else
+          Logger.warning(
+            "program #{os_pid} would run untracked, its kill gave #{inspect(failed)}; " <>
+              "stopping its port process instead"
+          )
 
-        ref = Process.monitor(proc.pid)
-        Process.unlink(proc.pid)
-        Process.exit(proc.pid, :kill)
+          ref = Process.monitor(proc.pid)
+          Process.unlink(proc.pid)
+          Process.exit(proc.pid, :kill)
 
-        receive do
-          {:DOWN, ^ref, :process, _, _} -> :ok
-        after
-          2_000 -> Logger.warning("program #{os_pid} runs untracked: its port process stayed")
+          receive do
+            {:DOWN, ^ref, :process, _, _} ->
+              if await_gone(os_pid) do
+                :ok
+              else
+                Logger.warning(
+                  "program #{os_pid} runs untracked: it stayed after its port process ended"
+                )
+              end
+          after
+            2_000 -> Logger.warning("program #{os_pid} runs untracked: its port process stayed")
+          end
         end
     end
   catch
     :exit, _ -> :ok
+  end
+
+  # A program that does exit on its closed stdin needs a moment to, so "gone" is
+  # awaited, bounded, rather than read once. Nothing signals a process other than
+  # its parent that it exited, so its state is what can be read.
+  defp await_gone(os_pid, tries \\ 50) do
+    cond do
+      HalC2.Subprocess.Orphans.gone?(os_pid) ->
+        true
+
+      tries == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        await_gone(os_pid, tries - 1)
+    end
   end
 
   @spec write_line(t, iodata) :: :ok | {:error, term}

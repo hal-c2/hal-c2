@@ -219,7 +219,7 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:error, {:untracked, :enotdir}} = Subprocess.start(["sh", "-c", @echo])
   end
 
-  test "a records dir that cannot be made does not stop the boot; tracking stays off" do
+  test "a records dir that cannot be made does not stop the boot, but no program runs untracked" do
     # A file where a parent of the records dir goes makes creating it fail outright
     # (`:enotdir` from the mkdir itself), not just list/write fails inside it.
     parent = Path.dirname(Orphans.dir())
@@ -228,10 +228,9 @@ defmodule HalC2.Subprocess.OrphansTest do
 
     boot(:next)
 
-    # Tracking is off, so a program still starts (untracked, as without the service).
-    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
-    alive!(sub)
-    assert {:ok, 0} = Subprocess.stop(sub)
+    # The MC still boots, but a program start fails closed, as a failed record
+    # write does, instead of reopening the untracked hole for the whole boot.
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
   end
 
   test "a program that exits at once starts cleanly and reports its status" do
@@ -355,13 +354,31 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
-  test "an MC that cannot read its own start time records nothing" do
+  test "an MC that cannot read its own start time runs no program untracked" do
     # Its records would name an owner no later boot could tell from a live MC.
+    # Off Windows that makes program starts fail closed (on Windows no start
+    # time can ever be read, so tracking stays off there by design).
     boot(:blind, owner: %{"pid" => String.to_integer(System.pid()), "started" => nil})
-    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
-    alive!(sub)
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
     assert File.ls!(Orphans.dir()) == []
-    {:ok, _} = Subprocess.stop(sub)
+  end
+
+  test "a stat that cannot be read as a process is unknown, not gone" do
+    rest = Enum.join(List.duplicate("0", 16) ++ ["999"], " ")
+    assert {:ok, {"S", started, 123}} = Orphans.parse_stat("123 (sh) S 1 123 " <> rest)
+    assert String.ends_with?(started, ":999")
+    assert Orphans.parse_stat("123 (sh) S 1") == :unknown
+    assert Orphans.parse_stat("123 (sh) S 1 x " <> rest) == :unknown
+  end
+
+  test "tracking a program already gone is fine, and gone? tells it from a running one" do
+    boot(:mc)
+    assert :ok = Orphans.track(self(), 2_000_000_000)
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    pid = Subprocess.os_pid(sub)
+    refute Orphans.gone?(pid)
+    assert {:ok, 0} = Subprocess.stop(sub)
+    assert Orphans.gone?(pid)
   end
 
   test "an MC that exited but was not reaped yet is gone" do
