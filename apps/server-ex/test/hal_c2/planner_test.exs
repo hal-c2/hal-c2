@@ -95,7 +95,7 @@ defmodule HalC2.PlannerTest do
                Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
 
       # The rest of the host's login shape refuses it here too, not at every push.
-      for bad <- ["a/b", "-dana", "..", "dana!", String.duplicate("a", 40)] do
+      for bad <- ["a/b", "-dana", "dana-", "da--na", "..", "dana!", String.duplicate("a", 40)] do
         assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
       end
 
@@ -777,6 +777,42 @@ defmodule HalC2.PlannerTest do
 
       assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
                Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+    end
+
+    test "a case-only owner change pushes no assignee ops" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "Alice",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
     end
   end
 end

@@ -161,6 +161,12 @@ defmodule HalC2.IssuesTest do
              )
 
     assert length(calls(dir)) == 4
+
+    # An empty assignee list on update clears the list at GitHub, unlike an absent one.
+    assert {:ok, %{"number" => 9}} =
+             Issues.handle("update", Map.merge(@input, %{"number" => 9, "assignees" => []}))
+
+    assert [_, %{"assignees" => []}] = rest_inputs(dir, "PATCH")
   end
 
   test "assignees are added and removed by login, the others kept", %{dir: dir} do
@@ -195,6 +201,8 @@ defmodule HalC2.IssuesTest do
           ["a/b"],
           [".."],
           ["-dana"],
+          ["dana-"],
+          ["da--na"],
           [String.duplicate("a", 40)]
         ],
         do: assert({:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", bad)))
@@ -644,6 +652,7 @@ defmodule HalC2.IssuesTest do
     assert File.read!(Path.join(dir, "gh.log")) == ""
 
     assert Issues.write?("setBoardField") and Issues.write?("comment")
+    assert Issues.write?("addAssignees") and Issues.write?("removeAssignees")
     refute Issues.write?("board") or Issues.write?("list")
   end
 

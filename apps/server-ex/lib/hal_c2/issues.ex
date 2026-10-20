@@ -41,7 +41,7 @@ defmodule HalC2.Issues do
 
   @page 100
   @repository ~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-  @login ~r/^[A-Za-z0-9][A-Za-z0-9_-]{0,38}(\[bot\])?$/
+  @login ~r/^[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}(\[bot\])?$/
   @date ~r/^\d{4}-\d{2}-\d{2}$/
   @scope "gh may not read boards with its current login. Run `gh auth refresh -s project` and try again."
 

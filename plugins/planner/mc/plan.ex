@@ -183,7 +183,7 @@ defmodule HalC2Plugins.Planner.Plan do
         {:ok, nil}
 
       login ->
-        if login =~ ~r/^[A-Za-z0-9][A-Za-z0-9_-]{0,38}(\[bot\])?$/,
+        if login =~ ~r/^[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}(\[bot\])?$/,
           do: {:ok, login},
           else: {:error, "owner: #{inspect(login)} is not a login."}
     end

@@ -121,6 +121,12 @@ defmodule HalC2.PlannerPropTest do
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
     follow match what it answers.
+
+  Task owners are deliberately not modelled here: the owner-push ordering and retry
+  semantics (remove old, add new, retry only the add after a refusal, relink and
+  case-only changes pushing nothing) are pinned by the planner Gherkin scenarios and
+  the `Sync.pushes/5` unit tests in `test/hal_c2/planner_test.exs`, which is the
+  intended coverage for that surface.
   """
   use ExUnit.Case, async: false
   use PropCheck
