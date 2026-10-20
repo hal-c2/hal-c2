@@ -204,7 +204,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
          {:ok, token} <- File.read(Path.join(dirs.data, "access-token")) do
       {:ok, base, String.trim(token)}
     else
-      _ -> {:error, "No installed MC has run from #{dirs.data}"}
+      _ ->
+        {:error,
+         "No installed MC has run from #{dirs.data}; if it keeps its files under a " <>
+           "HAL_C2_HOME root, pass --release --root <that root>"}
     end
   end
 
