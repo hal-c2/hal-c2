@@ -39,7 +39,9 @@ defmodule HalC2.Web.Wire do
   before the patch (or its `cut_basis/1`): how much of a subagent's text the client
   already holds is read from it. With `was` nil an append is taken to grow an empty
   field, which is right only where the text appended to is known to be within the
-  limit (`appends_past_limit?/3`).
+  limit or reset by the patch itself: `replay_patch/3` is the one place that passes
+  it for a text whose current length it has checked, and the live path passes the
+  item (or its basis) an append grows, nil only for an item not there before.
   """
   def patch(kind, patch, type, was)
 
@@ -61,6 +63,28 @@ defmodule HalC2.Web.Wire do
       do: Enum.any?(@cut_keys, &(is_map_key(appended, &1) and size(entity[&1]) > @max_detail))
 
   def appends_past_limit?(_kind, _patch, _entity), do: false
+
+  @doc """
+  What a replay sends for one merged event (`HalC2.Streams.View.replayed/3`): the
+  events since a client's offset coalesced into `patch`, against `entity` as it is
+  now. `:replacement` when the patch appends to a subagent text past the limit now:
+  the text it grows at the client's offset is not known, so the caller sends the
+  item whole, cut as `entity/2` has it. Else `{:patch, trimmed}` or nil when
+  nothing is left. Text within the limit now was within it at the offset too,
+  unless the patch resets it, which `patch/4` reads from the patch itself; that is
+  the check under which this, the one caller that may, hands `patch/4` an empty
+  `was`.
+  """
+  def replay_patch(kind, patch, entity) do
+    if appends_past_limit?(kind, patch, entity) do
+      :replacement
+    else
+      case patch(kind, patch, entity && entity["type"], nil) do
+        nil -> nil
+        trimmed -> {:patch, trimmed}
+      end
+    end
+  end
 
   @doc """
   What `patch/4` reads of a subagent item as `was`: its texts, each kept to the bytes

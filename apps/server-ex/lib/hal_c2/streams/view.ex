@@ -176,10 +176,24 @@ defmodule HalC2.Streams.View do
   # later event of the commit is to the same item. What is folded is the item's
   # `Wire.cut_basis/1` and the patch's (`Wire.cut_basis_patch/1`), so each view's fold
   # stays within the wire's limit however long the text or an append is.
-  # It goes by the item's type at the end of the commit, where `Wire.patch/4` goes by the
-  # type a patch sets: they agree because an item changes its type only by a
-  # replacement (`"d"` with the whole new item), never by a set of `"type"` alone.
-  defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch) do
+  # It goes by the item's type at the end of the commit or the type a patch in it
+  # sets, as `Wire.patch/4` does. The two agree for everything the item's writers
+  # make today because an item's type is fixed at creation: it is set once by
+  # `HalC2.Orchestration.TurnWriter.ensure_item/4`, a no-op for an item already known
+  # (`HalC2.Orchestration.NativeSubagent` creates its item typed and merges fields
+  # other than `type` after), so a set of `"type"` alone never re-types one. An
+  # adapter that ever did re-type an item mid-commit must revisit this; matching a
+  # patch that sets the type (the second clause) keeps the fold on the wire's side
+  # of that change in the meantime.
+  defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch),
+    do: subagent_at(running, id, was, patch)
+
+  defp running_at(running, "turn-item", id, was, _now, %{"s" => %{"type" => "subagent"}} = patch),
+    do: subagent_at(running, id, was, patch)
+
+  defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}
+
+  defp subagent_at(running, id, was, patch) do
     at =
       case running do
         %{^id => {base, last}} -> Wire.cut_basis(HalC2.Patch.apply(base, last))
@@ -188,8 +202,6 @@ defmodule HalC2.Streams.View do
 
     {at, Map.put(running, id, {at, Wire.cut_basis_patch(patch)})}
   end
-
-  defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}
 
   # A run that moves in or out of the window takes its items with it, without an
   # event to any of them: the ones the client held go, the ones it comes to hold
@@ -244,22 +256,16 @@ defmodule HalC2.Streams.View do
       entity = StreamState.get(stream, kind)[id]
 
       sent =
-        cond do
-          StreamState.void?(event) or not holds?(view, stream, kind, entity) ->
-            []
-
-          # The text a merged append grows is not known, so one to a subagent text
-          # past the limit now is sent as the item, cut as a snapshot has it.
-          Wire.appends_past_limit?(kind, patch, entity) ->
-            [%{event | patch: replacement(kind, entity)}]
-
-          # Text within the limit now was within it at the offset too, unless the
-          # patch resets it, which `Wire.patch/4` reads from the patch itself.
-          true ->
-            case Wire.patch(kind, patch, entity && entity["type"], nil) do
-              nil -> []
-              patch -> [%{event | patch: patch}]
-            end
+        if StreamState.void?(event) or not holds?(view, stream, kind, entity) do
+          []
+        else
+          # `Wire.replay_patch/3` decides replacement against trimmed patch: the
+          # empty base a replay trims against is its call to make, not this one's.
+          case Wire.replay_patch(kind, patch, entity) do
+            :replacement -> [%{event | patch: replacement(kind, entity)}]
+            nil -> []
+            {:patch, patch} -> [%{event | patch: patch}]
+          end
         end
 
       # Whether or not the client holds runs: its items are what it is owed.

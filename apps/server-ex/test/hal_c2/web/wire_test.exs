@@ -154,4 +154,23 @@ defmodule HalC2.Web.WireTest do
     assert Wire.appends_past_limit?("turn-item", patch, item(String.duplicate("x", @limit + 1)))
     refute Wire.appends_past_limit?("turn-item", patch, item("x"))
   end
+
+  # The replay decision pairing the past-limit check with the empty base lives in
+  # the wire: past the limit it is a replacement, never a patch trimmed blind.
+  test "a replay decides replacement, trimmed patch or nothing in the wire" do
+    append = %{"a" => %{"progress" => "x"}}
+
+    assert Wire.replay_patch("turn-item", append, item(String.duplicate("x", @limit + 1))) ==
+             :replacement
+
+    assert Wire.replay_patch("turn-item", append, item("x")) == {:patch, append}
+
+    # A patch that resets the text it appends to is trimmed from the patch itself,
+    # whatever the text was at the offset.
+    reset = %{"s" => %{"progress" => "a"}, "a" => %{"progress" => "b"}}
+    assert Wire.replay_patch("turn-item", reset, item("ab")) == {:patch, reset}
+
+    command = %{"id" => "i", "type" => "command_execution"}
+    assert Wire.replay_patch("turn-item", %{"s" => %{"output" => "x"}}, command) == nil
+  end
 end
