@@ -444,17 +444,6 @@ defmodule HalC2.Web.SocketTest do
     assert output == [{2, "for-second\r\n"}]
   end
 
-  defp await_mailbox(pid, count) do
-    if Process.info(pid, :message_queue_len) |> elem(1) >= count do
-      :ok
-    else
-      receive do
-      after
-        5 -> await_mailbox(pid, count)
-      end
-    end
-  end
-
   # Output the terminal's timer flushed while the socket waited on the new
   # subscription's attach is in that subscription's snapshot: it is not then sent
   # again under the new id, and what follows still arrives.
@@ -486,7 +475,7 @@ defmodule HalC2.Web.SocketTest do
         %{"t" => "sub", "id" => 2, "shape" => terminal_shape(input)}
       ])
 
-    :ok = await_mailbox(pid, 4)
+    :ok = WsClient.await_mailbox(pid, 4)
     :ok = :sys.resume(pid)
     :ok = :sys.resume(HalC2.Terminal.Hub)
 
@@ -523,6 +512,78 @@ defmodule HalC2.Web.SocketTest do
     assert {:push, [{:text, frame}], state} = HalC2.Web.Socket.handle_info(new, state)
     assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
     assert {:ok, ^state} = HalC2.Web.Socket.handle_info(new, state)
+
+    # A `started` event goes out as a snapshot event whose sequence sits only
+    # inside its snapshot; at the floor it is held, above it is told (and the
+    # same for a restart, which carries both).
+    nested = fn seq ->
+      {:hal_c2_terminal, key,
+       %{"type" => "snapshot", "snapshot" => %{"sequence" => seq, "history" => "y"}}}
+    end
+
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info(nested.(6), state)
+
+    restarted =
+      {:hal_c2_terminal, key,
+       %{"type" => "restarted", "sequence" => 6, "snapshot" => %{"sequence" => 6}}}
+
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info(restarted, state)
+    assert {:push, [{:text, frame}], _} = HalC2.Web.Socket.handle_info(nested.(7), state)
+    assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+  end
+
+  # Teardown threads each unsubscribe through the last one's state: of two
+  # subscriptions sharing a terminal and two sharing an MC's config, the
+  # terminal is detached and the settings watch ended (each exactly once is
+  # the end state the other side is left in; the casts have no receipt, so
+  # the wait for them is bounded and fails with what it found).
+  test "terminate ends a shared terminal attach and a shared config watch", %{tmp_dir: dir} do
+    start_terminals()
+    start_supervised!(HalC2.Settings)
+    input = %{"threadId" => "th-end", "terminalId" => "term-1", "cwd" => dir}
+    {:ok, _} = HalC2.Terminal.attach(input, self())
+    :ok = HalC2.Settings.watch(self())
+
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    key = {"th-end", "term-1"}
+
+    state = %{
+      state
+      | subs: %{
+          1 => {:terminal, node(), key},
+          2 => {:terminal, node(), key},
+          3 => {:config, node()},
+          4 => {:config, node()}
+        },
+        by_terminal: %{key => %{1 => nil, 2 => nil}, {:settings, node()} => [3, 4]}
+    }
+
+    assert :ok = HalC2.Web.Socket.terminate(:normal, state)
+
+    [{session, _}] =
+      Registry.lookup(HalC2.Terminal.Registry, {"th-end", "term-1"})
+
+    await_true(fn ->
+      :sys.get_state(session).subscribers == %{} and
+        not Map.has_key?(:sys.get_state(HalC2.Settings).watchers, self())
+    end)
+  end
+
+  # Bounded condition wait for an end state no receipt announces.
+  defp await_true(fun, attempts \\ 200) do
+    cond do
+      fun.() ->
+        :ok
+
+      attempts <= 0 ->
+        flunk("the awaited end state never arrived")
+
+      true ->
+        receive do
+        after
+          5 -> await_true(fun, attempts - 1)
+        end
+    end
   end
 
   test "a request that raises is logged and still answered", %{port: port} do

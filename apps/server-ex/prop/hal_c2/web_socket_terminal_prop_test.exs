@@ -113,7 +113,10 @@ defmodule HalC2.WebSocketTerminalPropTest do
           else: []
         ) ++
         if(state.started and free != [],
-          do: [{2, {:call, __MODULE__, :race_sub, [oneof(free), token]}}],
+          do: [
+            {2, {:call, __MODULE__, :race_sub, [oneof(free), token]}},
+            {2, {:call, __MODULE__, :race_sub_attach, [oneof(free), token]}}
+          ],
           else: []
         )
     )
@@ -125,7 +128,7 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def precondition(state, {:call, _, :output, [token]}),
     do: state.started and token == "t#{state.n}"
 
-  def precondition(state, {:call, _, :race_sub, [id, token]}),
+  def precondition(state, {:call, _, op, [id, token]}) when op in [:race_sub, :race_sub_attach],
     do: state.started and id not in state.subs and token == "t#{state.n}"
 
   def next_state(state, _result, {:call, _, :sub, [id]}),
@@ -137,8 +140,9 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def next_state(state, _result, {:call, _, :output, [token]}),
     do: %{state | text: state.text <> token <> "\r\n", n: state.n + 1}
 
-  def next_state(state, _result, {:call, _, :race_sub, [id, token]}),
-    do: %{state | subs: [id | state.subs], text: state.text <> token <> "\r\n", n: state.n + 1}
+  def next_state(state, _result, {:call, _, op, [id, token]})
+      when op in [:race_sub, :race_sub_attach],
+      do: %{state | subs: [id | state.subs], text: state.text <> token <> "\r\n", n: state.n + 1}
 
   def postcondition(state, {:call, _, :sub, [id]}, frames),
     do: frames == [{id, :snapshot, state.text}]
@@ -150,7 +154,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   # The new subscription's snapshot holds the output; the ones already there are
   # told it, and the new one is not told it again.
-  def postcondition(state, {:call, _, :race_sub, [id, token]}, frames) do
+  def postcondition(state, {:call, _, op, [id, token]}, frames)
+      when op in [:race_sub, :race_sub_attach] do
     told = for old <- state.subs, do: {old, :output, token <> "\r\n"}
     frames == Enum.sort([{id, :snapshot, state.text <> token <> "\r\n"} | told])
   end
@@ -168,13 +173,19 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   # Subscribes `id` with output and its flush queued at the terminal ahead of the
   # attach, as the output timer firing just before the attach lands them.
-  def race_sub(id, token) do
+  def race_sub(id, token), do: race(id, token, true)
+
+  # The same with no flush queued: the batch is still pending when the attach
+  # lands, so the attach handler's own flush is what produces it.
+  def race_sub_attach(id, token), do: race(id, token, false)
+
+  defp race(id, token, flush?) do
     pid = terminal_pid()
     os_pid = :sys.get_state(pid).os_pid
     :ok = :sys.suspend(HalC2.Terminal.Hub)
     :ok = :sys.suspend(pid)
     send(pid, {:stdout, os_pid, token <> "\r\n"})
-    send(pid, :output)
+    if flush?, do: send(pid, :output)
 
     Process.put(
       {__MODULE__, :client},
@@ -185,21 +196,10 @@ defmodule HalC2.WebSocketTerminalPropTest do
       })
     )
 
-    :ok = await_mailbox(pid, 3)
+    :ok = WsClient.await_mailbox(pid, if(flush?, do: 3, else: 2))
     :ok = :sys.resume(pid)
     :ok = :sys.resume(HalC2.Terminal.Hub)
     terminal_frames()
-  end
-
-  defp await_mailbox(pid, count) do
-    if Process.info(pid, :message_queue_len) |> elem(1) >= count do
-      :ok
-    else
-      receive do
-      after
-        5 -> await_mailbox(pid, count)
-      end
-    end
   end
 
   defp shape do

@@ -284,14 +284,17 @@ defmodule HalC2.UpgradeTest do
 
   test "a v6 socket's terminal subscription migrates to per-subscription state" do
     # The exact v6 shape: a terminal is held as a single subscription id, while
-    # a watched config is already a list of ids.
+    # a watched config is already a list of ids. This socket followed the
+    # terminal twice (2, then 3 recorded last in v6's single slot as 2 went
+    # in — the overwrite v7 fixes), and rebuilding from `subs` revives both.
     state = %{
       v: 6,
       session: nil,
       scopes: :all,
       subs: %{
         1 => {:config, node()},
-        2 => {:terminal, node(), {"th-6", "term-1"}}
+        2 => {:terminal, node(), {"th-6", "term-1"}},
+        3 => {:terminal, node(), {"th-6", "term-1"}}
       },
       by_stream: %{},
       by_terminal: %{{"th-6", "term-1"} => 2, {:settings, node()} => [1]},
@@ -307,22 +310,27 @@ defmodule HalC2.UpgradeTest do
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
     assert migrated.v == 7
     assert migrated.subs == state.subs
-    # Only the terminal entry changes shape; the config entry is preserved.
+    # Only the terminal entry changes shape; the config entry is preserved,
+    # and both subscriptions `subs` held are in it.
     assert migrated.by_terminal == %{
-             {"th-6", "term-1"} => %{2 => nil},
+             {"th-6", "term-1"} => %{2 => nil, 3 => nil},
              {:settings, node()} => [1]
            }
 
-    # With a nil floor the migrated subscription is told everything that
+    # With a nil floor each migrated subscription is told everything that
     # follows, under its own id.
-    assert {:push, [{:text, frame}], _} =
+    assert {:push, frames, _} =
              HalC2.Web.Socket.handle_info(
                {:hal_c2_terminal, {"th-6", "term-1"},
                 %{"type" => "output", "data" => "hi", "sequence" => 9}},
                migrated
              )
 
-    assert %{"t" => "terminal", "id" => 2} = JSON.decode!(IO.iodata_to_binary(frame))
+    ids =
+      for {:text, frame} <- frames,
+          do: frame |> IO.iodata_to_binary() |> JSON.decode!() |> Map.fetch!("id")
+
+    assert Enum.sort(ids) == [2, 3]
   end
 
   test "a message without a tag is only for a stream followed before an upgrade" do

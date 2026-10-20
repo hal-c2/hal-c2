@@ -332,8 +332,14 @@ defmodule HalC2.Terminal do
   def handle_call({:attach, input, subscriber}, _from, state) do
     # The snapshot holds the pending batch and whatever this attach starts, so a
     # subscriber attaching again is left out of the events they produce; others get them.
+    # Those events are also told to the attaching pid as `:hal_c2_terminal_attach`:
+    # a socket attaching for a new subscription fans them out to the subscriptions
+    # it already holds to this terminal (its per-subscription floors keep the new
+    # one from being told twice), which a plain re-send would break for a direct
+    # subscriber reading snapshot-plus-events. Other direct subscribers ignore
+    # the shape.
     {ref, others} = Map.pop(state.subscribers, subscriber)
-    state = flush_output(%{state | subscribers: others})
+    state = flush_output(%{state | subscribers: others} |> Map.put(:attach_capture, subscriber))
 
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
@@ -344,6 +350,7 @@ defmodule HalC2.Terminal do
         do: open_session(state, input),
         else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
+    state = Map.put(state, :attach_capture, nil)
     subscribers = Map.put(state.subscribers, subscriber, ref || Process.monitor(subscriber))
 
     # A shell that failed to start while attaching is explained to the attaching
@@ -690,6 +697,11 @@ defmodule HalC2.Terminal do
 
     key = {state.thread_id, state.terminal_id}
     for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_terminal, key, attach_event})
+
+    # An attach in flight left its pid out above; it is told as an attach event
+    # instead (see `handle_call({:attach, …})`).
+    if capture = Map.get(state, :attach_capture),
+      do: send(capture, {:hal_c2_terminal_attach, key, attach_event})
 
     if event["type"] in ~w(started restarted exited error activity),
       do: Hub.upsert(summary(state), self())

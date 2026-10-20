@@ -158,27 +158,15 @@ defmodule HalC2.Web.Socket do
   # (at or below its sequence, as the output the terminal flushed while this
   # socket waited on the attach) goes to that subscription nowhere. An error's
   # message is in no snapshot, so an error is always told.
-  def handle_info({:hal_c2_terminal, key, event}, state) do
-    subs = Map.get(state.by_terminal, key, %{})
-    seq = terminal_seq(event)
-    held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
+  def handle_info({:hal_c2_terminal, key, event}, state), do: terminal_event(state, key, event)
 
-    {frames, subs} =
-      Enum.map_reduce(subs, subs, fn
-        {_id, floor}, acc
-        when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
-          {nil, acc}
-
-        {id, floor}, acc ->
-          acc = if is_integer(seq), do: Map.put(acc, id, max(floor || seq, seq)), else: acc
-          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), acc}
-      end)
-
-    case Enum.reject(frames, &is_nil/1) do
-      [] -> {:ok, state}
-      frames -> {:push, frames, %{state | by_terminal: Map.put(state.by_terminal, key, subs)}}
-    end
-  end
+  # An event the terminal emitted while this socket's attach for a new
+  # subscription was in flight — the pending batch the attach flushed, or what
+  # it started. The new subscription holds it in its snapshot; the ones this
+  # socket already held do not, so it is fanned out as any terminal event is
+  # and each subscription's floor decides.
+  def handle_info({:hal_c2_terminal_attach, key, event}, state),
+    do: terminal_event(state, key, event)
 
   def handle_info({:hal_c2_server_update, mc, event}, state) do
     case state.by_terminal do
@@ -550,8 +538,10 @@ defmodule HalC2.Web.Socket do
   def terminate(_reason, state) do
     state = migrate(state)
     # Each unsubscribe sees the last one's state, so the last of several sharing
-    # one watch (a terminal, an MC's config) is the one that ends it.
-    Enum.reduce(Map.keys(state.subs), state, &unsubscribe(&2, &1))
+    # one watch (a terminal, an MC's config) is the one that ends it. Nothing on
+    # this socket attaches again, so a terminal detach needs no ordering here:
+    # it is cast, and the terminal's monitor drops this socket in any case.
+    Enum.reduce(Map.keys(state.subs), state, &unsubscribe(&2, &1, false))
     :ok
   end
 
@@ -1260,16 +1250,24 @@ defmodule HalC2.Web.Socket do
 
   # Version 7: a terminal's subscriptions are held by id, each with the sequence
   # of the snapshot it was sent. One followed before has none recorded, so it is
-  # told everything, as it was.
+  # told everything, as it was. The entries are rebuilt from `subs`, which is
+  # authoritative: a socket that already followed one terminal twice recorded
+  # only the last id in v6, and rebuilding revives the earlier subscription
+  # (told everything on its nil floor, where it was told nothing).
   defp migrate(%{v: 6} = state) do
-    by_terminal =
-      Map.new(state.by_terminal, fn
-        {{thread, terminal} = key, id}
-        when is_binary(thread) and is_binary(terminal) and is_integer(id) ->
-          {key, %{id => nil}}
+    kept =
+      Map.reject(state.by_terminal, fn
+        {{thread, terminal}, id} -> is_binary(thread) and is_binary(terminal) and is_integer(id)
+        _entry -> false
+      end)
 
-        entry ->
-          entry
+    by_terminal =
+      Enum.reduce(state.subs, kept, fn
+        {id, {:terminal, _mc, key}}, acc ->
+          Map.update(acc, key, %{id => nil}, &Map.put(&1, id, nil))
+
+        _sub, acc ->
+          acc
       end)
 
     %{state | by_terminal: by_terminal, v: 7}
@@ -1375,6 +1373,28 @@ defmodule HalC2.Web.Socket do
 
   # Where a terminal event stands in its terminal's sequence, its snapshot's for
   # a snapshot event, or `nil` when it carries none.
+  defp terminal_event(state, key, event) do
+    subs = Map.get(state.by_terminal, key, %{})
+    seq = terminal_seq(event)
+    held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
+
+    {frames, subs} =
+      Enum.map_reduce(subs, subs, fn
+        {_id, floor}, acc
+        when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
+          {nil, acc}
+
+        {id, floor}, acc ->
+          acc = if is_integer(seq), do: Map.put(acc, id, max(floor || seq, seq)), else: acc
+          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), acc}
+      end)
+
+    case Enum.reject(frames, &is_nil/1) do
+      [] -> {:ok, state}
+      frames -> {:push, frames, %{state | by_terminal: Map.put(state.by_terminal, key, subs)}}
+    end
+  end
+
   defp terminal_seq(%{"sequence" => seq}) when is_integer(seq), do: seq
   defp terminal_seq(%{"snapshot" => %{"sequence" => seq}}) when is_integer(seq), do: seq
   defp terminal_seq(_event), do: nil
@@ -1385,7 +1405,9 @@ defmodule HalC2.Web.Socket do
 
   defp error_frame(id, reason), do: %{"t" => "error", "id" => id, "reason" => to_string(reason)}
 
-  defp unsubscribe(state, id) do
+  # `ordered?` is the terminal detach's: only an unsubscribe a later attach on
+  # this socket could follow pays for the ordered call.
+  defp unsubscribe(state, id, ordered? \\ true) do
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
         case Map.delete(Map.get(state.by_terminal, key, %{}), id) do
@@ -1397,7 +1419,10 @@ defmodule HalC2.Web.Socket do
             # by the attach's own path, a call this socket waits on, so it has
             # reached the terminal's MC before any attach that follows is made
             # and cannot land after it, as a cast in a process of its own could.
-            remote(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+            if ordered?,
+              do: remote(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()]),
+              else: :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+
             %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
         end
 
