@@ -32,6 +32,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { latestUnheldRun } from "../state/threadExecution.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -763,7 +764,9 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
         run.status === "waiting",
     )?.id;
     if (runId === undefined) {
-      const latestRun = projection.runs.at(-1);
+      // Ordinal order, not creation order: a held run that a newer run passed is
+      // renumbered above it, so the last-created run need not be the latest.
+      const latestRun = latestUnheldRun(projection);
       if (
         derivePendingBackgroundWork({
           latestRun,

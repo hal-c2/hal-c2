@@ -418,7 +418,9 @@ QList<Row> project(const Model& model) {
   QString latest;
   for (const Run& run : thread.runs) {
     if (run.held) continue;
-    if (latest.isEmpty() || run.ordinal > thread.runs.value(latest).ordinal) latest = run.id;
+    // Runs are in the order they were made, so `>=` gives equal ordinals to the
+    // newest, as the MC's latest pick does.
+    if (latest.isEmpty() || run.ordinal >= thread.runs.value(latest).ordinal) latest = run.id;
   }
 
   QHash<QString, QString> terminal;  // run -> its last reply
