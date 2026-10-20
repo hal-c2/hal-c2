@@ -187,6 +187,32 @@ defmodule HalC2.TurnLifecycleTest do
              StreamState.get(current(thread_id), "provider-session")[session]
   end
 
+  test "a request from a run before instances had their own sessions answers to the session it ran in",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [run] = await_statuses(thread_id, ["running"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    # The run's ids as a pre-instance turn in flight across the upgrade carries
+    # them: its instance is the other one, its provider thread the driver's,
+    # which names the driver's session.
+    ids = Map.put(:sys.get_state(runtime).turn.ids, :instance, "codex-work")
+
+    {_state, request_id} =
+      TurnWriter.open_request(
+        %{thread_id: thread_id, turn: %{ids: ids}},
+        "legacy-ask",
+        "command",
+        "run it?"
+      )
+
+    session = HalC2.Orchestration.Entities.provider_session_id("codex", thread_id)
+
+    assert %{"responseCapability" => %{"type" => "live", "providerSessionId" => ^session}} =
+             StreamState.get(current(thread_id), "runtime-request")[request_id]
+
+    :ok = TurnWriter.abandon(thread_id, run["id"], "failed", "done asking")
+  end
+
   # IdleSessions found the thread idle and released its runtime just as a message
   # started a run there: the runtime stopped under the start, and the run failed.
   test "a turn that starts as its idle runtime is released runs on a new one",

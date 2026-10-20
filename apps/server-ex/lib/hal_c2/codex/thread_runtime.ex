@@ -129,8 +129,8 @@ defmodule HalC2.Codex.ThreadRuntime do
        v: @state_version,
        thread_id: thread_id,
        conn: nil,
-       # The provider instance the app-server was started for; :unknown for one started
-       # before the runtime recorded it (a hot update).
+       # The provider instance the app-server was started for: nil until the first
+       # `connect/2`; `:unknown` after a hot update of a runtime that predates the field.
        instance: nil,
        native_thread_id: nil,
        turn: nil,

@@ -361,8 +361,7 @@ defmodule HalC2.Orchestration.TurnWriter do
               do: %{"type" => "message"},
               else: %{
                 "type" => "live",
-                "providerSessionId" =>
-                  Entities.provider_session_id(Entities.instance(ids), ids.thread)
+                "providerSessionId" => session_id(stream, ids)
               }
             ),
           "createdAt" => at,
