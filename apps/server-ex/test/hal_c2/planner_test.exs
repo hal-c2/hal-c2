@@ -270,6 +270,34 @@ defmodule HalC2.PlannerTest do
                "https://ghe.example.com/acme/api/issues/4"
 
       assert url.("https://ghe.example.com/acme/api/pull/4", "issue") == nil
+
+      # The host is canonical, as everywhere else it is derived.
+      assert url.("https://GHE.Example.COM./acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com:0/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com:99999/acme/api/pull/4", "pullRequest") == nil
+    end
+
+    test "a correcting link to another host forgets what the old host's look stored" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+
+      item =
+        put_in(item["pullRequests"], [
+          %{
+            "repository" => "acme/api",
+            "number" => 4,
+            "url" => "https://github.com/acme/api/pull/4",
+            "title" => "Old",
+            "state" => "merged"
+          }
+        ])
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"url" => ^ghe, "state" => "open", "title" => nil}] = item["pullRequests"]
     end
 
     test "an issue linked again with the address of its host takes that address and keeps the rest" do

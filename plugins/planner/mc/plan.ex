@@ -459,7 +459,8 @@ defmodule HalC2Plugins.Planner.Plan do
   defp web_url(url, repository, number, kind) when is_binary(url) do
     case URI.parse(url) do
       %URI{scheme: scheme, host: host, port: port, path: path}
-      when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) ->
+      when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) and
+             port in 1..65_535 ->
         name = Regex.escape(String.downcase(repository))
         segment = %{"pullRequest" => "pull", "issue" => "issues"}[kind] || "pull|issues"
 
@@ -467,7 +468,7 @@ defmodule HalC2Plugins.Planner.Plan do
           [_, found | _] ->
             URI.to_string(%URI{
               scheme: scheme,
-              host: host,
+              host: host |> String.downcase() |> String.trim_trailing("."),
               port: port,
               path: "/#{repository}/#{found}/#{number}"
             })
@@ -598,16 +599,39 @@ defmodule HalC2Plugins.Planner.Plan do
 
       at ->
         url = ref["url"]
+        stored = Enum.at(prs, at)
 
-        if url && Enum.at(prs, at)["url"] != url,
-          do: %{
+        if url && stored["url"] != url do
+          # A correcting address on another host names a different pull request, so
+          # what the old host's look stored of it does not carry over: the next look
+          # reads it again on the host that serves it now.
+          corrected =
+            if host_of(url) != host_of(stored["url"]),
+              do: %{"url" => url, "state" => "open", "title" => nil},
+              else: %{"url" => url}
+
+          %{
             item
-            | "pullRequests" => List.update_at(prs, at, &Map.put(&1, "url", url)),
+            | "pullRequests" => List.update_at(prs, at, &Map.merge(&1, corrected)),
               "updatedAt" => now
-          },
-          else: item
+          }
+        else
+          item
+        end
     end
   end
+
+  defp host_of(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) ->
+        host |> String.downcase() |> String.trim_trailing(".")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp host_of(_url), do: nil
 
   # The issue a task has already keeps what its looks last saw of it, so a closed one
   # linked again does not read as newly closed.
