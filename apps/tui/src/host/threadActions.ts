@@ -276,7 +276,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     const copied = ctx.copyToClipboard?.(value) ?? false;
     store.setStatus(
       copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
-      copied ? "success" : "error",
+      copied ? "success" : "warning",
     );
   };
 

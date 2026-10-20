@@ -2812,7 +2812,7 @@ export function ChatView({
         const supported = renderer.isOsc52Supported();
         store.setStatus(
           supported ? `${label} copied.` : "Clipboard not supported by this terminal.",
-          supported ? "success" : "error",
+          supported ? "success" : "warning",
         );
       };
 
@@ -2951,7 +2951,7 @@ export function ChatView({
       const supported = renderer.isOsc52Supported();
       store.setStatus(
         supported ? "Terminal copied to clipboard." : "Clipboard not supported by this terminal.",
-        supported ? "success" : "error",
+        supported ? "success" : "warning",
       );
     },
     onGrowPrompt: () => resizePrompt(2),

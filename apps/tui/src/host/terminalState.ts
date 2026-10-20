@@ -679,7 +679,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       }
       if (options.copyToClipboard(text))
         store.setStatus("Terminal copied to clipboard.", "success");
-      else store.setStatus("Clipboard not supported by this terminal.", "error");
+      else store.setStatus("Clipboard not supported by this terminal.", "warning");
     },
     input: (data) => {
       const pane = activePane();

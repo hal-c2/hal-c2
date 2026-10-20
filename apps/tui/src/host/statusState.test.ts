@@ -25,10 +25,11 @@ describe("status row beside a pinned error", () => {
       status: { kind: "success", text: "Pulled." },
       pinnedError: "Offline",
     });
-    expect(state.pinned).toBe("✗ Offline · ");
+    expect(state.pinned).toBe("✗ Offline (click or ^K to dismiss) · ");
     expect(state.label).toBe("✓ Pulled.");
-    // Half of 100 columns would leave the hints 48 cells; two short messages need 32.
-    expect(state.hint.length).toBeGreaterThan(60);
+    // Half of 100 columns would leave the hints 48 cells; the two messages plus
+    // the dismiss hint need less than that, so the hints keep more than 48.
+    expect(state.hint.length).toBeGreaterThan(48);
   });
 
   it("shares half the row at most, cutting the error before the newer message", () => {
@@ -44,8 +45,14 @@ describe("status row beside a pinned error", () => {
   it("shows an error that is the status itself once, as the label", () => {
     const state = row({ status: { kind: "error", text: "Offline" }, pinnedError: "Offline" });
     expect(state.pinned).toBe("");
-    expect(state.label).toBe("✗ Offline");
+    expect(state.label).toBe("✗ Offline (click or ^K to dismiss)");
     expect(state.errorPinned).toBe(true);
+  });
+
+  it("does not add the dismiss hint when no error is pinned", () => {
+    const state = row({ status: { kind: "error", text: "Offline" } });
+    expect(state.label).toBe("✗ Offline");
+    expect(state.errorPinned).toBe(false);
   });
 
   it("shares at most half of a narrow row, below the 32-cell floor", () => {

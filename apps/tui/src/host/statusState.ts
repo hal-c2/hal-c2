@@ -40,6 +40,8 @@ export interface TuiStatusRowState {
 
 /** The glue between a pinned error and the message that came after it. */
 const PINNED_SEPARATOR = " · ";
+/** How a pinned error says it is waiting to be dismissed, so it does not read as a stuck line. */
+const DISMISS_HINT = " (click or ^K to dismiss)";
 
 export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const composeHint = [
@@ -65,11 +67,16 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
         : input.terminalOpen
           ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
           : composeHint;
-  const statusLabel = `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}`;
   const beside =
     input.pinnedError !== null &&
     !(input.status.kind === "error" && input.status.text === input.pinnedError);
-  const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
+  const statusLabel =
+    input.pinnedError !== null && !beside
+      ? `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}${DISMISS_HINT}`
+      : `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}`;
+  const pinnedLabel = beside
+    ? `${statusGlyphColor("error").glyph} ${input.pinnedError}${DISMISS_HINT}`
+    : "";
   const room = Math.max(0, input.mainWidth - 2);
   // Widths are terminal cells, as `clip` counts them: a wide character takes two.
   const statusCells = Bun.stringWidth(statusLabel);
@@ -79,7 +86,13 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const besideNeed = pinnedCells + PINNED_SEPARATOR.length + statusCells;
   const statusWidth = beside
     ? Math.min(room, Math.floor(input.mainWidth / 2), Math.max(32, besideNeed))
-    : Math.min(room, Math.max(8, Math.min(32, statusCells)));
+    : Math.min(
+        room,
+        Math.max(
+          8,
+          Math.min(input.pinnedError !== null ? Math.floor(input.mainWidth / 2) : 32, statusCells),
+        ),
+      );
   const hintWidth = Math.max(0, room - statusWidth);
   if (!beside) {
     return {

@@ -1902,16 +1902,28 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus(`Adding ${NodePath.basename(imagePath)}…`, "busy");
     try {
       const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
-      let image: ComposerImageAttachment;
+      let prepare: () => Promise<ComposerImageAttachment>;
       if (platformPath.isAbsolute(imagePath)) {
         const bytes = await options.readLocalImage(imagePath);
         const mimeType = imageMimeTypeForPath(imagePath);
-        if (!mimeType) throw new Error("Select a supported image file.");
-        image = await prepareComposerImageBytes(imagePath, mimeType, bytes, decode);
+        if (!mimeType) {
+          store.setStatus("Select a supported image file.", "warning");
+          return false;
+        }
+        prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes, decode);
       } else {
         const file = await client.readFileBase64(composerCwd(), imagePath);
         if (!file) throw new Error("Could not read the pasted image path.");
-        image = await prepareComposerImage(imagePath, file, decode);
+        prepare = () => prepareComposerImage(imagePath, file, decode);
+      }
+      // Validation and decode failures are the pasted-image route's warning:
+      // the file is not an image we can show. Only the reads above pin as errors.
+      let image: ComposerImageAttachment;
+      try {
+        image = await prepare();
+      } catch (error) {
+        store.setStatus(errorText(error), "warning");
+        return false;
       }
       addImage(key, image);
       store.setStatus(`Attached ${image.upload.name}.`, "success");

@@ -160,7 +160,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   const addInstance = () => {
     const drivers = [...new Set(providers().map((provider) => provider.driver as string))];
     if (drivers.length === 0) {
-      kit.status("The server reports no provider drivers.", "error");
+      kit.status("The server reports no provider drivers.", "warning");
       return;
     }
     kit.menu({
