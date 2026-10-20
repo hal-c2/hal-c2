@@ -304,6 +304,13 @@ Feature: Where HAL-C2 keeps its files
         | HAL_C2_HOME    | /srv/hal-c2 |
 
     @mc
+    Scenario: A checkout pairs with the installed server though its shell names a HAL-C2 root with no server running
+      Given the installed server is running with no HAL-C2 home configured
+      And HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
+      When a developer asks a checkout for a pairing link
+      Then it prints a pairing link for that server
+
+    @mc
     Scenario: A checkout with no server of its own pairs with the server of its HAL-C2 root
       Given HAL_C2_HOME is "/srv/hal-c2"
       And the server of that home is running

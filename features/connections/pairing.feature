@@ -85,6 +85,14 @@ Feature: Pairing a client with an environment
       | https://box.example/some path   |
 
   @mc
+  Scenario: A pairing command given an address with credentials does not print them back
+    Given an administrator's client
+    When an operator asks for a pairing link for the one address "http://user:pass@127.0.0.1:3780"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And the command does not print "user:pass"
+    And no pairing link is listed
+
+  @mc
   Scenario: A pairing command given a bad value says which one
     Given an administrator's client
     When an operator asks for a pairing link with the option "--tailscale-serve-port=foo"

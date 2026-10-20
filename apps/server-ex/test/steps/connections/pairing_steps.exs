@@ -59,6 +59,12 @@ defmodule HalC2.Steps.Connections.Pairing do
     context
   end
 
+  step "the command does not print {string}", %{args: [text]} = context do
+    assert {:error, message} = context.refusal
+    refute message =~ text
+    context
+  end
+
   # The real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that evaluates what a
   # release would, with elixir over this build's code and the scenario's home.
   step "an operator runs {string} on the installed MC's command line",

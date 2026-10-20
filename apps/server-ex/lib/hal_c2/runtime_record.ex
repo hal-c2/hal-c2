@@ -41,7 +41,7 @@ defmodule HalC2.RuntimeRecord do
   def locate(own, installed \\ nil)
 
   def locate(own, installed) when own in [nil, :dev] do
-    Enum.find_value(Enum.uniq([own, installed, :dev]), fn home ->
+    Enum.find_value(Enum.uniq([own, installed, nil, :dev]), fn home ->
       if record = running(home), do: {home, record}
     end)
   end

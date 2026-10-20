@@ -63,8 +63,10 @@ defmodule HalC2.Pair do
       serve_port = opts[:tailscale_serve_port] || HalC2.TailscaleServe.default_port()
 
       with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running) do
-        data = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).data
-        token = HalC2.Auth.create_pairing_token(Path.join(data, "hal-c2.sqlite"))
+        dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
+        # Minting ahead of a first start: the store's directory may not be there yet.
+        if running == nil, do: HalC2.Paths.ensure!(dirs)
+        token = HalC2.Auth.create_pairing_token(Path.join(dirs.data, "hal-c2.sqlite"))
         link = "#{String.trim_trailing(base, "/")}/?token=#{token}"
 
         if opts[:tailscale] do
@@ -102,6 +104,15 @@ defmodule HalC2.Pair do
     end
   end
 
+  # A refused address is echoed with any credentials in it replaced: the message
+  # lands in logs and script output.
+  defp redacted(url) do
+    case URI.parse(url) do
+      %URI{userinfo: nil} -> url
+      %URI{} = uri -> URI.to_string(%{uri | userinfo: "redacted"})
+    end
+  end
+
   defp check_options([], [_, _ | _], _opts),
     do: {:error, "`#{command_name()}` takes at most one BASE_URL"}
 
@@ -115,7 +126,7 @@ defmodule HalC2.Pair do
 
       match?([_], rest) and not base_url?(hd(rest)) ->
         {:error,
-         "BASE_URL must be an http or https address with a host, a port from 1 to 65535 if any, and no credentials, spaces, query or fragment, such as http://127.0.0.1:3780, not #{hd(rest)}"}
+         "BASE_URL must be an http or https address with a host, a port from 1 to 65535 if any, and no credentials, spaces, query or fragment, such as http://127.0.0.1:3780, not #{redacted(hd(rest))}"}
 
       port && !opts[:tailscale] ->
         {:error, "`--tailscale-serve-port` only applies with `--tailscale`"}
