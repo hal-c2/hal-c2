@@ -296,7 +296,7 @@ struct Answer : Command {
     }
     check(expected, sut);
   }
-  void show(std::ostream& os) const override { os << (ok ? "list " : "fail ") << "'" << path.toStdString() << "'"; }
+  void show(std::ostream& os) const override { os << (ok ? "list " : "fail ") << "'" << path.toStdString() << "'" << (twice ? " twice" : ""); }
 };
 
 struct Retry : Command {
