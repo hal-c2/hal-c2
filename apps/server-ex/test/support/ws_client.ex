@@ -106,13 +106,24 @@ defmodule HalC2.Test.WsClient do
     %{client | conn: conn, ws: ws, inbox: client.inbox ++ decoded}
   end
 
-  @doc "Receives frames until one matches `fun`, returning it and the frames skipped."
+  @doc """
+  Receives frames until one matches `fun`, returning it and the frames skipped.
+  `timeout` bounds the whole wait, not each frame: a trickle of non-matching
+  frames does not extend it.
+  """
   def recv_until(client, fun, timeout \\ 2_000, skipped \\ []) do
-    {frame, client} = recv(client, timeout)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    recv_until(client, fun, timeout, deadline, skipped)
+  end
+
+  defp recv_until(client, fun, timeout, deadline, skipped) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+    if remaining <= 0, do: raise("no frame within #{timeout} ms")
+    {frame, client} = recv(client, remaining)
 
     if fun.(frame),
       do: {frame, Enum.reverse(skipped), client},
-      else: recv_until(client, fun, timeout, [frame | skipped])
+      else: recv_until(client, fun, timeout, deadline, [frame | skipped])
   end
 
   # Only this connection's socket messages, so a scenario's other mail (closed

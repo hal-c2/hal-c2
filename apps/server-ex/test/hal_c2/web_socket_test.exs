@@ -818,18 +818,22 @@ defmodule HalC2.Web.SocketTest do
         "shape" => %{"type" => "config", "mc" => Atom.to_string(node())}
       })
 
+    # Generous but finite, and a total bound (recv_until/4): under load a frame
+    # can be late, but a missing one fails with WsClient's diagnostic, not a
+    # bare test-timeout hang. The id is in the predicate so another
+    # subscription's frame is skipped, not matched and then failed on.
+    usage_frame = &(&1["t"] == "config.usageLimitSources" and &1["id"] == 3)
+
     {%{"id" => 3, "sources" => []}, [%{"t" => "config"}, %{"t" => "config.themes"}], client} =
-      WsClient.recv_until(client, &(&1["t"] == "config.usageLimitSources"))
+      WsClient.recv_until(client, usage_frame, 30_000)
 
     source = %{"id" => "hub", "kind" => "cliproxy", "label" => "Hub", "accounts" => []}
     HalC2.Settings.notify_usage_limit_sources([source])
 
-    # Generous but finite: under load the frame can be late, but a missing or closed
-    # frame should fail with WsClient's diagnostic, not a bare test-timeout hang.
     assert {%{"t" => "config.usageLimitSources", "id" => 3, "sources" => [^source]}, _, _} =
              WsClient.recv_until(
                client,
-               &(&1["t"] == "config.usageLimitSources" and &1["sources"] == [source]),
+               &(usage_frame.(&1) and &1["sources"] == [source]),
                30_000
              )
   end
