@@ -633,6 +633,88 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 7, "milestone" => nil} = input
     end
 
+    test "goes to the milestone of a task that took the issue over" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "goes to this milestone when the task that took the issue over is held by it" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, ["u"]),
+          milestone.("mr", 4, []),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 3}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
     test "keeps one mark per task, the newer; the older issue still goes out by the task's remembered one" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
       op = fn n -> {"t", {"update", issue.(n), nil}} end

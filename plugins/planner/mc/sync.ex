@@ -1090,20 +1090,22 @@ defmodule HalC2Plugins.Planner.Sync do
             issue = ref(items, id),
             do: {id, issue, ref["number"], &relate(&1, "after", id, issue)}
 
-    # The issue a correction was made for is the one it goes to, whatever the task names
-    # now: a task relinked or unlinked since no longer holds it, so it leaves any
-    # milestone, as the removal of an issue a task left does.
+    # The issue a correction was made for goes to whoever names it now, not to
+    # wherever the marked task went: a task relinked or unlinked since no longer
+    # holds it, and another task may have taken it over since, whose milestone it
+    # belongs in. Only when no live task names it does it leave any milestone, as
+    # the removal of an issue a task left does.
     corrections =
-      for {id, issue} <- to_correct,
-          do:
-            {id, issue,
-             if(Plan.same_ref?(issue, ref(items, id)),
-               do: List.first(holders(items, ref["repository"], id))
-             ),
-             if(id in new["after"],
-               do: &placed(&1, id, issue),
-               else: &unrelate(&1, "after", id, issue)
-             )}
+      for {id, issue} <- to_correct do
+        holder = linked(items, issue)
+
+        {id, issue,
+         holder && List.first(holders(items, ref["repository"], holder["id"])),
+         if(id in new["after"],
+           do: &placed(&1, id, issue),
+           else: &unrelate(&1, "after", id, issue)
+         )}
+      end
 
     # An issue a move and a correction both send to the same milestone is asked once,
     # and the ask's `took` runs every one of theirs: whichever task named the issue (a
@@ -1363,7 +1365,7 @@ defmodule HalC2Plugins.Planner.Sync do
   defp same?(_, _), do: false
 
   defp whole?(%{"repository" => repo, "number" => number}),
-    do: is_binary(repo) and not is_nil(number)
+    do: is_binary(repo) and is_integer(number)
 
   defp whole?(_), do: false
 
