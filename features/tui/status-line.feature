@@ -77,6 +77,17 @@ Feature: Errors stay on the terminal client's status line
     Then the status line shows "Pull failed: Error: offline" before "Pulled."
 
   @tui
+  Scenario: Clicking the pinned error beside a later message dismisses only the error
+    Given the terminal is 160 columns wide
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    And pulling will succeed
+    And the user pulls the branch
+    When the user clicks "Pull failed: Error: offline" on the status line
+    Then the status line shows "Pulled."
+    And the status line no longer shows "Pull failed"
+
+  @tui
   Scenario: A message after a dismissed error shows on its own
     Given the terminal is 160 columns wide
     And pulling will fail with "offline"
