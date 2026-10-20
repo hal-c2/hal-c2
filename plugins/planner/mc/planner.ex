@@ -1222,7 +1222,7 @@ defmodule HalC2Plugins.Planner do
   # What the next look may reuse of the one applied last, nothing once a day has passed
   # since a full look; one its read failed for is read alone again at the next look.
   # GitHub does not count every change to an issue as an update to it (a milestone
-  # renamed, a pull request now closing it, an issue deleted), so a closed task's last
+  # renamed, a pull request now closing it), so a closed task's last
   # copy would otherwise stand until the MC restarts or the issue changes.
   defp reusable(%{details: details, full_at: full_at}) do
     if full_at != nil and DateTime.diff(DateTime.utc_now(), full_at) < full_read_seconds(),

@@ -35,7 +35,8 @@ defmodule HalC2Plugins.Planner.Sync do
   only an issue neither has is read alone, or every one the listing lacks when it
   fails or is cut short. Without a `before` the look that reads issues is a full one,
   `full: true` in what it finds: every linked issue not among the open ones is read
-  alone, a call for each, four at a time. A look that reads no issues (sync is off, or
+  alone, a call for each, four at a time. A look whose listing failed or was cut
+  short, so it read every such issue alone and none failed, counts as full too. A look that reads no issues (sync is off, or
   the MC's projects could not be read) is never full. One issue whose read failed is
   absent from the `details` the look finds, so the next look reads it alone again
   whether or not it is the day for it.
@@ -132,13 +133,13 @@ defmodule HalC2Plugins.Planner.Sync do
           project_of(github, repo),
           do: Map.take(ref, ~w(repository number))
 
-    {details, problems} =
+    {details, problems, full?} =
       for {_, [%{"repository" => repo} | _] = refs} <-
             Enum.group_by(missing, &String.downcase(&1["repository"])),
-          reduce: {[], problems} do
-        {details, problems} ->
+          reduce: {[], problems, nil} do
+        {details, problems, full?} ->
           project = project_of(github, repo)
-          {known, alone} = updated(project, repo, refs, before)
+          {known, alone, reused?} = updated(project, repo, refs, before)
 
           # The issues to read alone are read a few at a time.
           read =
@@ -153,17 +154,27 @@ defmodule HalC2Plugins.Planner.Sync do
             )
             |> Enum.map(fn {:ok, answer} -> answer end)
 
-          for {number, answer} <- read, reduce: {known ++ details, problems} do
-            {details, problems} ->
-              case answer do
-                {:ok, issue} -> {[issue | details], problems}
-                {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
-              end
-          end
+          {details, problems} =
+            for {number, answer} <- read, reduce: {known ++ details, problems} do
+              {details, problems} ->
+                case answer do
+                  {:ok, issue} -> {[issue | details], problems}
+                  {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+                end
+            end
+
+          failed? = Enum.any?(read, fn {_number, answer} -> match?({:error, _}, answer) end)
+          {details, problems, full? != false and not reused? and not failed?}
       end
 
     problem(
-      %{found | issues: listed, details: details, unwatched: unwatched, full: before == nil},
+      %{
+        found
+        | issues: listed,
+          details: details,
+          unwatched: unwatched,
+          full: before == nil or full? == true
+      },
       problems
     )
   end
@@ -173,7 +184,9 @@ defmodule HalC2Plugins.Planner.Sync do
   # updated since, and the rest, to be read alone. A listing that fails or is cut short
   # says nothing of the issues it lacks. GitHub stamps updates by its own clock, which
   # the MC's may run ahead of, so the listing reaches back `skew_seconds` further.
-  defp updated(_project, _repo, refs, nil), do: {[], refs}
+  # The third element says whether a copy the look before had was reused: without one,
+  # and with every alone-read taken, the look read every issue as surely as a full one.
+  defp updated(_project, _repo, refs, nil), do: {[], refs, false}
 
   defp updated(project, repo, refs, {started, had}) do
     since = started |> DateTime.add(-skew_seconds(), :second) |> DateTime.truncate(:millisecond)
@@ -195,10 +208,10 @@ defmodule HalC2Plugins.Planner.Sync do
         rest = Enum.reject(refs, &MapSet.member?(got, key(&1)))
         had = if list["truncated"], do: %{}, else: Map.new(had, &{key(&1), &1})
         {same, alone} = Enum.split_with(rest, &is_map_key(had, key(&1)))
-        {fresh ++ Enum.map(same, &had[key(&1)]), alone}
+        {fresh ++ Enum.map(same, &had[key(&1)]), alone, same != []}
 
       {:error, _} ->
-        {[], refs}
+        {[], refs, false}
     end
   end
 

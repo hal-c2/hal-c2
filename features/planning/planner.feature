@@ -979,6 +979,21 @@ Feature: Planner
       When the plugin looks at GitHub again, with nothing there changed since
       Then that look read no issue alone
 
+    # A look the listing of changes failed for read every closed issue alone, so it
+    # counts as the day's full read: the next look need not read them alone again.
+    @mc
+    Scenario: A closed issue read alone because the listing of changes failed is not read alone again until the next day
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And nearly a day passes since the planner last read every closed issue alone
+      And GitHub fails to list the issues changed since
+      When the plugin looks at GitHub again
+      Then that look read the closed #7 alone
+      When nearly a day passes since the planner last read every closed issue alone
+      And the plugin looks at GitHub again, with nothing there changed since
+      Then that look read no issue alone
+
     @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again
       Given "planner" follows the issues of "acme/api" labelled "roadmap"
