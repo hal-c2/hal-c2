@@ -515,6 +515,13 @@ Item {
             verify(explorer.visible);
             verify(toggle.checked, "a shown tree is pressed again");
 
+            // The checked binding is live, not a click coincidence: setting
+            // the preference directly moves the toggle too.
+            files.explorerOpen = false;
+            verify(!toggle.checked && !explorer.visible, "a programmatic hide unpresses the toggle");
+            files.explorerOpen = true;
+            verify(toggle.checked && explorer.visible, "a programmatic show presses the toggle");
+
             // Hiding is a preference: the next file opens with the tree still hidden.
             tryVerify(() => viewer.x + viewer.width <= explorer.x, 5000, "the file settles beside the tree before the next click");
             mouseClick(toggle);
@@ -536,10 +543,14 @@ Item {
             Shell.state = Object.assign({}, Shell.state, { workspace: { editors: [{ id: "vscode", label: "VS Code" }] } });
             const source = createTemporaryObject(fakeFiles, root);
             source.renderKind = "markdown";
-            const files = createTemporaryObject(filesComponent, root, { source: source, width: 360 });
+            const files = createTemporaryObject(filesComponent, root, { source: source });
             const viewer = findChild(files, "fileViewer");
             const explorer = findChild(files, "filesExplorer");
             tryVerify(() => viewer.visible);
+            // A phone-wide tab derived from the header's own minimum, so the
+            // width does not depend on today's label lengths or font.
+            tryVerify(() => files.fileMinimumWidth > 0);
+            files.width = Math.ceil(files.fileMinimumWidth) + 1 + files.explorerMinimum + 48;
             tryVerify(() => explorer.visible && viewer.x + viewer.width <= explorer.x + 0.5, 5000, "the file settles beside the tree");
             const names = ["fileRender", "fileEdit", "fileOpenInEditor", "fileWrap", "fileExplorerToggle", "fileClose"];
             for (const name of names) {
@@ -548,6 +559,7 @@ Item {
                 const end = button.mapToItem(files, button.width, 0).x;
                 verify(end <= explorer.x + 0.5, name + " ends at " + end + " but the tree starts at " + explorer.x);
             }
+            tryVerify(() => explorer.x + explorer.width <= files.width + 0.5, 5000, "the tree settles inside the tab");
             verify(explorer.x + explorer.width <= files.width + 0.5, "tree " + explorer.x + "+" + explorer.width + " of " + files.width + ", file " + viewer.x + "+" + viewer.width);
             const close = findChild(files, "fileClose");
             mouseClick(close);
@@ -559,16 +571,42 @@ Item {
         function test_aTabTooNarrowForTheTreeShowsTheFileAlone() {
             const source = createTemporaryObject(fakeFiles, root);
             source.renderKind = "markdown";
-            const files = createTemporaryObject(filesComponent, root, { source: source, width: 280 });
+            const files = createTemporaryObject(filesComponent, root, { source: source });
             const viewer = findChild(files, "fileViewer");
             const explorer = findChild(files, "filesExplorer");
             tryVerify(() => viewer.visible);
+            // Just under the panel's own threshold (the file's minimum plus
+            // the divider plus the tree's floor), independent of the header's
+            // label lengths or the test font.
+            tryVerify(() => files.fileMinimumWidth > 0);
+            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
             verify(files.explorerShare < files.explorerMinimum, "share " + files.explorerShare);
             verify(findChild(files, "filesSearch").visible === false, "the search field is not reachable");
-            verify(findChild(files, "fileExplorerToggle").checked, "the preference to show the tree is kept");
+            const toggle = findChild(files, "fileExplorerToggle");
+            verify(files.explorerOpen, "the preference to show the tree is kept");
+            verify(!toggle.checked, "the toggle presents the hidden tree, not the preference");
             files.width = 600;
             tryVerify(() => explorer.visible && explorer.width >= files.explorerMinimum, 5000, "a wider tab brings the tree back");
+            verify(toggle.checked, "the toggle presents the tree again once it is back");
+        }
+
+        // Narrowing the tab under the focused search field gives focus to
+        // the toggle that brings the tree back, not to nowhere.
+        function test_narrowingTheTabMovesFocusFromTheTreeToTheToggle() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            const search = findChild(files, "filesSearch");
+            const toggle = findChild(files, "fileExplorerToggle");
+            tryVerify(() => viewer.visible && explorer.visible);
+            search.forceActiveFocus();
+            tryVerify(() => search.activeFocus, 5000, "the search field has focus before the tab narrows");
+            tryVerify(() => files.fileMinimumWidth > 0);
+            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
+            tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
+            tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
         }
 
         // Past the width where 46% would be more than the tree needs, the cap is 352px.

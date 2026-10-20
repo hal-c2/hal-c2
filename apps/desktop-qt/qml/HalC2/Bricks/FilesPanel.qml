@@ -33,6 +33,27 @@ Rectangle {
     // of it that still takes focus.
     readonly property int explorerMinimum: 72
     readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
+    // The open file's own minimum width (its header's buttons), for tests
+    // that size the tab from the panel's geometry instead of a pixel count.
+    readonly property real fileMinimumWidth: fileViewer.Layout.minimumWidth
+
+    // True while keyboard focus sits inside the explorer column.
+    function explorerHoldsFocus(): bool {
+        let item = Window.activeFocusItem;
+        while (item) {
+            if (item === filesExplorerColumn)
+                return true;
+            item = item.parent;
+        }
+        return false;
+    }
+
+    // When the explorer goes away under the focused item, focus would be
+    // cleared to nowhere; give it to the toggle that brings the tree back.
+    onExplorerShownChanged: {
+        if (!explorerShown && fileOpen && explorerHoldsFocus())
+            fileExplorerToggleButton.forceActiveFocus();
+    }
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -134,12 +155,21 @@ Rectangle {
                     onClicked: root.source.wrap = !root.source.wrap
                 }
                 ShellButton {
+                    id: fileExplorerToggleButton
+
                     objectName: "fileExplorerToggle"
                     subtle: true
-                    // A toggle for assistive tech too; the click's own flip and the
-                    // panel's flip of explorerOpen land on the same value.
+                    // The button owns the flip; the panel copies it into the
+                    // explorerOpen preference. checked presents what is on
+                    // screen (explorerShown), so an auto-hidden tree does not
+                    // read as shown, and the binding stays live for
+                    // programmatic changes to the preference.
                     checkable: true
-                    checked: root.explorerOpen
+                    checked: root.explorerShown
+                    // While the tab is too narrow for the tree the toggle
+                    // cannot bring it back; it stays the focus home for the
+                    // hidden column, and its tooltip says what will.
+                    toolTip: root.fileOpen && root.explorerOpen && !root.explorerShown ? qsTr("Widen the panel to show the file explorer") : ""
                     Accessible.checkable: true
                     Accessible.checked: checked
                     iconName: "folder-tree"
@@ -147,8 +177,8 @@ Rectangle {
                     iconTint: root.muted
                     implicitWidth: 26
                     implicitHeight: 26
-                    Accessible.name: root.explorerOpen ? qsTr("Hide file explorer") : qsTr("Show file explorer")
-                    onClicked: root.explorerOpen = !root.explorerOpen
+                    Accessible.name: root.explorerShown ? qsTr("Hide file explorer") : qsTr("Show file explorer")
+                    onClicked: root.explorerOpen = checked
                 }
                 ShellButton {
                     objectName: "fileClose"
@@ -495,6 +525,8 @@ Rectangle {
         }
 
         ColumnLayout {
+            id: filesExplorerColumn
+
             objectName: "filesExplorer"
             Layout.fillHeight: true
             Layout.fillWidth: !root.fileOpen
