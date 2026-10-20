@@ -41,7 +41,7 @@ export interface TuiStatusRowState {
 /** The glue between a pinned error and the message that came after it. */
 const PINNED_SEPARATOR = " · ";
 /** How a pinned error says it is waiting to be dismissed, so it does not read as a stuck line. */
-const DISMISS_HINT = " (click or ^K to dismiss)";
+const DISMISS_HINT = "click error or ^K to dismiss";
 
 export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const composeHint = [
@@ -67,16 +67,14 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
         : input.terminalOpen
           ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
           : composeHint;
+  const statusLabel = `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}`;
   const beside =
     input.pinnedError !== null &&
     !(input.status.kind === "error" && input.status.text === input.pinnedError);
-  const statusLabel =
-    input.pinnedError !== null && !beside
-      ? `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}${DISMISS_HINT}`
-      : `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}`;
-  const pinnedLabel = beside
-    ? `${statusGlyphColor("error").glyph} ${input.pinnedError}${DISMISS_HINT}`
-    : "";
+  const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
+  // A pinned error announces how to dismiss it at the head of the hints, which
+  // `clip` keeps, instead of widening the status budget the layout promises.
+  const hintWithDismiss = input.pinnedError !== null ? `${DISMISS_HINT} · ${hint}` : hint;
   const room = Math.max(0, input.mainWidth - 2);
   // Widths are terminal cells, as `clip` counts them: a wide character takes two.
   const statusCells = Bun.stringWidth(statusLabel);
@@ -86,17 +84,11 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const besideNeed = pinnedCells + PINNED_SEPARATOR.length + statusCells;
   const statusWidth = beside
     ? Math.min(room, Math.floor(input.mainWidth / 2), Math.max(32, besideNeed))
-    : Math.min(
-        room,
-        Math.max(
-          8,
-          Math.min(input.pinnedError !== null ? Math.floor(input.mainWidth / 2) : 32, statusCells),
-        ),
-      );
+    : Math.min(room, Math.max(8, Math.min(32, statusCells)));
   const hintWidth = Math.max(0, room - statusWidth);
   if (!beside) {
     return {
-      hint: clip(hint, hintWidth),
+      hint: clip(hintWithDismiss, hintWidth),
       label: clip(statusLabel, statusWidth),
       kind: input.status.kind,
       pinned: "",
@@ -111,7 +103,7 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   );
   const pinnedWidth = Math.max(0, statusWidth - PINNED_SEPARATOR.length - labelWidth);
   return {
-    hint: clip(hint, hintWidth),
+    hint: clip(hintWithDismiss, hintWidth),
     pinned: pinnedWidth > 0 ? clip(pinnedLabel, pinnedWidth) + PINNED_SEPARATOR : "",
     label: clip(statusLabel, labelWidth),
     kind: input.status.kind,
