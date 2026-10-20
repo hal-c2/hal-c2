@@ -1070,6 +1070,7 @@ defmodule HalC2.OrchestrationTest do
         end)
 
       :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
       moved = %{
         "mc" => "desktop@127.0.0.1",
         "label" => "desktop",
