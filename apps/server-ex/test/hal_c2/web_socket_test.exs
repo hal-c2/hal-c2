@@ -563,25 +563,31 @@ defmodule HalC2.Web.SocketTest do
     [{session, _}] =
       Registry.lookup(HalC2.Terminal.Registry, {"th-end", "term-1"})
 
-    await_true(fn ->
-      :sys.get_state(session).subscribers == %{} and
-        not Map.has_key?(:sys.get_state(HalC2.Settings).watchers, self())
-    end)
+    await_true(
+      fn ->
+        :sys.get_state(session).subscribers == %{} and
+          not Map.has_key?(:sys.get_state(HalC2.Settings).watchers, self())
+      end,
+      fn ->
+        "subscribers=#{inspect(:sys.get_state(session).subscribers)} " <>
+          "watchers=#{inspect(Map.keys(:sys.get_state(HalC2.Settings).watchers))}"
+      end
+    )
   end
 
   # Bounded condition wait for an end state no receipt announces.
-  defp await_true(fun, attempts \\ 200) do
+  defp await_true(fun, describe, attempts \\ 200) do
     cond do
       fun.() ->
         :ok
 
       attempts <= 0 ->
-        flunk("the awaited end state never arrived")
+        flunk("the awaited end state never arrived: #{describe.()}")
 
       true ->
         receive do
         after
-          5 -> await_true(fun, attempts - 1)
+          5 -> await_true(fun, describe, attempts - 1)
         end
     end
   end
