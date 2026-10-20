@@ -200,8 +200,10 @@ defmodule HalC2.Upgrade.Source do
   end
 
   # An unpacked bundle is the archive's only while the stamp beside it holds the archive's
-  # SHA-256: whichever source replaced the archive, and wherever an unpack or a writer
-  # stopped, a bundle of the same version built again is unpacked again.
+  # SHA-256 and the archive still hashes to it: whichever source replaced the archive,
+  # and wherever an unpack or a writer stopped, a bundle of the same version built again
+  # is unpacked again. Hashing on the fast path too closes the window where a writer
+  # replaced the archive but not yet its checksum after the source checked it.
   # The source checked the archive just before, but a writer outside `HalC2.Upgrade` (or
   # a cleanup) may have taken its checksum since.
   defp unpack(version, platform) do
@@ -222,7 +224,10 @@ defmodule HalC2.Upgrade.Source do
     dir = unpacked_dir(version, platform)
     stamp = dir <> ".sha256"
 
-    if File.read(stamp) == {:ok, sum} and HalC2.Upgrade.manifest(dir) != nil do
+    archive = archive_path(version, platform)
+
+    if File.read(stamp) == {:ok, sum} and File.regular?(archive) and
+         sha256(archive) == sum and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
     else
       File.rm(stamp)
