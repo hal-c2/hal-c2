@@ -1363,7 +1363,9 @@ Feature: Planner
       Then #7's task is marked as not synced
 
     # GitHub's answer arrives while the plugin is down; the push is reported again
-    # when it starts, so its task is not left waiting on a dead report.
+    # when it starts, so its task is not left waiting on a dead report. The report
+    # retries only while the plugin is back within 30 seconds (see `report/6` in
+    # the planner); a plugin stopped for longer loses it as a stopped push.
     @mc
     Scenario: A change GitHub answers while the plugin is stopped is told to it when it starts again
       Given "planner" syncs "acme/api" both ways
