@@ -592,7 +592,12 @@ Rectangle {
                     iconName: card.advisory && card.advisory.strong ? "triangle-alert" : "circle-arrow-up"
                     tint: card.advisory && card.advisory.strong ? page.warning : page.foreground
                     Accessible.name: card.advisory ? qsTr("%1: %2").arg(card.provider.name).arg(card.advisory.title) : ""
-                    onClicked: advisoryPopover.opened ? advisoryPopover.close() : advisoryPopover.open()
+                    // Checkable, with checked bound to the popover, so assistive
+                    // tech can tell whether it is open; the popover is driven
+                    // from onToggled so a click toggles it exactly once.
+                    checkable: true
+                    checked: advisoryPopover.opened
+                    onToggled: checked ? advisoryPopover.open() : advisoryPopover.close()
 
                     Popup {
                         id: advisoryPopover
@@ -637,7 +642,7 @@ Rectangle {
                         // The most the content may be tall, in local units; never nothing,
                         // for a window that is not laid out yet.
                         readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
-                        width: windowWidth > 0 ? Math.min(320, (windowWidth - 16) / scale) : 320
+                        width: windowWidth > 0 ? Math.max(24, Math.min(320, (windowWidth - 16) / scale)) : 320
                         padding: 12
                         // Focus is what lets Escape close it here instead of leaving
                         // Settings. Pressing the icon again closes it through onClicked.

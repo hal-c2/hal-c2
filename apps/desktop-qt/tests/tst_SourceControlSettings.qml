@@ -176,11 +176,30 @@ Item {
             compare(scan.Accessible.name, "Scanning server environment");
             verify(scan.opacity < 1, "dimmed while disabled");
             mouseMove(area, area.width / 2, area.height / 2);
-            const hover = findChild(page, "scanHover");
-            tryCompare(hover.ToolTip, "visible", true);
-            compare(hover.ToolTip.text, "Scanning…");
+            tryCompare(area.ToolTip, "visible", true);
+            compare(area.ToolTip.text, "Scanning…");
             mouseClick(area);
             compare(Shell.dispatchedActions.length, 0);
+        }
+
+        // While enabled the wrapper's hover is passive: the button itself is
+        // hovered (so its fill paints), its tooltip reads Rescan, and a click
+        // through the wrapper still dispatches the scan.
+        function test_rescan_while_enabled_keeps_the_buttons_hover_and_click() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [root.github({})],
+                             providers: [] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            const scan = findChild(page, "scan");
+            const area = findChild(page, "scanArea");
+            verify(scan.enabled);
+            mouseMove(area, area.width / 2, area.height / 2);
+            tryVerify(() => scan.hovered);
+            tryCompare(area.ToolTip, "visible", true);
+            compare(area.ToolTip.text, "Rescan Git and hosting integrations");
+            mouseClick(area);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "sourceControlSettings.scan");
         }
 
         // Git's fetch interval is behind a details toggle, collapsed until it is used.

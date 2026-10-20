@@ -198,10 +198,13 @@ Item {
             tryCompare(popover, "opened", false);
             verify(!leftThePage, "Escape stopped at the popover");
 
+            verify(!button.checked, "the icon reads as collapsed while the popover is closed");
             mouseClick(button);
             tryCompare(popover, "opened", true);
+            verify(button.checked, "the icon reads as expanded while the popover is open");
             mouseClick(button);
             tryCompare(popover, "opened", false);
+            verify(!button.checked, "the icon reads as collapsed again once the popover closes");
             // Closing it with the press must not reopen it with the click that follows.
             tryVerify(() => !popover.opened && !popover.visible);
             verify(!popover.opened, "pressing the icon again closes it rather than reopening it");

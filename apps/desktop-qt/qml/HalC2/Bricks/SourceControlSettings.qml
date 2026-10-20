@@ -32,8 +32,8 @@ SettingsPage {
     // is escaped as plain text, and so is the face's name (StyledText ignores a
     // font face, so the span carries it as CSS).
     function withCode(text) {
-        const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"]/g, ""));
+        const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"\\]/g, ""));
         return escape(text ?? "").replace(/`([^`\n]+)`/g, (match, code) => "<span style=\"font-family:'" + face + "'\">" + code + "</span>");
     }
 
@@ -362,14 +362,16 @@ SettingsPage {
                     onClicked: page.send("scan")
                 }
 
-                MouseArea {
+                // Passive, so the button under it keeps its own hover (and fill)
+                // and clicks while enabled.
+                HoverHandler {
+                    id: scanHover
+
                     objectName: "scanHover"
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: parent.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
                 }
+
+                ToolTip.visible: scanHover.hovered
+                ToolTip.text: scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
             }
         }
 

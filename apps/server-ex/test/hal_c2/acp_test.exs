@@ -145,9 +145,12 @@ defmodule HalC2.AcpTest do
     tmp_dir: dir
   } do
     {exe, harness} = HalC2.Acp.Antigravity.names()
+    marker = Path.join(dir, "launched")
 
+    # Either script, if run, leaves this behind: no marker is the behavioural
+    # proof that nothing was launched, whatever the loader keeps.
     for name <- [exe, harness] do
-      File.write!(Path.join(dir, name), "#!/bin/sh\n")
+      File.write!(Path.join(dir, name), "#!/bin/sh\ntouch #{marker}\n")
       File.chmod!(Path.join(dir, name), 0o755)
     end
 
@@ -168,8 +171,10 @@ defmodule HalC2.AcpTest do
     assert %{"status" => "disabled", "installed" => true, "version" => nil} =
              HalC2.Acp.entry("antigravity")
 
-    # Launching starts a loader, which sets its flag before anything else, and what it
-    # keeps (models or a failure) comes later: the flag is what shows no launch began.
+    refute File.exists?(marker)
+
+    # Belt and braces: launching starts a loader, which sets its flag before
+    # anything else, and what it keeps (models or a failure) comes later.
     assert :persistent_term.get({HalC2.Acp, "antigravity", :loading}, false) == false
     assert :persistent_term.get({HalC2.Acp, "antigravity", :models}, nil) == nil
     assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
