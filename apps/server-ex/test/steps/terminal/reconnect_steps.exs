@@ -514,10 +514,11 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
-  # Runs `printf '<format>\n'` and waits for `done` at the end of the line.
+  # Runs `printf '<format>\n'` and waits for `done` at the end of the line, with
+  # the shell back at its prompt like `print/3`, so the next command typed starts a line.
   defp printf(context, name, format, done) do
     context = Terminal.write(context, name, "printf '#{format}\\n'\n")
-    {_, _, context} = Terminal.await_output(context, name, ~r/#{Regex.escape(done)}\r?\n/)
+    {_, _, context} = Terminal.await_output_idle(context, name, ~r/#{Regex.escape(done)}\r?\n/)
     context
   end
 

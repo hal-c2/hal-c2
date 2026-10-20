@@ -3886,6 +3886,8 @@ defmodule HalC2.Test.Mc.Terminal do
 
   # Whether the shell is the one `ensure/1` installs, whose prompt `@prompt` matches;
   # scenarios about which shell the MC picks run others (zsh, fish) that draw their own.
+  # This keys off the scenario's current `SHELL`, so it assumes one shell per scenario,
+  # set before any terminal opens; a terminal keeps the shell it spawned with.
   defp prompt_known?, do: System.get_env("SHELL") == "/bin/sh"
 
   @doc "Sets (or with `nil` unsets) an OS environment variable until the scenario ends."
@@ -3978,31 +3980,75 @@ defmodule HalC2.Test.Mc.Terminal do
   def await_prompt(input, restored \\ "") do
     if prompt_known?() do
       session = Map.take(input, ["threadId", "terminalId"])
+      parent = self()
+      ref = make_ref()
 
-      Task.async(fn ->
-        {:ok, snapshot} = HalC2.Terminal.attach(session, self())
+      # Unlinked: asserting in the caller keeps a failure an assertion failure,
+      # not a linked EXIT crash from a task.
+      spawn(fn -> send(parent, {ref, prompt_result(session, input, restored)}) end)
 
+      receive do
+        {^ref, :prompt} ->
+          :ok
+
+        {^ref, {:no_prompt, tail}} ->
+          flunk("the shell drew no prompt; its output ends #{inspect(tail)}")
+
+        {^ref, {:error, reason}} ->
+          flunk("could not attach to the terminal to wait for its prompt: #{inspect(reason)}")
+      after
+        10_000 -> flunk("the shell drew no prompt")
+      end
+    end
+
+    :ok
+  end
+
+  defp prompt_result(session, input, restored) do
+    case HalC2.Terminal.attach(session, self()) do
+      {:ok, snapshot} ->
         try do
           deadline = System.monotonic_time(:millisecond) + 5_000
           receive_prompt(String.replace_prefix(snapshot["history"], restored, ""), deadline)
         after
           HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
         end
-      end)
-      |> Task.await(10_000)
-    end
 
-    :ok
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, other}
+    end
   end
 
   # The end of a terminal's output, the part that says what the shell last drew; a
   # reopened running terminal starts with its whole scrollback (megabytes).
   defp output_tail(output), do: String.slice(output, -200..-1//1)
 
+  # `@prompt` is `\z`-anchored, so only the tail can ever match; keeping a bounded
+  # tail makes each scan O(frame) instead of O(scrollback x frames).
+  defp prompt_tail(output) when byte_size(output) <= 1024, do: output
+
+  defp prompt_tail(output) do
+    output
+    |> binary_part(byte_size(output) - 1024, 1024)
+    |> drop_continuation_bytes()
+  end
+
+  defp drop_continuation_bytes(<<byte, rest::binary>>) when byte in 0x80..0xBF,
+    do: drop_continuation_bytes(rest)
+
+  defp drop_continuation_bytes(tail), do: tail
+
   # `deadline` is absolute, so a shell that keeps printing without drawing a prompt
-  # still ends in the flunk below rather than renewing the wait with every message.
+  # still ends in the result below rather than renewing the wait with every message.
   defp receive_prompt(output, deadline) do
-    unless output =~ @prompt do
+    output = prompt_tail(output)
+
+    if output =~ @prompt do
+      :prompt
+    else
       receive do
         {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
           receive_prompt(output <> data, deadline)
@@ -4011,7 +4057,7 @@ defmodule HalC2.Test.Mc.Terminal do
           receive_prompt(output, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
-          flunk("the shell drew no prompt; its output ends #{inspect(output_tail(output))}")
+          {:no_prompt, output_tail(output)}
       end
     end
   end
@@ -4145,7 +4191,7 @@ defmodule HalC2.Test.Mc.Terminal do
         Regex.compile!(
           "(?:" <>
             Regex.source(pattern) <>
-            ")(?:[^\\r\\n]*\\r?\\n)?[^\\r\\n]*" <> Regex.source(@prompt),
+            ")(?:[^\\r\\n]*\\r?\\n)*[^\\r\\n]*" <> Regex.source(@prompt),
           Regex.opts(pattern)
         )
 
