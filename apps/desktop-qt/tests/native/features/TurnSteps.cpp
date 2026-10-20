@@ -577,7 +577,8 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the queue to be held; the turn is %1").arg(show(turn(world))); });
   });
   const auto requestsBrick = [](World& world) -> Brick& {
-    if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTurnRequests {}\n", QSize(820, 500));
+    if (world.brick && world.brick->root() && world.brick->root()->objectName() == QLatin1String("turnRequestsBrick")) return *world.brick;
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTurnRequests { objectName: \"turnRequestsBrick\" }\n", QSize(820, 500));
     return *world.brick;
   };
   step(QStringLiteral("the queue is headed %1 and says %1").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {

@@ -356,3 +356,24 @@ Feature: Follow-ups while the agent is working
     And the MC is not asked to resume the queue
     When the user resumes the queue
     Then the user sees the toast "Not connected: queue not resumed" once
+
+  @desktop
+  Scenario: A resume warning dismissed and shown again is one fresh warning
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC stops accepting connections
+    And the MC drops the connection
+    When the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once
+    When the user dismisses the toast "Not connected: queue not resumed"
+    And the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once
+    And the MC is not asked to resume the queue
+
+  @backlog @tui
+  Scenario: A held queue is resumed from the terminal
+    Given "later" was queued when the MC restarted
+    When the MC comes back
+    Then the queue is shown as held
+    When the user resumes the queue
+    Then the MC is asked to resume the queue
