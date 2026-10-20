@@ -96,6 +96,9 @@ export function createStatusLog(ctx: {
         return true;
       }
       if (action !== "status.history") return false;
+      // Direct callers (shells, plugins) skip the palette's gating: an empty
+      // history is a dead-end picker, so this stays a known no-op.
+      if (history.length === 0) return true;
       // Opening the history is reading the error.
       dismiss();
       // The list as the picker showed it: errors arriving while it is open must not shift its values.

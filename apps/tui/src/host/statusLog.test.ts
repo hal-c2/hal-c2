@@ -46,6 +46,14 @@ describe("status log", () => {
     expect(log.commands().map((command) => command.id)).toEqual([]);
   });
 
+  it("dispatching history or dismiss with nothing logged or pinned opens no picker and clears nothing", () => {
+    const { log, picks, cleared } = setup();
+    expect(log.dispatch("status.history")).toBe(true);
+    expect(log.dispatch("status.dismiss")).toBe(true);
+    expect(picks).toEqual([]);
+    expect(cleared).toEqual([]);
+  });
+
   it("offers the history only once an error has been logged", () => {
     const { log } = setup();
     const ids = () => log.commands().map((command) => command.id);

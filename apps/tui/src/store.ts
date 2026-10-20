@@ -339,7 +339,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       }
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       const startedAtMs = Date.parse(now());
@@ -420,7 +420,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       if (state.gitBusy) return;
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       set({ gitBusy: true, status: "Pulling…", statusKind: "busy" });

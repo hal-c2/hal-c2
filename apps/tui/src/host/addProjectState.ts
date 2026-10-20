@@ -572,7 +572,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
     if (current.step === "source") {
       if (row?.kind !== "source") return;
       if (row.disabled) {
-        store.setStatus(row.description, "error");
+        store.setStatus(row.description, "warning");
         return;
       }
       if (row.source === "local") {
