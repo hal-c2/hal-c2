@@ -241,6 +241,13 @@ Feature: Where HAL-C2 keeps its files
       Then it prints a pairing link for that server
 
     @mc
+    Scenario: Pairing the installed server over Tailscale from a checkout reuses its own Serve mapping
+      Given the installed server is running with no HAL-C2 home configured
+      And Tailscale already serves that server at another loopback address
+      When a developer asks a checkout for the installed server's pairing link over Tailscale
+      Then it prints a Tailscale pairing link for that server
+
+    @mc
     Scenario: Asking for the installed server's pairing link when it is not running says so
       Given a development server is running with no HAL-C2 home configured
       When a developer asks a checkout for the installed server's pairing link

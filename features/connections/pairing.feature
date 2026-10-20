@@ -80,6 +80,7 @@ Feature: Pairing a client with an environment
       | https://box.example/?a=1        |
       | https://box.example/#top        |
       | http://user:pass@127.0.0.1:3780 |
+      | http://host:abc                 |
       | http://127.0.0.1:99999          |
       | http://exa mple.com             |
       | https://box.example/some path   |
@@ -90,6 +91,14 @@ Feature: Pairing a client with an environment
     When an operator asks for a pairing link for the one address "http://user:pass@127.0.0.1:3780"
     Then the command fails naming "BASE_URL must be an http or https address"
     And the command does not print "user:pass"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A pairing command given a pasted pairing link does not print its token back
+    Given an administrator's client
+    When an operator asks for a pairing link for the one address "https://box.example/?token=sekrit"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And the command does not print "sekrit"
     And no pairing link is listed
 
   @mc
