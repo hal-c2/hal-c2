@@ -86,6 +86,16 @@ private slots:
     QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory")}));
   }
 
+  // The mirror order: a file listed first stays a file, with its ignored flag.
+  void aPathListedTwiceAsFileFirstKeepsTheFirst() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), false, true}, {QStringLiteral("a"), true, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a file")}));
+    QCOMPARE(tree.index(0).data(FileTreeModel::IgnoredRole).toBool(), true);
+  }
+
   // Retrying a folder during a search marked the search's copy loading and
   // left the user's tree failed, so the listing never showed in either.
   void retryDuringASearchListsTheFolderAgain() {
