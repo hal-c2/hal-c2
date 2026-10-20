@@ -247,6 +247,71 @@ defmodule HalC2.AcpTest do
         do: assert(:persistent_term.get({HalC2.Acp, "grok", key}, nil) == nil, inspect(key))
   end
 
+  test "of two concurrent reads only the most recently started publishes", %{tmp_dir: dir} do
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    second = Path.join(dir, "second")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    grok = Path.join(dir, "grok")
+
+    # The first probe holds its `initialize` until released and then answers
+    # "stale"; a later probe answers "fresh" at once. Finishing last must not
+    # let the first read overwrite the second.
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, os, sys
+    request = json.loads(sys.stdin.readline())
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    def serve(name):
+        answer(request, {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+        model = {"id": "model", "currentValue": name, "options": [{"value": name, "name": name}]}
+        answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    if os.path.exists("#{second}"):
+        serve("fresh")
+    else:
+        open("#{second}", "w").close()
+        open("#{started}", "w").write(os.getcwd() + "\\n")
+        open("#{release}").read()
+        serve("stale")
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+    :ok = HalC2.Settings.watch(self())
+
+    HalC2.Acp.entry("grok")
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, probe}}, 10_000
+
+    # The boot-style read runs while the first is still held, and publishes.
+    HalC2.Acp.load()
+    assert inspect(:persistent_term.get({HalC2.Acp, "grok", :models}, nil)) =~ "fresh"
+
+    File.write!(release, "go\n")
+    read_done(String.trim(probe))
+
+    models = inspect(:persistent_term.get({HalC2.Acp, "grok", :models}, nil))
+    assert models =~ "fresh"
+    refute models =~ "stale"
+  end
+
   # Reads the grok instance from a fake agent that, holding the read's `initialize`
   # (`request`), waits until the test has forgotten the instance and then runs `script`
   # (Python). Returns once that read has published what it would and finished. The agent

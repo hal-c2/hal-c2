@@ -489,13 +489,24 @@ defmodule HalC2.Acp do
   # it (`{:error, :closed}`), and what it read would otherwise stand as the instance's
   # state beside the read that replaced it. So the read keeps what it learns aside
   # (`stage/3`) and publishes it under the lock `forget/1` takes, and only while the
-  # generation it started in is still current. Lock-free `:persistent_term` readers
-  # can still see a brief torn state during those puts; the lock serializes the
-  # publish against `forget/1`, it does not make it atomic for readers.
+  # generation it started in is still current. Each read starts a new generation, so
+  # of two concurrent reads (boot `load/0` does not set `:loading`, so `load_once/1`
+  # can start a second) only the most recently started may publish; the slower,
+  # possibly older-config one cannot win by finishing last. Lock-free
+  # `:persistent_term` readers can still see a brief torn state during those puts;
+  # the lock serializes the publish against `forget/1`, it does not make it atomic
+  # for readers.
   defp load(id) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    generation = locked(id, fn -> generation(id) end)
+
+    generation =
+      locked(id, fn ->
+        ref = make_ref()
+        :persistent_term.put({__MODULE__, id, :generation}, ref)
+        ref
+      end)
+
     Process.put(staged_key(id), [])
 
     try do
@@ -555,14 +566,6 @@ defmodule HalC2.Acp do
   defp stage(id, key, value) do
     Process.put(staged_key(id), [{key, value} | Process.get(staged_key(id), [])])
     :ok
-  end
-
-  defp generation(id) do
-    with nil <- :persistent_term.get({__MODULE__, id, :generation}, nil) do
-      generation = make_ref()
-      :persistent_term.put({__MODULE__, id, :generation}, generation)
-      generation
-    end
   end
 
   # Serializes a read's publication with `forget/1` for one instance, on this MC.
