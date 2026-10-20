@@ -180,7 +180,8 @@ defmodule HalC2.AcpTest do
     assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
   end
 
-  test "a successful generic probe clears a previous error without a forget", %{tmp_dir: dir} do
+  test "a successful generic probe clears a previous error and signed-out flag without a forget",
+       %{tmp_dir: dir} do
     grok = Path.join(dir, "grok")
 
     File.write!(grok, """
@@ -212,10 +213,12 @@ defmodule HalC2.AcpTest do
 
     on_exit(fn -> HalC2.Acp.forget("grok") end)
     :persistent_term.put({HalC2.Acp, "grok", :error}, "stale failure")
+    :persistent_term.put({HalC2.Acp, "grok", :unauthenticated}, true)
 
     HalC2.Acp.load()
 
     assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+    assert :persistent_term.get({HalC2.Acp, "grok", :unauthenticated}, false) == false
     assert :persistent_term.get({HalC2.Acp, "grok", :models}, nil) != nil
   end
 

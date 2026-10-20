@@ -48,7 +48,6 @@ defmodule HalC2.Acp do
 
   # Instances of this driver run an agent from the ACP Registry (`HalC2.Acp.Catalog`).
   @registry "acpRegistry"
-  @staged {__MODULE__, :staged}
 
   @doc "Instance ids of the ACP agents: the built-in agents and configured instances."
   def instances do
@@ -497,7 +496,7 @@ defmodule HalC2.Acp do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     generation = locked(id, fn -> generation(id) end)
-    Process.put(@staged, [])
+    Process.put(staged_key(id), [])
 
     try do
       result = read_agent(id, dir)
@@ -507,7 +506,7 @@ defmodule HalC2.Acp do
     catch
       _, _ -> :ok
     after
-      Process.delete(@staged)
+      Process.delete(staged_key(id))
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
@@ -519,8 +518,8 @@ defmodule HalC2.Acp do
 
   defp publish(id, generation, result, error) do
     if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
-      for {key, value} <- Enum.reverse(Process.get(@staged, [])),
-          do: :persistent_term.put({__MODULE__, id, key}, value)
+      for {key, value} <- Enum.reverse(Process.get(staged_key(id), [])),
+          do: publish_staged(id, key, value)
 
       case result do
         :ok ->
@@ -539,11 +538,22 @@ defmodule HalC2.Acp do
     end
   end
 
+  # A staged `:unauthenticated, false` (a successful generic `session/new`) clears
+  # the flag instead of storing `false`; other staged values are stored as read.
+  defp publish_staged(id, :unauthenticated, false),
+    do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
+
+  defp publish_staged(id, key, value),
+    do: :persistent_term.put({__MODULE__, id, key}, value)
+
+  defp staged_key(id), do: {__MODULE__, :staged, id}
+
   # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
   # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
-  # counts as a success in `publish/4`.
-  defp stage(_id, key, value) do
-    Process.put(@staged, [{key, value} | Process.get(@staged, [])])
+  # counts as a success in `publish/4`. Keyed per instance so a nested read of
+  # another instance cannot discard this read's staged values.
+  defp stage(id, key, value) do
+    Process.put(staged_key(id), [{key, value} | Process.get(staged_key(id), [])])
     :ok
   end
 
@@ -664,6 +674,10 @@ defmodule HalC2.Acp do
           {:ok, session} ->
             stage(id, :config, session["configOptions"] || [])
             stage(id, :models, models(session))
+            # Antigravity skips `session/new`, so its success proves no sign-in;
+            # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
+            if driver != "antigravity", do: stage(id, :unauthenticated, false)
+            :ok
 
           # ACP's "authentication required".
           {:error, %{"code" => -32000}} ->
